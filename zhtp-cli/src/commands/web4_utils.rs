@@ -7,9 +7,11 @@ use lib_crypto::types::PrivateKey;
 use lib_identity::ZhtpIdentity;
 use lib_network::client::{ZhtpClient, ZhtpClientConfig};
 use lib_network::web4::TrustConfig;
-use serde::Deserialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+
+// Re-export KeystorePrivateKey from zhtp for local use and external consumers
+pub use zhtp::keyfile_names::KeystorePrivateKey;
 
 #[derive(Debug, Clone)]
 pub struct LoadedIdentity {
@@ -17,24 +19,18 @@ pub struct LoadedIdentity {
     pub keypair: KeyPair,
 }
 
-#[derive(Deserialize)]
-struct KeystorePrivateKey {
-    dilithium_sk: Vec<u8>,
-    kyber_sk: Vec<u8>,
-    master_seed: Vec<u8>,
-}
-
 pub fn load_identity_from_keystore(keystore_path: &Path) -> CliResult<LoadedIdentity> {
     // Load USER identity for domain/content operations (has wallets)
     // NODE identity is for mesh networking operations only
-    let mut identity_file = keystore_path.join(zhtp::keystore_names::USER_IDENTITY_FILENAME);
-    let mut private_key_file = keystore_path.join(zhtp::keystore_names::USER_PRIVATE_KEY_FILENAME);
+    let mut identity_file = keystore_path.join(zhtp::keyfile_names::USER_IDENTITY_FILENAME);
+    let mut private_key_file = keystore_path.join(zhtp::keyfile_names::USER_PRIVATE_KEY_FILENAME);
 
     // Fallback to NODE identity files for backwards compatibility with old keystores
     // that were created before USER/NODE identity separation
     if !identity_file.exists() || !private_key_file.exists() {
-        let node_identity_file = keystore_path.join(zhtp::keystore_names::NODE_IDENTITY_FILENAME);
-        let node_private_key_file = keystore_path.join(zhtp::keystore_names::NODE_PRIVATE_KEY_FILENAME);
+        let node_identity_file = keystore_path.join(zhtp::keyfile_names::NODE_IDENTITY_FILENAME);
+        let node_private_key_file =
+            keystore_path.join(zhtp::keyfile_names::NODE_PRIVATE_KEY_FILENAME);
 
         if node_identity_file.exists() && node_private_key_file.exists() {
             eprintln!(
@@ -70,6 +66,7 @@ pub fn load_identity_from_keystore(keystore_path: &Path) -> CliResult<LoadedIden
 
     let private_key = PrivateKey {
         dilithium_sk: keystore_key.dilithium_sk,
+        dilithium_pk: keystore_key.dilithium_pk,
         kyber_sk: keystore_key.kyber_sk,
         master_seed: keystore_key.master_seed,
     };
@@ -85,12 +82,53 @@ pub fn load_identity_from_keystore(keystore_path: &Path) -> CliResult<LoadedIden
     Ok(LoadedIdentity { identity, keypair })
 }
 
+pub fn default_keystore_path() -> CliResult<PathBuf> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| CliError::ConfigError("Cannot determine home directory".to_string()))?;
+    Ok(home.join(".zhtp").join("keystore"))
+}
+
+pub fn resolve_keystore_path(keystore: Option<&str>) -> CliResult<PathBuf> {
+    if let Some(path) = keystore {
+        return crate::logic::paths::expand_home_directory(path);
+    }
+
+    let defaults = crate::cli_config::runtime_defaults();
+    if let Some(path) = defaults.keystore {
+        return crate::logic::paths::expand_home_directory(&path);
+    }
+
+    let fallback = default_keystore_path()?;
+    if fallback.exists() {
+        return Ok(fallback);
+    }
+
+    Err(CliError::IdentityError(
+        "Keystore path required. Provide --keystore or set defaults in ~/.zhtp/cli.toml"
+            .to_string(),
+    ))
+}
+
 pub fn build_trust_config(
     pin_spki: Option<&str>,
     node_did: Option<&str>,
     tofu: bool,
     trust_node: bool,
 ) -> CliResult<TrustConfig> {
+    let mut pin_spki = pin_spki.map(|s| s.to_string());
+    let mut node_did = node_did.map(|s| s.to_string());
+    let mut tofu = tofu;
+    let mut trust_node = trust_node;
+
+    if pin_spki.is_none() && node_did.is_none() && !tofu && !trust_node {
+        if let Some(defaults) = crate::cli_config::runtime_defaults().trust {
+            pin_spki = defaults.pin_spki;
+            node_did = defaults.node_did;
+            tofu = defaults.tofu.unwrap_or(false);
+            trust_node = defaults.trust_node.unwrap_or(false);
+        }
+    }
+
     if trust_node && pin_spki.is_some() {
         return Err(CliError::ConfigError(
             "Cannot use --trust-node (bootstrap mode) with --pin-spki (pinning mode)".to_string(),
@@ -112,7 +150,7 @@ pub fn build_trust_config(
     let mut config = if trust_node {
         TrustConfig::bootstrap()
     } else if let Some(pin) = pin_spki {
-        TrustConfig::with_pin(pin.to_string())
+        TrustConfig::with_pin(pin)
     } else if tofu {
         let trustdb_path = TrustConfig::default_trustdb_path()
             .map_err(|e| CliError::ConfigError(format!("Failed to resolve trustdb path: {}", e)))?;
@@ -122,7 +160,7 @@ pub fn build_trust_config(
     };
 
     if let Some(did) = node_did {
-        config = config.expect_node_did(did.to_string());
+        config = config.expect_node_did(did);
     }
 
     Ok(config)
@@ -144,6 +182,42 @@ pub async fn connect_client(
         .connect(server)
         .await
         .map_err(|e| CliError::ConfigError(format!("Failed to connect: {}", e)))?;
+    Ok(client)
+}
+
+/// Connect to ZHTP node using default keystore with bootstrap mode
+///
+/// This is a simplified connection method for commands that don't need
+/// explicit keystore/trust configuration (monitoring, status queries, etc.)
+///
+/// Uses:
+/// - Default keystore at ~/.zhtp/keystore
+/// - Bootstrap mode (no TLS verification) for development convenience
+pub async fn connect_default(server: &str) -> CliResult<ZhtpClient> {
+    let default_keystore = default_keystore_path()?;
+
+    if !default_keystore.exists() {
+        return Err(CliError::IdentityError(format!(
+            "Default keystore not found at {:?}. Run 'zhtp-cli identity create-did <name>' first.",
+            default_keystore
+        )));
+    }
+
+    let loaded = load_identity_from_keystore(&default_keystore)?;
+    let trust_config = TrustConfig::bootstrap();
+    let config = ZhtpClientConfig {
+        allow_bootstrap: true,
+    };
+
+    let mut client = ZhtpClient::new_with_config(loaded.identity, trust_config, config)
+        .await
+        .map_err(|e| CliError::ConfigError(format!("Failed to create client: {}", e)))?;
+
+    client
+        .connect(server)
+        .await
+        .map_err(|e| CliError::ConfigError(format!("Failed to connect to {}: {}", server, e)))?;
+
     Ok(client)
 }
 
@@ -178,6 +252,14 @@ pub fn validate_domain(domain: &str) -> CliResult<String> {
     if *tld != "zhtp" && *tld != "sov" {
         return Err(CliError::ConfigError(
             "Domain must end with .zhtp or .sov".to_string(),
+        ));
+    }
+
+    // Check for reserved dao. prefix (virtual namespace - cannot be registered)
+    let name_parts = &parts[..parts.len() - 1];
+    if !name_parts.is_empty() && name_parts[0] == "dao" {
+        return Err(CliError::ConfigError(
+            "dao. prefix is virtual and cannot be registered. DAO governance is automatically derived from base domains.".to_string(),
         ));
     }
 
@@ -223,8 +305,39 @@ pub fn decode_base64(data: &str) -> CliResult<Vec<u8>> {
 }
 
 pub fn default_trust_paths() -> (PathBuf, PathBuf) {
-    let trustdb = TrustConfig::default_trustdb_path()
-        .unwrap_or_else(|_| PathBuf::from("trustdb.json"));
+    let trustdb =
+        TrustConfig::default_trustdb_path().unwrap_or_else(|_| PathBuf::from("trustdb.json"));
     let audit = TrustConfig::default_audit_path();
     (trustdb, audit)
+}
+
+/// Save private key to file with restrictive permissions
+pub fn save_private_key_to_file(
+    private_key: &lib_crypto::types::PrivateKey,
+    private_key_file: &Path,
+) -> CliResult<()> {
+    let keystore_key = KeystorePrivateKey {
+        dilithium_sk: private_key.dilithium_sk.clone(),
+        dilithium_pk: private_key.dilithium_pk.clone(),
+        kyber_sk: private_key.kyber_sk.clone(),
+        master_seed: private_key.master_seed.clone(),
+    };
+
+    let private_key_json = serde_json::to_string_pretty(&keystore_key)
+        .map_err(|e| CliError::IdentityError(format!("Failed to serialize private key: {}", e)))?;
+
+    std::fs::write(private_key_file, private_key_json)
+        .map_err(|e| CliError::IdentityError(format!("Failed to write private key file: {}", e)))?;
+
+    // Set restrictive permissions on Unix
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(private_key_file, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| {
+                CliError::IdentityError(format!("Failed to set file permissions: {}", e))
+            })?;
+    }
+
+    Ok(())
 }

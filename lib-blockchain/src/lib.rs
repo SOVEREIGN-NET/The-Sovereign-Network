@@ -1,79 +1,277 @@
 //! ZHTP Blockchain Package
-//! 
+//!
 //! Core blockchain implementation with zero-knowledge transactions
 //! and quantum-resistant consensus integration. Focuses on blockchain
 //! fundamentals while delegating specialized functionality to other packages.
 
 // External dependencies
 extern crate lib_crypto;
-extern crate lib_proofs;
-extern crate lib_identity;
 extern crate lib_economy;
+extern crate lib_identity;
+extern crate lib_proofs;
 
-pub mod types;
-pub mod transaction;
 pub mod block;
 pub mod blockchain;
-pub mod mempool;
-pub mod integration;
-pub mod utils;
-pub mod edge_node_state;
+pub mod byzantine_evidence;
+pub mod dao;
 pub mod dht_index;
+pub mod edge_node_state;
+pub mod events;
+pub mod exchange;
+pub mod execution;
+pub mod fees;
+mod fork_recovery; // gutted in Issue #936; kept as private to avoid orphan module errors
+pub mod genesis;
+pub mod integration;
+pub mod mempool;
+pub mod onramp;
+pub mod oracle;
+pub mod pricing;
+pub mod protocol;
 pub mod receipts;
+pub mod resources;
+pub mod snapshot;
+pub mod storage;
+pub mod sync;
+pub mod transaction;
+pub mod types;
+pub mod utils;
+pub mod validation;
 
 // Smart contracts submodule (feature-gated)
 #[cfg(feature = "contracts")]
 pub mod contracts;
 
 // Re-export core types for convenience
-pub use types::*;
-pub use transaction::{*, WalletReference, WalletPrivateData};
-pub use block::*;
-pub use blockchain::{Blockchain, BlockchainImport, BlockchainBroadcastMessage, EconomicsTransaction, ValidatorInfo};
-pub use mempool::*;
-pub use utils::*;
-pub use dht_index::*;
+// Types module (all types are already explicitly re-exported in types/mod.rs)
+pub use types::{
+    adjust_difficulty, adjust_difficulty_with_config, blake3_hash, calculate_target,
+    difficulty_to_work, get_mining_config_from_env, hash_to_hex, hex_to_hash, is_zero_hash,
+    max_target, meets_difficulty, min_target, target_to_difficulty, validate_mining_for_chain,
+    zero_hash, DAOMetadata, DAOType, Difficulty, DifficultyParameterUpdateData, Hash, Hashable,
+    MiningConfig, MiningProfile, SectorDao, SectorVerificationFloor, TokenClass, TransactionType,
+    TreasuryAllocation, WelfareSectorId,
+};
+
+// Transaction module (core types and functions)
+pub use transaction::{
+    calculate_transaction_merkle_root, create_commitment, create_contract_deployment_transaction,
+    create_contract_transaction, create_encrypted_note, create_identity_transaction,
+    create_token_transaction, create_transfer_transaction, create_wallet_transaction,
+    generate_nullifier, hash_for_signature, hash_transaction, hash_transaction_for_signing,
+    hash_transaction_input, hash_transaction_output, sign_transaction,
+    verify_transaction_signature, ContractDeploymentPayloadV1, DaoExecutionData, DaoProposalData,
+    DaoVoteData, IdentityTransactionData, ProfitDeclarationData, RecordOnRampTradeData,
+    RevenueSource, SigningError, StatefulTransactionValidator, Transaction, TransactionBuilder,
+    TransactionCreateError, TransactionInput, TransactionOutput, TransactionValidator,
+    TreasuryAllocationData, UbiClaimData, ValidationError, ValidationResult, ValidatorOperation,
+    ValidatorTransactionData, WalletPrivateData, WalletReference, WalletTransactionData,
+    CONTRACT_DEPLOYMENT_MEMO_PREFIX,
+};
+
+// Threshold approval types
+pub use transaction::threshold_approval::{
+    Approval, ApprovalDomain, ThresholdApprovalSet, ThresholdError,
+};
+
+// Block module (core types and functions)
+pub use block::{
+    create_block,
+    create_genesis_block,
+    create_genesis_block_with_transactions,
+    estimate_block_time,
+    mine_block,             // Deprecated stub - BFT-A-935
+    mine_block_with_config, // Deprecated stub - BFT-A-935
+    select_transactions_for_block,
+    Block,
+    BlockBuilder,
+    BlockHeader,
+    BlockValidationError,
+    BlockValidationResult,
+};
+
+// Blockchain module
+pub use blockchain::{
+    Blockchain, BlockchainBroadcastMessage, BlockchainImport, ConsensusCheckpoint,
+    EconomicsTransaction, ValidatorInfo, ADMISSION_SOURCE_BOOTSTRAP_GENESIS,
+};
+#[cfg(feature = "contracts")]
+pub use contracts::AmmPool;
+
+// Mempool module
+pub use mempool::{Mempool, MempoolError, MempoolStats};
+
+// DHT Index module
+pub use dht_index::{IndexedBlockHeader, IndexedTransactionSummary};
+
+// Receipts module
 pub use receipts::{TransactionReceipt, TransactionStatus};
+
+// Sync module (Phase 3A)
+pub use sync::{ChainSync, ImportResult, SyncError, SyncResult};
+
+// Snapshot module (Phase 11)
+pub use oracle::{
+    FinalizedOraclePrice,
+    OracleAttestationAdmission,
+    OracleAttestationAdmissionError,
+    OracleAttestationValidationError,
+    OracleCommitteeState,
+    OracleConfig,
+    // ORACLE-15: Config validation
+    OracleConfigError,
+    OracleEpochState,
+    OraclePriceAttestation,
+    OraclePriceAttestationPayload,
+    // ORACLE-4: Slashing
+    OracleSlashEvent,
+    OracleSlashReason,
+    OracleSlashingConfig,
+    OracleState,
+    PendingCommitteeUpdate,
+    PendingConfigUpdate,
+    ORACLE_ATTESTATION_DOMAIN,
+    ORACLE_PRICE_SCALE,
+};
+pub use snapshot::{restore, snapshot, Snapshot, SnapshotError, SnapshotResult};
+
+// Exchange module re-exports (ORACLE-3)
+pub use exchange::{ExchangeState, LastTradePrice, TradingPair};
+
+// Protocol module (Phase 3B)
+pub use protocol::{fee_model, ProtocolError, ProtocolParams, ProtocolResult, PROTOCOL_PARAMS_KEY};
 
 // Re-export enhanced integrations
 pub use integration::enhanced_zk_crypto::{
-    EnhancedTransactionValidator,
-    EnhancedTransactionCreator,
-    EnhancedConsensusValidator,
+    EnhancedConsensusValidator, EnhancedTransactionCreator, EnhancedTransactionValidator,
     TransactionSpec,
 };
 
 // Re-export economic integration
 pub use integration::economic_integration::{
-    EconomicTransactionProcessor,
-    TreasuryStats,
-    create_economic_processor,
-    create_welfare_funding_transactions,
-    validate_dao_fee_calculation,
-    calculate_minimum_blockchain_fee,
-    convert_economy_amount_to_blockchain,
-    convert_blockchain_amount_to_economy,
+    calculate_minimum_blockchain_fee, convert_blockchain_amount_to_economy,
+    convert_economy_amount_to_blockchain, create_economic_processor,
+    create_welfare_funding_transactions, validate_dao_fee_calculation,
+    EconomicTransactionProcessor, TreasuryStats,
 };
 
 // Re-export consensus integration
 pub use integration::consensus_integration::{
-    BlockchainConsensusCoordinator,
+    create_dao_proposal_transaction, create_dao_vote_transaction, initialize_consensus_integration,
+    initialize_consensus_integration_with_difficulty_config, BlockchainConsensusCoordinator,
     ConsensusStatus,
-    initialize_consensus_integration,
-    initialize_consensus_integration_with_difficulty_config,
-    create_dao_proposal_transaction,
-    create_dao_vote_transaction,
 };
 
 // Re-export difficulty types from lib-consensus for convenience
-pub use lib_consensus::{DifficultyConfig, DifficultyManager, DifficultyError, DifficultyResult};
+pub use lib_consensus::{DifficultyConfig, DifficultyError, DifficultyManager, DifficultyResult};
+
+// Re-export storage types (Phase 1 storage layer)
+pub use storage::{
+    AccountState, Address, BlockHash, BlockchainStore, IdentityAttribute, IdentityState,
+    IdentityStatus, OutPoint, SledStore, StorageError, StorageResult, TokenId, TxHash, Utxo,
+    ValidatorState, ValidatorStatus, WalletMetadata, WalletState,
+};
+
+// Re-export execution types (Phase 2 execution layer)
+pub use execution::{
+    ApplyOutcome, BlockApplyError, BlockApplyResult, BlockExecutor, ExecutorConfig,
+    StateChangesSummary, StateMutator, StateView, StateViewExt, TxApplyError, TxApplyResult,
+};
+
+// Phase 2 validation module available as crate::validation
+// Not re-exported at top level to avoid conflict with transaction::validation
 
 // Re-export contracts when feature is enabled
+// contracts/mod.rs has explicit re-exports, so this is safe and curated
 #[cfg(feature = "contracts")]
-pub use contracts::*;
+pub use contracts::{
+    compute_name_hash, derive_dao_id, parse_and_validate, Amount, ApprovedGrant,
+    BlockchainIntegration, CallPermissions, ContactEntry, ContentRoute, ContractCall,
+    ContractEvent, ContractEventListener, ContractEventPublisher, ContractExecutor, ContractLog,
+    ContractPermissions, ContractResult, ContractRuntime, ContractStorage,
+    ContractTransactionBuilder, ContractType, DAOEntry, DAORegistry, DaoDistribution, DaoId,
+    DevGrants, Disbursement, DomainRecord, EmergencyReserve, EntityRegistry, EntityRegistryError,
+    EntityType, Error, EventType, ExecutionContext, FeeDistribution, FeeRouter, FeeRouterError,
+    FileContract, GlobalStakingGuardrails, GovernanceRecord, GroupChat, GroupThread, LaunchedDao,
+    LiquidityPosition, LpPositionsManager, LpRewardBreakdown, MemoryStorage, MessageContract,
+    MessageThread, MessageType, MonthIndex, NameClass, NameClassification, NameHash, NameRecord,
+    NameStatus, NativeRuntime, PendingDao, PoolState, ProposalId, ProposalStatus, ReservedReason,
+    Result, Role, RootRegistry, RuntimeConfig, RuntimeContext, RuntimeFactory, RuntimeResult,
+    SharedFile, SmartContract, SovDaoStaking, SovDaoTreasury, SovSwapPool, StakingPosition,
+    SwapDirection, SwapError, SwapResult, TokenContract, UbiDistributor, VerificationLevel,
+    Web4Contract, WebsiteContract, WebsiteDeploymentData, WebsiteMetadata, WelfareSector,
+    WhisperMessage, ZoneController, DAO_ALLOCATION_PERCENT, DEV_ALLOCATION_PERCENT,
+    EMERGENCY_ALLOCATION_PERCENT, FEE_RATE_BASIS_POINTS, GAS_BASE, GAS_CONTACT, GAS_GROUP,
+    GAS_MESSAGING, GAS_TOKEN, UBI_ALLOCATION_PERCENT,
+};
 
-/// ZHTP blockchain protocol version
+/// ZHTP blockchain protocol version.
+///
+/// # Protocol Upgrade Policy (BFT-H)
+///
+/// Protocol upgrades are consensus-critical and must follow this policy:
+/// - Upgrades are gated by block height; incompatible peers and blocks are
+///   rejected **deterministically** at both the handshake layer and block
+///   acceptance layer.
+/// - A new version MUST be accompanied by a hard-fork block height constant.
+/// - Validators running an incompatible version are automatically rejected
+///   and cannot participate in consensus.
 pub const BLOCKCHAIN_VERSION: u32 = 1;
+
+/// Minimum compatible protocol version.
+///
+/// Peers advertising a version below this value are rejected immediately.
+/// Update this constant when a breaking protocol change is introduced.
+pub const MIN_COMPATIBLE_PROTOCOL_VERSION: u32 = 1;
+
+/// Enforces the protocol version gate for a connecting peer.
+///
+/// Returns `Ok(())` if the peer version is within the accepted range,
+/// otherwise returns an `Err` describing the mismatch.  This check MUST be
+/// performed before accepting any block or vote from a peer.
+///
+/// # Errors
+/// Returns an error if `peer_version < MIN_COMPATIBLE_PROTOCOL_VERSION` or
+/// `peer_version > BLOCKCHAIN_VERSION`.
+pub fn enforce_protocol_version_gate(peer_version: u32) -> std::result::Result<(), String> {
+    if peer_version < MIN_COMPATIBLE_PROTOCOL_VERSION {
+        return Err(format!(
+            "peer protocol version {peer_version} is below minimum compatible version \
+             {MIN_COMPATIBLE_PROTOCOL_VERSION}; upgrade required"
+        ));
+    }
+    if peer_version > BLOCKCHAIN_VERSION {
+        return Err(format!(
+            "peer protocol version {peer_version} is ahead of local version \
+             {BLOCKCHAIN_VERSION}; local node must be upgraded"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod protocol_version_tests {
+    use super::*;
+
+    #[test]
+    fn test_enforce_protocol_version_gate_accepts_current() {
+        assert!(enforce_protocol_version_gate(BLOCKCHAIN_VERSION).is_ok());
+    }
+
+    #[test]
+    fn test_enforce_protocol_version_gate_rejects_old() {
+        // If MIN_COMPATIBLE_PROTOCOL_VERSION is 1 this test is skipped (nothing below)
+        if MIN_COMPATIBLE_PROTOCOL_VERSION > 0 {
+            let too_old = MIN_COMPATIBLE_PROTOCOL_VERSION - 1;
+            assert!(enforce_protocol_version_gate(too_old).is_err());
+        }
+    }
+
+    #[test]
+    fn test_enforce_protocol_version_gate_rejects_future() {
+        assert!(enforce_protocol_version_gate(BLOCKCHAIN_VERSION + 1).is_err());
+    }
+}
 
 /// Maximum block size in bytes (1MB)
 pub const MAX_BLOCK_SIZE: usize = 1_048_576;
@@ -210,3 +408,4 @@ pub struct BlockchainInfo {
 // Use zhtp::runtime::blockchain_provider::get_global_blockchain() instead.
 // This provides better control over blockchain initialization and lifecycle.
 
+pub mod execution_limits;

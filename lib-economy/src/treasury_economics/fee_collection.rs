@@ -1,12 +1,12 @@
 //! DAO Treasury for managing UBI and DAO allocations (economics interface only)
-//! 
+//!
 //! This is the economics calculation interface for treasury operations.
 //! The actual DAO governance logic is centralized in lib-consensus package.
 
-use anyhow::Result;
-use serde::{Serialize, Deserialize};
 use crate::transactions::DaoFeeDistribution;
 use crate::wasm::logging::info;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 /// DAO Treasury for managing UBI and DAO allocations (economics interface only)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,14 +70,20 @@ impl DaoTreasury {
         self.total_dao_fees_collected = self.total_dao_fees_collected.saturating_add(total);
 
         self.ubi_allocated = self.ubi_allocated.saturating_add(distribution.ubi);
-        self.sector_dao_allocated = self.sector_dao_allocated.saturating_add(distribution.sector_daos);
-        self.emergency_allocated = self.emergency_allocated.saturating_add(distribution.emergency_reserve);
-        self.dev_grants_allocated = self.dev_grants_allocated.saturating_add(distribution.dev_grants);
+        self.sector_dao_allocated = self
+            .sector_dao_allocated
+            .saturating_add(distribution.sector_daos);
+        self.emergency_allocated = self
+            .emergency_allocated
+            .saturating_add(distribution.emergency_reserve);
+        self.dev_grants_allocated = self
+            .dev_grants_allocated
+            .saturating_add(distribution.dev_grants);
 
         self.assert_accounting_invariant();
 
         info!(
-            " Added {} ZHTP to DAO treasury - UBI: +{}, Sector DAOs: +{}, Emergency: +{}, Dev Grants: +{}, Total: {}",
+            " Added {} SOV to DAO treasury - UBI: +{}, Sector DAOs: +{}, Emergency: +{}, Dev Grants: +{}, Total: {}",
             total,
             distribution.ubi,
             distribution.sector_daos,
@@ -114,7 +120,7 @@ impl DaoTreasury {
             }
         })
     }
-    
+
     /// Calculate UBI distribution amount per citizen
     pub fn calculate_ubi_per_citizen(&self, total_citizens: u64) -> u64 {
         if total_citizens > 0 && self.ubi_allocated > 0 {
@@ -123,7 +129,7 @@ impl DaoTreasury {
             0
         }
     }
-    
+
     /// Calculate sector DAO funding available
     pub fn calculate_sector_dao_funding_available(&self) -> u64 {
         self.sector_dao_allocated
@@ -138,31 +144,33 @@ impl DaoTreasury {
     pub fn calculate_dev_grants_funding_available(&self) -> u64 {
         self.dev_grants_allocated
     }
-    
+
     /// Record UBI distribution (for accounting)
     pub fn record_ubi_distribution(&mut self, amount: u64, timestamp: u64) -> Result<()> {
         if amount > self.ubi_allocated {
             return Err(anyhow::anyhow!("UBI distribution exceeds allocated amount"));
         }
-        
+
         self.ubi_allocated -= amount;
         self.total_ubi_distributed += amount;
         self.treasury_balance -= amount;
         self.last_ubi_distribution = timestamp;
         self.assert_accounting_invariant();
-        
+
         info!(
-            "Recorded UBI distribution: {} ZHTP to citizens, remaining allocated: {}",
+            "Recorded UBI distribution: {} SOV to citizens, remaining allocated: {}",
             amount, self.ubi_allocated
         );
-        
+
         Ok(())
     }
-    
+
     /// Record sector DAO distribution (for accounting)
     pub fn record_sector_dao_distribution(&mut self, amount: u64, timestamp: u64) -> Result<()> {
         if amount > self.sector_dao_allocated {
-            return Err(anyhow::anyhow!("Sector DAO distribution exceeds allocated amount"));
+            return Err(anyhow::anyhow!(
+                "Sector DAO distribution exceeds allocated amount"
+            ));
         }
 
         self.sector_dao_allocated -= amount;
@@ -172,7 +180,7 @@ impl DaoTreasury {
         self.assert_accounting_invariant();
 
         info!(
-            " Recorded sector DAO distribution: {} ZHTP, remaining allocated: {}",
+            " Recorded sector DAO distribution: {} SOV, remaining allocated: {}",
             amount, self.sector_dao_allocated
         );
 
@@ -182,7 +190,9 @@ impl DaoTreasury {
     /// Record emergency reserve distribution (for accounting)
     pub fn record_emergency_distribution(&mut self, amount: u64, timestamp: u64) -> Result<()> {
         if amount > self.emergency_allocated {
-            return Err(anyhow::anyhow!("Emergency distribution exceeds allocated amount"));
+            return Err(anyhow::anyhow!(
+                "Emergency distribution exceeds allocated amount"
+            ));
         }
 
         self.emergency_allocated -= amount;
@@ -192,7 +202,7 @@ impl DaoTreasury {
         self.assert_accounting_invariant();
 
         info!(
-            " Recorded emergency distribution: {} ZHTP, remaining allocated: {}",
+            " Recorded emergency distribution: {} SOV, remaining allocated: {}",
             amount, self.emergency_allocated
         );
 
@@ -202,7 +212,9 @@ impl DaoTreasury {
     /// Record development grant distribution (for accounting)
     pub fn record_dev_grants_distribution(&mut self, amount: u64, timestamp: u64) -> Result<()> {
         if amount > self.dev_grants_allocated {
-            return Err(anyhow::anyhow!("Dev grant distribution exceeds allocated amount"));
+            return Err(anyhow::anyhow!(
+                "Dev grant distribution exceeds allocated amount"
+            ));
         }
 
         self.dev_grants_allocated -= amount;
@@ -212,13 +224,13 @@ impl DaoTreasury {
         self.assert_accounting_invariant();
 
         info!(
-            " Recorded dev grants distribution: {} ZHTP, remaining allocated: {}",
+            " Recorded dev grants distribution: {} SOV, remaining allocated: {}",
             amount, self.dev_grants_allocated
         );
 
         Ok(())
     }
-    
+
     /// Get allocation efficiency metrics
     pub fn get_allocation_efficiency(&self) -> serde_json::Value {
         let ubi_efficiency = if self.total_dao_fees_collected > 0 {
@@ -226,9 +238,10 @@ impl DaoTreasury {
         } else {
             0.0
         };
-        
+
         let sector_dao_efficiency = if self.total_dao_fees_collected > 0 {
-            (self.total_sector_dao_distributed as f64 / self.total_dao_fees_collected as f64) * 100.0
+            (self.total_sector_dao_distributed as f64 / self.total_dao_fees_collected as f64)
+                * 100.0
         } else {
             0.0
         };
@@ -240,11 +253,12 @@ impl DaoTreasury {
         };
 
         let dev_grants_efficiency = if self.total_dao_fees_collected > 0 {
-            (self.total_dev_grants_distributed as f64 / self.total_dao_fees_collected as f64) * 100.0
+            (self.total_dev_grants_distributed as f64 / self.total_dao_fees_collected as f64)
+                * 100.0
         } else {
             0.0
         };
-        
+
         serde_json::json!({
             "ubi_distribution_efficiency": ubi_efficiency,
             "sector_dao_distribution_efficiency": sector_dao_efficiency,

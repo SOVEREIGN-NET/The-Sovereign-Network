@@ -66,6 +66,8 @@ use zeroize::Zeroize;
 ///
 /// Use generic bounds to ensure only zeroizing keys are accepted:
 /// ```rust
+/// use lib_crypto::ZeroizingKey;
+///
 /// pub fn secure_store<K: ZeroizingKey>(key: K) {
 ///     // Guaranteed to be zeroized on drop
 /// }
@@ -215,7 +217,9 @@ mod tests {
             key.zeroize();
         }
 
-        let secret = SecretData { data: vec![0xFF; 64] };
+        let secret = SecretData {
+            data: vec![0xFF; 64],
+        };
         process(secret);
     }
 }

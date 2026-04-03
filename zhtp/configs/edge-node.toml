@@ -5,7 +5,7 @@
 # Core Node Settings
 mesh_mode = "PureMesh"  #  mode
 security_level = "High"
-environment = "Mainnet"
+runtime_role = "EDGE"
 data_directory = "./data/mainnet-edge"  # Mainnet-specific directory
 
 [crypto_config]

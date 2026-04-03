@@ -9,11 +9,10 @@ pub enum OpCodes {
     Status,
     Notify,
     Update,
-    Dso
+    Dso,
 }
 
 impl OpCodes {
-
     pub fn code(&self) -> u8 {
         match self {
             Self::Query => 0,
@@ -21,7 +20,7 @@ impl OpCodes {
             Self::Status => 2,
             Self::Notify => 4,
             Self::Update => 5,
-            Self::Dso => 6
+            Self::Dso => 6,
         }
     }
 }
@@ -30,14 +29,12 @@ impl OpCodes {
 pub struct OpCodeParseError(pub u8);
 
 impl fmt::Display for OpCodeParseError {
-
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "unknown opt code: {}", self.0)
     }
 }
 
 impl TryFrom<u8> for OpCodes {
-
     type Error = OpCodeParseError;
 
     fn try_from(v: u8) -> Result<Self, Self::Error> {
@@ -48,21 +45,24 @@ impl TryFrom<u8> for OpCodes {
             4 => Self::Notify,
             5 => Self::Update,
             6 => Self::Dso,
-            _  => return Err(OpCodeParseError(v))
+            _ => return Err(OpCodeParseError(v)),
         })
     }
 }
 
 impl fmt::Display for OpCodes {
-
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", match self {
-            Self::Query => "QUERY",
-            Self::IQuery => "IQUERY",
-            Self::Status => "STATUS",
-            Self::Notify => "NOTIFY",
-            Self::Update => "UPDATE",
-            Self::Dso => "DSO"
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Query => "QUERY",
+                Self::IQuery => "IQUERY",
+                Self::Status => "STATUS",
+                Self::Notify => "NOTIFY",
+                Self::Update => "UPDATE",
+                Self::Dso => "DSO",
+            }
+        )
     }
 }

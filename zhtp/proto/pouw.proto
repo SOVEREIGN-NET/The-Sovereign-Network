@@ -1,0 +1,116 @@
+syntax = "proto3";
+
+package zhtp.pouw;
+
+// Proof type for challenge generation (878-S4)
+// Determines the computational proof required from client
+enum ProofType {
+    PROOF_TYPE_UNSPECIFIED = 0;
+    
+    // Simple hash-based proof (H(challenge || nonce) < difficulty)
+    // Multiplier: 1x
+    HASH = 1;
+    
+    // Merkle tree proof (requires building partial tree)
+    // Multiplier: 2x
+    MERKLE = 2;
+    
+    // Signature-based proof (ECDSA/EdDSA signature of challenge)
+    // Multiplier: 3x
+    SIGNATURE = 3;
+}
+
+// Client identity for proof submission
+message ClientIdentity {
+    // DID of client submitting proof
+    string did = 1;
+    
+    // Public key for signature verification (if SIGNATURE proof type)
+    bytes public_key = 2;
+}
+
+// Policy controlling proof generation and validation (878-S3)
+message Policy {
+    // Proof type required
+    ProofType proof_type = 1;
+    
+    // Difficulty target (interpretation depends on proof_type)
+    // For HASH: number of leading zeros required in hash
+    // For MERKLE: depth of merkle tree to compute
+    // For SIGNATURE: not used (always verify signature)
+    uint32 difficulty = 2;
+    
+    // Time limit for completing proof (seconds)
+    uint32 time_limit_secs = 3;
+    
+    // Bandwidth limit for proof (bytes) - not used in v1
+    uint32 bandwidth_limit_bytes = 4;
+    
+    // Maximum number of proof attempts allowed per client per epoch
+    uint32 max_attempts = 5;
+    
+    // Cost in tokens to claim a challenge
+    uint64 challenge_cost = 6;
+}
+
+// Challenge token issued to client (878-S2)
+// Contains nonce and policy for proof generation
+message ChallengeToken {
+    // Unique challenge nonce (16-32 bytes)
+    // CSPRNG generated (878-S5)
+    bytes challenge_nonce = 1;
+    
+    // Unique task identifier (16-32 bytes)
+    // Links receipt to original challenge (878-S6)
+    bytes task_id = 2;
+    
+    // Challenge policy
+    Policy policy = 3;
+    
+    // Expiration timestamp (Unix seconds)
+    // Challenge valid for ~5 minutes
+    uint64 expires_at = 4;
+    
+    // Server identifier (domain/node issuing challenge)
+    string issuer_did = 5;
+    
+    // Sequence number for anti-replay
+    uint64 sequence = 6;
+    
+    // Signature over canonical bytes (Ed25519 or Dilithium) (878-S8)
+    // Excludes this signature field for signing
+    bytes signature = 7;
+}
+
+// Signed challenge token for transmission
+message SignedChallenge {
+    // The challenge token
+    ChallengeToken token = 1;
+    
+    // Optional additional metadata
+    string metadata = 2;
+}
+
+// Request to generate new challenge
+message GenerateChallengeRequest {
+    // Client identity requesting challenge
+    ClientIdentity client_identity = 1;
+    
+    // Preferred proof type (server may override)
+    ProofType preferred_proof_type = 2;
+    
+    // List of acceptable proof types (fallback options)
+    repeated ProofType acceptable_proof_types = 3;
+}
+
+// Response with generated challenge
+message GenerateChallengeResponse {
+    // Generated challenge token
+    SignedChallenge challenge = 1;
+    
+    // Server time (for client clock sync)
+    uint64 server_time = 2;
+    
+    // Estimated time to solve (milliseconds)
+    uint32 estimated_solve_time_ms = 3;
+}

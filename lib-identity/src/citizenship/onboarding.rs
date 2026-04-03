@@ -1,11 +1,10 @@
 //! Complete citizenship onboarding from the original identity.rs
 
-
-use serde::{Deserialize, Serialize};
-use crate::types::{IdentityId, AccessLevel};
-use crate::wallets::WalletId;
 use super::{DaoRegistration, UbiRegistration, Web4Access, WelcomeBonus};
 use crate::credentials::ZkCredential;
+use crate::types::{AccessLevel, IdentityId};
+use crate::wallets::WalletId;
+use serde::{Deserialize, Serialize};
 
 /// Complete result of citizen onboarding process
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,17 +31,16 @@ pub struct CitizenshipResult {
     pub welcome_bonus: WelcomeBonus,
 }
 
-/// Wallet recovery seed phrases - MUST BE STORED SECURELY!
+/// Wallet recovery seed phrase - MUST BE STORED SECURELY!
+///
+/// Single master seed phrase that derives all 3 citizen wallets via HD derivation:
+/// - Index 0 → Primary wallet
+/// - Index 1 → UBI wallet
+/// - Index 2 → Savings wallet
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletSeedPhrases {
-    /// Primary wallet 20-word seed phrase
-    pub primary_wallet_seeds: crate::recovery::RecoveryPhrase,
-    /// UBI wallet 20-word seed phrase
-    pub ubi_wallet_seeds: crate::recovery::RecoveryPhrase,
-    /// Savings wallet 20-word seed phrase
-    pub savings_wallet_seeds: crate::recovery::RecoveryPhrase,
-    /// Timestamp when seed phrases were generated
-    pub generated_at: u64,
+    /// Master 24-word seed phrase (derives all wallets)
+    pub master_seed_phrase: crate::recovery::RecoveryPhrase,
 }
 
 /// Privacy-preserving credentials setup
@@ -83,7 +81,7 @@ impl CitizenshipResult {
             welcome_bonus,
         }
     }
-    
+
     /// Get summary of citizen benefits
     pub fn get_benefits_summary(&self) -> CitizenBenefitsSummary {
         CitizenBenefitsSummary {
@@ -99,13 +97,13 @@ impl CitizenshipResult {
             registration_timestamp: self.dao_registration.registered_at,
         }
     }
-    
+
     /// Check if citizen has full access rights
     pub fn has_full_access(&self) -> bool {
-        self.web4_access.access_level == AccessLevel::FullCitizen &&
-        self.dao_registration.voting_eligibility &&
-        self.dao_registration.proposal_eligibility &&
-        !self.ubi_registration.eligibility_proof.is_empty()
+        self.web4_access.access_level == AccessLevel::FullCitizen
+            && self.dao_registration.voting_eligibility
+            && self.dao_registration.proposal_eligibility
+            && !self.ubi_registration.eligibility_proof.is_empty()
     }
 }
 
@@ -131,29 +129,34 @@ impl PrivacyCredentials {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         Self {
             identity_id,
             credentials,
             created_at: current_time,
         }
     }
-    
+
     /// Add a new credential
     pub fn add_credential(&mut self, credential: ZkCredential) {
         self.credentials.push(credential);
     }
-    
+
     /// Get credentials by type
-    pub fn get_credentials_by_type(&self, credential_type: &crate::types::CredentialType) -> Vec<&ZkCredential> {
-        self.credentials.iter()
+    pub fn get_credentials_by_type(
+        &self,
+        credential_type: &crate::types::CredentialType,
+    ) -> Vec<&ZkCredential> {
+        self.credentials
+            .iter()
             .filter(|cred| &cred.credential_type == credential_type)
             .collect()
     }
-    
+
     /// Count valid (non-expired) credentials
     pub fn count_valid_credentials(&self) -> usize {
-        self.credentials.iter()
+        self.credentials
+            .iter()
             .filter(|cred| cred.is_valid())
             .count()
     }

@@ -8,13 +8,13 @@
 //!
 //! This is the bridge between policy (runtime) and execution (server).
 
-use std::sync::Arc;
 use std::collections::HashSet;
-use tokio::sync::{RwLock, mpsc};
+use std::sync::Arc;
+use tokio::sync::{mpsc, RwLock};
 use tokio::time::{interval, Duration};
-use tracing::{info, debug, error};
+use tracing::{debug, error, info};
 
-use super::node_runtime::{NodeRuntime, NodeAction, Tick, PeerStateChange, PeerState};
+use super::node_runtime::{NodeAction, NodeRuntime, PeerState, PeerStateChange, Tick};
 
 /// Queue of pending actions for the server to execute
 /// SECURITY: Bounded queue with deduplication to prevent DoS
@@ -22,7 +22,7 @@ pub struct ActionQueue {
     tx: mpsc::Sender<NodeAction>,
     rx: RwLock<mpsc::Receiver<NodeAction>>,
     dedup_set: Arc<RwLock<HashSet<String>>>,
-    max_queue_size: usize,
+    _max_queue_size: usize,
 }
 
 impl ActionQueue {
@@ -32,7 +32,7 @@ impl ActionQueue {
             tx,
             rx: RwLock::new(rx),
             dedup_set: Arc::new(RwLock::new(HashSet::new())),
-            max_queue_size: 1000,
+            _max_queue_size: 1000,
         }
     }
 
@@ -55,7 +55,7 @@ impl ActionQueue {
             Ok(()) => {
                 debug!("✓ Action enqueued");
             }
-            Err(e) => {
+            Err(_e) => {
                 error!("⚠️ Action queue full or closed - dropping action");
                 // Remove from dedup set since we couldn't queue it
                 self.dedup_set.write().await.remove(&action_id);

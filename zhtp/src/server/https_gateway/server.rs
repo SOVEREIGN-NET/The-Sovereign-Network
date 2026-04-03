@@ -21,17 +21,19 @@ use axum::{
     Router,
 };
 use axum_server::tls_rustls::RustlsConfig;
-use tokio::sync::{RwLock, watch};
+use tokio::sync::{watch, RwLock};
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
-use tracing::{info, warn, error, debug};
+use tracing::{debug, error, info, warn};
 
-use lib_network::web4::DomainRegistry;
-use crate::web4_stub::{Web4ContentService, ZdnsResolver};
+use crate::web4_stub::ZdnsResolver;
+use lib_network::web4::{DomainRegistry, Web4ContentService};
 
 use super::config::{GatewayTlsConfig, TlsMode};
-use super::handlers::{gateway_handler, redirect_handler, health_handler, info_handler, GatewayState};
+use super::handlers::{
+    gateway_handler, health_handler, info_handler, redirect_handler, GatewayState,
+};
 
 /// Rate limit configuration
 const RATE_LIMIT_REQUESTS_PER_MINUTE: u32 = 100;
@@ -62,10 +64,14 @@ impl RateLimitState {
 
     /// Start background cleanup task with shutdown support
     /// Task will exit when shutdown signal is received
-    fn start_cleanup_task(&self, mut shutdown_rx: watch::Receiver<bool>) -> tokio::task::JoinHandle<()> {
+    fn start_cleanup_task(
+        &self,
+        mut shutdown_rx: watch::Receiver<bool>,
+    ) -> tokio::task::JoinHandle<()> {
         let requests = self.requests.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(RATE_LIMIT_CLEANUP_INTERVAL_SECS));
+            let mut interval =
+                tokio::time::interval(Duration::from_secs(RATE_LIMIT_CLEANUP_INTERVAL_SECS));
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
@@ -99,7 +105,7 @@ impl RateLimitState {
         // Fast path: check with read lock first
         {
             let requests = self.requests.read().await;
-            if let Some((count, timestamp)) = requests.get(&ip) {
+            if let Some((_count, timestamp)) = requests.get(&ip) {
                 // Check if window is still valid
                 if now.duration_since(*timestamp).as_secs() < RATE_LIMIT_WINDOW_SECS {
                     // Need write lock to increment, but we know this IP exists
@@ -151,7 +157,12 @@ impl RateLimitState {
     }
 
     /// Try to insert a new IP entry, respecting capacity limits
-    fn try_insert_new(&self, requests: &mut HashMap<IpAddr, (u32, Instant)>, ip: IpAddr, now: Instant) -> bool {
+    fn try_insert_new(
+        &self,
+        requests: &mut HashMap<IpAddr, (u32, Instant)>,
+        ip: IpAddr,
+        now: Instant,
+    ) -> bool {
         if requests.len() >= RATE_LIMIT_MAX_ENTRIES {
             warn!(
                 ip = %ip,
@@ -180,7 +191,8 @@ async fn rate_limit_middleware(
             StatusCode::TOO_MANY_REQUESTS,
             [("Retry-After", "60")],
             "Rate limit exceeded. Please try again later.",
-        ).into_response();
+        )
+            .into_response();
     }
 
     next.run(request).await
@@ -195,7 +207,10 @@ struct HstsState {
 impl HstsState {
     fn new(config: &GatewayTlsConfig) -> Self {
         let header_value = if config.mode != TlsMode::Disabled {
-            Some(format!("max-age={}; includeSubDomains", config.hsts_max_age))
+            Some(format!(
+                "max-age={}; includeSubDomains",
+                config.hsts_max_age
+            ))
         } else {
             None
         };
@@ -214,10 +229,9 @@ async fn hsts_middleware(
     // Add HSTS header if TLS is enabled
     if let Some(ref hsts_value) = hsts.header_value {
         if let Ok(value) = axum::http::HeaderValue::from_str(hsts_value) {
-            response.headers_mut().insert(
-                axum::http::header::STRICT_TRANSPORT_SECURITY,
-                value,
-            );
+            response
+                .headers_mut()
+                .insert(axum::http::header::STRICT_TRANSPORT_SECURITY, value);
         }
     }
 
@@ -252,10 +266,7 @@ pub struct HttpsGateway {
 
 impl HttpsGateway {
     /// Create a new HTTPS gateway with the given domain registry
-    pub async fn new(
-        registry: Arc<DomainRegistry>,
-        config: GatewayTlsConfig,
-    ) -> Result<Self> {
+    pub async fn new(registry: Arc<DomainRegistry>, config: GatewayTlsConfig) -> Result<Self> {
         config.validate().map_err(|e| anyhow::anyhow!(e))?;
 
         let content_service = Arc::new(Web4ContentService::new(registry));
@@ -272,12 +283,14 @@ impl HttpsGateway {
     /// Create with ZDNS resolver for cached domain lookups
     pub async fn new_with_zdns(
         registry: Arc<DomainRegistry>,
-        zdns_resolver: Arc<ZdnsResolver>,
+        _zdns_resolver: Arc<ZdnsResolver>,
         config: GatewayTlsConfig,
     ) -> Result<Self> {
         config.validate().map_err(|e| anyhow::anyhow!(e))?;
 
-        let content_service = Arc::new(Web4ContentService::with_zdns(registry, zdns_resolver));
+        // ZDNS runtime was relocated out of lib-network; keep this constructor
+        // stable by accepting the resolver but using the canonical registry path.
+        let content_service = Arc::new(Web4ContentService::new(registry));
 
         Ok(Self {
             config,
@@ -332,12 +345,24 @@ impl HttpsGateway {
         info!("  TLS Mode: {:?}", self.config.mode);
         info!("  HTTPS Port: {}", self.config.https_port);
         if let Some(http_port) = self.config.http_port {
-            info!("  HTTP Port: {} (redirect: {})", http_port, self.config.enable_http_redirect);
+            info!(
+                "  HTTP Port: {} (redirect: {})",
+                http_port, self.config.enable_http_redirect
+            );
         }
         info!("  Gateway Suffix: '{}'", self.config.gateway_suffix);
-        info!("  Bare Domains: {}", self.config.allow_bare_sovereign_domains);
-        info!("  Rate Limit: {} req/min per IP", RATE_LIMIT_REQUESTS_PER_MINUTE);
-        info!("  Max Body Size: {} MB", MAX_REQUEST_BODY_SIZE / 1024 / 1024);
+        info!(
+            "  Bare Domains: {}",
+            self.config.allow_bare_sovereign_domains
+        );
+        info!(
+            "  Rate Limit: {} req/min per IP",
+            RATE_LIMIT_REQUESTS_PER_MINUTE
+        );
+        info!(
+            "  Max Body Size: {} MB",
+            MAX_REQUEST_BODY_SIZE / 1024 / 1024
+        );
         info!("  Request Timeout: {}s", REQUEST_TIMEOUT_SECS);
 
         // Build shared state
@@ -358,7 +383,10 @@ impl HttpsGateway {
             let mut tasks = self.background_tasks.write().await;
             tasks.push(cleanup_task);
         }
-        debug!("  Rate limiter cleanup task started (interval: {}s)", RATE_LIMIT_CLEANUP_INTERVAL_SECS);
+        debug!(
+            "  Rate limiter cleanup task started (interval: {}s)",
+            RATE_LIMIT_CLEANUP_INTERVAL_SECS
+        );
 
         // Build HSTS state
         let hsts = HstsState::new(&self.config);
@@ -530,7 +558,10 @@ impl HttpsGateway {
             for handle in handles.iter() {
                 handle.shutdown();
             }
-            info!("  Sent shutdown signal to {} server/task handle(s)", handles.len());
+            info!(
+                "  Sent shutdown signal to {} server/task handle(s)",
+                handles.len()
+            );
         }
 
         // Wait briefly for graceful shutdown, then abort any lingering background tasks
@@ -599,15 +630,15 @@ impl HttpsGateway {
                         .context("Failed to load generated certificates")
                 }
             }
-            TlsMode::Disabled => {
-                Err(anyhow::anyhow!("Cannot build TLS config when TLS is disabled"))
-            }
+            TlsMode::Disabled => Err(anyhow::anyhow!(
+                "Cannot build TLS config when TLS is disabled"
+            )),
         }
     }
 
     /// Generate a self-signed certificate for development
     fn generate_self_signed_cert(&self, cert_path: &Path, key_path: &Path) -> Result<()> {
-        use rcgen::{CertifiedKey, generate_simple_self_signed};
+        use rcgen::{generate_simple_self_signed, CertifiedKey};
 
         // Ensure data directory exists
         if let Some(parent) = cert_path.parent() {
@@ -686,7 +717,9 @@ impl HttpsGateway {
                 .allow_headers(Any)
         } else {
             // Parse configured origins
-            let origins: Vec<_> = self.config.cors_origins
+            let origins: Vec<_> = self
+                .config
+                .cors_origins
                 .iter()
                 .filter_map(|origin| origin.parse().ok())
                 .collect();
@@ -694,9 +727,7 @@ impl HttpsGateway {
             if origins.is_empty() {
                 // Fallback to restrictive - no origins allowed
                 warn!("No valid CORS origins configured, using restrictive policy");
-                CorsLayer::new()
-                    .allow_methods(Any)
-                    .allow_headers(Any)
+                CorsLayer::new().allow_methods(Any).allow_headers(Any)
             } else {
                 CorsLayer::new()
                     .allow_origin(origins)
@@ -752,12 +783,19 @@ mod tests {
                 ((i >> 8) & 0xFF) as u8,
                 (i & 0xFF) as u8,
             ));
-            assert!(rate_limit.check_rate_limit(ip).await, "Entry {} should be allowed", i);
+            assert!(
+                rate_limit.check_rate_limit(ip).await,
+                "Entry {} should be allowed",
+                i
+            );
         }
 
         // New IP should be rejected when at capacity
         let new_ip = IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255));
-        assert!(!rate_limit.check_rate_limit(new_ip).await, "Should reject new IPs at capacity");
+        assert!(
+            !rate_limit.check_rate_limit(new_ip).await,
+            "Should reject new IPs at capacity"
+        );
     }
 
     #[test]
@@ -822,11 +860,11 @@ mod tests {
         handle.shutdown();
 
         // Task should complete within a reasonable time
-        let result = tokio::time::timeout(
-            Duration::from_millis(100),
-            task
-        ).await;
+        let result = tokio::time::timeout(Duration::from_millis(100), task).await;
 
-        assert!(result.is_ok(), "Cleanup task should complete after shutdown signal");
+        assert!(
+            result.is_ok(),
+            "Cleanup task should complete after shutdown signal"
+        );
     }
 }

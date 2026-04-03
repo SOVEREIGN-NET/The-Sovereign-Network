@@ -1,14 +1,14 @@
 //! Content Management Types for ZHTP
-//! 
+//!
 //! Content structures with metadata, integrity verification,
 //! encryption support, and Web4 protocol integration.
 
+use crate::storage_stub::ContentHash;
+use crate::types::{AccessPolicy, EconomicAssessment, StorageRequirements};
+use lib_identity::IdentityId;
+use lib_proofs::ZeroKnowledgeProof;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
-use crate::storage_stub::ContentHash;
-use lib_proofs::ZeroKnowledgeProof;
-use lib_identity::IdentityId;
-use crate::types::{AccessPolicy, EconomicAssessment, StorageRequirements};
 
 /// Content hosted by ZHTP server
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -280,12 +280,10 @@ impl ServerContent {
         author: Option<IdentityId>,
         access_policy: AccessPolicy,
     ) -> anyhow::Result<Self> {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_secs();
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
         let hash = lib_crypto::hash_blake3(&data).to_vec();
-        
+
         let metadata = ContentMetadata {
             content_type,
             encoding: None,
@@ -445,9 +443,7 @@ impl ServerContent {
         self.data = new_data;
         self.hash = lib_crypto::hash_blake3(&self.data).to_vec();
         self.metadata.size = self.data.len() as u64;
-        self.metadata.last_modified = SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_secs();
+        self.metadata.last_modified = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         self.metadata.integrity_checksum = Some(lib_crypto::hash_blake3(&self.data).to_vec());
         Ok(())
     }
@@ -475,9 +471,11 @@ impl ServerContent {
                 PopularityUpdate::Comment => metrics.comments += 1,
                 PopularityUpdate::Download => metrics.downloads += 1,
                 PopularityUpdate::Rating(rating) => {
-                    let total_rating = metrics.rating_average.unwrap_or(0.0) * metrics.rating_count as f64;
+                    let total_rating =
+                        metrics.rating_average.unwrap_or(0.0) * metrics.rating_count as f64;
                     metrics.rating_count += 1;
-                    metrics.rating_average = Some((total_rating + rating) / metrics.rating_count as f64);
+                    metrics.rating_average =
+                        Some((total_rating + rating) / metrics.rating_count as f64);
                 }
             }
         }
@@ -566,13 +564,10 @@ mod tests {
     fn test_content_creation() {
         let data = b"Hello, ZHTP World!".to_vec();
         let access_policy = AccessPolicy::public();
-        
-        let content = ServerContent::new(
-            data.clone(),
-            "text/plain".to_string(),
-            None,
-            access_policy,
-        ).unwrap();
+
+        let content =
+            ServerContent::new(data.clone(), "text/plain".to_string(), None, access_policy)
+                .unwrap();
 
         assert_eq!(content.data, data);
         assert_eq!(content.metadata.content_type, "text/plain");
@@ -585,16 +580,16 @@ mod tests {
         let data = b"Secret content".to_vec();
         let access_policy = AccessPolicy::private();
         let encryption_info = EncryptionInfo::standard();
-        
-        let content = ServerContent::new(
-            data,
-            "text/plain".to_string(),
-            None,
-            access_policy,
-        ).unwrap().with_encryption(encryption_info);
+
+        let content = ServerContent::new(data, "text/plain".to_string(), None, access_policy)
+            .unwrap()
+            .with_encryption(encryption_info);
 
         assert!(content.is_encrypted());
-        assert_eq!(content.encryption_info.as_ref().unwrap().algorithm, "CRYSTALS-Kyber");
+        assert_eq!(
+            content.encryption_info.as_ref().unwrap().algorithm,
+            "CRYSTALS-Kyber"
+        );
     }
 
     #[test]
@@ -607,13 +602,10 @@ mod tests {
             30, // Simulated compressed size
             Some(6),
         );
-        
-        let content = ServerContent::new(
-            data,
-            "text/plain".to_string(),
-            None,
-            access_policy,
-        ).unwrap().with_compression(compression_info);
+
+        let content = ServerContent::new(data, "text/plain".to_string(), None, access_policy)
+            .unwrap()
+            .with_compression(compression_info);
 
         assert!(content.is_compressed());
         assert!(content.compression_info.as_ref().unwrap().ratio < 1.0);
@@ -623,13 +615,9 @@ mod tests {
     fn test_popularity_updates() {
         let data = b"Popular content".to_vec();
         let access_policy = AccessPolicy::public();
-        
-        let mut content = ServerContent::new(
-            data,
-            "text/plain".to_string(),
-            None,
-            access_policy,
-        ).unwrap();
+
+        let mut content =
+            ServerContent::new(data, "text/plain".to_string(), None, access_policy).unwrap();
 
         content.update_popularity(PopularityUpdate::View);
         content.update_popularity(PopularityUpdate::Like);
@@ -646,13 +634,9 @@ mod tests {
     fn test_content_tags() {
         let data = b"Tagged content".to_vec();
         let access_policy = AccessPolicy::public();
-        
-        let mut content = ServerContent::new(
-            data,
-            "text/plain".to_string(),
-            None,
-            access_policy,
-        ).unwrap();
+
+        let mut content =
+            ServerContent::new(data, "text/plain".to_string(), None, access_policy).unwrap();
 
         content.add_tag("web4".to_string());
         content.add_tag("zhtp".to_string());
@@ -671,19 +655,16 @@ mod tests {
     fn test_content_update() {
         let original_data = b"Original content".to_vec();
         let access_policy = AccessPolicy::public();
-        
-        let mut content = ServerContent::new(
-            original_data,
-            "text/plain".to_string(),
-            None,
-            access_policy,
-        ).unwrap();
+
+        let mut content =
+            ServerContent::new(original_data, "text/plain".to_string(), None, access_policy)
+                .unwrap();
 
         let original_hash = content.hash.clone();
         let new_data = b"Updated content".to_vec();
-        
+
         content.update_data(new_data.clone()).unwrap();
-        
+
         assert_eq!(content.data, new_data);
         assert_ne!(content.hash, original_hash);
         assert!(content.verify_integrity().unwrap());

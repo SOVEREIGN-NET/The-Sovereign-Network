@@ -1,4 +1,4 @@
-use super::core::{WhisperMessage, MessageContract, MessageThread};
+use super::core::{MessageContract, MessageThread, WhisperMessage};
 use crate::integration::crypto_integration::PublicKey;
 use crate::types::MessageType;
 use std::collections::HashMap;
@@ -19,7 +19,7 @@ pub fn send_direct_message(
         encrypted_content,
         whisper_tokens_paid,
     );
-    
+
     let message_id = message.message_id;
     contract.add_message(message)?;
     Ok(message_id)
@@ -33,13 +33,9 @@ pub fn send_group_message(
     encrypted_content: Vec<u8>,
     whisper_tokens_paid: u64,
 ) -> Result<[u8; 32], String> {
-    let message = WhisperMessage::new_group_message(
-        sender,
-        group_id,
-        encrypted_content,
-        whisper_tokens_paid,
-    );
-    
+    let message =
+        WhisperMessage::new_group_message(sender, group_id, encrypted_content, whisper_tokens_paid);
+
     let message_id = message.message_id;
     contract.add_message(message)?;
     Ok(message_id)
@@ -61,7 +57,7 @@ pub fn send_file_attachment(
         encrypted_content,
         whisper_tokens_paid,
     );
-    
+
     let message_id = message.message_id;
     contract.add_message(message)?;
     Ok(message_id)
@@ -98,7 +94,7 @@ pub fn send_auto_burn_message(
         whisper_tokens_paid,
         burn_height,
     );
-    
+
     let message_id = message.message_id;
     contract.add_message(message)?;
     Ok(message_id)
@@ -150,16 +146,13 @@ pub fn burn_message(
     } else {
         return Err("Message not found".to_string());
     }
-    
+
     contract.remove_message(message_id);
     Ok(())
 }
 
 /// Burn all expired messages
-pub fn burn_expired_messages(
-    contract: &mut MessageContract,
-    current_height: u64,
-) -> usize {
+pub fn burn_expired_messages(contract: &mut MessageContract, current_height: u64) -> usize {
     contract.burn_expired_messages(current_height)
 }
 
@@ -168,17 +161,19 @@ pub fn get_message_stats(contract: &MessageContract) -> MessageStats {
     let total_messages = contract.message_count();
     let total_threads = contract.thread_count();
     let total_groups = contract.group_count();
-    
+
     let mut message_type_counts = HashMap::new();
     let mut total_size = 0;
     let mut total_tokens_paid = 0;
-    
+
     for message in contract.messages.values() {
-        *message_type_counts.entry(message.message_type.clone()).or_insert(0) += 1;
+        *message_type_counts
+            .entry(message.message_type.clone())
+            .or_insert(0) += 1;
         total_size += message.size();
         total_tokens_paid += message.whisper_tokens_paid;
     }
-    
+
     MessageStats {
         total_messages,
         total_threads,
@@ -195,7 +190,8 @@ pub fn get_messages_in_range(
     start_timestamp: u64,
     end_timestamp: u64,
 ) -> Vec<&WhisperMessage> {
-    contract.messages
+    contract
+        .messages
         .values()
         .filter(|message| {
             message.timestamp >= start_timestamp && message.timestamp <= end_timestamp
@@ -208,7 +204,8 @@ pub fn get_messages_by_type(
     contract: &MessageContract,
     message_type: MessageType,
 ) -> Vec<&WhisperMessage> {
-    contract.messages
+    contract
+        .messages
         .values()
         .filter(|message| message.message_type == message_type)
         .collect()
@@ -234,12 +231,15 @@ pub fn search_messages<'a>(
     // Note: In a implementation, this would require decrypting messages
     // For now, we'll search in the encrypted content (not very useful)
     let search_bytes = search_term.as_bytes();
-    
-    contract.get_user_messages(user)
+
+    contract
+        .get_user_messages(user)
         .into_iter()
         .filter(|message| {
             // This is a placeholder - in reality you'd decrypt first
-            message.encrypted_content.windows(search_bytes.len())
+            message
+                .encrypted_content
+                .windows(search_bytes.len())
                 .any(|window| window == search_bytes)
         })
         .collect()
@@ -252,20 +252,19 @@ pub fn get_thread_stats(
     user2: &PublicKey,
 ) -> Option<ThreadStats> {
     if let Some(thread) = contract.get_thread(user1, user2) {
-        let messages: Vec<&WhisperMessage> = thread.message_ids
+        let messages: Vec<&WhisperMessage> = thread
+            .message_ids
             .iter()
             .filter_map(|id| contract.get_message(id))
             .collect();
-        
+
         let total_messages = messages.len();
         let total_size: usize = messages.iter().map(|m| m.size()).sum();
         let total_tokens: u64 = messages.iter().map(|m| m.whisper_tokens_paid).sum();
-        
-        let sent_by_user1 = messages.iter()
-            .filter(|m| m.sender == *user1)
-            .count();
+
+        let sent_by_user1 = messages.iter().filter(|m| m.sender == *user1).count();
         let sent_by_user2 = total_messages - sent_by_user1;
-        
+
         Some(ThreadStats {
             total_messages,
             sent_by_user1,
@@ -281,25 +280,23 @@ pub fn get_thread_stats(
 }
 
 /// Get group thread statistics
-pub fn get_group_stats(
-    contract: &MessageContract,
-    group_id: &[u8; 32],
-) -> Option<GroupStats> {
+pub fn get_group_stats(contract: &MessageContract, group_id: &[u8; 32]) -> Option<GroupStats> {
     if let Some(group) = contract.groups.get(group_id) {
-        let messages: Vec<&WhisperMessage> = group.message_ids
+        let messages: Vec<&WhisperMessage> = group
+            .message_ids
             .iter()
             .filter_map(|id| contract.get_message(id))
             .collect();
-        
+
         let total_messages = messages.len();
         let total_size: usize = messages.iter().map(|m| m.size()).sum();
         let total_tokens: u64 = messages.iter().map(|m| m.whisper_tokens_paid).sum();
-        
+
         let mut participants = HashMap::new();
         for message in &messages {
             *participants.entry(message.sender.clone()).or_insert(0) += 1;
         }
-        
+
         Some(GroupStats {
             group_id: *group_id,
             total_messages,
@@ -316,20 +313,18 @@ pub fn get_group_stats(
 }
 
 /// Archive old messages (remove from active storage but keep references)
-pub fn archive_old_messages(
-    contract: &mut MessageContract,
-    older_than_timestamp: u64,
-) -> usize {
-    let old_messages: Vec<[u8; 32]> = contract.messages
+pub fn archive_old_messages(contract: &mut MessageContract, older_than_timestamp: u64) -> usize {
+    let old_messages: Vec<[u8; 32]> = contract
+        .messages
         .iter()
         .filter(|(_, message)| message.timestamp < older_than_timestamp)
         .map(|(id, _)| *id)
         .collect();
-    
+
     for message_id in &old_messages {
         contract.remove_message(message_id);
     }
-    
+
     old_messages.len()
 }
 
@@ -377,13 +372,13 @@ pub fn send_batch_messages(
     messages: Vec<WhisperMessage>,
 ) -> Result<Vec<[u8; 32]>, String> {
     let mut message_ids = Vec::new();
-    
+
     for message in messages {
         let message_id = message.message_id;
         contract.add_message(message)?;
         message_ids.push(message_id);
     }
-    
+
     Ok(message_ids)
 }
 
@@ -396,10 +391,10 @@ pub fn get_paginated_user_messages<'a>(
 ) -> Vec<&'a WhisperMessage> {
     let mut messages = contract.get_user_messages(user);
     messages.sort_by(|a, b| b.timestamp.cmp(&a.timestamp)); // Most recent first
-    
+
     let start = page * page_size;
     let end = std::cmp::min(start + page_size, messages.len());
-    
+
     if start >= messages.len() {
         Vec::new()
     } else {
@@ -413,7 +408,7 @@ pub fn get_conversation_previews(
     user: &PublicKey,
 ) -> Vec<ConversationPreview> {
     let mut previews = Vec::new();
-    
+
     for thread in contract.threads.values() {
         // Check if user is part of this thread
         if thread.participant1 == *user || thread.participant2 == *user {
@@ -424,7 +419,7 @@ pub fn get_conversation_previews(
                     } else {
                         thread.participant1.clone()
                     };
-                    
+
                     previews.push(ConversationPreview {
                         other_participant,
                         latest_message_id: *latest_message_id,
@@ -436,10 +431,10 @@ pub fn get_conversation_previews(
             }
         }
     }
-    
+
     // Sort by most recent activity
     previews.sort_by(|a, b| b.latest_message_timestamp.cmp(&a.latest_message_timestamp));
-    
+
     previews
 }
 
@@ -466,15 +461,16 @@ mod tests {
         let mut contract = MessageContract::new();
         let sender = create_test_public_key(1);
         let recipient = create_test_public_key(2);
-        
+
         let message_id = send_direct_message(
             &mut contract,
             sender.clone(),
             recipient.clone(),
             b"Hello!".to_vec(),
             1000,
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         let message = get_message(&contract, &message_id).unwrap();
         assert_eq!(message.sender, sender);
         assert_eq!(message.recipient, Some(recipient));
@@ -486,15 +482,16 @@ mod tests {
         let mut contract = MessageContract::new();
         let sender = create_test_public_key(1);
         let group_id = [42u8; 32];
-        
+
         let message_id = send_group_message(
             &mut contract,
             sender.clone(),
             group_id,
             b"Hello group!".to_vec(),
             2000,
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         let message = get_message(&contract, &message_id).unwrap();
         assert_eq!(message.sender, sender);
         assert_eq!(message.group_id, Some(group_id));
@@ -506,15 +503,16 @@ mod tests {
         let mut contract = MessageContract::new();
         let sender = create_test_public_key(1);
         let recipient = create_test_public_key(2);
-        
+
         let message_id = send_direct_message(
             &mut contract,
             sender.clone(),
             recipient.clone(),
             b"Burn me".to_vec(),
             1000,
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         // Sender can burn their own message
         assert!(burn_message(&mut contract, &message_id, &sender).is_ok());
         assert!(get_message(&contract, &message_id).is_none());
@@ -525,13 +523,14 @@ mod tests {
         let mut contract = MessageContract::new();
         let sender = create_test_public_key(1);
         let recipient = create_test_public_key(2);
-        
+
         // Use future timestamp for burn height
         let future_timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs() + 3600; // 1 hour from now
-        
+            .as_secs()
+            + 3600; // 1 hour from now
+
         let _message_id = send_auto_burn_message(
             &mut contract,
             sender.clone(),
@@ -540,10 +539,11 @@ mod tests {
             b"Auto burn".to_vec(),
             1000,
             future_timestamp,
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         assert_eq!(contract.message_count(), 1);
-        
+
         // Burn expired messages with timestamp beyond burn_height
         let burned_count = burn_expired_messages(&mut contract, future_timestamp + 1);
         assert_eq!(burned_count, 1);
@@ -555,7 +555,7 @@ mod tests {
         let mut contract = MessageContract::new();
         let sender = create_test_public_key(1);
         let recipient = create_test_public_key(2);
-        
+
         // Send a few messages
         // Note: Messages sent in rapid succession with same sender/recipient
         // will have the same timestamp and thus same message_id, causing overwrites
@@ -566,7 +566,8 @@ mod tests {
                 recipient.clone(),
                 format!("Message {}", i).into_bytes(),
                 1000,
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         let stats = get_message_stats(&contract);
@@ -582,7 +583,7 @@ mod tests {
         let user1 = create_test_public_key(1);
         let user2 = create_test_public_key(2);
         let user3 = create_test_public_key(3);
-        
+
         // Create conversations with different users
         send_direct_message(
             &mut contract,
@@ -590,19 +591,21 @@ mod tests {
             user2.clone(),
             b"Hello user2".to_vec(),
             1000,
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         send_direct_message(
             &mut contract,
             user1.clone(),
             user3.clone(),
             b"Hello user3".to_vec(),
             1000,
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         let previews = get_conversation_previews(&contract, &user1);
         assert_eq!(previews.len(), 2);
-        
+
         // Should be sorted by most recent
         assert!(previews[0].latest_message_timestamp >= previews[1].latest_message_timestamp);
     }
@@ -612,7 +615,7 @@ mod tests {
         let mut contract = MessageContract::new();
         let sender = create_test_public_key(1);
         let recipient = create_test_public_key(2);
-        
+
         // Send 10 messages
         for i in 0..10 {
             send_direct_message(
@@ -621,17 +624,18 @@ mod tests {
                 recipient.clone(),
                 format!("Message {}", i).into_bytes(),
                 1000,
-            ).unwrap();
+            )
+            .unwrap();
         }
-        
+
         // Get first page (5 messages)
         let page1 = get_paginated_user_messages(&contract, &sender, 0, 5);
         assert_eq!(page1.len(), 5);
-        
+
         // Get second page
         let page2 = get_paginated_user_messages(&contract, &sender, 1, 5);
         assert_eq!(page2.len(), 5);
-        
+
         // Get empty page
         let page3 = get_paginated_user_messages(&contract, &sender, 2, 5);
         assert_eq!(page3.len(), 0);

@@ -11,6 +11,7 @@ mod tests {
     use crate::citizenship::*;
     use crate::economics::EconomicModel;
     use crate::wallets::WalletType;
+    use crate::constants::{SOV_ATOMIC_UNITS, SOV_UBI_MONTHLY_SOV, SOV_WELCOME_BONUS_SOV};
     use lib_crypto::Hash;
     use std::collections::HashMap;
 
@@ -71,9 +72,9 @@ mod tests {
         assert!(!citizenship_result.dao_registration.membership_proof.is_empty());
         
         // Verify UBI registration
-        assert_eq!(citizenship_result.ubi_registration.monthly_amount, 1000);
+        assert_eq!(citizenship_result.ubi_registration.monthly_amount, SOV_UBI_MONTHLY_SOV * SOV_ATOMIC_UNITS);
         assert!(citizenship_result.ubi_registration.daily_amount > 0);
-        assert!(citizenship_result.ubi_registration.daily_amount <= 35); // Roughly 1000/30
+        assert!(citizenship_result.ubi_registration.daily_amount <= 35 * SOV_ATOMIC_UNITS); // Roughly 1000/30
         assert!(!citizenship_result.ubi_registration.eligibility_proof.is_empty());
         
         // Verify Web4 access
@@ -96,7 +97,7 @@ mod tests {
         assert_eq!(citizenship_result.privacy_credentials.credentials.len(), 2); // Age + Reputation
         
         // Verify welcome bonus
-        assert_eq!(citizenship_result.welcome_bonus.bonus_amount, 5000);
+        assert_eq!(citizenship_result.welcome_bonus.bonus_amount, SOV_WELCOME_BONUS_SOV * SOV_ATOMIC_UNITS);
         assert_eq!(citizenship_result.welcome_bonus.wallet_id, citizenship_result.primary_wallet_id);
         
         // Verify the identity was stored in manager
@@ -123,9 +124,9 @@ mod tests {
         // Verify all components are created
         assert!(!citizenship_result.identity_id.0.is_empty());
         assert_eq!(citizenship_result.dao_registration.voting_power, 1);
-        assert_eq!(citizenship_result.ubi_registration.monthly_amount, 1000);
+        assert_eq!(citizenship_result.ubi_registration.monthly_amount, SOV_UBI_MONTHLY_SOV * SOV_ATOMIC_UNITS);
         assert_eq!(citizenship_result.web4_access.access_level, AccessLevel::FullCitizen);
-        assert_eq!(citizenship_result.welcome_bonus.bonus_amount, 1000); // Different bonus amount in this method
+        assert_eq!(citizenship_result.welcome_bonus.bonus_amount, 1000 * SOV_ATOMIC_UNITS); // Different bonus amount in this method
         
         // Verify identity is stored
         let identity = manager.get_identity(&citizenship_result.identity_id).unwrap();

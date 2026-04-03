@@ -6,10 +6,26 @@ use anyhow::Result;
 use lib_identity::IdentityId;
 use std::collections::HashMap;
 
-/// Trait for validator info structures that can be synced from blockchain
+/// Minimum validator count required for BFT safety.
+pub const MIN_VALIDATORS: usize = crate::types::MIN_BFT_VALIDATORS;
+/// Default governance target for maximum active validators.
+pub const MAX_VALIDATORS: u32 = 100;
+/// Hard protocol cap for maximum active validators.
+pub const MAX_VALIDATORS_HARD_CAP: u32 = 256;
+
+/// Trait for validator info structures that can be synced from blockchain.
 ///
-/// This allows ValidatorManager to sync from different validator data sources
+/// This allows `ValidatorManager` to sync from different validator data sources
 /// (blockchain registry, genesis config, etc.) without tight coupling.
+///
+/// # Key Separation
+///
+/// Implementors MUST return three distinct keys from [`consensus_key`],
+/// [`networking_key`], and [`rewards_key`].  `ValidatorManager::sync_from_validator_list`
+/// delegates key-separation enforcement to [`ValidatorManager::register_validator`],
+/// which checks that no two keys are equal before inserting a new validator.
+///
+/// See [`Validator`] for a full description of each key's role.
 pub trait ValidatorInfo {
     /// Get validator identity
     fn identity_id(&self) -> IdentityId;
@@ -17,8 +33,21 @@ pub trait ValidatorInfo {
     fn stake(&self) -> u64;
     /// Get storage provided
     fn storage_provided(&self) -> u64;
-    /// Get consensus key
+    /// Get the BFT vote-signing key (Dilithium2, hot).
+    ///
+    /// Used exclusively for signing block proposals, pre-votes, pre-commits, and
+    /// view-change messages.  MUST differ from [`networking_key`] and [`rewards_key`].
     fn consensus_key(&self) -> Vec<u8>;
+    /// Get the P2P transport identity key (Ed25519/X25519, hot).
+    ///
+    /// Used for QUIC TLS handshakes, DHT node ID derivation, and peer authentication.
+    /// MUST differ from [`consensus_key`] and [`rewards_key`].
+    fn networking_key(&self) -> Vec<u8>;
+    /// Get the rewards wallet public key (cold-capable).
+    ///
+    /// Identifies the wallet that receives block rewards and protocol fee distributions.
+    /// MUST differ from [`consensus_key`] and [`networking_key`].
+    fn rewards_key(&self) -> Vec<u8>;
     /// Get commission rate
     fn commission_rate(&self) -> u8;
 }
@@ -65,13 +94,27 @@ impl ValidatorManager {
         }
     }
 
-    /// Register a new validator
+    /// Register a new validator.
+    ///
+    /// # Key Separation Enforcement
+    ///
+    /// The three key parameters — `consensus_key`, `networking_key`, and `rewards_key`
+    /// — MUST all be non-empty and pairwise distinct.  Registration is rejected with a
+    /// descriptive error if any two keys are equal.
+    ///
+    /// | Key | Role | Exposure |
+    /// |-----|------|----------|
+    /// | `consensus_key` | BFT vote signing (Dilithium2) | Hot |
+    /// | `networking_key` | P2P transport identity (Ed25519/X25519) | Hot |
+    /// | `rewards_key` | Reward wallet public key | Cold-capable |
     pub fn register_validator(
         &mut self,
         identity: IdentityId,
         stake: u64,
         storage_provided: u64,
         consensus_key: Vec<u8>,
+        networking_key: Vec<u8>,
+        rewards_key: Vec<u8>,
         commission_rate: u8,
     ) -> Result<()> {
         // Check minimum requirements - ONLY stake is required for validators
@@ -99,12 +142,43 @@ impl ValidatorManager {
             return Err(anyhow::anyhow!("Validator already registered"));
         }
 
+        // KEY SEPARATION ASSERTIONS
+        if consensus_key.is_empty() {
+            return Err(anyhow::anyhow!("consensus_key must not be empty"));
+        }
+        if networking_key.is_empty() {
+            return Err(anyhow::anyhow!("networking_key must not be empty"));
+        }
+        if rewards_key.is_empty() {
+            return Err(anyhow::anyhow!("rewards_key must not be empty"));
+        }
+        if consensus_key == networking_key {
+            return Err(anyhow::anyhow!(
+                "Key separation violation: consensus_key and networking_key must be different. \
+                 Reusing the same key across roles collapses security domain boundaries."
+            ));
+        }
+        if consensus_key == rewards_key {
+            return Err(anyhow::anyhow!(
+                "Key separation violation: consensus_key and rewards_key must be different. \
+                 A compromised consensus key must not give an attacker control over staking rewards."
+            ));
+        }
+        if networking_key == rewards_key {
+            return Err(anyhow::anyhow!(
+                "Key separation violation: networking_key and rewards_key must be different. \
+                 A compromised network identity key must not give an attacker access to reward funds."
+            ));
+        }
+
         // Create new validator
         let validator = Validator::new(
             identity.clone(),
             stake,
             storage_provided,
             consensus_key,
+            networking_key,
+            rewards_key,
             commission_rate,
         );
 
@@ -113,7 +187,7 @@ impl ValidatorManager {
         self.validators.insert(identity.clone(), validator);
 
         tracing::info!(
-            "Registered new validator {:?} with {} ZHTP stake and {} bytes storage",
+            "Registered new validator {:?} with {} SOV stake and {} bytes storage",
             identity,
             stake,
             storage_provided
@@ -153,10 +227,12 @@ impl ValidatorManager {
             .collect()
     }
 
-    /// Get validator set for a specific consensus round
+    /// Get the validator set for a specific consensus round.
+    ///
+    /// All active validators participate in every round.  ZHTP uses a single
+    /// static committee per epoch; per-round rotation is a future enhancement
+    /// that would be gated behind an epoch-boundary validator-set change.
     pub fn get_validator_set_for_round(&self, _round: u64) -> Vec<&Validator> {
-        // For now, return all active validators
-        // In a more sophisticated implementation, this could rotate validators
         self.get_active_validators()
     }
 
@@ -178,15 +254,22 @@ impl ValidatorManager {
     }
 
     /// Slash a validator for misbehavior
+    ///
+    /// # Arguments
+    /// * `identity` - Validator identity to slash
+    /// * `slash_type` - Type of misbehavior
+    /// * `slash_percentage` - Percentage of stake to slash
+    /// * `current_block` - Current block height for jail tracking
     pub fn slash_validator(
         &mut self,
         identity: &IdentityId,
         slash_type: SlashType,
         slash_percentage: u8,
+        current_block: u64,
     ) -> Result<u64> {
         if let Some(validator) = self.validators.get_mut(identity) {
             let old_voting_power = validator.voting_power;
-            let slashed_amount = validator.slash(slash_type, slash_percentage)?;
+            let slashed_amount = validator.slash(slash_type, slash_percentage, current_block)?;
 
             // Update total voting power
             self.total_voting_power = self
@@ -232,9 +315,19 @@ impl ValidatorManager {
     }
 
     /// Process inactive validators
+    ///
+    /// # Arguments
+    /// * `max_inactive_seconds` - Maximum inactivity period before slashing
+    /// * `current_block` - Current block height for jail tracking
+    ///
+    /// # Note
+    /// This method NO LONGER automatically releases validators from jail.
+    /// Validators must explicitly call unjail() via an unjail transaction
+    /// to exit jail, which will enforce all recovery policy invariants.
     pub fn process_inactive_validators(
         &mut self,
         max_inactive_seconds: u64,
+        current_block: u64,
     ) -> Result<Vec<IdentityId>> {
         let mut inactive_validators = Vec::new();
 
@@ -244,7 +337,7 @@ impl ValidatorManager {
             {
                 // Slash for liveness violation
                 let old_voting_power = validator.voting_power;
-                let _ = validator.slash(SlashType::Liveness, 1)?; // 1% slash for inactivity
+                let _ = validator.slash(SlashType::Liveness, 1, current_block)?; // 1% slash for inactivity
 
                 // Update total voting power
                 self.total_voting_power = self
@@ -255,11 +348,51 @@ impl ValidatorManager {
                 inactive_validators.push(identity.clone());
             }
 
-            // Try to release validators from jail
-            validator.try_release_from_jail();
+            // NOTE: No longer auto-releasing from jail
+            // Validators must explicitly submit an unjail transaction
+            // which will call validator.unjail() and enforce recovery invariants
         }
 
         Ok(inactive_validators)
+    }
+
+    /// Attempt to unjail a validator
+    ///
+    /// Enforces all recovery policy invariants defined in the slashing module.
+    /// This method should be called when processing an unjail transaction.
+    ///
+    /// # Arguments
+    /// * `identity` - Validator identity to unjail
+    /// * `current_block` - Current finalized block height
+    ///
+    /// # Returns
+    /// * `Ok(())` - Validator successfully unjailed
+    /// * `Err(_)` - Unjail request rejected with reason
+    ///
+    /// # Invariants Enforced
+    /// - REC-INV-1: Safety-slashed validators CANNOT unjail (permanent ban)
+    /// - REC-INV-2: Liveness-slashed validators MUST wait JAIL_EXIT_WAIT_BLOCKS
+    /// - REC-INV-3: Unjail is only permitted if remaining stake >= MIN_STAKE_TO_UNJAIL
+    /// - REC-INV-4: Slashed stake is NOT restored on unjail
+    pub fn unjail_validator(&mut self, identity: &IdentityId, current_block: u64) -> Result<()> {
+        if let Some(validator) = self.validators.get_mut(identity) {
+            // Attempt to unjail - this enforces all recovery policy invariants
+            validator
+                .unjail(current_block)
+                .map_err(|e| anyhow::anyhow!("Failed to unjail validator: {}", e))?;
+
+            // Recalculate total voting power after unjail
+            self.total_voting_power = self
+                .validators
+                .values()
+                .filter(|v| v.can_participate())
+                .map(|v| v.voting_power)
+                .sum();
+
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Validator not found for unjail"))
+        }
     }
 
     /// Get total voting power of all active validators
@@ -328,6 +461,8 @@ impl ValidatorManager {
                 validator_info.stake(),
                 validator_info.storage_provided(),
                 validator_info.consensus_key(),
+                validator_info.networking_key(),
+                validator_info.rewards_key(),
                 validator_info.commission_rate(),
             ) {
                 Ok(_) => {

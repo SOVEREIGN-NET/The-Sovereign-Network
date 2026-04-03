@@ -2,11 +2,11 @@
 // Comprehensive NSError parsing and Core Bluetooth error code mapping
 
 #[cfg(target_os = "macos")]
-use objc2::runtime::AnyObject;
+use anyhow::{anyhow, Result};
 #[cfg(target_os = "macos")]
 use objc2::msg_send;
 #[cfg(target_os = "macos")]
-use anyhow::{anyhow, Result};
+use objc2::runtime::AnyObject;
 #[cfg(target_os = "macos")]
 use std::fmt;
 
@@ -26,55 +26,55 @@ pub const CB_ATT_ERROR_DOMAIN: &str = "CBATTErrorDomain";
 pub enum CBErrorCode {
     /// The connection failed.
     Unknown = 0,
-    
+
     /// The specified parameters are invalid.
     InvalidParameters = 1,
-    
+
     /// The specified attribute handle is invalid.
     InvalidHandle = 2,
-    
+
     /// The device isn't currently connected.
     NotConnected = 3,
-    
+
     /// The device has run out of space to complete the intended operation.
     OutOfSpace = 4,
-    
+
     /// The operation isn't supported.
     OperationCancelled = 5,
-    
+
     /// The connection timed out.
     ConnectionTimeout = 6,
-    
+
     /// The peripheral disconnected.
     PeripheralDisconnected = 7,
-    
+
     /// The specified UUID isn't permitted.
     UUIDNotAllowed = 8,
-    
+
     /// The peripheral is already advertising.
     AlreadyAdvertising = 9,
-    
+
     /// The connection failed because the system rejected it.
     ConnectionFailed = 10,
-    
+
     /// The connection failed due to an internal system limit.
     ConnectionLimitReached = 11,
-    
+
     /// The operation failed.
     OperationNotSupported = 12,
-    
+
     /// The Core Bluetooth manager is still being initialized.
     UnknownDevice = 13,
-    
+
     /// The device has run out of space to complete the intended operation.
     InvalidData = 14,
-    
+
     /// The peer rejected the request.
     PeerRemovedPairingInformation = 15,
-    
+
     /// The connection attempt or operation is already in progress.
     EncryptionTimedOut = 16,
-    
+
     /// The peripheral disconnected.
     TooManyLEPairedDevices = 17,
 }
@@ -104,7 +104,7 @@ impl CBErrorCode {
             _ => None,
         }
     }
-    
+
     /// Get human-readable error message
     pub fn message(&self) -> &'static str {
         match self {
@@ -144,55 +144,55 @@ impl fmt::Display for CBErrorCode {
 pub enum CBATTErrorCode {
     /// The ATT command or request successfully completed.
     Success = 0x00,
-    
+
     /// The attribute handle is invalid on this peripheral.
     InvalidHandle = 0x01,
-    
+
     /// The permissions prohibit reading the attribute's value.
     ReadNotPermitted = 0x02,
-    
+
     /// The permissions prohibit writing the attribute's value.
     WriteNotPermitted = 0x03,
-    
+
     /// The attribute Protocol Data Unit (PDU) is invalid.
     InvalidPdu = 0x04,
-    
+
     /// Reading or writing the attribute's value failed for lack of authentication.
     InsufficientAuthentication = 0x05,
-    
+
     /// The attribute server doesn't support the request received from the client.
     RequestNotSupported = 0x06,
-    
+
     /// The specified offset value was past the end of the attribute's value.
     InvalidOffset = 0x07,
-    
+
     /// Reading or writing the attribute's value failed for lack of authorization.
     InsufficientAuthorization = 0x08,
-    
+
     /// The prepare queue is full, as a result of there being too many write requests in the queue.
     PrepareQueueFull = 0x09,
-    
+
     /// The attribute wasn't found within the specified attribute handle range.
     AttributeNotFound = 0x0A,
-    
+
     /// The ATT read blob request can't read or write the attribute.
     AttributeNotLong = 0x0B,
-    
+
     /// The encryption key size used for encrypting this link is insufficient.
     InsufficientEncryptionKeySize = 0x0C,
-    
+
     /// The length of the attribute's value is invalid for the intended operation.
     InvalidAttributeValueLength = 0x0D,
-    
+
     /// The ATT request encountered an unlikely error and wasn't completed.
     UnlikelyError = 0x0E,
-    
+
     /// Reading or writing the attribute's value failed for lack of encryption.
     InsufficientEncryption = 0x0F,
-    
+
     /// The attribute type isn't a supported grouping attribute as defined by a higher-layer specification.
     UnsupportedGroupType = 0x10,
-    
+
     /// Resources are insufficient to complete the ATT request.
     InsufficientResources = 0x11,
 }
@@ -222,7 +222,7 @@ impl CBATTErrorCode {
             _ => None,
         }
     }
-    
+
     /// Get human-readable error message
     pub fn message(&self) -> &'static str {
         match self {
@@ -260,16 +260,16 @@ impl fmt::Display for CBATTErrorCode {
 pub struct NSErrorInfo {
     /// Error domain (e.g., "CBErrorDomain", "CBATTErrorDomain")
     pub domain: String,
-    
+
     /// Error code as integer
     pub code: i64,
-    
+
     /// Localized description from NSError
     pub localized_description: String,
-    
+
     /// Parsed CB error code (if from CBErrorDomain)
     pub cb_error: Option<CBErrorCode>,
-    
+
     /// Parsed ATT error code (if from CBATTErrorDomain)
     pub att_error: Option<CBATTErrorCode>,
 }
@@ -278,17 +278,27 @@ impl NSErrorInfo {
     /// Create a user-friendly error message
     pub fn to_error_message(&self) -> String {
         if let Some(cb_error) = &self.cb_error {
-            format!("Core Bluetooth Error: {} (code: {}, domain: {})", 
-                    cb_error.message(), self.code, self.domain)
+            format!(
+                "Core Bluetooth Error: {} (code: {}, domain: {})",
+                cb_error.message(),
+                self.code,
+                self.domain
+            )
         } else if let Some(att_error) = &self.att_error {
-            format!("ATT Error: {} (code: 0x{:02X}, domain: {})", 
-                    att_error.message(), self.code, self.domain)
+            format!(
+                "ATT Error: {} (code: 0x{:02X}, domain: {})",
+                att_error.message(),
+                self.code,
+                self.domain
+            )
         } else {
-            format!("Error: {} (code: {}, domain: {})", 
-                    self.localized_description, self.code, self.domain)
+            format!(
+                "Error: {} (code: {}, domain: {})",
+                self.localized_description, self.code, self.domain
+            )
         }
     }
-    
+
     /// Convert to anyhow Result error
     pub fn into_result<T>(self) -> Result<T> {
         Err(anyhow!(self.to_error_message()))
@@ -304,49 +314,54 @@ impl fmt::Display for NSErrorInfo {
 impl std::error::Error for NSErrorInfo {}
 
 /// Parse NSError object into structured error information
-/// 
+///
 /// # Safety
 /// The error pointer must be a valid NSError object or null
 #[cfg(target_os = "macos")]
+// SAFETY: NSError parsing assumes `error` is either null or a valid Objective-C NSError-compatible object; selectors used here are standard NSError accessors.
 pub unsafe fn parse_nserror(error: *mut AnyObject) -> Option<NSErrorInfo> {
     if error.is_null() {
         return None;
     }
-    
+
     // Extract error code
     let code: i64 = msg_send![error, code];
-    
+
     // Extract error domain
     let domain_obj: *mut AnyObject = msg_send![error, domain];
     let domain = if !domain_obj.is_null() {
         let domain_cstr: *const i8 = msg_send![domain_obj, UTF8String];
-        std::ffi::CStr::from_ptr(domain_cstr).to_string_lossy().to_string()
+        std::ffi::CStr::from_ptr(domain_cstr)
+            .to_string_lossy()
+            .to_string()
     } else {
         "Unknown".to_string()
     };
-    
+
     // Extract localized description
     let desc_obj: *mut AnyObject = msg_send![error, localizedDescription];
     let localized_description = if !desc_obj.is_null() {
         let desc_cstr: *const i8 = msg_send![desc_obj, UTF8String];
-        std::ffi::CStr::from_ptr(desc_cstr).to_string_lossy().to_string()
+        std::ffi::CStr::from_ptr(desc_cstr)
+            .to_string_lossy()
+            .to_string()
     } else {
         "No description available".to_string()
     };
-    
+
     // Parse specific error codes based on domain
     let cb_error = if domain == CB_ERROR_DOMAIN {
         CBErrorCode::from_code(code)
     } else {
         None
     };
-    
+
     let att_error = if domain == CB_ATT_ERROR_DOMAIN {
         CBATTErrorCode::from_code(code)
     } else {
         None
     };
-    
+
     Some(NSErrorInfo {
         domain,
         code,
@@ -358,10 +373,11 @@ pub unsafe fn parse_nserror(error: *mut AnyObject) -> Option<NSErrorInfo> {
 
 /// Parse NSError and convert to anyhow Result
 /// Returns Ok(()) if error is null, Err with parsed error info otherwise
-/// 
+///
 /// # Safety
 /// The error pointer must be a valid NSError object or null
 #[cfg(target_os = "macos")]
+// SAFETY: NSError parsing assumes `error` is either null or a valid Objective-C NSError-compatible object; selectors used here are standard NSError accessors.
 pub unsafe fn check_nserror(error: *mut AnyObject) -> Result<()> {
     if let Some(error_info) = parse_nserror(error) {
         error_info.into_result()
@@ -372,10 +388,11 @@ pub unsafe fn check_nserror(error: *mut AnyObject) -> Result<()> {
 
 /// Parse NSError and log it with appropriate level
 /// Returns true if error was present, false if null
-/// 
+///
 /// # Safety
 /// The error pointer must be a valid NSError object or null
 #[cfg(target_os = "macos")]
+// SAFETY: NSError parsing assumes `error` is either null or a valid Objective-C NSError-compatible object; selectors used here are standard NSError accessors.
 pub unsafe fn log_nserror(error: *mut AnyObject, context: &str) -> bool {
     if let Some(error_info) = parse_nserror(error) {
         use tracing::error;
@@ -390,32 +407,44 @@ pub unsafe fn log_nserror(error: *mut AnyObject, context: &str) -> bool {
 #[cfg(target_os = "macos")]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_cb_error_code_mapping() {
         assert_eq!(CBErrorCode::from_code(0), Some(CBErrorCode::Unknown));
         assert_eq!(CBErrorCode::from_code(3), Some(CBErrorCode::NotConnected));
-        assert_eq!(CBErrorCode::from_code(6), Some(CBErrorCode::ConnectionTimeout));
+        assert_eq!(
+            CBErrorCode::from_code(6),
+            Some(CBErrorCode::ConnectionTimeout)
+        );
         assert_eq!(CBErrorCode::from_code(999), None);
     }
-    
+
     #[test]
     fn test_att_error_code_mapping() {
-        assert_eq!(CBATTErrorCode::from_code(0x01), Some(CBATTErrorCode::InvalidHandle));
-        assert_eq!(CBATTErrorCode::from_code(0x02), Some(CBATTErrorCode::ReadNotPermitted));
-        assert_eq!(CBATTErrorCode::from_code(0x0F), Some(CBATTErrorCode::InsufficientEncryption));
+        assert_eq!(
+            CBATTErrorCode::from_code(0x01),
+            Some(CBATTErrorCode::InvalidHandle)
+        );
+        assert_eq!(
+            CBATTErrorCode::from_code(0x02),
+            Some(CBATTErrorCode::ReadNotPermitted)
+        );
+        assert_eq!(
+            CBATTErrorCode::from_code(0x0F),
+            Some(CBATTErrorCode::InsufficientEncryption)
+        );
         assert_eq!(CBATTErrorCode::from_code(0xFF), None);
     }
-    
+
     #[test]
     fn test_error_messages() {
         let cb_error = CBErrorCode::NotConnected;
         assert_eq!(cb_error.message(), "Device is not currently connected");
-        
+
         let att_error = CBATTErrorCode::ReadNotPermitted;
         assert_eq!(att_error.message(), "Read not permitted");
     }
-    
+
     #[test]
     fn test_error_info_display() {
         let error_info = NSErrorInfo {
@@ -425,7 +454,7 @@ mod tests {
             cb_error: Some(CBErrorCode::NotConnected),
             att_error: None,
         };
-        
+
         let message = error_info.to_error_message();
         assert!(message.contains("Device is not currently connected"));
         assert!(message.contains("CBErrorDomain"));

@@ -8,14 +8,8 @@ use tokio::sync::{Mutex, RwLock};
 use lib_crypto::Hash;
 
 use crate::proofs::{
-    generate_storage_proof,
-    ChallengeResult,
-    ProofManager,
-    StorageCapacityAttestation,
-    StorageChallenge,
-    StorageProofSummary,
-    StorageProofProvider,
-    VerificationResult,
+    generate_storage_proof, ChallengeResult, ProofManager, StorageCapacityAttestation,
+    StorageChallenge, StorageProofProvider, StorageProofSummary, VerificationResult,
 };
 use crate::types::ContentHash;
 
@@ -61,11 +55,13 @@ impl InMemoryStorageProofProvider {
         storage_capacity: u64,
     ) -> Result<()> {
         let mut validators = self.validators.write().await;
-        let entry = validators.entry(validator_id).or_insert(ValidatorStorageState {
-            storage_capacity,
-            utilization_override: None,
-            contents: Vec::new(),
-        });
+        let entry = validators
+            .entry(validator_id)
+            .or_insert(ValidatorStorageState {
+                storage_capacity,
+                utilization_override: None,
+                contents: Vec::new(),
+            });
         entry.storage_capacity = storage_capacity;
         Ok(())
     }
@@ -79,11 +75,13 @@ impl InMemoryStorageProofProvider {
             return Err(anyhow!("Utilization must be between 0 and 100"));
         }
         let mut validators = self.validators.write().await;
-        let entry = validators.entry(validator_id).or_insert(ValidatorStorageState {
-            storage_capacity: 0,
-            utilization_override: Some(utilization),
-            contents: Vec::new(),
-        });
+        let entry = validators
+            .entry(validator_id)
+            .or_insert(ValidatorStorageState {
+                storage_capacity: 0,
+                utilization_override: Some(utilization),
+                contents: Vec::new(),
+            });
         entry.utilization_override = Some(utilization);
         Ok(())
     }
@@ -99,12 +97,17 @@ impl InMemoryStorageProofProvider {
         }
 
         let mut validators = self.validators.write().await;
-        let entry = validators.entry(validator_id).or_insert(ValidatorStorageState {
-            storage_capacity: 0,
-            utilization_override: None,
-            contents: Vec::new(),
+        let entry = validators
+            .entry(validator_id)
+            .or_insert(ValidatorStorageState {
+                storage_capacity: 0,
+                utilization_override: None,
+                contents: Vec::new(),
+            });
+        entry.contents.push(StoredContent {
+            content_hash,
+            blocks,
         });
-        entry.contents.push(StoredContent { content_hash, blocks });
         Ok(())
     }
 
@@ -135,7 +138,7 @@ impl StorageProofProvider for InMemoryStorageProofProvider {
             return Ok(Vec::new());
         };
 
-        let mut manager = self.proof_manager.lock().await;
+        let manager = self.proof_manager.lock().await;
         let mut challenges = Vec::new();
         for content in &state.contents {
             challenges.extend(manager.get_active_challenges(&content.content_hash));
@@ -143,7 +146,10 @@ impl StorageProofProvider for InMemoryStorageProofProvider {
         Ok(challenges)
     }
 
-    async fn verified_proof_summaries(&self, validator_id: &Hash) -> Result<Vec<StorageProofSummary>> {
+    async fn verified_proof_summaries(
+        &self,
+        validator_id: &Hash,
+    ) -> Result<Vec<StorageProofSummary>> {
         let validators = self.validators.read().await;
         let Some(state) = validators.get(validator_id) else {
             return Ok(Vec::new());
@@ -187,7 +193,11 @@ impl StorageProofProvider for InMemoryStorageProofProvider {
         let mut manager = self.proof_manager.lock().await;
         let mut challenge_results = Vec::new();
 
-        for content in state.contents.iter().take(self.max_challenges_per_attestation) {
+        for content in state
+            .contents
+            .iter()
+            .take(self.max_challenges_per_attestation)
+        {
             let total_blocks = content.blocks.len();
             let challenge = manager.generate_storage_challenge(
                 content.content_hash.clone(),
@@ -203,7 +213,8 @@ impl StorageProofProvider for InMemoryStorageProofProvider {
                 validator_id.to_string(),
             )?;
 
-            let result = manager.submit_storage_proof(proof.clone(), challenge.challenge_id.clone())?;
+            let result =
+                manager.submit_storage_proof(proof.clone(), challenge.challenge_id.clone())?;
             let verification = match result {
                 VerificationResult::Valid => VerificationResult::Valid,
                 other => other,

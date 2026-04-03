@@ -1,7 +1,7 @@
 //! Bluetooth Low Energy (BLE) Protocol Router
 //!
 //! Extracted from unified_server.rs (lines 5158-5595)
-//! 
+//!
 //! Handles BLE GATT mesh connections with:
 //! - GATT characteristics and service discovery
 //! - Edge node header/proof sync
@@ -9,19 +9,19 @@
 //! - DHT bridge functionality
 //! - Fragment reassembly for large messages
 
+use crate::server::mesh::core::MeshRouter;
 use anyhow::{Context, Result};
+use lib_crypto::PublicKey;
+use lib_network::protocols::bluetooth::BluetoothMeshProtocol;
+use lib_network::types::mesh_message::ZhtpMeshMessage;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
-use std::net::SocketAddr;
+use tracing::{debug, info, warn};
 use uuid::Uuid;
-use tracing::{debug, info, warn, error};
-use lib_network::protocols::bluetooth::BluetoothMeshProtocol;
-use lib_crypto::PublicKey;
-use lib_network::types::mesh_message::ZhtpMeshMessage;
-use crate::server::mesh::core::MeshRouter;
 
 /// Bluetooth Low Energy mesh protocol router for phone connectivity
 #[derive(Clone)]
@@ -41,14 +41,14 @@ impl BluetoothRouter {
             id[16..].copy_from_slice(uuid_bytes); // Fill remaining with same UUID
             id
         };
-        
+
         Self {
             connected_devices: Arc::new(RwLock::new(HashMap::new())),
             node_id,
             protocol: Arc::new(RwLock::new(None)),
         }
     }
-    
+
     /// Initialize Bluetooth mesh protocol for phone connectivity
     // Ticket #146: Updated to use UnifiedPeerId as HashMap key
     pub async fn initialize(
@@ -72,8 +72,9 @@ impl BluetoothRouter {
         info!("📱 Initializing Bluetooth mesh protocol for phone connectivity...");
 
         // Create Bluetooth mesh protocol instance
+        let local_public_key_for_gatt = our_public_key.clone(); // Capture before move
         let mut bluetooth_protocol = BluetoothMeshProtocol::new(self.node_id, our_public_key)?;
-        
+
         // ========================================================================
         // Phase 6: Enable BLE edge node sync if blockchain provider is available
         // ========================================================================
@@ -81,12 +82,12 @@ impl BluetoothRouter {
             bluetooth_protocol.set_blockchain_provider(provider).await;
             info!("✅ BLE edge sync enabled - will serve headers/proofs to mobile devices");
         }
-        
+
         // Create GATT message channel for forwarding GATT writes to this router
         let (gatt_tx, mut gatt_rx) = tokio::sync::mpsc::unbounded_channel();
         bluetooth_protocol.set_gatt_message_channel(gatt_tx).await;
         info!("✅ GATT message channel connected to BluetoothRouter");
-        
+
         // Initialize Bluetooth advertising for ZHTP service
         // Note: Windows COM threading handled within the Bluetooth implementation
         if let Err(e) = bluetooth_protocol.start_advertising().await {
@@ -96,11 +97,11 @@ impl BluetoothRouter {
         } else {
             info!("✅ Bluetooth advertising started successfully");
         }
-        
+
         // Store the protocol instance (wrapped in Arc for sharing)
         let protocol_arc = Arc::new(bluetooth_protocol);
         *self.protocol.write().await = Some(protocol_arc.clone());
-        
+
         // Spawn GATT message handler task with mesh_connections access
         let connected_devices = self.connected_devices.clone();
         let mesh_conns = peer_registry.clone();
@@ -112,27 +113,33 @@ impl BluetoothRouter {
             while let Some(gatt_message) = gatt_rx.recv().await {
                 use lib_network::protocols::bluetooth::gatt::GattMessage;
                 match gatt_message {
-                    GattMessage::MeshHandshake { data, peripheral_id } => {
+                    GattMessage::MeshHandshake {
+                        data,
+                        peripheral_id,
+                    } => {
                         info!("📨 GATT: Received mesh message ({} bytes)", data.len());
                         if let Some(ref pid) = peripheral_id {
                             info!("   🆔 Peripheral ID: {}", pid);
                         }
-                        
+
                         // Try to parse as MeshHandshake first (initial connection)
-                        if let Ok(handshake) = bincode::deserialize::<lib_network::protocols::bluetooth::MeshHandshake>(&data) {
+                        if let Ok(handshake) = bincode::deserialize::<
+                            lib_network::protocols::bluetooth::MeshHandshake,
+                        >(&data)
+                        {
                             info!("🤝 GATT handshake from: {}", handshake.node_id);
-                            
+
                             // Extract the real cryptographic public key from handshake
                             let peer_pubkey = handshake.public_key.clone();
-                            
+
                             // FIX: Use peripheral_id for macOS, node_id for other platforms
                             let gatt_address = if let Some(ref pid) = peripheral_id {
-                                format!("gatt://{}", pid)  // macOS: Use CBPeripheral UUID
+                                format!("gatt://{}", pid) // macOS: Use CBPeripheral UUID
                             } else {
-                                format!("gatt://{}", handshake.node_id)  // Windows/Linux: Use node_id
+                                format!("gatt://{}", handshake.node_id) // Windows/Linux: Use node_id
                             };
                             info!("   📍 GATT address: {}", gatt_address);
-                            
+
                             // Create mesh connection for GATT peer (Ticket #146: Use UnifiedPeerId)
                             let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_pubkey.clone());
                             let connection = lib_network::mesh::connection::MeshConnection {
@@ -156,20 +163,22 @@ impl BluetoothRouter {
                                 trust_score: 0.5,
                                 bootstrap_mode: false,
                             };
-                            
+
                             // Add to mesh network (Ticket #146: Use UnifiedPeerId as key)
                             let peer_key = connection.peer.clone();
                             // Ticket #149: Use PeerRegistry API instead of HashMap methods
                             let registry_read = mesh_conns.read().await;
                             let is_new_peer = registry_read.get(&peer_key).is_none();
                             drop(registry_read);
-                            
+
                             // Create PeerEntry and upsert into registry
                             let mut registry_write = mesh_conns.write().await;
                             let peer_entry = lib_network::peer_registry::PeerEntry::new(
                                 peer_key,
                                 vec![lib_network::peer_registry::PeerEndpoint {
-                                    address: lib_network::NodeAddress::BluetoothLE(gatt_address.clone()),
+                                    address: lib_network::NodeAddress::BluetoothLE(
+                                        gatt_address.clone(),
+                                    ),
                                     protocol: connection.protocol.clone(),
                                     signal_strength: 0.8,
                                     latency_ms: 50,
@@ -213,40 +222,55 @@ impl BluetoothRouter {
                                 lib_network::peer_registry::PeerTier::Tier3,
                                 0.8,
                             );
-                            registry_write.upsert(peer_entry).await.expect("Failed to upsert peer");
-                            info!("   ✅ Added GATT peer {} to mesh network", handshake.node_id);
-                            
+                            registry_write
+                                .upsert(peer_entry)
+                                .await
+                                .expect("Failed to upsert peer");
+                            info!(
+                                "   ✅ Added GATT peer {} to mesh network",
+                                handshake.node_id
+                            );
+
                             // FIX: Also register with BluetoothMeshProtocol.current_connections
                             // This is required for send_mesh_message() to find the peer
-                            let ble_connection = lib_network::protocols::bluetooth::BluetoothConnection {
-                                peer_id: handshake.node_id.to_string(),
-                                address: gatt_address.clone(),
-                                mtu: 247,  // Default BLE MTU
-                                rssi: -50, // Placeholder RSSI
-                                connected_at: std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                                    .as_secs(),
-                                last_seen: std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                                    .as_secs(),
-                            };
-                            bluetooth_protocol_for_gatt.current_connections.write().await.insert(gatt_address.clone(), ble_connection);
+                            let ble_connection =
+                                lib_network::protocols::bluetooth::BluetoothConnection {
+                                    peer_id: handshake.node_id.to_string(),
+                                    address: gatt_address.clone(),
+                                    mtu: 247,  // Default BLE MTU
+                                    rssi: -50, // Placeholder RSSI
+                                    connected_at: std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs(),
+                                    last_seen: std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs(),
+                                };
+                            bluetooth_protocol_for_gatt
+                                .current_connections
+                                .write()
+                                .await
+                                .insert(gatt_address.clone(), ble_connection);
                             info!("   ✅ Registered GATT peer in bluetooth_protocol.current_connections: {}", gatt_address);
-                            
+
                             // Register peer in DHT Kademlia routing table
                             // Generate node_id from public key hash (Blake3)
                             let node_id: [u8; 32] = lib_crypto::hash_blake3(&peer_pubkey.key_id);
                             // Note: KademliaNode registration removed (type no longer available)
                             // TODO: Use ZkDHTIntegration::register_peer() instead
                             info!("   📝 Would register BLE peer in Kademlia routing table: node_id={}", hex::encode(&node_id[0..8]));
-                            
+
                             // Track connected device
                             let device_key = handshake.node_id.to_string();
-                            let device_info = format!("Bluetooth GATT (protocols: {:?})", handshake.protocols);
-                            connected_devices.write().await.insert(device_key, device_info);
-                            
+                            let device_info =
+                                format!("Bluetooth GATT (protocols: {:?})", handshake.protocols);
+                            connected_devices
+                                .write()
+                                .await
+                                .insert(device_key, device_info);
+
                             // Always trigger blockchain sync for BLE handshake completion
                             // The sync coordinator will detect and prevent duplicates if peer is also connected via UDP
                             info!("🔄 BLE handshake complete - notifying for blockchain sync (is_new_peer: {})", is_new_peer);
@@ -254,31 +278,50 @@ impl BluetoothRouter {
                                 if let Err(e) = notify_tx.send(peer_pubkey.clone()) {
                                     warn!("Failed to send BLE peer notification: {}", e);
                                 } else {
-                                    info!("📤 BLE peer notification sent for {}", handshake.node_id);
+                                    info!(
+                                        "📤 BLE peer notification sent for {}",
+                                        handshake.node_id
+                                    );
                                 }
                             }
                         }
                         // If not MeshHandshake, try to parse as ZhtpMeshMessage (edge sync requests)
-                        else if let Ok(mesh_message) = bincode::deserialize::<ZhtpMeshMessage>(&data) {
+                        else if let Ok(mesh_message) =
+                            bincode::deserialize::<ZhtpMeshMessage>(&data)
+                        {
                             info!("📨 GATT: Received ZhtpMeshMessage");
-                            
+
                             // Handle HeadersRequest/BlockchainRequest messages
                             match &mesh_message {
-                                ZhtpMeshMessage::HeadersRequest { requester, request_id, start_height, count } => {
+                                ZhtpMeshMessage::HeadersRequest {
+                                    requester,
+                                    request_id,
+                                    start_height,
+                                    count,
+                                } => {
                                     info!("📥 GATT HeadersRequest from peer (ID: {}, height: {}, count: {})", 
                                           request_id, start_height, count);
-                                    
+
                                     // Get blockchain provider and fetch headers
-                                    if let Some(provider) = mesh_router_for_gatt.get_blockchain_provider().await {
-                                        match provider.get_headers(*start_height, *count as u64).await {
+                                    if let Some(provider) =
+                                        mesh_router_for_gatt.get_blockchain_provider().await
+                                    {
+                                        match provider
+                                            .get_headers(*start_height, *count as u64)
+                                            .await
+                                        {
                                             Ok(headers) => {
-                                                info!("📤 GATT: Sending {} headers back to requester", headers.len());
-                                                
+                                                info!(
+                                                    "📤 GATT: Sending {} headers back to requester",
+                                                    headers.len()
+                                                );
+
                                                 // Serialize headers to Vec<Vec<u8>>
-                                                let serialized_headers: Vec<Vec<u8>> = headers.iter()
+                                                let serialized_headers: Vec<Vec<u8>> = headers
+                                                    .iter()
                                                     .filter_map(|h| bincode::serialize(h).ok())
                                                     .collect();
-                                                
+
                                                 // Create HeadersResponse message
                                                 let response = ZhtpMeshMessage::HeadersResponse {
                                                     request_id: *request_id,
@@ -286,63 +329,74 @@ impl BluetoothRouter {
                                                     start_height: *start_height,
                                                 };
 
-                                                // ✅ TICKET 2.6 FIX: Route through MeshRouter with CORRECT sender identity
-                                                // CRITICAL CORRECTNESS: Sender MUST always be the local node, never the requester
-                                                // This ensures:
-                                                // - Identity verification is meaningful
-                                                // - Logs accurately reflect message provenance
-                                                // - Signatures and accountability are valid
-                                                match mesh_router_for_gatt.get_sender_public_key().await {
-                                                    Ok(our_pubkey) => {
-                                                        match mesh_router_for_gatt.send_with_routing(
-                                                            response,
-                                                            requester,
-                                                            &our_pubkey,
-                                                        ).await {
-                                                            Ok(msg_id) => {
-                                                                info!("✅ GATT: HeadersResponse routed successfully (ID: {}, destination verified)", msg_id);
-                                                            }
-                                                            Err(e) => {
-                                                                warn!("Failed to route HeadersResponse via MeshRouter: {}", e);
-                                                            }
-                                                        }
-                                                    }
-                                                    Err(e) => {
-                                                        error!("FATAL: Cannot send HeadersResponse - local identity not available: {}", e);
-                                                    }
+                                                // ✅ TICKET 2.6 FIX: Route through MeshRouter instead of direct send
+                                                // This ensures all messages are logged and follow standard routing path
+                                                // destination = requester (the peer who asked)
+                                                // sender = local node (this node is the one responding)
+                                                if let Err(e) = mesh_router_for_gatt
+                                                    .send_with_routing(
+                                                        response,
+                                                        requester, // destination: original requester
+                                                        &local_public_key_for_gatt, // sender: this node's public key
+                                                    )
+                                                    .await
+                                                {
+                                                    warn!("Failed to route HeadersResponse via MeshRouter: {}", e);
+                                                } else {
+                                                    info!("✅ GATT: HeadersResponse routed successfully through MeshRouter");
                                                 }
                                             }
                                             Err(e) => {
-                                                warn!("Failed to get headers from blockchain: {}", e);
+                                                warn!(
+                                                    "Failed to get headers from blockchain: {}",
+                                                    e
+                                                );
                                             }
                                         }
                                     } else {
                                         warn!("No blockchain provider available to handle HeadersRequest");
                                     }
                                 }
-                                ZhtpMeshMessage::BlockchainRequest {  request_id, .. } => {
-                                    info!("📥 GATT BlockchainRequest from peer (ID: {})", request_id);
+                                ZhtpMeshMessage::BlockchainRequest { request_id, .. } => {
+                                    info!(
+                                        "📥 GATT BlockchainRequest from peer (ID: {})",
+                                        request_id
+                                    );
                                     // TODO: Handle full blockchain request
                                     warn!("Full blockchain requests via GATT not yet implemented");
                                 }
-                                ZhtpMeshMessage::HeadersResponse { request_id, headers, start_height } => {
+                                ZhtpMeshMessage::HeadersResponse {
+                                    request_id,
+                                    headers,
+                                    start_height,
+                                } => {
                                     info!("✅ GATT: Received HeadersResponse (ID: {}, {} headers, starting at height {})", 
                                           request_id, headers.len(), start_height);
-                                    
+
                                     // Find peer by request_id and mark sync complete
-                                    if let Some((peer_id, sync_type)) = sync_coordinator_for_gatt.find_peer_by_sync_id(*request_id).await {
-                                        sync_coordinator_for_gatt.complete_sync(&peer_id, *request_id, sync_type).await;
-                                        info!("   ✅ Marked edge sync complete for peer {}", hex::encode(&peer_id.key_id[..8]));
+                                    if let Some((peer_id, sync_type)) = sync_coordinator_for_gatt
+                                        .find_peer_by_sync_id(*request_id)
+                                        .await
+                                    {
+                                        sync_coordinator_for_gatt
+                                            .complete_sync(&peer_id, *request_id, sync_type)
+                                            .await;
+                                        info!(
+                                            "   ✅ Marked edge sync complete for peer {}",
+                                            hex::encode(&peer_id.key_id[..8])
+                                        );
                                     } else {
-                                        warn!("   ⚠️  No active sync found for request_id {}", request_id);
+                                        warn!(
+                                            "   ⚠️  No active sync found for request_id {}",
+                                            request_id
+                                        );
                                     }
                                 }
                                 _ => {
                                     debug!("GATT: Unhandled ZhtpMeshMessage variant");
                                 }
                             }
-                        }
-                        else {
+                        } else {
                             warn!("⚠️  GATT: Failed to deserialize message as MeshHandshake or ZhtpMeshMessage");
                         }
                     }
@@ -358,39 +412,77 @@ impl BluetoothRouter {
                         info!("🔄 GATT: Relay query ({} bytes)", data.len());
                         // Relay queries processed by MeshRouter relay protocol
                     }
-                    GattMessage::HeadersRequest { request_id, start_height, count } => {
-                        info!("📥 GATT: HeadersRequest received (ID: {}, height: {}, count: {})", 
-                              request_id, start_height, count);
+                    GattMessage::HeadersRequest {
+                        request_id,
+                        start_height,
+                        count,
+                    } => {
+                        info!(
+                            "📥 GATT: HeadersRequest received (ID: {}, height: {}, count: {})",
+                            request_id, start_height, count
+                        );
                         // Handle via BluetoothMeshProtocol's edge sync handler
                         // Response will be sent back via BLE automatically
                     }
-                    GattMessage::BootstrapProofRequest { request_id, current_height } => {
-                        info!("📥 GATT: BootstrapProofRequest received (ID: {}, current: {})", 
-                              request_id, current_height);
+                    GattMessage::BootstrapProofRequest {
+                        request_id,
+                        current_height,
+                    } => {
+                        info!(
+                            "📥 GATT: BootstrapProofRequest received (ID: {}, current: {})",
+                            request_id, current_height
+                        );
                         // Handle via BluetoothMeshProtocol's edge sync handler
                     }
-                    GattMessage::HeadersResponse { request_id, headers } => {
-                        info!("✅ GATT: HeadersResponse received (ID: {}, {} headers)", 
-                              request_id, headers.len());
+                    GattMessage::HeadersResponse {
+                        request_id,
+                        headers,
+                    } => {
+                        info!(
+                            "✅ GATT: HeadersResponse received (ID: {}, {} headers)",
+                            request_id,
+                            headers.len()
+                        );
                         // Edge node received headers - sync complete
-                        
+
                         // Find peer by request_id and mark sync complete
-                        if let Some((peer_id, sync_type)) = sync_coordinator_for_gatt.find_peer_by_sync_id(request_id).await {
-                            sync_coordinator_for_gatt.complete_sync(&peer_id, request_id, sync_type).await;
-                            info!("   ✅ Marked edge sync complete for peer {}", hex::encode(&peer_id.key_id[..8]));
+                        if let Some((peer_id, sync_type)) = sync_coordinator_for_gatt
+                            .find_peer_by_sync_id(request_id)
+                            .await
+                        {
+                            sync_coordinator_for_gatt
+                                .complete_sync(&peer_id, request_id, sync_type)
+                                .await;
+                            info!(
+                                "   ✅ Marked edge sync complete for peer {}",
+                                hex::encode(&peer_id.key_id[..8])
+                            );
                         } else {
                             warn!("   ⚠️  No active sync found for request_id {}", request_id);
                         }
                     }
-                    GattMessage::BootstrapProofResponse { request_id, proof_height, headers, .. } => {
+                    GattMessage::BootstrapProofResponse {
+                        request_id,
+                        proof_height,
+                        headers,
+                        ..
+                    } => {
                         info!("✅ GATT: BootstrapProofResponse received (ID: {}, proof up to {}, {} headers)", 
                               request_id, proof_height, headers.len());
                         // Edge node received proof + headers - sync complete
-                        
+
                         // Find peer by request_id and mark sync complete
-                        if let Some((peer_id, sync_type)) = sync_coordinator_for_gatt.find_peer_by_sync_id(request_id).await {
-                            sync_coordinator_for_gatt.complete_sync(&peer_id, request_id, sync_type).await;
-                            info!("   ✅ Marked edge sync complete for peer {}", hex::encode(&peer_id.key_id[..8]));
+                        if let Some((peer_id, sync_type)) = sync_coordinator_for_gatt
+                            .find_peer_by_sync_id(request_id)
+                            .await
+                        {
+                            sync_coordinator_for_gatt
+                                .complete_sync(&peer_id, request_id, sync_type)
+                                .await;
+                            info!(
+                                "   ✅ Marked edge sync complete for peer {}",
+                                hex::encode(&peer_id.key_id[..8])
+                            );
                         } else {
                             warn!("   ⚠️  No active sync found for request_id {}", request_id);
                         }
@@ -399,26 +491,25 @@ impl BluetoothRouter {
                         info!("🧩 GATT: Fragment header received (multi-part message)");
                         // Handled by fragment reassembler in BluetoothMeshProtocol
                     }
-                    _ => {
-                        info!("❓ GATT: Unknown message type");
-                    }
                 }
             }
             info!("GATT message handler stopped");
         });
-        
-        info!("✅ Bluetooth mesh protocol initialized - discoverable as 'ZHTP-{}'", 
-              hex::encode(&self.node_id[..4]));
+
+        info!(
+            "✅ Bluetooth mesh protocol initialized - discoverable as 'ZHTP-{}'",
+            hex::encode(&self.node_id[..4])
+        );
         info!("📱 Your phone can now discover and connect to this ZHTP node via Bluetooth");
-        
+
         Ok(())
     }
-    
+
     /// Get the bluetooth protocol instance for message routing
     pub async fn get_protocol(&self) -> Option<Arc<BluetoothMeshProtocol>> {
         (*self.protocol.read().await).clone()
     }
-    
+
     /// Handle incoming Bluetooth connection with full mesh authentication
     pub async fn handle_bluetooth_connection(
         &self,
@@ -427,35 +518,48 @@ impl BluetoothRouter {
         mesh_router: &MeshRouter,
     ) -> Result<()> {
         info!("📱 Processing Bluetooth mesh connection from: {}", addr);
-        
+
         let mut buffer = vec![0; 8192];
-        let bytes_read = stream.read(&mut buffer).await
+        let bytes_read = stream
+            .read(&mut buffer)
+            .await
             .context("Failed to read Bluetooth data")?;
-        
+
         if bytes_read > 0 {
             debug!("Bluetooth data received: {} bytes", bytes_read);
-            
+
             // Try to parse as binary mesh handshake (same as TCP!)
-            if let Ok(handshake) = bincode::deserialize::<lib_network::protocols::bluetooth::MeshHandshake>(&buffer[..bytes_read]) {
-                info!("🤝 Received Bluetooth mesh handshake from peer: {}", handshake.node_id);
-                info!("   Version: {}, Port: {}, Protocols: {:?}", 
-                    handshake.version, handshake.mesh_port, handshake.protocols);
-                
+            if let Ok(handshake) = bincode::deserialize::<
+                lib_network::protocols::bluetooth::MeshHandshake,
+            >(&buffer[..bytes_read])
+            {
+                info!(
+                    "🤝 Received Bluetooth mesh handshake from peer: {}",
+                    handshake.node_id
+                );
+                info!(
+                    "   Version: {}, Port: {}, Protocols: {:?}",
+                    handshake.version, handshake.mesh_port, handshake.protocols
+                );
+
                 // Create peer identity
-                let peer_pubkey = lib_crypto::PublicKey::new(handshake.node_id.as_bytes().to_vec());
-                
+                let peer_pubkey = handshake.public_key.clone();
+
                 // Bluetooth connections use BluetoothLE protocol
                 let protocol = lib_network::protocols::NetworkProtocol::BluetoothLE;
-                
+
                 // Create mesh connection (Ticket #146: Use UnifiedPeerId)
-                let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_pubkey.clone());
+                let unified_peer =
+                    lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(
+                        peer_pubkey.clone(),
+                    );
                 let connection = lib_network::mesh::connection::MeshConnection {
                     peer: unified_peer,
                     protocol,
                     peer_address: Some(addr.to_string()), // Store Bluetooth peer address for relay queries
-                    signal_strength: 0.7, // Bluetooth typically lower than WiFi
+                    signal_strength: 0.7,                 // Bluetooth typically lower than WiFi
                     bandwidth_capacity: 250_000, // 250 KB/s - optimized BLE throughput (7.5ms interval + 1ms delay)
-                    latency_ms: 100, // Bluetooth has higher latency
+                    latency_ms: 100,             // Bluetooth has higher latency
                     connected_at: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
@@ -464,13 +568,13 @@ impl BluetoothRouter {
                     tokens_earned: 0,
                     stability_score: 0.8,
                     zhtp_authenticated: false, // Will be set after authentication
-                    quantum_secure: false, // Will be set after Kyber exchange
+                    quantum_secure: false,     // Will be set after Kyber exchange
                     peer_dilithium_pubkey: None,
                     kyber_shared_secret: None,
                     trust_score: 0.5,
                     bootstrap_mode: false,
                 };
-                
+
                 // Add to mesh connections (Ticket #146: Use UnifiedPeerId as key)
                 {
                     let mut connections = mesh_router.connections.write().await;
@@ -524,32 +628,42 @@ impl BluetoothRouter {
                         lib_network::peer_registry::PeerTier::Tier3,
                         0.8,
                     );
-                    connections.upsert(peer_entry).await.expect("Failed to upsert peer");
+                    connections
+                        .upsert(peer_entry)
+                        .await
+                        .expect("Failed to upsert peer");
                     // No need to drop(connections) as it will be dropped automatically
-                    
-                    info!("✅ Bluetooth peer {} added to mesh network ({} total peers)",
-                        handshake.node_id, connections.all_peers().count());
+
+                    info!(
+                        "✅ Bluetooth peer {} added to mesh network ({} total peers)",
+                        handshake.node_id,
+                        connections.all_peers().count()
+                    );
                 }
-                
+
                 // Run full authentication, key exchange, and DHT registration (same as TCP!)
                 info!("🔐 Starting automatic authentication (no pairing code needed)");
-                let _ = mesh_router.authenticate_and_register_peer(&peer_pubkey, &handshake, &addr, &mut stream).await;
-                
+                let _ = mesh_router
+                    .authenticate_and_register_peer(&peer_pubkey, &handshake, &addr, &mut stream)
+                    .await;
+
                 // Send acknowledgment
                 let ack = bincode::serialize(&true)?;
                 let _ = stream.write_all(&ack).await;
-                
+
                 info!("✅ Bluetooth peer fully integrated - zero-trust authentication complete!");
-                
             } else {
                 // Legacy text-based Bluetooth messages (DHT bridge)
                 let message = String::from_utf8_lossy(&buffer[..bytes_read]);
-                
+
                 if message.starts_with("ZHTP-MESH:") || message.starts_with("DHT:") {
                     info!("🌉 Bridging Bluetooth ZHTP traffic to DHT network");
-                    
+
                     // ACTUALLY CALL THE BRIDGE FUNCTION
-                    match mesh_router.bridge_bluetooth_to_dht(&buffer[..bytes_read], &addr).await {
+                    match mesh_router
+                        .bridge_bluetooth_to_dht(&buffer[..bytes_read], &addr)
+                        .await
+                    {
                         Ok(()) => {
                             info!("✅ Bluetooth message successfully bridged to DHT");
                             let response = format!(
@@ -576,21 +690,21 @@ impl BluetoothRouter {
                     );
                     let _ = stream.write_all(response.as_bytes()).await;
                 }
-                
+
                 // Store legacy connection
                 let mut devices = self.connected_devices.write().await;
                 devices.insert(addr.to_string(), "bluetooth-legacy-bridge".to_string());
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Get the Bluetooth service name visible to phones
     pub fn get_service_name(&self) -> String {
         format!("ZHTP-{}", hex::encode(&self.node_id[..4]))
     }
-    
+
     /// Check if Bluetooth is advertising and discoverable
     pub async fn is_advertising(&self) -> bool {
         if let Some(protocol) = self.protocol.read().await.as_ref() {
@@ -599,7 +713,7 @@ impl BluetoothRouter {
             false
         }
     }
-    
+
     /// Get connected phone devices
     pub async fn get_connected_phones(&self) -> HashMap<String, String> {
         self.connected_devices.read().await.clone()

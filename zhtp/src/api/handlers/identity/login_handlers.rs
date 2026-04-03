@@ -11,16 +11,16 @@
 //! - Audit logging for security events
 //! - No sensitive data in logs
 
-use std::sync::Arc;
-use std::collections::HashMap;
-use tokio::sync::RwLock;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use zeroize::{Zeroize, Zeroizing};
 
 // ZHTP protocol imports
-use lib_protocols::zhtp::ZhtpResult;
 use lib_protocols::types::{ZhtpResponse, ZhtpStatus};
+use lib_protocols::zhtp::ZhtpResult;
 
 // Identity management imports
 use lib_identity::IdentityManager;
@@ -28,11 +28,8 @@ use lib_identity::IdentityManager;
 // Session management
 use crate::session_manager::SessionManager;
 
-// Import shared helpers from common module
-use crate::api::handlers::common::{extract_client_ip, extract_user_agent};
-
 // Rate limiting and CSRF protection via dependency injection
-use crate::api::middleware::{RateLimiter, CsrfProtection};
+use crate::api::middleware::{CsrfProtection, RateLimiter};
 
 /// Account lockout tracker
 #[derive(Clone)]
@@ -46,7 +43,7 @@ impl AccountLockout {
     pub fn new() -> Self {
         Self {
             failed_attempts: Arc::new(RwLock::new(HashMap::new())),
-            max_attempts: 5, // Lock after 5 failed attempts
+            max_attempts: 5,               // Lock after 5 failed attempts
             lockout_duration_seconds: 900, // 15 minutes
         }
     }
@@ -80,7 +77,9 @@ impl AccountLockout {
             .as_secs();
 
         let mut attempts = self.failed_attempts.write().await;
-        let entry = attempts.entry(identity_id.to_string()).or_insert_with(Vec::new);
+        let entry = attempts
+            .entry(identity_id.to_string())
+            .or_insert_with(Vec::new);
 
         // Remove old attempts outside lockout window
         entry.retain(|&t| now - t < self.lockout_duration_seconds);
@@ -156,7 +155,7 @@ struct AuthAuditLog {
     timestamp: u64,
     ip_address: String,
     success: bool,
-    identity_exists: bool,
+    _identity_exists: bool,
     failure_reason: Option<String>,
 }
 
@@ -179,6 +178,34 @@ impl AuthAuditLog {
     }
 }
 
+/// Extract client IP from request headers
+fn extract_client_ip(request: &lib_protocols::types::ZhtpRequest) -> String {
+    // Try X-Real-IP first (from reverse proxy)
+    if let Some(ip) = request.headers.get("X-Real-IP") {
+        return ip;
+    }
+
+    // Try X-Forwarded-For (may contain multiple IPs, take first)
+    if let Some(forwarded) = request.headers.get("X-Forwarded-For") {
+        if let Some(first_ip) = forwarded.split(',').next() {
+            return first_ip.trim().to_string();
+        }
+    }
+
+    // Fallback to "unknown" if no IP headers found
+    // This should log a warning in production
+    tracing::warn!("No client IP found in request headers");
+    "unknown".to_string()
+}
+
+/// Extract User-Agent from request headers (P0-6)
+fn extract_user_agent(request: &lib_protocols::types::ZhtpRequest) -> String {
+    request
+        .headers
+        .get("User-Agent")
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 /// Check HTTPS enforcement for production (P0-5)
 fn check_https(request: &lib_protocols::types::ZhtpRequest) -> Result<(), ZhtpResponse> {
     // Only enforce HTTPS in production (non-debug builds)
@@ -195,9 +222,14 @@ fn check_https(request: &lib_protocols::types::ZhtpRequest) -> Result<(), ZhtpRe
         } else {
             // No X-Forwarded-Proto header - assume direct connection
             // In production, this should be configured with reverse proxy
-            tracing::warn!("No X-Forwarded-Proto header found - HTTPS enforcement cannot be verified");
+            tracing::warn!(
+                "No X-Forwarded-Proto header found - HTTPS enforcement cannot be verified"
+            );
         }
     }
+
+    #[cfg(debug_assertions)]
+    let _ = request;
 
     Ok(())
 }
@@ -219,7 +251,17 @@ pub async fn handle_signin(
 
     let client_ip = extract_client_ip(request);
     let user_agent = extract_user_agent(request);
-    handle_signin_with_ip(request_body, identity_manager, session_manager, rate_limiter, account_lockout, csrf_protection, &client_ip, &user_agent).await
+    handle_signin_with_ip(
+        request_body,
+        identity_manager,
+        session_manager,
+        rate_limiter,
+        account_lockout,
+        csrf_protection,
+        &client_ip,
+        &user_agent,
+    )
+    .await
 }
 
 /// Handle signin request with IP address for rate limiting
@@ -244,9 +286,10 @@ pub async fn handle_signin_with_ip(
             timestamp: now,
             ip_address: client_ip.to_string(),
             success: false,
-            identity_exists: false,
+            _identity_exists: false,
             failure_reason: Some("rate_limit_exceeded".to_string()),
-        }.log();
+        }
+        .log();
 
         return Ok(response);
     }
@@ -270,9 +313,10 @@ pub async fn handle_signin_with_ip(
                         timestamp: now,
                         ip_address: client_ip.to_string(),
                         success: false,
-                        identity_exists: false,
+                        _identity_exists: false,
                         failure_reason: Some("invalid_did_format".to_string()),
-                    }.log();
+                    }
+                    .log();
 
                     return Ok(ZhtpResponse::error(
                         ZhtpStatus::BadRequest,
@@ -285,9 +329,10 @@ pub async fn handle_signin_with_ip(
                     timestamp: now,
                     ip_address: client_ip.to_string(),
                     success: false,
-                    identity_exists: false,
+                    _identity_exists: false,
                     failure_reason: Some("missing_did_prefix".to_string()),
-                }.log();
+                }
+                .log();
 
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::BadRequest,
@@ -301,9 +346,10 @@ pub async fn handle_signin_with_ip(
                 timestamp: now,
                 ip_address: client_ip.to_string(),
                 success: false,
-                identity_exists: false,
+                _identity_exists: false,
                 failure_reason: Some("missing_identifier".to_string()),
-            }.log();
+            }
+            .log();
 
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::BadRequest,
@@ -323,9 +369,10 @@ pub async fn handle_signin_with_ip(
             timestamp: now,
             ip_address: client_ip.to_string(),
             success: false,
-            identity_exists: false,
+            _identity_exists: false,
             failure_reason: Some("account_locked_out".to_string()),
-        }.log();
+        }
+        .log();
 
         return Ok(ZhtpResponse::error(
             ZhtpStatus::TooManyRequests,
@@ -338,7 +385,14 @@ pub async fn handle_signin_with_ip(
 
     // P0-3: Constant-time operations - validate password regardless of identity existence
     // This prevents timing attacks that could enumerate valid identity IDs
-    let validation_result: Result<Option<(String, lib_identity::IdentityType, lib_identity::AccessLevel, u64)>> = {
+    let validation_result: Result<
+        Option<(
+            String,
+            lib_identity::IdentityType,
+            lib_identity::AccessLevel,
+            u64,
+        )>,
+    > = {
         let manager = identity_manager.read().await;
 
         // Always attempt to get identity (even if it doesn't exist)
@@ -359,14 +413,12 @@ pub async fn handle_signin_with_ip(
 
         // Extract identity data only if validation succeeded
         match (identity_option, validation) {
-            (Some(identity), Ok(val)) if val.valid => {
-                Ok(Some((
-                    identity.did.clone(),
-                    identity.identity_type.clone(),
-                    identity.access_level.clone(),
-                    identity.created_at,
-                )))
-            }
+            (Some(identity), Ok(val)) if val.valid => Ok(Some((
+                identity.did.clone(),
+                identity.identity_type.clone(),
+                identity.access_level.clone(),
+                identity.created_at,
+            ))),
             _ => Ok(None),
         }
     };
@@ -383,9 +435,10 @@ pub async fn handle_signin_with_ip(
                 timestamp: now,
                 ip_address: client_ip.to_string(),
                 success: false,
-                identity_exists: false,
+                _identity_exists: false,
                 failure_reason: Some("invalid_credentials".to_string()),
-            }.log();
+            }
+            .log();
 
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::Unauthorized,
@@ -415,9 +468,10 @@ pub async fn handle_signin_with_ip(
         timestamp: now,
         ip_address: client_ip.to_string(),
         success: true,
-        identity_exists: true,
+        _identity_exists: true,
         failure_reason: None,
-    }.log();
+    }
+    .log();
 
     // Generate CSRF token for this session (P0-7)
     let csrf_token = csrf_protection.generate_token(&session_token);
@@ -457,7 +511,16 @@ pub async fn handle_login(
     request: &lib_protocols::types::ZhtpRequest,
 ) -> ZhtpResult<ZhtpResponse> {
     // Login is identical to signin
-    handle_signin(request_body, identity_manager, session_manager, rate_limiter, account_lockout, csrf_protection, request).await
+    handle_signin(
+        request_body,
+        identity_manager,
+        session_manager,
+        rate_limiter,
+        account_lockout,
+        csrf_protection,
+        request,
+    )
+    .await
 }
 
 #[cfg(test)]

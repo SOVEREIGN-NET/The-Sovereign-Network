@@ -14,8 +14,7 @@ fn main() {
         if info_plist_path.exists() {
             // Copy Info.plist to output directory
             let dest_path = PathBuf::from(&out_dir).join("Info.plist");
-            fs::copy(&info_plist_path, &dest_path)
-                .expect("Failed to copy Info.plist");
+            fs::copy(&info_plist_path, &dest_path).expect("Failed to copy Info.plist");
 
             println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=10.15");
 
@@ -26,7 +25,9 @@ fn main() {
             println!("cargo:rustc-link-arg=__info_plist");
             println!("cargo:rustc-link-arg={}", dest_path.display());
 
-            println!("cargo:warning=Embedded Info.plist into macOS binary for Bluetooth permissions");
+            println!(
+                "cargo:warning=Embedded Info.plist into macOS binary for Bluetooth permissions"
+            );
         }
     }
 }

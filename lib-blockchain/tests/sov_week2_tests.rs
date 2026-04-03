@@ -16,9 +16,9 @@
 //! - MANDATORY_TRIBUTE_PERCENTAGE = 20%
 
 // Include contract modules
+use lib_blockchain::contracts::economics::*;
 use lib_blockchain::contracts::governance::*;
 use lib_blockchain::contracts::treasuries::*;
-use lib_blockchain::contracts::economics::*;
 
 // ============================================================================
 // TEST CONSTANTS
@@ -33,6 +33,7 @@ const VOTER2: [u8; 32] = [6u8; 32];
 const VOTER3: [u8; 32] = [7u8; 32];
 
 const VOTING_POWER_BASE: u64 = 100_000 * 10_u64.pow(8); // 100k with 8 decimals
+const TEST_TOTAL_VOTING_POWER: u64 = 1_000_000; // Smaller value for easier test math
 
 // ============================================================================
 // GOVERNANCE TESTS
@@ -60,8 +61,14 @@ fn test_governance_cannot_init_twice() {
 
 #[test]
 fn test_governance_voting_period_constant() {
-    assert_eq!(VOTING_PERIOD_SECONDS, 604_800, "Voting period must be exactly 7 days");
-    assert_eq!(TIMELOCK_DELAY_SECONDS, 172_800, "Timelock must be exactly 2 days");
+    assert_eq!(
+        VOTING_PERIOD_SECONDS, 604_800,
+        "Voting period must be exactly 7 days"
+    );
+    assert_eq!(
+        TIMELOCK_DELAY_SECONDS, 172_800,
+        "Timelock must be exactly 2 days"
+    );
 }
 
 #[test]
@@ -143,21 +150,18 @@ fn test_governance_voting_flow() {
     governance.update_total_voting_power(VOTING_POWER_BASE * 10);
     governance.set_current_timestamp(0);
 
-    let proposal_id = governance.create_proposal(
-        PROPOSER,
-        "Test Proposal".to_string(),
-        "Test Description".to_string(),
-        ProposalCategory::Regular,
-        MIN_VOTING_POWER_FOR_PROPOSAL,
-    ).unwrap();
+    let proposal_id = governance
+        .create_proposal(
+            PROPOSER,
+            "Test Proposal".to_string(),
+            "Test Description".to_string(),
+            ProposalCategory::Regular,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        )
+        .unwrap();
 
     // Vote during voting period
-    let vote_result = governance.vote(
-        proposal_id,
-        VOTER1,
-        VoteType::For,
-        VOTING_POWER_BASE,
-    );
+    let vote_result = governance.vote(proposal_id, VOTER1, VoteType::For, VOTING_POWER_BASE);
     assert!(vote_result.is_ok());
 
     let proposal = governance.get_proposal(proposal_id).unwrap();
@@ -171,15 +175,19 @@ fn test_governance_cannot_vote_twice() {
     governance.update_total_voting_power(VOTING_POWER_BASE * 10);
     governance.set_current_timestamp(0);
 
-    let proposal_id = governance.create_proposal(
-        PROPOSER,
-        "Test Proposal".to_string(),
-        "Test Description".to_string(),
-        ProposalCategory::Regular,
-        MIN_VOTING_POWER_FOR_PROPOSAL,
-    ).unwrap();
+    let proposal_id = governance
+        .create_proposal(
+            PROPOSER,
+            "Test Proposal".to_string(),
+            "Test Description".to_string(),
+            ProposalCategory::Regular,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        )
+        .unwrap();
 
-    governance.vote(proposal_id, VOTER1, VoteType::For, VOTING_POWER_BASE).unwrap();
+    governance
+        .vote(proposal_id, VOTER1, VoteType::For, VOTING_POWER_BASE)
+        .unwrap();
 
     let result = governance.vote(proposal_id, VOTER1, VoteType::For, VOTING_POWER_BASE);
     assert_eq!(result, Err(GovernanceError::AlreadyVoted));
@@ -192,13 +200,15 @@ fn test_governance_voting_period_check() {
     governance.update_total_voting_power(VOTING_POWER_BASE * 10);
     governance.set_current_timestamp(0);
 
-    let proposal_id = governance.create_proposal(
-        PROPOSER,
-        "Test Proposal".to_string(),
-        "Test Description".to_string(),
-        ProposalCategory::Regular,
-        MIN_VOTING_POWER_FOR_PROPOSAL,
-    ).unwrap();
+    let proposal_id = governance
+        .create_proposal(
+            PROPOSER,
+            "Test Proposal".to_string(),
+            "Test Description".to_string(),
+            ProposalCategory::Regular,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        )
+        .unwrap();
 
     // Try to vote before voting starts
     governance.set_current_timestamp(0);
@@ -215,20 +225,26 @@ fn test_governance_voting_period_check() {
 fn test_governance_finalize_voting_majority_passes() {
     let mut governance = Governance::new();
     governance.init(ADMIN).unwrap();
-    governance.update_total_voting_power(VOTING_POWER_BASE * 10);
+    governance.update_total_voting_power(TEST_TOTAL_VOTING_POWER);
     governance.set_current_timestamp(0);
 
-    let proposal_id = governance.create_proposal(
-        PROPOSER,
-        "Test Proposal".to_string(),
-        "Test Description".to_string(),
-        ProposalCategory::Regular,
-        MIN_VOTING_POWER_FOR_PROPOSAL,
-    ).unwrap();
+    let proposal_id = governance
+        .create_proposal(
+            PROPOSER,
+            "Test Proposal".to_string(),
+            "Test Description".to_string(),
+            ProposalCategory::Regular,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        )
+        .unwrap();
 
-    // Vote: 60% for, 40% against
-    governance.vote(proposal_id, VOTER1, VoteType::For, 600 * 10_000).unwrap();
-    governance.vote(proposal_id, VOTER2, VoteType::Against, 400 * 10_000).unwrap();
+    // Vote: 60% for, 40% against (total = 100% meets quorum)
+    governance
+        .vote(proposal_id, VOTER1, VoteType::For, 600_000)
+        .unwrap();
+    governance
+        .vote(proposal_id, VOTER2, VoteType::Against, 400_000)
+        .unwrap();
 
     // Finalize after voting period
     governance.set_current_timestamp(VOTING_PERIOD_SECONDS + 1);
@@ -242,20 +258,26 @@ fn test_governance_finalize_voting_majority_passes() {
 fn test_governance_finalize_voting_majority_fails() {
     let mut governance = Governance::new();
     governance.init(ADMIN).unwrap();
-    governance.update_total_voting_power(VOTING_POWER_BASE * 10);
+    governance.update_total_voting_power(TEST_TOTAL_VOTING_POWER);
     governance.set_current_timestamp(0);
 
-    let proposal_id = governance.create_proposal(
-        PROPOSER,
-        "Test Proposal".to_string(),
-        "Test Description".to_string(),
-        ProposalCategory::Regular,
-        MIN_VOTING_POWER_FOR_PROPOSAL,
-    ).unwrap();
+    let proposal_id = governance
+        .create_proposal(
+            PROPOSER,
+            "Test Proposal".to_string(),
+            "Test Description".to_string(),
+            ProposalCategory::Regular,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        )
+        .unwrap();
 
-    // Vote: 40% for, 60% against (fails majority)
-    governance.vote(proposal_id, VOTER1, VoteType::For, 400 * 10_000).unwrap();
-    governance.vote(proposal_id, VOTER2, VoteType::Against, 600 * 10_000).unwrap();
+    // Vote: 40% for, 60% against (fails majority, total = 100% meets quorum)
+    governance
+        .vote(proposal_id, VOTER1, VoteType::For, 400_000)
+        .unwrap();
+    governance
+        .vote(proposal_id, VOTER2, VoteType::Against, 600_000)
+        .unwrap();
 
     governance.set_current_timestamp(VOTING_PERIOD_SECONDS + 1);
     governance.finalize_voting(proposal_id).unwrap();
@@ -268,18 +290,23 @@ fn test_governance_finalize_voting_majority_fails() {
 fn test_governance_timelock_enforcement() {
     let mut governance = Governance::new();
     governance.init(ADMIN).unwrap();
-    governance.update_total_voting_power(VOTING_POWER_BASE * 10);
+    governance.update_total_voting_power(TEST_TOTAL_VOTING_POWER);
     governance.set_current_timestamp(0);
 
-    let proposal_id = governance.create_proposal(
-        PROPOSER,
-        "Test Proposal".to_string(),
-        "Test Description".to_string(),
-        ProposalCategory::Regular,
-        MIN_VOTING_POWER_FOR_PROPOSAL,
-    ).unwrap();
+    let proposal_id = governance
+        .create_proposal(
+            PROPOSER,
+            "Test Proposal".to_string(),
+            "Test Description".to_string(),
+            ProposalCategory::Regular,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        )
+        .unwrap();
 
-    governance.vote(proposal_id, VOTER1, VoteType::For, VOTING_POWER_BASE).unwrap();
+    // Vote with enough power to meet quorum (>50% of 1M = >500K)
+    governance
+        .vote(proposal_id, VOTER1, VoteType::For, 600_000)
+        .unwrap();
     governance.set_current_timestamp(VOTING_PERIOD_SECONDS + 1);
     governance.finalize_voting(proposal_id).unwrap();
 
@@ -300,20 +327,26 @@ fn test_governance_timelock_enforcement() {
 fn test_governance_supermajority_threshold() {
     let mut governance = Governance::new();
     governance.init(ADMIN).unwrap();
-    governance.update_total_voting_power(VOTING_POWER_BASE * 10);
+    governance.update_total_voting_power(TEST_TOTAL_VOTING_POWER);
     governance.set_current_timestamp(0);
 
-    let proposal_id = governance.create_proposal(
-        PROPOSER,
-        "Constitutional Amendment".to_string(),
-        "Test Description".to_string(),
-        ProposalCategory::Constitutional,
-        MIN_VOTING_POWER_FOR_PROPOSAL,
-    ).unwrap();
+    let proposal_id = governance
+        .create_proposal(
+            PROPOSER,
+            "Constitutional Amendment".to_string(),
+            "Test Description".to_string(),
+            ProposalCategory::Constitutional,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        )
+        .unwrap();
 
-    // Vote: 65% for (below 66.67% supermajority)
-    governance.vote(proposal_id, VOTER1, VoteType::For, 650 * 10_000).unwrap();
-    governance.vote(proposal_id, VOTER2, VoteType::Against, 350 * 10_000).unwrap();
+    // Vote: 65% for (below 66.67% supermajority), total = 100% meets quorum
+    governance
+        .vote(proposal_id, VOTER1, VoteType::For, 650_000)
+        .unwrap();
+    governance
+        .vote(proposal_id, VOTER2, VoteType::Against, 350_000)
+        .unwrap();
 
     governance.set_current_timestamp(VOTING_PERIOD_SECONDS + 1);
     governance.finalize_voting(proposal_id).unwrap();
@@ -323,16 +356,22 @@ fn test_governance_supermajority_threshold() {
 
     // Vote: 67% for (meets supermajority)
     governance.set_current_timestamp(0);
-    let proposal_id2 = governance.create_proposal(
-        PROPOSER,
-        "Constitutional Amendment 2".to_string(),
-        "Test Description".to_string(),
-        ProposalCategory::Constitutional,
-        MIN_VOTING_POWER_FOR_PROPOSAL,
-    ).unwrap();
+    let proposal_id2 = governance
+        .create_proposal(
+            PROPOSER,
+            "Constitutional Amendment 2".to_string(),
+            "Test Description".to_string(),
+            ProposalCategory::Constitutional,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        )
+        .unwrap();
 
-    governance.vote(proposal_id2, VOTER1, VoteType::For, 670 * 10_000).unwrap();
-    governance.vote(proposal_id2, VOTER2, VoteType::Against, 330 * 10_000).unwrap();
+    governance
+        .vote(proposal_id2, VOTER1, VoteType::For, 670_000)
+        .unwrap();
+    governance
+        .vote(proposal_id2, VOTER2, VoteType::Against, 330_000)
+        .unwrap();
 
     governance.set_current_timestamp(VOTING_PERIOD_SECONDS + 1);
     governance.finalize_voting(proposal_id2).unwrap();
@@ -515,7 +554,7 @@ fn test_forprofit_treasury_no_dividend_before_tribute() {
     // Try to pay dividend before tribute
     let result = treasury.spend(
         SpendingCategory::Dividend,
-         100_000,
+        100_000,
         ADMIN,
         "Dividend".to_string(),
         ADMIN,
@@ -613,12 +652,7 @@ fn test_tribute_router_profit_declaration() {
     let mut router = TributeRouter::new();
     router.init(ADMIN, NONPROFIT_TREASURY).unwrap();
 
-    let result = router.declare_profit(
-        ADMIN,
-        1_000_000,
-        None,
-        "Q1 Profit".to_string(),
-    );
+    let result = router.declare_profit(ADMIN, 1_000_000, None, "Q1 Profit".to_string());
 
     assert!(result.is_ok());
     let settlement = router.get_settlement(result.unwrap()).unwrap();
@@ -630,12 +664,9 @@ fn test_tribute_router_tribute_routing() {
     let mut router = TributeRouter::new();
     router.init(ADMIN, NONPROFIT_TREASURY).unwrap();
 
-    let settlement_id = router.declare_profit(
-        ADMIN,
-        1_000_000,
-        None,
-        "Profit".to_string(),
-    ).unwrap();
+    let settlement_id = router
+        .declare_profit(ADMIN, 1_000_000, None, "Profit".to_string())
+        .unwrap();
 
     let result = router.settle_tribute(settlement_id);
     assert!(result.is_ok());
@@ -652,11 +683,15 @@ fn test_tribute_router_multiple_profits() {
 
     // Declare multiple profits
     router.set_current_timestamp(0);
-    let id1 = router.declare_profit(ADMIN, 1_000_000, None, "Q1".to_string()).unwrap();
+    let id1 = router
+        .declare_profit(ADMIN, 1_000_000, None, "Q1".to_string())
+        .unwrap();
 
     // Advance time to avoid anti-circumvention rule
     router.set_current_timestamp(86400 + 1);
-    let id2 = router.declare_profit(ADMIN, 500_000, None, "Q2".to_string()).unwrap();
+    let id2 = router
+        .declare_profit(ADMIN, 500_000, None, "Q2".to_string())
+        .unwrap();
 
     router.settle_tribute(id1).unwrap();
     router.settle_tribute(id2).unwrap();
@@ -681,7 +716,9 @@ fn test_tribute_router_anti_circumvention_min_interval() {
     router.set_current_timestamp(0);
 
     // First declaration at timestamp 0
-    let _id1 = router.declare_profit(ADMIN, 1_000_000, None, "Profit 1".to_string()).unwrap();
+    let _id1 = router
+        .declare_profit(ADMIN, 1_000_000, None, "Profit 1".to_string())
+        .unwrap();
 
     // Try declaration before minimum interval (1 day)
     router.set_current_timestamp(43200); // 12 hours later
@@ -711,15 +748,16 @@ fn test_tribute_router_consistent_20_percent_calculation() {
         // Advance time between declarations to avoid anti-circumvention rule
         router.set_current_timestamp(86400 * (i as u64 + 1));
 
-        let settlement_id = router.declare_profit(
-            ADMIN,
-            *profit,
-            None,
-            format!("Test {}", i),
-        ).unwrap();
+        let settlement_id = router
+            .declare_profit(ADMIN, *profit, None, format!("Test {}", i))
+            .unwrap();
 
         let settlement = router.get_settlement(settlement_id).unwrap();
-        assert_eq!(settlement.tribute_amount, *expected_tribute, "Tribute calculation failed for profit {}", profit);
+        assert_eq!(
+            settlement.tribute_amount, *expected_tribute,
+            "Tribute calculation failed for profit {}",
+            profit
+        );
     }
 }
 
@@ -732,7 +770,7 @@ fn test_week2_complete_flow() {
     // Initialize all contracts
     let mut governance = Governance::new();
     governance.init(ADMIN).unwrap();
-    governance.update_total_voting_power(VOTING_POWER_BASE * 10);
+    governance.update_total_voting_power(TEST_TOTAL_VOTING_POWER);
     governance.set_current_timestamp(0);
 
     let mut nonprofit = NonprofitTreasury::new();
@@ -748,29 +786,37 @@ fn test_week2_complete_flow() {
     let forprofit_declaration = forprofit.declare_profit(1_000_000, ADMIN, None).unwrap();
 
     // 2. Tribute is settled
-    forprofit.settle_tribute(forprofit_declaration, ADMIN).unwrap();
+    forprofit
+        .settle_tribute(forprofit_declaration, ADMIN)
+        .unwrap();
 
     // 3. Simulate transfer of tribute to nonprofit (in real system, this is enforced by contract calls)
     nonprofit.receive(FOR_PROFIT_TREASURY, 200_000).unwrap();
 
     // 4. Create governance proposal to spend nonprofit funds
-    let proposal_id = governance.create_proposal(
-        PROPOSER,
-        "Community Grant".to_string(),
-        "Allocate nonprofit funds for community good".to_string(),
-        ProposalCategory::Regular,
-        MIN_VOTING_POWER_FOR_PROPOSAL,
-    ).unwrap();
+    let proposal_id = governance
+        .create_proposal(
+            PROPOSER,
+            "Community Grant".to_string(),
+            "Allocate nonprofit funds for community good".to_string(),
+            ProposalCategory::Regular,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        )
+        .unwrap();
 
-    // 5. Vote on proposal
-    governance.vote(proposal_id, VOTER1, VoteType::For, VOTING_POWER_BASE).unwrap();
+    // 5. Vote on proposal (>50% of TEST_TOTAL_VOTING_POWER to meet quorum)
+    governance
+        .vote(proposal_id, VOTER1, VoteType::For, 600_000)
+        .unwrap();
 
     // 6. Finalize voting
     governance.set_current_timestamp(VOTING_PERIOD_SECONDS + 1);
     governance.finalize_voting(proposal_id).unwrap();
 
     // 7. Request withdrawal from nonprofit (after proposal approval)
-    let withdrawal = nonprofit.request_withdrawal(ADMIN, 100_000, proposal_id).unwrap();
+    let withdrawal = nonprofit
+        .request_withdrawal(ADMIN, 100_000, proposal_id)
+        .unwrap();
     nonprofit.approve_withdrawal(withdrawal, ADMIN).unwrap();
     nonprofit.execute_withdrawal(withdrawal, ADMIN).unwrap();
 
@@ -779,7 +825,10 @@ fn test_week2_complete_flow() {
     assert_eq!(nonprofit.total_withdrawn(), 100_000);
     assert_eq!(forprofit.total_tribute_paid(), 200_000);
     assert_eq!(router.total_tribute_collected(), 0); // Router is separate layer
-    assert_eq!(governance.get_proposal(proposal_id).unwrap().status, ProposalStatus::Approved);
+    assert_eq!(
+        governance.get_proposal(proposal_id).unwrap().status,
+        ProposalStatus::Approved
+    );
 }
 
 #[test]

@@ -18,38 +18,33 @@
 //! Key functions are decorated with `#[instrument]` for automatic span creation.
 
 pub mod backend;
-pub mod node;
-pub mod routing;
-pub mod network;
-pub mod storage;
 pub mod messaging;
+pub mod network;
+pub mod node;
 pub mod peer_management;
-pub mod replication;
 pub mod peer_registry; // Ticket #148: Internal DHT peer registry
-pub mod transport; // Ticket #152: Multi-protocol transport abstraction
 pub mod registry_trait; // Ticket #1.14: Trait for unified registry integration
-pub mod signing; // Issue #676: DHT message signing and verification
+pub mod replication;
+pub mod routing;
+pub mod signing;
+pub mod storage;
+pub mod transport; // Ticket #152: Multi-protocol transport abstraction // Issue #676: DHT message signing and verification
 
 // Re-export main DHT components
-pub use node::*;
-pub use routing::*;
-pub use network::*;
-pub use storage::*;
 pub use messaging::*;
+pub use network::*;
+pub use node::*;
 pub use peer_management::*;
-pub use replication::*;
 pub use peer_registry::*; // Ticket #148
-pub use transport::{DhtTransport, PeerId, UdpDhtTransport}; // Ticket #152
 pub use registry_trait::DhtPeerRegistryTrait; // Ticket #1.14
+pub use replication::*;
+pub use routing::*;
 pub use signing::{
-    MessageSigner,
-    verify_message_signature,
-    verify_message_signature_bytes,
-    requires_signature,
-    SigningError,
-    VerificationError,
-    MAX_FUTURE_TIMESTAMP_SECS,
-}; // Issue #676
+    requires_signature, verify_message_signature, verify_message_signature_bytes, MessageSigner,
+    SigningError, VerificationError, MAX_FUTURE_TIMESTAMP_SECS,
+};
+pub use storage::*;
+pub use transport::{DhtTransport, PeerId, UdpDhtTransport}; // Ticket #152 // Issue #676
 
 // DHT Configuration Constants
 pub const DHT_PORT: u16 = 33442;

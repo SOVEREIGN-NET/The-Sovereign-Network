@@ -4,17 +4,25 @@
 //! exchange Kyber1024 keys, and validate Dilithium5 signatures. Hybrid
 //! mode mixes PQC secrets with classical session keys for defense in depth.
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use hkdf::Hkdf;
+use serde::{Deserialize, Serialize};
 use sha3::Sha3_256;
-use serde::{Serialize, Deserialize};
 
-use lib_crypto::{
-    post_quantum::{
-        kyber1024_keypair, kyber1024_encapsulate, kyber1024_decapsulate,
-        dilithium5_keypair, dilithium5_sign, dilithium5_verify,
-    },
+use lib_crypto::post_quantum::{
+    dilithium5_keypair, dilithium_sign, dilithium_verify, kyber1024_decapsulate,
+    kyber1024_encapsulate, kyber1024_keypair,
 };
+
+fn fp8(label: &'static str, bytes: &[u8]) -> String {
+    // Debug fingerprint only (non-secret): blake3(data) prefix.
+    // Never log raw key material.
+    format!(
+        "{}:{}",
+        label,
+        hex::encode(&lib_crypto::hash_blake3(bytes)[..8])
+    )
+}
 
 /// Supported PQC capability suites
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -54,8 +62,8 @@ impl PqcCapability {
         match (local, remote) {
             (Kyber1024Dilithium5, Kyber1024Dilithium5) => Kyber1024Dilithium5,
             (HybridEd25519Dilithium5, HybridEd25519Dilithium5) => HybridEd25519Dilithium5,
-            (Kyber1024Dilithium5, HybridEd25519Dilithium5) |
-            (HybridEd25519Dilithium5, Kyber1024Dilithium5) => HybridEd25519Dilithium5,
+            (Kyber1024Dilithium5, HybridEd25519Dilithium5)
+            | (HybridEd25519Dilithium5, Kyber1024Dilithium5) => HybridEd25519Dilithium5,
             _ => None,
         }
     }
@@ -92,8 +100,19 @@ pub fn create_pqc_offer(suite: PqcCapability) -> Result<(PqcHandshakeOffer, PqcH
     let (dilithium_pk, dilithium_sk) = dilithium5_keypair();
 
     let kyber_pk_vec = kyber_pk.to_vec();
+    tracing::debug!(
+        kyber_pk = %fp8("kyber_pk", &kyber_pk_vec),
+        kyber_sk = %fp8("kyber_sk", &kyber_sk),
+        "PQC offer created (ephemeral keypair)"
+    );
+    eprintln!(
+        "PQC offer created debug {} {}",
+        fp8("kyber_pk", &kyber_pk_vec),
+        fp8("kyber_sk", &kyber_sk)
+    );
+
     let binder = binder_bytes(suite.as_str(), &kyber_pk_vec);
-    let signature = dilithium5_sign(&binder, &dilithium_sk)?;
+    let signature = dilithium_sign(&binder, &dilithium_sk)?;
 
     let offer = PqcHandshakeOffer {
         suite: suite.clone(),
@@ -111,17 +130,33 @@ pub fn create_pqc_offer(suite: PqcCapability) -> Result<(PqcHandshakeOffer, PqcH
     Ok((offer, state))
 }
 
-/// Verify a PQC offer (Dilithium5 signature over binder)
+/// Verify a PQC offer (Dilithium signature over binder)
 pub fn verify_pqc_offer(offer: &PqcHandshakeOffer) -> Result<()> {
+    println!(
+        "verify_pqc_offer: pk_len={}, sig_len={}, kyber_pk_len={}",
+        offer.dilithium_public_key.len(),
+        offer.signature.len(),
+        offer.kyber_public_key.len()
+    );
     if !offer.suite.is_enabled() {
+        println!("verify_pqc_offer: FAILED - suite disabled");
         return Err(anyhow!("Peer PQC suite disabled"));
     }
 
     let binder = binder_bytes(offer.suite.as_str(), &offer.kyber_public_key);
-    let valid = dilithium5_verify(&binder, &offer.signature, &offer.dilithium_public_key)?;
+    println!(
+        "verify_pqc_offer: binder_len={}, calling dilithium_verify",
+        binder.len()
+    );
+    let valid = dilithium_verify(&binder, &offer.signature, &offer.dilithium_public_key)?;
     if !valid {
-        return Err(anyhow!("Invalid Dilithium5 signature on PQC offer"));
+        println!("verify_pqc_offer: FAILED - dilithium_verify returned false");
+        return Err(anyhow!(
+            "Invalid Dilithium signature on PQC offer (pk_len={})",
+            offer.dilithium_public_key.len()
+        ));
     }
+    println!("verify_pqc_offer: SUCCESS");
     Ok(())
 }
 
@@ -132,8 +167,22 @@ pub fn encapsulate_pqc(offer: &PqcHandshakeOffer) -> Result<(Vec<u8>, [u8; 32])>
     if !offer.suite.is_enabled() {
         return Err(anyhow!("PQC not enabled for encapsulation"));
     }
-    let kdf_info = b"ZHTP-KEM-v1.0";
-    kyber1024_encapsulate(&offer.kyber_public_key, kdf_info)
+    let kdf_info = b"ZHTP-KEM-v2.0";
+    let result = kyber1024_encapsulate(&offer.kyber_public_key, kdf_info)?;
+    tracing::debug!(
+        kyber_pk = %fp8("kyber_pk", &offer.kyber_public_key),
+        ciphertext = %fp8("ct", &result.0),
+        pqc_shared_prefix = ?hex::encode(&result.1[..8]),
+        ciphertext_len = result.0.len(),
+        "PQC encapsulate (initiator)"
+    );
+    eprintln!(
+        "PQC encapsulate debug {} {} shared_prefix={}",
+        fp8("kyber_pk", &offer.kyber_public_key),
+        fp8("ct", &result.0),
+        hex::encode(&result.1[..8])
+    );
+    Ok(result)
 }
 
 /// Decapsulate a Kyber shared secret using local state
@@ -141,16 +190,39 @@ pub fn decapsulate_pqc(ciphertext: &[u8], state: &PqcHandshakeState) -> Result<[
     if !state.suite.is_enabled() {
         return Err(anyhow!("PQC not enabled for decapsulation"));
     }
-    let kdf_info = b"ZHTP-KEM-v1.0";
-    kyber1024_decapsulate(ciphertext, &state.kyber_secret_key, kdf_info)
+    let kdf_info = b"ZHTP-KEM-v2.0";
+    let shared = kyber1024_decapsulate(ciphertext, &state.kyber_secret_key, kdf_info)?;
+    tracing::debug!(
+        kyber_sk = %fp8("kyber_sk", &state.kyber_secret_key),
+        ciphertext = %fp8("ct", ciphertext),
+        pqc_shared_prefix = ?hex::encode(&shared[..8]),
+        ciphertext_len = ciphertext.len(),
+        "PQC decapsulate (responder)"
+    );
+    eprintln!(
+        "PQC decapsulate debug {} {} shared_prefix={}",
+        fp8("kyber_sk", &state.kyber_secret_key),
+        fp8("ct", ciphertext),
+        hex::encode(&shared[..8])
+    );
+    Ok(shared)
 }
 
 /// Derive a hybrid session key that mixes PQC and classical secrets
-pub fn derive_hybrid_session_key(pqc_shared: &[u8; 32], classical_session_key: &[u8; 32]) -> Result<[u8; 32]> {
+pub fn derive_hybrid_session_key(
+    pqc_shared: &[u8; 32],
+    classical_session_key: &[u8; 32],
+) -> Result<[u8; 32]> {
     let hk = Hkdf::<Sha3_256>::new(Some(classical_session_key), pqc_shared);
     let mut out = [0u8; 32];
     hk.expand(b"ZHTP-HYBRID-SESSION", &mut out)
         .map_err(|_| anyhow!("HKDF expansion failed"))?;
+    tracing::debug!(
+        pqc_shared_prefix = ?hex::encode(&pqc_shared[..8]),
+        classical_key_prefix = ?hex::encode(&classical_session_key[..8]),
+        hybrid_key_prefix = ?hex::encode(&out[..8]),
+        "derive_hybrid_session_key"
+    );
     Ok(out)
 }
 
@@ -186,9 +258,21 @@ mod tests {
     #[test]
     fn test_pqc_negotiation_priority() {
         use PqcCapability::*;
-        assert_eq!(PqcCapability::negotiate(Kyber1024Dilithium5, Kyber1024Dilithium5), Kyber1024Dilithium5);
-        assert_eq!(PqcCapability::negotiate(HybridEd25519Dilithium5, Kyber1024Dilithium5), HybridEd25519Dilithium5);
-        assert_eq!(PqcCapability::negotiate(HybridEd25519Dilithium5, HybridEd25519Dilithium5), HybridEd25519Dilithium5);
-        assert_eq!(PqcCapability::negotiate(None, HybridEd25519Dilithium5), None);
+        assert_eq!(
+            PqcCapability::negotiate(Kyber1024Dilithium5, Kyber1024Dilithium5),
+            Kyber1024Dilithium5
+        );
+        assert_eq!(
+            PqcCapability::negotiate(HybridEd25519Dilithium5, Kyber1024Dilithium5),
+            HybridEd25519Dilithium5
+        );
+        assert_eq!(
+            PqcCapability::negotiate(HybridEd25519Dilithium5, HybridEd25519Dilithium5),
+            HybridEd25519Dilithium5
+        );
+        assert_eq!(
+            PqcCapability::negotiate(None, HybridEd25519Dilithium5),
+            None
+        );
     }
 }

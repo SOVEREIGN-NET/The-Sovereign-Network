@@ -10,7 +10,6 @@ use tracing::debug;
 use super::gatt::GattMessage;
 use super::BluetoothMeshProtocol;
 
-
 impl BluetoothMeshProtocol {
     pub(crate) async fn register_mesh_gatt_service(
         &self,
@@ -45,7 +44,8 @@ impl BluetoothMeshProtocol {
                 .await?;
         }
 
-        self.start_gatt_characteristic_handlers(&characteristics).await?;
+        self.start_gatt_characteristic_handlers(&characteristics)
+            .await?;
 
         for char_uuid in &characteristics {
             info!("Registered characteristic: {}", char_uuid);
@@ -87,19 +87,22 @@ impl BluetoothMeshProtocol {
 
         #[cfg(target_os = "linux")]
         {
-            return self.linux_read_gatt_characteristic(device_address, char_uuid)
+            return self
+                .linux_read_gatt_characteristic(device_address, char_uuid)
                 .await;
         }
 
         #[cfg(target_os = "windows")]
         {
-            return self.windows_read_gatt_characteristic(device_address, char_uuid)
+            return self
+                .windows_read_gatt_characteristic(device_address, char_uuid)
                 .await;
         }
 
         #[cfg(target_os = "macos")]
         {
-            return self.macos_read_gatt_characteristic(device_address, char_uuid)
+            return self
+                .macos_read_gatt_characteristic(device_address, char_uuid)
                 .await;
         }
 
@@ -192,7 +195,10 @@ impl BluetoothMeshProtocol {
 
         match result {
             Ok(data) => data,
-            Err(_) => Err(anyhow!("Notification timeout after {} seconds", timeout_secs)),
+            Err(_) => Err(anyhow!(
+                "Notification timeout after {} seconds",
+                timeout_secs
+            )),
         }
     }
 
@@ -223,11 +229,7 @@ impl BluetoothMeshProtocol {
         Err(anyhow!("Platform not supported for service discovery"))
     }
 
-    async fn enable_gatt_notifications(
-        &self,
-        device_address: &str,
-        char_uuid: &str,
-    ) -> Result<()> {
+    async fn enable_gatt_notifications(&self, device_address: &str, char_uuid: &str) -> Result<()> {
         #[cfg(any(test, feature = "ble-mock"))]
         {
             if let Some(backend) = self.gatt_backend().await {
@@ -239,17 +241,23 @@ impl BluetoothMeshProtocol {
 
         #[cfg(target_os = "linux")]
         {
-            return self.linux_enable_notifications(device_address, char_uuid).await;
+            return self
+                .linux_enable_notifications(device_address, char_uuid)
+                .await;
         }
 
         #[cfg(target_os = "windows")]
         {
-            return self.windows_enable_notifications(device_address, char_uuid).await;
+            return self
+                .windows_enable_notifications(device_address, char_uuid)
+                .await;
         }
 
         #[cfg(target_os = "macos")]
         {
-            return self.macos_enable_notifications(device_address, char_uuid).await;
+            return self
+                .macos_enable_notifications(device_address, char_uuid)
+                .await;
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
@@ -272,17 +280,23 @@ impl BluetoothMeshProtocol {
 
         #[cfg(target_os = "linux")]
         {
-            return self.linux_disable_notifications(device_address, char_uuid).await;
+            return self
+                .linux_disable_notifications(device_address, char_uuid)
+                .await;
         }
 
         #[cfg(target_os = "windows")]
         {
-            return self.windows_disable_notifications(device_address, char_uuid).await;
+            return self
+                .windows_disable_notifications(device_address, char_uuid)
+                .await;
         }
 
         #[cfg(target_os = "macos")]
         {
-            return self.macos_disable_notifications(device_address, char_uuid).await;
+            return self
+                .macos_disable_notifications(device_address, char_uuid)
+                .await;
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
@@ -305,17 +319,23 @@ impl BluetoothMeshProtocol {
 
         #[cfg(target_os = "linux")]
         {
-            return self.linux_wait_notification_data(device_address, char_uuid).await;
+            return self
+                .linux_wait_notification_data(device_address, char_uuid)
+                .await;
         }
 
         #[cfg(target_os = "windows")]
         {
-            return self.windows_wait_notification_data(device_address, char_uuid).await;
+            return self
+                .windows_wait_notification_data(device_address, char_uuid)
+                .await;
         }
 
         #[cfg(target_os = "macos")]
         {
-            return self.macos_wait_notification_data(device_address, char_uuid).await;
+            return self
+                .macos_wait_notification_data(device_address, char_uuid)
+                .await;
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
@@ -392,7 +412,10 @@ Value=00
             Storage::Streams::*,
         };
 
-        info!(" Windows: Creating GATT Service Provider with UUID: {}", service_uuid);
+        info!(
+            " Windows: Creating GATT Service Provider with UUID: {}",
+            service_uuid
+        );
 
         let service_guid = crate::protocols::bluetooth::common::parse_uuid_to_guid(service_uuid)?;
 
@@ -681,7 +704,9 @@ Value=00
         char_uuid: &str,
     ) -> Result<Vec<u8>> {
         let dbus_device_path = self.resolve_device_address(device_address).await?;
-        let char_handle = self.get_characteristic_handle(device_address, char_uuid).await?;
+        let char_handle = self
+            .get_characteristic_handle(device_address, char_uuid)
+            .await?;
 
         use std::process::Command;
 
@@ -783,7 +808,9 @@ Value=00
         data: &[u8],
     ) -> Result<()> {
         let dbus_device_path = self.resolve_device_address(device_address).await?;
-        let char_handle = self.get_characteristic_handle(device_address, char_uuid).await?;
+        let char_handle = self
+            .get_characteristic_handle(device_address, char_uuid)
+            .await?;
 
         use std::process::Command;
 
@@ -836,7 +863,9 @@ Value=00
         use std::process::Command;
 
         let dbus_device_path = self.resolve_device_address(device_address).await?;
-        let char_handle = self.get_characteristic_handle(device_address, char_uuid).await?;
+        let char_handle = self
+            .get_characteristic_handle(device_address, char_uuid)
+            .await?;
 
         let dbus_char_path = format!(
             "/org/bluez/hci0/{}/service0001/char{:04x}",
@@ -853,7 +882,10 @@ Value=00
             .output()?;
 
         if output.status.success() {
-            info!(" Linux: Notifications enabled for characteristic {}", char_uuid);
+            info!(
+                " Linux: Notifications enabled for characteristic {}",
+                char_uuid
+            );
             Ok(())
         } else {
             Err(anyhow!(
@@ -872,7 +904,9 @@ Value=00
         use std::process::Command;
 
         let dbus_device_path = self.resolve_device_address(device_address).await?;
-        let char_handle = self.get_characteristic_handle(device_address, char_uuid).await?;
+        let char_handle = self
+            .get_characteristic_handle(device_address, char_uuid)
+            .await?;
 
         let dbus_char_path = format!(
             "/org/bluez/hci0/{}/service0001/char{:04x}",
@@ -888,7 +922,10 @@ Value=00
             ])
             .output()?;
 
-        info!("Linux: Notifications disabled for characteristic {}", char_uuid);
+        info!(
+            "Linux: Notifications disabled for characteristic {}",
+            char_uuid
+        );
         Ok(())
     }
 
@@ -902,7 +939,9 @@ Value=00
         use tokio::time::{sleep, Duration};
 
         let dbus_device_path = self.resolve_device_address(device_address).await?;
-        let char_handle = self.get_characteristic_handle(device_address, char_uuid).await?;
+        let char_handle = self
+            .get_characteristic_handle(device_address, char_uuid)
+            .await?;
 
         let dbus_char_path = format!(
             "/org/bluez/hci0/{}/service0001/char{:04x}",
@@ -926,7 +965,10 @@ Value=00
                 let response = String::from_utf8_lossy(&output.stdout);
                 if let Some(data) = self.extract_dbus_byte_array(&response) {
                     if !data.is_empty() {
-                        info!("📥 Linux: Received notification data ({} bytes)", data.len());
+                        info!(
+                            "📥 Linux: Received notification data ({} bytes)",
+                            data.len()
+                        );
                         return Ok(data);
                     }
                 }
@@ -980,18 +1022,15 @@ Value=00
         #[cfg(feature = "windows-gatt")]
         {
             use windows::{
-                core::GUID,
-                Devices::Bluetooth::BluetoothLEDevice,
-                Devices::Bluetooth::GenericAttributeProfile::*,
-                Foundation::Collections::*,
+                core::GUID, Devices::Bluetooth::BluetoothLEDevice,
+                Devices::Bluetooth::GenericAttributeProfile::*, Foundation::Collections::*,
                 Storage::Streams::*,
             };
 
             let bluetooth_address = self.parse_windows_bluetooth_address(device_address)?;
 
-            let ble_device_async =
-                BluetoothLEDevice::FromBluetoothAddressAsync(bluetooth_address)
-                    .map_err(|e| anyhow!("Failed to get BLE device: {:?}", e))?;
+            let ble_device_async = BluetoothLEDevice::FromBluetoothAddressAsync(bluetooth_address)
+                .map_err(|e| anyhow!("Failed to get BLE device: {:?}", e))?;
             let ble_device = ble_device_async
                 .get()
                 .map_err(|e| anyhow!("Failed to await BLE device: {:?}", e))?;
@@ -1071,7 +1110,10 @@ Value=00
                 }
             }
 
-            Err(anyhow!("Characteristic {} not found or not readable", char_uuid))
+            Err(anyhow!(
+                "Characteristic {} not found or not readable",
+                char_uuid
+            ))
         }
 
         #[cfg(not(feature = "windows-gatt"))]
@@ -1118,18 +1160,15 @@ Value=00
         #[cfg(feature = "windows-gatt")]
         {
             use windows::{
-                core::GUID,
-                Devices::Bluetooth::BluetoothLEDevice,
-                Devices::Bluetooth::GenericAttributeProfile::*,
-                Foundation::Collections::*,
+                core::GUID, Devices::Bluetooth::BluetoothLEDevice,
+                Devices::Bluetooth::GenericAttributeProfile::*, Foundation::Collections::*,
                 Storage::Streams::*,
             };
 
             let bluetooth_address = self.parse_windows_bluetooth_address(device_address)?;
 
-            let ble_device_async =
-                BluetoothLEDevice::FromBluetoothAddressAsync(bluetooth_address)
-                    .map_err(|e| anyhow!("Failed to get BLE device: {:?}", e))?;
+            let ble_device_async = BluetoothLEDevice::FromBluetoothAddressAsync(bluetooth_address)
+                .map_err(|e| anyhow!("Failed to get BLE device: {:?}", e))?;
             let ble_device = ble_device_async
                 .get()
                 .map_err(|e| anyhow!("Failed to await BLE device: {:?}", e))?;
@@ -1208,9 +1247,8 @@ Value=00
             use windows::Devices::Bluetooth::GenericAttributeProfile::*;
 
             let bluetooth_address = self.parse_windows_bluetooth_address(device_address)?;
-            let ble_device_async =
-                BluetoothLEDevice::FromBluetoothAddressAsync(bluetooth_address)
-                    .map_err(|e| anyhow!("Failed to get BLE device: {:?}", e))?;
+            let ble_device_async = BluetoothLEDevice::FromBluetoothAddressAsync(bluetooth_address)
+                .map_err(|e| anyhow!("Failed to get BLE device: {:?}", e))?;
             let ble_device = ble_device_async
                 .get()
                 .map_err(|e| anyhow!("Failed to await BLE device: {:?}", e))?;
@@ -1260,9 +1298,8 @@ Value=00
 
             let bluetooth_address = self.parse_windows_bluetooth_address(device_address)?;
 
-            let ble_device_async =
-                BluetoothLEDevice::FromBluetoothAddressAsync(bluetooth_address)
-                    .map_err(|e| anyhow!("Failed to get BLE device: {:?}", e))?;
+            let ble_device_async = BluetoothLEDevice::FromBluetoothAddressAsync(bluetooth_address)
+                .map_err(|e| anyhow!("Failed to get BLE device: {:?}", e))?;
             let ble_device = ble_device_async
                 .get()
                 .map_err(|e| anyhow!("Failed to await BLE device: {:?}", e))?;
@@ -1333,9 +1370,8 @@ Value=00
 
             let bluetooth_address = self.parse_windows_bluetooth_address(device_address)?;
 
-            let ble_device_async =
-                BluetoothLEDevice::FromBluetoothAddressAsync(bluetooth_address)
-                    .map_err(|e| anyhow!("Failed to get BLE device: {:?}", e))?;
+            let ble_device_async = BluetoothLEDevice::FromBluetoothAddressAsync(bluetooth_address)
+                .map_err(|e| anyhow!("Failed to get BLE device: {:?}", e))?;
             let ble_device = ble_device_async
                 .get()
                 .map_err(|e| anyhow!("Failed to await BLE device: {:?}", e))?;
@@ -1377,7 +1413,10 @@ Value=00
             }
         }
 
-        info!("Windows: Notifications disabled for characteristic {}", char_uuid);
+        info!(
+            "Windows: Notifications disabled for characteristic {}",
+            char_uuid
+        );
         Ok(())
     }
 
@@ -1400,7 +1439,9 @@ Value=00
 
         #[cfg(not(feature = "windows-gatt"))]
         {
-            Err(anyhow!("Windows GATT notifications require windows-gatt feature"))
+            Err(anyhow!(
+                "Windows GATT notifications require windows-gatt feature"
+            ))
         }
     }
 
@@ -1431,7 +1472,11 @@ mod tests {
 
     #[async_trait]
     impl GattBackend for MockBackend {
-        async fn read_characteristic(&self, _device_address: &str, _char_uuid: &str) -> Result<Vec<u8>> {
+        async fn read_characteristic(
+            &self,
+            _device_address: &str,
+            _char_uuid: &str,
+        ) -> Result<Vec<u8>> {
             Ok(vec![])
         }
 
@@ -1459,13 +1504,21 @@ mod tests {
             }
         }
 
-        async fn enable_notifications(&self, _device_address: &str, _char_uuid: &str) -> Result<()> {
+        async fn enable_notifications(
+            &self,
+            _device_address: &str,
+            _char_uuid: &str,
+        ) -> Result<()> {
             let mut calls = self.enable_calls.lock().unwrap();
             *calls += 1;
             Ok(())
         }
 
-        async fn disable_notifications(&self, _device_address: &str, _char_uuid: &str) -> Result<()> {
+        async fn disable_notifications(
+            &self,
+            _device_address: &str,
+            _char_uuid: &str,
+        ) -> Result<()> {
             let mut calls = self.disable_calls.lock().unwrap();
             *calls += 1;
             Ok(())

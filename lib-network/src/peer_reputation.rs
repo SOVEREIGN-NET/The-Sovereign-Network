@@ -19,8 +19,8 @@
 //! 4. Disconnect is reversible; banning is explicit
 //! 5. Reputation enforcement never alters consensus state
 
-use std::collections::HashMap;
 use lib_identity::IdentityId;
+use std::collections::HashMap;
 
 /// Peer reputation event types with their reputation delta weights
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
@@ -55,6 +55,7 @@ pub struct PeerReputation {
     /// Whether this peer is banned (prevents reconnection)
     is_banned: bool,
     /// Track event counts for idempotence verification
+    #[allow(dead_code)]
     event_counts: HashMap<String, u32>,
 }
 
@@ -170,10 +171,7 @@ impl PeerReputationManager {
     ///
     /// Returns 50 (default) if peer not in tracking system.
     pub fn get_reputation_score(&self, peer_id: &IdentityId) -> u8 {
-        self.peers
-            .get(peer_id)
-            .map(|p| p.score())
-            .unwrap_or(50)
+        self.peers.get(peer_id).map(|p| p.score()).unwrap_or(50)
     }
 
     /// Check if peer should be disconnected

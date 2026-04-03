@@ -1,9 +1,7 @@
 //! Tests for Byzantine fault detection system
 
 use anyhow::Result;
-use lib_consensus::{
-    ByzantineFaultDetector, ByzantineFaultType, FaultSeverity, ValidatorManager,
-};
+use lib_consensus::{ByzantineFaultDetector, ByzantineFaultType, FaultSeverity, ValidatorManager};
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -11,6 +9,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Helper function to create test identity
 fn create_test_identity(name: &str) -> IdentityId {
     Hash::from_bytes(&hash_blake3(name.as_bytes()))
+}
+
+fn validator_keys(seed: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    (
+        vec![seed; 32],
+        vec![seed.wrapping_add(64); 32],
+        vec![seed.wrapping_add(128); 32],
+    )
 }
 
 #[test]
@@ -174,11 +180,14 @@ fn test_fault_processing_and_slashing() -> Result<()> {
 
     // Register a validator
     let validator_id = create_test_identity("malicious_validator");
+    let (consensus_key, networking_key, rewards_key) = validator_keys(1);
     validator_manager.register_validator(
         validator_id.clone(),
         2000 * 1_000_000,
         200 * 1024 * 1024 * 1024,
-        vec![1u8; 32],
+        consensus_key,
+        networking_key,
+        rewards_key,
         5,
     )?;
 
@@ -192,7 +201,7 @@ fn test_fault_processing_and_slashing() -> Result<()> {
     let faults = detector.detect_faults(&validator_manager)?;
 
     // Process the faults (apply slashing)
-    detector.process_faults(faults, &mut validator_manager)?;
+    detector.process_faults(faults, &mut validator_manager, 100)?;
 
     // Verify slashing was applied
     let validator = validator_manager.get_validator(&validator_id).unwrap();
@@ -227,7 +236,11 @@ fn test_fault_record_cleanup() {
 
     // After cleanup with far future timestamp, old faults should be cleaned
     let faults_after = detector.detect_faults(&validator_manager).unwrap();
-    assert_eq!(faults_after.len(), 0, "Expected cleanup to remove old faults");
+    assert_eq!(
+        faults_after.len(),
+        0,
+        "Expected cleanup to remove old faults"
+    );
 }
 
 #[test]

@@ -24,14 +24,15 @@ impl ZkConsensusIntegration {
         Ok(Self { zk_system })
     }
 
-    fn derive_identity_inputs(validator_id: &IdentityId) -> Result<(u64, u64, u64, u64, u64, u64, u64)> {
+    fn derive_identity_inputs(
+        validator_id: &IdentityId,
+    ) -> Result<(u64, u64, u64, u64, u64, u64, u64)> {
         let identity_hash = hash_blake3(validator_id.as_bytes());
 
-        let identity_secret = u64::from_le_bytes(
-            identity_hash[0..8]
-                .try_into()
-                .map_err(|_| ConsensusError::ZkError("Invalid identity secret bytes".to_string()))?,
-        );
+        let identity_secret =
+            u64::from_le_bytes(identity_hash[0..8].try_into().map_err(|_| {
+                ConsensusError::ZkError("Invalid identity secret bytes".to_string())
+            })?);
         let age_seed = u64::from_le_bytes(
             identity_hash[8..16]
                 .try_into()
@@ -65,13 +66,15 @@ impl ZkConsensusIntegration {
     }
 
     fn serialize_zk_proof(proof: &ZkProof) -> Result<Vec<u8>> {
-        bincode::serialize(proof)
-            .map_err(|e| ConsensusError::ZkError(format!("Failed to serialize ZK proof: {e}")).into())
+        bincode::serialize(proof).map_err(|e| {
+            ConsensusError::ZkError(format!("Failed to serialize ZK proof: {e}")).into()
+        })
     }
 
     fn deserialize_zk_proof(data: &[u8]) -> Result<ZkProof> {
-        bincode::deserialize(data)
-            .map_err(|e| ConsensusError::ZkError(format!("Failed to deserialize ZK proof: {e}")).into())
+        bincode::deserialize(data).map_err(|e| {
+            ConsensusError::ZkError(format!("Failed to deserialize ZK proof: {e}")).into()
+        })
     }
 
     /// Generate ZK-DID proof for validator identity
@@ -139,11 +142,10 @@ impl ZkConsensusIntegration {
             return Ok(false);
         }
 
-        let identity_secret = u64::from_le_bytes(
-            plonky2_proof.proof[0..8]
-                .try_into()
-                .map_err(|_| ConsensusError::ZkError("Invalid identity proof bytes".to_string()))?,
-        );
+        let identity_secret =
+            u64::from_le_bytes(plonky2_proof.proof[0..8].try_into().map_err(|_| {
+                ConsensusError::ZkError("Invalid identity proof bytes".to_string())
+            })?);
 
         Ok(identity_secret == expected_identity_secret)
     }
@@ -230,7 +232,11 @@ impl ZkConsensusIntegration {
     }
 
     /// Verify work proof without revealing work details
-    pub async fn verify_work_proof_zk(&self, proof: &ZkProof, commitment: &[u8; 8]) -> Result<bool> {
+    pub async fn verify_work_proof_zk(
+        &self,
+        proof: &ZkProof,
+        commitment: &[u8; 8],
+    ) -> Result<bool> {
         let Some(plonky2_proof) = &proof.plonky2_proof else {
             return Ok(false);
         };
@@ -291,6 +297,7 @@ impl ZkConsensusIntegration {
             id: proposal_id.clone(),
             proposer: validator_id.clone(),
             height,
+            round: 0,
             previous_hash,
             block_data,
             timestamp: std::time::SystemTime::now()

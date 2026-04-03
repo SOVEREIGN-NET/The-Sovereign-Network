@@ -7,11 +7,11 @@
 //!
 //! These are convenience APIs matching the old ZHTP implementation.
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use base64::Engine;
 
 // ZHTP protocol imports
 use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
@@ -55,12 +55,10 @@ impl ZhtpRequestHandler for CryptoHandler {
             (ZhtpMethod::Post, "/api/v1/crypto/generate_keypair") => {
                 self.handle_generate_keypair(request).await
             }
-            _ => {
-                Ok(create_error_response(
-                    ZhtpStatus::NotFound,
-                    "Crypto endpoint not found".to_string(),
-                ))
-            }
+            _ => Ok(create_error_response(
+                ZhtpStatus::NotFound,
+                "Crypto endpoint not found".to_string(),
+            )),
         };
 
         match response {
@@ -93,13 +91,13 @@ impl ZhtpRequestHandler for CryptoHandler {
 #[derive(Deserialize)]
 struct SignMessageRequest {
     identity_id: String,
-    message: String, // Base64 or hex encoded
+    message: String,          // Base64 or hex encoded
     encoding: Option<String>, // "base64", "hex", or "utf8" (default)
 }
 
 #[derive(Serialize)]
 struct SignMessageResponse {
-    signature: String, // Hex encoded
+    signature: String,  // Hex encoded
     public_key: String, // Hex encoded (1312-byte Dilithium2 key)
     algorithm: String,
     message_hash: String,
@@ -107,9 +105,9 @@ struct SignMessageResponse {
 
 #[derive(Deserialize)]
 struct VerifySignatureRequest {
-    signature: String, // Hex encoded
+    signature: String,  // Hex encoded
     public_key: String, // Hex encoded
-    message: String, // Base64 or hex encoded
+    message: String,    // Base64 or hex encoded
     encoding: Option<String>,
 }
 
@@ -122,7 +120,7 @@ struct VerifySignatureResponse {
 
 #[derive(Serialize)]
 struct GenerateKeypairResponse {
-    public_key: String, // Hex encoded Dilithium2 public key
+    public_key: String,  // Hex encoded Dilithium2 public key
     private_key: String, // Hex encoded Dilithium2 private key (SENSITIVE!)
     algorithm: String,
     warning: String,
@@ -137,7 +135,7 @@ impl CryptoHandler {
         // Parse identity ID
         let identity_hash = hex::decode(&sign_req.identity_id)
             .map_err(|e| anyhow!("Invalid hex for identity_id: {}", e))?;
-        
+
         if identity_hash.len() != 32 {
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
@@ -152,14 +150,11 @@ impl CryptoHandler {
         // Decode message based on encoding
         let encoding = sign_req.encoding.as_deref().unwrap_or("utf8");
         let message_bytes = match encoding {
-            "base64" => {
-                base64::engine::general_purpose::STANDARD.decode(&sign_req.message)
-                    .map_err(|e| anyhow!("Invalid base64: {}", e))?
-            }
-            "hex" => {
-                hex::decode(&sign_req.message)
-                    .map_err(|e| anyhow!("Invalid hex for message: {}", e))?
-            }
+            "base64" => base64::engine::general_purpose::STANDARD
+                .decode(&sign_req.message)
+                .map_err(|e| anyhow!("Invalid base64: {}", e))?,
+            "hex" => hex::decode(&sign_req.message)
+                .map_err(|e| anyhow!("Invalid hex for message: {}", e))?,
             "utf8" | _ => sign_req.message.as_bytes().to_vec(),
         };
 
@@ -176,7 +171,9 @@ impl CryptoHandler {
         };
 
         // Get private key from identity (P1-7: private keys stored in identity)
-        let private_key = identity.private_key.as_ref()
+        let private_key = identity
+            .private_key
+            .as_ref()
             .ok_or_else(|| anyhow!("Identity missing private key"))?;
 
         // Create keypair for signing
@@ -226,20 +223,18 @@ impl CryptoHandler {
         // Decode message
         let encoding = verify_req.encoding.as_deref().unwrap_or("utf8");
         let message_bytes = match encoding {
-            "base64" => {
-                base64::engine::general_purpose::STANDARD.decode(&verify_req.message)
-                    .map_err(|e| anyhow!("Invalid base64: {}", e))?
-            }
-            "hex" => {
-                hex::decode(&verify_req.message)
-                    .map_err(|e| anyhow!("Invalid hex for message: {}", e))?
-            }
+            "base64" => base64::engine::general_purpose::STANDARD
+                .decode(&verify_req.message)
+                .map_err(|e| anyhow!("Invalid base64: {}", e))?,
+            "hex" => hex::decode(&verify_req.message)
+                .map_err(|e| anyhow!("Invalid hex for message: {}", e))?,
             "utf8" | _ => verify_req.message.as_bytes().to_vec(),
         };
 
         // Verify signature using lib-crypto
-        let valid = lib_crypto::verify_signature(&signature_bytes, &message_bytes, &public_key_bytes)
-            .unwrap_or(false);
+        let valid =
+            lib_crypto::verify_signature(&signature_bytes, &message_bytes, &public_key_bytes)
+                .unwrap_or(false);
 
         let message_hash = lib_crypto::hash_blake3(&message_bytes);
 
@@ -260,8 +255,8 @@ impl CryptoHandler {
     /// Generate a new Dilithium2 keypair
     async fn handle_generate_keypair(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
         // Generate new keypair
-        let keypair = KeyPair::generate()
-            .map_err(|e| anyhow!("Failed to generate keypair: {}", e))?;
+        let keypair =
+            KeyPair::generate().map_err(|e| anyhow!("Failed to generate keypair: {}", e))?;
 
         let response = GenerateKeypairResponse {
             public_key: hex::encode(&keypair.public_key.dilithium_pk),

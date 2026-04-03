@@ -58,7 +58,12 @@ impl BluetoothMeshProtocol {
         for line in output.lines() {
             if line.trim().starts_with("UUID:") {
                 if let Some(uuid_part) = line.split("UUID:").nth(1) {
-                    let uuid = uuid_part.trim().split_whitespace().next().unwrap_or("").to_string();
+                    let uuid = uuid_part
+                        .trim()
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("")
+                        .to_string();
                     if !uuid.is_empty() {
                         services.push(uuid);
                     }
@@ -180,6 +185,7 @@ impl BluetoothMeshProtocol {
     }
 
     /// Parse macOS GATT read output for a specific characteristic.
+    #[cfg(target_os = "macos")]
     pub(crate) fn parse_macos_gatt_data(
         &self,
         json_output: &str,
@@ -273,6 +279,7 @@ mod tests {
         assert_eq!(services.len(), 1);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn test_parse_macos_gatt_data() {
         let proto = protocol();
@@ -281,6 +288,7 @@ mod tests {
         assert_eq!(data.unwrap(), vec![1, 2, 3]);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn test_extract_macos_services() {
         let proto = protocol();
@@ -293,7 +301,9 @@ mod tests {
     #[test]
     fn test_parse_windows_bluetooth_address() {
         let proto = protocol();
-        let parsed = proto.parse_windows_bluetooth_address("AA:BB:CC:DD:EE:FF").unwrap();
+        let parsed = proto
+            .parse_windows_bluetooth_address("AA:BB:CC:DD:EE:FF")
+            .unwrap();
         assert_eq!(parsed, 0xAABBCCDDEEFF);
     }
 }

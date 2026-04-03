@@ -7,4 +7,8 @@ pub mod router;
 pub mod serialization;
 
 pub use router::ZhtpRouter;
-pub use serialization::{serialize_request, deserialize_request, serialize_response, deserialize_response};
+pub use serialization::{
+    deserialize_request, deserialize_request_with_format, deserialize_response,
+    deserialize_response_with_format, serialize_request, serialize_request_with_format,
+    serialize_response, serialize_response_with_format, PayloadFormat,
+};

@@ -1,11 +1,11 @@
 //! Plonky2 proof system implementation
-//! 
+//!
 //! This is the core ZK proof system implementation imported from the original
 //! zk_plonky2.rs file to maintain all production functionality.
 
-use anyhow::{Result, anyhow};
-use serde::{Serialize, Deserialize};
+use anyhow::{anyhow, Result};
 use lib_crypto::hashing::hash_blake3;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::info;
 
@@ -37,7 +37,7 @@ impl CircuitConfig {
         parameters.insert("degree_bits".to_string(), 10);
         parameters.insert("num_wires".to_string(), 100);
         parameters.insert("num_routed_wires".to_string(), 80);
-        
+
         Self {
             num_public_inputs: 4,
             security_bits: 128,
@@ -237,7 +237,7 @@ impl ZkCircuit {
     pub fn prove(&self, inputs: &[u64], private_inputs: &[u64]) -> Result<Plonky2Proof> {
         // Production proof generation would use actual Plonky2 here
         let proof_data = hash_blake3(&format!("{:?}{:?}", inputs, private_inputs).as_bytes());
-        
+
         Ok(Plonky2Proof {
             proof: proof_data.to_vec(),
             public_inputs: inputs.to_vec(),
@@ -246,7 +246,10 @@ impl ZkCircuit {
             generated_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_secs(),
-            circuit_id: format!("{:x}", u64::from_le_bytes(self.circuit_hash[0..8].try_into()?)),
+            circuit_id: format!(
+                "{:x}",
+                u64::from_le_bytes(self.circuit_hash[0..8].try_into()?)
+            ),
             private_input_commitment: hash_blake3(&format!("{:?}", private_inputs).as_bytes()),
         })
     }
@@ -263,7 +266,7 @@ impl ZkCircuit {
         if proof.public_inputs.len() != self.config.num_public_inputs {
             return Ok(false);
         }
-        
+
         // In production, this would use actual Plonky2 verification
         Ok(true)
     }
@@ -275,8 +278,8 @@ impl ZkCircuit {
             depth: 32, // Estimated depth
             public_input_count: self.public_inputs.len() as u32,
             constraint_count: self.constraints.len() as u64,
-            compilation_time_ms: 100, // Estimated compilation time
-            avg_proving_time_ms: 50,  // Estimated proving time
+            compilation_time_ms: 100,     // Estimated compilation time
+            avg_proving_time_ms: 50,      // Estimated proving time
             avg_verification_time_ms: 10, // Estimated verification time
         }
     }
@@ -331,9 +334,9 @@ impl ZkProofSystem {
     /// Initialize the production ZK proof system
     pub fn new() -> Result<Self> {
         info!("Initializing PRODUCTION ZK proof system with cryptographic security...");
-        
+
         let mut verification_keys = HashMap::new();
-        
+
         // Initialize circuit verification keys
         Self::setup_transaction_circuit(&mut verification_keys)?;
         Self::setup_identity_circuit(&mut verification_keys)?;
@@ -341,7 +344,7 @@ impl ZkProofSystem {
         Self::setup_storage_access_circuit(&mut verification_keys)?;
         Self::setup_routing_privacy_circuit(&mut verification_keys)?;
         Self::setup_data_integrity_circuit(&mut verification_keys)?;
-        
+
         info!("Transaction circuits: PRODUCTION READY with cryptographic soundness");
         info!("Identity circuits: PRODUCTION READY with zero-knowledge privacy");
         info!("Range proof circuits: PRODUCTION READY with bulletproof security");
@@ -356,27 +359,28 @@ impl ZkProofSystem {
             proof_stats: ZkProofStats::default(),
         })
     }
-    
+
     /// Setup transaction circuit with cryptographic constraints
     fn setup_transaction_circuit(vk_map: &mut HashMap<String, Vec<u8>>) -> Result<()> {
         let circuit_constraints = Self::compile_transaction_constraints()?;
-        let verification_key = Self::generate_verification_key("transaction", &circuit_constraints)?;
+        let verification_key =
+            Self::generate_verification_key("transaction", &circuit_constraints)?;
         vk_map.insert("transaction".to_string(), verification_key);
-        
+
         info!("Transaction circuit: zero-knowledge constraints compiled");
         Ok(())
     }
-    
+
     /// Setup identity circuit with biometric privacy
     fn setup_identity_circuit(vk_map: &mut HashMap<String, Vec<u8>>) -> Result<()> {
         let circuit_constraints = Self::compile_identity_constraints()?;
         let verification_key = Self::generate_verification_key("identity", &circuit_constraints)?;
         vk_map.insert("identity".to_string(), verification_key);
-        
+
         info!("Identity circuit: biometric privacy constraints compiled");
         Ok(())
     }
-    
+
     /// Setup other circuits with cryptographic implementations
     fn setup_range_proof_circuit(vk_map: &mut HashMap<String, Vec<u8>>) -> Result<()> {
         let circuit_constraints = Self::compile_range_constraints()?;
@@ -384,94 +388,101 @@ impl ZkProofSystem {
         vk_map.insert("range".to_string(), verification_key);
         Ok(())
     }
-    
+
     fn setup_storage_access_circuit(vk_map: &mut HashMap<String, Vec<u8>>) -> Result<()> {
         let circuit_constraints = Self::compile_storage_constraints()?;
         let verification_key = Self::generate_verification_key("storage", &circuit_constraints)?;
         vk_map.insert("storage".to_string(), verification_key);
         Ok(())
     }
-    
+
     fn setup_routing_privacy_circuit(vk_map: &mut HashMap<String, Vec<u8>>) -> Result<()> {
         let circuit_constraints = Self::compile_routing_constraints()?;
         let verification_key = Self::generate_verification_key("routing", &circuit_constraints)?;
         vk_map.insert("routing".to_string(), verification_key);
         Ok(())
     }
-    
+
     fn setup_data_integrity_circuit(vk_map: &mut HashMap<String, Vec<u8>>) -> Result<()> {
         let circuit_constraints = Self::compile_data_integrity_constraints()?;
-        let verification_key = Self::generate_verification_key("data_integrity", &circuit_constraints)?;
+        let verification_key =
+            Self::generate_verification_key("data_integrity", &circuit_constraints)?;
         vk_map.insert("data_integrity".to_string(), verification_key);
         Ok(())
     }
-    
+
     /// Compile cryptographic constraints for transaction proofs
     fn compile_transaction_constraints() -> Result<Vec<u8>> {
         let mut constraints = Vec::new();
-        
+
         // Constraint 1: Balance sufficiency
         constraints.extend_from_slice(b"BALANCE_CONSTRAINT:");
         constraints.extend_from_slice(&[1, 0, 0, 1, 1]); // Coefficient vector
-        
+
         // Constraint 2: Non-negative amounts
         constraints.extend_from_slice(b"POSITIVITY_CONSTRAINT:");
         constraints.extend_from_slice(&[0, 1, 0, 0, 0]); // Amount >= 0
         constraints.extend_from_slice(&[0, 0, 1, 0, 0]); // Fee >= 0
-        
+
         // Constraint 3: Nullifier uniqueness (prevents double spending)
         constraints.extend_from_slice(b"NULLIFIER_CONSTRAINT:");
         constraints.extend_from_slice(&[0, 0, 0, 0, 1]); // Nullifier commitment
-        
+
         // Constraint 4: Range constraints (prevent overflow attacks)
         constraints.extend_from_slice(b"RANGE_CONSTRAINT:");
         constraints.extend_from_slice(&[1, 1, 1, 0, 0]); // All values < 2^64
-        
-        info!("Transaction constraints: {} bytes of cryptographic constraints", constraints.len());
+
+        info!(
+            "Transaction constraints: {} bytes of cryptographic constraints",
+            constraints.len()
+        );
         Ok(constraints)
     }
-    
+
     /// Compile identity constraints with biometric privacy
     fn compile_identity_constraints() -> Result<Vec<u8>> {
         let mut constraints = Vec::new();
-        
+
         // Constraint 1: Biometric commitment validity
         constraints.extend_from_slice(b"BIOMETRIC_COMMITMENT:");
         constraints.extend_from_slice(&[1, 0, 1, 0, 0, 0]); // Hash commitment
-        
+
         // Constraint 2: Age range proof (18-120) without revealing exact age
         constraints.extend_from_slice(b"AGE_RANGE_PROOF:");
         constraints.extend_from_slice(&[0, 1, 0, 1, 0, 0]); // 18 <= age <= 120
-        
+
         // Constraint 3: Citizenship proof without location
         constraints.extend_from_slice(b"CITIZENSHIP_PROOF:");
         constraints.extend_from_slice(&[0, 0, 1, 0, 1, 0]); // Valid country code
-        
+
         // Constraint 4: Uniqueness without identity revelation
         constraints.extend_from_slice(b"UNIQUENESS_PROOF:");
         constraints.extend_from_slice(&[1, 1, 1, 1, 1, 1]); // Unique identifier
-        
-        info!("Identity constraints: {} bytes of privacy-preserving constraints", constraints.len());
+
+        info!(
+            "Identity constraints: {} bytes of privacy-preserving constraints",
+            constraints.len()
+        );
         Ok(constraints)
     }
-    
+
     /// Compile other constraint types
     fn compile_range_constraints() -> Result<Vec<u8>> {
         Ok(b"RANGE_PROOF_CONSTRAINTS:bulletproof_compatible".to_vec())
     }
-    
+
     fn compile_storage_constraints() -> Result<Vec<u8>> {
         Ok(b"STORAGE_ACCESS_CONSTRAINTS:merkle_tree_proof".to_vec())
     }
-    
+
     fn compile_routing_constraints() -> Result<Vec<u8>> {
         Ok(b"ROUTING_PRIVACY_CONSTRAINTS:onion_routing".to_vec())
     }
-    
+
     fn compile_data_integrity_constraints() -> Result<Vec<u8>> {
         Ok(b"DATA_INTEGRITY_CONSTRAINTS:erasure_coding".to_vec())
     }
-    
+
     /// Generate verification key from circuit constraints
     fn generate_verification_key(circuit_name: &str, constraints: &[u8]) -> Result<Vec<u8>> {
         let mut key_material = Vec::new();
@@ -479,15 +490,19 @@ impl ZkProofSystem {
         key_material.extend_from_slice(circuit_name.as_bytes());
         key_material.extend_from_slice(b":");
         key_material.extend_from_slice(constraints);
-        
+
         // Generate deterministic verification key
         let vk_hash = hash_blake3(&key_material);
         let mut verification_key = Vec::new();
         verification_key.extend_from_slice(&vk_hash);
         verification_key.extend_from_slice(&vk_hash); // Double for security
         verification_key.extend_from_slice(constraints);
-        
-        info!(" Verification key generated for {}: {} bytes", circuit_name, verification_key.len());
+
+        info!(
+            " Verification key generated for {}: {} bytes",
+            circuit_name,
+            verification_key.len()
+        );
         Ok(verification_key)
     }
 
@@ -506,7 +521,12 @@ impl ZkProofSystem {
 
         // Validate transaction constraints at proof generation time
         if amount + fee > sender_balance {
-            return Err(anyhow!("Insufficient balance: {} + {} > {}", amount, fee, sender_balance));
+            return Err(anyhow!(
+                "Insufficient balance: {} + {} > {}",
+                amount,
+                fee,
+                sender_balance
+            ));
         }
 
         if amount == 0 {
@@ -520,25 +540,28 @@ impl ZkProofSystem {
         proof_data.extend_from_slice(&fee.to_le_bytes());
         proof_data.extend_from_slice(&sender_secret.to_le_bytes());
         proof_data.extend_from_slice(&nullifier_seed.to_le_bytes());
-        
+
         let proof_hash = hash_blake3(&proof_data);
-        
+
         // Calculate private input commitment for audit trail
         // Using available function parameters (sender_secret is u64 in this optimized version)
         let private_inputs = [
             &sender_balance.to_le_bytes()[..],
             &sender_secret.to_le_bytes()[..],
             &nullifier_seed.to_le_bytes()[..],
-        ].concat();
+        ]
+        .concat();
         let private_input_commitment = hash_blake3(&private_inputs);
-        
+
         Ok(Plonky2Proof {
             proof: proof_data,
             public_inputs: vec![amount, fee, nullifier_seed],
             verification_key_hash: proof_hash,
             proof_system: "ZHTP-Optimized-Transaction".to_string(),
             circuit_id: "optimized-transaction".to_string(),
-            generated_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs(),
+            generated_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs(),
             private_input_commitment,
         })
     }
@@ -546,7 +569,7 @@ impl ZkProofSystem {
     /// Verify transaction proof (production-optimized)
     pub fn verify_transaction(&self, proof: &Plonky2Proof) -> Result<bool> {
         log::info!("ZkProofSystem::verify_transaction starting");
-        
+
         if !self.initialized {
             log::error!("ZkProofSystem not initialized");
             return Ok(false);
@@ -554,21 +577,28 @@ impl ZkProofSystem {
         log::info!("ZkProofSystem is initialized");
 
         // Verify proof structure and integrity
-        if proof.proof.len() < 40 { // 5 * 8 bytes minimum
+        if proof.proof.len() < 40 {
+            // 5 * 8 bytes minimum
             log::error!("Proof too short: {} bytes (minimum 40)", proof.proof.len());
             return Ok(false);
         }
         log::info!("Proof length valid: {} bytes", proof.proof.len());
 
         if proof.proof_system != "ZHTP-Optimized-Transaction" {
-            log::error!("Invalid proof system: '{}' (expected 'ZHTP-Optimized-Transaction')", proof.proof_system);
+            log::error!(
+                "Invalid proof system: '{}' (expected 'ZHTP-Optimized-Transaction')",
+                proof.proof_system
+            );
             return Ok(false);
         }
         log::info!("Proof system valid: '{}'", proof.proof_system);
 
         // Verify public inputs are consistent
         if proof.public_inputs.len() != 3 {
-            log::error!("Invalid public inputs length: {} (expected 3)", proof.public_inputs.len());
+            log::error!(
+                "Invalid public inputs length: {} (expected 3)",
+                proof.public_inputs.len()
+            );
             return Ok(false);
         }
         log::info!("Public inputs length valid: {}", proof.public_inputs.len());
@@ -577,32 +607,66 @@ impl ZkProofSystem {
         if proof.proof.len() >= 40 {
             // Check if this is a transaction circuit proof (longer format) or ZK system proof (shorter format)
             if proof.proof.len() >= 2048 {
-                log::info!("Using transaction circuit format (long proof: {} bytes)", proof.proof.len());
+                log::info!(
+                    "Using transaction circuit format (long proof: {} bytes)",
+                    proof.proof.len()
+                );
                 // Transaction circuit format: sender_balance(0-8), receiver_balance(8-16), amount(16-24), fee(24-32)
                 let sender_balance = u64::from_le_bytes([
-                    proof.proof[0], proof.proof[1], proof.proof[2], proof.proof[3],
-                    proof.proof[4], proof.proof[5], proof.proof[6], proof.proof[7],
+                    proof.proof[0],
+                    proof.proof[1],
+                    proof.proof[2],
+                    proof.proof[3],
+                    proof.proof[4],
+                    proof.proof[5],
+                    proof.proof[6],
+                    proof.proof[7],
                 ]);
                 let amount = u64::from_le_bytes([
-                    proof.proof[16], proof.proof[17], proof.proof[18], proof.proof[19],
-                    proof.proof[20], proof.proof[21], proof.proof[22], proof.proof[23],
+                    proof.proof[16],
+                    proof.proof[17],
+                    proof.proof[18],
+                    proof.proof[19],
+                    proof.proof[20],
+                    proof.proof[21],
+                    proof.proof[22],
+                    proof.proof[23],
                 ]);
                 let fee = u64::from_le_bytes([
-                    proof.proof[24], proof.proof[25], proof.proof[26], proof.proof[27],
-                    proof.proof[28], proof.proof[29], proof.proof[30], proof.proof[31],
+                    proof.proof[24],
+                    proof.proof[25],
+                    proof.proof[26],
+                    proof.proof[27],
+                    proof.proof[28],
+                    proof.proof[29],
+                    proof.proof[30],
+                    proof.proof[31],
                 ]);
 
-                log::info!("Extracted values: sender_balance={}, amount={}, fee={}", sender_balance, amount, fee);
+                log::info!(
+                    "Extracted values: sender_balance={}, amount={}, fee={}",
+                    sender_balance,
+                    amount,
+                    fee
+                );
 
                 // For transaction circuit format, public inputs contain [amount, fee, nullifier_u64]
                 // We only validate the first two since nullifier validation is different
                 if proof.public_inputs.len() >= 2 {
                     if amount != proof.public_inputs[0] {
-                        log::error!("Amount mismatch: proof={}, public_input={}", amount, proof.public_inputs[0]);
+                        log::error!(
+                            "Amount mismatch: proof={}, public_input={}",
+                            amount,
+                            proof.public_inputs[0]
+                        );
                         return Ok(false);
                     }
                     if fee != proof.public_inputs[1] {
-                        log::error!("Fee mismatch: proof={}, public_input={}", fee, proof.public_inputs[1]);
+                        log::error!(
+                            "Fee mismatch: proof={}, public_input={}",
+                            fee,
+                            proof.public_inputs[1]
+                        );
                         return Ok(false);
                     }
                     log::info!("Amount and fee match public inputs");
@@ -610,8 +674,13 @@ impl ZkProofSystem {
 
                 // Validate transaction constraints
                 if amount + fee > sender_balance {
-                    log::error!("Insufficient balance: amount({}) + fee({}) = {} > sender_balance({})", 
-                               amount, fee, amount + fee, sender_balance);
+                    log::error!(
+                        "Insufficient balance: amount({}) + fee({}) = {} > sender_balance({})",
+                        amount,
+                        fee,
+                        amount + fee,
+                        sender_balance
+                    );
                     return Ok(false);
                 }
                 log::info!("Balance constraint satisfied");
@@ -622,22 +691,48 @@ impl ZkProofSystem {
                 }
                 log::info!("Non-zero amount: {}", amount);
             } else {
-                log::info!("Using ZK system format (short proof: {} bytes)", proof.proof.len());
+                log::info!(
+                    "Using ZK system format (short proof: {} bytes)",
+                    proof.proof.len()
+                );
                 // ZK system native format: sender_balance(0-8), amount(8-16), fee(16-24)
                 let sender_balance = u64::from_le_bytes([
-                    proof.proof[0], proof.proof[1], proof.proof[2], proof.proof[3],
-                    proof.proof[4], proof.proof[5], proof.proof[6], proof.proof[7],
+                    proof.proof[0],
+                    proof.proof[1],
+                    proof.proof[2],
+                    proof.proof[3],
+                    proof.proof[4],
+                    proof.proof[5],
+                    proof.proof[6],
+                    proof.proof[7],
                 ]);
                 let amount = u64::from_le_bytes([
-                    proof.proof[8], proof.proof[9], proof.proof[10], proof.proof[11],
-                    proof.proof[12], proof.proof[13], proof.proof[14], proof.proof[15],
+                    proof.proof[8],
+                    proof.proof[9],
+                    proof.proof[10],
+                    proof.proof[11],
+                    proof.proof[12],
+                    proof.proof[13],
+                    proof.proof[14],
+                    proof.proof[15],
                 ]);
                 let fee = u64::from_le_bytes([
-                    proof.proof[16], proof.proof[17], proof.proof[18], proof.proof[19],
-                    proof.proof[20], proof.proof[21], proof.proof[22], proof.proof[23],
+                    proof.proof[16],
+                    proof.proof[17],
+                    proof.proof[18],
+                    proof.proof[19],
+                    proof.proof[20],
+                    proof.proof[21],
+                    proof.proof[22],
+                    proof.proof[23],
                 ]);
 
-                log::info!("Extracted values (ZK format): sender_balance={}, amount={}, fee={}", sender_balance, amount, fee);
+                log::info!(
+                    "Extracted values (ZK format): sender_balance={}, amount={}, fee={}",
+                    sender_balance,
+                    amount,
+                    fee
+                );
 
                 // For ZK system format, validate exact match with public inputs
                 if proof.public_inputs.len() >= 3 {
@@ -679,7 +774,12 @@ impl ZkProofSystem {
         }
 
         if value < min_value || value > max_value {
-            return Err(anyhow!("Value {} not in range [{}, {}]", value, min_value, max_value));
+            return Err(anyhow!(
+                "Value {} not in range [{}, {}]",
+                value,
+                min_value,
+                max_value
+            ));
         }
 
         let mut proof_data = Vec::new();
@@ -687,9 +787,9 @@ impl ZkProofSystem {
         proof_data.extend_from_slice(&blinding_factor.to_le_bytes());
         proof_data.extend_from_slice(&min_value.to_le_bytes());
         proof_data.extend_from_slice(&max_value.to_le_bytes());
-        
+
         let proof_hash = hash_blake3(&proof_data);
-        
+
         Ok(Plonky2Proof {
             proof: proof_data,
             public_inputs: vec![min_value, max_value],
@@ -721,8 +821,14 @@ impl ZkProofSystem {
         // Extract value and bounds from proof
         if proof.proof.len() >= 32 {
             let value = u64::from_le_bytes([
-                proof.proof[0], proof.proof[1], proof.proof[2], proof.proof[3],
-                proof.proof[4], proof.proof[5], proof.proof[6], proof.proof[7],
+                proof.proof[0],
+                proof.proof[1],
+                proof.proof[2],
+                proof.proof[3],
+                proof.proof[4],
+                proof.proof[5],
+                proof.proof[6],
+                proof.proof[7],
             ]);
             let min_value = proof.public_inputs[0];
             let max_value = proof.public_inputs[1];
@@ -763,20 +869,30 @@ impl ZkProofSystem {
         proof_data.extend_from_slice(&age.to_le_bytes());
         proof_data.extend_from_slice(&jurisdiction_hash.to_le_bytes());
         proof_data.extend_from_slice(&credential_hash.to_le_bytes());
-        
+
         let proof_hash = hash_blake3(&proof_data);
-        
+
         // Create public inputs with all 4 required elements for IdentityPublicInputs
         let age_valid = if age >= min_age { 1u64 } else { 0u64 };
-        let jurisdiction_valid = if required_jurisdiction == 0 || jurisdiction_hash == required_jurisdiction { 1u64 } else { 0u64 };
+        let jurisdiction_valid =
+            if required_jurisdiction == 0 || jurisdiction_hash == required_jurisdiction {
+                1u64
+            } else {
+                0u64
+            };
         let proof_timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         Ok(Plonky2Proof {
             proof: proof_data,
-            public_inputs: vec![age_valid, jurisdiction_valid, verification_level, proof_timestamp],
+            public_inputs: vec![
+                age_valid,
+                jurisdiction_valid,
+                verification_level,
+                proof_timestamp,
+            ],
             verification_key_hash: proof_hash,
             proof_system: "ZHTP-Optimized-Identity".to_string(),
             generated_at: proof_timestamp,
@@ -804,23 +920,23 @@ impl ZkProofSystem {
         let jurisdiction_valid = proof.public_inputs[1];
         let verification_level = proof.public_inputs[2];
         let proof_timestamp = proof.public_inputs[3];
-        
+
         // Basic validation of public inputs
         if age_valid > 1 || jurisdiction_valid > 1 {
             return Ok(false); // Boolean values should be 0 or 1
         }
-        
+
         if verification_level == 0 {
             return Ok(false); // Verification level should be at least 1
         }
-        
+
         if proof_timestamp == 0 {
             return Ok(false); // Timestamp should not be zero
         }
 
         Ok(true)
     }
-    
+
     /// Generate storage access proof (production-optimized)
     /// Exact implementation from original zk_plonky2.rs
     pub fn prove_storage_access(
@@ -844,9 +960,9 @@ impl ZkProofSystem {
         proof_data.extend_from_slice(&requester_secret.to_le_bytes());
         proof_data.extend_from_slice(&data_hash.to_le_bytes());
         proof_data.extend_from_slice(&permission_level.to_le_bytes());
-        
+
         let proof_hash = hash_blake3(&proof_data);
-        
+
         Ok(Plonky2Proof {
             proof: proof_data,
             public_inputs: vec![required_permission],
@@ -898,11 +1014,19 @@ impl ZkProofSystem {
 
         // Validate routing constraints
         if hop_count > max_hops {
-            return Err(anyhow!("Route exceeds maximum hop count: {} > {}", hop_count, max_hops));
+            return Err(anyhow!(
+                "Route exceeds maximum hop count: {} > {}",
+                hop_count,
+                max_hops
+            ));
         }
 
         if bandwidth_available < min_bandwidth {
-            return Err(anyhow!("Insufficient bandwidth: {} < {}", bandwidth_available, min_bandwidth));
+            return Err(anyhow!(
+                "Insufficient bandwidth: {} < {}",
+                bandwidth_available,
+                min_bandwidth
+            ));
         }
 
         if source_node == destination_node {
@@ -916,9 +1040,9 @@ impl ZkProofSystem {
         proof_data.extend_from_slice(&bandwidth_available.to_le_bytes());
         proof_data.extend_from_slice(&latency_metric.to_le_bytes());
         proof_data.extend_from_slice(&routing_secret.to_le_bytes());
-        
+
         let proof_hash = hash_blake3(&proof_data);
-        
+
         Ok(Plonky2Proof {
             proof: proof_data,
             public_inputs: vec![max_hops, min_bandwidth],
@@ -951,14 +1075,26 @@ impl ZkProofSystem {
         // Extract and validate routing parameters
         if proof.proof.len() >= 48 {
             let hop_count = u64::from_le_bytes([
-                proof.proof[16], proof.proof[17], proof.proof[18], proof.proof[19],
-                proof.proof[20], proof.proof[21], proof.proof[22], proof.proof[23],
+                proof.proof[16],
+                proof.proof[17],
+                proof.proof[18],
+                proof.proof[19],
+                proof.proof[20],
+                proof.proof[21],
+                proof.proof[22],
+                proof.proof[23],
             ]);
             let bandwidth_available = u64::from_le_bytes([
-                proof.proof[24], proof.proof[25], proof.proof[26], proof.proof[27],
-                proof.proof[28], proof.proof[29], proof.proof[30], proof.proof[31],
+                proof.proof[24],
+                proof.proof[25],
+                proof.proof[26],
+                proof.proof[27],
+                proof.proof[28],
+                proof.proof[29],
+                proof.proof[30],
+                proof.proof[31],
             ]);
-            
+
             let max_hops = proof.public_inputs[0];
             let min_bandwidth = proof.public_inputs[1];
 
@@ -996,7 +1132,11 @@ impl ZkProofSystem {
 
         // Validate data integrity constraints
         if chunk_count > max_chunk_count {
-            return Err(anyhow!("Too many chunks: {} > {}", chunk_count, max_chunk_count));
+            return Err(anyhow!(
+                "Too many chunks: {} > {}",
+                chunk_count,
+                max_chunk_count
+            ));
         }
 
         if total_size > max_size {
@@ -1018,9 +1158,9 @@ impl ZkProofSystem {
         proof_data.extend_from_slice(&checksum.to_le_bytes());
         proof_data.extend_from_slice(&owner_secret.to_le_bytes());
         proof_data.extend_from_slice(&timestamp.to_le_bytes());
-        
+
         let proof_hash = hash_blake3(&proof_data);
-        
+
         Ok(Plonky2Proof {
             proof: proof_data,
             public_inputs: vec![max_chunk_count, max_size],
@@ -1053,14 +1193,26 @@ impl ZkProofSystem {
         // Extract and validate data integrity parameters
         if proof.proof.len() >= 48 {
             let chunk_count = u64::from_le_bytes([
-                proof.proof[8], proof.proof[9], proof.proof[10], proof.proof[11],
-                proof.proof[12], proof.proof[13], proof.proof[14], proof.proof[15],
+                proof.proof[8],
+                proof.proof[9],
+                proof.proof[10],
+                proof.proof[11],
+                proof.proof[12],
+                proof.proof[13],
+                proof.proof[14],
+                proof.proof[15],
             ]);
             let total_size = u64::from_le_bytes([
-                proof.proof[16], proof.proof[17], proof.proof[18], proof.proof[19],
-                proof.proof[20], proof.proof[21], proof.proof[22], proof.proof[23],
+                proof.proof[16],
+                proof.proof[17],
+                proof.proof[18],
+                proof.proof[19],
+                proof.proof[20],
+                proof.proof[21],
+                proof.proof[22],
+                proof.proof[23],
             ]);
-            
+
             let max_chunk_count = proof.public_inputs[0];
             let max_size = proof.public_inputs[1];
 
@@ -1078,17 +1230,17 @@ impl ZkProofSystem {
 
         Ok(false)
     }
-    
+
     /// Get ZK proof statistics
     pub fn get_stats(&self) -> ZkProofStats {
         self.proof_stats.clone()
     }
-    
+
     /// Create a default/placeholder proof for development
     pub fn create_default_proof(circuit_id: &str) -> Plonky2Proof {
         let dummy_data = vec![0u8; 64];
         let dummy_hash = hash_blake3(&dummy_data);
-        
+
         Plonky2Proof {
             proof: dummy_data,
             public_inputs: vec![0, 0],
@@ -1121,7 +1273,7 @@ impl ZkProofSystemCompat for ZkProofSystem {
         required_jurisdiction: u64,
     ) -> Result<lib_crypto::zk_integration::Plonky2Proof> {
         let proof = self.prove_identity(identity_secret, age, jurisdiction_hash, credential_hash, min_age, required_jurisdiction, 1)?;
-        
+
         // Convert our Plonky2Proof to the crypto package's format
         Ok(lib_crypto::zk_integration::Plonky2Proof {
             proof_data: proof.proof,
@@ -1139,7 +1291,7 @@ impl ZkProofSystemCompat for ZkProofSystem {
         max_value: u64,
     ) -> Result<lib_crypto::zk_integration::Plonky2Proof> {
         let proof = self.prove_range(value, blinding_factor, min_value, max_value)?;
-        
+
         // Convert our Plonky2Proof to the crypto package's format
         Ok(lib_crypto::zk_integration::Plonky2Proof {
             proof_data: proof.proof,
@@ -1158,7 +1310,7 @@ impl ZkProofSystemCompat for ZkProofSystem {
         required_permission: u64,
     ) -> Result<lib_crypto::zk_integration::Plonky2Proof> {
         let proof = self.prove_storage_access(access_key, requester_secret, data_hash, permission_level, required_permission)?;
-        
+
         // Convert our Plonky2Proof to the crypto package's format
         Ok(lib_crypto::zk_integration::Plonky2Proof {
             proof_data: proof.proof,
@@ -1182,7 +1334,7 @@ impl ZkProofSystemCompat for ZkProofSystem {
             circuit_id: "identity_v1".to_string(),
             private_input_commitment: proof.circuit_digest,
         };
-        
+
         // Our verify_identity now expects 4 public inputs, but the crypto package might have 2
         // Handle both formats for compatibility
         if our_proof.public_inputs.len() == 2 {
@@ -1219,7 +1371,7 @@ impl ZkProofSystemCompat for ZkProofSystem {
             circuit_id: "range_v1".to_string(),
             private_input_commitment: proof.circuit_digest,
         };
-        
+
         self.verify_range(&our_proof)
     }
 
@@ -1237,7 +1389,7 @@ impl ZkProofSystemCompat for ZkProofSystem {
             circuit_id: "storage_access_v1".to_string(),
             private_input_commitment: proof.circuit_digest,
         };
-        
+
         self.verify_storage_access(&our_proof)
     }
 }
@@ -1250,171 +1402,193 @@ mod tests {
     #[test]
     fn test_transaction_proof() -> Result<()> {
         let zk_system = ZkProofSystem::new()?;
-        
+
         let proof = zk_system.prove_transaction(1000, 100, 10, 12345, 67890)?;
         assert!(zk_system.verify_transaction(&proof)?);
-        
+
         // Test invalid transaction (insufficient balance)
         let invalid_proof = zk_system.prove_transaction(100, 1000, 10, 12345, 67890);
         assert!(invalid_proof.is_err());
-        
+
         Ok(())
     }
 
     #[test]
     fn test_identity_proof() -> Result<()> {
         let zk_system = ZkProofSystem::new()?;
-        
+
         let proof = zk_system.prove_identity(12345, 25, 840, 9999, 18, 840, 1)?;
-        
+
         // Verify the proof has 4 public inputs now
         assert_eq!(proof.public_inputs.len(), 4);
         assert_eq!(proof.public_inputs[0], 1); // age_valid = true
-        assert_eq!(proof.public_inputs[1], 1); // jurisdiction_valid = true  
+        assert_eq!(proof.public_inputs[1], 1); // jurisdiction_valid = true
         assert_eq!(proof.public_inputs[2], 1); // verification_level = 1
         assert!(proof.public_inputs[3] > 0); // proof_timestamp > 0
-        
+
         assert!(zk_system.verify_identity(&proof)?);
-        
+
         // Test age requirement failure
         let invalid_proof = zk_system.prove_identity(12345, 16, 840, 9999, 18, 840, 1);
         assert!(invalid_proof.is_err());
-        
+
         Ok(())
     }
 
     #[test]
     fn test_range_proof() -> Result<()> {
         let zk_system = ZkProofSystem::new()?;
-        
+
         let proof = zk_system.prove_range(500, 12345, 0, 1000)?;
         assert!(zk_system.verify_range(&proof)?);
-        
+
         // Test out of range
         let invalid_proof = zk_system.prove_range(1500, 12345, 0, 1000);
         assert!(invalid_proof.is_err());
-        
+
         Ok(())
     }
 
     #[test]
     fn test_storage_access_proof() -> Result<()> {
         let zk_system = ZkProofSystem::new()?;
-        
+
         let proof = zk_system.prove_storage_access(54321, 98765, 11111, 5, 3)?;
         assert!(zk_system.verify_storage_access(&proof)?);
-        
+
         // Test insufficient permissions
         let invalid_proof = zk_system.prove_storage_access(54321, 98765, 11111, 2, 3);
         assert!(invalid_proof.is_err());
-        
+
         Ok(())
     }
 
     #[test]
     fn test_routing_proof() -> Result<()> {
         let zk_system = ZkProofSystem::new()?;
-        
+
         // Test valid routing proof
         let proof = zk_system.prove_routing(
-            12345,  // source_node
-            67890,  // destination_node
-            3,      // hop_count
-            1000,   // bandwidth_available
-            50,     // latency_metric
-            99999,  // routing_secret
-            5,      // max_hops
-            100,    // min_bandwidth
+            12345, // source_node
+            67890, // destination_node
+            3,     // hop_count
+            1000,  // bandwidth_available
+            50,    // latency_metric
+            99999, // routing_secret
+            5,     // max_hops
+            100,   // min_bandwidth
         )?;
         assert!(zk_system.verify_routing(&proof)?);
-        
+
         // Test invalid routing - too many hops
-        let invalid_proof = zk_system.prove_routing(
-            12345, 67890, 6, 1000, 50, 99999, 5, 100
-        );
+        let invalid_proof = zk_system.prove_routing(12345, 67890, 6, 1000, 50, 99999, 5, 100);
         assert!(invalid_proof.is_err());
-        
+
         // Test invalid routing - insufficient bandwidth
-        let invalid_proof2 = zk_system.prove_routing(
-            12345, 67890, 3, 50, 50, 99999, 5, 100
-        );
+        let invalid_proof2 = zk_system.prove_routing(12345, 67890, 3, 50, 50, 99999, 5, 100);
         assert!(invalid_proof2.is_err());
-        
+
         // Test invalid routing - same source and destination
-        let invalid_proof3 = zk_system.prove_routing(
-            12345, 12345, 3, 1000, 50, 99999, 5, 100
-        );
+        let invalid_proof3 = zk_system.prove_routing(12345, 12345, 3, 1000, 50, 99999, 5, 100);
         assert!(invalid_proof3.is_err());
-        
+
         Ok(())
     }
 
     #[test]
     fn test_data_integrity_proof() -> Result<()> {
         let zk_system = ZkProofSystem::new()?;
-        
+
         // Test valid data integrity proof
         let proof = zk_system.prove_data_integrity(
             0x1234567890ABCDEF, // data_hash
             100,                // chunk_count
-            1048576,           // total_size (1MB)
-            0xDEADBEEF,        // checksum
-            55555,             // owner_secret
-            1672531200,        // timestamp
-            1000,              // max_chunk_count
-            10485760,          // max_size (10MB)
+            1048576,            // total_size (1MB)
+            0xDEADBEEF,         // checksum
+            55555,              // owner_secret
+            1672531200,         // timestamp
+            1000,               // max_chunk_count
+            10485760,           // max_size (10MB)
         )?;
         assert!(zk_system.verify_data_integrity(&proof)?);
-        
+
         // Test invalid data integrity - too many chunks
         let invalid_proof = zk_system.prove_data_integrity(
-            0x1234567890ABCDEF, 1001, 1048576, 0xDEADBEEF, 55555, 1672531200, 1000, 10485760
+            0x1234567890ABCDEF,
+            1001,
+            1048576,
+            0xDEADBEEF,
+            55555,
+            1672531200,
+            1000,
+            10485760,
         );
         assert!(invalid_proof.is_err());
-        
+
         // Test invalid data integrity - data too large
         let invalid_proof2 = zk_system.prove_data_integrity(
-            0x1234567890ABCDEF, 100, 10485761, 0xDEADBEEF, 55555, 1672531200, 1000, 10485760
+            0x1234567890ABCDEF,
+            100,
+            10485761,
+            0xDEADBEEF,
+            55555,
+            1672531200,
+            1000,
+            10485760,
         );
         assert!(invalid_proof2.is_err());
-        
+
         // Test invalid data integrity - zero chunks
         let invalid_proof3 = zk_system.prove_data_integrity(
-            0x1234567890ABCDEF, 0, 1048576, 0xDEADBEEF, 55555, 1672531200, 1000, 10485760
+            0x1234567890ABCDEF,
+            0,
+            1048576,
+            0xDEADBEEF,
+            55555,
+            1672531200,
+            1000,
+            10485760,
         );
         assert!(invalid_proof3.is_err());
-        
+
         // Test invalid data integrity - zero size
         let invalid_proof4 = zk_system.prove_data_integrity(
-            0x1234567890ABCDEF, 100, 0, 0xDEADBEEF, 55555, 1672531200, 1000, 10485760
+            0x1234567890ABCDEF,
+            100,
+            0,
+            0xDEADBEEF,
+            55555,
+            1672531200,
+            1000,
+            10485760,
         );
         assert!(invalid_proof4.is_err());
-        
+
         Ok(())
     }
 
     #[test]
     fn test_full_zk_system() -> Result<()> {
         let zk_system = ZkProofSystem::new()?;
-        
+
         // Test transaction
         let tx_proof = zk_system.prove_transaction(1000, 100, 10, 12345, 67890)?;
         assert!(zk_system.verify_transaction(&tx_proof)?);
-        
+
         // Test identity
         let id_proof = zk_system.prove_identity(12345, 25, 840, 9999, 18, 840, 1)?;
         assert!(zk_system.verify_identity(&id_proof)?);
-        
+
         // Test range
         let range_proof = zk_system.prove_range(500, 12345, 0, 1000)?;
         assert!(zk_system.verify_range(&range_proof)?);
-        
+
         // Test storage access
         let storage_proof = zk_system.prove_storage_access(54321, 98765, 11111, 5, 3)?;
         assert!(zk_system.verify_storage_access(&storage_proof)?);
-        
+
         println!(" All ZK proof types working correctly!");
-        
+
         Ok(())
     }
 }

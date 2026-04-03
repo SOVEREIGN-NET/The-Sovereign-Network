@@ -7,9 +7,11 @@
 //! - **Error Handling**: Standard anyhow::Result error handling
 //! - **Testability**: Pure functions for message generation and operation description
 
+use crate::argument_parsing::{IsolationAction, IsolationArgs, ZhtpCli};
 use anyhow::Result;
-use zhtp::config::network_isolation::{NetworkIsolationConfig, initialize_network_isolation, verify_mesh_isolation};
-use crate::argument_parsing::{IsolationArgs, IsolationAction, ZhtpCli};
+use zhtp::config::network_isolation::{
+    initialize_network_isolation, verify_mesh_isolation, NetworkIsolationConfig,
+};
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -65,8 +67,12 @@ pub fn get_operation_message(operation: IsolationOperation) -> String {
     match operation {
         IsolationOperation::Apply => format!("{} Applying network isolation...", operation.emoji()),
         IsolationOperation::Check => format!("{} Checking isolation status...", operation.emoji()),
-        IsolationOperation::Remove => format!("{} Removing network isolation...", operation.emoji()),
-        IsolationOperation::Test => format!("{} Testing network connectivity...", operation.emoji()),
+        IsolationOperation::Remove => {
+            format!("{} Removing network isolation...", operation.emoji())
+        }
+        IsolationOperation::Test => {
+            format!("{} Testing network connectivity...", operation.emoji())
+        }
     }
 }
 
@@ -130,7 +136,10 @@ pub fn format_local_unreachable() -> &'static str {
 ///
 /// Pure function - message formatting only
 pub fn format_internet_reachable(host: &str) -> String {
-    format!("  ⚠ Internet ({}): Reachable (isolation may be broken)", host)
+    format!(
+        "  ⚠ Internet ({}): Reachable (isolation may be broken)",
+        host
+    )
 }
 
 /// Format internet host unreachable (good isolation)
@@ -175,7 +184,7 @@ async fn handle_apply_impl() -> Result<()> {
                 Ok(false) => println!("{}", format_isolation_with_warning()),
                 Err(e) => println!("Network isolation applied but verification failed: {}", e),
             }
-        },
+        }
         Err(e) => println!("Failed to apply network isolation: {}", e),
     }
     Ok(())
@@ -238,30 +247,54 @@ mod tests {
 
     #[test]
     fn test_action_to_operation_apply() {
-        assert_eq!(action_to_operation(&IsolationAction::Apply), IsolationOperation::Apply);
+        assert_eq!(
+            action_to_operation(&IsolationAction::Apply),
+            IsolationOperation::Apply
+        );
     }
 
     #[test]
     fn test_action_to_operation_check() {
-        assert_eq!(action_to_operation(&IsolationAction::Check), IsolationOperation::Check);
+        assert_eq!(
+            action_to_operation(&IsolationAction::Check),
+            IsolationOperation::Check
+        );
     }
 
     #[test]
     fn test_action_to_operation_remove() {
-        assert_eq!(action_to_operation(&IsolationAction::Remove), IsolationOperation::Remove);
+        assert_eq!(
+            action_to_operation(&IsolationAction::Remove),
+            IsolationOperation::Remove
+        );
     }
 
     #[test]
     fn test_action_to_operation_test() {
-        assert_eq!(action_to_operation(&IsolationAction::Test), IsolationOperation::Test);
+        assert_eq!(
+            action_to_operation(&IsolationAction::Test),
+            IsolationOperation::Test
+        );
     }
 
     #[test]
     fn test_operation_description() {
-        assert_eq!(IsolationOperation::Apply.description(), "Apply network isolation");
-        assert_eq!(IsolationOperation::Check.description(), "Check isolation status");
-        assert_eq!(IsolationOperation::Remove.description(), "Remove network isolation");
-        assert_eq!(IsolationOperation::Test.description(), "Test network connectivity");
+        assert_eq!(
+            IsolationOperation::Apply.description(),
+            "Apply network isolation"
+        );
+        assert_eq!(
+            IsolationOperation::Check.description(),
+            "Check isolation status"
+        );
+        assert_eq!(
+            IsolationOperation::Remove.description(),
+            "Remove network isolation"
+        );
+        assert_eq!(
+            IsolationOperation::Test.description(),
+            "Test network connectivity"
+        );
     }
 
     #[test]

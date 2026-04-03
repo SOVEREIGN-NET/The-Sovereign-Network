@@ -1,12 +1,12 @@
 //! Transaction proof verification logic
-//! 
+//!
 //! Provides PURE ZK verification functions for transaction proofs using
 //! Plonky2 circuits only. NO FALLBACKS ALLOWED.
 
-use anyhow::Result;
-use crate::transaction::ZkTransactionProof;
 use crate::plonky2::ZkProofSystem;
+use crate::transaction::ZkTransactionProof;
 use crate::types::VerificationResult;
+use anyhow::Result;
 
 /// Verify a transaction proof using PURE ZK verification only
 pub fn verify_transaction(proof: &ZkTransactionProof) -> Result<bool> {
@@ -96,11 +96,11 @@ pub fn verify_nullifier_proof(proof: &ZkTransactionProof) -> Result<bool> {
 /// Batch verify multiple transaction proofs
 pub fn batch_verify_transactions(proofs: &[ZkTransactionProof]) -> Result<Vec<bool>> {
     let mut results = Vec::with_capacity(proofs.len());
-    
+
     for proof in proofs {
         results.push(verify_transaction(proof)?);
     }
-    
+
     Ok(results)
 }
 
@@ -125,18 +125,20 @@ mod tests {
         let sender_blinding = [1u8; 32];
         let receiver_blinding = [2u8; 32];
         let nullifier = [3u8; 32];
-        
+
         let prover = ZkTransactionProver::new().unwrap();
-        let proof = prover.prove_transaction(
-            sender_balance,
-            receiver_balance,
-            amount,
-            fee,
-            sender_blinding,
-            receiver_blinding,
-            nullifier,
-        ).unwrap();
-        
+        let proof = prover
+            .prove_transaction(
+                sender_balance,
+                receiver_balance,
+                amount,
+                fee,
+                sender_blinding,
+                receiver_blinding,
+                nullifier,
+            )
+            .unwrap();
+
         let is_valid = verify_transaction(&proof).unwrap();
         assert!(is_valid);
     }
@@ -144,7 +146,7 @@ mod tests {
     #[test]
     fn test_verify_transaction_detailed() {
         let proof = ZkTransactionProof::default();
-        
+
         let result = verify_transaction_detailed(&proof);
         // Default proof should be invalid (empty proofs)
         assert!(result.is_invalid());
@@ -153,7 +155,7 @@ mod tests {
     #[test]
     fn test_verify_individual_components() {
         let proof = ZkTransactionProof::default();
-        
+
         // Components should fail for empty proof
         assert!(!verify_amount_proof(&proof).unwrap());
         assert!(!verify_balance_proof(&proof).unwrap());
@@ -164,10 +166,10 @@ mod tests {
     fn test_security_requirements() {
         let empty_proof = ZkTransactionProof::default();
         assert!(!meets_security_requirements(&empty_proof));
-        
+
         // Create proofs with valid Plonky2 data
         use crate::plonky2::Plonky2Proof;
-        
+
         let create_valid_plonky2_proof = |circuit_id: &str| -> ZkProof {
             let plonky2 = Plonky2Proof {
                 proof: vec![1, 2, 3],
@@ -178,7 +180,7 @@ mod tests {
                 circuit_id: circuit_id.to_string(),
                 private_input_commitment: [8; 32],
             };
-            
+
             ZkProof::new(
                 "Plonky2".to_string(),
                 vec![1, 2, 3],
@@ -187,13 +189,13 @@ mod tests {
                 Some(plonky2),
             )
         };
-        
+
         let valid_proof = ZkTransactionProof::new(
             create_valid_plonky2_proof("amount"),
             create_valid_plonky2_proof("balance"),
             create_valid_plonky2_proof("nullifier"),
         );
-        
+
         assert!(meets_security_requirements(&valid_proof));
     }
 
@@ -202,10 +204,10 @@ mod tests {
         let prover = ZkTransactionProver::new().unwrap();
         let proof1 = prover.prove_simple_transaction(100, [1u8; 32]).unwrap();
         let proof2 = prover.prove_simple_transaction(200, [2u8; 32]).unwrap();
-        
+
         let proofs = vec![proof1, proof2];
         let results = batch_verify_transactions(&proofs).unwrap();
-        
+
         assert_eq!(results.len(), 2);
         // Both should be valid
         assert!(results.iter().all(|&r| r));

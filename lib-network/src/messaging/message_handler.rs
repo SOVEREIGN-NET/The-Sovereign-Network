@@ -1,27 +1,38 @@
 //! Mesh Message Handler Implementation
-//! 
+//!
 //! Central message routing and handling for ZHTP mesh protocol
 
-use anyhow::{Result, anyhow};
+use crate::types::node_address::NodeAddress;
+use anyhow::{anyhow, Result};
+use lib_crypto::PublicKey;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
-use tracing::{info, warn, debug};
-use crate::types::node_address::NodeAddress;
-use lib_crypto::PublicKey;
+use tracing::{debug, info, warn};
 
-use crate::types::mesh_message::ZhtpMeshMessage;
-use crate::protocols::NetworkProtocol;
 use crate::identity::unified_peer::UnifiedPeerId;
+use crate::protocols::NetworkProtocol;
+use crate::types::mesh_message::ZhtpMeshMessage;
 
+use crate::network_output::{global_output_queue, NetworkOutput};
 use crate::relays::LongRangeRelay;
-use crate::network_output::{NetworkOutput, global_output_queue};
 use lib_types::NodeId;
 
 type DhtPayload = (Vec<u8>, NodeId);
 
+/// Consensus message sender type - forwards ValidatorMessages to the consensus engine
+pub type ConsensusMessageSender = tokio::sync::mpsc::Sender<lib_consensus::types::ValidatorMessage>;
+
 type DhtPayloadSender = tokio::sync::mpsc::UnboundedSender<DhtPayload>;
+
+/// Sender half for oracle price attestation gossip payloads.
+///
+/// Bounded to 256 messages to prevent unbounded memory growth when a peer
+/// floods the node with attestation gossip. Excess messages are dropped with
+/// a warning; the oracle epoch is long enough that one dropped attestation
+/// per epoch does not affect finalization.
+pub type OracleAttestationSender = tokio::sync::mpsc::Sender<Vec<u8>>;
 
 /// Central mesh message handler
 ///
@@ -48,10 +59,27 @@ pub struct MeshMessageHandler {
     /// Rate limiter for DHT messages per peer (Ticket #154)
     /// Key: hex-encoded peer key_id prefix, Value: (count, window_start)
     pub dht_rate_limits: Arc<RwLock<HashMap<String, (u32, u64)>>>,
+    /// Receive-side event sink for blocks/transactions from mesh peers (#916)
+    pub blockchain_event_receiver: Arc<dyn crate::blockchain_sync::BlockchainEventReceiver>,
+    /// Consensus message sender for forwarding ValidatorMessages to the consensus engine
+    /// When set, received ValidatorMessages are converted and sent to the consensus loop
+    pub consensus_message_sender: Option<ConsensusMessageSender>,
+    /// Raw validator message sender for ValidatorProtocol middleware (#spec-identity-device-model)
+    /// When set, raw ValidatorMessages are forwarded here for signature verification before
+    /// being passed to the consensus engine. Takes priority over consensus_message_sender.
+    pub raw_validator_message_sender:
+        Option<tokio::sync::mpsc::Sender<lib_consensus::validators::ValidatorMessage>>,
+    /// Store-and-forward queue for identity envelopes
+    pub identity_store_forward:
+        Option<Arc<RwLock<crate::identity_store_forward::IdentityStoreForward>>>,
+    /// Oracle price attestation sender.
+    /// When set, received OracleAttestation gossip payloads are forwarded here for
+    /// deserialization and processing by the oracle runtime component.
+    pub oracle_attestation_sender: Option<OracleAttestationSender>,
 }
 
 /// DHT rate limit configuration
-const DHT_RATE_LIMIT_MAX: u32 = 100;      // Max DHT messages per peer per window
+const DHT_RATE_LIMIT_MAX: u32 = 100; // Max DHT messages per peer per window
 const DHT_RATE_LIMIT_WINDOW_SECS: u64 = 60; // Rate limit window in seconds
 
 impl MeshMessageHandler {
@@ -77,180 +105,523 @@ impl MeshMessageHandler {
             blockchain_provider: Arc::new(crate::blockchain_sync::NullBlockchainProvider),
             dht_payload_sender: None,
             dht_rate_limits: Arc::new(RwLock::new(HashMap::new())),
+            blockchain_event_receiver: Arc::new(
+                crate::blockchain_sync::NullBlockchainEventReceiver,
+            ),
+            consensus_message_sender: None,
+            raw_validator_message_sender: None,
+            identity_store_forward: None,
+            oracle_attestation_sender: None,
         }
+    }
+
+    /// Wire the oracle attestation sender.
+    /// Once set, received `OracleAttestation` gossip payloads are forwarded here instead of
+    /// being silently dropped.
+    pub fn set_oracle_attestation_sender(&mut self, sender: OracleAttestationSender) {
+        self.oracle_attestation_sender = Some(sender);
     }
 
     /// Set DHT payload sender for forwarding received DHT messages (Ticket #154)
     ///
     /// This connects the message handler to the MeshDhtTransport's receiver,
     /// allowing DHT payloads received over mesh to be processed by DhtStorage.
-    pub fn set_dht_payload_sender(
-        &mut self,
-        sender: DhtPayloadSender
-    ) {
+    pub fn set_dht_payload_sender(&mut self, sender: DhtPayloadSender) {
         self.dht_payload_sender = Some(sender);
     }
 
     /// Switch to edge node sync mode (must be called before sync operations)
     pub fn set_edge_mode(&mut self, max_headers: usize) {
-        self.sync_manager = Arc::new(crate::blockchain_sync::BlockchainSyncManager::new_edge_node(max_headers));
+        self.sync_manager =
+            Arc::new(crate::blockchain_sync::BlockchainSyncManager::new_edge_node(max_headers));
     }
-    
+
     /// Set message router for sending responses (Phase 2)
-    pub fn set_message_router(&mut self, router: Arc<RwLock<crate::routing::message_routing::MeshMessageRouter>>) {
+    pub fn set_message_router(
+        &mut self,
+        router: Arc<RwLock<crate::routing::message_routing::MeshMessageRouter>>,
+    ) {
         self.message_router = Some(router);
     }
-    
+
     /// Set node ID (Phase 2)
     pub fn set_node_id(&mut self, node_id: PublicKey) {
         self.node_id = Some(node_id);
     }
-    
+
     /// Set blockchain provider (injected by application layer)
-    pub fn set_blockchain_provider(&mut self, provider: Arc<dyn crate::blockchain_sync::BlockchainProvider>) {
+    pub fn set_blockchain_provider(
+        &mut self,
+        provider: Arc<dyn crate::blockchain_sync::BlockchainProvider>,
+    ) {
         self.blockchain_provider = provider;
     }
-    
+
+    /// Set blockchain event receiver for receive-side block/tx forwarding (#916)
+    pub fn set_blockchain_event_receiver(
+        &mut self,
+        receiver: Arc<dyn crate::blockchain_sync::BlockchainEventReceiver>,
+    ) {
+        self.blockchain_event_receiver = receiver;
+    }
+
+    /// Set consensus message sender for forwarding ValidatorMessages to the consensus engine
+    ///
+    /// When set, received ValidatorMessages are converted from network format to consensus format
+    /// and forwarded to the consensus engine's message receiver for BFT processing.
+    pub fn set_consensus_message_sender(&mut self, sender: ConsensusMessageSender) {
+        self.consensus_message_sender = Some(sender);
+        info!("🔗 Consensus message sender wired to mesh message handler");
+    }
+
+    /// Set raw validator message sender for ValidatorProtocol middleware
+    ///
+    /// When set, incoming ValidatorMessages from the network are forwarded here for
+    /// signature verification by ValidatorProtocol before reaching the consensus engine.
+    pub fn set_raw_validator_message_sender(
+        &mut self,
+        sender: tokio::sync::mpsc::Sender<lib_consensus::validators::ValidatorMessage>,
+    ) {
+        self.raw_validator_message_sender = Some(sender);
+        info!("🔗 Raw validator message sender wired to mesh message handler");
+    }
+
+    /// Set identity store-and-forward queue for envelope storage
+    pub fn set_identity_store_forward(
+        &mut self,
+        store: Arc<RwLock<crate::identity_store_forward::IdentityStoreForward>>,
+    ) {
+        self.identity_store_forward = Some(store);
+        info!("📦 Identity store-and-forward wired to mesh message handler");
+    }
+
+    /// Fetch pending identity envelopes for a specific recipient device (if configured)
+    pub async fn get_identity_pending_for_device(
+        &self,
+        recipient_did: &str,
+        device_id: &str,
+    ) -> Result<Vec<lib_protocols::types::IdentityEnvelope>, String> {
+        match &self.identity_store_forward {
+            Some(store) => {
+                let mut store = store.write().await;
+                store.get_pending_for_device(recipient_did, device_id)
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// Acknowledge delivery for a specific recipient and message id (if configured)
+    pub async fn acknowledge_identity_delivery(
+        &self,
+        recipient_did: &str,
+        message_id: u64,
+    ) -> Result<bool, String> {
+        match &self.identity_store_forward {
+            Some(store) => {
+                let mut store = store.write().await;
+                store.acknowledge_delivery(recipient_did, message_id)
+            }
+            None => Ok(false),
+        }
+    }
+
     /// Handle incoming mesh message
-    pub async fn handle_mesh_message(&self, message: ZhtpMeshMessage, sender: PublicKey) -> Result<()> {
+    pub async fn handle_mesh_message(
+        &self,
+        message: ZhtpMeshMessage,
+        sender: PublicKey,
+    ) -> Result<()> {
         match message {
-            ZhtpMeshMessage::PeerDiscovery { capabilities, location, shared_resources } => {
-                self.handle_peer_discovery(sender, capabilities, location, shared_resources).await?;
-            },
-            ZhtpMeshMessage::PeerAnnouncement { sender: announced_sender, timestamp, signature } => {
+            ZhtpMeshMessage::PeerDiscovery {
+                capabilities,
+                location,
+                shared_resources,
+            } => {
+                self.handle_peer_discovery(sender, capabilities, location, shared_resources)
+                    .await?;
+            }
+            ZhtpMeshMessage::PeerAnnouncement {
+                sender: announced_sender,
+                timestamp,
+                signature,
+            } => {
                 // PeerAnnouncement is handled in unified_server.rs (UDP mesh layer)
                 // This is just a pass-through or logging placeholder
-                tracing::debug!("PeerAnnouncement from {:?} at timestamp {} (signature: {} bytes)", 
+                tracing::debug!(
+                    "PeerAnnouncement from {:?} at timestamp {} (signature: {} bytes)",
                     hex::encode(&announced_sender.key_id[0..8.min(announced_sender.key_id.len())]),
                     timestamp,
                     signature.len()
                 );
-            },
-            ZhtpMeshMessage::ConnectivityRequest { requester, bandwidth_needed_kbps, duration_minutes, payment_tokens } => {
-                self.handle_connectivity_request(requester, bandwidth_needed_kbps, duration_minutes, payment_tokens).await?;
-            },
-            ZhtpMeshMessage::ConnectivityResponse { provider, accepted, available_bandwidth_kbps, cost_tokens_per_mb, connection_details } => {
-                self.handle_connectivity_response(provider, accepted, available_bandwidth_kbps, cost_tokens_per_mb, connection_details).await?;
-            },
-            ZhtpMeshMessage::LongRangeRoute { destination, relay_chain, payload, max_hops } => {
-                self.handle_long_range_route(destination, relay_chain, payload, max_hops).await?;
-            },
-            ZhtpMeshMessage::UbiDistribution { recipient, amount_tokens, distribution_round, proof } => {
-                self.handle_ubi_distribution(recipient, amount_tokens, distribution_round, proof).await?;
-            },
-            ZhtpMeshMessage::HealthReport { reporter, network_quality, available_bandwidth, connected_peers, uptime_hours } => {
-                self.handle_health_report(reporter, network_quality, available_bandwidth, connected_peers, uptime_hours).await?;
-            },
+            }
+            ZhtpMeshMessage::ConnectivityRequest {
+                requester,
+                bandwidth_needed_kbps,
+                duration_minutes,
+                payment_tokens,
+            } => {
+                self.handle_connectivity_request(
+                    requester,
+                    bandwidth_needed_kbps,
+                    duration_minutes,
+                    payment_tokens,
+                )
+                .await?;
+            }
+            ZhtpMeshMessage::ConnectivityResponse {
+                provider,
+                accepted,
+                available_bandwidth_kbps,
+                cost_tokens_per_mb,
+                connection_details,
+            } => {
+                self.handle_connectivity_response(
+                    provider,
+                    accepted,
+                    available_bandwidth_kbps,
+                    cost_tokens_per_mb,
+                    connection_details,
+                )
+                .await?;
+            }
+            ZhtpMeshMessage::LongRangeRoute {
+                destination,
+                relay_chain,
+                payload,
+                max_hops,
+            } => {
+                self.handle_long_range_route(destination, relay_chain, payload, max_hops)
+                    .await?;
+            }
+            ZhtpMeshMessage::UbiDistribution {
+                recipient,
+                amount_tokens,
+                distribution_round,
+                proof,
+            } => {
+                self.handle_ubi_distribution(recipient, amount_tokens, distribution_round, proof)
+                    .await?;
+            }
+            ZhtpMeshMessage::HealthReport {
+                reporter,
+                network_quality,
+                available_bandwidth,
+                connected_peers,
+                uptime_hours,
+            } => {
+                self.handle_health_report(
+                    reporter,
+                    network_quality,
+                    available_bandwidth,
+                    connected_peers,
+                    uptime_hours,
+                )
+                .await?;
+            }
             ZhtpMeshMessage::ZhtpRequest(request) => {
                 let mut headers_map = HashMap::new();
                 for (k, v) in &request.headers.custom {
                     headers_map.insert(k.clone(), v.clone());
                 }
-                if let Some(ct) = &request.headers.content_type { headers_map.insert("Content-Type".to_string(), ct.clone()); }
-                
-                self.handle_lib_request(sender, request.method.to_string(), request.uri, headers_map, request.body, request.timestamp).await?;
-            },
+                if let Some(ct) = &request.headers.content_type {
+                    headers_map.insert("Content-Type".to_string(), ct.clone());
+                }
+
+                self.handle_lib_request(
+                    sender,
+                    request.method.to_string(),
+                    request.uri,
+                    headers_map,
+                    request.body,
+                    request.timestamp,
+                )
+                .await?;
+            }
             ZhtpMeshMessage::ZhtpResponse(response) => {
                 let mut headers_map = HashMap::new();
                 for (k, v) in &response.headers.custom {
                     headers_map.insert(k.clone(), v.clone());
                 }
-                let request_id = response.headers.custom.get("Request-ID")
+                let request_id = response
+                    .headers
+                    .custom
+                    .get("Request-ID")
                     .and_then(|v| v.parse::<u64>().ok())
                     .unwrap_or(0);
-                    
-                self.handle_lib_response(request_id, response.status.code(), response.status_message, headers_map, response.body, response.timestamp).await?;
-            },
-            ZhtpMeshMessage::BlockchainRequest { requester, request_id, request_type } => {
-                self.handle_blockchain_request(requester, request_id, request_type).await?;
-            },
-            ZhtpMeshMessage::BlockchainData { sender, request_id, chunk_index, total_chunks, data, complete_data_hash } => {
-                self.handle_blockchain_data(&sender, request_id, chunk_index, total_chunks, data, complete_data_hash).await?;
-            },
-            ZhtpMeshMessage::NewBlock { block, sender, height, timestamp } => {
-                self.handle_new_block(block, sender, height, timestamp).await?;
-            },
-            ZhtpMeshMessage::NewTransaction { transaction, sender, tx_hash, fee } => {
-                self.handle_new_transaction(transaction, sender, tx_hash, fee).await?;
-            },
+
+                self.handle_lib_response(
+                    request_id,
+                    response.status.code(),
+                    response.status_message,
+                    headers_map,
+                    response.body,
+                    response.timestamp,
+                )
+                .await?;
+            }
+            ZhtpMeshMessage::IdentityEnvelope(envelope) => {
+                if let Some(store) = &self.identity_store_forward {
+                    let mut store = store.write().await;
+                    if let Err(err) = store.enqueue(envelope) {
+                        warn!("Failed to enqueue identity envelope: {}", err);
+                    }
+                } else {
+                    warn!("Identity envelope received but no store-and-forward configured");
+                }
+            }
+            ZhtpMeshMessage::IdentityDeliveryAck(ack) => {
+                if let Some(store) = &self.identity_store_forward {
+                    let mut store = store.write().await;
+                    if let Err(err) = store.acknowledge_delivery(&ack.recipient_did, ack.message_id)
+                    {
+                        warn!("Failed to acknowledge identity delivery: {}", err);
+                    }
+                } else {
+                    warn!("Identity delivery ack received but no store-and-forward configured");
+                }
+            }
+            ZhtpMeshMessage::BlockchainRequest {
+                requester,
+                request_id,
+                request_type,
+            } => {
+                self.handle_blockchain_request(requester, request_id, request_type)
+                    .await?;
+            }
+            ZhtpMeshMessage::BlockchainData {
+                sender,
+                request_id,
+                chunk_index,
+                total_chunks,
+                data,
+                complete_data_hash,
+            } => {
+                self.handle_blockchain_data(
+                    &sender,
+                    request_id,
+                    chunk_index,
+                    total_chunks,
+                    data,
+                    complete_data_hash,
+                )
+                .await?;
+            }
+            ZhtpMeshMessage::NewBlock {
+                block,
+                sender,
+                height,
+                timestamp,
+            } => {
+                self.handle_new_block(block, sender, height, timestamp)
+                    .await?;
+            }
+            ZhtpMeshMessage::NewTransaction {
+                transaction,
+                sender,
+                tx_hash,
+                fee,
+            } => {
+                self.handle_new_transaction(transaction, sender, tx_hash, fee)
+                    .await?;
+            }
             ZhtpMeshMessage::RouteProbe { probe_id, target } => {
                 // TODO: Implement route probe handling
                 tracing::info!("Received route probe {} for target {:?}", probe_id, target);
-            },
-            ZhtpMeshMessage::RouteResponse { probe_id, route_quality, latency_ms } => {
+            }
+            ZhtpMeshMessage::RouteResponse {
+                probe_id,
+                route_quality,
+                latency_ms,
+            } => {
                 // TODO: Implement route response handling
-                tracing::info!("Received route response for probe {} with quality {} and latency {}ms", 
-                    probe_id, route_quality, latency_ms);
-            },
-            ZhtpMeshMessage::BootstrapProofRequest { requester, request_id, current_height } => {
-                self.handle_bootstrap_proof_request(requester, request_id, current_height).await?;
-            },
-            ZhtpMeshMessage::BootstrapProofResponse { request_id, proof_data, proof_height, headers } => {
-                self.handle_bootstrap_proof_response(request_id, proof_data, proof_height, headers).await?;
-            },
-            ZhtpMeshMessage::HeadersRequest { requester, request_id, start_height, count } => {
-                self.handle_headers_request(requester, request_id, start_height, count).await?;
-            },
-            ZhtpMeshMessage::HeadersResponse { request_id, headers, start_height } => {
-                self.handle_headers_response(request_id, headers, start_height).await?;
-            },
-            ZhtpMeshMessage::DhtStore { requester, request_id, key, value, ttl, signature } => {
-                self.handle_dht_store(requester, request_id, key, value, ttl, signature).await?;
-            },
-            ZhtpMeshMessage::DhtStoreAck { request_id, success, stored_count } => {
-                self.handle_dht_store_ack(request_id, success, stored_count).await?;
-            },
-            ZhtpMeshMessage::DhtFindValue { requester, request_id, key, max_hops } => {
-                self.handle_dht_find_value(requester, request_id, key, max_hops).await?;
-            },
-            ZhtpMeshMessage::DhtFindValueResponse { request_id, found, value, closer_nodes } => {
-                self.handle_dht_find_value_response(request_id, found, value, closer_nodes).await?;
-            },
-            ZhtpMeshMessage::DhtFindNode { requester, request_id, target_id, max_hops } => {
-                self.handle_dht_find_node(requester, request_id, target_id, max_hops).await?;
-            },
-            ZhtpMeshMessage::DhtFindNodeResponse { request_id, closer_nodes } => {
-                self.handle_dht_find_node_response(request_id, closer_nodes).await?;
-            },
-            ZhtpMeshMessage::DhtPing { requester, request_id, timestamp } => {
-                self.handle_dht_ping(requester, request_id, timestamp).await?;
-            },
-            ZhtpMeshMessage::DhtPong { request_id, timestamp } => {
-                self.handle_dht_pong(request_id, timestamp).await?;
-            },
-            ZhtpMeshMessage::DhtGenericPayload { requester, payload, signature } => {
-                // Ticket #154: Handle generic DHT payload routed through mesh network
-                self.handle_dht_generic_payload(requester, payload, signature).await?;
-            },
-            ZhtpMeshMessage::ValidatorMessage(_msg) => {
-                // Consensus validator messages are routed through the mesh layer
-                // but handled by the consensus layer, not here. Just log receipt.
-                tracing::debug!("Received ValidatorMessage from peer {:?}",
-                    hex::encode(&sender.key_id[0..8.min(sender.key_id.len())])
+                tracing::info!(
+                    "Received route response for probe {} with quality {} and latency {}ms",
+                    probe_id,
+                    route_quality,
+                    latency_ms
                 );
-            },
+            }
+            ZhtpMeshMessage::BootstrapProofRequest {
+                requester,
+                request_id,
+                current_height,
+            } => {
+                self.handle_bootstrap_proof_request(requester, request_id, current_height)
+                    .await?;
+            }
+            ZhtpMeshMessage::BootstrapProofResponse {
+                request_id,
+                proof_data,
+                proof_height,
+                headers,
+            } => {
+                self.handle_bootstrap_proof_response(request_id, proof_data, proof_height, headers)
+                    .await?;
+            }
+            ZhtpMeshMessage::HeadersRequest {
+                requester,
+                request_id,
+                start_height,
+                count,
+            } => {
+                self.handle_headers_request(requester, request_id, start_height, count)
+                    .await?;
+            }
+            ZhtpMeshMessage::HeadersResponse {
+                request_id,
+                headers,
+                start_height,
+            } => {
+                self.handle_headers_response(request_id, headers, start_height)
+                    .await?;
+            }
+            ZhtpMeshMessage::DhtStore {
+                requester,
+                request_id,
+                key,
+                value,
+                ttl,
+                signature,
+            } => {
+                self.handle_dht_store(requester, request_id, key, value, ttl, signature)
+                    .await?;
+            }
+            ZhtpMeshMessage::DhtStoreAck {
+                request_id,
+                success,
+                stored_count,
+            } => {
+                self.handle_dht_store_ack(request_id, success, stored_count)
+                    .await?;
+            }
+            ZhtpMeshMessage::DhtFindValue {
+                requester,
+                request_id,
+                key,
+                max_hops,
+            } => {
+                self.handle_dht_find_value(requester, request_id, key, max_hops)
+                    .await?;
+            }
+            ZhtpMeshMessage::DhtFindValueResponse {
+                request_id,
+                found,
+                value,
+                closer_nodes,
+            } => {
+                self.handle_dht_find_value_response(request_id, found, value, closer_nodes)
+                    .await?;
+            }
+            ZhtpMeshMessage::DhtFindNode {
+                requester,
+                request_id,
+                target_id,
+                max_hops,
+            } => {
+                self.handle_dht_find_node(requester, request_id, target_id, max_hops)
+                    .await?;
+            }
+            ZhtpMeshMessage::DhtFindNodeResponse {
+                request_id,
+                closer_nodes,
+            } => {
+                self.handle_dht_find_node_response(request_id, closer_nodes)
+                    .await?;
+            }
+            ZhtpMeshMessage::DhtPing {
+                requester,
+                request_id,
+                timestamp,
+            } => {
+                self.handle_dht_ping(requester, request_id, timestamp)
+                    .await?;
+            }
+            ZhtpMeshMessage::DhtPong {
+                request_id,
+                timestamp,
+            } => {
+                self.handle_dht_pong(request_id, timestamp).await?;
+            }
+            ZhtpMeshMessage::DhtGenericPayload {
+                requester,
+                payload,
+                signature,
+            } => {
+                // Ticket #154: Handle generic DHT payload routed through mesh network
+                self.handle_dht_generic_payload(requester, payload, signature)
+                    .await?;
+            }
+            ZhtpMeshMessage::ValidatorMessage(msg) => {
+                // ValidatorMessages MUST go through ValidatorProtocol middleware for
+                // signature verification before reaching the consensus engine.
+                // No fallback path — unverified consensus messages are never forwarded.
+                if let Some(ref raw_tx) = self.raw_validator_message_sender {
+                    match raw_tx.send(msg).await {
+                        Ok(()) => {
+                            debug!("ValidatorMessage forwarded to ValidatorProtocol middleware from peer {:?}",
+                                hex::encode(&sender.key_id[0..8.min(sender.key_id.len())])
+                            );
+                        }
+                        Err(e) => {
+                            warn!("Failed to forward ValidatorMessage to middleware: {} (middleware may be stopped)",
+                                e
+                            );
+                        }
+                    }
+                } else {
+                    warn!(
+                        "Dropping ValidatorMessage from peer {:?}: no ValidatorProtocol middleware wired (signature verification required)",
+                        hex::encode(&sender.key_id[0..8.min(sender.key_id.len())])
+                    );
+                }
+            }
+            ZhtpMeshMessage::OracleAttestation { payload } => {
+                if let Some(ref tx) = self.oracle_attestation_sender {
+                    if let Err(e) = tx.try_send(payload) {
+                        let len = e.into_inner().len();
+                        warn!(
+                            "OracleAttestation dropped (oracle inbox full or closed, {} bytes)",
+                            len
+                        );
+                    }
+                } else {
+                    debug!(
+                        "Received OracleAttestation ({} bytes) but oracle sender not wired — ignoring",
+                        payload.len()
+                    );
+                }
+            }
         }
         Ok(())
     }
-    
+
     /// Handle peer discovery message
+    #[allow(deprecated)]
     pub async fn handle_peer_discovery(
-        &self, 
-        peer: PublicKey, 
-        capabilities: Vec<crate::types::mesh_capability::MeshCapability>, 
+        &self,
+        peer: PublicKey,
+        capabilities: Vec<crate::types::mesh_capability::MeshCapability>,
         _location: Option<crate::types::geographic::GeographicLocation>,
-        shared_resources: crate::types::mesh_capability::SharedResources
+        shared_resources: crate::types::mesh_capability::SharedResources,
     ) -> Result<()> {
-        info!("Discovered peer {:?} with {} capabilities", 
-              hex::encode(&peer.key_id[0..8]), capabilities.len());
-        
+        info!(
+            "Discovered peer {:?} with {} capabilities",
+            hex::encode(&peer.key_id[0..8]),
+            capabilities.len()
+        );
+
         // Process peer capabilities for legitimate mesh services
         for capability in &capabilities {
-            if let crate::types::mesh_capability::MeshCapability::MeshRelay { capacity_mbps } = capability {
-                info!("Peer offers mesh relay service: {} Mbps capacity", capacity_mbps);
+            if let crate::types::mesh_capability::MeshCapability::MeshRelay { capacity_mbps } =
+                capability
+            {
+                info!(
+                    "Peer offers mesh relay service: {} Mbps capacity",
+                    capacity_mbps
+                );
             }
         }
-        
+
         // Establish mesh connection (Ticket #149: using peer_registry)
         // MIGRATION (Ticket #146): Convert PublicKey to UnifiedPeerId
         let unified_peer = UnifiedPeerId::from_public_key_legacy(peer.clone());
@@ -293,30 +664,32 @@ impl MeshMessageHandler {
             shared_resources.reliability_score,
             None, // dht_info
             crate::peer_registry::DiscoveryMethod::MeshScan,
-            now,  // first_seen
-            now,  // last_seen
+            now,                                   // first_seen
+            now,                                   // last_seen
             crate::peer_registry::PeerTier::Tier3, // Standard participating nodes
-            0.5,  // trust_score
+            0.5,                                   // trust_score
         );
-        
+
         let mut registry = self.peer_registry.write().await;
         registry.upsert(peer_entry).await?;
-        
+
         Ok(())
     }
-    
+
     /// Handle connectivity request - legitimate P2P mesh routing
     async fn handle_connectivity_request(
-        &self, 
-        _requester: PublicKey, 
-        bandwidth_needed_kbps: u32, 
-        duration_minutes: u32, 
-        _payment_tokens: u64
+        &self,
+        _requester: PublicKey,
+        bandwidth_needed_kbps: u32,
+        duration_minutes: u32,
+        _payment_tokens: u64,
     ) -> Result<()> {
-        info!("📞 P2P mesh routing request: {} kbps for {} minutes", 
-              bandwidth_needed_kbps, duration_minutes);
-        
-        // ZHTP provides direct peer-to-peer mesh routing without 
+        info!(
+            "📞 P2P mesh routing request: {} kbps for {} minutes",
+            bandwidth_needed_kbps, duration_minutes
+        );
+
+        // ZHTP provides direct peer-to-peer mesh routing without
         let relays = self.long_range_relays.read().await;
         if !relays.is_empty() {
             info!("Mesh relay capacity available for P2P routing");
@@ -325,123 +698,145 @@ impl MeshMessageHandler {
             warn!("No mesh relay nodes available for routing");
             info!(" Sending connectivity rejection - no relay capacity");
         }
-        
+
         Ok(())
     }
-    
+
     /// Handle connectivity response
     async fn handle_connectivity_response(
-        &self, 
-        provider: PublicKey, 
-        accepted: bool, 
-        available_bandwidth_kbps: u32, 
-        cost_tokens_per_mb: u64, 
-        connection_details: Option<crate::types::connection_details::ConnectionDetails>
+        &self,
+        provider: PublicKey,
+        accepted: bool,
+        available_bandwidth_kbps: u32,
+        cost_tokens_per_mb: u64,
+        connection_details: Option<crate::types::connection_details::ConnectionDetails>,
     ) -> Result<()> {
         if accepted {
-            info!("Connectivity accepted from provider {:?}: {} kbps at {} tokens/MB", 
-                  hex::encode(&provider.key_id[0..8]), available_bandwidth_kbps, cost_tokens_per_mb);
-            
+            info!(
+                "Connectivity accepted from provider {:?}: {} kbps at {} tokens/MB",
+                hex::encode(&provider.key_id[0..8]),
+                available_bandwidth_kbps,
+                cost_tokens_per_mb
+            );
+
             // TODO: Use connection_details to establish actual mesh connection
             if let Some(_details) = connection_details {
                 info!(" Connection details received - TODO: establish connection");
             }
         } else {
-            info!("Connectivity request denied by provider {:?}", hex::encode(&provider.key_id[0..8]));
+            info!(
+                "Connectivity request denied by provider {:?}",
+                hex::encode(&provider.key_id[0..8])
+            );
         }
         Ok(())
     }
-    
+
     /// Handle long-range routing - GLOBAL reach through multi-hop mesh!
     async fn handle_long_range_route(
-        &self, 
-        destination: PublicKey, 
-        relay_chain: Vec<String>, 
-        payload: Vec<u8>, 
-        max_hops: u8
+        &self,
+        destination: PublicKey,
+        relay_chain: Vec<String>,
+        payload: Vec<u8>,
+        max_hops: u8,
     ) -> Result<()> {
-        info!("GLOBAL long-range route: {} bytes to destination {:?} via {} relays", 
-              payload.len(), hex::encode(&destination.key_id[0..8]), relay_chain.len());
-        
+        info!(
+            "GLOBAL long-range route: {} bytes to destination {:?} via {} relays",
+            payload.len(),
+            hex::encode(&destination.key_id[0..8]),
+            relay_chain.len()
+        );
+
         // ZHTP supports unlimited global routing through mesh relays
         if max_hops > 0 {
             let relays = self.long_range_relays.read().await;
             let mut total_distance_km = 0.0;
             let mut routing_path = Vec::new();
-            
+
             for relay_id in &relay_chain {
                 if let Some(relay) = relays.get(relay_id) {
                     total_distance_km += relay.coverage_radius_km;
                     routing_path.push(format!("{} ({}km)", relay_id, relay.coverage_radius_km));
-                    
+
                     match relay.relay_type {
                         crate::types::relay_type::LongRangeRelayType::Satellite => {
-                            info!("🛰️ GLOBAL satellite relay: {} - WORLDWIDE coverage", relay_id);
+                            info!(
+                                "🛰️ GLOBAL satellite relay: {} - WORLDWIDE coverage",
+                                relay_id
+                            );
                         }
                         crate::types::relay_type::LongRangeRelayType::LoRaWAN => {
-                            info!("LoRa relay: {} - {}km regional coverage", relay_id, relay.coverage_radius_km);
+                            info!(
+                                "LoRa relay: {} - {}km regional coverage",
+                                relay_id, relay.coverage_radius_km
+                            );
                         }
                         crate::types::relay_type::LongRangeRelayType::WiFiRelay => {
                             info!("Internet bridge: {} - GLOBAL internet access", relay_id);
                         }
                         _ => {
-                            info!("Long-range relay: {} - {}km coverage", relay_id, relay.coverage_radius_km);
+                            info!(
+                                "Long-range relay: {} - {}km coverage",
+                                relay_id, relay.coverage_radius_km
+                            );
                         }
                     }
                 }
             }
-            
-            info!("TOTAL GLOBAL REACH: {:.0}km via path: {:?}", 
-                  total_distance_km, routing_path);
-            
+
+            info!(
+                "TOTAL GLOBAL REACH: {:.0}km via path: {:?}",
+                total_distance_km, routing_path
+            );
+
             // With satellite + internet bridges, ZHTP reaches ANYWHERE on Earth!
             if total_distance_km > 10000.0 {
                 info!(" INTERCONTINENTAL ZHTP routing active - Planet-wide mesh network!");
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Handle UBI distribution message
     pub async fn handle_ubi_distribution(
         &self,
         recipient: PublicKey,
         amount_tokens: u64,
         distribution_round: u64,
-        proof: Vec<u8>
+        proof: Vec<u8>,
     ) -> Result<()> {
-        info!("UBI distribution: {} tokens to recipient (round {})", 
-              amount_tokens, distribution_round);
-        
+        info!(
+            "UBI distribution: {} tokens to recipient (round {})",
+            amount_tokens, distribution_round
+        );
+
         // Verify ZK proof using lib-proofs
         if proof.is_empty() {
             warn!(" Empty ZK proof for UBI distribution - rejecting");
             return Err(anyhow::anyhow!("UBI distribution requires valid ZK proof"));
         }
-        
+
         // Deserialize and verify the proof
         // The proof format depends on the UBI distribution circuit implementation
         let verification_result = match bincode::deserialize::<lib_proofs::ZkProof>(&proof) {
-            Ok(zk_proof) => {
+            Ok(_zk_proof) => {
                 // Use the recursive verifier for chain proofs (UBI is a chain operation)
                 let verifier = lib_proofs::verifiers::RecursiveProofAggregator::new()?;
-                
+
                 // For UBI distribution, we need to verify:
                 // 1. The recipient is eligible (identity proof)
                 // 2. The amount matches the current round distribution
                 // 3. The distribution round hasn't been claimed before (replay protection)
-                
+
                 // Note: The actual proof structure depends on the circuit implementation
                 // For now, we perform basic verification
                 match bincode::deserialize::<lib_proofs::ChainRecursiveProof>(&proof) {
-                    Ok(chain_proof) => {
-                        match verifier.verify_recursive_chain_proof(&chain_proof) {
-                            Ok(result) => result,
-                            Err(e) => {
-                                warn!("ZK proof verification error: {}", e);
-                                false
-                            }
+                    Ok(chain_proof) => match verifier.verify_recursive_chain_proof(&chain_proof) {
+                        Ok(result) => result,
+                        Err(e) => {
+                            warn!("ZK proof verification error: {}", e);
+                            false
                         }
                     },
                     Err(_) => {
@@ -456,7 +851,7 @@ impl MeshMessageHandler {
                                         false
                                     }
                                 }
-                            },
+                            }
                             Err(e) => {
                                 warn!("Failed to deserialize proof: {}", e);
                                 false
@@ -464,43 +859,48 @@ impl MeshMessageHandler {
                         }
                     }
                 }
-            },
+            }
             Err(e) => {
                 warn!("Failed to deserialize ZK proof: {}", e);
                 false
             }
         };
-        
+
         if !verification_result {
             warn!("Invalid ZK proof for UBI distribution - rejecting");
             return Err(anyhow::anyhow!("Invalid ZK proof for UBI distribution"));
         }
-        
+
         info!(" ZK proof verified successfully for UBI distribution");
-        
+
         // Validate distribution round to prevent replay attacks
         let mut pools = self.revenue_pools.write().await;
         let last_round_key = format!("ubi_last_round_{}", hex::encode(&recipient.key_id[0..8]));
         let last_round = pools.get(&last_round_key).unwrap_or(&0);
-        
+
         if distribution_round <= *last_round {
-            warn!("UBI distribution round {} already processed for recipient", distribution_round);
+            warn!(
+                "UBI distribution round {} already processed for recipient",
+                distribution_round
+            );
             return Err(anyhow::anyhow!("UBI distribution round already processed"));
         }
-        
+
         // Update recipient's UBI balance and track distribution
         *pools.entry("ubi_total".to_string()).or_insert(0) += amount_tokens;
         *pools.entry(last_round_key).or_insert(0) = distribution_round;
-        
+
         let recipient_balance_key = format!("ubi_balance_{}", hex::encode(&recipient.key_id[0..8]));
         *pools.entry(recipient_balance_key).or_insert(0) += amount_tokens;
-        
-        info!("UBI distribution completed: {} tokens distributed (round {})", 
-              amount_tokens, distribution_round);
-        
+
+        info!(
+            "UBI distribution completed: {} tokens distributed (round {})",
+            amount_tokens, distribution_round
+        );
+
         Ok(())
     }
-    
+
     /// Handle network health report
     pub async fn handle_health_report(
         &self,
@@ -508,10 +908,15 @@ impl MeshMessageHandler {
         network_quality: f64,
         available_bandwidth: u64,
         connected_peers: u32,
-        uptime_hours: u32
+        uptime_hours: u32,
     ) -> Result<()> {
-        info!("Health report: quality={:.2}, bandwidth={} MB/s, peers={}, uptime={}h",
-              network_quality, available_bandwidth / 1_000_000, connected_peers, uptime_hours);
+        info!(
+            "Health report: quality={:.2}, bandwidth={} MB/s, peers={}, uptime={}h",
+            network_quality,
+            available_bandwidth / 1_000_000,
+            connected_peers,
+            uptime_hours
+        );
 
         // Update connection statistics (Ticket #149: using peer_registry)
         //
@@ -532,7 +937,7 @@ impl MeshMessageHandler {
 
         Ok(())
     }
-    
+
     /// Handle native ZHTP protocol request from browser/API clients (UPDATED - Phase 3)
     pub async fn handle_lib_request(
         &self,
@@ -543,21 +948,36 @@ impl MeshMessageHandler {
         body: Vec<u8>,
         timestamp: u64,
     ) -> Result<()> {
-        info!("📥 Native ZHTP Request: {} {} from {:?}", method, uri, hex::encode(&requester.key_id[0..8]));
-        
+        info!(
+            "📥 Native ZHTP Request: {} {} from {:?}",
+            method,
+            uri,
+            hex::encode(&requester.key_id[0..8])
+        );
+
         // Validate timestamp (replay protection)
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        if now.abs_diff(timestamp) > 300 {  // 5 minute window
-            warn!(" Request timestamp too old/future: {} vs {}", timestamp, now);
-            return self.send_error_response(requester, 400, "Request timestamp invalid".to_string()).await;
+        if now.abs_diff(timestamp) > 300 {
+            // 5 minute window
+            warn!(
+                " Request timestamp too old/future: {} vs {}",
+                timestamp, now
+            );
+            return self
+                .send_error_response(requester, 400, "Request timestamp invalid".to_string())
+                .await;
         }
-        
-        info!(" Timestamp valid, headers: {}, body: {} bytes", headers.len(), body.len());
-        
+
+        info!(
+            " Timestamp valid, headers: {}, body: {} bytes",
+            headers.len(),
+            body.len()
+        );
+
         // For Phase 3, we'll create a simplified ZHTP response
         // In production, this would forward to lib-protocols ZHTP server
         // For now, we'll handle basic requests directly
-        
+
         let (status, status_message, response_body) = match method.as_str() {
             "GET" => {
                 info!("Processing GET request for {}", uri);
@@ -565,7 +985,11 @@ impl MeshMessageHandler {
                 if uri == "/health" {
                     (200, "OK".to_string(), b"Mesh node healthy".to_vec())
                 } else if uri.starts_with("/content/") {
-                    (200, "OK".to_string(), format!("Content for {}", uri).into_bytes())
+                    (
+                        200,
+                        "OK".to_string(),
+                        format!("Content for {}", uri).into_bytes(),
+                    )
                 } else {
                     (404, "Not Found".to_string(), b"Resource not found".to_vec())
                 }
@@ -574,35 +998,48 @@ impl MeshMessageHandler {
                 info!("Processing POST request for {}", uri);
                 (200, "OK".to_string(), b"Data received".to_vec())
             }
-            _ => {
-                (405, "Method Not Allowed".to_string(), b"Method not supported".to_vec())
-            }
+            _ => (
+                405,
+                "Method Not Allowed".to_string(),
+                b"Method not supported".to_vec(),
+            ),
         };
-        
+
         // Generate request ID for tracking
         let request_id = self.generate_request_id().await;
-        
+
         // Create response message
         let mut response = lib_protocols::types::ZhtpResponse::success(response_body, None);
-        response.status = lib_protocols::types::ZhtpStatus::from_code(status).unwrap_or(lib_protocols::types::ZhtpStatus::InternalServerError);
+        response.status = lib_protocols::types::ZhtpStatus::from_code(status)
+            .unwrap_or(lib_protocols::types::ZhtpStatus::InternalServerError);
         response.status_message = status_message.clone();
-        
+
         // Add custom headers
-        response.headers.custom.insert("X-Mesh-Node".to_string(), "ZHTP/1.0".to_string());
-        response.headers.custom.insert("Request-ID".to_string(), request_id.to_string());
+        response
+            .headers
+            .custom
+            .insert("X-Mesh-Node".to_string(), "ZHTP/1.0".to_string());
+        response
+            .headers
+            .custom
+            .insert("Request-ID".to_string(), request_id.to_string());
         response.headers.content_type = Some("text/plain".to_string());
-        
+
         let response_message = ZhtpMeshMessage::ZhtpResponse(response);
-        
+
         // Send response back to requester via mesh
-        info!("📤 Sending response {} {} back to requester", status, status_message);
-        self.send_response_to_requester(requester, response_message).await?;
-        
+        info!(
+            "📤 Sending response {} {} back to requester",
+            status, status_message
+        );
+        self.send_response_to_requester(requester, response_message)
+            .await?;
+
         info!(" ZHTP Request processed: {} {}", method, uri);
-        
+
         Ok(())
     }
-    
+
     /// Send response back through mesh network (NEW - Phase 3)
     async fn send_response_to_requester(
         &self,
@@ -612,11 +1049,9 @@ impl MeshMessageHandler {
         if let Some(router) = &self.message_router {
             if let Some(my_id) = &self.node_id {
                 let router_guard = router.read().await;
-                router_guard.route_message_with_forwarding(
-                    requester.clone(),
-                    response,
-                    my_id.clone()
-                ).await?;
+                router_guard
+                    .route_message_with_forwarding(requester.clone(), response, my_id.clone())
+                    .await?;
                 info!(" Response routed back to requester");
             } else {
                 warn!(" Node ID not set, cannot send response");
@@ -626,7 +1061,7 @@ impl MeshMessageHandler {
         }
         Ok(())
     }
-    
+
     /// Send error response (NEW - Phase 3)
     async fn send_error_response(
         &self,
@@ -637,33 +1072,38 @@ impl MeshMessageHandler {
         let request_id = self.generate_request_id().await;
         let mut headers = HashMap::new();
         headers.insert("Content-Type".to_string(), "text/plain".to_string());
-        
+
         let mut response = lib_protocols::types::ZhtpResponse::error(
-            lib_protocols::types::ZhtpStatus::from_code(status).unwrap_or(lib_protocols::types::ZhtpStatus::InternalServerError),
-            message.clone()
+            lib_protocols::types::ZhtpStatus::from_code(status)
+                .unwrap_or(lib_protocols::types::ZhtpStatus::InternalServerError),
+            message.clone(),
         );
-        
+
         for (k, v) in headers {
             response.headers.custom.insert(k, v);
         }
-        response.headers.custom.insert("Request-ID".to_string(), request_id.to_string());
-        
+        response
+            .headers
+            .custom
+            .insert("Request-ID".to_string(), request_id.to_string());
+
         let error_message = ZhtpMeshMessage::ZhtpResponse(response);
-        
-        self.send_response_to_requester(requester, error_message).await
+
+        self.send_response_to_requester(requester, error_message)
+            .await
     }
-    
+
     /// Generate unique request ID (NEW - Phase 3)
     async fn generate_request_id(&self) -> u64 {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos() as u64;
-        
+
         // Combine timestamp with random bits for uniqueness
         timestamp ^ (rand::random::<u64>() >> 16)
     }
-    
+
     /// Handle native ZHTP protocol response
     pub async fn handle_lib_response(
         &self,
@@ -674,16 +1114,23 @@ impl MeshMessageHandler {
         body: Vec<u8>,
         timestamp: u64,
     ) -> Result<()> {
-        info!("ZHTP Response received: {} {} (request_id: {})", status, status_message, request_id);
-        
+        info!(
+            "ZHTP Response received: {} {} (request_id: {})",
+            status, status_message, request_id
+        );
+
         // TODO: Implement full ZHTP response handling
         // - Parse response headers
         // - Process response body
         // - Validate timestamp
         // - Match with pending request and fulfill promise
-        info!(" Headers: {} present, Body: {} bytes, Timestamp: {}", 
-              headers.len(), body.len(), timestamp);
-        
+        info!(
+            " Headers: {} present, Body: {} bytes, Timestamp: {}",
+            headers.len(),
+            body.len(),
+            timestamp
+        );
+
         Ok(())
     }
 
@@ -695,21 +1142,28 @@ impl MeshMessageHandler {
         request_id: u64,
         request_type: crate::types::mesh_message::BlockchainRequestType,
     ) -> Result<()> {
-        info!(" Blockchain request from peer {:?} (request_id: {}, type: {:?})", 
-              hex::encode(&requester.key_id[0..8]), request_id, request_type);
+        info!(
+            " Blockchain request from peer {:?} (request_id: {}, type: {:?})",
+            hex::encode(&requester.key_id[0..8]),
+            request_id,
+            request_type
+        );
 
         // Emit data-only output for application layer to handle.
-        global_output_queue().push(NetworkOutput::BlockchainRequest {
-            requester,
-            request_id,
-            request: request_type,
-        }).await;
+        global_output_queue()
+            .push(NetworkOutput::BlockchainRequest {
+                requester,
+                request_id,
+                request: request_type,
+            })
+            .await;
 
         Ok(())
     }
-    
+
     /// Get protocol being used for peer (NEW - Phase 3)
     /// TODO (Ticket #149): Migrated to peer_registry
+    #[allow(dead_code)]
     async fn get_protocol_for_peer(&self, peer_id: &PublicKey) -> Result<NetworkProtocol> {
         let registry = self.peer_registry.read().await;
         // Find connection by PublicKey
@@ -720,8 +1174,9 @@ impl MeshMessageHandler {
         }
         Err(anyhow!("No connection to peer"))
     }
-    
+
     /// Chunk blockchain data for protocol (NEW - Phase 3)
+    #[allow(dead_code)]
     fn chunk_blockchain_data(
         &self,
         sender: PublicKey,
@@ -731,37 +1186,44 @@ impl MeshMessageHandler {
     ) -> Result<Vec<ZhtpMeshMessage>> {
         // Calculate chunk size based on protocol
         let chunk_size = match protocol {
-            NetworkProtocol::BluetoothLE => 200,        // BLE 5.0 conservative
-            NetworkProtocol::BluetoothClassic => 800,   // Bluetooth Classic larger MTU
-            NetworkProtocol::WiFiDirect => 1400,        // WiFi Direct near-ethernet
-            NetworkProtocol::LoRaWAN => 50,             // LoRa very small packets
-            _ => 512,                                    // Default safe size
+            NetworkProtocol::BluetoothLE => 200,      // BLE 5.0 conservative
+            NetworkProtocol::BluetoothClassic => 800, // Bluetooth Classic larger MTU
+            NetworkProtocol::WiFiDirect => 1400,      // WiFi Direct near-ethernet
+            NetworkProtocol::LoRaWAN => 50,           // LoRa very small packets
+            _ => 512,                                 // Default safe size
         };
-        
+
         // Calculate complete data hash
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(&data);
         let complete_data_hash: [u8; 32] = hasher.finalize().into();
-        
+
         // Split into chunks
         let chunks: Vec<&[u8]> = data.chunks(chunk_size).collect();
         let total_chunks = chunks.len() as u32;
-        
-        info!(" Chunking {} bytes into {} chunks of ~{} bytes", data.len(), total_chunks, chunk_size);
-        
+
+        info!(
+            " Chunking {} bytes into {} chunks of ~{} bytes",
+            data.len(),
+            total_chunks,
+            chunk_size
+        );
+
         // Create ZhtpMeshMessage for each chunk
-        let messages: Vec<ZhtpMeshMessage> = chunks.into_iter().enumerate().map(|(i, chunk)| {
-            ZhtpMeshMessage::BlockchainData {
+        let messages: Vec<ZhtpMeshMessage> = chunks
+            .into_iter()
+            .enumerate()
+            .map(|(i, chunk)| ZhtpMeshMessage::BlockchainData {
                 sender: sender.clone(),
                 request_id,
                 chunk_index: i as u32,
                 total_chunks,
                 data: chunk.to_vec(),
                 complete_data_hash,
-            }
-        }).collect();
-        
+            })
+            .collect();
+
         Ok(messages)
     }
 
@@ -775,15 +1237,34 @@ impl MeshMessageHandler {
         data: Vec<u8>,
         complete_data_hash: [u8; 32],
     ) -> Result<()> {
-        info!("📥 Blockchain data chunk {}/{} received ({} bytes, request_id: {})", 
-              chunk_index + 1, total_chunks, data.len(), request_id);
-        
+        info!(
+            "📥 Blockchain data chunk {}/{} received ({} bytes, request_id: {})",
+            chunk_index + 1,
+            total_chunks,
+            data.len(),
+            request_id
+        );
+
         // Add chunk to sync manager for reassembly (SECURITY: with sender authentication)
-        match self.sync_manager.add_chunk(sender, request_id, chunk_index, total_chunks, data, complete_data_hash).await {
+        match self
+            .sync_manager
+            .add_chunk(
+                sender,
+                request_id,
+                chunk_index,
+                total_chunks,
+                data,
+                complete_data_hash,
+            )
+            .await
+        {
             Ok(Some(complete_data)) => {
-                info!("✅ All blockchain chunks received and verified! Total: {} bytes", complete_data.len());
+                info!(
+                    "✅ All blockchain chunks received and verified! Total: {} bytes",
+                    complete_data.len()
+                );
                 info!("   Hash: {}", hex::encode(complete_data_hash));
-                
+
                 // TODO: Forward complete blockchain data to application layer for import
                 // This requires lib-blockchain which would create a circular dependency
                 // The unified_server handles this properly in handle_udp_mesh()
@@ -791,19 +1272,22 @@ impl MeshMessageHandler {
                 info!("   Application layer should import this data via blockchain.evaluate_and_merge_chain()");
             }
             Ok(None) => {
-                debug!("Chunk {}/{} buffered, waiting for more chunks", chunk_index + 1, total_chunks);
+                debug!(
+                    "Chunk {}/{} buffered, waiting for more chunks",
+                    chunk_index + 1,
+                    total_chunks
+                );
             }
             Err(e) => {
                 warn!("⚠️ Failed to process blockchain chunk: {}", e);
                 return Err(e);
             }
         }
-        
+
         Ok(())
     }
-    
-    /// Handle new block announcement (NEW - Phase 3)
-    /// TODO: This requires lib-blockchain which would create a circular dependency
+
+    /// Handle new block announcement (#916: forwards to application layer via BlockchainEventReceiver)
     pub async fn handle_new_block(
         &self,
         block: Vec<u8>,
@@ -811,17 +1295,18 @@ impl MeshMessageHandler {
         height: u64,
         timestamp: u64,
     ) -> Result<()> {
-        info!(" New block announcement: height {} from {:?} ({} bytes)", 
-              height, hex::encode(&sender.key_id[0..4]), block.len());
-        
-        // TODO: Implement blockchain integration at application layer
-        warn!(" Blockchain integration not yet implemented (circular dependency issue)");
-        
-        Ok(())
+        info!(
+            "New block announcement: height {} from {:?} ({} bytes)",
+            height,
+            hex::encode(&sender.key_id[0..4]),
+            block.len()
+        );
+        self.blockchain_event_receiver
+            .on_block_received(block, height, timestamp, sender.key_id.to_vec())
+            .await
     }
-    
-    /// Handle new transaction announcement (NEW - Phase 3)
-    /// TODO: This requires lib-blockchain which would create a circular dependency
+
+    /// Handle new transaction announcement (#916: forwards to application layer via BlockchainEventReceiver)
     pub async fn handle_new_transaction(
         &self,
         transaction: Vec<u8>,
@@ -829,23 +1314,23 @@ impl MeshMessageHandler {
         tx_hash: [u8; 32],
         fee: u64,
     ) -> Result<()> {
-        info!(" New transaction from {:?}: hash={}, fee={}", 
-              hex::encode(&sender.key_id[0..4]), 
-              hex::encode(&tx_hash[0..8]),
-              fee);
-        
-        // TODO: Implement blockchain integration at application layer
-        warn!(" Blockchain integration not yet implemented (circular dependency issue)");
-        
-        Ok(())
+        info!(
+            "New transaction from {:?}: hash={}, fee={}",
+            hex::encode(&sender.key_id[0..4]),
+            hex::encode(&tx_hash[0..8]),
+            fee
+        );
+        self.blockchain_event_receiver
+            .on_transaction_received(transaction, tx_hash, fee, sender.key_id.to_vec())
+            .await
     }
 
     /// Handle bootstrap proof request from edge node
-    /// 
+    ///
     /// This is called on a FULL VALIDATOR NODE when an edge node requests
     /// a chain bootstrap proof. The validator generates a ChainRecursiveProof
     /// that proves the entire blockchain state up to the current height.
-    /// 
+    ///
     /// Edge nodes are computationally constrained (BLE phones, IoT devices)
     /// and cannot generate proofs themselves - they only verify proofs.
     pub async fn handle_bootstrap_proof_request(
@@ -854,41 +1339,47 @@ impl MeshMessageHandler {
         request_id: u64,
         current_height: u64,
     ) -> Result<()> {
-        info!(" Bootstrap proof request from edge node {:?} at height {}", 
-              hex::encode(&requester.key_id[0..4]), 
-              current_height);
+        info!(
+            " Bootstrap proof request from edge node {:?} at height {}",
+            hex::encode(&requester.key_id[0..4]),
+            current_height
+        );
 
         // Emit data-only output for application layer to handle.
-        global_output_queue().push(NetworkOutput::BootstrapProofRequest {
-            requester,
-            request_id,
-            current_height,
-        }).await;
+        global_output_queue()
+            .push(NetworkOutput::BootstrapProofRequest {
+                requester,
+                request_id,
+                current_height,
+            })
+            .await;
 
         Ok(())
     }
 
     /// Handle bootstrap proof response
-    /// 
+    ///
     /// This is called on an EDGE NODE when it receives a ChainRecursiveProof
     /// from a validator. The edge node performs lightweight verification
     /// (O(1) time regardless of chain length!) and then stores headers.
-    /// 
+    ///
     /// Edge nodes have limited computation/storage, so they:
     /// 1. Verify the recursive proof (fast!)
     /// 2. Store rolling window of headers (100-500 blocks)
     /// 3. Track UTXOs for their addresses
     pub async fn handle_bootstrap_proof_response(
         &self,
-        request_id: u64,
-        proof_data: Vec<u8>,
+        _request_id: u64,
+        _proof_data: Vec<u8>,
         proof_height: u64,
         headers: Vec<Vec<u8>>,
     ) -> Result<()> {
-        info!(" Bootstrap proof response: {} headers at height {}", 
-              headers.len(), 
-              proof_height);
-        
+        info!(
+            " Bootstrap proof response: {} headers at height {}",
+            headers.len(),
+            proof_height
+        );
+
         // Note: Bootstrap proof handling would need EdgeNodeStrategy-specific API
         // For now, this is a no-op as the strategy pattern handles sync differently
         warn!(" Bootstrap proof handling not yet implemented for unified sync manager");
@@ -896,7 +1387,7 @@ impl MeshMessageHandler {
     }
 
     /// Handle headers request from edge node
-    /// 
+    ///
     /// Edge nodes request specific block headers when they're close to the
     /// chain tip (<500 blocks behind) and don't need a full bootstrap proof.
     /// This is more efficient for incremental sync.
@@ -907,42 +1398,54 @@ impl MeshMessageHandler {
         start_height: u64,
         count: u32,
     ) -> Result<()> {
-        info!(" Headers request from {:?}: start={}, count={}", 
-              hex::encode(&requester.key_id[0..4]), 
-              start_height, 
-              count);
-        
+        info!(
+            " Headers request from {:?}: start={}, count={}",
+            hex::encode(&requester.key_id[0..4]),
+            start_height,
+            count
+        );
+
         // Check if blockchain is available
         if !self.blockchain_provider.is_available().await {
             warn!(" Blockchain not available - cannot fetch headers");
             return Err(anyhow!("Blockchain not available"));
         }
-        
+
         // Limit count to prevent abuse (max 1000 headers per request)
         let safe_count = std::cmp::min(count as u64, 1000);
-        
+
         // Fetch headers from blockchain
-        let headers = self.blockchain_provider.get_headers(start_height, safe_count).await?;
-        info!(" Fetched {} headers starting at height {}", headers.len(), start_height);
-        
+        let headers = self
+            .blockchain_provider
+            .get_headers(start_height, safe_count)
+            .await?;
+        info!(
+            " Fetched {} headers starting at height {}",
+            headers.len(),
+            start_height
+        );
+
         // Serialize headers
-        let serialized_headers: Vec<Vec<u8>> = headers.iter()
+        let serialized_headers: Vec<Vec<u8>> = headers
+            .iter()
             .map(|h| bincode::serialize(h))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| anyhow!("Failed to serialize headers: {}", e))?;
-        
+
         // Send response
         let response_message = ZhtpMeshMessage::HeadersResponse {
             request_id,
             headers: serialized_headers,
             start_height,
         };
-        
+
         // Send via message router if available
         if let Some(router) = &self.message_router {
             let router_lock = router.read().await;
             if let Some(sender_node_id) = &self.node_id {
-                router_lock.route_message(response_message, requester, sender_node_id.clone()).await?;
+                router_lock
+                    .route_message(response_message, requester, sender_node_id.clone())
+                    .await?;
                 info!("📤 Sent {} headers to edge node", headers.len());
             } else {
                 warn!(" Node ID not set - cannot send response");
@@ -950,12 +1453,12 @@ impl MeshMessageHandler {
         } else {
             warn!(" Message router not available - cannot send response");
         }
-        
+
         Ok(())
     }
 
     /// Handle headers response
-    /// 
+    ///
     /// Edge node receives block headers from validator for incremental sync.
     /// Headers are stored in a rolling window (100-500 blocks) and used to:
     /// 1. Verify merkle proofs for transactions
@@ -963,14 +1466,16 @@ impl MeshMessageHandler {
     /// 3. Validate incoming payments instantly
     pub async fn handle_headers_response(
         &self,
-        request_id: u64,
+        _request_id: u64,
         headers: Vec<Vec<u8>>,
         start_height: u64,
     ) -> Result<()> {
-        info!(" Headers response: {} headers from height {}", 
-              headers.len(), 
-              start_height);
-        
+        info!(
+            " Headers response: {} headers from height {}",
+            headers.len(),
+            start_height
+        );
+
         // Note: Headers-only sync would need EdgeNodeStrategy-specific API
         // For now, this is a no-op as the strategy pattern handles sync differently
         warn!(" Headers-only sync not yet implemented for unified sync manager");
@@ -980,81 +1485,239 @@ impl MeshMessageHandler {
     // DHT message handlers
     // Note: These are protocol-level handlers. Actual DHT logic is in lib-storage.
     // The application layer (zhtp) should handle DHT operations through ZkDHTIntegration.
-    
-    async fn handle_dht_store(&self, requester: PublicKey, request_id: u64, key: Vec<u8>, value: Vec<u8>, ttl: u64, _signature: Vec<u8>) -> Result<()> {
-        info!("DHT Store request from {:?}: key={} bytes, value={} bytes, ttl={}", 
-              requester, key.len(), value.len(), ttl);
-        
+
+    async fn handle_dht_store(
+        &self,
+        requester: PublicKey,
+        request_id: u64,
+        key: Vec<u8>,
+        value: Vec<u8>,
+        ttl: u64,
+        signature: Vec<u8>,
+    ) -> Result<()> {
+        let peer_id_hex = hex::encode(&requester.key_id[0..8.min(requester.key_id.len())]);
+
+        // Reject empty key/value — prevents 32-byte signed-data collision with the
+        // "system transaction" bypass in verify_signature (msg_len==32, sig_len==pk_len).
+        if key.is_empty() || value.is_empty() {
+            warn!(
+                "DHT Store rejected from {}: key and value must be non-empty",
+                peer_id_hex
+            );
+            return Err(anyhow!("DHT Store key and value must be non-empty"));
+        }
+
+        // Guard against memory/CPU DoS — cap payload before any allocation.
+        const DHT_STORE_MAX_KEY_BYTES: usize = 256;
+        const DHT_STORE_MAX_VALUE_BYTES: usize = 65_536; // 64 KiB
+        if key.len() > DHT_STORE_MAX_KEY_BYTES {
+            warn!(
+                "DHT Store key too large ({} bytes) from peer {}",
+                key.len(),
+                peer_id_hex
+            );
+            return Err(anyhow!("DHT Store key exceeds maximum size"));
+        }
+        if value.len() > DHT_STORE_MAX_VALUE_BYTES {
+            warn!(
+                "DHT Store value too large ({} bytes) from peer {}",
+                value.len(),
+                peer_id_hex
+            );
+            return Err(anyhow!("DHT Store value exceeds maximum size"));
+        }
+
+        info!(
+            "DHT Store request from {}: key={} bytes, value={} bytes, ttl={}",
+            peer_id_hex,
+            key.len(),
+            value.len(),
+            ttl
+        );
+
+        // Validate that key_id is bound to the Dilithium public key.
+        // Without this check an attacker can forge a victim's key_id while supplying
+        // their own dilithium_pk and still pass Dilithium verification.
+        if requester.dilithium_pk.is_empty() {
+            warn!(
+                "DHT Store rejected from {}: missing Dilithium public key",
+                peer_id_hex
+            );
+            return Err(anyhow!("DHT Store requester has no Dilithium public key"));
+        }
+        let expected_key_id = lib_crypto::hash_blake3(&requester.dilithium_pk);
+        if requester.key_id != expected_key_id {
+            warn!(
+                "DHT Store rejected from {}: key_id does not match dilithium_pk",
+                peer_id_hex
+            );
+            return Err(anyhow!("DHT Store requester key_id mismatch"));
+        }
+
+        // Verify signature over domain-separated tuple:
+        // "ZHTP_DHT_STORE_V1|" || requester.key_id || request_id (BE) || ttl (BE) || key || value
+        // Including request_id and ttl prevents an attacker from replaying the signature
+        // with a different TTL or a different request context.
+        const DHT_STORE_DOMAIN_SEP: &[u8] = b"ZHTP_DHT_STORE_V1|";
+        let mut signed_data = Vec::with_capacity(
+            DHT_STORE_DOMAIN_SEP.len()
+                + requester.key_id.len()
+                + 8 // request_id (u64 BE)
+                + 8 // ttl (u64 BE)
+                + key.len()
+                + value.len(),
+        );
+        signed_data.extend_from_slice(DHT_STORE_DOMAIN_SEP);
+        signed_data.extend_from_slice(&requester.key_id);
+        signed_data.extend_from_slice(&request_id.to_be_bytes());
+        signed_data.extend_from_slice(&ttl.to_be_bytes());
+        signed_data.extend_from_slice(&key);
+        signed_data.extend_from_slice(&value);
+
+        let sig = lib_crypto::Signature::from_bytes_with_key(&signature, requester.clone());
+        match requester.verify(&signed_data, &sig) {
+            Ok(true) => {
+                debug!("DHT Store signature verified from peer {}", peer_id_hex);
+            }
+            Ok(false) => {
+                warn!(
+                    "DHT Store signature verification FAILED from peer {}",
+                    peer_id_hex
+                );
+                return Err(anyhow!("Invalid DHT Store signature"));
+            }
+            Err(e) => {
+                warn!(
+                    "DHT Store signature verification error from peer {}: {}",
+                    peer_id_hex, e
+                );
+                return Err(anyhow!("DHT Store signature verification error: {}", e));
+            }
+        }
+
         // DHT storage operations should be implemented at the application layer
         // through ZkDHTIntegration. This handler just logs the request.
-        // In a full implementation, this would forward to the local DHT node.
-        
         warn!("DHT Store: Application layer should implement through ZkDHTIntegration");
         Ok(())
     }
-    
-    async fn handle_dht_store_ack(&self, request_id: u64, success: bool, stored_count: u32) -> Result<()> {
-        info!("DHT Store ACK: request_id={}, success={}, stored_count={}", 
-              request_id, success, stored_count);
-        
+
+    async fn handle_dht_store_ack(
+        &self,
+        request_id: u64,
+        success: bool,
+        stored_count: u32,
+    ) -> Result<()> {
+        info!(
+            "DHT Store ACK: request_id={}, success={}, stored_count={}",
+            request_id, success, stored_count
+        );
+
         // This confirms a previous store request completed
         // Application layer should track pending requests
         Ok(())
     }
-    
-    async fn handle_dht_find_value(&self, requester: PublicKey, request_id: u64, key: Vec<u8>, max_hops: u8) -> Result<()> {
-        info!("DHT Find Value from {:?}: key={} bytes, max_hops={}", 
-              requester, key.len(), max_hops);
-        
+
+    async fn handle_dht_find_value(
+        &self,
+        requester: PublicKey,
+        _request_id: u64,
+        key: Vec<u8>,
+        max_hops: u8,
+    ) -> Result<()> {
+        info!(
+            "DHT Find Value from {:?}: key={} bytes, max_hops={}",
+            requester,
+            key.len(),
+            max_hops
+        );
+
         // DHT lookup operations should be implemented at the application layer
         // This would query the local DHT storage and return the value or closer nodes
-        
+
         warn!("DHT Find Value: Application layer should implement through ZkDHTIntegration");
         Ok(())
     }
-    
-    async fn handle_dht_find_value_response(&self, request_id: u64, found: bool, value: Option<Vec<u8>>, closer_nodes: Vec<PublicKey>) -> Result<()> {
-        info!("DHT Find Value Response: request_id={}, found={}, value={} bytes, closer_nodes={}", 
-              request_id, found, value.as_ref().map(|v| v.len()).unwrap_or(0), closer_nodes.len());
-        
+
+    async fn handle_dht_find_value_response(
+        &self,
+        request_id: u64,
+        found: bool,
+        value: Option<Vec<u8>>,
+        closer_nodes: Vec<PublicKey>,
+    ) -> Result<()> {
+        info!(
+            "DHT Find Value Response: request_id={}, found={}, value={} bytes, closer_nodes={}",
+            request_id,
+            found,
+            value.as_ref().map(|v| v.len()).unwrap_or(0),
+            closer_nodes.len()
+        );
+
         // This is a response to a previous find_value request
         // Application layer should match this with the pending request
         Ok(())
     }
-    
-    async fn handle_dht_find_node(&self, requester: PublicKey, request_id: u64, target_id: Vec<u8>, max_hops: u8) -> Result<()> {
-        info!("DHT Find Node from {:?}: target_id={} bytes, max_hops={}", 
-              requester, target_id.len(), max_hops);
-        
+
+    async fn handle_dht_find_node(
+        &self,
+        requester: PublicKey,
+        _request_id: u64,
+        target_id: Vec<u8>,
+        max_hops: u8,
+    ) -> Result<()> {
+        info!(
+            "DHT Find Node from {:?}: target_id={} bytes, max_hops={}",
+            requester,
+            target_id.len(),
+            max_hops
+        );
+
         // DHT node discovery operations should be implemented at the application layer
         // This would query the routing table for nodes closer to target_id
-        
+
         warn!("DHT Find Node: Application layer should implement through ZkDHTIntegration");
         Ok(())
     }
-    
-    async fn handle_dht_find_node_response(&self, request_id: u64, closer_nodes: Vec<(PublicKey, String)>) -> Result<()> {
-        info!("DHT Find Node Response: request_id={}, closer_nodes={}", 
-              request_id, closer_nodes.len());
-        
+
+    async fn handle_dht_find_node_response(
+        &self,
+        request_id: u64,
+        closer_nodes: Vec<(PublicKey, String)>,
+    ) -> Result<()> {
+        info!(
+            "DHT Find Node Response: request_id={}, closer_nodes={}",
+            request_id,
+            closer_nodes.len()
+        );
+
         // This is a response to a previous find_node request
         // Application layer should use these nodes to continue the search
         Ok(())
     }
-    
-    async fn handle_dht_ping(&self, requester: PublicKey, request_id: u64, timestamp: u64) -> Result<()> {
-        debug!("DHT Ping from {:?}: request_id={}, timestamp={}", 
-               requester, request_id, timestamp);
-        
+
+    async fn handle_dht_ping(
+        &self,
+        requester: PublicKey,
+        request_id: u64,
+        timestamp: u64,
+    ) -> Result<()> {
+        debug!(
+            "DHT Ping from {:?}: request_id={}, timestamp={}",
+            requester, request_id, timestamp
+        );
+
         // DHT ping is used to keep nodes alive in the routing table
         // Should respond with a pong message
-        
+
         // In a full implementation, we would send a DhtPong response here
         Ok(())
     }
-    
+
     async fn handle_dht_pong(&self, request_id: u64, timestamp: u64) -> Result<()> {
-        debug!("DHT Pong: request_id={}, timestamp={}", request_id, timestamp);
+        debug!(
+            "DHT Pong: request_id={}, timestamp={}",
+            request_id, timestamp
+        );
 
         // This confirms the peer is still alive
         // Application layer should update the routing table's last_seen timestamp
@@ -1081,7 +1744,12 @@ impl MeshMessageHandler {
     /// DHT messages are rate-limited to prevent DoS attacks:
     /// - Max 100 messages per peer per 60-second window
     /// - Exceeded peers are logged and their messages dropped
-    async fn handle_dht_generic_payload(&self, requester: PublicKey, payload: Vec<u8>, signature: Vec<u8>) -> Result<()> {
+    async fn handle_dht_generic_payload(
+        &self,
+        requester: PublicKey,
+        payload: Vec<u8>,
+        signature: Vec<u8>,
+    ) -> Result<()> {
         let peer_id_hex = hex::encode(&requester.key_id[0..8.min(requester.key_id.len())]);
 
         debug!(
@@ -1157,14 +1825,16 @@ impl MeshMessageHandler {
         if payload.len() > MAX_DHT_PAYLOAD_SIZE {
             warn!(
                 "DHT payload too large from peer {}: {} bytes (max {})",
-                peer_id_hex, payload.len(), MAX_DHT_PAYLOAD_SIZE
+                peer_id_hex,
+                payload.len(),
+                MAX_DHT_PAYLOAD_SIZE
             );
             return Err(anyhow!("DHT payload exceeds maximum size"));
         }
 
         // Forward to DHT transport if sender is configured
         if let Some(sender) = &self.dht_payload_sender {
-            let peer_id = NodeId(requester.key_id);
+            let peer_id = NodeId::from_bytes(requester.key_id);
 
             if let Err(e) = sender.send((payload.clone(), peer_id)) {
                 warn!(
@@ -1176,17 +1846,88 @@ impl MeshMessageHandler {
 
             debug!(
                 "Forwarded DHT payload ({} bytes) from peer {} to DHT handler",
-                payload.len(), peer_id_hex
+                payload.len(),
+                peer_id_hex
             );
         } else {
             debug!(
                 "DHT payload received but no handler configured (peer: {}, {} bytes). \
                  Call set_dht_payload_sender() to enable DHT message processing.",
-                peer_id_hex, payload.len()
+                peer_id_hex,
+                payload.len()
             );
         }
 
         Ok(())
+    }
+}
+
+/// Convert from network ValidatorMessage format to consensus engine format
+///
+/// The network layer uses `lib_consensus::validators::ValidatorMessage` (the wire format),
+/// while the consensus engine uses `lib_consensus::types::ValidatorMessage` (the internal format).
+/// This function bridges the two representations.
+#[allow(dead_code)]
+fn convert_network_to_consensus_message(
+    msg: &lib_consensus::validators::ValidatorMessage,
+) -> lib_consensus::types::ValidatorMessage {
+    use lib_consensus::types::{ConsensusVote, ValidatorMessage as ConsensusMessage, VoteType};
+    use lib_consensus::validators::ValidatorMessage as NetworkMessage;
+
+    match msg {
+        NetworkMessage::Propose(propose_msg) => ConsensusMessage::Propose {
+            proposal: propose_msg.proposal.clone(),
+        },
+        NetworkMessage::Vote(vote_msg) => ConsensusMessage::Vote {
+            vote: vote_msg.vote.clone(),
+        },
+        NetworkMessage::Commit(commit_msg) => {
+            // Commit messages are converted to Vote with VoteType::Commit
+            let commit_vote = ConsensusVote {
+                id: commit_msg.message_id.clone(),
+                height: commit_msg.height,
+                round: commit_msg.round,
+                vote_type: VoteType::Commit,
+                proposal_id: commit_msg.proposal_id.clone(),
+                voter: commit_msg.committer.clone(),
+                timestamp: commit_msg.timestamp,
+                signature: commit_msg.signature.clone(),
+            };
+            ConsensusMessage::Vote { vote: commit_vote }
+        }
+        NetworkMessage::RoundChange(round_change_msg) => {
+            // Round change messages don't have a direct mapping in the consensus engine
+            // Log and convert to a heartbeat-like message to maintain liveness tracking
+            tracing::debug!(
+                "Received RoundChange from validator {:?} for height {} -> round {}",
+                round_change_msg.validator,
+                round_change_msg.height,
+                round_change_msg.new_round
+            );
+            // Create a heartbeat to keep the validator marked as responsive
+            use lib_consensus::validators::NetworkSummary;
+            let heartbeat = lib_consensus::types::HeartbeatMessage {
+                message_id: round_change_msg.message_id.clone(),
+                validator: round_change_msg.validator.clone(),
+                height: round_change_msg.height,
+                round: round_change_msg.new_round,
+                step: lib_consensus::types::ConsensusStep::NewRound,
+                network_summary: NetworkSummary {
+                    active_validators: 0,
+                    health_score: 1.0,
+                    block_rate: 0.0,
+                },
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                signature: round_change_msg.signature.clone(),
+            };
+            ConsensusMessage::Heartbeat { message: heartbeat }
+        }
+        NetworkMessage::Heartbeat(heartbeat_msg) => ConsensusMessage::Heartbeat {
+            message: heartbeat_msg.clone(),
+        },
     }
 }
 
@@ -1195,40 +1936,35 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use tokio::sync::RwLock;
-    
+
     #[tokio::test]
     async fn test_message_handler_creation() {
         // Ticket #149: Use peer_registry instead of mesh_connections
         let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
         let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
-        
-        let handler = MeshMessageHandler::new(
-            peer_registry.clone(),
-            long_range_relays,
-            revenue_pools,
-        );
-        
+
+        let handler =
+            MeshMessageHandler::new(peer_registry.clone(), long_range_relays, revenue_pools);
+
         // Handler should be created successfully
         assert_eq!(peer_registry.read().await.all_peers().count(), 0);
     }
-    
+
     #[tokio::test]
     async fn test_health_report_handling() {
         // Ticket #149: Use peer_registry instead of mesh_connections
         let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
         let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
-        
-        let handler = MeshMessageHandler::new(
-            peer_registry.clone(),
-            long_range_relays,
-            revenue_pools,
-        );
-        
+
+        let handler =
+            MeshMessageHandler::new(peer_registry.clone(), long_range_relays, revenue_pools);
+
         let reporter = PublicKey::new(vec![1, 2, 3]);
         // Ticket #146: Use UnifiedPeerId for HashMap key
-        let unified_peer = crate::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(reporter.clone());
+        let unified_peer =
+            crate::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(reporter.clone());
 
         // Add a peer entry first (Ticket #149)
         {
@@ -1265,23 +2001,19 @@ mod tests {
                 0.8,  // reliability_score
                 None, // dht_info
                 crate::peer_registry::DiscoveryMethod::MeshScan,
-                1000000, // first_seen
-                1000000, // last_seen
+                1000000,                               // first_seen
+                1000000,                               // last_seen
                 crate::peer_registry::PeerTier::Tier3, // Standard participating nodes
-                0.5,  // trust_score
+                0.5,                                   // trust_score
             );
             let mut registry = peer_registry.write().await;
             let _ = registry.upsert(peer_entry).await;
         }
 
         // Handle health report
-        let result = handler.handle_health_report(
-            reporter.clone(),
-            0.9,
-            2000000,
-            5,
-            24,
-        ).await;
+        let result = handler
+            .handle_health_report(reporter.clone(), 0.9, 2000000, 5, 24)
+            .await;
 
         assert!(result.is_ok());
 
@@ -1291,20 +2023,17 @@ mod tests {
         assert_eq!(peer_entry.connection_metrics.stability_score, 0.9);
         assert_eq!(peer_entry.connection_metrics.bandwidth_capacity, 2000000);
     }
-    
+
     /// Test DHT signature verification - valid signature
     #[tokio::test]
     async fn test_dht_signature_verification_valid() {
         let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
         let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
-        
-        let mut handler = MeshMessageHandler::new(
-            peer_registry.clone(),
-            long_range_relays,
-            revenue_pools,
-        );
-        
+
+        let mut handler =
+            MeshMessageHandler::new(peer_registry.clone(), long_range_relays, revenue_pools);
+
         // Create a test key pair
         let test_key = lib_crypto::KeyPair::generate().unwrap();
         let public_key = test_key.public_key.clone();
@@ -1322,26 +2051,29 @@ mod tests {
         let signature = sig.signature.clone(); // Raw signature bytes
 
         // This should succeed (signature verification passes)
-        let result = handler.handle_dht_generic_payload(public_key, payload, signature).await;
+        let result = handler
+            .handle_dht_generic_payload(public_key, payload, signature)
+            .await;
 
         // Signature verification passes, and without dht_payload_sender configured,
         // the function gracefully returns Ok (logs debug message but doesn't error)
-        assert!(result.is_ok(), "Valid signature should pass verification: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Valid signature should pass verification: {:?}",
+            result
+        );
     }
-    
+
     /// Test DHT signature verification - invalid signature
     #[tokio::test]
     async fn test_dht_signature_verification_invalid() {
         let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
         let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
-        
-        let mut handler = MeshMessageHandler::new(
-            peer_registry.clone(),
-            long_range_relays,
-            revenue_pools,
-        );
-        
+
+        let mut handler =
+            MeshMessageHandler::new(peer_registry.clone(), long_range_relays, revenue_pools);
+
         // Create test keys
         let test_key = lib_crypto::KeyPair::generate().unwrap();
         let wrong_key = lib_crypto::KeyPair::generate().unwrap();
@@ -1359,25 +2091,24 @@ mod tests {
         let signature = sig.signature.clone(); // Raw signature bytes
 
         // This should fail signature verification
-        let result = handler.handle_dht_generic_payload(test_key.public_key, payload, signature).await;
-        
+        let result = handler
+            .handle_dht_generic_payload(test_key.public_key, payload, signature)
+            .await;
+
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("signature"));
     }
-    
+
     /// Test DHT signature verification - malformed signature
     #[tokio::test]
     async fn test_dht_signature_verification_malformed() {
         let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
         let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
-        
-        let mut handler = MeshMessageHandler::new(
-            peer_registry.clone(),
-            long_range_relays,
-            revenue_pools,
-        );
-        
+
+        let mut handler =
+            MeshMessageHandler::new(peer_registry.clone(), long_range_relays, revenue_pools);
+
         let test_key = lib_crypto::KeyPair::generate().unwrap();
         let payload = b"test dht payload".to_vec();
 
@@ -1385,9 +2116,347 @@ mod tests {
         let invalid_signature = vec![0u8; 10]; // Too short for any valid signature
 
         // This should fail signature verification
-        let result = handler.handle_dht_generic_payload(test_key.public_key, payload, invalid_signature).await;
-        
+        let result = handler
+            .handle_dht_generic_payload(test_key.public_key, payload, invalid_signature)
+            .await;
+
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("signature"));
+    }
+
+    #[tokio::test]
+    async fn test_identity_envelope_handling() {
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
+        let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
+        let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
+
+        let mut handler = MeshMessageHandler::new(peer_registry, long_range_relays, revenue_pools);
+
+        let store = Arc::new(RwLock::new(
+            crate::identity_store_forward::IdentityStoreForward::new(10),
+        ));
+        handler.set_identity_store_forward(store.clone());
+
+        let envelope = lib_protocols::types::IdentityEnvelope {
+            message_id: 1,
+            sender_did: "did:zhtp:sender".to_string(),
+            recipient_did: "did:zhtp:recipient".to_string(),
+            created_at: 1,
+            ttl: lib_protocols::types::MessageTtl::Days7,
+            retain_until_ttl: false,
+            pouw_stamp: None,
+            payloads: vec![lib_protocols::types::DevicePayload {
+                device_id: "device-1".to_string(),
+                ciphertext: vec![1, 2, 3],
+            }],
+        };
+
+        handler
+            .handle_mesh_message(
+                ZhtpMeshMessage::IdentityEnvelope(envelope.clone()),
+                PublicKey::new(vec![9]),
+            )
+            .await
+            .unwrap();
+
+        let pending = store
+            .write()
+            .await
+            .get_pending(&envelope.recipient_did)
+            .unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].message_id, envelope.message_id);
+    }
+
+    #[tokio::test]
+    async fn test_identity_delivery_ack_handling() {
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
+        let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
+        let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
+
+        let mut handler = MeshMessageHandler::new(peer_registry, long_range_relays, revenue_pools);
+
+        let store = Arc::new(RwLock::new(
+            crate::identity_store_forward::IdentityStoreForward::new(10),
+        ));
+        handler.set_identity_store_forward(store.clone());
+
+        let envelope = lib_protocols::types::IdentityEnvelope {
+            message_id: 42,
+            sender_did: "did:zhtp:sender".to_string(),
+            recipient_did: "did:zhtp:recipient".to_string(),
+            created_at: 1,
+            ttl: lib_protocols::types::MessageTtl::Days7,
+            retain_until_ttl: false,
+            pouw_stamp: None,
+            payloads: vec![lib_protocols::types::DevicePayload {
+                device_id: "device-1".to_string(),
+                ciphertext: vec![1, 2, 3],
+            }],
+        };
+
+        handler
+            .handle_mesh_message(
+                ZhtpMeshMessage::IdentityEnvelope(envelope.clone()),
+                PublicKey::new(vec![9]),
+            )
+            .await
+            .unwrap();
+
+        let pending_for_device = handler
+            .get_identity_pending_for_device(&envelope.recipient_did, "device-1")
+            .await
+            .unwrap();
+        assert_eq!(pending_for_device.len(), 1);
+
+        let ack = crate::types::mesh_message::IdentityDeliveryAck {
+            recipient_did: envelope.recipient_did.clone(),
+            message_id: envelope.message_id,
+            device_id: "device-1".to_string(),
+            retain_until_ttl: false,
+        };
+
+        handler
+            .handle_mesh_message(
+                ZhtpMeshMessage::IdentityDeliveryAck(ack),
+                PublicKey::new(vec![9]),
+            )
+            .await
+            .unwrap();
+
+        let pending = store
+            .write()
+            .await
+            .get_pending(&envelope.recipient_did)
+            .unwrap();
+        assert!(pending.is_empty());
+    }
+
+    // -------------------------------------------------------------------------
+    // DHT Store security tests
+    // -------------------------------------------------------------------------
+
+    fn make_handler() -> MeshMessageHandler {
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
+        let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
+        let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
+        MeshMessageHandler::new(peer_registry, long_range_relays, revenue_pools)
+    }
+
+    /// Build a valid signed DHT Store message matching the domain-separated format
+    /// expected by handle_dht_store.
+    fn dht_store_signed_data(
+        kp: &lib_crypto::KeyPair,
+        request_id: u64,
+        ttl: u64,
+        key: &[u8],
+        value: &[u8],
+    ) -> Vec<u8> {
+        const DOMAIN: &[u8] = b"ZHTP_DHT_STORE_V1|";
+        let mut data = Vec::new();
+        data.extend_from_slice(DOMAIN);
+        data.extend_from_slice(&kp.public_key.key_id);
+        data.extend_from_slice(&request_id.to_be_bytes());
+        data.extend_from_slice(&ttl.to_be_bytes());
+        data.extend_from_slice(key);
+        data.extend_from_slice(value);
+        kp.sign(&data).unwrap().signature
+    }
+
+    /// DHT Store with a valid Dilithium signature is accepted.
+    #[tokio::test]
+    async fn test_dht_store_valid_signature_accepted() {
+        let handler = make_handler();
+        let kp = lib_crypto::KeyPair::generate().unwrap();
+        let key = b"validator:abcd".to_vec();
+        let value = b"serialized_announcement".to_vec();
+        let request_id = 1_000u64;
+        let ttl = 86_400u64;
+
+        let sig = dht_store_signed_data(&kp, request_id, ttl, &key, &value);
+        let result = handler
+            .handle_dht_store(kp.public_key.clone(), request_id, key, value, ttl, sig)
+            .await;
+        assert!(result.is_ok(), "Valid DHT Store should be accepted: {:?}", result);
+    }
+
+    /// DHT Store with an empty signature is rejected.
+    #[tokio::test]
+    async fn test_dht_store_empty_signature_rejected() {
+        let handler = make_handler();
+        let kp = lib_crypto::KeyPair::generate().unwrap();
+        let result = handler
+            .handle_dht_store(
+                kp.public_key.clone(),
+                1,
+                b"key".to_vec(),
+                b"value".to_vec(),
+                100,
+                Vec::new(), // empty signature
+            )
+            .await;
+        assert!(result.is_err());
+    }
+
+    /// DHT Store with an invalid signature (wrong key) is rejected.
+    #[tokio::test]
+    async fn test_dht_store_invalid_signature_rejected() {
+        let handler = make_handler();
+        let kp = lib_crypto::KeyPair::generate().unwrap();
+        let wrong_kp = lib_crypto::KeyPair::generate().unwrap();
+        let key = b"validator:abcd".to_vec();
+        let value = b"serialized_announcement".to_vec();
+        let request_id = 42u64;
+        let ttl = 100u64;
+
+        // Sign with the wrong key — verification against kp.public_key must fail.
+        let bad_sig = dht_store_signed_data(&wrong_kp, request_id, ttl, &key, &value);
+        let result = handler
+            .handle_dht_store(kp.public_key.clone(), request_id, key, value, ttl, bad_sig)
+            .await;
+        assert!(result.is_err());
+    }
+
+    /// DHT Store with a forged key_id (key_id does not match dilithium_pk) is rejected.
+    #[tokio::test]
+    async fn test_dht_store_forged_key_id_rejected() {
+        let handler = make_handler();
+        let kp = lib_crypto::KeyPair::generate().unwrap();
+        let victim_kp = lib_crypto::KeyPair::generate().unwrap();
+
+        // Attacker's pk with victim's key_id spliced in.
+        let mut forged = kp.public_key.clone();
+        forged.key_id = victim_kp.public_key.key_id;
+
+        let key = b"validator:forged".to_vec();
+        let value = b"payload".to_vec();
+
+        // Sign with attacker's key over the forged key_id — must still be rejected.
+        let sig = {
+            const DOMAIN: &[u8] = b"ZHTP_DHT_STORE_V1|";
+            let mut data = Vec::new();
+            data.extend_from_slice(DOMAIN);
+            data.extend_from_slice(&forged.key_id); // victim's key_id
+            data.extend_from_slice(&1u64.to_be_bytes());
+            data.extend_from_slice(&100u64.to_be_bytes());
+            data.extend_from_slice(&key);
+            data.extend_from_slice(&value);
+            kp.sign(&data).unwrap().signature
+        };
+
+        let result = handler
+            .handle_dht_store(forged, 1, key, value, 100, sig)
+            .await;
+        assert!(result.is_err(), "Forged key_id must be rejected");
+    }
+
+    /// DHT Store with empty key or value is rejected.
+    #[tokio::test]
+    async fn test_dht_store_empty_key_value_rejected() {
+        let handler = make_handler();
+        let kp = lib_crypto::KeyPair::generate().unwrap();
+
+        let result_empty_key = handler
+            .handle_dht_store(
+                kp.public_key.clone(),
+                1,
+                Vec::new(), // empty key
+                b"value".to_vec(),
+                100,
+                b"fakesig".to_vec(),
+            )
+            .await;
+        assert!(result_empty_key.is_err());
+
+        let result_empty_val = handler
+            .handle_dht_store(
+                kp.public_key.clone(),
+                1,
+                b"key".to_vec(),
+                Vec::new(), // empty value
+                100,
+                b"fakesig".to_vec(),
+            )
+            .await;
+        assert!(result_empty_val.is_err());
+    }
+
+    /// DHT Store with oversized key or value is rejected.
+    #[tokio::test]
+    async fn test_dht_store_oversized_payload_rejected() {
+        let handler = make_handler();
+        let kp = lib_crypto::KeyPair::generate().unwrap();
+
+        let result_big_key = handler
+            .handle_dht_store(
+                kp.public_key.clone(),
+                1,
+                vec![b'k'; 257], // > DHT_STORE_MAX_KEY_BYTES (256)
+                b"value".to_vec(),
+                100,
+                b"fakesig".to_vec(),
+            )
+            .await;
+        assert!(result_big_key.is_err());
+
+        let result_big_val = handler
+            .handle_dht_store(
+                kp.public_key.clone(),
+                1,
+                b"key".to_vec(),
+                vec![b'v'; 65_537], // > DHT_STORE_MAX_VALUE_BYTES (65_536)
+                100,
+                b"fakesig".to_vec(),
+            )
+            .await;
+        assert!(result_big_val.is_err());
+    }
+
+    // -------------------------------------------------------------------------
+    // ValidatorMessage drop test
+    // -------------------------------------------------------------------------
+
+    /// ValidatorMessage is silently dropped (Ok) when no middleware is wired.
+    #[tokio::test]
+    async fn test_validator_message_dropped_without_middleware() {
+        let handler = make_handler();
+
+        // Use a properly generated keypair to avoid triggering internal key invariants.
+        let kp = lib_crypto::KeyPair::generate().unwrap();
+        let sender_pk = kp.public_key.clone();
+
+        // Build a minimal, structurally valid HeartbeatMessage.  The handler does not
+        // validate message content in the drop path — it only checks whether the
+        // ValidatorProtocol middleware channel is wired.
+        let heartbeat_sig = kp.sign(b"test_heartbeat").unwrap();
+        let heartbeat = lib_consensus::validators::HeartbeatMessage {
+            message_id: lib_crypto::Hash([0u8; 32]),
+            validator: lib_crypto::Hash([0u8; 32]),
+            height: 0,
+            round: 0,
+            step: lib_types::ConsensusStep::Propose,
+            network_summary: lib_consensus::validators::NetworkSummary {
+                active_validators: 0,
+                health_score: 0.0,
+                block_rate: 0.0,
+            },
+            timestamp: 0,
+            signature: heartbeat_sig,
+        };
+        let validator_msg =
+            lib_consensus::validators::ValidatorMessage::Heartbeat(heartbeat);
+
+        // Without middleware wired, the message must be dropped (Ok, not forwarded).
+        let result = handler
+            .handle_mesh_message(
+                ZhtpMeshMessage::ValidatorMessage(validator_msg),
+                sender_pk,
+            )
+            .await;
+        assert!(
+            result.is_ok(),
+            "ValidatorMessage should be dropped gracefully when middleware is absent: {:?}",
+            result
+        );
     }
 }

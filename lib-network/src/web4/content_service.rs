@@ -28,11 +28,11 @@ use super::name_resolver::NameResolver;
 
 // ZDNS types - available when storage-integration is enabled
 #[cfg(feature = "storage-integration")]
-use crate::zdns::{ZdnsResolver, Web4Record};
+use crate::zdns::{Web4Record, ZdnsResolver};
 
 // Stub types when ZDNS is not available
 #[cfg(not(feature = "storage-integration"))]
-struct ZdnsResolver;
+pub struct ZdnsResolver;
 
 #[cfg(not(feature = "storage-integration"))]
 impl ZdnsResolver {
@@ -192,10 +192,7 @@ impl Web4ContentService {
 
     /// Create with ZDNS resolver for cached domain lookups
     #[cfg(feature = "storage-integration")]
-    pub fn with_zdns(
-        registry: Arc<DomainRegistry>,
-        zdns_resolver: Arc<ZdnsResolver>,
-    ) -> Self {
+    pub fn with_zdns(registry: Arc<DomainRegistry>, zdns_resolver: Arc<ZdnsResolver>) -> Self {
         let name_resolver = Arc::new(NameResolver::new(registry.clone()));
         Self {
             registry,
@@ -225,10 +222,7 @@ impl Web4ContentService {
 
     /// Disabled without storage-integration feature
     #[cfg(not(feature = "storage-integration"))]
-    pub fn with_zdns(
-        registry: Arc<DomainRegistry>,
-        _zdns_resolver: Arc<ZdnsResolver>,
-    ) -> Self {
+    pub fn with_zdns(registry: Arc<DomainRegistry>, _zdns_resolver: Arc<ZdnsResolver>) -> Self {
         Self::new(registry)
     }
 
@@ -253,7 +247,10 @@ impl Web4ContentService {
     pub async fn resolve_domain(&self, domain: &str) -> Result<Web4Record> {
         if let Some(resolver) = &self.zdns_resolver {
             // Use ZDNS resolver for cached lookup
-            resolver.resolve_web4(domain).await.map_err(|e| anyhow!("{}", e))
+            resolver
+                .resolve_web4(domain)
+                .await
+                .map_err(|e| anyhow!("{}", e))
         } else {
             // Fall back to direct registry lookup
             let record = self.name_resolver.resolve(domain).await?;
@@ -388,10 +385,7 @@ impl Web4ContentService {
     /// - `chunk-abc123def456.js`
     pub fn is_hashed_asset(path: &str) -> bool {
         // Extract filename from path (handle empty segments from trailing /)
-        let filename = path
-            .rsplit('/')
-            .find(|s| !s.is_empty())
-            .unwrap_or(path);
+        let filename = path.rsplit('/').find(|s| !s.is_empty()).unwrap_or(path);
 
         // Check for chunk-style names first: chunk-abc123def456.js or chunk-abc12345.js
         // These are common bundler output patterns (webpack, vite, etc.)
@@ -532,6 +526,7 @@ impl Web4ContentService {
         }
     }
 
+    #[allow(dead_code)]
     /// Check if a path looks like a navigation route (not an asset)
     ///
     /// Navigation routes are paths that don't have file extensions,
@@ -563,7 +558,9 @@ impl Web4ContentService {
             match resolver.resolve_web4(domain).await {
                 Ok(record) => {
                     let mode = record.content_mode.unwrap_or(self.defaults.content_mode);
-                    let index = record.spa_entry.unwrap_or_else(|| self.defaults.index_document.clone());
+                    let index = record
+                        .spa_entry
+                        .unwrap_or_else(|| self.defaults.index_document.clone());
                     let cap = record.capability.unwrap_or(self.defaults.capability);
                     (mode, index, cap)
                 }
@@ -652,10 +649,7 @@ impl Web4ContentService {
                 }
 
                 // Navigation route -> fallback to index.html
-                info!(
-                    "SPA fallback: '{}' -> '/{}'",
-                    normalized_path, index_doc
-                );
+                info!("SPA fallback: '{}' -> '/{}'", normalized_path, index_doc);
 
                 let index_path = format!("/{}", index_doc);
                 match self.fetch_content(domain, &index_path).await {
@@ -673,12 +667,10 @@ impl Web4ContentService {
                             is_fallback: true,
                         })
                     }
-                    Err(e) => {
-                        Err(anyhow!(
-                            "SPA fallback failed: index document not found ({})",
-                            e
-                        ))
-                    }
+                    Err(e) => Err(anyhow!(
+                        "SPA fallback failed: index document not found ({})",
+                        e
+                    )),
                 }
             }
         }
@@ -690,7 +682,9 @@ impl Web4ContentService {
         let lookup_path = path.strip_prefix('/').unwrap_or(path);
 
         // Try to get content from domain
-        self.registry.get_domain_content(domain, &format!("/{}", lookup_path)).await
+        self.registry
+            .get_domain_content(domain, &format!("/{}", lookup_path))
+            .await
     }
 
     /// Compute ETag from content
@@ -712,7 +706,10 @@ mod tests {
     fn test_normalize_path_basic() {
         assert_eq!(Web4ContentService::normalize_path("/").unwrap(), "/");
         assert_eq!(Web4ContentService::normalize_path("/foo").unwrap(), "/foo");
-        assert_eq!(Web4ContentService::normalize_path("/foo/bar").unwrap(), "/foo/bar");
+        assert_eq!(
+            Web4ContentService::normalize_path("/foo/bar").unwrap(),
+            "/foo/bar"
+        );
     }
 
     #[test]
@@ -723,22 +720,40 @@ mod tests {
     #[test]
     fn test_normalize_path_double_slashes() {
         assert_eq!(Web4ContentService::normalize_path("//").unwrap(), "/");
-        assert_eq!(Web4ContentService::normalize_path("/foo//bar").unwrap(), "/foo/bar");
-        assert_eq!(Web4ContentService::normalize_path("///foo///bar///").unwrap(), "/foo/bar");
+        assert_eq!(
+            Web4ContentService::normalize_path("/foo//bar").unwrap(),
+            "/foo/bar"
+        );
+        assert_eq!(
+            Web4ContentService::normalize_path("///foo///bar///").unwrap(),
+            "/foo/bar"
+        );
     }
 
     #[test]
     fn test_normalize_path_dot_segments() {
-        assert_eq!(Web4ContentService::normalize_path("/./foo").unwrap(), "/foo");
-        assert_eq!(Web4ContentService::normalize_path("/foo/./bar").unwrap(), "/foo/bar");
+        assert_eq!(
+            Web4ContentService::normalize_path("/./foo").unwrap(),
+            "/foo"
+        );
+        assert_eq!(
+            Web4ContentService::normalize_path("/foo/./bar").unwrap(),
+            "/foo/bar"
+        );
         assert_eq!(Web4ContentService::normalize_path("/./").unwrap(), "/");
     }
 
     #[test]
     fn test_normalize_path_dotdot_safe() {
         // Should resolve .. within bounds
-        assert_eq!(Web4ContentService::normalize_path("/foo/bar/../baz").unwrap(), "/foo/baz");
-        assert_eq!(Web4ContentService::normalize_path("/foo/../bar").unwrap(), "/bar");
+        assert_eq!(
+            Web4ContentService::normalize_path("/foo/bar/../baz").unwrap(),
+            "/foo/baz"
+        );
+        assert_eq!(
+            Web4ContentService::normalize_path("/foo/../bar").unwrap(),
+            "/bar"
+        );
     }
 
     #[test]
@@ -777,7 +792,9 @@ mod tests {
     fn test_is_hashed_asset_true() {
         assert!(Web4ContentService::is_hashed_asset("/main.a1b2c3d4.js"));
         assert!(Web4ContentService::is_hashed_asset("/styles.f5e6d7c8.css"));
-        assert!(Web4ContentService::is_hashed_asset("/assets/main.abcd1234.js"));
+        assert!(Web4ContentService::is_hashed_asset(
+            "/assets/main.abcd1234.js"
+        ));
         assert!(Web4ContentService::is_hashed_asset("/chunk-abc12345.js"));
         assert!(Web4ContentService::is_hashed_asset("/vendor-xyz98765.js"));
     }
@@ -836,7 +853,11 @@ mod tests {
     #[test]
     fn test_cache_control_hashed_asset() {
         assert_eq!(
-            Web4ContentService::cache_control_for("/main.a1b2c3d4.js", "application/javascript", false),
+            Web4ContentService::cache_control_for(
+                "/main.a1b2c3d4.js",
+                "application/javascript",
+                false
+            ),
             "public, max-age=31536000, immutable"
         );
     }

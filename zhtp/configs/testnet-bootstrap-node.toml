@@ -5,7 +5,7 @@
 
 mesh_mode = "Hybrid"
 security_level = "High"  # High but not maximum (easier for testing)
-environment = "Testnet"
+runtime_role = "BOOTSTRAP"
 data_directory = "./data/testnet-bootstrap"
 
 [node]
@@ -57,7 +57,7 @@ advertise_address = "testnet-seed1.sovereign.net:9334"
 external_ip = "0.0.0.0"
 
 # Network protocols
-protocols = ["tcp", "quic"]
+protocols = ["quic"]
 mesh_port = 33445
 max_peers = 200
 min_peers = 5
@@ -171,7 +171,7 @@ health_check_interval_seconds = 30
 [economic]
 # Universal Basic Income (higher for testing)
 ubi_enabled = true
-ubi_amount_per_day = 50  # 50 ZHTP per day (testnet rate - more generous)
+ubi_amount_per_day = 50  # 50 SOV per day (testnet rate - more generous)
 ubi_distribution_hour = 0
 
 # DAO participation
@@ -181,7 +181,7 @@ dao_proposal_enabled = true
 
 # Testnet faucet settings
 faucet_enabled = true
-faucet_amount = 1000  # 1000 ZHTP per request
+faucet_amount = 1000  # 1000 SOV per request
 faucet_cooldown_hours = 1
 faucet_max_per_address = 10000
 
@@ -193,7 +193,7 @@ _gateway_enabled = false
 
 [mesh]
 mesh_mode = "Hybrid"
-mesh_protocols = ["tcp", "quic"]
+mesh_protocols = ["quic"]
 mesh_encryption = true
 
 # Bluetooth and WiFi Direct disabled for server

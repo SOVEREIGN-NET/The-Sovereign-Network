@@ -11,13 +11,13 @@
 //! - Full wallet operations happen on more powerful devices
 //! - BLE bandwidth: Bootstrap ~30 KB (0.6s), per-block ~2-5 KB (0.1-0.2s)
 
-use crate::types::Hash;
 use crate::block::BlockHeader;
-use crate::transaction::{Transaction, TransactionOutput};
 use crate::integration::crypto_integration::PublicKey;
+use crate::transaction::{Transaction, TransactionOutput};
+use crate::types::Hash;
+use anyhow::{anyhow, Result};
 use std::collections::{HashMap, VecDeque};
 use tracing::{info, warn};
-use anyhow::{Result, anyhow};
 
 /// Minimal edge node state for bandwidth-constrained BLE connections
 /// Stores only headers and tracked UTXOs (not full blockchain state)
@@ -48,7 +48,7 @@ pub struct UtxoKey {
 pub struct VerifiedPayment {
     pub tx_hash: Hash,
     pub output_index: u32,
-    pub commitment: Hash,  // Pedersen commitment (amount encrypted)
+    pub commitment: Hash, // Pedersen commitment (amount encrypted)
     pub block_height: u64,
     pub block_hash: Hash,
     pub confirmed: bool,
@@ -58,7 +58,10 @@ impl EdgeNodeState {
     /// Create a new edge node state
     /// Recommended: max_headers = 500 for security/finality (~100 KB storage)
     pub fn new(max_headers: usize) -> Self {
-        info!(" Initializing edge node state with {} header capacity", max_headers);
+        info!(
+            " Initializing edge node state with {} header capacity",
+            max_headers
+        );
         Self {
             headers: VecDeque::new(),
             max_headers,
@@ -80,7 +83,9 @@ impl EdgeNodeState {
     /// Check if a public key belongs to this edge node
     pub fn is_my_address(&self, pubkey: &PublicKey) -> bool {
         let pubkey_bytes = pubkey.as_bytes();
-        self.my_addresses.iter().any(|a| a.as_slice() == pubkey_bytes)
+        self.my_addresses
+            .iter()
+            .any(|a| a.as_slice() == pubkey_bytes)
     }
 
     /// Add a UTXO to tracked outputs (when we receive a payment)
@@ -90,23 +95,33 @@ impl EdgeNodeState {
             return;
         }
 
-        let utxo_key = UtxoKey { tx_hash, output_index };
+        let utxo_key = UtxoKey {
+            tx_hash,
+            output_index,
+        };
         self.my_utxos.insert(utxo_key, output.clone());
 
         // Note: Amount is encrypted in the commitment - not tracked on edge node
-        info!(" Added UTXO: txid={}, index={}, commitment={}",
+        info!(
+            " Added UTXO: txid={}, index={}, commitment={}",
             hex::encode(&tx_hash.as_bytes()[..8]),
             output_index,
-            hex::encode(&output.commitment.as_bytes()[..8]));
+            hex::encode(&output.commitment.as_bytes()[..8])
+        );
     }
 
     /// Remove a UTXO when it's spent
     pub fn remove_utxo(&mut self, tx_hash: &Hash, output_index: u32) -> bool {
-        let utxo_key = UtxoKey { tx_hash: *tx_hash, output_index };
+        let utxo_key = UtxoKey {
+            tx_hash: *tx_hash,
+            output_index,
+        };
         if let Some(_output) = self.my_utxos.remove(&utxo_key) {
-            info!(" Removed UTXO: txid={}, index={}",
+            info!(
+                " Removed UTXO: txid={}, index={}",
                 hex::encode(&tx_hash.as_bytes()[..8]),
-                output_index);
+                output_index
+            );
             true
         } else {
             false
@@ -118,7 +133,7 @@ impl EdgeNodeState {
     pub fn add_header(&mut self, header: BlockHeader) -> Result<()> {
         // CRITICAL: Validate header before accepting
         self.validate_header(&header)?;
-        
+
         // Update current height
         if header.height > self.current_height {
             self.current_height = header.height;
@@ -135,20 +150,22 @@ impl EdgeNodeState {
             }
         }
 
-        info!(" Added header: height={}, hash={}, headers_count={}",
+        info!(
+            " Added header: height={}, hash={}, headers_count={}",
             header.height,
             hex::encode(&header.block_hash.as_bytes()[..8]),
-            self.headers.len());
+            self.headers.len()
+        );
         Ok(())
     }
-    
+
     /// Validate a block header before accepting it
     fn validate_header(&self, header: &BlockHeader) -> Result<()> {
         // 1. Check basic header validity
         if header.version == 0 {
             return Err(anyhow!("Invalid header version: 0"));
         }
-        
+
         // 2. Check that block hash is correctly calculated
         let calculated_hash = header.calculate_hash();
         if calculated_hash != header.block_hash {
@@ -158,12 +175,12 @@ impl EdgeNodeState {
                 hex::encode(&header.block_hash.as_bytes()[..8])
             ));
         }
-        
+
         // 3. Check timestamp is reasonable (not too far in future)
         if !header.has_reasonable_timestamp() {
             return Err(anyhow!("Invalid timestamp: too far in future"));
         }
-        
+
         // 4. If we have previous headers, validate chain continuity
         if let Some(latest) = self.get_latest_header() {
             // Check height is sequential
@@ -174,7 +191,7 @@ impl EdgeNodeState {
                     header.height
                 ));
             }
-            
+
             // Check previous_block_hash matches our latest header
             if header.previous_block_hash != latest.block_hash {
                 return Err(anyhow!(
@@ -183,7 +200,7 @@ impl EdgeNodeState {
                     hex::encode(&latest.block_hash.as_bytes()[..8])
                 ));
             }
-            
+
             // Check timestamp is after previous block
             if header.timestamp <= latest.timestamp {
                 return Err(anyhow!(
@@ -192,17 +209,15 @@ impl EdgeNodeState {
                     latest.timestamp
                 ));
             }
-            
-            // Check cumulative difficulty increases
-            if header.cumulative_difficulty.bits() <= latest.cumulative_difficulty.bits() {
-                warn!("⚠️  Cumulative difficulty did not increase (possible valid adjustment)");
-            }
         } else if header.height != 0 {
             // First header must either be genesis (height 0) or we must accept any height
             // for bootstrap sync. Log warning but accept.
-            warn!("⚠️  First header has height {} (not genesis), accepting for bootstrap", header.height);
+            warn!(
+                "⚠️  First header has height {} (not genesis), accepting for bootstrap",
+                header.height
+            );
         }
-        
+
         Ok(())
     }
 
@@ -237,23 +252,22 @@ impl EdgeNodeState {
         }
 
         // 2. Find the header for the given block height
-        let header = self.get_header_by_height(block_height)
+        let header = self
+            .get_header_by_height(block_height)
             .ok_or_else(|| anyhow!("Header not found for block {}", block_height))?;
 
         // 3. Verify Merkle proof against header's merkle_root
-        let computed_root = self.verify_merkle_proof(
-            tx_hash,
-            merkle_proof,
-            &header.merkle_root,
-        )?;
+        let computed_root = self.verify_merkle_proof(tx_hash, merkle_proof, &header.merkle_root)?;
 
         if computed_root != header.merkle_root {
             return Err(anyhow!("Merkle proof verification failed"));
         }
 
         // 4. Return verified payment details (amount encrypted in commitment)
-        info!(" Payment verified: commitment={} to my address", 
-            hex::encode(&output.commitment.as_bytes()[..8]));
+        info!(
+            " Payment verified: commitment={} to my address",
+            hex::encode(&output.commitment.as_bytes()[..8])
+        );
 
         Ok(VerifiedPayment {
             tx_hash: *tx_hash,
@@ -293,11 +307,6 @@ impl EdgeNodeState {
         Hash::from_slice(&blake3::hash(&combined).as_bytes()[..32])
     }
 
-    /// Hash data using BLAKE3
-    fn hash_data(&self, data: &[u8]) -> Hash {
-        Hash::from_slice(&blake3::hash(&data).as_bytes()[..32])
-    }
-
     /// Get total UTXO count
     pub fn utxo_count(&self) -> usize {
         self.my_utxos.len()
@@ -305,14 +314,15 @@ impl EdgeNodeState {
 
     /// Get all UTXOs (amounts are encrypted in commitments)
     pub fn get_all_utxos(&self) -> Vec<(UtxoKey, TransactionOutput)> {
-        self.my_utxos.iter()
+        self.my_utxos
+            .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect()
     }
 
     /// Check if we need to request a new ChainRecursiveProof
     /// Returns true if we're more than 500 blocks behind
-    /// 
+    ///
     /// **New Network Handling:**
     /// - If network has <100 blocks: Request all headers directly (no proof needed)
     /// - If network has ≥100 blocks: Use ZK proof for blocks before our window
@@ -350,7 +360,7 @@ impl EdgeNodeState {
             }
         } else {
             let blocks_behind = network_height.saturating_sub(self.current_height);
-            
+
             if blocks_behind <= 500 {
                 // Close to tip: Just sync missing headers
                 SyncStrategy::HeadersOnly {
@@ -370,7 +380,11 @@ impl EdgeNodeState {
 
     /// Process a new block and update UTXO set
     /// Returns an error if the block header is invalid
-    pub fn process_block(&mut self, header: &BlockHeader, transactions: &[Transaction]) -> Result<()> {
+    pub fn process_block(
+        &mut self,
+        header: &BlockHeader,
+        transactions: &[Transaction],
+    ) -> Result<()> {
         // Add header to rolling window with validation
         self.add_header(header.clone())?;
 
@@ -399,36 +413,37 @@ impl EdgeNodeState {
             }
         }
 
-        info!(" Processed block {}: {} UTXOs tracked", header.height, self.my_utxos.len());
+        info!(
+            " Processed block {}: {} UTXOs tracked",
+            header.height,
+            self.my_utxos.len()
+        );
         Ok(())
     }
-    
+
     /// Compute merkle root from list of transactions
     fn compute_merkle_root_from_transactions(&self, transactions: &[Transaction]) -> Hash {
         if transactions.is_empty() {
             return Hash::default();
         }
 
-        let mut hashes: Vec<Hash> = transactions
-            .iter()
-            .map(|tx| tx.hash())
-            .collect();
+        let mut hashes: Vec<Hash> = transactions.iter().map(|tx| tx.hash()).collect();
 
         // Build Merkle tree bottom-up
         while hashes.len() > 1 {
             let mut next_level = Vec::new();
-            
+
             for chunk in hashes.chunks(2) {
                 let left = chunk[0];
                 let right = chunk.get(1).copied().unwrap_or(left);
-                
+
                 let mut combined = Vec::new();
                 combined.extend_from_slice(left.as_bytes());
                 combined.extend_from_slice(right.as_bytes());
                 let parent_hash = Hash::from_slice(&blake3::hash(&combined).as_bytes()[..32]);
                 next_level.push(parent_hash);
             }
-            
+
             hashes = next_level;
         }
 
@@ -452,16 +467,16 @@ impl EdgeNodeState {
     fn estimate_storage_size(&self) -> usize {
         // BlockHeader: ~200 bytes each
         let header_bytes = self.headers.len() * 200;
-        
+
         // TransactionOutput: ~96 bytes (32 commitment + 32 note + 32 pubkey)
         let utxo_bytes = self.my_utxos.len() * 96;
-        
+
         // Addresses: ~32 bytes each
         let address_bytes = self.my_addresses.len() * 32;
-        
+
         header_bytes + utxo_bytes + address_bytes
     }
-    
+
     /// Detect potential chain reorganization
     /// Returns true if a reorg is detected (headers don't form continuous chain)
     pub fn detect_reorg(&self, new_header: &BlockHeader) -> bool {
@@ -471,23 +486,32 @@ impl EdgeNodeState {
             // 2. Heights are not sequential
             if new_header.height == latest.height + 1 {
                 if new_header.previous_block_hash != latest.block_hash {
-                    warn!("⚠️  REORG DETECTED: New header {} doesn't link to our chain", new_header.height);
+                    warn!(
+                        "⚠️  REORG DETECTED: New header {} doesn't link to our chain",
+                        new_header.height
+                    );
                     return true;
                 }
             }
         }
         false
     }
-    
+
     /// Rollback to a specific height (for handling reorgs)
     /// Removes all headers and UTXOs after the rollback height
     pub fn rollback_to_height(&mut self, target_height: u64) -> Result<()> {
         if target_height > self.current_height {
-            return Err(anyhow!("Cannot rollback to future height {}", target_height));
+            return Err(anyhow!(
+                "Cannot rollback to future height {}",
+                target_height
+            ));
         }
-        
-        warn!("⚠️  Rolling back from height {} to {}", self.current_height, target_height);
-        
+
+        warn!(
+            "⚠️  Rolling back from height {} to {}",
+            self.current_height, target_height
+        );
+
         // Remove headers after target height
         while let Some(latest) = self.headers.back() {
             if latest.height <= target_height {
@@ -495,18 +519,21 @@ impl EdgeNodeState {
             }
             self.headers.pop_back();
         }
-        
+
         // Update current height
         self.current_height = target_height;
-        
+
         // Note: UTXOs are NOT rolled back automatically
         // This is acceptable for edge nodes since they only track their own UTXOs
         // and can re-sync them from the canonical chain
-        warn!(" Rollback complete, {} headers remaining", self.headers.len());
-        
+        warn!(
+            " Rollback complete, {} headers remaining",
+            self.headers.len()
+        );
+
         Ok(())
     }
-    
+
     /// Create checkpoint for rollback recovery
     pub fn create_checkpoint(&self) -> EdgeNodeCheckpoint {
         EdgeNodeCheckpoint {
@@ -538,10 +565,7 @@ pub struct EdgeNodeStats {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SyncStrategy {
     /// Download headers only (for new networks <100 blocks or when close to tip)
-    HeadersOnly {
-        start_height: u64,
-        count: usize,
-    },
+    HeadersOnly { start_height: u64, count: usize },
     /// Use ZK bootstrap proof + recent headers (for established networks when far behind)
     BootstrapProof {
         proof_up_to_height: u64,
@@ -563,6 +587,7 @@ pub struct EdgeNodeCheckpoint {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::Difficulty;
 
     #[test]
     fn test_edge_node_creation() {
@@ -620,23 +645,30 @@ mod tests {
     #[test]
     fn test_new_network_sync_strategy() {
         let edge_node = EdgeNodeState::new(500);
-        
+
         // New network with 50 blocks: Just download all headers
         match edge_node.get_sync_strategy(50) {
-            SyncStrategy::HeadersOnly { start_height, count } => {
+            SyncStrategy::HeadersOnly {
+                start_height,
+                count,
+            } => {
                 assert_eq!(start_height, 0);
                 assert_eq!(count, 50);
-            },
+            }
             _ => panic!("Expected HeadersOnly strategy for new network"),
         }
-        
+
         // New network with 200 blocks: Use bootstrap proof
         match edge_node.get_sync_strategy(200) {
-            SyncStrategy::BootstrapProof { proof_up_to_height, headers_from_height, headers_count } => {
+            SyncStrategy::BootstrapProof {
+                proof_up_to_height,
+                headers_from_height,
+                headers_count,
+            } => {
                 assert_eq!(proof_up_to_height, 100);
                 assert_eq!(headers_from_height, 100);
                 assert_eq!(headers_count, 100);
-            },
+            }
             _ => panic!("Expected BootstrapProof strategy for network with 200 blocks"),
         }
     }
@@ -659,20 +691,27 @@ mod tests {
 
         // Network at height 1100 (100 blocks behind): Just sync headers
         match edge_node.get_sync_strategy(1100) {
-            SyncStrategy::HeadersOnly { start_height, count } => {
+            SyncStrategy::HeadersOnly {
+                start_height,
+                count,
+            } => {
                 assert_eq!(start_height, 1001);
                 assert_eq!(count, 100);
-            },
+            }
             _ => panic!("Expected HeadersOnly when close to tip"),
         }
 
         // Network at height 1600 (600 blocks behind): Use bootstrap proof
         match edge_node.get_sync_strategy(1600) {
-            SyncStrategy::BootstrapProof { proof_up_to_height, headers_from_height, headers_count } => {
+            SyncStrategy::BootstrapProof {
+                proof_up_to_height,
+                headers_from_height,
+                headers_count,
+            } => {
                 assert_eq!(proof_up_to_height, 1500);
                 assert_eq!(headers_from_height, 1500);
                 assert_eq!(headers_count, 100);
-            },
+            }
             _ => panic!("Expected BootstrapProof when far behind"),
         }
     }
@@ -680,12 +719,12 @@ mod tests {
     #[test]
     fn test_new_network_no_bootstrap_needed() {
         let mut edge_node = EdgeNodeState::new(500);
-        
+
         // New network with only 50 blocks shouldn't need ZK proof
         assert!(!edge_node.needs_bootstrap_proof(50));
-        
+
         // After first sync at height 50, network at 70 blocks (20 blocks behind)
-        edge_node.add_header(create_dummy_header(50));
+        let _ = edge_node.add_header(create_dummy_header(50));
         assert!(!edge_node.needs_bootstrap_proof(70));
     }
 
@@ -694,14 +733,16 @@ mod tests {
             version: 1,
             previous_block_hash: Hash::zero(),
             merkle_root: Hash::zero(),
+            state_root: Hash::default(),
             timestamp: 1700000000 + height * 10,
-            difficulty: crate::types::Difficulty::from_bits(1000),
+            difficulty: Difficulty::minimum(),
             nonce: 0,
+            cumulative_difficulty: Difficulty::minimum(),
             height,
             block_hash: Hash::zero(),
             transaction_count: 0,
             block_size: 0,
-            cumulative_difficulty: crate::types::Difficulty::from_bits((height * 1000) as u32),
+            fee_model_version: 2, // Phase 2+ uses v2
         };
         // Calculate and set the correct block hash
         header.block_hash = header.calculate_hash();

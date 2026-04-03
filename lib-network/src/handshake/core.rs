@@ -18,7 +18,7 @@
 //! ```ignore
 //! use lib_network::handshake::{HandshakeContext, handshake_as_initiator};
 //! use tokio::net::TcpStream;
-//! 
+//!
 //! async fn connect(stream: &mut TcpStream, ctx: &HandshakeContext) {
 //!     let result = handshake_as_initiator(stream, ctx).await.unwrap();
 //!     println!("Session established: {:?}", result.session_id);
@@ -26,18 +26,18 @@
 //! ```
 
 use super::{
-    ClientHello, ServerHello, ClientFinish, HandshakeMessage, HandshakePayload,
-    HandshakeContext, HandshakeResult, HandshakeSessionInfo, HandshakeRole,
-    HandshakeCapabilities,
-    decapsulate_pqc, verify_pqc_offer,
+    compute_transcript_hash, decapsulate_pqc, verify_pqc_offer, ClientFinish, ClientHello,
+    HandshakeCapabilities, HandshakeContext, HandshakeMessage, HandshakePayload, HandshakeResult,
+    HandshakeRole, HandshakeSessionInfo, ServerHello,
 };
-use anyhow::{Result, anyhow};
-use lib_identity::ZhtpIdentity;
+use anyhow::Result;
 use lib_crypto::KeyPair;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
+use lib_identity::ZhtpIdentity;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tracing::{debug, error, trace};
 
 // Use orchestrator helpers to reduce duplication
-use crate::handshake::orchestrator::{extract_payload, check_for_error};
+use crate::handshake::orchestrator::{check_for_error, extract_payload};
 
 // ============================================================================
 // Error Types
@@ -65,10 +65,7 @@ pub enum HandshakeIoError {
     InvalidMessageOrder,
 
     /// Unexpected message type
-    UnexpectedMessageType {
-        expected: String,
-        got: String,
-    },
+    UnexpectedMessageType { expected: String, got: String },
 
     /// Protocol error
     Protocol(String),
@@ -87,7 +84,11 @@ impl std::fmt::Display for HandshakeIoError {
             Self::NonceMissing => write!(f, "Invalid nonce"),
             Self::InvalidMessageOrder => write!(f, "Invalid message order or nonce mismatch"),
             Self::UnexpectedMessageType { expected, got } => {
-                write!(f, "Unexpected message type: expected {}, got {}", expected, got)
+                write!(
+                    f,
+                    "Unexpected message type: expected {}, got {}",
+                    expected, got
+                )
             }
             Self::Protocol(s) => write!(f, "Protocol error: {}", s),
             Self::IdentityError(s) => write!(f, "Identity error: {}", s),
@@ -126,6 +127,7 @@ impl<'a> NonceTracker<'a> {
     /// Returns `Ok(())` if nonce is new (first time seen)
     /// Returns `Err(HandshakeIoError::ReplayDetected)` if nonce was already seen
     pub fn register(&self, nonce: &[u8; 32], timestamp: u64) -> Result<(), HandshakeIoError> {
+        #[allow(deprecated)]
         self.cache
             .check_and_store(nonce, timestamp)
             .map_err(|_| HandshakeIoError::ReplayDetected)
@@ -140,7 +142,10 @@ impl<'a> NonceTracker<'a> {
 ///
 /// Uses unified framing module for consistent message serialization across all transports.
 /// Format: [4-byte length][message bytes]
-pub async fn send_message<S>(stream: &mut S, message: &HandshakeMessage) -> Result<(), HandshakeIoError>
+pub async fn send_message<S>(
+    stream: &mut S,
+    message: &HandshakeMessage,
+) -> Result<(), HandshakeIoError>
 where
     S: AsyncWrite + Unpin,
 {
@@ -169,8 +174,41 @@ where
         .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
 
     // Deserialize message
-    HandshakeMessage::from_bytes(&bytes)
-        .map_err(|e| HandshakeIoError::Serialization(e.to_string()))
+    HandshakeMessage::from_bytes(&bytes).map_err(|e| HandshakeIoError::Serialization(e.to_string()))
+}
+
+async fn send_message_with_bytes<S>(
+    stream: &mut S,
+    message: &HandshakeMessage,
+) -> Result<Vec<u8>, HandshakeIoError>
+where
+    S: AsyncWrite + Unpin,
+{
+    let bytes = message
+        .to_bytes()
+        .map_err(|e| HandshakeIoError::Serialization(e.to_string()))?;
+
+    crate::handshake::framing::send_framed(stream, &bytes)
+        .await
+        .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
+
+    Ok(bytes)
+}
+
+async fn recv_message_with_bytes<S>(
+    stream: &mut S,
+) -> Result<(HandshakeMessage, Vec<u8>), HandshakeIoError>
+where
+    S: AsyncRead + Unpin,
+{
+    let bytes = crate::handshake::framing::recv_framed(stream)
+        .await
+        .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
+
+    let message = HandshakeMessage::from_bytes(&bytes)
+        .map_err(|e| HandshakeIoError::Serialization(e.to_string()))?;
+
+    Ok((message, bytes))
 }
 
 // ============================================================================
@@ -214,19 +252,16 @@ where
 {
     let ctx = ctx.with_roles(HandshakeRole::Client, HandshakeRole::Server);
 
-    // Create nonce tracker for replay protection
-    let nonce_tracker = NonceTracker::new(&ctx.nonce_cache);
-
     // 1. Create ClientHello with fresh nonce
     let client_hello = ClientHello::new(local_identity, capabilities, &ctx)
         .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
 
     // 2. Send ClientHello
     let hello_msg = HandshakeMessage::new(HandshakePayload::ClientHello(client_hello.clone()));
-    send_message(stream, &hello_msg).await?;
+    let client_hello_bytes = send_message_with_bytes(stream, &hello_msg).await?;
 
     // 3. Receive ServerHello
-    let server_msg = recv_message(stream).await?;
+    let (server_msg, server_hello_bytes) = recv_message_with_bytes(stream).await?;
     check_for_error(&server_msg)?;
     let server_hello = extract_payload(&server_msg, "ServerHello", |payload| {
         if let HandshakePayload::ServerHello(sh) = payload {
@@ -236,15 +271,10 @@ where
         }
     })?;
 
-    // 4. Verify server signature
-    server_hello
-        .verify_signature(&client_hello.challenge_nonce, &ctx)
-        .map_err(|_| HandshakeIoError::InvalidSignature)?;
+    let client_hello_hash = compute_transcript_hash(&[&client_hello_bytes]);
+    let pre_finish_hash = compute_transcript_hash(&[&client_hello_bytes, &server_hello_bytes]);
 
-    // 5. Check for replay attack (server nonce must be fresh)
-    nonce_tracker.register(&server_hello.response_nonce, server_hello.timestamp)?;
-
-    // 6. Create ClientFinish with mutual authentication and PQC encapsulation
+    // 4. Create ClientFinish with mutual authentication and PQC encapsulation
     let keypair = KeyPair {
         public_key: local_identity.public_key.clone(),
         private_key: local_identity
@@ -254,12 +284,25 @@ where
     };
 
     // Use new_with_pqc to get the shared secret for hybrid key derivation
-    let (client_finish, pqc_shared_secret) = ClientFinish::new_with_pqc(&server_hello, &client_hello, &keypair, &ctx)
-        .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
+    let (client_finish, pqc_shared_secret) = ClientFinish::new_with_pqc(
+        &server_hello,
+        &client_hello,
+        &client_hello_hash,
+        &pre_finish_hash,
+        &keypair,
+        &ctx,
+    )
+    .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
 
     // 7. Send ClientFinish
     let finish_msg = HandshakeMessage::new(HandshakePayload::ClientFinish(client_finish));
-    send_message(stream, &finish_msg).await?;
+    let client_finish_bytes = send_message_with_bytes(stream, &finish_msg).await?;
+
+    let transcript_hash = compute_transcript_hash(&[
+        &client_hello_bytes,
+        &server_hello_bytes,
+        &client_finish_bytes,
+    ]);
 
     // 8. Derive session key (with PQC hybrid if available)
     let session_info = HandshakeSessionInfo::from_messages(&client_hello, &server_hello)
@@ -275,6 +318,7 @@ where
         client_hello.timestamp, // VULN-003 FIX: Use ClientHello timestamp
         &session_info,
         pqc_shared_secret.as_ref(),
+        transcript_hash,
     )
     .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
 
@@ -323,13 +367,16 @@ pub async fn handshake_as_responder<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
+    trace!("core::handshake_as_responder: starting server-side handshake");
     let ctx = ctx.with_roles(HandshakeRole::Server, HandshakeRole::Client);
 
-    // Create nonce tracker for replay protection
-    let nonce_tracker = NonceTracker::new(&ctx.nonce_cache);
-
     // 1. Receive ClientHello
-    let client_msg = recv_message(stream).await?;
+    trace!("core::handshake_as_responder: step 1 - receiving ClientHello...");
+    let (client_msg, client_hello_bytes) = recv_message_with_bytes(stream).await?;
+    debug!(
+        "core::handshake_as_responder: received ClientHello ({} bytes)",
+        client_hello_bytes.len()
+    );
     let client_hello = extract_payload(&client_msg, "ClientHello", |payload| {
         if let HandshakePayload::ClientHello(ch) = payload {
             Some(ch.clone())
@@ -337,31 +384,62 @@ where
             None
         }
     })?;
+    trace!(
+        "core::handshake_as_responder: ClientHello parsed, client_did={}",
+        client_hello.identity.did
+    );
 
     // 2. Verify client signature
-    client_hello
-        .verify_signature(&ctx)
-        .map_err(|_| HandshakeIoError::InvalidSignature)?;
+    trace!("core::handshake_as_responder: step 2 - verifying client signature...");
+    if let Err(e) = client_hello.verify_signature(&ctx) {
+        error!(
+            "core::handshake_as_responder: signature verification FAILED: {}",
+            e
+        );
+        error!("  client_did: {}", client_hello.identity.did);
+        error!("  client_device_id: {}", client_hello.identity.device_id);
+        return Err(HandshakeIoError::InvalidSignature);
+    }
+    trace!("core::handshake_as_responder: client signature verified");
 
-    // 3. Check for replay attack (client nonce must be fresh)
-    nonce_tracker.register(&client_hello.challenge_nonce, client_hello.timestamp)?;
-
-    // 4. Optionally verify client's PQC offer if present
+    // 3. Optionally verify client's PQC offer if present
     if let Some(ref pqc_offer) = client_hello.pqc_offer {
+        trace!("core::handshake_as_responder: step 3 - verifying client PQC offer...");
         verify_pqc_offer(pqc_offer)
             .map_err(|e| HandshakeIoError::Protocol(format!("Invalid client PQC offer: {}", e)))?;
+        trace!("core::handshake_as_responder: client PQC offer verified");
     }
 
-    // 5. Create ServerHello with PQC state for later decapsulation
-    let (server_hello, pqc_state) = ServerHello::new_with_pqc(local_identity, capabilities, &client_hello, &ctx)
-        .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
+    let client_hello_hash = compute_transcript_hash(&[&client_hello_bytes]);
 
-    // 6. Send ServerHello
+    // 4. Create ServerHello with PQC state for later decapsulation
+    trace!("core::handshake_as_responder: step 4 - creating ServerHello...");
+    let (server_hello, pqc_state) = ServerHello::new_with_pqc(
+        local_identity,
+        capabilities,
+        &client_hello,
+        &client_hello_hash,
+        &ctx,
+    )
+    .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
+    trace!("core::handshake_as_responder: ServerHello created");
+
+    // 5. Send ServerHello
+    trace!("core::handshake_as_responder: step 5 - sending ServerHello...");
     let hello_msg = HandshakeMessage::new(HandshakePayload::ServerHello(server_hello.clone()));
-    send_message(stream, &hello_msg).await?;
+    let server_hello_bytes = send_message_with_bytes(stream, &hello_msg).await?;
+    debug!(
+        "core::handshake_as_responder: sent ServerHello ({} bytes)",
+        server_hello_bytes.len()
+    );
 
-    // 7. Receive ClientFinish
-    let finish_msg = recv_message(stream).await?;
+    // 6. Receive ClientFinish
+    trace!("core::handshake_as_responder: step 6 - receiving ClientFinish...");
+    let (finish_msg, client_finish_bytes) = recv_message_with_bytes(stream).await?;
+    debug!(
+        "core::handshake_as_responder: received ClientFinish ({} bytes)",
+        client_finish_bytes.len()
+    );
     check_for_error(&finish_msg)?;
     let client_finish = extract_payload(&finish_msg, "ClientFinish", |payload| {
         if let HandshakePayload::ClientFinish(cf) = payload {
@@ -371,22 +449,36 @@ where
         }
     })?;
 
-    // 8. Verify client signature on finish
+    let pre_finish_hash = compute_transcript_hash(&[&client_hello_bytes, &server_hello_bytes]);
+
+    // 7. Verify client signature on finish
     client_finish
-        .verify_signature_with_context(&server_hello.response_nonce, &client_hello.identity.public_key, &ctx)
+        .verify_signature_with_context(
+            &server_hello.response_nonce,
+            &pre_finish_hash,
+            &client_hello.identity.public_key,
+            &ctx,
+        )
         .map_err(|_| HandshakeIoError::InvalidSignature)?;
 
-    // 9. Decapsulate PQC shared secret if client sent ciphertext
+    // 8. Decapsulate PQC shared secret if client sent ciphertext
     let pqc_shared_secret = match (&client_finish.pqc_ciphertext, &pqc_state) {
         (Some(ciphertext), Some(state)) => {
-            let secret = decapsulate_pqc(ciphertext, state)
-                .map_err(|e| HandshakeIoError::Protocol(format!("PQC decapsulation failed: {}", e)))?;
+            let secret = decapsulate_pqc(ciphertext, state).map_err(|e| {
+                HandshakeIoError::Protocol(format!("PQC decapsulation failed: {}", e))
+            })?;
             Some(secret)
         }
         _ => None,
     };
 
-    // 10. Derive session key (with PQC hybrid if available)
+    let transcript_hash = compute_transcript_hash(&[
+        &client_hello_bytes,
+        &server_hello_bytes,
+        &client_finish_bytes,
+    ]);
+
+    // 9. Derive session key (with PQC hybrid if available)
     let session_info = HandshakeSessionInfo::from_messages(&client_hello, &server_hello)
         .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
 
@@ -395,15 +487,91 @@ where
         server_hello.negotiated.clone(),
         &client_hello.challenge_nonce,
         &server_hello.response_nonce,
-        &local_identity.did,
-        &client_hello.identity.did,
-        client_hello.timestamp, // VULN-003 FIX: Use ClientHello timestamp
+        &client_hello.identity.did, // FIX: client_did is the CLIENT's DID
+        &local_identity.did,        // FIX: server_did is the SERVER's (local) DID
+        client_hello.timestamp,     // VULN-003 FIX: Use ClientHello timestamp
         &session_info,
         pqc_shared_secret.as_ref(),
+        transcript_hash,
     )
     .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
 
     Ok(result)
+}
+
+// ============================================================================
+// Graceful Shutdown Helper for Duplex Streams
+// ============================================================================
+
+#[allow(dead_code)]
+/// Gracefully shutdown a duplex stream to avoid race conditions
+///
+/// This ensures both sides of the stream have finished reading before closing.
+/// The shutdown sequence:
+/// 1. Flush to ensure all data is written
+/// 2. Shutdown the write side
+/// 3. Read until EOF to drain any remaining data (with timeout)
+///
+/// # Arguments
+/// * `stream` - The duplex stream to shutdown
+/// * `timeout_secs` - Maximum time to wait for graceful shutdown (default: 5)
+///
+/// # Returns
+/// * `Ok(())` if shutdown completed successfully
+/// * `Err(...)` if shutdown failed or timed out
+async fn graceful_shutdown<S>(stream: &mut S, timeout_secs: u64) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    use tokio::io::AsyncWriteExt;
+    use tokio::time::{timeout, Duration};
+
+    // Step 1: Flush to ensure all buffered data is written
+    stream.flush().await?;
+
+    // Step 2: Shutdown the write side
+    stream.shutdown().await?;
+
+    // Step 3: Drain any remaining data with timeout (prevents hanging)
+    let drain_result = timeout(Duration::from_secs(timeout_secs), drain_stream(stream)).await;
+
+    match drain_result {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => {
+            // Drain error is not fatal - the shutdown already succeeded
+            debug!(
+                "Graceful shutdown: drain completed with error (non-fatal): {}",
+                e
+            );
+            Ok(())
+        }
+        Err(_) => {
+            // Timeout is not fatal - the shutdown already succeeded
+            debug!(
+                "Graceful shutdown: drain timed out after {}s (non-fatal)",
+                timeout_secs
+            );
+            Ok(())
+        }
+    }
+}
+
+#[allow(dead_code)]
+/// Helper to drain a stream until EOF
+async fn drain_stream<S>(stream: &mut S) -> Result<()>
+where
+    S: AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+    let mut buf = [0u8; 1024];
+    loop {
+        let n = stream.read(&mut buf).await?;
+        if n == 0 {
+            break; // EOF reached
+        }
+        // Continue reading to drain
+    }
+    Ok(())
 }
 
 // ============================================================================
@@ -428,9 +596,7 @@ mod tests {
     }
 
     /// Test: Happy path - successful handshake between initiator and responder
-    /// TODO: Fix race condition in tokio duplex streams causing UnexpectedEof
     #[tokio::test]
-    #[ignore]
     async fn test_happy_path_handshake() {
         // Create identities
         let client_identity = create_test_identity("client-device");
@@ -446,30 +612,37 @@ mod tests {
         // Create in-memory duplex streams (16MB buffer for UHP messages)
         let (mut client_stream, mut server_stream) = duplex(16 * 1024 * 1024);
 
-        // Run client and server concurrently
+        // Run client and server concurrently with graceful shutdown
         let client_ctx = ctx.clone();
         let server_ctx = ctx.clone();
 
         let (client_result, server_result) = tokio::try_join!(
             async {
-                handshake_as_initiator(
+                let result = handshake_as_initiator(
                     &mut client_stream,
                     &client_ctx,
                     &client_identity,
                     HandshakeCapabilities::default(),
                 )
-                .await
+                .await;
+                // Graceful shutdown to avoid race condition
+                let _ = graceful_shutdown(&mut client_stream, 5).await;
+                result
             },
             async {
-                handshake_as_responder(
+                let result = handshake_as_responder(
                     &mut server_stream,
                     &server_ctx,
                     &server_identity,
                     HandshakeCapabilities::default(),
                 )
-                .await
+                .await;
+                // Graceful shutdown to avoid race condition
+                let _ = graceful_shutdown(&mut server_stream, 5).await;
+                result
             }
-        ).unwrap();
+        )
+        .expect("Handshake should complete successfully");
 
         // Verify session keys match
         assert_eq!(client_result.session_key, server_result.session_key);
@@ -480,9 +653,7 @@ mod tests {
     }
 
     /// Test: Replay attack detection
-    /// TODO: Fix race condition in tokio duplex streams causing UnexpectedEof
     #[tokio::test]
-    #[ignore]
     async fn test_replay_attack_prevention() {
         let client_identity = create_test_identity("client-replay");
         let server_identity = create_test_identity("server-replay");
@@ -500,22 +671,26 @@ mod tests {
 
             let result = tokio::try_join!(
                 async {
-                    handshake_as_initiator(
+                    let result = handshake_as_initiator(
                         &mut client_stream,
                         &client_ctx,
                         &client_identity_clone,
                         HandshakeCapabilities::default(),
                     )
-                    .await
+                    .await;
+                    let _ = graceful_shutdown(&mut client_stream, 5).await;
+                    result
                 },
                 async {
-                    handshake_as_responder(
+                    let result = handshake_as_responder(
                         &mut server_stream,
                         &server_ctx,
                         &server_identity_clone,
                         HandshakeCapabilities::default(),
                     )
-                    .await
+                    .await;
+                    let _ = graceful_shutdown(&mut server_stream, 5).await;
+                    result
                 }
             );
 
@@ -530,14 +705,27 @@ mod tests {
 
             // Create a ClientHello manually to control the nonce
             let client_ctx = ctx.with_roles(HandshakeRole::Client, HandshakeRole::Server);
-            let client_hello = ClientHello::new(&client_identity, HandshakeCapabilities::default(), &client_ctx).unwrap();
+            let client_hello = ClientHello::new(
+                &client_identity,
+                HandshakeCapabilities::default(),
+                &client_ctx,
+            )
+            .unwrap();
 
             // Register this nonce in the cache (simulating first handshake)
-            ctx.nonce_cache.check_and_store(&client_hello.challenge_nonce, client_hello.timestamp).unwrap();
+            ctx.nonce_cache
+                .check_and_store(&client_hello.challenge_nonce, client_hello.timestamp)
+                .unwrap();
 
             // Now try to use it again - should be detected as replay
-            let result = ctx.nonce_cache.check_and_store(&client_hello.challenge_nonce, client_hello.timestamp);
+            let result = ctx
+                .nonce_cache
+                .check_and_store(&client_hello.challenge_nonce, client_hello.timestamp);
             assert!(result.is_err());
+
+            // Cleanup streams
+            let _ = graceful_shutdown(&mut client_stream, 5).await;
+            let _ = graceful_shutdown(&mut server_stream, 5).await;
         }
     }
 
@@ -563,16 +751,20 @@ mod tests {
         // Create a test message
         let identity = create_test_identity("test-io");
         let ctx = HandshakeContext::new_test();
-        let client_hello = ClientHello::new(&identity, HandshakeCapabilities::default(), &ctx).unwrap();
+        let client_hello =
+            ClientHello::new(&identity, HandshakeCapabilities::default(), &ctx).unwrap();
         let message = HandshakeMessage::new(HandshakePayload::ClientHello(client_hello.clone()));
 
         // Send from client
         tokio::spawn(async move {
-            send_message(&mut client, &message).await.unwrap();
+            let result = send_message(&mut client, &message).await;
+            let _ = graceful_shutdown(&mut client, 5).await;
+            result.unwrap();
         });
 
         // Receive on server
         let received = recv_message(&mut server).await.unwrap();
+        let _ = graceful_shutdown(&mut server, 5).await;
 
         // Verify message type
         match received.payload {
@@ -586,16 +778,20 @@ mod tests {
     /// Test: Message size limit enforcement
     #[tokio::test]
     async fn test_oversized_message_rejection() {
+        use tokio::io::AsyncWriteExt;
         let (mut client, mut server) = duplex(16 * 1024 * 1024);
 
-        // Send a length that exceeds the limit
+        // Send a length prefix that exceeds the 1MB limit
         tokio::spawn(async move {
-            client.write_u32(2_000_000).await.unwrap(); // 2MB > 1MB limit
-            client.flush().await.unwrap();
+            let _ = client.write_all(&2_000_000u32.to_be_bytes()).await;
+            let _ = client.flush().await;
+            let _ = graceful_shutdown(&mut client, 5).await;
         });
 
         // Server should reject
         let result = recv_message(&mut server).await;
+        let _ = graceful_shutdown(&mut server, 5).await;
+
         assert!(result.is_err());
         match result.unwrap_err() {
             HandshakeIoError::Protocol(msg) => assert!(msg.contains("too large")),

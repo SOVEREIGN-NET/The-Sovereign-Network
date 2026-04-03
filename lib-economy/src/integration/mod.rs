@@ -1,4 +1,4 @@
-//! Integration interfaces with other ZHTP components
+//! Integration interfaces with other SOV components
 
 pub mod blockchain_integration;
 pub mod network_integration;

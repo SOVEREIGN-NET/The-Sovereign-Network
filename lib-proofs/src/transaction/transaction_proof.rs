@@ -1,10 +1,10 @@
 //! Zero-knowledge transaction proof structures
-//! 
+//!
 //! Unified transaction proof matching ZHTPDEV-main65 architecture.
 //! Uses single ZK proof system for all transaction components.
 
-use serde::{Serialize, Deserialize};
 use crate::types::ZkProof;
+use serde::{Deserialize, Serialize};
 
 /// Zero-knowledge transaction proof (unified ZHTPDEV-main65 style)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,11 +19,7 @@ pub struct ZkTransactionProof {
 
 impl ZkTransactionProof {
     /// Create a new transaction proof using unified ZK system
-    pub fn new(
-        amount_proof: ZkProof,
-        balance_proof: ZkProof,
-        nullifier_proof: ZkProof,
-    ) -> Self {
+    pub fn new(amount_proof: ZkProof, balance_proof: ZkProof, nullifier_proof: ZkProof) -> Self {
         Self {
             amount_proof,
             balance_proof,
@@ -38,16 +34,14 @@ impl ZkTransactionProof {
 
     /// Get the total size of all proofs in bytes
     pub fn total_size(&self) -> usize {
-        self.amount_proof.size() + 
-        self.balance_proof.size() + 
-        self.nullifier_proof.size()
+        self.amount_proof.size() + self.balance_proof.size() + self.nullifier_proof.size()
     }
 
     /// Check if any proof is empty/uninitialized
     pub fn has_empty_proofs(&self) -> bool {
-        self.amount_proof.is_empty() || 
-        self.balance_proof.is_empty() || 
-        self.nullifier_proof.is_empty()
+        self.amount_proof.is_empty()
+            || self.balance_proof.is_empty()
+            || self.nullifier_proof.is_empty()
     }
 
     /// Get proof system types used (always "Plonky2" for unified system)
@@ -64,7 +58,7 @@ impl ZkTransactionProof {
         let amount_valid = self.amount_proof.verify()?;
         let balance_valid = self.balance_proof.verify()?;
         let nullifier_valid = self.nullifier_proof.verify()?;
-        
+
         Ok(amount_valid && balance_valid && nullifier_valid)
     }
 
@@ -82,7 +76,8 @@ impl ZkTransactionProof {
         let zk_system = crate::plonky2::ZkProofSystem::new()?;
 
         // Extract sender_secret and nullifier_seed from the blinding factors
-        let sender_secret = u64::from_le_bytes(sender_blinding[0..8].try_into().unwrap_or([0u8; 8]));
+        let sender_secret =
+            u64::from_le_bytes(sender_blinding[0..8].try_into().unwrap_or([0u8; 8]));
         let nullifier_seed = u64::from_le_bytes(nullifier[0..8].try_into().unwrap_or([0u8; 8]));
 
         // Generate the main transaction proof
@@ -174,7 +169,7 @@ mod tests {
         );
 
         let tx_proof = ZkTransactionProof::new(amount_proof, balance_proof, nullifier_proof);
-        
+
         assert!(tx_proof.is_plonky2());
         assert!(tx_proof.total_size() > 0);
         assert!(!tx_proof.has_empty_proofs());
@@ -183,10 +178,10 @@ mod tests {
     #[test]
     fn test_default_transaction_proof() {
         let tx_proof = ZkTransactionProof::default();
-        
+
         assert!(tx_proof.is_plonky2());
         assert!(tx_proof.has_empty_proofs());
-        
+
         let (amt_sys, bal_sys, null_sys) = tx_proof.proof_systems();
         assert_eq!(amt_sys, "Plonky2");
         assert_eq!(bal_sys, "Plonky2");

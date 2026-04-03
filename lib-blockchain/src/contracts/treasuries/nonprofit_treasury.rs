@@ -74,24 +74,21 @@ pub enum NonprofitTreasuryError {
 impl std::fmt::Display for NonprofitTreasuryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            NonprofitTreasuryError::NotInitialized =>
-                write!(f, "Treasury not yet initialized"),
-            NonprofitTreasuryError::AlreadyInitialized =>
-                write!(f, "Treasury already initialized"),
-            NonprofitTreasuryError::Unauthorized =>
-                write!(f, "Unauthorized operation"),
-            NonprofitTreasuryError::UnauthorizedSource =>
-                write!(f, "Can only receive funds from TributeRouter"),
-            NonprofitTreasuryError::InsufficientBalance =>
-                write!(f, "Insufficient balance for withdrawal"),
-            NonprofitTreasuryError::ZeroAmount =>
-                write!(f, "Amount cannot be zero"),
-            NonprofitTreasuryError::Overflow =>
-                write!(f, "Arithmetic overflow"),
-            NonprofitTreasuryError::InvalidRecipient =>
-                write!(f, "Invalid recipient address"),
-            NonprofitTreasuryError::TreasuryFrozen =>
-                write!(f, "Treasury is frozen - no withdrawals allowed"),
+            NonprofitTreasuryError::NotInitialized => write!(f, "Treasury not yet initialized"),
+            NonprofitTreasuryError::AlreadyInitialized => write!(f, "Treasury already initialized"),
+            NonprofitTreasuryError::Unauthorized => write!(f, "Unauthorized operation"),
+            NonprofitTreasuryError::UnauthorizedSource => {
+                write!(f, "Can only receive funds from TributeRouter")
+            }
+            NonprofitTreasuryError::InsufficientBalance => {
+                write!(f, "Insufficient balance for withdrawal")
+            }
+            NonprofitTreasuryError::ZeroAmount => write!(f, "Amount cannot be zero"),
+            NonprofitTreasuryError::Overflow => write!(f, "Arithmetic overflow"),
+            NonprofitTreasuryError::InvalidRecipient => write!(f, "Invalid recipient address"),
+            NonprofitTreasuryError::TreasuryFrozen => {
+                write!(f, "Treasury is frozen - no withdrawals allowed")
+            }
         }
     }
 }
@@ -309,11 +306,7 @@ impl NonprofitTreasury {
     /// - `UnauthorizedSource` if sender is not the TributeRouter
     /// - `ZeroAmount` if amount is zero
     /// - `Overflow` if balance would exceed u64::MAX
-    pub fn receive(
-        &mut self,
-        sender: [u8; 32],
-        amount: u64,
-    ) -> Result<(), NonprofitTreasuryError> {
+    pub fn receive(&mut self, sender: [u8; 32], amount: u64) -> Result<(), NonprofitTreasuryError> {
         if !self.initialized {
             return Err(NonprofitTreasuryError::NotInitialized);
         }
@@ -328,10 +321,14 @@ impl NonprofitTreasury {
         }
 
         // Update balances
-        self.balance = self.balance.checked_add(amount)
+        self.balance = self
+            .balance
+            .checked_add(amount)
             .ok_or(NonprofitTreasuryError::Overflow)?;
 
-        self.total_received = self.total_received.checked_add(amount)
+        self.total_received = self
+            .total_received
+            .checked_add(amount)
             .ok_or(NonprofitTreasuryError::Overflow)?;
 
         // Record transaction
@@ -345,8 +342,11 @@ impl NonprofitTreasury {
             description: "Tribute deposit from TributeRouter".to_string(),
         };
 
-        self.transactions.insert(self.next_transaction_id, transaction);
-        self.next_transaction_id = self.next_transaction_id.checked_add(1)
+        self.transactions
+            .insert(self.next_transaction_id, transaction);
+        self.next_transaction_id = self
+            .next_transaction_id
+            .checked_add(1)
             .ok_or(NonprofitTreasuryError::Overflow)?;
 
         Ok(())
@@ -399,7 +399,9 @@ impl NonprofitTreasury {
         };
 
         self.withdrawal_requests.insert(request_id, request);
-        self.next_withdrawal_request_id = self.next_withdrawal_request_id.checked_add(1)
+        self.next_withdrawal_request_id = self
+            .next_withdrawal_request_id
+            .checked_add(1)
             .ok_or(NonprofitTreasuryError::Overflow)?;
 
         Ok(request_id)
@@ -425,7 +427,9 @@ impl NonprofitTreasury {
             return Err(NonprofitTreasuryError::Unauthorized);
         }
 
-        let request = self.withdrawal_requests.get_mut(&request_id)
+        let request = self
+            .withdrawal_requests
+            .get_mut(&request_id)
             .ok_or(NonprofitTreasuryError::InvalidRecipient)?;
 
         request.status = WithdrawalStatus::Approved;
@@ -460,7 +464,9 @@ impl NonprofitTreasury {
             return Err(NonprofitTreasuryError::TreasuryFrozen);
         }
 
-        let request = self.withdrawal_requests.get_mut(&request_id)
+        let request = self
+            .withdrawal_requests
+            .get_mut(&request_id)
             .ok_or(NonprofitTreasuryError::InvalidRecipient)?;
 
         if request.status != WithdrawalStatus::Approved {
@@ -472,10 +478,14 @@ impl NonprofitTreasury {
         }
 
         // Update balances
-        self.balance = self.balance.checked_sub(request.amount)
+        self.balance = self
+            .balance
+            .checked_sub(request.amount)
             .ok_or(NonprofitTreasuryError::InsufficientBalance)?;
 
-        self.total_withdrawn = self.total_withdrawn.checked_add(request.amount)
+        self.total_withdrawn = self
+            .total_withdrawn
+            .checked_add(request.amount)
             .ok_or(NonprofitTreasuryError::Overflow)?;
 
         // Record transaction
@@ -489,8 +499,11 @@ impl NonprofitTreasury {
             description: "Governance-approved nonprofit withdrawal".to_string(),
         };
 
-        self.transactions.insert(self.next_transaction_id, transaction);
-        self.next_transaction_id = self.next_transaction_id.checked_add(1)
+        self.transactions
+            .insert(self.next_transaction_id, transaction);
+        self.next_transaction_id = self
+            .next_transaction_id
+            .checked_add(1)
             .ok_or(NonprofitTreasuryError::Overflow)?;
 
         // Mark request as executed
@@ -513,7 +526,9 @@ impl NonprofitTreasury {
             return Err(NonprofitTreasuryError::Unauthorized);
         }
 
-        let request = self.withdrawal_requests.get_mut(&request_id)
+        let request = self
+            .withdrawal_requests
+            .get_mut(&request_id)
             .ok_or(NonprofitTreasuryError::InvalidRecipient)?;
 
         request.status = WithdrawalStatus::Rejected;
@@ -581,7 +596,11 @@ impl NonprofitTreasury {
     // ========================================================================
 
     /// Freeze/unfreeze the treasury (emergency only)
-    pub fn set_frozen(&mut self, frozen: bool, caller: [u8; 32]) -> Result<(), NonprofitTreasuryError> {
+    pub fn set_frozen(
+        &mut self,
+        frozen: bool,
+        caller: [u8; 32],
+    ) -> Result<(), NonprofitTreasuryError> {
         if !self.initialized {
             return Err(NonprofitTreasuryError::NotInitialized);
         }

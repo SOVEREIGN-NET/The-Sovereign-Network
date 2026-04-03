@@ -1,10 +1,11 @@
 use crate::protocols::NetworkProtocol;
+use crate::NodeId;
 
 /// Mesh server configuration
 #[derive(Debug, Clone)]
 pub struct MeshConfig {
     /// Node ID for this mesh node
-    pub node_id: [u8; 32],
+    pub node_id: NodeId,
     /// Listen port (0 = no TCP port for pure mesh)
     pub listen_port: u16,
     /// Maximum peer connections

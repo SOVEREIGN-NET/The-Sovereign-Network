@@ -1,17 +1,17 @@
 //! ISP cost savings calculation and tracking
-//! 
+//!
 //! Tracks and calculates the economic value created by replacing traditional
-//! ISP services with the ZHTP mesh network.
+//! ISP services with the SOV mesh network.
 
-use anyhow::Result;
-use serde::{Serialize, Deserialize};
 use crate::types::IspBypassWork;
 use crate::wasm::logging::info;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 /// Cost savings tracking structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CostSavings {
-    /// Total USD equivalent savings from 
+    /// Total USD equivalent savings from
     pub total_usd_savings: u64,
     /// Average monthly savings per user
     pub avg_monthly_savings_per_user: u64,
@@ -34,33 +34,33 @@ impl CostSavings {
             infrastructure_cost_savings: 0,
         }
     }
-    
+
     /// Update cost savings from  work
     pub fn update_from_work(&mut self, work: &IspBypassWork) -> Result<()> {
         // Calculate bandwidth cost savings (cost per GB avoided by users)
         let bandwidth_savings = (work.bandwidth_shared_gb as f64) * self.bandwidth_cost_savings;
-        
+
         // Calculate infrastructure cost savings (estimated ISP profit margin avoided)
         let infrastructure_savings = work.users_served * 30; // $30/month ISP profit per user
-        
+
         // Update totals including calculated bandwidth savings
         self.total_usd_savings += work.cost_savings_provided + bandwidth_savings as u64;
         self.users_benefiting = work.users_served;
         self.infrastructure_cost_savings += infrastructure_savings;
-        
+
         // Update average savings per user
         if self.users_benefiting > 0 {
             self.avg_monthly_savings_per_user = self.total_usd_savings / self.users_benefiting;
         }
-        
+
         info!(
             "Cost savings updated: {} users save avg ${}/month, total ${} saved",
             self.users_benefiting, self.avg_monthly_savings_per_user, self.total_usd_savings
         );
-        
+
         Ok(())
     }
-    
+
     /// Calculate potential cost savings for a region
     pub fn calculate_regional_impact(
         population: u64,
@@ -70,7 +70,7 @@ impl CostSavings {
         let users_adopting = ((population as f64) * adoption_rate) as u64;
         let monthly_savings = users_adopting * avg_isp_cost;
         let annual_savings = monthly_savings * 12;
-        
+
         RegionalImpact {
             population,
             users_adopting,
@@ -80,7 +80,7 @@ impl CostSavings {
             annual_savings,
         }
     }
-    
+
     /// Get cost savings statistics
     pub fn get_stats(&self) -> serde_json::Value {
         serde_json::json!({
@@ -102,7 +102,7 @@ impl CostSavings {
 pub struct RegionalImpact {
     /// Total population in region
     pub population: u64,
-    /// Number of users adopting ZHTP
+    /// Number of users adopting SOV
     pub users_adopting: u64,
     /// Average ISP cost in region ($/month)
     pub avg_isp_cost: u64,
@@ -124,8 +124,8 @@ impl RegionalImpact {
             "avg_isp_cost_monthly": self.avg_isp_cost,
             "total_monthly_savings": self.monthly_savings,
             "total_annual_savings": self.annual_savings,
-            "savings_per_capita": if self.population > 0 { 
-                self.annual_savings / self.population 
+            "savings_per_capita": if self.population > 0 {
+                self.annual_savings / self.population
             } else { 0 }
         })
     }

@@ -1,26 +1,27 @@
 // Component modules - thin wrappers that delegate to services
-pub mod crypto;
-pub mod zk;
-pub mod identity;
-pub mod storage;
-pub mod network;
+pub mod api;
 pub mod blockchain;
 pub mod consensus;
+pub mod crypto;
 pub mod economics;
+pub mod identity;
+pub mod network;
+pub mod oracle;
 pub mod protocols;
-pub mod api;
+pub mod storage;
+pub mod zk;
 
 // Re-export component types
-pub use crypto::CryptoComponent;
-pub use zk::ZKComponent;
-pub use identity::IdentityComponent;
-pub use storage::StorageComponent;
-pub use network::{NetworkComponent, RoutingRewardStats, StorageRewardStats};
-pub use blockchain::BlockchainComponent;
-pub use consensus::{ConsensusComponent, BlockchainValidatorAdapter};
-pub use economics::EconomicsComponent;
-pub use protocols::ProtocolsComponent;
 pub use api::ApiComponent;
+pub use blockchain::BlockchainComponent;
+pub use consensus::{BlockchainValidatorAdapter, ConsensusComponent};
+pub use crypto::CryptoComponent;
+pub use economics::EconomicsComponent;
+pub use identity::IdentityComponent;
+pub use network::{NetworkComponent, RoutingRewardStats, StorageRewardStats};
+pub use protocols::ProtocolsComponent;
+pub use storage::StorageComponent;
+pub use zk::ZKComponent;
 
 // Re-export helper functions
 pub use identity::create_default_storage_config;

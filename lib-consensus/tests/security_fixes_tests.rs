@@ -12,24 +12,22 @@
 //! 9. Bounded commit window
 //! 10. SystemTime panic handling
 
-use lib_consensus::{
-    ConsensusRound, ConsensusStep,
-};
+use lib_consensus::{ConsensusRound, ConsensusStep};
 use lib_crypto::{hash_blake3, Hash, PostQuantumSignature, PublicKey, SignatureAlgorithm};
 use lib_identity::IdentityId;
-use std::time::SystemTime;
 use std::collections::HashMap;
+use std::time::SystemTime;
 
 fn create_test_identity(seed: &str) -> IdentityId {
     Hash::from_bytes(&hash_blake3(seed.as_bytes()))
 }
 
 fn create_test_key() -> Vec<u8> {
-    vec![1u8; 32]  // Non-zero key for testing
+    vec![1u8; 32] // Non-zero key for testing
 }
 
 fn create_zero_key() -> Vec<u8> {
-    vec![0u8; 32]  // Zero key (should be rejected)
+    vec![0u8; 32] // Zero key (should be rejected)
 }
 
 fn create_test_signature(nonce: u64) -> PostQuantumSignature {
@@ -55,7 +53,7 @@ fn test_fix_10_systemtime_panic_handling() {
 
     // Create a minimal ConsensusEngine (pseudo-test)
     // This would normally panic with .unwrap() but should handle gracefully
-    let round = ConsensusRound {
+    let _round = ConsensusRound {
         height: 1,
         round: 0,
         step: ConsensusStep::Propose,
@@ -71,8 +69,7 @@ fn test_fix_10_systemtime_panic_handling() {
         valid_proposal: None,
     };
 
-    // Verify that start_time is set (either to actual time or fallback 0)
-    assert!(round.start_time >= 0);
+    // start_time is 0 (deterministic, wall-clock removed per CONSENSUS-NET fix)
 }
 
 #[test]
@@ -99,10 +96,16 @@ fn test_fix_2_consensus_key_validation() {
     let valid_key = create_test_key();
 
     // Verify that zero key is all zeros
-    assert!(zero_key.iter().all(|&b| b == 0), "Zero key should be all zeros");
+    assert!(
+        zero_key.iter().all(|&b| b == 0),
+        "Zero key should be all zeros"
+    );
 
     // Verify that valid key is not all zeros
-    assert!(!valid_key.iter().all(|&b| b == 0), "Valid key should not be all zeros");
+    assert!(
+        !valid_key.iter().all(|&b| b == 0),
+        "Valid key should not be all zeros"
+    );
 
     // Verify that valid key is not empty
     assert!(!valid_key.is_empty(), "Valid key should not be empty");
@@ -122,12 +125,12 @@ fn test_fix_9_commit_vote_round_window() {
 
     // Test cases
     let test_cases = vec![
-        (7, false),  // Future round (too far ahead)
-        (6, false),  // One round ahead
-        (5, true),   // Current round (valid)
-        (4, true),   // One round back (valid)
-        (3, true),   // Two rounds back (valid, at window boundary)
-        (2, false),  // Three rounds back (outside window)
+        (7, false), // Future round (too far ahead)
+        (6, false), // One round ahead
+        (5, true),  // Current round (valid)
+        (4, true),  // One round back (valid)
+        (3, true),  // Two rounds back (valid, at window boundary)
+        (2, false), // Three rounds back (outside window)
     ];
 
     for (vote_round, should_accept) in test_cases {
@@ -171,7 +174,9 @@ fn test_fix_5_validator_membership_height_scoped() {
     // - validator might be active at _height1 but not _height2
     // - validator might be inactive at _height2 due to epoch transition
 
-    println!("FIX #5: Height-scoped validator membership checks require validator history tracking");
+    println!(
+        "FIX #5: Height-scoped validator membership checks require validator history tracking"
+    );
     println!("  Current: is_validator_member() checks current validator set");
     println!("  Needed: Track validator set per height/epoch for proper validation");
 }
@@ -322,7 +327,11 @@ fn test_all_fixes_summary() {
     ];
 
     for (num, desc) in fixes {
-        let status = if desc.contains("DONE") { "✅" } else { "⚠️" };
+        let status = if desc.contains("DONE") {
+            "✅"
+        } else {
+            "⚠️"
+        };
         println!("{} {} - {}", status, num, desc);
     }
 

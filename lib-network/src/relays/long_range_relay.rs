@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
-use lib_crypto::PublicKey;
 use crate::types::relay_type::LongRangeRelayType;
+use lib_crypto::PublicKey;
+use serde::{Deserialize, Serialize};
 
 /// Long-range relay for extending mesh network reach
 #[derive(Debug, Clone, Serialize, Deserialize)]

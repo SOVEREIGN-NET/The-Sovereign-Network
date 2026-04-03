@@ -165,14 +165,14 @@
 //! - Tamper detection: bit flips in ciphertext are detected
 //! - AAD binding: modifying AAD components fails decryption
 
-use anyhow::{Result, Context as AnyhowContext};
-use lib_crypto::symmetric::chacha20::{encrypt_data_with_ad_nonce, decrypt_data_with_ad_nonce};
+use anyhow::{Context as AnyhowContext, Result};
+use lib_crypto::symmetric::chacha20::{decrypt_data_with_ad_nonce, encrypt_data_with_ad_nonce};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::debug;
 
 // Re-export handshake types for convenience
-pub use crate::handshake::{HandshakeSessionInfo, HandshakeRole};
+pub use crate::handshake::{HandshakeRole, HandshakeSessionInfo};
 
 // ============================================================================
 // Public Types
@@ -237,6 +237,7 @@ pub struct ConsensusAead {
     /// Ensures no nonce collision even if counters restart across session boundaries
     nonce_prefix_send: [u8; 4],
     /// Nonce prefix for recv direction (4 bytes, derived from root per-direction)
+    #[allow(dead_code)]
     nonce_prefix_recv: [u8; 4],
     /// Base AAD (context-bound: network_id, protocol_id, codec_version)
     /// Sender and receiver DIDs added per message (build_send_aad, build_recv_aad)
@@ -246,6 +247,7 @@ pub struct ConsensusAead {
     /// Peer DID (for constructing AAD in send path)
     peer_did: String,
     /// Direction (determines which key is send vs recv, and AAD ordering)
+    #[allow(dead_code)]
     direction: RoleDirection,
 }
 
@@ -304,17 +306,13 @@ impl ConsensusAead {
         );
 
         // Derive directional keys
-        let (key_send, key_recv) = derive_directional_keys(
-            &session_key,
-            &local_did,
-            &peer_did,
-            session_info,
-            direction,
-        )?;
+        let (key_send, key_recv) =
+            derive_directional_keys(&session_key, &local_did, &peer_did, session_info, direction)?;
 
         // Derive nonce prefixes
         let nonce_prefix_send = derive_nonce_prefix(&session_key, session_info, direction)?;
-        let nonce_prefix_recv = derive_nonce_prefix(&session_key, session_info, direction.opposite())?;
+        let nonce_prefix_recv =
+            derive_nonce_prefix(&session_key, session_info, direction.opposite())?;
 
         // Build AAD base (context-bound, excludes direction and sender/receiver which vary per message)
         let aad_base = build_aad_base(
@@ -349,7 +347,10 @@ impl ConsensusAead {
     /// - AAD binds to context, prevents cross-channel replay (CE-5)
     /// - Nonce included in ciphertext (enables stateless decryption)
     pub fn encrypt(&self, plaintext_frame: &[u8]) -> Result<Vec<u8>> {
-        debug!("Encrypting consensus frame: {} bytes", plaintext_frame.len());
+        debug!(
+            "Encrypting consensus frame: {} bytes",
+            plaintext_frame.len()
+        );
 
         // Generate counter-based nonce (guarantees uniqueness within session)
         let counter = self.send_counter.fetch_add(1, Ordering::Relaxed);
@@ -359,8 +360,9 @@ impl ConsensusAead {
         let aad = self.build_send_aad();
 
         // Encrypt with explicit counter-based nonce and AAD binding
-        let encrypted_with_nonce = encrypt_data_with_ad_nonce(plaintext_frame, &self.key_send, &nonce, &aad)
-            .context("ChaCha20Poly1305 encryption with counter-based nonce failed")?;
+        let encrypted_with_nonce =
+            encrypt_data_with_ad_nonce(plaintext_frame, &self.key_send, &nonce, &aad)
+                .context("ChaCha20Poly1305 encryption with counter-based nonce failed")?;
 
         // Build wire format: [enc_version] [nonce (from encrypted_with_nonce)] [ciphertext || tag]
         // encrypted_with_nonce already has: [nonce (12 bytes)] [ciphertext || tag]
@@ -391,7 +393,10 @@ impl ConsensusAead {
     /// - AAD validation prevents cross-channel replay
     /// - Authentication tag verification detects tampering
     pub fn decrypt(&self, encrypted_envelope: &[u8]) -> Result<Vec<u8>> {
-        debug!("Decrypting consensus envelope: {} bytes", encrypted_envelope.len());
+        debug!(
+            "Decrypting consensus envelope: {} bytes",
+            encrypted_envelope.len()
+        );
 
         if encrypted_envelope.len() < 1 + 12 {
             return Err(anyhow::anyhow!(
@@ -422,7 +427,9 @@ impl ConsensusAead {
 
         // Decrypt with explicit nonce and AAD validation
         let plaintext = decrypt_data_with_ad_nonce(ciphertext, &self.key_recv, &nonce_array, &aad)
-            .context("ChaCha20Poly1305 decryption failed (AAD mismatch, tampering, or wrong key)")?;
+            .context(
+                "ChaCha20Poly1305 decryption failed (AAD mismatch, tampering, or wrong key)",
+            )?;
 
         debug!(
             "Decrypted consensus envelope: {} bytes envelope → {} bytes frame",
@@ -513,7 +520,7 @@ fn derive_key_for_direction(
     info.push(0x00);
     info.extend_from_slice(session_info.protocol_id.as_bytes());
     info.push(0x00);
-    info.extend_from_slice(b"CONSENSUS-MSG-AEAD");  // purpose for consensus
+    info.extend_from_slice(b"CONSENSUS-MSG-AEAD"); // purpose for consensus
     info.push(0x00);
     // Include roles for binding (Client=0, Server=1, Router=2, Verifier=3)
     info.push(match session_info.client_role {
@@ -642,8 +649,8 @@ mod tests {
         let aead_a = ConsensusAead::new_from_handshake(
             &session_info,
             session_key,
-            "validator-b".to_string(),  // peer
-            "validator-a".to_string(),  // local
+            "validator-b".to_string(), // peer
+            "validator-a".to_string(), // local
             RoleDirection::ClientToServer,
         )?;
 
@@ -651,8 +658,8 @@ mod tests {
         let aead_b = ConsensusAead::new_from_handshake(
             &session_info,
             session_key,
-            "validator-a".to_string(),  // peer
-            "validator-b".to_string(),  // local
+            "validator-a".to_string(), // peer
+            "validator-b".to_string(), // local
             RoleDirection::ServerToClient,
         )?;
 
@@ -662,7 +669,11 @@ mod tests {
 
         // B receives and decrypts from A
         let decrypted_at_b = aead_b.decrypt(&encrypted_a2b)?;
-        assert_eq!(plaintext, &decrypted_at_b[..], "B should decrypt A's message");
+        assert_eq!(
+            plaintext,
+            &decrypted_at_b[..],
+            "B should decrypt A's message"
+        );
 
         // B sends back to A
         let response = b"consensus vote approved";
@@ -670,7 +681,11 @@ mod tests {
 
         // A receives and decrypts from B
         let decrypted_at_a = aead_a.decrypt(&encrypted_b2a)?;
-        assert_eq!(response, &decrypted_at_a[..], "A should decrypt B's response");
+        assert_eq!(
+            response,
+            &decrypted_at_a[..],
+            "A should decrypt B's response"
+        );
 
         Ok(())
     }
@@ -733,7 +748,7 @@ mod tests {
         let aead_wrong = ConsensusAead::new_from_handshake(
             &session_info,
             session_key,
-            "validator-c".to_string(),  // Wrong peer DID
+            "validator-c".to_string(), // Wrong peer DID
             "validator-a".to_string(),
             RoleDirection::ClientToServer,
         )?;
@@ -871,7 +886,7 @@ mod tests {
         let session_info = create_test_session_info();
         let session_key1 = [0x42u8; 32];
         let mut session_key2 = [0x42u8; 32];
-        session_key2[0] ^= 0xFF;  // Flip bits
+        session_key2[0] ^= 0xFF; // Flip bits
         let plaintext = b"sensitive consensus data";
 
         // Encrypt with session_key1
@@ -927,7 +942,10 @@ mod tests {
         )?;
 
         let encrypted = aead_a.encrypt(plaintext)?;
-        assert!(encrypted.len() > 0, "Even empty payload gets version + nonce + tag");
+        assert!(
+            encrypted.len() > 0,
+            "Even empty payload gets version + nonce + tag"
+        );
 
         let decrypted = aead_b.decrypt(&encrypted)?;
         assert_eq!(b"", &decrypted[..]);
@@ -989,8 +1007,8 @@ mod tests {
         let aead_b_to_a = ConsensusAead::new_from_handshake(
             &session_info,
             session_key,
-            "validator-a".to_string(),  // Swapped
-            "validator-b".to_string(),  // Swapped
+            "validator-a".to_string(), // Swapped
+            "validator-b".to_string(), // Swapped
             RoleDirection::ClientToServer,
         )?;
 

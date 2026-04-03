@@ -20,6 +20,7 @@ use crate::types::{
     ConsensusVote, VoteType,
 };
 use crate::validators::ValidatorManager;
+use crate::ConsensusError;
 
 const VOTE_DOMAIN_TAG: &[u8] = b"ZHTP/CONSENSUS/VOTE/v1\0";
 
@@ -117,6 +118,30 @@ impl EnhancedBftEngine {
 
     /// Initialize validator with keypair
     pub fn initialize_validator(&mut self, keypair: KeyPair) -> Result<()> {
+        let identity = self.validator_identity.as_ref().ok_or_else(|| {
+            ConsensusError::ValidatorError(
+                "Cannot load validator signing keypair: local validator identity is not configured"
+                    .to_string(),
+            )
+        })?;
+
+        let validator = self
+            .validator_manager
+            .get_validator(identity)
+            .ok_or_else(|| {
+                ConsensusError::ValidatorError(
+                    "Cannot load validator signing keypair: local validator is not registered"
+                        .to_string(),
+                )
+            })?;
+
+        if validator.consensus_key != keypair.public_key.dilithium_pk {
+            return Err(ConsensusError::ValidatorError(
+                "Validator keypair does not match registered consensus key".to_string(),
+            )
+            .into());
+        }
+
         self.validator_keypair = Some(keypair);
         Ok(())
     }
@@ -843,6 +868,7 @@ pub mod testing {
             id: proposal_id,
             proposer,
             height,
+            round: 0,
             previous_hash,
             block_data: vec![1, 2, 3, 4], // Test block data
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
@@ -917,6 +943,7 @@ pub mod testing {
         )?;
 
         let proof = ZkProof::from_plonky2(plonky2_proof);
-        bincode::serialize(&proof).map_err(|e| anyhow::anyhow!("ZK proof serialization failed: {e}"))
+        bincode::serialize(&proof)
+            .map_err(|e| anyhow::anyhow!("ZK proof serialization failed: {e}"))
     }
 }

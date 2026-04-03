@@ -155,7 +155,7 @@ fn test_claim_100_citizens_same_month() {
 
     assert_eq!(ubi.registered_count(), 0); // Not registered yet
     assert_eq!(ubi.balance(), 100 * 4_500 * 12); // 5,400,000
-    // Verify monthly amount is set
+                                                 // Verify monthly amount is set
     assert!(ubi.amount_for(0) > 0);
 }
 
@@ -277,7 +277,8 @@ fn test_register_10k_citizens() {
 
     for i in 0..10_000 {
         let citizen = test_citizen(i as u32);
-        ubi.register(&citizen).expect(&format!("Register {} failed", i));
+        ubi.register(&citizen)
+            .expect(&format!("Register {} failed", i));
     }
 
     let duration = start.elapsed();

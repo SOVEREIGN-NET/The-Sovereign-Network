@@ -1,2 +1,4 @@
 //! Welfare funding implementation (stub)
-pub fn fund_welfare_services() -> anyhow::Result<()> { Ok(()) }
+pub fn fund_welfare_services() -> anyhow::Result<()> {
+    Ok(())
+}

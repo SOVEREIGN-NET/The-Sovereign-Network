@@ -9,7 +9,7 @@ This directory contains pre-configured templates for different types of ZHTP nod
 **Best for**: API servers, blockchain explorers, dApps, general-purpose nodes
 
 **Features**:
-- All 9 ZHTP components enabled
+- All 9 SOV components enabled
 - Complete blockchain copy and validation
 - API endpoints for serving data
 - Moderate storage provision (500GB)
@@ -28,7 +28,7 @@ This directory contains pre-configured templates for different types of ZHTP nod
 - High storage provision (1TB)
 - Enhanced peer connectivity (200 peers)
 - Hardware security key support
-- Higher staking requirements (10,000 ZHTP)
+- Higher staking requirements (10,000 SOV)
 
 **Resources**: 8GB RAM, 16 CPU threads, 2TB storage
 
@@ -60,7 +60,23 @@ This directory contains pre-configured templates for different types of ZHTP nod
 
 **Resources**: 1GB RAM, 4 CPU threads, 200GB storage
 
-### 5. **Development Node** (`dev-node.toml`)
+### 5. **Relay Node** (`relay-node.toml`)
+**Purpose**: Network routing without blockchain state
+**Best for**: NAT traversal, message forwarding, network connectivity
+
+**Features**:
+- **Routing-only node** (no blockchain state)
+- Message forwarding and routing
+- NAT traversal assistance
+- Minimal storage (no blockchain)
+- High peer connectivity for routing
+- Must be explicitly configured with `node_type = "relay"`
+
+**Note**: Relay nodes cannot be auto-detected from config flags - you must explicitly set `node_type = "relay"` in the configuration file.
+
+**Resources**: 512MB RAM, 2 CPU threads, minimal storage
+
+### 6. **Development Node** (`dev-node.toml`)
 **Purpose**: Testing and development
 **Best for**: Development, testing, local experiments
 
@@ -84,6 +100,7 @@ zhtp --node-type full      # Full node
 zhtp --node-type validator # Validator node  
 zhtp --node-type storage   # Storage node
 zhtp --node-type edge      # Edge node
+zhtp --node-type relay     # Relay node (routing only)
 zhtp --node-type dev       # Development node
 
 # Using explicit config files
@@ -91,6 +108,7 @@ zhtp node start --config ./configs/full-node.toml
 zhtp node start --config ./configs/validator-node.toml
 zhtp node start --config ./configs/storage-node.toml
 zhtp node start --config ./configs/edge-node.toml
+zhtp node start --config ./configs/relay-node.toml
 zhtp node start --config ./configs/dev-node.toml
 
 # Using helper scripts
@@ -140,7 +158,7 @@ zhtp node start --config ./configs/my-custom-node.toml
 ## Node Role Requirements
 
 ### Validator Node Requirements
-- **Minimum stake**: 10,000 ZHTP tokens
+- **Minimum stake**: 10,000 SOV tokens
 - **Identity**: Registered human identity (`did:zhtp:person:*`)
 - **Hardware**: Dedicated server recommended
 - **Network**: Stable, high-bandwidth connection
@@ -155,6 +173,12 @@ zhtp node start --config ./configs/my-custom-node.toml
 - **Hardware**: Can run on Raspberry Pi or similar
 - **Location**: Areas with poor internet connectivity
 - **Protocols**: Bluetooth, WiFi Direct, or LoRaWAN capability
+
+### Relay Node Requirements
+- **Purpose**: Routing-only, no blockchain state
+- **Configuration**: Must explicitly set `node_type = "relay"` in config
+- **Network**: Good connectivity for message forwarding
+- **Blockchain**: Does not maintain blockchain state or validate blocks
 
 ## Security Considerations
 
@@ -177,6 +201,16 @@ All nodes expose health endpoints:
 - `http://localhost:8080/metrics` - Detailed metrics
 - `http://localhost:8080/peers` - Network connectivity
 
+Observer-specific readiness guidance is documented in
+`docs/guides/OBSERVER_NODE_RUNBOOK.md`, including lifecycle expectations and
+the `/api/v1/observer/*` endpoints.
+
+That runbook also defines the supported observer Web4 layering:
+
+- base observer: full-state sync and operator APIs
+- content-serving observer: read-only Web4/domain resolution
+- gateway observer: host-header Web4 gateway serving
+
 ### Log Monitoring
 Monitor logs for:
 - Consensus participation (validators)
@@ -190,7 +224,7 @@ Monitor logs for:
 1. **Port conflicts**: Ensure mesh_port, dht_port, and api_port are available
 2. **Storage space**: Monitor disk usage, especially for storage nodes
 3. **Peer connectivity**: Check firewall and network configuration
-4. **Stake requirements**: Validators need sufficient ZHTP tokens staked
+4. **Stake requirements**: Validators need sufficient SOV tokens staked
 
 ### Configuration Validation
 Before starting a node, validate your configuration:
@@ -213,21 +247,24 @@ Before starting a node, validate your configuration:
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │   Full Node     │    │  Validator Node │    │  Storage Node   │
 │                 │    │                 │    │                 │
-│ • All Components│    │ • Consensus    │    │ • Large Storage │
+│ • All Components│    │ • Consensus     │    │ • Large Storage │
 │ • API Endpoints │    │ • High Security │    │ • DHT Focus     │
 │ • Moderate Store│    │ • Block Creation│    │ • Data Serving  │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                       │                       │
          └───────────────────────┼───────────────────────┘
                                  │
-                    ┌─────────────────┐
-                    │   Edge Node     │
-                    │                 │
-                    │ • Pure Mesh     │
-                    │ •     │
-                    │ • Low Resources │
-                    │ • Rural Connect │
-                    └─────────────────┘
+                ┌────────────────┴────────────────┐
+                │                                  │
+       ┌─────────────────┐             ┌─────────────────┐
+       │   Edge Node     │             │   Relay Node    │
+       │                 │             │                 │
+       │ • Pure Mesh     │             │ • Routing Only  │
+       │ • Low Resources │             │ • No Blockchain │
+       │ • Rural Connect │             │ • NAT Traversal │
+       └─────────────────┘             └─────────────────┘
 ```
 
 Each node type is optimized for its specific role while maintaining compatibility with the broader ZHTP ecosystem.
+
+**Important**: Relay nodes must be explicitly configured with `node_type = "relay"` in the configuration file - they cannot be auto-detected from other config settings.

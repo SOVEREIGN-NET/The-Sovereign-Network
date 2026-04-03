@@ -64,7 +64,9 @@ pub enum ValidationError {
     DaoPrefixRequiresParent { parent: String },
 
     /// Insufficient verification level
-    #[error("Verification level {actual:?} does not meet minimum {required:?} for {classification:?}")]
+    #[error(
+        "Verification level {actual:?} does not meet minimum {required:?} for {classification:?}"
+    )]
     InsufficientVerification {
         actual: VerificationLevel,
         required: VerificationLevel,
@@ -150,15 +152,30 @@ impl ParsedName {
 
 /// High-risk labels that require extra verification
 const HIGH_RISK_LABELS: &[&str] = &[
-    "bank", "banks", "banking",
-    "gov", "govt", "government",
-    "hospital", "hospitals",
-    "police", "emergency",
-    "tax", "taxes", "irs",
-    "fbi", "cia", "nsa",
-    "military", "army", "navy",
-    "court", "courts", "legal",
-    "passport", "visa",
+    "bank",
+    "banks",
+    "banking",
+    "gov",
+    "govt",
+    "government",
+    "hospital",
+    "hospitals",
+    "police",
+    "emergency",
+    "tax",
+    "taxes",
+    "irs",
+    "fbi",
+    "cia",
+    "nsa",
+    "military",
+    "army",
+    "navy",
+    "court",
+    "courts",
+    "legal",
+    "passport",
+    "visa",
 ];
 
 /// Parse and validate a domain name
@@ -215,8 +232,18 @@ pub fn parse_and_validate(name: &str) -> ValidationResult<ParsedName> {
     // Build parent name
     let parent = if labels.len() > 2 {
         // e.g., ["sov", "food", "kitchen"] -> "food.sov"
-        let parent_labels: Vec<&str> = labels[..labels.len() - 1].iter().map(|s| s.as_str()).collect();
-        Some(parent_labels.iter().rev().cloned().collect::<Vec<_>>().join("."))
+        let parent_labels: Vec<&str> = labels[..labels.len() - 1]
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        Some(
+            parent_labels
+                .iter()
+                .rev()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("."),
+        )
     } else {
         None
     };
@@ -293,7 +320,7 @@ fn classify_name(labels: &[String]) -> ValidationResult<NameClassification> {
     // Case: "*.*.sov" and deeper
     if labels.len() >= 3 {
         let second_label = &labels[1]; // e.g., "food" in "kitchen.food.sov"
-        let third_label = &labels[2];  // e.g., "kitchen" in "kitchen.food.sov"
+        let third_label = &labels[2]; // e.g., "kitchen" in "kitchen.food.sov"
 
         // Check for reserved welfare: {sector}.dao.sov
         if second_label == "dao" {
@@ -491,12 +518,7 @@ mod tests {
     #[test]
     fn test_commercial_classification() {
         // Regular commercial domains
-        let cases = vec![
-            "shoes.sov",
-            "mystore.sov",
-            "company123.sov",
-            "my-brand.sov",
-        ];
+        let cases = vec!["shoes.sov", "mystore.sov", "company123.sov", "my-brand.sov"];
 
         for name in cases {
             let parsed = parse_and_validate(name).unwrap();
@@ -525,34 +547,40 @@ mod tests {
         assert!(validate_verification_level(
             NameClassification::Commercial,
             VerificationLevel::L2VerifiedEntity
-        ).is_ok());
+        )
+        .is_ok());
 
         assert!(validate_verification_level(
             NameClassification::Commercial,
             VerificationLevel::L1BasicDID
-        ).is_err());
+        )
+        .is_err());
 
         // Welfare delegated requires L1
         assert!(validate_verification_level(
             NameClassification::WelfareDelegated,
             VerificationLevel::L1BasicDID
-        ).is_ok());
+        )
+        .is_ok());
 
         assert!(validate_verification_level(
             NameClassification::WelfareDelegated,
             VerificationLevel::L0Unverified
-        ).is_err());
+        )
+        .is_err());
 
         // Reserved welfare requires L3
         assert!(validate_verification_level(
             NameClassification::ReservedWelfare,
             VerificationLevel::L3ConstitutionalActor
-        ).is_ok());
+        )
+        .is_ok());
 
         assert!(validate_verification_level(
             NameClassification::ReservedWelfare,
             VerificationLevel::L2VerifiedEntity
-        ).is_err());
+        )
+        .is_err());
     }
 
     #[test]

@@ -76,7 +76,7 @@ pub async fn index_block_header(storage: &mut DhtStorage, block: &Block) -> Resu
         timestamp: block.timestamp(),
     };
     let key = format!("block_header:{}", header.height);
-    validate_blockchain_key(&key)?;  // NAMESPACE GUARD
+    validate_blockchain_key(&key)?; // NAMESPACE GUARD
     let bytes = bincode::serialize(&header)?;
     storage.store(key, bytes, None).await
 }
@@ -102,7 +102,7 @@ pub async fn index_transaction(
         };
 
         let key_recipient = format!("tx_idx:recipient:{}:{}", recipient_hex, summary.tx_id_hex);
-        validate_blockchain_key(&key_recipient)?;  // NAMESPACE GUARD
+        validate_blockchain_key(&key_recipient)?; // NAMESPACE GUARD
         let bytes = bincode::serialize(&summary)?;
         storage.store(key_recipient, bytes, None).await?;
     }
@@ -115,8 +115,11 @@ pub async fn index_transaction(
         amount_hint: 0, // Dummy amount; actual values are hidden by commitments.
         block_height,
     };
-    let key_sender = format!("tx_idx:sender:{}:{}", summary.sender_hint, summary.tx_id_hex);
-    validate_blockchain_key(&key_sender)?;  // NAMESPACE GUARD
+    let key_sender = format!(
+        "tx_idx:sender:{}:{}",
+        summary.sender_hint, summary.tx_id_hex
+    );
+    validate_blockchain_key(&key_sender)?; // NAMESPACE GUARD
     let bytes = bincode::serialize(&summary)?;
     storage.store(key_sender, bytes, None).await
 }

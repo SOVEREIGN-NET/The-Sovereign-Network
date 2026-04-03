@@ -1,18 +1,18 @@
 //! Protocol Handler Module
-//! 
+//!
 //! Clean, minimal protocol operations and server information
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
-use tokio::sync::RwLock;
 use anyhow::Result;
 use serde::Serialize;
+use tokio::sync::RwLock;
 // Removed unused Deserialize and serde_json::json
 
 // ZHTP protocol imports
+use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
-use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 
 /// Clean protocol handler implementation with proper metrics tracking
 pub struct ProtocolHandler {
@@ -42,11 +42,13 @@ impl ProtocolHandler {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
-            node_id: format!("zhtp-node-{}", 
+            node_id: format!(
+                "zhtp-node-{}",
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_secs() % 10000
+                    .as_secs()
+                    % 10000
             ),
         };
 
@@ -59,14 +61,16 @@ impl ProtocolHandler {
             start_time: std::time::Instant::now(),
         }
     }
-    
+
     /// Record a handled request and track metrics
     pub fn record_request(&self, bytes_received: u64, bytes_sent: u64) {
         self.requests_handled.fetch_add(1, Ordering::Relaxed);
-        self.total_bytes_received.fetch_add(bytes_received, Ordering::Relaxed);
-        self.total_bytes_sent.fetch_add(bytes_sent, Ordering::Relaxed);
+        self.total_bytes_received
+            .fetch_add(bytes_received, Ordering::Relaxed);
+        self.total_bytes_sent
+            .fetch_add(bytes_sent, Ordering::Relaxed);
     }
-    
+
     /// Record active connection change
     pub fn set_active_connections(&self, count: u64) {
         self.active_connections.store(count, Ordering::Relaxed);
@@ -77,14 +81,10 @@ impl ProtocolHandler {
 impl ZhtpRequestHandler for ProtocolHandler {
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         tracing::info!(" Protocol handler: {} {}", request.method, request.uri);
-        
+
         let response = match (request.method, request.uri.as_str()) {
-            (ZhtpMethod::Get, "/api/v1/protocol/info") => {
-                self.handle_protocol_info(request).await
-            }
-            (ZhtpMethod::Get, "/api/v1/protocol/health") => {
-                self.handle_health_check(request).await
-            }
+            (ZhtpMethod::Get, "/api/v1/protocol/info") => self.handle_protocol_info(request).await,
+            (ZhtpMethod::Get, "/api/v1/protocol/health") => self.handle_health_check(request).await,
             (ZhtpMethod::Get, "/api/v1/protocol/version") => {
                 self.handle_version_info(request).await
             }
@@ -94,14 +94,12 @@ impl ZhtpRequestHandler for ProtocolHandler {
             (ZhtpMethod::Get, "/api/v1/protocol/stats") => {
                 self.handle_protocol_stats(request).await
             }
-            _ => {
-                Ok(ZhtpResponse::error(
-                    ZhtpStatus::NotFound,
-                    "Protocol endpoint not found".to_string(),
-                ))
-            }
+            _ => Ok(ZhtpResponse::error(
+                ZhtpStatus::NotFound,
+                "Protocol endpoint not found".to_string(),
+            )),
         };
-        
+
         match response {
             Ok(mut resp) => {
                 resp.headers.set("X-Handler", "Protocol".to_string());
@@ -117,11 +115,11 @@ impl ZhtpRequestHandler for ProtocolHandler {
             }
         }
     }
-    
+
     fn can_handle(&self, request: &ZhtpRequest) -> bool {
         request.uri.starts_with("/api/v1/protocol/")
     }
-    
+
     fn priority(&self) -> u32 {
         70
     }
@@ -201,11 +199,12 @@ impl ProtocolHandler {
     /// Handle protocol information request
     async fn handle_protocol_info(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
         let server_info = self.server_info.read().await;
-        
+
         let uptime = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs() - server_info.start_time;
-        
+            .as_secs()
+            - server_info.start_time;
+
         let response_data = ProtocolInfoResponse {
             status: "active".to_string(),
             protocol: "ZHTP".to_string(),
@@ -225,7 +224,7 @@ impl ProtocolHandler {
                 "protocol_info".to_string(),
             ],
         };
-        
+
         let json_response = serde_json::to_vec(&response_data)?;
         Ok(ZhtpResponse::success_with_content_type(
             json_response,
@@ -233,15 +232,16 @@ impl ProtocolHandler {
             None,
         ))
     }
-    
+
     /// Handle health check request
     async fn handle_health_check(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
         let server_info = self.server_info.read().await;
-        
+
         let uptime = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs() - server_info.start_time;
-        
+            .as_secs()
+            - server_info.start_time;
+
         let checks = vec![
             HealthCheck {
                 name: "server".to_string(),
@@ -259,7 +259,7 @@ impl ProtocolHandler {
                 message: "Memory usage is within normal limits".to_string(),
             },
         ];
-        
+
         let response_data = HealthCheckResponse {
             status: "healthy".to_string(),
             healthy: true,
@@ -269,7 +269,7 @@ impl ProtocolHandler {
                 .as_secs(),
             checks,
         };
-        
+
         let json_response = serde_json::to_vec(&response_data)?;
         Ok(ZhtpResponse::success_with_content_type(
             json_response,
@@ -277,11 +277,11 @@ impl ProtocolHandler {
             None,
         ))
     }
-    
+
     /// Handle version information request
     async fn handle_version_info(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
         let server_info = self.server_info.read().await;
-        
+
         let response_data = VersionResponse {
             status: "version_info".to_string(),
             server_version: server_info.version.clone(),
@@ -293,7 +293,7 @@ impl ProtocolHandler {
                 rust_version: "1.70+".to_string(),
             },
         };
-        
+
         let json_response = serde_json::to_vec(&response_data)?;
         Ok(ZhtpResponse::success_with_content_type(
             json_response,
@@ -301,7 +301,7 @@ impl ProtocolHandler {
             None,
         ))
     }
-    
+
     /// Handle capabilities request
     async fn handle_capabilities(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
         let capabilities = vec![
@@ -330,16 +330,13 @@ impl ProtocolHandler {
                 enabled: true,
             },
         ];
-        
+
         let response_data = CapabilitiesResponse {
             status: "capabilities_listed".to_string(),
             capabilities,
-            extensions: vec![
-                "zhtp-native".to_string(),
-                "post-quantum-crypto".to_string(),
-            ],
+            extensions: vec!["zhtp-native".to_string(), "post-quantum-crypto".to_string()],
         };
-        
+
         let json_response = serde_json::to_vec(&response_data)?;
         Ok(ZhtpResponse::success_with_content_type(
             json_response,
@@ -347,7 +344,7 @@ impl ProtocolHandler {
             None,
         ))
     }
-    
+
     /// Handle protocol statistics request
     async fn handle_protocol_stats(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
         // Get metrics from our counters
@@ -355,7 +352,7 @@ impl ProtocolHandler {
         let total_bytes_sent = self.total_bytes_sent.load(Ordering::Relaxed);
         let total_bytes_received = self.total_bytes_received.load(Ordering::Relaxed);
         let active_connections = self.active_connections.load(Ordering::Relaxed) as u32;
-        
+
         // Calculate uptime-based metrics
         let uptime_seconds = self.start_time.elapsed().as_secs();
         let average_response_time = if requests_handled > 0 {
@@ -369,10 +366,10 @@ impl ProtocolHandler {
         } else {
             0.0
         };
-        
+
         // Calculate error rate (simplified - would need actual error tracking)
         let error_rate = 0.01; // 1% - would be calculated from actual error counts
-        
+
         let response_data = ProtocolStatsResponse {
             status: "stats_retrieved".to_string(),
             requests_handled,
@@ -382,7 +379,7 @@ impl ProtocolHandler {
             average_response_time,
             error_rate,
         };
-        
+
         let json_response = serde_json::to_vec(&response_data)?;
         Ok(ZhtpResponse::success_with_content_type(
             json_response,

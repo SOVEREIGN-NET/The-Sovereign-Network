@@ -1,5 +1,5 @@
 //! ZHTP Request Methods
-//! 
+//!
 //! HTTP-compatible request methods with Web4 extensions for zero-knowledge proofs
 //! and blockchain interactions.
 
@@ -66,35 +66,33 @@ impl ZhtpMethod {
 
     /// Check if method is safe (doesn't modify state)
     pub fn is_safe(&self) -> bool {
-        matches!(self, 
-            ZhtpMethod::Get | 
-            ZhtpMethod::Head | 
-            ZhtpMethod::Options | 
-            ZhtpMethod::Verify | 
-            ZhtpMethod::Trace
+        matches!(
+            self,
+            ZhtpMethod::Get
+                | ZhtpMethod::Head
+                | ZhtpMethod::Options
+                | ZhtpMethod::Verify
+                | ZhtpMethod::Trace
         )
     }
 
     /// Check if method is idempotent (multiple identical requests have same effect)
     pub fn is_idempotent(&self) -> bool {
-        matches!(self,
-            ZhtpMethod::Get |
-            ZhtpMethod::Put |
-            ZhtpMethod::Delete |
-            ZhtpMethod::Head |
-            ZhtpMethod::Options |
-            ZhtpMethod::Verify |
-            ZhtpMethod::Trace
+        matches!(
+            self,
+            ZhtpMethod::Get
+                | ZhtpMethod::Put
+                | ZhtpMethod::Delete
+                | ZhtpMethod::Head
+                | ZhtpMethod::Options
+                | ZhtpMethod::Verify
+                | ZhtpMethod::Trace
         )
     }
 
     /// Check if method typically has a request body
     pub fn has_body(&self) -> bool {
-        matches!(self,
-            ZhtpMethod::Post |
-            ZhtpMethod::Put |
-            ZhtpMethod::Patch
-        )
+        matches!(self, ZhtpMethod::Post | ZhtpMethod::Put | ZhtpMethod::Patch)
     }
 
     /// Check if method is a Web4 extension (not in standard HTTP)
@@ -109,12 +107,13 @@ impl ZhtpMethod {
 
     /// Check if method requires special permissions
     pub fn requires_special_permissions(&self) -> bool {
-        matches!(self,
-            ZhtpMethod::Post |
-            ZhtpMethod::Put |
-            ZhtpMethod::Patch |
-            ZhtpMethod::Delete |
-            ZhtpMethod::Verify
+        matches!(
+            self,
+            ZhtpMethod::Post
+                | ZhtpMethod::Put
+                | ZhtpMethod::Patch
+                | ZhtpMethod::Delete
+                | ZhtpMethod::Verify
         )
     }
 
@@ -137,15 +136,9 @@ impl ZhtpMethod {
             ZhtpMethod::Get | ZhtpMethod::Head | ZhtpMethod::Options | ZhtpMethod::Trace => {
                 EconomicImpact::Low
             }
-            ZhtpMethod::Verify | ZhtpMethod::Connect => {
-                EconomicImpact::Medium
-            }
-            ZhtpMethod::Patch | ZhtpMethod::Delete => {
-                EconomicImpact::High
-            }
-            ZhtpMethod::Post | ZhtpMethod::Put => {
-                EconomicImpact::VeryHigh
-            }
+            ZhtpMethod::Verify | ZhtpMethod::Connect => EconomicImpact::Medium,
+            ZhtpMethod::Patch | ZhtpMethod::Delete => EconomicImpact::High,
+            ZhtpMethod::Post | ZhtpMethod::Put => EconomicImpact::VeryHigh,
         }
     }
 
@@ -253,13 +246,13 @@ mod tests {
     fn test_method_properties() {
         assert!(ZhtpMethod::Get.is_safe());
         assert!(!ZhtpMethod::Post.is_safe());
-        
+
         assert!(ZhtpMethod::Put.is_idempotent());
         assert!(!ZhtpMethod::Post.is_idempotent());
-        
+
         assert!(ZhtpMethod::Post.has_body());
         assert!(!ZhtpMethod::Get.has_body());
-        
+
         assert!(ZhtpMethod::Verify.is_web4_extension());
         assert!(!ZhtpMethod::Get.is_web4_extension());
     }
@@ -295,7 +288,10 @@ mod tests {
     fn test_economic_impact_properties() {
         assert_eq!(EconomicImpact::Low.factor(), 0.5);
         assert_eq!(EconomicImpact::VeryHigh.factor(), 3.0);
-        assert_eq!(EconomicImpact::Medium.description(), "Moderate resource usage");
+        assert_eq!(
+            EconomicImpact::Medium.description(),
+            "Moderate resource usage"
+        );
     }
 
     #[test]

@@ -59,7 +59,7 @@ impl BluetoothMeshProtocol {
                 max_throughput: 250_000,
                 max_message_size: 512,
                 encryption_methods: vec!["chacha20-poly1305".to_string()],
-                pqc_capability: PqcCapability::None,
+                pqc_capability: PqcCapability::Kyber1024Dilithium5,
                 dht_capable: false,
                 relay_capable: false,
                 storage_capacity: 0,

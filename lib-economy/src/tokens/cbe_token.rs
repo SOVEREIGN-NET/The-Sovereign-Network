@@ -54,18 +54,7 @@ pub const CBE_STRATEGIC_RESERVES: u64 = 10_000_000_000;
 ///
 /// These are NOT account addresses. Actual ownership mapping occurs via governance.
 /// This separation ensures bucket accounting is independent of account management.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Serialize,
-    Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum CbeBucketId {
     /// Compensation Pool: Allocated for employee/contributor compensation
@@ -161,10 +150,18 @@ impl fmt::Display for CbeError {
                 write!(f, "CBE allocation has already been initialized. Re-initialization is a consensus failure.")
             }
             CbeError::AllocationInvariantViolated { expected, actual } => {
-                write!(f, "CBE allocation invariant violated: expected sum {}, got {}", expected, actual)
+                write!(
+                    f,
+                    "CBE allocation invariant violated: expected sum {}, got {}",
+                    expected, actual
+                )
             }
             CbeError::SupplyInvariantViolated { expected, actual } => {
-                write!(f, "CBE supply invariant violated: expected {}, got {}", expected, actual)
+                write!(
+                    f,
+                    "CBE supply invariant violated: expected {}, got {}",
+                    expected, actual
+                )
             }
         }
     }
@@ -237,7 +234,8 @@ impl CbeAllocationLedger {
         self.strategic_reserves = CBE_STRATEGIC_RESERVES;
 
         // Verify supply invariant
-        let total = self.compensation_pool
+        let total = self
+            .compensation_pool
             .saturating_add(self.operational_treasury)
             .saturating_add(self.performance_incentives)
             .saturating_add(self.strategic_reserves);
@@ -267,7 +265,10 @@ impl CbeAllocationLedger {
     /// Get total allocated amount (sum of all buckets)
     pub const fn total_allocated(&self) -> u64 {
         // Note: Using const-compatible calculation
-        self.compensation_pool + self.operational_treasury + self.performance_incentives + self.strategic_reserves
+        self.compensation_pool
+            + self.operational_treasury
+            + self.performance_incentives
+            + self.strategic_reserves
     }
 
     /// Check if allocation is complete (all buckets populated)
@@ -382,10 +383,22 @@ mod tests {
         let mut ledger = CbeAllocationLedger::new();
         ledger.init().unwrap();
 
-        assert_eq!(ledger.get_bucket_allocation(CbeBucketId::Compensation), CBE_COMPENSATION_POOL);
-        assert_eq!(ledger.get_bucket_allocation(CbeBucketId::Treasury), CBE_OPERATIONAL_TREASURY);
-        assert_eq!(ledger.get_bucket_allocation(CbeBucketId::Performance), CBE_PERFORMANCE_INCENTIVES);
-        assert_eq!(ledger.get_bucket_allocation(CbeBucketId::Reserves), CBE_STRATEGIC_RESERVES);
+        assert_eq!(
+            ledger.get_bucket_allocation(CbeBucketId::Compensation),
+            CBE_COMPENSATION_POOL
+        );
+        assert_eq!(
+            ledger.get_bucket_allocation(CbeBucketId::Treasury),
+            CBE_OPERATIONAL_TREASURY
+        );
+        assert_eq!(
+            ledger.get_bucket_allocation(CbeBucketId::Performance),
+            CBE_PERFORMANCE_INCENTIVES
+        );
+        assert_eq!(
+            ledger.get_bucket_allocation(CbeBucketId::Reserves),
+            CBE_STRATEGIC_RESERVES
+        );
     }
 
     #[test]
@@ -429,9 +442,15 @@ mod tests {
 
     #[test]
     fn test_bucket_id_allocations() {
-        assert_eq!(CbeBucketId::Compensation.allocation(), CBE_COMPENSATION_POOL);
+        assert_eq!(
+            CbeBucketId::Compensation.allocation(),
+            CBE_COMPENSATION_POOL
+        );
         assert_eq!(CbeBucketId::Treasury.allocation(), CBE_OPERATIONAL_TREASURY);
-        assert_eq!(CbeBucketId::Performance.allocation(), CBE_PERFORMANCE_INCENTIVES);
+        assert_eq!(
+            CbeBucketId::Performance.allocation(),
+            CBE_PERFORMANCE_INCENTIVES
+        );
         assert_eq!(CbeBucketId::Reserves.allocation(), CBE_STRATEGIC_RESERVES);
     }
 
@@ -445,9 +464,15 @@ mod tests {
 
     #[test]
     fn test_bucket_id_display_names() {
-        assert_eq!(CbeBucketId::Compensation.display_name(), "Compensation Pool");
+        assert_eq!(
+            CbeBucketId::Compensation.display_name(),
+            "Compensation Pool"
+        );
         assert_eq!(CbeBucketId::Treasury.display_name(), "Operational Treasury");
-        assert_eq!(CbeBucketId::Performance.display_name(), "Performance Incentives");
+        assert_eq!(
+            CbeBucketId::Performance.display_name(),
+            "Performance Incentives"
+        );
         assert_eq!(CbeBucketId::Reserves.display_name(), "Strategic Reserves");
     }
 
@@ -480,12 +505,15 @@ mod tests {
             CbeBucketId::Treasury,
         ];
         kinds.sort();
-        assert_eq!(kinds, vec![
-            CbeBucketId::Compensation,
-            CbeBucketId::Treasury,
-            CbeBucketId::Performance,
-            CbeBucketId::Reserves,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                CbeBucketId::Compensation,
+                CbeBucketId::Treasury,
+                CbeBucketId::Performance,
+                CbeBucketId::Reserves,
+            ]
+        );
     }
 
     // ===== DISPLAY AND SERIALIZATION TESTS =====
@@ -507,9 +535,15 @@ mod tests {
 
     #[test]
     fn test_bucket_id_display() {
-        assert_eq!(format!("{}", CbeBucketId::Compensation), "Compensation Pool");
+        assert_eq!(
+            format!("{}", CbeBucketId::Compensation),
+            "Compensation Pool"
+        );
         assert_eq!(format!("{}", CbeBucketId::Treasury), "Operational Treasury");
-        assert_eq!(format!("{}", CbeBucketId::Performance), "Performance Incentives");
+        assert_eq!(
+            format!("{}", CbeBucketId::Performance),
+            "Performance Incentives"
+        );
         assert_eq!(format!("{}", CbeBucketId::Reserves), "Strategic Reserves");
     }
 
@@ -519,7 +553,8 @@ mod tests {
         ledger.init().unwrap();
 
         let serialized = serde_json::to_string(&ledger).expect("serialization failed");
-        let deserialized: CbeAllocationLedger = serde_json::from_str(&serialized).expect("deserialization failed");
+        let deserialized: CbeAllocationLedger =
+            serde_json::from_str(&serialized).expect("deserialization failed");
 
         assert_eq!(ledger, deserialized);
         assert!(deserialized.is_initialized());
@@ -530,7 +565,8 @@ mod tests {
     fn test_bucket_id_serialization_round_trip() {
         for bucket in CbeBucketId::ALL {
             let serialized = serde_json::to_string(bucket).expect("serialization failed");
-            let deserialized: CbeBucketId = serde_json::from_str(&serialized).expect("deserialization failed");
+            let deserialized: CbeBucketId =
+                serde_json::from_str(&serialized).expect("deserialization failed");
             assert_eq!(*bucket, deserialized);
         }
     }
@@ -567,7 +603,10 @@ mod tests {
         // Read multiple times - should never change
         for _ in 0..10 {
             assert_eq!(ledger.total_allocated(), before_total);
-            assert_eq!(ledger.get_bucket_allocation(CbeBucketId::Compensation), before_comp);
+            assert_eq!(
+                ledger.get_bucket_allocation(CbeBucketId::Compensation),
+                before_comp
+            );
         }
     }
 
@@ -588,7 +627,10 @@ mod tests {
         ledger.init().unwrap();
 
         // What we CAN do: read allocations
-        assert_eq!(ledger.get_bucket_allocation(CbeBucketId::Compensation), CBE_COMPENSATION_POOL);
+        assert_eq!(
+            ledger.get_bucket_allocation(CbeBucketId::Compensation),
+            CBE_COMPENSATION_POOL
+        );
 
         // What we CANNOT do: everything else (enforced by type system)
         // This prevents "just add transfer" feature creep

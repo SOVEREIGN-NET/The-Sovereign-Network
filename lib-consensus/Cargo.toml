@@ -18,8 +18,10 @@ async-trait = "0.1"
 rand = "0.8"
 hex = "0.4"
 bincode = "1.3"
+scopeguard = "1.2"
 
 # ZHTP package dependencies
+lib-types = { path = "../lib-types" }
 lib-crypto = { path = "../lib-crypto" }
 lib-identity = { path = "../lib-identity" }
 lib-storage = { path = "../lib-storage" }

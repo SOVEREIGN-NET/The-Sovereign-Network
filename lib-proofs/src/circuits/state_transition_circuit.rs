@@ -1,14 +1,14 @@
 //! State Transition Circuit Implementation
-//! 
+//!
 //! Implements zero-knowledge circuits for proving state transitions
 //! between blockchain states using transaction proofs as building blocks.
 
-use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use lib_crypto::hashing::{hash_blake3, hash_blake3_multiple};
 use crate::circuits::TransactionCircuit;
-use crate::state::StateCommitment;
 use crate::plonky2::{CircuitBuilder, CircuitConfig, CircuitConstraint, Plonky2Proof};
+use crate::state::StateCommitment;
+use anyhow::Result;
+use lib_crypto::hashing::{hash_blake3, hash_blake3_multiple};
+use serde::{Deserialize, Serialize};
 
 /// State transition witness containing all data needed to prove a state transition
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,7 +111,7 @@ impl StateTransitionCircuit {
     pub fn new() -> Result<Self> {
         let config = CircuitConfig::default();
         let transaction_circuit = TransactionCircuit::new(config.clone());
-        
+
         Ok(Self {
             config,
             transaction_circuit,
@@ -121,7 +121,7 @@ impl StateTransitionCircuit {
     /// Create circuit with custom configuration
     pub fn with_config(config: CircuitConfig) -> Result<Self> {
         let transaction_circuit = TransactionCircuit::new(config.clone());
-        
+
         Ok(Self {
             config,
             transaction_circuit,
@@ -134,29 +134,30 @@ impl StateTransitionCircuit {
         witness: StateTransitionWitness,
     ) -> Result<StateTransitionProof> {
         let start_time = std::time::Instant::now();
-        
+
         // Validate witness
         self.validate_witness(&witness)?;
-        
+
         // Build the circuit
         let mut builder = CircuitBuilder::new(self.config.clone());
-        
+
         // Add state transition constraints
         self.add_state_consistency_constraints(&mut builder, &witness)?;
         self.add_transaction_validity_constraints(&mut builder, &witness)?;
         self.add_balance_conservation_constraints(&mut builder, &witness)?;
         self.add_merkle_proof_constraints(&mut builder, &witness)?;
-        
+
         // Build public inputs
         let public_inputs = self.build_public_inputs(&witness)?;
-        
+
         // Generate the proof
         let circuit = builder.build()?;
         let private_inputs = self.witness_to_private_inputs(&witness)?;
-        let plonky2_proof = circuit.prove(&self.witness_to_circuit_inputs(&witness)?, &private_inputs)?;
-        
+        let plonky2_proof =
+            circuit.prove(&self.witness_to_circuit_inputs(&witness)?, &private_inputs)?;
+
         let generation_time = start_time.elapsed().as_millis() as u64;
-        
+
         Ok(StateTransitionProof {
             plonky2_proof,
             public_inputs,
@@ -173,17 +174,17 @@ impl StateTransitionCircuit {
     pub fn verify_proof(&self, proof: &StateTransitionProof) -> Result<bool> {
         // Verify the underlying Plonky2 proof
         let plonky2_valid = crate::plonky2::verify_plonky2_proof(&proof.plonky2_proof)?;
-        
+
         if !plonky2_valid.is_valid() {
             return Ok(false);
         }
-        
+
         // Verify public inputs consistency
         self.verify_public_inputs_consistency(&proof.public_inputs)?;
-        
+
         // Verify metadata consistency
         self.verify_metadata_consistency(&proof.metadata)?;
-        
+
         Ok(true)
     }
 
@@ -193,24 +194,24 @@ impl StateTransitionCircuit {
         if witness.new_state.block_height != witness.prev_state.block_height + 1 {
             return Err(anyhow::anyhow!("Invalid block height progression"));
         }
-        
+
         // Check timestamp progression
         if witness.new_state.timestamp <= witness.prev_state.timestamp {
             return Err(anyhow::anyhow!("Invalid timestamp progression"));
         }
-        
+
         // Validate state updates
         for update in &witness.state_updates {
             if update.prev_balance == update.new_balance {
                 return Err(anyhow::anyhow!("No-op state update detected"));
             }
         }
-        
+
         // Check transaction count consistency
         if witness.transaction_hashes.len() != witness.block_metadata.transaction_count as usize {
             return Err(anyhow::anyhow!("Transaction count mismatch"));
         }
-        
+
         Ok(())
     }
 
@@ -223,17 +224,17 @@ impl StateTransitionCircuit {
         // Add constraints ensuring proper state root transitions
         builder.add_constraint(CircuitConstraint {
             constraint_type: "state_root_transition".to_string(),
-            wires: vec![6, 7], // Placeholder wire indices
+            wires: vec![6, 7],        // Placeholder wire indices
             coefficients: vec![1, 1], // Placeholder coefficients
         });
-        
+
         // Add validator set consistency constraints
         builder.add_constraint(CircuitConstraint {
             constraint_type: "validator_set_consistency".to_string(),
-            wires: vec![8, 9], // Placeholder wire indices
+            wires: vec![8, 9],        // Placeholder wire indices
             coefficients: vec![1, 1], // Placeholder coefficients
         });
-        
+
         Ok(())
     }
 
@@ -246,15 +247,16 @@ impl StateTransitionCircuit {
         // Add constraint that all transactions are valid
         builder.add_constraint(CircuitConstraint {
             constraint_type: "transaction_validity".to_string(),
-            wires: vec![10, 11], // Placeholder wire indices
+            wires: vec![10, 11],      // Placeholder wire indices
             coefficients: vec![1, 1], // Placeholder coefficients
         });
-        
+
         // Add Merkle proof constraints for transaction inclusion
-        let tx_root_wire = self.compute_transaction_merkle_root_wire(builder, &witness.transaction_hashes);
+        let tx_root_wire =
+            self.compute_transaction_merkle_root_wire(builder, &witness.transaction_hashes);
         let prev_block_hash_wire = builder.add_public_input(None);
         builder.add_equality_constraint(tx_root_wire, prev_block_hash_wire);
-        
+
         Ok(())
     }
 
@@ -270,7 +272,7 @@ impl StateTransitionCircuit {
         let total_fees_wire = self.calculate_total_fees_wire(builder, &witness.transaction_hashes);
         let expected_new_supply_wire = builder.add_subtraction(prev_supply_wire, total_fees_wire);
         builder.add_equality_constraint(new_supply_wire, expected_new_supply_wire);
-        
+
         Ok(())
     }
 
@@ -285,7 +287,7 @@ impl StateTransitionCircuit {
             let account_id_wire = builder.add_private_input(None);
             let old_balance_wire = builder.add_private_input(None);
             let new_balance_wire = builder.add_private_input(None);
-            
+
             // Verify the Merkle path from old state to new state
             let computed_old_root = self.verify_merkle_path_circuit(
                 builder,
@@ -293,10 +295,10 @@ impl StateTransitionCircuit {
                 old_balance_wire,
                 &update.merkle_path,
             );
-            
+
             let prev_state_root_wire = builder.add_public_input(None);
             builder.add_equality_constraint(computed_old_root, prev_state_root_wire);
-            
+
             // Verify the new state root after update
             let computed_new_root = self.verify_merkle_path_circuit(
                 builder,
@@ -304,18 +306,21 @@ impl StateTransitionCircuit {
                 new_balance_wire,
                 &update.merkle_path,
             );
-            
+
             let new_state_root_wire = builder.add_public_input(None);
             builder.add_equality_constraint(computed_new_root, new_state_root_wire);
         }
-        
+
         Ok(())
     }
 
     /// Build public inputs for the circuit
-    fn build_public_inputs(&self, witness: &StateTransitionWitness) -> Result<StateTransitionPublicInputs> {
+    fn build_public_inputs(
+        &self,
+        witness: &StateTransitionWitness,
+    ) -> Result<StateTransitionPublicInputs> {
         let transaction_root = self.compute_transaction_merkle_root(&witness.transaction_hashes);
-        
+
         Ok(StateTransitionPublicInputs {
             prev_state_root: witness.prev_state.merkle_root,
             new_state_root: witness.new_state.merkle_root,
@@ -329,40 +334,40 @@ impl StateTransitionCircuit {
     /// Convert witness to circuit inputs
     fn witness_to_circuit_inputs(&self, witness: &StateTransitionWitness) -> Result<Vec<u64>> {
         let mut inputs = Vec::new();
-        
+
         // Add state commitments as inputs
         inputs.extend_from_slice(&self.commitment_to_field_elements(&witness.prev_state));
         inputs.extend_from_slice(&self.commitment_to_field_elements(&witness.new_state));
-        
+
         // Add transaction data
         for tx_hash in &witness.transaction_hashes {
             inputs.extend_from_slice(&self.hash_to_field_elements(tx_hash));
         }
-        
+
         // Add state updates
         for update in &witness.state_updates {
             inputs.push(update.prev_balance);
             inputs.push(update.new_balance);
             inputs.extend_from_slice(&self.hash_to_field_elements(&update.account_id));
         }
-        
+
         Ok(inputs)
     }
 
     /// Convert witness to private inputs for the circuit
     fn witness_to_private_inputs(&self, witness: &StateTransitionWitness) -> Result<Vec<u64>> {
         let mut private_inputs = Vec::new();
-        
+
         // Add private witness data (e.g., Merkle proof elements)
         for proof_element in &witness.merkle_proof {
             private_inputs.extend_from_slice(&self.hash_to_field_elements(proof_element));
         }
-        
+
         // Add signature data as private inputs
         for update in &witness.state_updates {
             private_inputs.extend_from_slice(&self.hash_to_field_elements(&update.merkle_path[0]));
         }
-        
+
         Ok(private_inputs)
     }
 
@@ -371,22 +376,26 @@ impl StateTransitionCircuit {
         let tx_complexity = witness.transaction_hashes.len() as u32 * 10;
         let state_complexity = witness.state_updates.len() as u32 * 5;
         let merkle_complexity = witness.merkle_proof.len() as u32 * 2;
-        
+
         tx_complexity + state_complexity + merkle_complexity
     }
 
     /// Helper functions for circuit constraints
     #[allow(dead_code)]
-    fn compute_new_state_root(&self, prev_state: &StateCommitment, updates: &[StateUpdateWitness]) -> [u8; 32] {
+    fn compute_new_state_root(
+        &self,
+        prev_state: &StateCommitment,
+        updates: &[StateUpdateWitness],
+    ) -> [u8; 32] {
         // Simplified state root computation - in practice this would be more complex
         let mut data = Vec::new();
         data.extend_from_slice(&prev_state.merkle_root);
-        
+
         for update in updates {
             data.extend_from_slice(&update.account_id);
             data.extend_from_slice(&update.new_balance.to_le_bytes());
         }
-        
+
         hash_blake3(&data)
     }
 
@@ -394,20 +403,25 @@ impl StateTransitionCircuit {
         if tx_hashes.is_empty() {
             return [0; 32];
         }
-        
+
         // Convert fixed-size arrays to slices
         let hash_slices: Vec<&[u8]> = tx_hashes.iter().map(|h| h.as_slice()).collect();
         hash_blake3_multiple(&hash_slices)
     }
 
     /// Compute transaction merkle root as a circuit wire
-    fn compute_transaction_merkle_root_wire(&self, builder: &mut CircuitBuilder, tx_hashes: &[[u8; 32]]) -> usize {
+    fn compute_transaction_merkle_root_wire(
+        &self,
+        builder: &mut CircuitBuilder,
+        tx_hashes: &[[u8; 32]],
+    ) -> usize {
         if tx_hashes.is_empty() {
             return builder.add_public_input(None);
         }
 
         // Add each transaction hash as a wire
-        let mut hash_wires: Vec<usize> = tx_hashes.iter()
+        let mut hash_wires: Vec<usize> = tx_hashes
+            .iter()
             .map(|_hash| {
                 let wire = builder.add_private_input(None);
                 // In a implementation, we'd constrain this wire to equal the hash
@@ -433,21 +447,25 @@ impl StateTransitionCircuit {
     }
 
     /// Calculate total fees as a circuit wire
-    fn calculate_total_fees_wire(&self, builder: &mut CircuitBuilder, transaction_hashes: &[[u8; 32]]) -> usize {
+    fn calculate_total_fees_wire(
+        &self,
+        builder: &mut CircuitBuilder,
+        transaction_hashes: &[[u8; 32]],
+    ) -> usize {
         let _num_transactions = transaction_hashes.len() as u64;
         let _fee_per_tx = 1000u64; // Fixed fee per transaction
-        
+
         // Create a constant wire for the fee per transaction
         let fee_per_tx_wire = builder.add_public_input(None);
-        
+
         // Create a constant wire for the number of transactions
         let num_tx_wire = builder.add_public_input(None);
-        
+
         // Multiply: total_fees = num_transactions * fee_per_tx
         builder.add_multiplication(num_tx_wire, fee_per_tx_wire)
     }
 
-    /// Verify a Merkle path in circuit 
+    /// Verify a Merkle path in circuit
     fn verify_merkle_path_circuit(
         &self,
         builder: &mut CircuitBuilder,
@@ -464,7 +482,7 @@ impl StateTransitionCircuit {
             // In a implementation, we'd need to handle left/right positioning
             current_hash = builder.add_hash(vec![current_hash, sibling_wire]);
         }
-        
+
         current_hash
     }
 
@@ -475,7 +493,13 @@ impl StateTransitionCircuit {
     }
 
     #[allow(dead_code)]
-    fn verify_merkle_path(&self, _account_id: &[u8; 32], _balance: &u64, _path: &[[u8; 32]], _root: &[u8; 32]) -> bool {
+    fn verify_merkle_path(
+        &self,
+        _account_id: &[u8; 32],
+        _balance: &u64,
+        _path: &[[u8; 32]],
+        _root: &[u8; 32],
+    ) -> bool {
         // Placeholder - would verify actual Merkle path
         true
     }
@@ -490,20 +514,20 @@ impl StateTransitionCircuit {
 
     fn hash_to_field_elements(&self, hash: &[u8; 32]) -> Vec<u64> {
         // Convert hash to field elements (simplified)
-        hash.chunks(8).map(|chunk| {
-            u64::from_le_bytes(chunk.try_into().unwrap_or([0; 8]))
-        }).collect()
+        hash.chunks(8)
+            .map(|chunk| u64::from_le_bytes(chunk.try_into().unwrap_or([0; 8])))
+            .collect()
     }
 
     fn verify_public_inputs_consistency(&self, inputs: &StateTransitionPublicInputs) -> Result<()> {
         if inputs.block_height == 0 {
             return Err(anyhow::anyhow!("Invalid block height"));
         }
-        
+
         if inputs.timestamp == 0 {
             return Err(anyhow::anyhow!("Invalid timestamp"));
         }
-        
+
         Ok(())
     }
 
@@ -511,7 +535,7 @@ impl StateTransitionCircuit {
         if metadata.transaction_count == 0 && metadata.state_update_count == 0 {
             return Err(anyhow::anyhow!("Empty state transition"));
         }
-        
+
         Ok(())
     }
 }
@@ -535,7 +559,7 @@ mod tests {
     #[test]
     fn test_witness_validation() {
         let circuit = StateTransitionCircuit::new().unwrap();
-        
+
         let witness = StateTransitionWitness {
             prev_state: StateCommitment {
                 merkle_root: [1; 32],
@@ -568,7 +592,7 @@ mod tests {
                 transaction_count: 1,
             },
         };
-        
+
         assert!(circuit.validate_witness(&witness).is_ok());
     }
 }

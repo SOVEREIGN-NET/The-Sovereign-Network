@@ -9,8 +9,8 @@
 use anyhow::Result;
 use lib_identity::types::NodeId;
 use lib_storage::{
-    UnifiedStorageSystem, UnifiedStorageConfig, StorageConfig, ErasureConfig,
-    EconomicManagerConfig, StorageTier,
+    EconomicManagerConfig, ErasureConfig, StorageConfig, StorageTier, UnifiedStorageConfig,
+    UnifiedStorageSystem,
 };
 
 /// Test that same DID+device produces same NodeId across 10+ restarts
@@ -133,8 +133,12 @@ async fn test_dht_routing_table_rebuild() -> Result<()> {
         let peer1_id = NodeId::from_did_device("did:zhtp:peer1", "node")?;
         let peer2_id = NodeId::from_did_device("did:zhtp:peer2", "node")?;
 
-        storage.add_peer("127.0.0.1:33461".to_string(), peer1_id).await?;
-        storage.add_peer("127.0.0.1:33462".to_string(), peer2_id).await?;
+        storage
+            .add_peer("127.0.0.1:33461".to_string(), peer1_id)
+            .await?;
+        storage
+            .add_peer("127.0.0.1:33462".to_string(), peer2_id)
+            .await?;
 
         // Verify node ID
         assert_eq!(storage.get_node_id(), node_id);
@@ -149,7 +153,8 @@ async fn test_dht_routing_table_rebuild() -> Result<()> {
 
         // Verify NodeId is the same after restart
         assert_eq!(
-            storage.get_node_id(), node_id,
+            storage.get_node_id(),
+            node_id,
             "NodeId changed after restart"
         );
 

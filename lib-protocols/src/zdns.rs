@@ -1,8 +1,8 @@
 //! ZDNS - Zero Knowledge Domain Name System
-//! 
+//!
 //! DNS replacement for Web4, providing decentralized domain name resolution
 //! with zero-knowledge proofs, ownership verification, and post-quantum security.
-//! 
+//!
 //! ZDNS completely replaces traditional DNS with a system that:
 //! - Proves domain ownership without revealing private keys
 //! - Provides censorship-resistant domain resolution
@@ -10,7 +10,10 @@
 //! - Supports .zhtp domains and Web4 addressing
 //! - Enables  through mesh routing
 
+#![allow(dead_code, private_interfaces)]
+
 use crate::{ProtocolError, Result};
+use lib_proofs::types::ZkProof;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -375,7 +378,7 @@ impl ZdnsServer {
         drop(stats);
 
         let records = self.resolve_records(&query.name, &query.record_type)?;
-        
+
         // Validate zero-knowledge proofs if required
         if self.config.security_config.require_zk_proofs {
             self.validate_zk_proofs(&records)?;
@@ -394,11 +397,12 @@ impl ZdnsServer {
         }
 
         let processing_time = start_time.elapsed().as_millis() as u64;
-        
+
         // Update stats
         let mut stats = self.query_stats.write().unwrap();
-        stats.average_response_time_ms = 
-            (stats.average_response_time_ms * (stats.total_queries - 1) as f64 + processing_time as f64) 
+        stats.average_response_time_ms = (stats.average_response_time_ms
+            * (stats.total_queries - 1) as f64
+            + processing_time as f64)
             / stats.total_queries as f64;
 
         Ok(ZdnsResponse {
@@ -433,18 +437,25 @@ impl ZdnsServer {
         // Validate record
         self.validate_record(&record)?;
 
-        // Validate ownership proof
-        self.validate_ownership_proof(&record)?;
+        // Validate ownership proof if required
+        if self.config.security_config.require_zk_proofs {
+            self.validate_ownership_proof(&record)?;
+        }
 
-        // Validate DAO fee payment
-        self.validate_dao_fee_proof(&record)?;
+        // Validate DAO fee payment if required
+        if self.config.security_config.require_dao_fees {
+            self.validate_dao_fee_proof(&record)?;
+        }
 
         // Store record
         let mut records = self.records.write().unwrap();
         let domain_records = records.entry(record.name.clone()).or_insert_with(Vec::new);
-        
+
         // Replace existing record of same type or add new one
-        if let Some(pos) = domain_records.iter().position(|r| r.record_type == record.record_type) {
+        if let Some(pos) = domain_records
+            .iter()
+            .position(|r| r.record_type == record.record_type)
+        {
             domain_records[pos] = record;
         } else {
             domain_records.push(record);
@@ -457,16 +468,20 @@ impl ZdnsServer {
     pub async fn update_record(&self, record: ZdnsRecord) -> Result<()> {
         // Validate that record exists and ownership is valid
         let records = self.records.read().unwrap();
-        let domain_records = records.get(&record.name)
+        let domain_records = records
+            .get(&record.name)
             .ok_or_else(|| ProtocolError::InvalidRequest("Domain not found".to_string()))?;
 
-        let existing = domain_records.iter()
+        let existing = domain_records
+            .iter()
             .find(|r| r.record_type == record.record_type)
             .ok_or_else(|| ProtocolError::InvalidRequest("Record not found".to_string()))?;
 
         // Verify ownership hasn't changed
         if existing.metadata.owner_id != record.metadata.owner_id {
-            return Err(ProtocolError::AccessDenied("Ownership mismatch".to_string()));
+            return Err(ProtocolError::AccessDenied(
+                "Ownership mismatch".to_string(),
+            ));
         }
 
         drop(records);
@@ -478,8 +493,11 @@ impl ZdnsServer {
 
         let mut records = self.records.write().unwrap();
         let domain_records = records.get_mut(&record.name).unwrap();
-        
-        if let Some(pos) = domain_records.iter().position(|r| r.record_type == record.record_type) {
+
+        if let Some(pos) = domain_records
+            .iter()
+            .position(|r| r.record_type == record.record_type)
+        {
             domain_records[pos] = record;
         }
 
@@ -487,14 +505,23 @@ impl ZdnsServer {
     }
 
     /// Delete ZDNS record
-    pub async fn delete_record(&self, name: &str, record_type: &ZdnsRecordType, owner_id: &str) -> Result<()> {
+    pub async fn delete_record(
+        &self,
+        name: &str,
+        record_type: &ZdnsRecordType,
+        owner_id: &str,
+    ) -> Result<()> {
         let mut records = self.records.write().unwrap();
-        let domain_records = records.get_mut(name)
+        let domain_records = records
+            .get_mut(name)
             .ok_or_else(|| ProtocolError::InvalidRequest("Domain not found".to_string()))?;
 
-        let pos = domain_records.iter().position(|r| {
-            r.record_type == *record_type && r.metadata.owner_id == owner_id
-        }).ok_or_else(|| ProtocolError::AccessDenied("Record not found or access denied".to_string()))?;
+        let pos = domain_records
+            .iter()
+            .position(|r| r.record_type == *record_type && r.metadata.owner_id == owner_id)
+            .ok_or_else(|| {
+                ProtocolError::AccessDenied("Record not found or access denied".to_string())
+            })?;
 
         domain_records.remove(pos);
 
@@ -515,11 +542,15 @@ impl ZdnsServer {
 
     fn validate_query(&self, query: &ZdnsQuery) -> Result<()> {
         if query.name.is_empty() {
-            return Err(ProtocolError::InvalidRequest("Domain name cannot be empty".to_string()));
+            return Err(ProtocolError::InvalidRequest(
+                "Domain name cannot be empty".to_string(),
+            ));
         }
 
         if !query.name.ends_with(".zhtp") && !query.name.contains('.') {
-            return Err(ProtocolError::InvalidRequest("Invalid domain format".to_string()));
+            return Err(ProtocolError::InvalidRequest(
+                "Invalid domain format".to_string(),
+            ));
         }
 
         Ok(())
@@ -537,36 +568,73 @@ impl ZdnsServer {
 
     fn resolve_records(&self, name: &str, record_type: &ZdnsRecordType) -> Result<Vec<ZdnsRecord>> {
         let records = self.records.read().unwrap();
-        
+
         if let Some(domain_records) = records.get(name) {
-            let matching: Vec<ZdnsRecord> = domain_records.iter()
+            let matching: Vec<ZdnsRecord> = domain_records
+                .iter()
                 .filter(|r| r.record_type == *record_type)
                 .cloned()
                 .collect();
-            
+
             if matching.is_empty() {
-                Err(ProtocolError::InvalidRequest("No records found".to_string()))
+                Err(ProtocolError::InvalidRequest(
+                    "No records found".to_string(),
+                ))
             } else {
                 Ok(matching)
             }
         } else {
-            Err(ProtocolError::InvalidRequest("Domain not found".to_string()))
+            Err(ProtocolError::InvalidRequest(
+                "Domain not found".to_string(),
+            ))
         }
     }
 
     fn validate_zk_proofs(&self, records: &[ZdnsRecord]) -> Result<()> {
+        if records.is_empty() {
+            return Ok(());
+        }
+
+        let _zk_system = lib_proofs::plonky2::ZkProofSystem::new().map_err(|e| {
+            ProtocolError::ZkProofError(format!("Failed to initialize ZK system: {}", e))
+        })?;
+
         for record in records {
-            if record.ownership_proof.len() < 64 {
-                return Err(ProtocolError::ZkProofError("Invalid ownership proof".to_string()));
+            let proof_bytes = base64::Engine::decode(
+                &base64::engine::general_purpose::STANDARD,
+                &record.ownership_proof,
+            )
+            .map_err(|e| ProtocolError::ZkProofError(format!("Invalid base64: {}", e)))?;
+
+            let zk_proof: ZkProof = bincode::deserialize(&proof_bytes)
+                .map_err(|e| ProtocolError::ZkProofError(format!("Deserialize failed: {}", e)))?;
+
+            if zk_proof.proof_data.is_empty() {
+                return Err(ProtocolError::ZkProofError("Proof data empty".to_string()));
             }
-            // TODO: Implement actual ZK proof verification
+
+            if let Some(_plonky2_proof) = &zk_proof.plonky2_proof {
+                // NOTE: A dedicated DNS ownership proof circuit is required here.
+                // Using storage access circuit is semantically incorrect.
+                return Err(ProtocolError::ZkProofError(
+                    "DNS ownership ZK verification requires a dedicated circuit".to_string(),
+                ));
+            } else {
+                return Err(ProtocolError::ZkProofError(
+                    "Plonky2 proof required".to_string(),
+                ));
+            }
         }
         Ok(())
     }
 
-    async fn process_dao_fee(&self, query: &ZdnsQuery, records: &[ZdnsRecord]) -> Result<EconomicTransaction> {
+    async fn process_dao_fee(
+        &self,
+        query: &ZdnsQuery,
+        _records: &[ZdnsRecord],
+    ) -> Result<EconomicTransaction> {
         let fee_amount = query.dao_fee.unwrap_or(0.01); // Default minimal fee
-        
+
         // Calculate fee distribution
         let ubi_contribution = fee_amount * 0.4; // 40% to UBI
         let network_fee = fee_amount * 0.3; // 30% to network maintenance
@@ -604,7 +672,18 @@ impl ZdnsServer {
         }
     }
 
-    fn create_response_from_cache(&self, query: ZdnsQuery, cached_record: ZdnsRecord) -> ZdnsResponse {
+    fn create_response_from_cache(
+        &self,
+        query: ZdnsQuery,
+        cached_record: ZdnsRecord,
+    ) -> ZdnsResponse {
+        let stats = self.query_stats.read().unwrap();
+        let hit_ratio = if stats.total_queries > 0 {
+            stats.cache_hits as f64 / stats.total_queries as f64
+        } else {
+            0.0
+        };
+
         ZdnsResponse {
             id: query.id,
             flags: ZdnsFlags {
@@ -614,7 +693,7 @@ impl ZdnsServer {
                 tc: false,
                 rd: query.recursion_desired,
                 ra: true,
-                zk: false, // Cache response doesn't re-validate ZK
+                zk: false,  // Cache response doesn't re-validate ZK
                 dao: false, // Cache response doesn't re-process DAO fees
                 rcode: 0,
             },
@@ -629,7 +708,7 @@ impl ZdnsServer {
                 economic_details: None,
                 cache_info: Some(CacheInfo {
                     cached: true,
-                    hit_ratio: 0.8, // TODO: Calculate actual hit ratio
+                    hit_ratio,
                     expires_at: chrono::Utc::now() + chrono::Duration::seconds(300),
                     cache_nodes: vec![self.config.node_id.clone()],
                 }),
@@ -639,33 +718,43 @@ impl ZdnsServer {
 
     fn validate_record(&self, record: &ZdnsRecord) -> Result<()> {
         if record.name.is_empty() {
-            return Err(ProtocolError::InvalidRequest("Record name cannot be empty".to_string()));
+            return Err(ProtocolError::InvalidRequest(
+                "Record name cannot be empty".to_string(),
+            ));
         }
 
         if record.value.is_empty() {
-            return Err(ProtocolError::InvalidRequest("Record value cannot be empty".to_string()));
+            return Err(ProtocolError::InvalidRequest(
+                "Record value cannot be empty".to_string(),
+            ));
         }
 
         // Validate record type specific constraints
         match record.record_type {
             ZdnsRecordType::A => {
-                record.value.parse::<Ipv4Addr>()
-                    .map_err(|_| ProtocolError::InvalidRequest("Invalid IPv4 address".to_string()))?;
-            },
+                record.value.parse::<Ipv4Addr>().map_err(|_| {
+                    ProtocolError::InvalidRequest("Invalid IPv4 address".to_string())
+                })?;
+            }
             ZdnsRecordType::AAAA => {
-                record.value.parse::<Ipv6Addr>()
-                    .map_err(|_| ProtocolError::InvalidRequest("Invalid IPv6 address".to_string()))?;
-            },
+                record.value.parse::<Ipv6Addr>().map_err(|_| {
+                    ProtocolError::InvalidRequest("Invalid IPv6 address".to_string())
+                })?;
+            }
             ZdnsRecordType::MX => {
                 if record.priority.is_none() {
-                    return Err(ProtocolError::InvalidRequest("MX record requires priority".to_string()));
+                    return Err(ProtocolError::InvalidRequest(
+                        "MX record requires priority".to_string(),
+                    ));
                 }
-            },
+            }
             ZdnsRecordType::SRV => {
                 if record.priority.is_none() || record.weight.is_none() || record.port.is_none() {
-                    return Err(ProtocolError::InvalidRequest("SRV record requires priority, weight, and port".to_string()));
+                    return Err(ProtocolError::InvalidRequest(
+                        "SRV record requires priority, weight, and port".to_string(),
+                    ));
                 }
-            },
+            }
             _ => {} // Other types have flexible validation
         }
 
@@ -673,19 +762,56 @@ impl ZdnsServer {
     }
 
     fn validate_ownership_proof(&self, record: &ZdnsRecord) -> Result<()> {
-        if record.ownership_proof.len() < 64 {
-            return Err(ProtocolError::ZkProofError("Ownership proof too short".to_string()));
+        if record.ownership_proof.is_empty() {
+            return Err(ProtocolError::ZkProofError(
+                "Ownership proof required".to_string(),
+            ));
         }
-        // TODO: Implement actual ownership proof validation
-        Ok(())
+
+        let proof_bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &record.ownership_proof,
+        )
+        .map_err(|e| ProtocolError::ZkProofError(format!("Invalid base64: {}", e)))?;
+
+        if proof_bytes.len() < 64 {
+            return Err(ProtocolError::ZkProofError(
+                "Ownership proof too short".to_string(),
+            ));
+        }
+
+        // NOTE: A dedicated DNS ownership proof circuit is required here.
+        // Using storage access circuit (verify_storage_access) is semantically incorrect
+        // and could allow proof reuse attacks.
+        Err(ProtocolError::ZkProofError(
+            "DNS ownership ZK verification requires a dedicated circuit".to_string(),
+        ))
     }
 
     fn validate_dao_fee_proof(&self, record: &ZdnsRecord) -> Result<()> {
-        if record.dao_fee_proof.len() < 32 {
-            return Err(ProtocolError::DaoFeeError("DAO fee proof too short".to_string()));
+        if record.dao_fee_proof.is_empty() {
+            return Err(ProtocolError::DaoFeeError(
+                "DAO fee proof required".to_string(),
+            ));
         }
-        // TODO: Implement actual DAO fee proof validation
-        Ok(())
+
+        let proof_bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &record.dao_fee_proof,
+        )
+        .map_err(|e| ProtocolError::DaoFeeError(format!("Invalid base64: {}", e)))?;
+
+        if proof_bytes.len() < 32 {
+            return Err(ProtocolError::DaoFeeError(
+                "DAO fee proof too short".to_string(),
+            ));
+        }
+
+        // NOTE: A dedicated DAO fee payment proof circuit is required here.
+        // Using storage access circuit is semantically incorrect.
+        Err(ProtocolError::DaoFeeError(
+            "DAO fee ZK verification requires a dedicated circuit".to_string(),
+        ))
     }
 }
 
@@ -728,24 +854,24 @@ impl Default for ZdnsConfig {
 }
 
 /// Web4 ZDNS Integration Module
-/// 
+///
 /// Provides seamless integration between Web4 domain registry and ZDNS system
 pub mod web4_integration {
     use super::*;
     use lib_proofs::ZeroKnowledgeProof;
-    
+
     /// Web4 ZDNS bridge for domain resolution integration
     pub struct Web4ZdnsBridge {
         /// ZDNS server instance
         zdns_server: std::sync::Arc<ZdnsServer>,
     }
-    
+
     impl Web4ZdnsBridge {
         /// Create new Web4 ZDNS bridge
         pub fn new(zdns_server: std::sync::Arc<ZdnsServer>) -> Self {
             Self { zdns_server }
         }
-        
+
         /// Register Web4 domain with ZDNS
         pub async fn register_web4_domain(
             &self,
@@ -756,7 +882,7 @@ pub mod web4_integration {
             dht_nodes: &[String],
         ) -> Result<()> {
             tracing::info!(" Registering Web4 domain {} with ZDNS", domain);
-            
+
             // Create Web4 domain registry record
             let web4_record = ZdnsRecord {
                 name: domain.to_string(),
@@ -767,7 +893,8 @@ pub mod web4_integration {
                     "registered_at": chrono::Utc::now(),
                     "type": "web4_domain",
                     "status": "active"
-                }).to_string(),
+                })
+                .to_string(),
                 ttl: 3600, // 1 hour TTL
                 ownership_proof: hex::encode(&ownership_proof.proof_data),
                 pq_signature: hex::encode(&ownership_proof.verification_key),
@@ -792,10 +919,10 @@ pub mod web4_integration {
                     content_hash: None,
                 },
             };
-            
+
             // Register domain record
             self.zdns_server.register_record(web4_record).await?;
-            
+
             // Register ownership verification record
             let owner_record = ZdnsRecord {
                 name: domain.to_string(),
@@ -805,7 +932,8 @@ pub mod web4_integration {
                     "verification_method": "zero_knowledge_proof",
                     "proof_type": ownership_proof.proof_system,
                     "verified_at": chrono::Utc::now()
-                }).to_string(),
+                })
+                .to_string(),
                 ttl: 7200, // 2 hour TTL for ownership records
                 ownership_proof: hex::encode(&ownership_proof.proof_data),
                 pq_signature: hex::encode(&ownership_proof.verification_key),
@@ -824,9 +952,9 @@ pub mod web4_integration {
                     content_hash: None,
                 },
             };
-            
+
             self.zdns_server.register_record(owner_record).await?;
-            
+
             // Register content mapping records
             for (path, content_hash) in content_mappings {
                 let content_record = ZdnsRecord {
@@ -851,10 +979,10 @@ pub mod web4_integration {
                         content_hash: Some(content_hash.clone()),
                     },
                 };
-                
+
                 self.zdns_server.register_record(content_record).await?;
             }
-            
+
             // Register DHT node records
             for (i, dht_node) in dht_nodes.iter().enumerate() {
                 let dht_record = ZdnsRecord {
@@ -879,18 +1007,18 @@ pub mod web4_integration {
                         content_hash: None,
                     },
                 };
-                
+
                 self.zdns_server.register_record(dht_record).await?;
             }
-            
+
             tracing::info!("Web4 domain {} registered with ZDNS successfully", domain);
             Ok(())
         }
-        
+
         /// Resolve Web4 domain to get DHT nodes and content mappings
         pub async fn resolve_web4_domain(&self, domain: &str) -> Result<Web4DomainResolution> {
             tracing::info!("Resolving Web4 domain {} through ZDNS", domain);
-            
+
             // Query for Web4 domain record
             let domain_query = ZdnsQuery {
                 name: domain.to_string(),
@@ -903,13 +1031,16 @@ pub mod web4_integration {
                 dao_fee: Some(0.001),
                 client_id: None,
             };
-            
+
             let domain_response = self.zdns_server.process_query(domain_query).await?;
-            
+
             if domain_response.answers.is_empty() {
-                return Err(ProtocolError::InvalidRequest(format!("Web4 domain not found: {}", domain)));
+                return Err(ProtocolError::InvalidRequest(format!(
+                    "Web4 domain not found: {}",
+                    domain
+                )));
             }
-            
+
             // Query for DHT nodes
             let dht_query = ZdnsQuery {
                 name: domain.to_string(),
@@ -922,9 +1053,9 @@ pub mod web4_integration {
                 dao_fee: Some(0.001),
                 client_id: None,
             };
-            
+
             let dht_response = self.zdns_server.process_query(dht_query).await?;
-            
+
             // Query for ownership info
             let owner_query = ZdnsQuery {
                 name: domain.to_string(),
@@ -937,49 +1068,70 @@ pub mod web4_integration {
                 dao_fee: Some(0.001),
                 client_id: None,
             };
-            
+
             let owner_response = self.zdns_server.process_query(owner_query).await?;
-            
+
             // Parse results
-            let domain_info: serde_json::Value = serde_json::from_str(&domain_response.answers[0].value)
-                .map_err(|e| ProtocolError::InvalidRequest(format!("Invalid domain record: {}", e)))?;
-            
-            let dht_nodes: Vec<String> = dht_response.answers
+            let domain_info: serde_json::Value =
+                serde_json::from_str(&domain_response.answers[0].value).map_err(|e| {
+                    ProtocolError::InvalidRequest(format!("Invalid domain record: {}", e))
+                })?;
+
+            let dht_nodes: Vec<String> = dht_response
+                .answers
                 .iter()
                 .map(|record| record.value.clone())
                 .collect();
-            
+
             let owner_id = if !owner_response.answers.is_empty() {
-                let owner_info: serde_json::Value = serde_json::from_str(&owner_response.answers[0].value)
-                    .unwrap_or_default();
-                owner_info.get("owner_id").and_then(|v| v.as_str()).unwrap_or("unknown").to_string()
+                let owner_info: serde_json::Value =
+                    serde_json::from_str(&owner_response.answers[0].value).unwrap_or_default();
+                owner_info
+                    .get("owner_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string()
             } else {
                 "unknown".to_string()
             };
-            
+
             let dht_nodes_len = dht_nodes.len();
-            
+
             let resolution = Web4DomainResolution {
                 domain: domain.to_string(),
                 found: true,
                 owner_id,
                 dht_nodes,
                 content_mappings: HashMap::new(), // Will be populated by separate queries
-                status: domain_info.get("status").and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
-                registered_at: domain_info.get("registered_at").and_then(|v| v.as_str())
+                status: domain_info
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string(),
+                registered_at: domain_info
+                    .get("registered_at")
+                    .and_then(|v| v.as_str())
                     .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                     .map(|dt| dt.with_timezone(&chrono::Utc))
                     .unwrap_or_else(chrono::Utc::now),
             };
-            
-            tracing::info!("Web4 domain {} resolved: {} DHT nodes found", domain, dht_nodes_len);
+
+            tracing::info!(
+                "Web4 domain {} resolved: {} DHT nodes found",
+                domain,
+                dht_nodes_len
+            );
             Ok(resolution)
         }
-        
+
         /// Resolve Web4 content path to content hash
-        pub async fn resolve_web4_content(&self, domain: &str, path: &str) -> Result<Option<String>> {
+        pub async fn resolve_web4_content(
+            &self,
+            domain: &str,
+            path: &str,
+        ) -> Result<Option<String>> {
             let full_name = format!("{}{}", domain, path);
-            
+
             let content_query = ZdnsQuery {
                 name: full_name.clone(),
                 record_type: ZdnsRecordType::WEB4CONTENT,
@@ -991,11 +1143,16 @@ pub mod web4_integration {
                 dao_fee: Some(0.001),
                 client_id: None,
             };
-            
+
             match self.zdns_server.process_query(content_query).await {
                 Ok(response) => {
                     if !response.answers.is_empty() {
-                        tracing::info!("Web4 content resolved: {}{} -> {}", domain, path, response.answers[0].value);
+                        tracing::info!(
+                            "Web4 content resolved: {}{} -> {}",
+                            domain,
+                            path,
+                            response.answers[0].value
+                        );
                         Ok(Some(response.answers[0].value.clone()))
                     } else {
                         Ok(None)
@@ -1004,7 +1161,7 @@ pub mod web4_integration {
                 Err(_) => Ok(None),
             }
         }
-        
+
         /// Update Web4 domain content mappings
         pub async fn update_web4_content(
             &self,
@@ -1015,7 +1172,7 @@ pub mod web4_integration {
             ownership_proof: &ZeroKnowledgeProof,
         ) -> Result<()> {
             let full_name = format!("{}{}", domain, path);
-            
+
             let content_record = ZdnsRecord {
                 name: full_name,
                 record_type: ZdnsRecordType::WEB4CONTENT,
@@ -1038,13 +1195,18 @@ pub mod web4_integration {
                     content_hash: Some(content_hash.to_string()),
                 },
             };
-            
+
             self.zdns_server.update_record(content_record).await?;
-            
-            tracing::info!("Web4 content updated: {}{} -> {}", domain, path, content_hash);
+
+            tracing::info!(
+                "Web4 content updated: {}{} -> {}",
+                domain,
+                path,
+                content_hash
+            );
             Ok(())
         }
-        
+
         /// Delete Web4 domain from ZDNS
         pub async fn delete_web4_domain(&self, domain: &str, owner_id: &str) -> Result<()> {
             // Delete all Web4-related records for the domain
@@ -1053,18 +1215,27 @@ pub mod web4_integration {
                 ZdnsRecordType::WEB4OWNER,
                 ZdnsRecordType::WEB4DHT,
             ];
-            
+
             for record_type in record_types {
-                if let Err(e) = self.zdns_server.delete_record(domain, &record_type, owner_id).await {
-                    tracing::warn!("Failed to delete {:?} record for {}: {}", record_type, domain, e);
+                if let Err(e) = self
+                    .zdns_server
+                    .delete_record(domain, &record_type, owner_id)
+                    .await
+                {
+                    tracing::warn!(
+                        "Failed to delete {:?} record for {}: {}",
+                        record_type,
+                        domain,
+                        e
+                    );
                 }
             }
-            
+
             tracing::info!("Web4 domain {} deleted from ZDNS", domain);
             Ok(())
         }
     }
-    
+
     /// Web4 domain resolution result
     #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
     pub struct Web4DomainResolution {
@@ -1083,7 +1254,7 @@ pub mod web4_integration {
         /// Registration timestamp
         pub registered_at: chrono::DateTime<chrono::Utc>,
     }
-    
+
     /// Create Web4 ZDNS bridge instance
     pub async fn create_web4_zdns_bridge() -> Result<Web4ZdnsBridge> {
         // Create ZDNS server configuration
@@ -1120,9 +1291,9 @@ pub mod web4_integration {
                 enable_isp_bypass: true,
             },
         };
-        
+
         let zdns_server = std::sync::Arc::new(ZdnsServer::new(zdns_config));
-        
+
         tracing::info!(" Web4 ZDNS bridge initialized");
         Ok(Web4ZdnsBridge::new(zdns_server))
     }
@@ -1134,7 +1305,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_zdns_query_processing() {
-        let config = ZdnsConfig::default();
+        let config = ZdnsConfig {
+            security_config: SecurityConfig {
+                require_zk_proofs: false,
+                require_dao_fees: false,
+                enable_pq_signatures: true,
+                max_query_rate: 100,
+                enable_query_logging: true,
+            },
+            ..ZdnsConfig::default()
+        };
         let server = ZdnsServer::new(config);
 
         // Register a test record
@@ -1178,7 +1358,7 @@ mod tests {
 
         let response = server.process_query(query).await;
         assert!(response.is_ok());
-        
+
         let response = response.unwrap();
         assert_eq!(response.answers.len(), 1);
         assert_eq!(response.answers[0].value, "192.168.1.1");
@@ -1232,7 +1412,8 @@ mod tests {
         };
 
         // Verify shares add up to 100%
-        let total = config.owner_share + config.ubi_share + config.network_share + config.hosting_reward;
+        let total =
+            config.owner_share + config.ubi_share + config.network_share + config.hosting_reward;
         assert!((total - 1.0).abs() < 0.001);
     }
 }

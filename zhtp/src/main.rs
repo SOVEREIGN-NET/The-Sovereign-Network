@@ -3,21 +3,18 @@
 //! Main entry point for the ZHTP orchestrator node.
 //! Starts the unified server and manages the network node lifecycle.
 
-use zhtp::config::{CliArgs, load_configuration, Environment};
-use zhtp::runtime::RuntimeOrchestrator;
-use tracing_subscriber;
 use std::env;
 use std::path::PathBuf;
+use tracing_subscriber;
+use zhtp::config::{load_configuration, CliArgs, Environment, NodeType};
+use zhtp::runtime::RuntimeOrchestrator;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize logging
-    let filter = env::var("RUST_LOG")
-        .unwrap_or_else(|_| "info".to_string());
+    let filter = env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
 
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .init();
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
     // Parse command-line arguments
     let args = parse_cli_args();
@@ -25,16 +22,84 @@ async fn main() -> anyhow::Result<()> {
     // Load and validate configuration
     let config = load_configuration(&args).await?;
 
-    // Create the orchestrator with the configuration
-    let orchestrator = RuntimeOrchestrator::new(config).await?;
+    // ========================================================================
+    // Issue #454: Canonical startup dispatch based on canonical NodeType
+    // ========================================================================
+    // Single dispatch based on config.node_type (SINGLE SOURCE OF TRUTH)
+    // to the appropriate startup function. Each startup function validates
+    // it was called with the correct type and performs type-specific init.
+    // ========================================================================
+    let node_type = config.node_type.ok_or_else(|| {
+        anyhow::anyhow!(
+            "node_type not set during config aggregation. \
+             derive_node_type() must be called before runtime initialization."
+        )
+    })?;
 
-    // Start the node with full startup sequence (includes identity creation)
-    orchestrator.start_node().await?;
+    let orchestrator = match node_type {
+        NodeType::Validator => {
+            tracing::info!("Starting node as Validator (mining and consensus enabled)");
+            RuntimeOrchestrator::start_validator(config).await?
+        }
+        NodeType::EdgeNode => {
+            tracing::info!("Starting node as EdgeNode (headers only, ZK proofs)");
+            RuntimeOrchestrator::start_edge_node(config).await?
+        }
+        NodeType::FullNode => {
+            tracing::info!(
+                "Starting node as Observer via FullNode startup path (complete blockchain, no mining, no consensus)"
+            );
+            RuntimeOrchestrator::start_full_node(config).await?
+        }
+        NodeType::Relay => {
+            tracing::info!("Starting node as Relay (routing only, no blockchain state)");
+            RuntimeOrchestrator::start_relay(config).await?
+        }
+    };
 
-    // Keep running indefinitely
-    loop {
-        tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
+    // Wrap orchestrator in Arc for shared ownership (needed by runtime handlers)
+    let orchestrator = std::sync::Arc::new(orchestrator);
+
+    // Register runtime-dependent handlers (NetworkHandler, MeshHandler) now that
+    // RuntimeOrchestrator is available as Arc. Give components a moment to fully initialize.
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+    if let Err(e) = orchestrator
+        .register_runtime_handlers(orchestrator.clone())
+        .await
+    {
+        tracing::warn!("Failed to register runtime handlers: {}", e);
+    } else {
+        tracing::info!("✅ Runtime handlers registered (NetworkHandler, MeshHandler)");
     }
+
+    // Wait for shutdown signal (SIGTERM/SIGINT)
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            tracing::info!("Received SIGINT (Ctrl+C), initiating graceful shutdown...");
+        }
+        _ = async {
+            #[cfg(unix)]
+            {
+                use tokio::signal::unix::{signal, SignalKind};
+                let mut sigterm = signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
+                sigterm.recv().await;
+            }
+            #[cfg(not(unix))]
+            {
+                std::future::pending::<()>().await;
+            }
+        } => {
+            tracing::info!("Received SIGTERM, initiating graceful shutdown...");
+        }
+    }
+
+    // Graceful shutdown - saves blockchain before exit
+    if let Err(e) = orchestrator.graceful_shutdown().await {
+        tracing::error!("Error during graceful shutdown: {}", e);
+    }
+
+    tracing::info!("Node shutdown complete");
+    Ok(())
 }
 
 /// Parse command-line arguments
@@ -49,6 +114,8 @@ fn parse_cli_args() -> CliArgs {
         .unwrap_or_else(|| PathBuf::from(".zhtp"));
     let mut mesh_port = None;
     let mut pure_mesh = false;
+    let mut emergency_restore_from_local = false;
+    let mut allow_emergency_restore_genesis_mismatch = false;
 
     // Simple argument parser
     let mut i = 1;
@@ -92,6 +159,14 @@ fn parse_cli_args() -> CliArgs {
                 pure_mesh = true;
                 i += 1;
             }
+            "--emergency-restore-from-local" => {
+                emergency_restore_from_local = true;
+                i += 1;
+            }
+            "--allow-emergency-restore-genesis-mismatch" => {
+                allow_emergency_restore_genesis_mismatch = true;
+                i += 1;
+            }
             "--log-level" => {
                 if i + 1 < args.len() {
                     log_level = args[i + 1].clone();
@@ -111,5 +186,7 @@ fn parse_cli_args() -> CliArgs {
         data_dir,
         mesh_port,
         pure_mesh,
+        emergency_restore_from_local,
+        allow_emergency_restore_genesis_mismatch,
     }
 }

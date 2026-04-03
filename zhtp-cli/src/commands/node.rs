@@ -7,14 +7,14 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Output trait injection for testing
 
-use crate::argument_parsing::{NodeArgs, NodeAction, ZhtpCli};
-use crate::error::{CliResult, CliError};
+use crate::argument_parsing::{NodeAction, NodeArgs, ZhtpCli};
+use crate::error::{CliError, CliResult};
 use crate::output::Output;
 
-use zhtp::config::environment::Environment;
-use zhtp::runtime::RuntimeOrchestrator;
-use zhtp::runtime::did_startup::WalletStartupManager;
 use std::path::PathBuf;
+use zhtp::config::environment::Environment;
+use zhtp::runtime::did_startup::WalletStartupManager;
+use zhtp::runtime::RuntimeOrchestrator;
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -127,7 +127,10 @@ async fn handle_node_command_impl(
                 output.print(&format!("Port override: {}", p))?;
             }
             if edge_mode {
-                output.print(&format!("Edge mode: ENABLED (max {} headers)", edge_max_headers))?;
+                output.print(&format!(
+                    "Edge mode: ENABLED (max {} headers)",
+                    edge_max_headers
+                ))?;
             }
             output.print(&format!("Network environment: {:?}", network_env))?;
 
@@ -152,8 +155,27 @@ async fn handle_node_command_impl(
         }
         NodeAction::Status => {
             output.header("Node Status")?;
-            output.print(&format!("Server: {}", cli.server))?;
-            output.success("Status: Information available at /api/v1/health")?;
+            output.print(&format!("Connecting to: {}", cli.server))?;
+
+            // Actually connect to running node and get status
+            match crate::commands::web4_utils::connect_default(&cli.server).await {
+                Ok(client) => match client.get("/api/v1/node/status").await {
+                    Ok(response) => {
+                        let status: serde_json::Value =
+                            lib_network::client::ZhtpClient::parse_json(&response)
+                                .unwrap_or_else(|_| serde_json::json!({"raw": response}));
+                        output.success("Node is running")?;
+                        output.print(&serde_json::to_string_pretty(&status).unwrap_or_default())?;
+                    }
+                    Err(e) => {
+                        output.warning(&format!("Failed to get status: {}", e))?;
+                    }
+                },
+                Err(e) => {
+                    output.warning(&format!("Cannot connect to node at {}: {}", cli.server, e))?;
+                    output.print("Is the node running? Start it with: zhtp node start")?;
+                }
+            }
             Ok(())
         }
         NodeAction::Restart => {
@@ -192,14 +214,14 @@ async fn start_node_impl(
             "info".to_string()
         },
         data_dir: PathBuf::from("./data"),
+        emergency_restore_from_local: false,
+        allow_emergency_restore_genesis_mismatch: false,
     };
 
     // Load configuration
     let mut node_config = load_configuration(&cli_args)
         .await
-        .map_err(|e| {
-            CliError::ConfigError(format!("Failed to load configuration: {}", e))
-        })?;
+        .map_err(|e| CliError::ConfigError(format!("Failed to load configuration: {}", e)))?;
 
     // Detect node type
     let hosted_storage = if node_config.storage_config.hosted_storage_gb > 0 {
@@ -239,14 +261,16 @@ async fn start_node_impl(
 
     // Start orchestrator
     output.info("Starting runtime orchestrator...")?;
-    let mut orchestrator = RuntimeOrchestrator::new(node_config.clone()).await.map_err(|e| {
-        CliError::ConfigError(format!("Failed to create orchestrator: {}", e))
-    })?;
+    let mut orchestrator = RuntimeOrchestrator::new(node_config.clone())
+        .await
+        .map_err(|e| CliError::ConfigError(format!("Failed to create orchestrator: {}", e)))?;
 
     // Configure edge node if needed
     if is_edge_node {
         orchestrator.set_edge_node(true).await;
-        orchestrator.set_edge_max_headers(edge_max_headers as usize).await;
+        orchestrator
+            .set_edge_max_headers(edge_max_headers as usize)
+            .await;
     }
 
     // PHASE 1: Start network components for peer discovery
@@ -264,15 +288,16 @@ async fn start_node_impl(
     let network_info_opt = orchestrator
         .discover_network_with_retry(is_edge_node)
         .await
-        .map_err(|e| {
-            CliError::ConfigError(format!("Failed to discover network: {}", e))
-        })?;
+        .map_err(|e| CliError::ConfigError(format!("Failed to discover network: {}", e)))?;
 
     // PHASE 3: Setup identity and blockchain
     if let Some(network_info) = network_info_opt {
         output.success("Connected to existing ZHTP network!")?;
         output.print(&format!("Network peers: {}", network_info.peer_count))?;
-        output.print(&format!("Blockchain height: {}", network_info.blockchain_height))?;
+        output.print(&format!(
+            "Blockchain height: {}",
+            network_info.blockchain_height
+        ))?;
 
         output.info("Initializing blockchain for sync...")?;
         orchestrator
@@ -290,16 +315,20 @@ async fn start_node_impl(
             output.warning("Initial sync timeout - will continue syncing in background")?;
         }
 
-        orchestrator.set_joined_existing_network(true).await.map_err(|e| {
-            CliError::ConfigError(format!("Failed to set network status: {}", e))
-        })?;
+        orchestrator
+            .set_joined_existing_network(true)
+            .await
+            .map_err(|e| CliError::ConfigError(format!("Failed to set network status: {}", e)))?;
 
         output.info("Starting in guest mode - blockchain will sync")?;
-        WalletStartupManager::handle_startup_wallet_flow_with_keystore(keystore_path)
+        let wallet_result =
+            WalletStartupManager::handle_startup_wallet_flow_with_keystore(keystore_path)
+                .await
+                .map_err(|e| CliError::IdentityError(format!("Failed to setup wallet: {}", e)))?;
+        orchestrator
+            .set_user_wallet(wallet_result)
             .await
-            .map_err(|e| {
-                CliError::IdentityError(format!("Failed to setup wallet: {}", e))
-            })?
+            .map_err(|e| CliError::ConfigError(format!("Failed to store wallet: {}", e)))?;
     } else {
         output.warning("No existing ZHTP network found")?;
 
@@ -310,35 +339,42 @@ async fn start_node_impl(
         }
 
         output.print("Starting new genesis network...")?;
-        orchestrator.set_joined_existing_network(false).await.map_err(|e| {
-            CliError::ConfigError(format!("Failed to set network status: {}", e))
-        })?;
-
-        WalletStartupManager::handle_startup_wallet_flow_with_keystore(keystore_path)
+        orchestrator
+            .set_joined_existing_network(false)
             .await
-            .map_err(|e| {
-                CliError::IdentityError(format!("Failed to setup wallet: {}", e))
-            })?
+            .map_err(|e| CliError::ConfigError(format!("Failed to set network status: {}", e)))?;
+
+        let wallet_result =
+            WalletStartupManager::handle_startup_wallet_flow_with_keystore(keystore_path)
+                .await
+                .map_err(|e| CliError::IdentityError(format!("Failed to setup wallet: {}", e)))?;
+        orchestrator
+            .set_user_wallet(wallet_result)
+            .await
+            .map_err(|e| CliError::ConfigError(format!("Failed to store wallet: {}", e)))?;
     };
 
     // PHASE 4: Register and start remaining components
     output.info("Registering remaining system components...")?;
-    orchestrator.register_all_components().await.map_err(|e| {
-        CliError::ConfigError(format!("Failed to register components: {}", e))
-    })?;
+    orchestrator
+        .register_all_components()
+        .await
+        .map_err(|e| CliError::ConfigError(format!("Failed to register components: {}", e)))?;
 
     output.info("Starting remaining system components...")?;
-    orchestrator.start_all_components().await.map_err(|e| {
-        CliError::ConfigError(format!("Failed to start components: {}", e))
-    })?;
+    orchestrator
+        .start_all_components()
+        .await
+        .map_err(|e| CliError::ConfigError(format!("Failed to start components: {}", e)))?;
 
     output.success("ZHTP orchestrator fully operational!")?;
     output.print("Press Ctrl+C to stop the node")?;
 
     // Run main loop
-    orchestrator.run_main_loop().await.map_err(|e| {
-        CliError::ConfigError(format!("Node runtime error: {}", e))
-    })?;
+    orchestrator
+        .run_main_loop()
+        .await
+        .map_err(|e| CliError::ConfigError(format!("Node runtime error: {}", e)))?;
 
     Ok(())
 }
@@ -463,9 +499,15 @@ mod tests {
 
     #[test]
     fn test_operation_description() {
-        assert_eq!(NodeOperation::Start.description(), "Start orchestrator node");
+        assert_eq!(
+            NodeOperation::Start.description(),
+            "Start orchestrator node"
+        );
         assert_eq!(NodeOperation::Stop.description(), "Stop orchestrator node");
         assert_eq!(NodeOperation::Status.description(), "Show node status");
-        assert_eq!(NodeOperation::Restart.description(), "Restart orchestrator node");
+        assert_eq!(
+            NodeOperation::Restart.description(),
+            "Restart orchestrator node"
+        );
     }
 }

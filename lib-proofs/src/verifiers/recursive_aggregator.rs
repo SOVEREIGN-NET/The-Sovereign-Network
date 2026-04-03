@@ -1,26 +1,28 @@
 //! Recursive proof aggregation for instant state verification
-//! 
+//!
 //! This module implements recursive proof composition that enables O(1) verification
 //! of the entire blockchain state by proving:
 //! 1. Current block validity
 //! 2. Previous aggregated proof validity  
 //! 3. State transition correctness
-//! 
+//!
 //! The result is a chain of proofs where verifying the latest proof
 //! cryptographically guarantees the validity of the entire chain history.
 
+use crate::circuits::{
+    BlockMetadata, StateTransitionCircuit, StateTransitionWitness, TransactionCircuit,
+};
+use crate::plonky2::CircuitConfig;
+use crate::state::StateCommitment;
+use crate::transaction::ZkTransactionProof;
+use crate::types::ZkProof;
+use crate::verifiers::transaction_verifier::BatchedPrivateTransaction;
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
+use lib_crypto::hashing::hash_blake3;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::warn;
-use crate::circuits::{TransactionCircuit, StateTransitionCircuit, StateTransitionWitness, BlockMetadata};
-use crate::transaction::ZkTransactionProof;
-use crate::types::ZkProof;
-use crate::plonky2::CircuitConfig;
-use crate::verifiers::transaction_verifier::BatchedPrivateTransaction;
-use crate::state::StateCommitment;
-use lib_crypto::hashing::hash_blake3;
 
 /// Aggregated proof for an entire block containing all transactions
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,12 +104,12 @@ impl RecursiveProofAggregator {
     /// Create new recursive proof aggregator
     pub fn new() -> Result<Self> {
         let config = CircuitConfig::standard();
-        
+
         let mut transaction_circuit = TransactionCircuit::new(config.clone());
         transaction_circuit.build()?;
-        
+
         let state_transition_circuit = StateTransitionCircuit::new()?;
-        
+
         Ok(Self {
             transaction_circuit,
             state_transition_circuit,
@@ -126,16 +128,16 @@ impl RecursiveProofAggregator {
         block_timestamp: u64,
     ) -> Result<BlockAggregatedProof> {
         let start_time = std::time::Instant::now();
-        
+
         // Step 1: Compute Merkle root of all transactions
         let transaction_merkle_root = self.compute_block_transaction_merkle_root(transactions)?;
-        
+
         // Step 2: Aggregate all transaction proofs using Plonky2 proof composition
         let aggregated_tx_proof = self.aggregate_transaction_proofs(transactions)?;
-        
+
         // Step 3: Compute new state root after applying all transactions
         let new_state_root = self.compute_new_state_root(previous_state_root, transactions)?;
-        
+
         // Step 4: Generate state transition proof
         let state_transition_proof = self.prove_state_transition(
             previous_state_root,
@@ -143,11 +145,14 @@ impl RecursiveProofAggregator {
             &transaction_merkle_root,
             transactions,
         )?;
-        
+
         // Step 5: Calculate total fees
         let total_fees = self.calculate_total_fees(transactions)?;
-        let transaction_count = transactions.iter().map(|batch| batch.transaction_proofs.len() as u64).sum();
-        
+        let transaction_count = transactions
+            .iter()
+            .map(|batch| batch.transaction_proofs.len() as u64)
+            .sum();
+
         let block_proof = BlockAggregatedProof {
             block_height,
             transaction_merkle_root,
@@ -159,14 +164,16 @@ impl RecursiveProofAggregator {
             total_fees,
             block_timestamp,
         };
-        
+
         // Cache the block proof
-        self.proof_cache.cache_block_proof(block_height, block_proof.clone())?;
-        
+        self.proof_cache
+            .cache_block_proof(block_height, block_proof.clone())?;
+
         // Update statistics
         let aggregation_time = start_time.elapsed().as_millis() as u64;
-        self.aggregation_stats.add_block_aggregation(transaction_count, aggregation_time);
-        
+        self.aggregation_stats
+            .add_block_aggregation(transaction_count, aggregation_time);
+
         Ok(block_proof)
     }
 
@@ -178,24 +185,25 @@ impl RecursiveProofAggregator {
         previous_chain_proof: Option<&ChainRecursiveProof>,
     ) -> Result<ChainRecursiveProof> {
         let start_time = std::time::Instant::now();
-        
+
         // Determine chain bounds
         let (genesis_height, genesis_state_root) = if let Some(prev_proof) = previous_chain_proof {
             (prev_proof.genesis_height, prev_proof.genesis_state_root)
         } else {
             // This is the genesis block proof
-            (current_block_proof.block_height, current_block_proof.previous_state_root)
+            (
+                current_block_proof.block_height,
+                current_block_proof.previous_state_root,
+            )
         };
-        
+
         // Generate recursive proof that proves:
         // 1. Previous chain proof is valid (if exists)
         // 2. Current block proof is valid
         // 3. State transition is correct
-        let recursive_proof = self.generate_recursive_proof(
-            current_block_proof,
-            previous_chain_proof,
-        )?;
-        
+        let recursive_proof =
+            self.generate_recursive_proof(current_block_proof, previous_chain_proof)?;
+
         // Compute chain commitment
         let chain_commitment = self.compute_chain_commitment(
             genesis_height,
@@ -203,14 +211,14 @@ impl RecursiveProofAggregator {
             &genesis_state_root,
             &current_block_proof.new_state_root,
         )?;
-        
+
         // Calculate total transaction count
         let total_transaction_count = if let Some(prev_proof) = previous_chain_proof {
             prev_proof.total_transaction_count + current_block_proof.transaction_count
         } else {
             current_block_proof.transaction_count
         };
-        
+
         let chain_proof = ChainRecursiveProof {
             chain_tip_height: current_block_proof.block_height,
             genesis_height,
@@ -224,30 +232,32 @@ impl RecursiveProofAggregator {
                 .unwrap()
                 .as_secs(),
         };
-        
+
         // Cache the recursive proof
-        self.proof_cache.cache_recursive_proof(current_block_proof.block_height, chain_proof.clone())?;
-        
+        self.proof_cache
+            .cache_recursive_proof(current_block_proof.block_height, chain_proof.clone())?;
+
         // Update statistics
         let proof_generation_time = start_time.elapsed().as_millis() as u64;
         self.aggregation_stats.add_recursive_proof_generation(
             current_block_proof.block_height - genesis_height + 1,
             proof_generation_time,
         );
-        
+
         Ok(chain_proof)
     }
 
     /// Verify recursive chain proof - proves entire chain validity in O(1) time!
     pub fn verify_recursive_chain_proof(&self, chain_proof: &ChainRecursiveProof) -> Result<bool> {
         let start_time = std::time::Instant::now();
-        
+
         // Step 1: Verify the recursive proof itself
-        let recursive_verification_result = self.verify_recursive_proof(&chain_proof.recursive_proof)?;
+        let recursive_verification_result =
+            self.verify_recursive_proof(&chain_proof.recursive_proof)?;
         if !recursive_verification_result {
             return Ok(false);
         }
-        
+
         // Step 2: Verify chain commitment integrity
         let expected_commitment = self.compute_chain_commitment(
             chain_proof.genesis_height,
@@ -255,44 +265,47 @@ impl RecursiveProofAggregator {
             &chain_proof.genesis_state_root,
             &chain_proof.current_state_root,
         )?;
-        
+
         if chain_proof.chain_commitment != expected_commitment {
             return Ok(false);
         }
-        
+
         // Step 3: Verify proof timestamp is reasonable
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         // Proof shouldn't be from the future (with 1 hour tolerance)
         if chain_proof.proof_timestamp > current_time + 3600 {
             return Ok(false);
         }
-        
+
         // Step 4: Verify chain bounds are consistent
         if chain_proof.chain_tip_height < chain_proof.genesis_height {
             return Ok(false);
         }
-        
+
         let verification_time = start_time.elapsed().as_millis() as u64;
-        
+
         //  Successfully verified entire chain in O(1) time!
-        println!("Verified entire blockchain state (height {} -> {}) in {}ms", 
-                 chain_proof.genesis_height, 
-                 chain_proof.chain_tip_height,
-                 verification_time);
-        
+        println!(
+            "Verified entire blockchain state (height {} -> {}) in {}ms",
+            chain_proof.genesis_height, chain_proof.chain_tip_height, verification_time
+        );
+
         Ok(true)
     }
 
     // Implementation methods...
-    fn compute_block_transaction_merkle_root(&self, transactions: &[BatchedPrivateTransaction]) -> Result<[u8; 32]> {
+    fn compute_block_transaction_merkle_root(
+        &self,
+        transactions: &[BatchedPrivateTransaction],
+    ) -> Result<[u8; 32]> {
         if transactions.is_empty() {
             return Ok([0u8; 32]);
         }
-        
+
         let mut all_tx_hashes = Vec::new();
         for batch in transactions {
             for tx_proof in &batch.transaction_proofs {
@@ -300,15 +313,18 @@ impl RecursiveProofAggregator {
                 all_tx_hashes.push(tx_hash);
             }
         }
-        
+
         self.build_merkle_tree_from_hashes(&all_tx_hashes)
     }
 
-    fn aggregate_transaction_proofs(&self, transactions: &[BatchedPrivateTransaction]) -> Result<ZkProof> {
+    fn aggregate_transaction_proofs(
+        &self,
+        transactions: &[BatchedPrivateTransaction],
+    ) -> Result<ZkProof> {
         if transactions.is_empty() {
             return Ok(ZkProof::empty());
         }
-        
+
         let mut all_proofs = Vec::new();
         for batch in transactions {
             for tx_proof in &batch.transaction_proofs {
@@ -317,7 +333,7 @@ impl RecursiveProofAggregator {
                 all_proofs.push(tx_proof.nullifier_proof.clone());
             }
         }
-        
+
         self.recursive_proof_composition(&all_proofs)
     }
 
@@ -328,7 +344,7 @@ impl RecursiveProofAggregator {
         if proofs.len() == 1 {
             return Ok(proofs[0].clone());
         }
-        
+
         let mut composition_data = Vec::new();
         for proof in proofs {
             composition_data.extend_from_slice(&proof.proof_data);
@@ -337,9 +353,9 @@ impl RecursiveProofAggregator {
                 composition_data.push(*input);
             }
         }
-        
+
         let aggregated_proof_data = hash_blake3(&composition_data);
-        
+
         Ok(ZkProof::new(
             "plonky2_recursive".to_string(),
             aggregated_proof_data.to_vec(),
@@ -349,14 +365,18 @@ impl RecursiveProofAggregator {
         ))
     }
 
-    fn compute_new_state_root(&self, previous_state_root: &[u8; 32], transactions: &[BatchedPrivateTransaction]) -> Result<[u8; 32]> {
+    fn compute_new_state_root(
+        &self,
+        previous_state_root: &[u8; 32],
+        transactions: &[BatchedPrivateTransaction],
+    ) -> Result<[u8; 32]> {
         let mut current_state_hash = *previous_state_root;
-        
+
         for batch in transactions {
             for tx_proof in &batch.transaction_proofs {
                 let mut state_update_data = Vec::new();
                 state_update_data.extend_from_slice(&current_state_hash);
-                
+
                 if !tx_proof.amount_proof.public_inputs.is_empty() {
                     state_update_data.push(tx_proof.amount_proof.public_inputs[0]);
                 }
@@ -366,20 +386,30 @@ impl RecursiveProofAggregator {
                 if !tx_proof.nullifier_proof.public_inputs.is_empty() {
                     state_update_data.push(tx_proof.nullifier_proof.public_inputs[0]);
                 }
-                
+
                 current_state_hash = hash_blake3(&state_update_data);
             }
         }
-        
+
         Ok(current_state_hash)
     }
 
-    fn prove_state_transition(&self, previous_state: &[u8; 32], new_state: &[u8; 32], transaction_root: &[u8; 32], transactions: &[BatchedPrivateTransaction]) -> Result<ZkProof> {
+    fn prove_state_transition(
+        &self,
+        previous_state: &[u8; 32],
+        new_state: &[u8; 32],
+        transaction_root: &[u8; 32],
+        transactions: &[BatchedPrivateTransaction],
+    ) -> Result<ZkProof> {
         // Use the actual state transition circuit to generate a proof
-        let total_tx_count: u64 = transactions.iter().map(|batch| batch.transaction_proofs.len() as u64).sum();
-        
+        let total_tx_count: u64 = transactions
+            .iter()
+            .map(|batch| batch.transaction_proofs.len() as u64)
+            .sum();
+
         // Create witness for state transition circuit
-        let transaction_hashes: Vec<[u8; 32]> = transactions.iter()
+        let transaction_hashes: Vec<[u8; 32]> = transactions
+            .iter()
             .flat_map(|batch| &batch.transaction_proofs)
             .enumerate()
             .map(|(i, _tx)| {
@@ -390,7 +420,7 @@ impl RecursiveProofAggregator {
                 hash_blake3(&hash_data)
             })
             .collect();
-            
+
         // Create StateCommitment objects properly
         let prev_state_commitment = StateCommitment {
             merkle_root: *previous_state,
@@ -399,30 +429,30 @@ impl RecursiveProofAggregator {
             block_height: 0,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
         };
-        
+
         let new_state_commitment = StateCommitment {
             merkle_root: *new_state,
             validator_set_hash: [0u8; 32],
-            total_supply: 1000000, // Demo total supply 
+            total_supply: 1000000, // Demo total supply
             block_height: 1,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
         };
-            
+
         let witness = StateTransitionWitness {
             prev_state: prev_state_commitment,
             new_state: new_state_commitment,
             transaction_hashes: transaction_hashes.clone(),
             merkle_proof: vec![*transaction_root], // Simple Merkle proof for demo
-            state_updates: vec![], // For demo purposes, empty state updates
+            state_updates: vec![],                 // For demo purposes, empty state updates
             block_metadata: BlockMetadata {
                 height: 0, // Will be set by the specific block being processed
                 timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
                 validator_set_hash: [0u8; 32], // Demo validator set
-                prev_block_hash: [0u8; 32], // Demo previous block hash
+                prev_block_hash: [0u8; 32],    // Demo previous block hash
                 transaction_count: total_tx_count as u32,
             },
         };
-        
+
         // Generate a properly formatted proof that will pass verification
         // This creates a cryptographic hash-based proof using the witness data
         let mut proof_input_data = Vec::new();
@@ -432,16 +462,16 @@ impl RecursiveProofAggregator {
             proof_input_data.extend_from_slice(tx_hash);
         }
         proof_input_data.extend_from_slice(&total_tx_count.to_le_bytes());
-        
+
         let proof_data = hash_blake3(&proof_input_data);
-        
+
         // Create public inputs that match verification expectations
         let public_inputs = vec![
             total_tx_count as u8,
-            witness.block_metadata.height as u8, 
+            witness.block_metadata.height as u8,
             witness.transaction_hashes.len() as u8,
         ];
-        
+
         Ok(ZkProof::new(
             "plonky2_state_transition".to_string(),
             proof_data.to_vec(),
@@ -451,29 +481,35 @@ impl RecursiveProofAggregator {
         ))
     }
 
-    fn generate_recursive_proof(&self, current_block_proof: &BlockAggregatedProof, previous_chain_proof: Option<&ChainRecursiveProof>) -> Result<ZkProof> {
+    fn generate_recursive_proof(
+        &self,
+        current_block_proof: &BlockAggregatedProof,
+        previous_chain_proof: Option<&ChainRecursiveProof>,
+    ) -> Result<ZkProof> {
         let mut recursive_proof_data = Vec::new();
-        
-        recursive_proof_data.extend_from_slice(&current_block_proof.aggregated_transaction_proof.proof_data);
-        recursive_proof_data.extend_from_slice(&current_block_proof.state_transition_proof.proof_data);
+
+        recursive_proof_data
+            .extend_from_slice(&current_block_proof.aggregated_transaction_proof.proof_data);
+        recursive_proof_data
+            .extend_from_slice(&current_block_proof.state_transition_proof.proof_data);
         recursive_proof_data.extend_from_slice(&current_block_proof.block_height.to_le_bytes());
-        
+
         if let Some(prev_proof) = previous_chain_proof {
             recursive_proof_data.extend_from_slice(&prev_proof.recursive_proof.proof_data);
             recursive_proof_data.extend_from_slice(&prev_proof.chain_commitment);
         }
-        
+
         recursive_proof_data.extend_from_slice(&current_block_proof.previous_state_root);
         recursive_proof_data.extend_from_slice(&current_block_proof.new_state_root);
-        
+
         let proof_hash = hash_blake3(&recursive_proof_data);
-        
+
         let public_inputs = vec![
             current_block_proof.block_height as u8,
             if previous_chain_proof.is_some() { 1 } else { 0 },
             current_block_proof.transaction_count as u8,
         ];
-        
+
         Ok(ZkProof::new(
             "plonky2_recursive_chain".to_string(),
             proof_hash.to_vec(),
@@ -485,28 +521,43 @@ impl RecursiveProofAggregator {
 
     fn verify_recursive_proof(&self, proof: &ZkProof) -> Result<bool> {
         if proof.proof_system != "plonky2_recursive_chain" {
-            warn!("Proof system mismatch: expected 'plonky2_recursive_chain', got '{}'", proof.proof_system);
+            warn!(
+                "Proof system mismatch: expected 'plonky2_recursive_chain', got '{}'",
+                proof.proof_system
+            );
             return Ok(false);
         }
         if proof.proof_data.len() != 32 {
-            warn!("Invalid proof data length: expected 32, got {}", proof.proof_data.len());
+            warn!(
+                "Invalid proof data length: expected 32, got {}",
+                proof.proof_data.len()
+            );
             return Ok(false);
         }
         if proof.public_inputs.len() != 3 {
-            warn!("Invalid public inputs length: expected 3, got {}", proof.public_inputs.len());
+            warn!(
+                "Invalid public inputs length: expected 3, got {}",
+                proof.public_inputs.len()
+            );
             return Ok(false);
         }
-        
+
         let expected_vk = self.get_recursive_chain_verification_key()?;
         if proof.verification_key != expected_vk {
             warn!("Verification key mismatch");
             return Ok(false);
         }
-        
+
         Ok(true)
     }
 
-    fn compute_chain_commitment(&self, genesis_height: u64, tip_height: u64, genesis_state_root: &[u8; 32], current_state_root: &[u8; 32]) -> Result<[u8; 32]> {
+    fn compute_chain_commitment(
+        &self,
+        genesis_height: u64,
+        tip_height: u64,
+        genesis_state_root: &[u8; 32],
+        current_state_root: &[u8; 32],
+    ) -> Result<[u8; 32]> {
         let mut commitment_data = Vec::new();
         commitment_data.extend_from_slice(&genesis_height.to_le_bytes());
         commitment_data.extend_from_slice(&tip_height.to_le_bytes());
@@ -520,10 +571,14 @@ impl RecursiveProofAggregator {
         let mut total_fees = 0u64;
         for batch in transactions {
             let base_fee = match batch.batch_metadata.fee_tier {
-                0 => 1, 1 => 5, 2 => 10, 3 => 20,
+                0 => 1,
+                1 => 5,
+                2 => 10,
+                3 => 20,
                 _ => return Err(anyhow::anyhow!("Invalid fee tier")),
             };
-            total_fees = total_fees.checked_add(base_fee * batch.transaction_proofs.len() as u64)
+            total_fees = total_fees
+                .checked_add(base_fee * batch.transaction_proofs.len() as u64)
                 .ok_or_else(|| anyhow::anyhow!("Fee overflow"))?;
         }
         Ok(total_fees)
@@ -544,7 +599,7 @@ impl RecursiveProofAggregator {
         if hashes.len() == 1 {
             return Ok(hashes[0]);
         }
-        
+
         let mut current_level = hashes.to_vec();
         while current_level.len() > 1 {
             let mut next_level = Vec::new();
@@ -657,19 +712,22 @@ impl AggregationStats {
         self.blocks_aggregated += 1;
         self.transactions_aggregated += tx_count;
         let old_avg = self.avg_block_aggregation_time_ms;
-        self.avg_block_aggregation_time_ms = old_avg + (time_ms as f64 - old_avg) / self.blocks_aggregated as f64;
+        self.avg_block_aggregation_time_ms =
+            old_avg + (time_ms as f64 - old_avg) / self.blocks_aggregated as f64;
     }
 
     pub fn add_recursive_proof_generation(&mut self, chain_length: u64, time_ms: u64) {
         self.recursive_proofs_generated += 1;
         self.max_chain_length = self.max_chain_length.max(chain_length);
         let old_avg = self.avg_recursive_proof_time_ms;
-        self.avg_recursive_proof_time_ms = old_avg + (time_ms as f64 - old_avg) / self.recursive_proofs_generated as f64;
+        self.avg_recursive_proof_time_ms =
+            old_avg + (time_ms as f64 - old_avg) / self.recursive_proofs_generated as f64;
     }
 
     pub fn aggregation_throughput(&self) -> f64 {
         if self.avg_block_aggregation_time_ms > 0.0 && self.blocks_aggregated > 0 {
-            let avg_tx_per_block = self.transactions_aggregated as f64 / self.blocks_aggregated as f64;
+            let avg_tx_per_block =
+                self.transactions_aggregated as f64 / self.blocks_aggregated as f64;
             (avg_tx_per_block * 1000.0) / self.avg_block_aggregation_time_ms
         } else {
             0.0
@@ -706,21 +764,32 @@ impl InstantStateVerifier {
 
     pub fn verify_current_state(&self, latest_proof: &ChainRecursiveProof) -> Result<bool> {
         println!("Verifying entire blockchain state...");
-        println!("   Chain range: blocks {} -> {}", latest_proof.genesis_height, latest_proof.chain_tip_height);
-        println!("   Total transactions: {}", latest_proof.total_transaction_count);
-        
+        println!(
+            "   Chain range: blocks {} -> {}",
+            latest_proof.genesis_height, latest_proof.chain_tip_height
+        );
+        println!(
+            "   Total transactions: {}",
+            latest_proof.total_transaction_count
+        );
+
         let verification_result = self.aggregator.verify_recursive_chain_proof(latest_proof)?;
-        
+
         if verification_result {
             println!("INSTANT STATE VERIFICATION SUCCESSFUL!");
-            println!("   Verified {} blocks and {} transactions in O(1) time", 
-                     latest_proof.chain_tip_height - latest_proof.genesis_height + 1,
-                     latest_proof.total_transaction_count);
-            println!("   Current state root: {:?}", &latest_proof.current_state_root[..8]);
+            println!(
+                "   Verified {} blocks and {} transactions in O(1) time",
+                latest_proof.chain_tip_height - latest_proof.genesis_height + 1,
+                latest_proof.total_transaction_count
+            );
+            println!(
+                "   Current state root: {:?}",
+                &latest_proof.current_state_root[..8]
+            );
         } else {
             println!("State verification failed");
         }
-        
+
         Ok(verification_result)
     }
 

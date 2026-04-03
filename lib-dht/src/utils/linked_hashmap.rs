@@ -5,16 +5,19 @@ use std::hash::Hash;
 pub struct LinkedHashMap<K: Eq + Hash, V> {
     map: HashMap<K, V>,
     order: VecDeque<K>,
-    capacity: usize
+    capacity: usize,
 }
 
-impl<K, V> LinkedHashMap<K, V> where K: Eq + Hash + Clone, V: Clone {
-
+impl<K, V> LinkedHashMap<K, V>
+where
+    K: Eq + Hash + Clone,
+    V: Clone,
+{
     pub fn new() -> Self {
         Self {
             map: HashMap::new(),
             order: VecDeque::new(),
-            capacity: 0
+            capacity: 0,
         }
     }
 
@@ -22,7 +25,7 @@ impl<K, V> LinkedHashMap<K, V> where K: Eq + Hash + Clone, V: Clone {
         Self {
             map: HashMap::with_capacity(capacity),
             order: VecDeque::with_capacity(capacity),
-            capacity
+            capacity,
         }
     }
 

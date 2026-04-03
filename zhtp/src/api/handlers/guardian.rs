@@ -3,25 +3,19 @@
 //! Implements 9 endpoints for guardian management and social recovery.
 //! Security-focused with rate limiting, signature verification, and proper session management.
 
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
-use anyhow::Result;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
-use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
+use lib_crypto::{PostQuantumSignature, PublicKey, SignatureAlgorithm};
+use lib_identity::{GuardianStatus, IdentityManager, SocialRecoveryManager};
+use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpRequestHandler;
-use lib_identity::{
-    IdentityManager, GuardianStatus,
-    SocialRecoveryManager,
-};
-use lib_crypto::{PublicKey, PostQuantumSignature, SignatureAlgorithm};
 
-use crate::session_manager::SessionManager;
 use crate::api::middleware::RateLimiter;
-
-// Import shared helpers from common module
-use super::common::{extract_client_ip, extract_user_agent};
+use crate::session_manager::SessionManager;
 
 /// Guardian HTTP Handler
 pub struct GuardianHandler {
@@ -131,11 +125,7 @@ impl GuardianHandler {
 
     /// Handle: GET /api/v1/identity/recovery/{recovery_id}/status
     async fn handle_recovery_status(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
-        handle_recovery_status(
-            &request.uri,
-            self.recovery_manager.clone(),
-        )
-        .await
+        handle_recovery_status(&request.uri, self.recovery_manager.clone()).await
     }
 
     /// Handle: GET /api/v1/identity/recovery/pending
@@ -292,9 +282,8 @@ async fn handle_add_guardian(
     request: &ZhtpRequest,
 ) -> Result<ZhtpResponse> {
     // Parse request
-    let req: AddGuardianRequest = serde_json::from_slice(body).map_err(|e| {
-        anyhow::anyhow!("Invalid request body: {}", e)
-    })?;
+    let req: AddGuardianRequest =
+        serde_json::from_slice(body).map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
 
     // Security: Validate inputs
     validate_did(&req.guardian_did)?;
@@ -336,7 +325,9 @@ async fn handle_add_guardian(
             client_ip = %client_ip,
             "Authorization denied: session identity mismatch"
         );
-        return Err(anyhow::anyhow!("Session identity mismatch - authorization denied"));
+        return Err(anyhow::anyhow!(
+            "Session identity mismatch - authorization denied"
+        ));
     }
 
     // Get or create guardian config and persist (use single write lock to prevent race conditions)
@@ -355,7 +346,8 @@ async fn handle_add_guardian(
     let total_guardians = guardian_config.guardians.len();
 
     // Persist guardian config to identity private data
-    manager_write.set_guardian_config(&identity_id, guardian_config)
+    manager_write
+        .set_guardian_config(&identity_id, guardian_config)
         .map_err(|e| anyhow::anyhow!("Failed to persist guardian config: {}", e))?;
     drop(manager_write);
 
@@ -374,10 +366,7 @@ async fn handle_add_guardian(
         total_guardians,
     };
 
-    Ok(ZhtpResponse::success(
-        serde_json::to_vec(&response)?,
-        None,
-    ))
+    Ok(ZhtpResponse::success(serde_json::to_vec(&response)?, None))
 }
 
 async fn handle_remove_guardian(
@@ -388,7 +377,9 @@ async fn handle_remove_guardian(
 ) -> Result<ZhtpResponse> {
     // Extract guardian_id from URI: /api/v1/identity/guardians/{guardian_id}
     let parts: Vec<&str> = uri.split('/').collect();
-    let guardian_id = parts.get(5).ok_or_else(|| anyhow::anyhow!("Missing guardian_id"))?;
+    let guardian_id = parts
+        .get(5)
+        .ok_or_else(|| anyhow::anyhow!("Missing guardian_id"))?;
 
     // Security: Extract and validate session token from Authorization header
     let session_token = request
@@ -488,10 +479,7 @@ async fn handle_list_guardians(
         threshold: guardian_config.threshold,
     };
 
-    Ok(ZhtpResponse::success(
-        serde_json::to_vec(&response)?,
-        None,
-    ))
+    Ok(ZhtpResponse::success(serde_json::to_vec(&response)?, None))
 }
 
 async fn handle_initiate_recovery(
@@ -502,9 +490,8 @@ async fn handle_initiate_recovery(
     request: &ZhtpRequest,
 ) -> Result<ZhtpResponse> {
     // Parse request
-    let req: InitiateRecoveryRequest = serde_json::from_slice(body).map_err(|e| {
-        anyhow::anyhow!("Invalid request body: {}", e)
-    })?;
+    let req: InitiateRecoveryRequest =
+        serde_json::from_slice(body).map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
 
     // Security: Validate inputs
     validate_did(&req.identity_did)?;
@@ -514,7 +501,10 @@ async fn handle_initiate_recovery(
     let client_ip = extract_client_ip(request);
 
     // Security: Rate limit recovery initiation (3 attempts per 24 hours)
-    if let Err(response) = rate_limiter.check_rate_limit_aggressive(&client_ip, 3, 86400).await {
+    if let Err(response) = rate_limiter
+        .check_rate_limit_aggressive(&client_ip, 3, 86400)
+        .await
+    {
         return Ok(response);
     }
 
@@ -527,7 +517,11 @@ async fn handle_initiate_recovery(
     // Load guardian config from identity storage
     let guardian_config = identity_manager_read
         .get_guardian_config(&identity_id)
-        .ok_or_else(|| anyhow::anyhow!("No guardians configured for this identity. Please add guardians first."))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "No guardians configured for this identity. Please add guardians first."
+            )
+        })?;
     drop(identity_manager_read);
 
     // Verify that guardians are configured
@@ -569,10 +563,7 @@ async fn handle_initiate_recovery(
         expires_at: recovery_request.expires_at.timestamp(),
     };
 
-    Ok(ZhtpResponse::success(
-        serde_json::to_vec(&response)?,
-        None,
-    ))
+    Ok(ZhtpResponse::success(serde_json::to_vec(&response)?, None))
 }
 
 async fn handle_approve_recovery(
@@ -587,9 +578,8 @@ async fn handle_approve_recovery(
     let recovery_id = extract_recovery_id(uri)?;
 
     // Parse request
-    let req: ApproveRecoveryRequest = serde_json::from_slice(body).map_err(|e| {
-        anyhow::anyhow!("Invalid request body: {}", e)
-    })?;
+    let req: ApproveRecoveryRequest =
+        serde_json::from_slice(body).map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
 
     // Security: Validate inputs
     validate_did(&req.guardian_did)?;
@@ -675,10 +665,7 @@ async fn handle_approve_recovery(
         required: recovery_request.threshold,
     };
 
-    Ok(ZhtpResponse::success(
-        serde_json::to_vec(&response)?,
-        None,
-    ))
+    Ok(ZhtpResponse::success(serde_json::to_vec(&response)?, None))
 }
 
 async fn handle_reject_recovery(
@@ -693,9 +680,8 @@ async fn handle_reject_recovery(
     let recovery_id = extract_recovery_id(uri)?;
 
     // Parse request to get guardian_did
-    let req: ApproveRecoveryRequest = serde_json::from_slice(body).map_err(|e| {
-        anyhow::anyhow!("Invalid request body: {}", e)
-    })?;
+    let req: ApproveRecoveryRequest =
+        serde_json::from_slice(body).map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
 
     // Security: Extract real client IP
     let client_ip = extract_client_ip(request);
@@ -869,10 +855,7 @@ async fn handle_recovery_status(
         identity_did: recovery_request.identity_did.clone(),
     };
 
-    Ok(ZhtpResponse::success(
-        serde_json::to_vec(&response)?,
-        None,
-    ))
+    Ok(ZhtpResponse::success(serde_json::to_vec(&response)?, None))
 }
 
 async fn handle_pending_recoveries(
@@ -909,7 +892,11 @@ async fn handle_pending_recoveries(
     // Get all pending recovery requests from recovery manager
     let all_requests = {
         let manager = recovery_manager.read().await;
-        manager.get_all_pending_requests().iter().map(|r| (*r).clone()).collect::<Vec<_>>()
+        manager
+            .get_all_pending_requests()
+            .iter()
+            .map(|r| (*r).clone())
+            .collect::<Vec<_>>()
     }; // Lock dropped here automatically
 
     // Acquire identity manager lock once for all lookups
@@ -920,7 +907,8 @@ async fn handle_pending_recoveries(
         .into_iter()
         .filter_map(|recovery_request| {
             // Get the identity being recovered
-            let identity_id = identity_manager_read.get_identity_id_by_did(&recovery_request.identity_did)?;
+            let identity_id =
+                identity_manager_read.get_identity_id_by_did(&recovery_request.identity_did)?;
 
             // Check if this guardian is authorized for this identity
             let guardian_config = identity_manager_read.get_guardian_config(&identity_id)?;
@@ -946,14 +934,31 @@ async fn handle_pending_recoveries(
 
     drop(identity_manager_read);
 
-    let response = PendingRecoveriesResponse {
-        pending_requests,
-    };
+    let response = PendingRecoveriesResponse { pending_requests };
 
-    Ok(ZhtpResponse::success(
-        serde_json::to_vec(&response)?,
-        None,
-    ))
+    Ok(ZhtpResponse::success(serde_json::to_vec(&response)?, None))
+}
+
+// Helper functions
+
+fn extract_client_ip(request: &ZhtpRequest) -> String {
+    request
+        .headers
+        .get("X-Real-IP")
+        .or_else(|| {
+            request
+                .headers
+                .get("X-Forwarded-For")
+                .and_then(|f| f.split(',').next().map(|s| s.trim().to_string()))
+        })
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn extract_user_agent(request: &ZhtpRequest) -> String {
+    request
+        .headers
+        .get("User-Agent")
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 fn extract_recovery_id(uri: &str) -> Result<String> {
@@ -970,16 +975,23 @@ fn extract_recovery_id(uri: &str) -> Result<String> {
 /// Validate DID format (must be "did:zhtp:...")
 fn validate_did(did: &str) -> Result<()> {
     if !did.starts_with("did:zhtp:") {
-        return Err(anyhow::anyhow!("Invalid DID format: must start with 'did:zhtp:'"));
+        return Err(anyhow::anyhow!(
+            "Invalid DID format: must start with 'did:zhtp:'"
+        ));
     }
     if did.len() < 15 {
         return Err(anyhow::anyhow!("Invalid DID: too short"));
     }
     if did.len() > 200 {
-        return Err(anyhow::anyhow!("Invalid DID: too long (max 200 characters)"));
+        return Err(anyhow::anyhow!(
+            "Invalid DID: too long (max 200 characters)"
+        ));
     }
     // Check for valid characters (alphanumeric, colon, dash, underscore)
-    if !did.chars().all(|c| c.is_alphanumeric() || c == ':' || c == '-' || c == '_') {
+    if !did
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == ':' || c == '-' || c == '_')
+    {
         return Err(anyhow::anyhow!("Invalid DID: contains invalid characters"));
     }
     Ok(())
@@ -991,10 +1003,15 @@ fn validate_guardian_name(name: &str) -> Result<()> {
         return Err(anyhow::anyhow!("Guardian name cannot be empty"));
     }
     if name.len() > 100 {
-        return Err(anyhow::anyhow!("Guardian name too long (max 100 characters)"));
+        return Err(anyhow::anyhow!(
+            "Guardian name too long (max 100 characters)"
+        ));
     }
     // Allow alphanumeric, spaces, and common punctuation
-    if !name.chars().all(|c| c.is_alphanumeric() || c.is_whitespace() || "'-.,".contains(c)) {
+    if !name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c.is_whitespace() || "'-.,".contains(c))
+    {
         return Err(anyhow::anyhow!("Guardian name contains invalid characters"));
     }
     Ok(())
@@ -1009,7 +1026,10 @@ fn validate_device_name(device: &str) -> Result<()> {
         return Err(anyhow::anyhow!("Device name too long (max 100 characters)"));
     }
     // Allow alphanumeric, spaces, dashes, underscores
-    if !device.chars().all(|c| c.is_alphanumeric() || c.is_whitespace() || c == '-' || c == '_') {
+    if !device
+        .chars()
+        .all(|c| c.is_alphanumeric() || c.is_whitespace() || c == '-' || c == '_')
+    {
         return Err(anyhow::anyhow!("Device name contains invalid characters"));
     }
     Ok(())

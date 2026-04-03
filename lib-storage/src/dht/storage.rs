@@ -9,35 +9,23 @@
 //! to prevent denial-of-service attacks through crafted proofs that consume
 //! excessive verification time. See [`ZkVerificationConfig`] for configuration.
 
-use crate::types::dht_types::{DhtNode, StorageEntry, DhtMessage, DhtMessageType, ZkDhtValue};
-use crate::types::{NodeId, ChunkMetadata, DhtKey};
-use crate::types::config_types::{ZkVerificationConfig, ZkVerificationMetrics};
-use crate::dht::backend::{StorageBackend, HashMapBackend};
-use crate::dht::network::DhtNetwork;
-use crate::dht::routing::KademliaRouter;
+use crate::dht::backend::{HashMapBackend, StorageBackend};
 use crate::dht::messaging::DhtMessaging;
+use crate::dht::network::DhtNetwork;
 use crate::dht::peer_registry::SequenceError;
-use anyhow::{Result, anyhow};
+use crate::dht::routing::KademliaRouter;
+use crate::types::config_types::{ZkVerificationConfig, ZkVerificationMetrics};
+use crate::types::dht_types::{DhtMessage, DhtMessageType, DhtNode, StorageEntry, ZkDhtValue};
+use crate::types::{ChunkMetadata, DhtKey, NodeId};
+use anyhow::{anyhow, Result};
+use lib_crypto::Hash;
+use lib_proofs::{ZeroKnowledgeProof, ZkProof};
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH, Duration, Instant};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use lib_crypto::Hash;
-use lib_proofs::{ZkProof, ZeroKnowledgeProof};
-use serde::{Serialize, Deserialize};
-use tracing::{trace, debug, warn, info, error, instrument};
-
-/// Versioned container for persisted DHT storage
-#[derive(Serialize, Deserialize)]
-struct PersistedDhtStorage {
-    /// Version for future migrations
-    version: u32,
-    /// Entries sorted by key for deterministic serialization
-    entries: Vec<(String, StorageEntry)>,
-    /// Contract index for fast discovery (sorted for deterministic serialization)
-    contract_index: Vec<(String, Vec<String>)>,
-}
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tracing::{debug, error, info, instrument, trace, warn};
 
 /// DHT storage manager with networking
 ///
@@ -88,13 +76,21 @@ impl DhtStorage<HashMapBackend> {
     /// **MIGRATED (Ticket #148):** Now creates and uses shared PeerRegistry
     /// **DB-010**: Now uses HashMapBackend by default
     pub fn new(local_node_id: NodeId, max_storage_size: u64) -> Self {
-        Self::new_with_config(local_node_id, max_storage_size, ZkVerificationConfig::default())
+        Self::new_with_config(
+            local_node_id,
+            max_storage_size,
+            ZkVerificationConfig::default(),
+        )
     }
 
     /// Create a new DHT storage manager with custom ZK verification config
     ///
     /// [DB-002] Allows configuring ZK proof verification timeouts
-    pub fn new_with_config(local_node_id: NodeId, max_storage_size: u64, zk_config: ZkVerificationConfig) -> Self {
+    pub fn new_with_config(
+        local_node_id: NodeId,
+        max_storage_size: u64,
+        zk_config: ZkVerificationConfig,
+    ) -> Self {
         Self {
             backend: HashMapBackend::new(),
             storage_cache: HashMap::new(),
@@ -112,37 +108,54 @@ impl DhtStorage<HashMapBackend> {
         }
     }
 
-    /// Create a new DHT storage manager with persistence enabled
-    /// **DEPRECATED in DB-010**: Use `new_persistent()` instead or just `new()` for in-memory
-    #[deprecated(note = "Use new() for in-memory or new_persistent() for persistent storage")]
-    pub fn new_with_persistence(local_node_id: NodeId, max_storage_size: u64, persist_path: PathBuf) -> Self {
-        error!(
-            "DEPRECATED: new_with_persistence() no longer provides persistence. \
-             Path {:?} is ignored. Use new_persistent() for persistent storage or new() for in-memory.",
+    /// Legacy compatibility constructor for callers that previously passed a persistence path.
+    ///
+    /// Migration path:
+    /// - use `new_persistent()` / `new_persistent_with_config()` for persistent storage
+    /// - use `new()` / `new_with_config()` for in-memory storage
+    ///
+    /// Note: `persist_path` is ignored in this compatibility wrapper.
+    pub fn new_with_persistence(
+        local_node_id: NodeId,
+        max_storage_size: u64,
+        persist_path: PathBuf,
+    ) -> Self {
+        warn!(
+            "new_with_persistence() compatibility wrapper: path {:?} is ignored; \
+             use new_persistent() for persistence or new() for in-memory",
             persist_path
         );
-        Self::new_with_config(local_node_id, max_storage_size, ZkVerificationConfig::default())
+        Self::new_with_config(
+            local_node_id,
+            max_storage_size,
+            ZkVerificationConfig::default(),
+        )
     }
 
-    /// Create a new DHT storage manager with persistence and custom ZK verification config
-    /// **DEPRECATED in DB-010**: Use `new_persistent()` instead
-    #[deprecated(note = "Use new() for in-memory or new_persistent() for persistent storage")]
+    /// Legacy compatibility constructor with custom ZK config.
+    ///
+    /// Migration path:
+    /// - use `new_persistent_with_config()` for persistent storage
+    /// - use `new_with_config()` for in-memory storage
+    ///
+    /// Note: `persist_path` is ignored in this compatibility wrapper.
     pub fn new_with_persistence_and_config(
         local_node_id: NodeId,
         max_storage_size: u64,
         persist_path: PathBuf,
         zk_config: ZkVerificationConfig,
     ) -> Self {
-        error!(
-            "DEPRECATED: new_with_persistence_and_config() no longer provides persistence. \
-             Path {:?} is ignored. Use new_persistent_with_config() for persistent storage.",
+        warn!(
+            "new_with_persistence_and_config() compatibility wrapper: path {:?} is ignored; \
+             use new_persistent_with_config() for persistence",
             persist_path
         );
         Self::new_with_config(local_node_id, max_storage_size, zk_config)
     }
 
-    /// Set the persistence path (DEPRECATED in DB-010 - no-op)
-    #[deprecated(note = "Persistence is now handled automatically by the backend")]
+    /// Legacy no-op for older code that expected runtime persistence path mutation.
+    ///
+    /// Persistence backend is selected at construction time by the `new_*` constructor used.
     pub fn set_persist_path(&mut self, _path: PathBuf) {
         // No-op - persistence is backend-specific
     }
@@ -151,7 +164,7 @@ impl DhtStorage<HashMapBackend> {
     pub fn new_default() -> Self {
         Self::new(
             NodeId::from_bytes([0u8; 32]), // Default node ID
-            1_000_000_000, // 1GB default storage
+            1_000_000_000,                 // 1GB default storage
         )
     }
 
@@ -161,9 +174,15 @@ impl DhtStorage<HashMapBackend> {
     pub async fn new_with_network(
         local_node: DhtNode,
         bind_addr: SocketAddr,
-        max_storage_size: u64
+        max_storage_size: u64,
     ) -> Result<Self> {
-        Self::new_with_network_and_config(local_node, bind_addr, max_storage_size, ZkVerificationConfig::default()).await
+        Self::new_with_network_and_config(
+            local_node,
+            bind_addr,
+            max_storage_size,
+            ZkVerificationConfig::default(),
+        )
+        .await
     }
 
     /// Create DHT storage with networking and custom ZK verification config
@@ -202,7 +221,12 @@ impl DhtStorage<HashMapBackend> {
         transport: Arc<dyn crate::dht::transport::DhtTransport>,
         max_storage_size: u64,
     ) -> Result<Self> {
-        Self::new_with_transport_and_config(local_node, transport, max_storage_size, ZkVerificationConfig::default())
+        Self::new_with_transport_and_config(
+            local_node,
+            transport,
+            max_storage_size,
+            ZkVerificationConfig::default(),
+        )
     }
 
     /// Create DHT storage with custom transport and ZK verification config
@@ -270,12 +294,8 @@ impl DhtStorage<crate::dht::backend::SledBackend> {
         let backend = crate::dht::backend::SledBackend::open(persist_path)?;
 
         // Create storage with backend
-        let mut storage = Self::with_backend_and_config(
-            backend,
-            local_node_id,
-            max_storage_size,
-            zk_config,
-        );
+        let mut storage =
+            Self::with_backend_and_config(backend, local_node_id, max_storage_size, zk_config);
 
         // Restore existing data from backend
         // If restoration fails, the storage instance is still valid but empty.
@@ -297,12 +317,13 @@ impl<B: StorageBackend> DhtStorage<B> {
     /// Create DhtStorage with a custom backend
     ///
     /// [DB-010] Allows using different backend implementations
-    pub fn with_backend(
-        backend: B,
-        local_node_id: NodeId,
-        max_storage_size: u64,
-    ) -> Self {
-        Self::with_backend_and_config(backend, local_node_id, max_storage_size, ZkVerificationConfig::default())
+    pub fn with_backend(backend: B, local_node_id: NodeId, max_storage_size: u64) -> Self {
+        Self::with_backend_and_config(
+            backend,
+            local_node_id,
+            max_storage_size,
+            ZkVerificationConfig::default(),
+        )
     }
 
     /// Create DhtStorage with a custom backend and ZK verification config
@@ -337,38 +358,36 @@ impl<B: StorageBackend> DhtStorage<B> {
 
     /// Encode StorageEntry to bytes
     fn encode_entry(entry: &StorageEntry) -> Result<Vec<u8>> {
-        bincode::serialize(entry)
-            .map_err(|e| anyhow!("Failed to serialize entry: {}", e))
+        bincode::serialize(entry).map_err(|e| anyhow!("Failed to serialize entry: {}", e))
     }
 
     /// Decode StorageEntry from bytes
     fn decode_entry(bytes: &[u8]) -> Result<StorageEntry> {
-        bincode::deserialize(bytes)
-            .map_err(|e| anyhow!("Failed to deserialize entry: {}", e))
+        bincode::deserialize(bytes).map_err(|e| anyhow!("Failed to deserialize entry: {}", e))
     }
 
-    /// Save storage state to disk (versioned, deterministic format)
-    /// **DEPRECATED in DB-010**: Persistence is now handled automatically by the storage backend
-    /// This method is kept for backward compatibility but is a no-op.
-    #[deprecated(note = "Persistence is handled automatically by backend. Use new_persistent() for persistent storage.")]
+    /// Legacy compatibility no-op for callers that explicitly triggered persistence.
+    ///
+    /// Persistence is now handled automatically by the selected backend.
     pub async fn save_to_file(&self, _path: &Path) -> Result<()> {
-        warn!("save_to_file() is deprecated - persistence handled by storage backend");
-        Ok(())
+        // Keep call shape for compatibility with older callers.
+        self.maybe_persist().await
     }
 
-    /// Load storage state from disk
-    /// **DEPRECATED in DB-010**: Use `new_persistent()` constructor instead to automatically load from backend
-    /// This method is no longer supported for the generic storage backend.
-    #[deprecated(note = "Use new_persistent() constructor to automatically load from persistent backend")]
+    /// Legacy compatibility API kept to provide a clear migration error.
+    ///
+    /// Use `new_persistent()` / `new_persistent_with_config()` constructors, which
+    /// load from persistent backends during initialization.
     pub async fn load_from_file(&mut self, _path: &Path) -> Result<()> {
-        warn!("load_from_file() is deprecated - use new_persistent() constructor instead");
-        Err(anyhow!("load_from_file() is deprecated - use new_persistent() constructor"))
+        Err(anyhow!(
+            "load_from_file() is no longer supported; use new_persistent() constructor"
+        ))
     }
 
-    /// Persist storage if needed (no-op in DB-010)
-    /// **DEPRECATED**: Persistence is now handled automatically by the storage backend
+    /// Compatibility shim for legacy explicit-save call sites.
+    ///
+    /// No-op: persistence is handled automatically by the storage backend.
     async fn maybe_persist(&self) -> Result<()> {
-        // No-op: persistence is handled automatically by backend on each mutation
         Ok(())
     }
 
@@ -399,10 +418,17 @@ impl<B: StorageBackend> DhtStorage<B> {
                         // Rebuild contract_index for contract entries
                         if key_str.starts_with("contract:") {
                             // Try to deserialize as ContractInfo to extract metadata
-                            if let Ok(contract_info) = serde_json::from_slice::<serde_json::Value>(&entry.value) {
+                            if let Ok(contract_info) =
+                                serde_json::from_slice::<serde_json::Value>(&entry.value)
+                            {
                                 if let Some(metadata_obj) = contract_info.get("metadata") {
-                                    if let Ok(metadata) = serde_json::from_value::<crate::types::dht_types::ContractMetadata>(metadata_obj.clone()) {
-                                        let contract_id = key_str.strip_prefix("contract:").unwrap_or(&key_str);
+                                    if let Ok(metadata) = serde_json::from_value::<
+                                        crate::types::dht_types::ContractMetadata,
+                                    >(
+                                        metadata_obj.clone()
+                                    ) {
+                                        let contract_id =
+                                            key_str.strip_prefix("contract:").unwrap_or(&key_str);
                                         // Index by each tag
                                         for tag in &metadata.tags {
                                             self.contract_index
@@ -443,7 +469,11 @@ impl<B: StorageBackend> DhtStorage<B> {
             "Restored DHT storage from backend: {} entries, {} bytes used{}",
             self.storage_cache.len(),
             self.current_usage,
-            if skipped_keys > 0 { format!(", {} keys skipped due to invalid UTF-8", skipped_keys) } else { String::new() }
+            if skipped_keys > 0 {
+                format!(", {} keys skipped due to invalid UTF-8", skipped_keys)
+            } else {
+                String::new()
+            }
         );
 
         Ok(())
@@ -463,31 +493,9 @@ impl<B: StorageBackend> DhtStorage<B> {
         self.contract_index.retain(|_tag, ids| !ids.is_empty());
     }
 
-    /// Verify signature from a DHT node (Acceptance Criteria: PublicKey-based verification)
+    /// Set the ZK verification configuration.
     ///
-    /// **MIGRATION (Ticket #145):** Uses `node.peer.public_key()` for signature verification
-    ///
-    /// # Security
-    ///
-    /// - Uses CRYSTALS-Dilithium post-quantum signatures
-    /// - Returns `Ok(false)` for invalid signatures (not error)
-    /// - Returns `Err(...)` for cryptographic/format errors
-    ///
-    /// # Performance (MED-8)
-    ///
-    /// **TODO:** Add timeout wrapper to prevent DoS via slow verification.
-    /// Dilithium2 verification is typically <1ms, but malformed inputs could
-    /// cause longer processing. Consider:
-    ///
-    /// ```rust,ignore
-    /// tokio::time::timeout(
-    ///     Duration::from_millis(100),
-    ///     async { lib_crypto::verification::verify_signature(...) }
-    /// ).await
-    /// ```
-    /// Set the ZK verification configuration
-    ///
-    /// [DB-002] Allows runtime configuration of verification timeouts
+    /// [DB-002] Allows runtime configuration of verification timeouts.
     pub fn set_zk_verification_config(&mut self, config: ZkVerificationConfig) {
         self.zk_verification_config = config;
     }
@@ -507,6 +515,21 @@ impl<B: StorageBackend> DhtStorage<B> {
     /// Reset ZK verification metrics
     pub fn reset_zk_verification_metrics(&mut self) {
         self.zk_verification_metrics = ZkVerificationMetrics::new();
+    }
+
+    /// Get all keys with a given prefix
+    ///
+    /// Returns keys as UTF-8 strings (skips non-UTF-8 keys).
+    /// Used for migration/scanning operations.
+    pub fn keys_with_prefix(&self, prefix: &str) -> Result<Vec<String>> {
+        let key_bytes = self.backend.keys_with_prefix(prefix.as_bytes())?;
+        let mut keys = Vec::with_capacity(key_bytes.len());
+        for k in key_bytes {
+            if let Ok(s) = String::from_utf8(k) {
+                keys.push(s);
+            }
+        }
+        Ok(keys)
     }
 
     /// Store data with content hash as key and replicate across DHT
@@ -537,12 +560,12 @@ impl<B: StorageBackend> DhtStorage<B> {
         } else {
             warn!(key = %key_str, "Key NOT found in storage cache after store");
         }
-        
+
         // If network is available, replicate to other nodes
         if self.network.is_some() {
             self.replicate_to_dht(&key_str, &data).await?;
         }
-        
+
         Ok(())
     }
 
@@ -550,17 +573,17 @@ impl<B: StorageBackend> DhtStorage<B> {
     pub async fn retrieve_data(&mut self, content_hash: Hash) -> Result<Option<Vec<u8>>> {
         let key: DhtKey = content_hash; // Use DhtKey type for strongly typed keys
         let key_str = hex::encode(key.as_bytes());
-        
+
         // Check local storage first
         if let Some(data) = self.get(&key_str).await? {
             return Ok(Some(data));
         }
-        
+
         // If not found locally and network is available, query DHT
         if self.network.is_some() {
             return self.retrieve_from_dht(&key_str).await;
         }
-        
+
         Ok(None)
     }
 
@@ -568,9 +591,9 @@ impl<B: StorageBackend> DhtStorage<B> {
     async fn replicate_to_dht(&mut self, key: &str, data: &[u8]) -> Result<()> {
         // Find closest nodes for this key
         let key_hash = Hash::from_bytes(&blake3::hash(key.as_bytes()).as_bytes()[..32]);
-        let target_key = NodeId::from_storage_hash(&key_hash);
+        let target_key = NodeId::from_bytes_array(key_hash.0);
         let closest_nodes = self.router.find_closest_nodes(&target_key, 3);
-        
+
         if let Some(network) = &self.network {
             // Send store messages to closest nodes
             // **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for routing and tracking
@@ -604,7 +627,7 @@ impl<B: StorageBackend> DhtStorage<B> {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -612,9 +635,9 @@ impl<B: StorageBackend> DhtStorage<B> {
     async fn retrieve_from_dht(&mut self, key: &str) -> Result<Option<Vec<u8>>> {
         // Find closest nodes for this key
         let key_hash = Hash::from_bytes(&blake3::hash(key.as_bytes()).as_bytes()[..32]);
-        let target_key = NodeId::from_storage_hash(&key_hash);
+        let target_key = NodeId::from_bytes_array(key_hash.0);
         let closest_nodes = self.router.find_closest_nodes(&target_key, 5);
-        
+
         if let Some(network) = &self.network {
             // Query nodes for the value
             // **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for routing and tracking
@@ -652,7 +675,7 @@ impl<B: StorageBackend> DhtStorage<B> {
                 }
             }
         }
-        
+
         Ok(None)
     }
 
@@ -666,18 +689,21 @@ impl<B: StorageBackend> DhtStorage<B> {
     /// Store zero-knowledge enhanced value
     pub async fn store_zk_value(&mut self, key: DhtKey, zk_value: ZkDhtValue) -> Result<()> {
         let key_str = hex::encode(key.as_bytes());
-        
+
         // Verify the zero-knowledge proof before storing
-        if !self.verify_full_zk_proof(&zk_value.validity_proof, &key_str, &zk_value.encrypted_data).await? {
+        if !self
+            .verify_full_zk_proof(&zk_value.validity_proof, &key_str, &zk_value.encrypted_data)
+            .await?
+        {
             return Err(anyhow!("Invalid zero-knowledge proof for DHT value"));
         }
-        
+
         // Serialize the ZK value
         let serialized_value = bincode::serialize(&zk_value)?;
-        
+
         // Convert ZeroKnowledgeProof to ZkProof for storage
         let zk_proof = self.convert_to_zk_proof(&zk_value.validity_proof)?;
-        
+
         // Store with ZK proof validation
         self.store(key_str, serialized_value, Some(zk_proof)).await
     }
@@ -685,16 +711,19 @@ impl<B: StorageBackend> DhtStorage<B> {
     /// Retrieve zero-knowledge enhanced value
     pub async fn retrieve_zk_value(&mut self, key: DhtKey) -> Result<Option<ZkDhtValue>> {
         let key_str = hex::encode(key.as_bytes());
-        
+
         if let Some(data) = self.get(&key_str).await? {
             // Deserialize ZK value
             let zk_value: ZkDhtValue = bincode::deserialize(&data)?;
-            
+
             // Verify ZK proof
-            if !self.verify_full_zk_proof(&zk_value.validity_proof, &key_str, &zk_value.encrypted_data).await? {
+            if !self
+                .verify_full_zk_proof(&zk_value.validity_proof, &key_str, &zk_value.encrypted_data)
+                .await?
+            {
                 return Err(anyhow!("ZK proof verification failed for retrieved value"));
             }
-            
+
             Ok(Some(zk_value))
         } else {
             Ok(None)
@@ -711,7 +740,7 @@ impl<B: StorageBackend> DhtStorage<B> {
             zk_proof.verification_key.clone(),
             zk_proof.plonky2_proof.clone(),
         );
-        
+
         Ok(converted_proof)
     }
 
@@ -732,15 +761,20 @@ impl<B: StorageBackend> DhtStorage<B> {
     /// metrics. Callers must ensure they have mutable access to the `DhtStorage`
     /// instance when invoking this method.
     #[instrument(skip(self, zk_proof, zk_value), fields(proof_system = %zk_proof.proof_system))]
-    pub async fn verify_zk_proof(&mut self, zk_proof: &ZkProof, zk_value: &ZkDhtValue) -> Result<bool> {
+    pub async fn verify_zk_proof(
+        &mut self,
+        zk_proof: &ZkProof,
+        zk_value: &ZkDhtValue,
+    ) -> Result<bool> {
         let start = Instant::now();
         let timeout_duration = self.zk_verification_config.timeout;
 
         // [DB-002] Wrap verification with timeout
         let verification_result = tokio::time::timeout(
             timeout_duration,
-            self.verify_zk_proof_inner(zk_proof, zk_value)
-        ).await;
+            self.verify_zk_proof_inner(zk_proof, zk_value),
+        )
+        .await;
 
         let elapsed = start.elapsed();
         let elapsed_ms = elapsed.as_millis() as u64;
@@ -796,7 +830,11 @@ impl<B: StorageBackend> DhtStorage<B> {
     /// Inner verification logic without timeout wrapper
     ///
     /// [DB-002] This is the actual verification logic, called by verify_zk_proof with timeout
-    async fn verify_zk_proof_inner(&self, zk_proof: &ZkProof, zk_value: &ZkDhtValue) -> Result<bool> {
+    async fn verify_zk_proof_inner(
+        &self,
+        zk_proof: &ZkProof,
+        zk_value: &ZkDhtValue,
+    ) -> Result<bool> {
         // Initialize the ZK proof system from lib-proofs
         let zk_system = lib_proofs::initialize_zk_system()
             .map_err(|e| anyhow!("Failed to initialize ZK system: {}", e))?;
@@ -806,21 +844,25 @@ impl<B: StorageBackend> DhtStorage<B> {
             // Determine proof type based on the proof system identifier
             match plonky2_proof.proof_system.as_str() {
                 "ZHTP-Optimized-StorageAccess" => {
-                    return zk_system.verify_storage_access(plonky2_proof)
+                    return zk_system
+                        .verify_storage_access(plonky2_proof)
                         .map_err(|e| anyhow!("Storage access proof verification failed: {}", e));
-                },
+                }
                 "ZHTP-Optimized-DataIntegrity" => {
-                    return zk_system.verify_data_integrity(plonky2_proof)
+                    return zk_system
+                        .verify_data_integrity(plonky2_proof)
                         .map_err(|e| anyhow!("Data integrity proof verification failed: {}", e));
-                },
+                }
                 "ZHTP-Optimized-Range" => {
-                    return zk_system.verify_range(plonky2_proof)
+                    return zk_system
+                        .verify_range(plonky2_proof)
                         .map_err(|e| anyhow!("Range proof verification failed: {}", e));
-                },
+                }
                 "ZHTP-Optimized-Identity" => {
-                    return zk_system.verify_identity(plonky2_proof)
+                    return zk_system
+                        .verify_identity(plonky2_proof)
                         .map_err(|e| anyhow!("Identity proof verification failed: {}", e));
-                },
+                }
                 _ => {
                     // [DB-002] Reject unknown proof types for security
                     warn!(
@@ -844,33 +886,47 @@ impl<B: StorageBackend> DhtStorage<B> {
 
         // Generate cryptographic access key from node identity and request context
         let node_key_material = self.local_node_id.as_bytes();
-        let access_key = blake3::hash(&[node_key_material as &[u8], value_hash.as_bytes()].concat());
+        let access_key =
+            blake3::hash(&[node_key_material as &[u8], value_hash.as_bytes()].concat());
         let access_key_u64 = u64::from_be_bytes([
-            access_key.as_bytes()[0], access_key.as_bytes()[1],
-            access_key.as_bytes()[2], access_key.as_bytes()[3],
-            access_key.as_bytes()[4], access_key.as_bytes()[5],
-            access_key.as_bytes()[6], access_key.as_bytes()[7],
+            access_key.as_bytes()[0],
+            access_key.as_bytes()[1],
+            access_key.as_bytes()[2],
+            access_key.as_bytes()[3],
+            access_key.as_bytes()[4],
+            access_key.as_bytes()[5],
+            access_key.as_bytes()[6],
+            access_key.as_bytes()[7],
         ]);
 
         // Generate requester secret from ZK value metadata
         let requester_context = [
             &zk_value.nonce,
             &zk_value.encrypted_data[..std::cmp::min(32, zk_value.encrypted_data.len())],
-        ].concat();
+        ]
+        .concat();
         let requester_secret_hash = blake3::hash(&requester_context);
         let requester_secret = u64::from_be_bytes([
-            requester_secret_hash.as_bytes()[0], requester_secret_hash.as_bytes()[1],
-            requester_secret_hash.as_bytes()[2], requester_secret_hash.as_bytes()[3],
-            requester_secret_hash.as_bytes()[4], requester_secret_hash.as_bytes()[5],
-            requester_secret_hash.as_bytes()[6], requester_secret_hash.as_bytes()[7],
+            requester_secret_hash.as_bytes()[0],
+            requester_secret_hash.as_bytes()[1],
+            requester_secret_hash.as_bytes()[2],
+            requester_secret_hash.as_bytes()[3],
+            requester_secret_hash.as_bytes()[4],
+            requester_secret_hash.as_bytes()[5],
+            requester_secret_hash.as_bytes()[6],
+            requester_secret_hash.as_bytes()[7],
         ]);
 
         // Convert data hash to u64 for ZK system compatibility
         let data_hash_u64 = u64::from_be_bytes([
-            value_hash.as_bytes()[0], value_hash.as_bytes()[1],
-            value_hash.as_bytes()[2], value_hash.as_bytes()[3],
-            value_hash.as_bytes()[4], value_hash.as_bytes()[5],
-            value_hash.as_bytes()[6], value_hash.as_bytes()[7],
+            value_hash.as_bytes()[0],
+            value_hash.as_bytes()[1],
+            value_hash.as_bytes()[2],
+            value_hash.as_bytes()[3],
+            value_hash.as_bytes()[4],
+            value_hash.as_bytes()[5],
+            value_hash.as_bytes()[6],
+            value_hash.as_bytes()[7],
         ]);
 
         // Determine required permission based on access level
@@ -918,12 +974,14 @@ impl<B: StorageBackend> DhtStorage<B> {
             }
 
             // Verify proof validity using ZK system
-            return zk_system.verify_storage_access(plonky2_proof)
+            return zk_system
+                .verify_storage_access(plonky2_proof)
                 .map_err(|e| anyhow!("Storage access proof verification failed: {}", e));
         }
 
         // Fallback to generic proof verification with cryptographic validation
-        let proof_valid = zk_proof.verify()
+        let proof_valid = zk_proof
+            .verify()
             .map_err(|e| anyhow!("ZK proof verification error: {}", e))?;
 
         // Additional cryptographic integrity check
@@ -932,41 +990,56 @@ impl<B: StorageBackend> DhtStorage<B> {
             data_hash_u64.to_be_bytes(),
             access_level_u64.to_be_bytes(),
             required_permission.to_be_bytes(),
-        ].concat();
+        ]
+        .concat();
 
-        let public_inputs_match = zk_proof.public_inputs.len() >= expected_public_inputs.len() &&
-            &zk_proof.public_inputs[..expected_public_inputs.len()] == &expected_public_inputs;
+        let public_inputs_match = zk_proof.public_inputs.len() >= expected_public_inputs.len()
+            && &zk_proof.public_inputs[..expected_public_inputs.len()] == &expected_public_inputs;
 
         Ok(proof_valid && public_inputs_match)
     }
-    
+
     /// Store a key-value pair with cryptographic access control and ZK proof verification
-    pub async fn store(&mut self, key: String, value: Vec<u8>, proof: Option<ZkProof>) -> Result<()> {
+    pub async fn store(
+        &mut self,
+        key: String,
+        value: Vec<u8>,
+        proof: Option<ZkProof>,
+    ) -> Result<()> {
         // Validate storage operation permissions
-        self.validate_storage_permissions(&key, &value, proof.as_ref()).await?;
-        
+        self.validate_storage_permissions(&key, &value, proof.as_ref())
+            .await?;
+
         // Check storage capacity with overhead calculation
         let value_size = value.len() as u64;
         let metadata_overhead = 256u64; // Estimated metadata size
         let total_size = value_size + metadata_overhead;
-        
+
         if self.current_usage + total_size > self.max_storage_size {
-            return Err(anyhow!("Storage capacity exceeded: {} + {} > {}", 
-                self.current_usage, total_size, self.max_storage_size));
+            return Err(anyhow!(
+                "Storage capacity exceeded: {} + {} > {}",
+                self.current_usage,
+                total_size,
+                self.max_storage_size
+            ));
         }
-        
+
         // Perform mandatory ZK proof verification for secure storage
         if let Some(zk_proof) = &proof {
             if !self.verify_storage_proof(zk_proof, &key, &value).await? {
-                return Err(anyhow!("Cryptographic proof verification failed - storage denied"));
+                return Err(anyhow!(
+                    "Cryptographic proof verification failed - storage denied"
+                ));
             }
         } else {
             // For security, require proof for non-public data
             if self.requires_proof_for_storage(&key, &value)? {
-                return Err(anyhow!("Zero-knowledge proof required for this storage operation"));
+                return Err(anyhow!(
+                    "Zero-knowledge proof required for this storage operation"
+                ));
             }
         }
-        
+
         // Create storage entry
         let entry = StorageEntry {
             key: key.clone(),
@@ -988,12 +1061,13 @@ impl<B: StorageBackend> DhtStorage<B> {
             replicas: Vec::new(),
             access_control: None,
         };
-        
+
         // Update storage cache
         if let Some(old_entry) = self.storage_cache.insert(key.clone(), entry.clone()) {
             // If replacing existing entry, adjust usage (include metadata overhead)
             let old_total = old_entry.value.len() as u64 + metadata_overhead;
-            self.current_usage = self.current_usage
+            self.current_usage = self
+                .current_usage
                 .saturating_sub(old_total)
                 .saturating_add(total_size);
         } else {
@@ -1040,7 +1114,7 @@ impl<B: StorageBackend> DhtStorage<B> {
             Ok(None)
         }
     }
-    
+
     /// Remove a key-value pair
     pub async fn remove(&mut self, key: &str) -> Result<bool> {
         if let Some(entry) = self.storage_cache.remove(key) {
@@ -1058,12 +1132,26 @@ impl<B: StorageBackend> DhtStorage<B> {
             Ok(false)
         }
     }
-    
+
+    /// Remove all keys with a single backend flush for better clear-cache performance.
+    pub async fn clear_all(&mut self) -> Result<()> {
+        let backend_keys = self.backend.keys()?;
+        for key in backend_keys {
+            let _ = self.backend.remove(&key)?;
+        }
+        self.backend.flush()?;
+
+        self.storage_cache.clear();
+        self.contract_index.clear();
+        self.current_usage = 0;
+        Ok(())
+    }
+
     /// Get storage entry metadata
     pub fn get_metadata(&self, key: &str) -> Option<&ChunkMetadata> {
         self.storage_cache.get(key).map(|entry| &entry.metadata)
     }
-    
+
     /// List all stored keys
     pub fn list_keys(&self) -> Vec<String> {
         self.storage_cache.keys().cloned().collect()
@@ -1071,7 +1159,9 @@ impl<B: StorageBackend> DhtStorage<B> {
 
     /// List all stored keys matching a prefix
     pub async fn list_keys_with_prefix(&self, prefix: &str) -> Result<Vec<String>> {
-        Ok(self.storage_cache.keys()
+        Ok(self
+            .storage_cache
+            .keys()
             .filter(|k| k.starts_with(prefix))
             .cloned()
             .collect())
@@ -1079,24 +1169,27 @@ impl<B: StorageBackend> DhtStorage<B> {
 
     /// List all stored keys with their sizes (for debugging)
     pub fn list_keys_with_info(&self) -> Vec<(String, usize)> {
-        self.storage_cache.iter()
+        self.storage_cache
+            .iter()
             .map(|(key, entry)| (key.clone(), entry.value.len()))
             .collect()
     }
-    
+
     /// Check if a specific key exists in storage
     pub fn contains_key(&self, key: &str) -> bool {
         self.storage_cache.contains_key(key)
     }
-    
+
     /// Get storage statistics
     pub fn get_storage_stats(&self) -> StorageStats {
         let total_entries = self.storage_cache.len();
         let total_size = self.current_usage;
         let available_space = self.max_storage_size.saturating_sub(self.current_usage);
-        
+
         // Calculate average access count
-        let total_accesses: u64 = self.storage_cache.values()
+        let total_accesses: u64 = self
+            .storage_cache
+            .values()
             .map(|entry| entry.metadata.access_count)
             .sum();
         let avg_access_count = if total_entries > 0 {
@@ -1104,7 +1197,7 @@ impl<B: StorageBackend> DhtStorage<B> {
         } else {
             0.0
         };
-        
+
         StorageStats {
             total_entries,
             total_size,
@@ -1113,13 +1206,15 @@ impl<B: StorageBackend> DhtStorage<B> {
             avg_access_count,
         }
     }
-    
+
     /// Cleanup expired entries
     pub async fn cleanup_expired(&mut self) -> Result<usize> {
         let current_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let mut removed_count = 0;
-        
-        let expired_keys: Vec<String> = self.storage_cache.iter()
+
+        let expired_keys: Vec<String> = self
+            .storage_cache
+            .iter()
             .filter_map(|(key, entry)| {
                 if let Some(expiry) = entry.expiry {
                     if current_time > expiry {
@@ -1132,7 +1227,7 @@ impl<B: StorageBackend> DhtStorage<B> {
                 }
             })
             .collect();
-        
+
         for key in expired_keys {
             if let Some(entry) = self.storage_cache.remove(&key) {
                 // Subtract value size + metadata overhead (256 bytes)
@@ -1163,10 +1258,11 @@ impl<B: StorageBackend> DhtStorage<B> {
             Err(anyhow!("Key not found: {}", key))
         }
     }
-    
+
     /// Get entries that need replication
     pub fn get_replication_candidates(&self, min_replicas: usize) -> Vec<String> {
-        self.storage_cache.iter()
+        self.storage_cache
+            .iter()
             .filter_map(|(key, entry)| {
                 if entry.replicas.len() < min_replicas {
                     Some(key.clone())
@@ -1176,7 +1272,7 @@ impl<B: StorageBackend> DhtStorage<B> {
             })
             .collect()
     }
-    
+
     /// Update replica information for a key
     pub async fn update_replicas(&mut self, key: &str, replicas: Vec<NodeId>) -> Result<()> {
         if let Some(entry) = self.storage_cache.get_mut(key) {
@@ -1188,20 +1284,26 @@ impl<B: StorageBackend> DhtStorage<B> {
             Err(anyhow!("Key not found: {}", key))
         }
     }
-    
+
     /// Verify zero-knowledge storage proof with cryptographic validation
     ///
     /// [DB-002] This method is wrapped with a configurable timeout to prevent DoS attacks.
     #[instrument(skip(self, proof, key, value), fields(key_len = key.len(), value_len = value.len()))]
-    async fn verify_storage_proof(&mut self, proof: &ZkProof, key: &str, value: &[u8]) -> Result<bool> {
+    async fn verify_storage_proof(
+        &mut self,
+        proof: &ZkProof,
+        key: &str,
+        value: &[u8],
+    ) -> Result<bool> {
         let start = Instant::now();
         let timeout_duration = self.zk_verification_config.timeout;
 
         // [DB-002] Wrap verification with timeout
         let verification_result = tokio::time::timeout(
             timeout_duration,
-            self.verify_storage_proof_inner(proof, key, value)
-        ).await;
+            self.verify_storage_proof_inner(proof, key, value),
+        )
+        .await;
 
         let elapsed = start.elapsed();
         let elapsed_ms = elapsed.as_millis() as u64;
@@ -1254,7 +1356,12 @@ impl<B: StorageBackend> DhtStorage<B> {
     /// Inner storage proof verification logic without timeout wrapper
     ///
     /// [DB-002] This is the actual verification logic, called with timeout by verify_storage_proof
-    async fn verify_storage_proof_inner(&self, proof: &ZkProof, key: &str, value: &[u8]) -> Result<bool> {
+    async fn verify_storage_proof_inner(
+        &self,
+        proof: &ZkProof,
+        key: &str,
+        value: &[u8],
+    ) -> Result<bool> {
         // Initialize ZK system for proof verification
         let zk_system = lib_proofs::initialize_zk_system()
             .map_err(|e| anyhow!("Failed to initialize ZK system: {}", e))?;
@@ -1270,11 +1377,14 @@ impl<B: StorageBackend> DhtStorage<B> {
         // Create public inputs using cryptographic operations
         let data_hash = blake3::hash(value);
         let key_hash = blake3::hash(key.as_bytes());
-        let node_commitment = blake3::hash(&[
-            self.local_node_id.as_bytes() as &[u8],
-            key_hash.as_bytes(),
-            data_hash.as_bytes(),
-        ].concat());
+        let node_commitment = blake3::hash(
+            &[
+                self.local_node_id.as_bytes() as &[u8],
+                key_hash.as_bytes(),
+                data_hash.as_bytes(),
+            ]
+            .concat(),
+        );
 
         // Convert to ZK proof system format (big-endian for consistency)
         let mut public_inputs_u64 = Vec::new();
@@ -1294,7 +1404,8 @@ impl<B: StorageBackend> DhtStorage<B> {
         }
 
         // Convert to byte representation for proof verification
-        let expected_public_inputs: Vec<u8> = public_inputs_u64.iter()
+        let expected_public_inputs: Vec<u8> = public_inputs_u64
+            .iter()
             .flat_map(|&x| x.to_be_bytes().to_vec())
             .collect();
 
@@ -1308,7 +1419,8 @@ impl<B: StorageBackend> DhtStorage<B> {
             return Ok(false);
         }
 
-        let inputs_match = &proof.public_inputs[..expected_public_inputs.len()] == &expected_public_inputs;
+        let inputs_match =
+            &proof.public_inputs[..expected_public_inputs.len()] == &expected_public_inputs;
         if !inputs_match {
             debug!("Storage proof rejected: public inputs content mismatch");
             return Ok(false);
@@ -1319,11 +1431,13 @@ impl<B: StorageBackend> DhtStorage<B> {
             // Verify using specific proof type
             match plonky2_proof.proof_system.as_str() {
                 "ZHTP-Optimized-StorageAccess" => {
-                    return zk_system.verify_storage_access(plonky2_proof)
+                    return zk_system
+                        .verify_storage_access(plonky2_proof)
                         .map_err(|e| anyhow!("Storage access proof verification failed: {}", e));
                 }
                 "ZHTP-Optimized-DataIntegrity" => {
-                    return zk_system.verify_data_integrity(plonky2_proof)
+                    return zk_system
+                        .verify_data_integrity(plonky2_proof)
                         .map_err(|e| anyhow!("Data integrity proof verification failed: {}", e));
                 }
                 _ => {
@@ -1332,13 +1446,17 @@ impl<B: StorageBackend> DhtStorage<B> {
                         proof_system = %plonky2_proof.proof_system,
                         "Using generic Plonky2 proof verification for unknown type"
                     );
-                    return Ok(self.verify_generic_plonky2_proof(plonky2_proof, &expected_public_inputs)?);
+                    return Ok(
+                        self.verify_generic_plonky2_proof(plonky2_proof, &expected_public_inputs)?
+                    );
                 }
             }
         }
 
         // Fallback to generic ZK proof verification
-        proof.verify().map_err(|e| anyhow!("ZK proof verification error: {}", e))
+        proof
+            .verify()
+            .map_err(|e| anyhow!("ZK proof verification error: {}", e))
     }
 
     /// Generate cryptographic commitment for storage operation
@@ -1349,93 +1467,118 @@ impl<B: StorageBackend> DhtStorage<B> {
             value,
             self.local_node_id.as_bytes() as &[u8],
             &timestamp.to_be_bytes(),
-        ].concat();
+        ]
+        .concat();
 
         Ok(blake3::hash(&commitment_data))
     }
 
     /// Verify generic Plonky2 proof with cryptographic validation
-    fn verify_generic_plonky2_proof(&self, proof: &lib_proofs::Plonky2Proof, expected_inputs: &[u8]) -> Result<bool> {
+    fn verify_generic_plonky2_proof(
+        &self,
+        proof: &lib_proofs::Plonky2Proof,
+        expected_inputs: &[u8],
+    ) -> Result<bool> {
         // Verify proof structure
         if proof.proof.is_empty() || proof.public_inputs.is_empty() {
             return Ok(false);
         }
-        
+
         // Verify public inputs match expected values
         if proof.public_inputs.len() < expected_inputs.len() {
             return Ok(false);
         }
-        
+
         // Convert u64 public inputs to bytes for comparison
-        let proof_inputs_bytes: Vec<u8> = proof.public_inputs.iter()
+        let proof_inputs_bytes: Vec<u8> = proof
+            .public_inputs
+            .iter()
             .flat_map(|&x| x.to_be_bytes())
             .collect();
         let inputs_match = proof_inputs_bytes.starts_with(expected_inputs);
         if !inputs_match {
             return Ok(false);
         }
-        
+
         // Verify proof size meets minimum cryptographic security requirements
         let min_proof_size = 256; // Minimum bytes for secure proof
         if proof.proof.len() < min_proof_size {
             return Ok(false);
         }
-        
+
         // Verify verification key hash is present and valid
         if proof.verification_key_hash == [0u8; 32] {
             return Ok(false);
         }
-        
+
         // Cryptographic integrity check - verify proof commitment
         let proof_hash = blake3::hash(&proof.proof);
-        let public_inputs_bytes: Vec<u8> = proof.public_inputs.iter()
+        let public_inputs_bytes: Vec<u8> = proof
+            .public_inputs
+            .iter()
             .flat_map(|&x| x.to_be_bytes())
             .collect();
-        let commitment_hash = blake3::hash(&[
-            &public_inputs_bytes,
-            &proof.verification_key_hash[..],
-            proof_hash.as_bytes(),
-        ].concat());
-        
+        let commitment_hash = blake3::hash(
+            &[
+                &public_inputs_bytes,
+                &proof.verification_key_hash[..],
+                proof_hash.as_bytes(),
+            ]
+            .concat(),
+        );
+
         // Verify the commitment is cryptographically sound
-        let commitment_valid = commitment_hash.as_bytes().iter()
+        let commitment_valid = commitment_hash
+            .as_bytes()
+            .iter()
             .zip(proof.verification_key_hash.iter().cycle())
-            .fold(0u8, |acc, (&a, &b)| acc ^ a ^ b) != 0;
-        
+            .fold(0u8, |acc, (&a, &b)| acc ^ a ^ b)
+            != 0;
+
         Ok(commitment_valid)
     }
 
     /// Validate storage operation permissions with cryptographic checks
-    async fn validate_storage_permissions(&self, key: &str, value: &[u8], proof: Option<&ZkProof>) -> Result<()> {
+    async fn validate_storage_permissions(
+        &self,
+        key: &str,
+        value: &[u8],
+        proof: Option<&ZkProof>,
+    ) -> Result<()> {
         // Check key format and length constraints
         if key.is_empty() || key.len() > 256 {
             return Err(anyhow!("Invalid key format: must be 1-256 characters"));
         }
-        
+
         // Check value size constraints
         if value.is_empty() {
             return Err(anyhow!("Cannot store empty value"));
         }
-        
+
         let max_value_size = 10 * 1024 * 1024; // 10MB max per entry
         if value.len() > max_value_size {
-            return Err(anyhow!("Value too large: {} bytes exceeds {} byte limit", 
-                value.len(), max_value_size));
+            return Err(anyhow!(
+                "Value too large: {} bytes exceeds {} byte limit",
+                value.len(),
+                max_value_size
+            ));
         }
-        
+
         // Validate key cryptographic integrity
         let key_hash = blake3::hash(key.as_bytes());
         if self.is_reserved_key(&key_hash)? {
             return Err(anyhow!("Cannot store to reserved key namespace"));
         }
-        
+
         // Check for overwrite permissions if key exists
         if let Some(existing_entry) = self.storage_cache.get(key) {
             if !self.can_overwrite_entry(existing_entry, proof).await? {
-                return Err(anyhow!("Insufficient permissions to overwrite existing entry"));
+                return Err(anyhow!(
+                    "Insufficient permissions to overwrite existing entry"
+                ));
             }
         }
-        
+
         Ok(())
     }
 
@@ -1444,18 +1587,18 @@ impl<B: StorageBackend> DhtStorage<B> {
         //  TEST MODE: Disable ZK proof requirement for testing
         // This allows us to test DHT storage without setting up ZK proofs
         Ok(false)
-        
+
         // ORIGINAL CODE (re-enable for production):
         // // Large values require proof
         // if value.len() > 1024 * 1024 { // 1MB threshold
         //     return Ok(true);
         // }
-        // 
+        //
         // // System or private keys require proof
         // if key.starts_with("system:") || key.starts_with("private:") || key.starts_with("secure:") {
         //     return Ok(true);
         // }
-        // 
+        //
         // // Check if value contains sensitive patterns
         // let sensitive_patterns = [&b"password"[..], &b"private_key"[..], &b"secret"[..], &b"token"[..]];
         // for pattern in &sensitive_patterns {
@@ -1463,13 +1606,13 @@ impl<B: StorageBackend> DhtStorage<B> {
         //         return Ok(true);
         //     }
         // }
-        // 
+        //
         // // Values with high entropy (likely encrypted) require proof
         // let entropy = self.calculate_entropy(value)?;
         // if entropy > 7.5 { // High entropy threshold
         //     return Ok(true);
         // }
-        // 
+        //
         // Ok(false)
     }
 
@@ -1481,29 +1624,33 @@ impl<B: StorageBackend> DhtStorage<B> {
             blake3::hash(b"admin"),
             blake3::hash(b"root"),
         ];
-        
+
         for reserved in &reserved_prefixes {
             // Check if key hash starts with reserved prefix pattern
             if key_hash.as_bytes()[..8] == reserved.as_bytes()[..8] {
                 return Ok(true);
             }
         }
-        
+
         Ok(false)
     }
 
     /// Check permissions to overwrite existing entry
-    async fn can_overwrite_entry(&self, existing: &StorageEntry, proof: Option<&ZkProof>) -> Result<bool> {
+    async fn can_overwrite_entry(
+        &self,
+        existing: &StorageEntry,
+        proof: Option<&ZkProof>,
+    ) -> Result<bool> {
         // Always allow overwrite if we have valid proof
         if let Some(zk_proof) = proof {
             return Ok(!zk_proof.is_empty());
         }
-        
+
         // Allow overwrite if no existing proof (public data)
         if existing.proof.is_none() {
             return Ok(true);
         }
-        
+
         // Check if existing entry has expired
         if let Some(expiry) = existing.expiry {
             let current_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
@@ -1511,7 +1658,7 @@ impl<B: StorageBackend> DhtStorage<B> {
                 return Ok(true);
             }
         }
-        
+
         // Deny overwrite for protected entries without proof
         Ok(false)
     }
@@ -1520,15 +1667,21 @@ impl<B: StorageBackend> DhtStorage<B> {
     ///
     /// [DB-002] This method is wrapped with a configurable timeout to prevent DoS attacks.
     #[instrument(skip(self, proof, key, value), fields(proof_system = %proof.proof_system))]
-    async fn verify_full_zk_proof(&mut self, proof: &ZeroKnowledgeProof, key: &str, value: &[u8]) -> Result<bool> {
+    async fn verify_full_zk_proof(
+        &mut self,
+        proof: &ZeroKnowledgeProof,
+        key: &str,
+        value: &[u8],
+    ) -> Result<bool> {
         let start = Instant::now();
         let timeout_duration = self.zk_verification_config.timeout;
 
         // [DB-002] Wrap verification with timeout
         let verification_result = tokio::time::timeout(
             timeout_duration,
-            self.verify_full_zk_proof_inner(proof, key, value)
-        ).await;
+            self.verify_full_zk_proof_inner(proof, key, value),
+        )
+        .await;
 
         let elapsed = start.elapsed();
         let elapsed_ms = elapsed.as_millis() as u64;
@@ -1581,7 +1734,12 @@ impl<B: StorageBackend> DhtStorage<B> {
     /// Inner full ZK proof verification logic without timeout wrapper
     ///
     /// [DB-002] This is the actual verification logic, called with timeout by verify_full_zk_proof
-    async fn verify_full_zk_proof_inner(&self, proof: &ZeroKnowledgeProof, key: &str, value: &[u8]) -> Result<bool> {
+    async fn verify_full_zk_proof_inner(
+        &self,
+        proof: &ZeroKnowledgeProof,
+        key: &str,
+        value: &[u8],
+    ) -> Result<bool> {
         // This would use the full ZeroKnowledgeProof system for more complex proofs
         // For now, we'll validate the structure and basic integrity
 
@@ -1632,7 +1790,7 @@ impl<B: StorageBackend> DhtStorage<B> {
         );
         Ok(false)
     }
-    
+
     /// Add a DHT node to the routing table and known nodes
     ///
     /// **ACCEPTANCE CRITERIA (Ticket #145):**
@@ -1697,8 +1855,12 @@ impl<B: StorageBackend> DhtStorage<B> {
 
             // Process outgoing messages
             if let Some(queued_msg) = self.messaging.get_next_message() {
-                let target_node_id = hex::encode(&queued_msg.target_node.peer.node_id().as_bytes()[..4]);
-                match network.send_message(&queued_msg.target_node, queued_msg.message.clone()).await {
+                let target_node_id =
+                    hex::encode(&queued_msg.target_node.peer.node_id().as_bytes()[..4]);
+                match network
+                    .send_message(&queued_msg.target_node, queued_msg.message.clone())
+                    .await
+                {
                     Ok(_) => {
                         debug!(
                             message_id = %queued_msg.message.message_id,
@@ -1734,8 +1896,14 @@ impl<B: StorageBackend> DhtStorage<B> {
                     }
 
                     if self.router.has_peer(&sender_id) {
-                        match self.router.check_and_update_sequence(&sender_id, message.sequence_number) {
-                            Err(SequenceError::ReplayDetected { sequence, last_sequence }) => {
+                        match self
+                            .router
+                            .check_and_update_sequence(&sender_id, message.sequence_number)
+                        {
+                            Err(SequenceError::ReplayDetected {
+                                sequence,
+                                last_sequence,
+                            }) => {
                                 self.replay_rejections = self.replay_rejections.saturating_add(1);
 
                                 warn!(
@@ -1788,7 +1956,7 @@ impl<B: StorageBackend> DhtStorage<B> {
                             message_id = %message.message_id,
                             "Skipping sequence validation for unknown peer"
                         );
-                        
+
                         // Process the message using helper method
                         let _ = self.process_incoming_message(message, &mut network).await;
 
@@ -1816,18 +1984,46 @@ impl<B: StorageBackend> DhtStorage<B> {
                     true
                 }
             };
-            
+
             if !should_continue {
                 break;
             }
-            
+
             // Cleanup and maintenance
-            self.messaging.cleanup_expired_responses(Duration::from_secs(300));
-            
+            self.messaging
+                .cleanup_expired_responses(Duration::from_secs(300));
+
             // Small delay to prevent busy-waiting
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
-        
+
+        Ok(())
+    }
+
+    /// Helper method to process an incoming DHT message and send responses
+    ///
+    /// This consolidates the common logic for handling messages, sending responses,
+    /// and processing storage-specific operations.
+    async fn process_incoming_message(
+        &mut self,
+        message: DhtMessage,
+        network: &mut DhtNetwork,
+    ) -> Result<()> {
+        // Handle the incoming message through messaging layer
+        if let Ok(response) = self.messaging.handle_incoming(message.clone()).await {
+            if let Some(response_msg) = response {
+                // Send response back to the sender
+                if let Some(target_node) = self.known_nodes.get(&message.sender_id) {
+                    let _ = network.send_message(target_node, response_msg).await;
+                }
+            }
+        }
+
+        // Handle storage-specific messages
+        if let Err(e) = self.handle_storage_message(message).await {
+            warn!("Failed to handle storage message: {}", e);
+        }
+
         Ok(())
     }
 
@@ -1902,44 +2098,53 @@ impl<B: StorageBackend> DhtStorage<B> {
             // Smart Contract DHT Messages
             DhtMessageType::ContractDeploy => {
                 if let Some(contract_data) = &message.contract_data {
-                    self.handle_contract_deploy(contract_data, &message.sender_id).await;
+                    self.handle_contract_deploy(contract_data, &message.sender_id)
+                        .await;
                 }
             }
             DhtMessageType::ContractQuery => {
                 if let Some(contract_data) = &message.contract_data {
-                    self.handle_contract_query(contract_data, &message.sender_id).await;
+                    self.handle_contract_query(contract_data, &message.sender_id)
+                        .await;
                 }
             }
             DhtMessageType::ContractExecute => {
                 if let Some(contract_data) = &message.contract_data {
-                    self.handle_contract_execute(contract_data, &message.sender_id).await;
+                    self.handle_contract_execute(contract_data, &message.sender_id)
+                        .await;
                 }
             }
             DhtMessageType::ContractFind => {
                 if let Some(contract_data) = &message.contract_data {
-                    self.handle_contract_find(contract_data, &message.sender_id).await;
+                    self.handle_contract_find(contract_data, &message.sender_id)
+                        .await;
                 }
             }
             _ => {
                 // Other message types are handled by messaging layer
             }
         }
-        
+
         Ok(())
     }
 
     /// Handle smart contract deployment through DHT
-    async fn handle_contract_deploy(&mut self, contract_data: &crate::types::dht_types::ContractDhtData, sender_id: &NodeId) {
+    async fn handle_contract_deploy(
+        &mut self,
+        contract_data: &crate::types::dht_types::ContractDhtData,
+        sender_id: &NodeId,
+    ) {
         let sender_short = hex::encode(&sender_id.as_bytes()[..4]);
         debug!(
             sender = %sender_short,
             contract_id = %contract_data.contract_id,
             "Contract deployment request received"
         );
-        
-        if let (Some(bytecode), Some(metadata)) = (&contract_data.bytecode, &contract_data.metadata) {
+
+        if let (Some(bytecode), Some(metadata)) = (&contract_data.bytecode, &contract_data.metadata)
+        {
             let contract_key = format!("contract:{}", contract_data.contract_id);
-            
+
             // Store contract bytecode and metadata in DHT
             let contract_info = serde_json::json!({
                 "contract_id": contract_data.contract_id,
@@ -1952,12 +2157,13 @@ impl<B: StorageBackend> DhtStorage<B> {
                 "bytecode_size": bytecode.len(),
                 "version": metadata.version.as_str()
             });
-            
+
             if let Ok(serialized) = serde_json::to_vec(&contract_info) {
                 match self.store(contract_key, serialized, None).await {
                     Ok(_) => {
                         // Index contract by tags for discovery
-                        self.index_contract_by_tags(&contract_data.contract_id, metadata).await;
+                        self.index_contract_by_tags(&contract_data.contract_id, metadata)
+                            .await;
                         info!(
                             contract_id = %contract_data.contract_id,
                             bytecode_size = bytecode.len(),
@@ -1978,19 +2184,25 @@ impl<B: StorageBackend> DhtStorage<B> {
                                 .unwrap_or_default().as_secs(),
                             "size": bytecode.len()
                         });
-                        
+
                         if let Ok(summary_serialized) = serde_json::to_vec(&summary) {
                             let _ = self.store(summary_key, summary_serialized, None).await;
                         }
                     }
-                    Err(e) => error!(contract_id = %contract_data.contract_id, error = %e, "Contract deployment failed"),
+                    Err(e) => {
+                        error!(contract_id = %contract_data.contract_id, error = %e, "Contract deployment failed")
+                    }
                 }
             }
         }
     }
 
     /// Handle smart contract query through DHT
-    async fn handle_contract_query(&mut self, contract_data: &crate::types::dht_types::ContractDhtData, sender_id: &NodeId) {
+    async fn handle_contract_query(
+        &mut self,
+        contract_data: &crate::types::dht_types::ContractDhtData,
+        sender_id: &NodeId,
+    ) {
         let sender_short = hex::encode(&sender_id.as_bytes()[..4]);
         debug!(sender = %sender_short, contract_id = %contract_data.contract_id, "Contract query received");
 
@@ -2005,7 +2217,9 @@ impl<B: StorageBackend> DhtStorage<B> {
                 );
 
                 // Parse contract info and provide detailed response
-                if let Ok(contract_info) = serde_json::from_slice::<serde_json::Value>(&stored_contract) {
+                if let Ok(contract_info) =
+                    serde_json::from_slice::<serde_json::Value>(&stored_contract)
+                {
                     let deployed_at = contract_info["deployed_at"].as_u64().unwrap_or(0);
                     let deployer = contract_info["deployer"].as_str().unwrap_or("unknown");
                     let bytecode_size = contract_info["bytecode_size"].as_u64().unwrap_or(0);
@@ -2032,7 +2246,11 @@ impl<B: StorageBackend> DhtStorage<B> {
     }
 
     /// Handle smart contract execution through DHT
-    async fn handle_contract_execute(&mut self, contract_data: &crate::types::dht_types::ContractDhtData, sender_id: &NodeId) {
+    async fn handle_contract_execute(
+        &mut self,
+        contract_data: &crate::types::dht_types::ContractDhtData,
+        sender_id: &NodeId,
+    ) {
         let sender_short = hex::encode(&sender_id.as_bytes()[..4]);
         let function_name = contract_data.function_name.as_deref().unwrap_or("default");
         debug!(
@@ -2067,7 +2285,11 @@ impl<B: StorageBackend> DhtStorage<B> {
     }
 
     /// Handle smart contract find through DHT
-    async fn handle_contract_find(&mut self, contract_data: &crate::types::dht_types::ContractDhtData, sender_id: &NodeId) {
+    async fn handle_contract_find(
+        &mut self,
+        contract_data: &crate::types::dht_types::ContractDhtData,
+        sender_id: &NodeId,
+    ) {
         let sender_short = hex::encode(&sender_id.as_bytes()[..4]);
         debug!(sender = %sender_short, "Contract search request received");
 
@@ -2119,7 +2341,10 @@ impl<B: StorageBackend> DhtStorage<B> {
             // List all available contracts
             debug!("Listing all available contracts");
             let all_contracts = self.list_contracts().await;
-            debug!(contract_count = all_contracts.len(), "Found contracts in DHT storage");
+            debug!(
+                contract_count = all_contracts.len(),
+                "Found contracts in DHT storage"
+            );
 
             for contract_id in all_contracts.iter().take(10) {
                 trace!(contract_id = %contract_id, "Available contract");
@@ -2128,7 +2353,11 @@ impl<B: StorageBackend> DhtStorage<B> {
     }
 
     /// Index contract by its tags for faster discovery
-    async fn index_contract_by_tags(&mut self, contract_id: &str, metadata: &crate::types::dht_types::ContractMetadata) {
+    async fn index_contract_by_tags(
+        &mut self,
+        contract_id: &str,
+        metadata: &crate::types::dht_types::ContractMetadata,
+    ) {
         // Index by each tag
         for tag in &metadata.tags {
             self.contract_index
@@ -2155,9 +2384,13 @@ impl<B: StorageBackend> DhtStorage<B> {
     }
 
     /// Find contracts by tags through DHT
-    pub async fn find_contracts_by_tags(&self, tags: &[String], limit: usize) -> Result<Vec<String>> {
+    pub async fn find_contracts_by_tags(
+        &self,
+        tags: &[String],
+        limit: usize,
+    ) -> Result<Vec<String>> {
         let mut matching_contracts = std::collections::HashSet::new();
-        
+
         // Find contracts that match any of the provided tags
         for tag in tags {
             if let Some(contracts) = self.contract_index.get(tag) {
@@ -2169,18 +2402,20 @@ impl<B: StorageBackend> DhtStorage<B> {
                 }
             }
         }
-        
+
         Ok(matching_contracts.into_iter().collect())
     }
 
     /// Get contract bytecode from DHT storage
     pub async fn get_contract_bytecode(&mut self, contract_id: &str) -> Result<Option<Vec<u8>>> {
         let contract_key = format!("contract:{}", contract_id);
-        
+
         match self.get(&contract_key).await {
             Ok(Some(contract_data)) => {
                 // Parse the stored contract info
-                if let Ok(contract_info) = serde_json::from_slice::<serde_json::Value>(&contract_data) {
+                if let Ok(contract_info) =
+                    serde_json::from_slice::<serde_json::Value>(&contract_data)
+                {
                     if let Some(bytecode_hex) = contract_info["bytecode"].as_str() {
                         if let Ok(bytecode) = hex::decode(bytecode_hex) {
                             return Ok(Some(bytecode));
@@ -2195,15 +2430,23 @@ impl<B: StorageBackend> DhtStorage<B> {
     }
 
     /// Get contract metadata from DHT storage
-    pub async fn get_contract_metadata(&mut self, contract_id: &str) -> Result<Option<crate::types::dht_types::ContractMetadata>> {
+    pub async fn get_contract_metadata(
+        &mut self,
+        contract_id: &str,
+    ) -> Result<Option<crate::types::dht_types::ContractMetadata>> {
         let contract_key = format!("contract:{}", contract_id);
-        
+
         match self.get(&contract_key).await {
             Ok(Some(contract_data)) => {
                 // Parse the stored contract info
-                if let Ok(contract_info) = serde_json::from_slice::<serde_json::Value>(&contract_data) {
+                if let Ok(contract_info) =
+                    serde_json::from_slice::<serde_json::Value>(&contract_data)
+                {
                     if let Some(metadata) = contract_info.get("metadata") {
-                        if let Ok(parsed_metadata) = serde_json::from_value::<crate::types::dht_types::ContractMetadata>(metadata.clone()) {
+                        if let Ok(parsed_metadata) = serde_json::from_value::<
+                            crate::types::dht_types::ContractMetadata,
+                        >(metadata.clone())
+                        {
                             return Ok(Some(parsed_metadata));
                         }
                     }
@@ -2218,7 +2461,7 @@ impl<B: StorageBackend> DhtStorage<B> {
     /// List all contracts stored in this DHT node
     pub async fn list_contracts(&self) -> Vec<String> {
         let mut contracts = Vec::new();
-        
+
         for key in self.storage_cache.keys() {
             if key.starts_with("contract:") && !key.starts_with("contract_summary:") {
                 if let Some(contract_id) = key.strip_prefix("contract:") {
@@ -2226,7 +2469,7 @@ impl<B: StorageBackend> DhtStorage<B> {
                 }
             }
         }
-        
+
         contracts
     }
 
@@ -2234,14 +2477,14 @@ impl<B: StorageBackend> DhtStorage<B> {
     pub fn get_contract_stats(&self) -> (usize, usize, u64) {
         let mut contract_count = 0;
         let mut total_size = 0u64;
-        
+
         for (key, entry) in &self.storage_cache {
             if key.starts_with("contract:") && !key.starts_with("contract_summary:") {
                 contract_count += 1;
                 total_size += entry.value.len() as u64;
             }
         }
-        
+
         (contract_count, self.contract_index.len(), total_size)
     }
 
@@ -2276,7 +2519,10 @@ impl<B: StorageBackend> DhtStorage<B> {
         // Cleanup expired storage entries
         let expired_count = self.cleanup_expired().await?;
         if expired_count > 0 {
-            info!(expired_count = expired_count, "Cleaned up expired storage entries");
+            info!(
+                expired_count = expired_count,
+                "Cleaned up expired storage entries"
+            );
         }
 
         let stats = self.router.get_stats();
@@ -2293,13 +2539,11 @@ impl<B: StorageBackend> DhtStorage<B> {
     fn calculate_checksum(&self, data: &[u8]) -> Vec<u8> {
         // Use BLAKE3 for cryptographically secure checksums
         let hash = blake3::hash(data);
-        
+
         // Include node identity in checksum for authenticity verification
-        let node_authenticated_hash = blake3::hash(&[
-            hash.as_bytes(),
-            self.local_node_id.as_bytes() as &[u8],
-        ].concat());
-        
+        let node_authenticated_hash =
+            blake3::hash(&[hash.as_bytes(), self.local_node_id.as_bytes() as &[u8]].concat());
+
         // Return first 32 bytes for storage efficiency while maintaining security
         node_authenticated_hash.as_bytes().to_vec()
     }
@@ -2338,31 +2582,34 @@ pub struct StorageStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_storage_creation() {
         let node_id = NodeId::from_bytes([1u8; 32]);
         let storage = DhtStorage::new(node_id, 1024 * 1024); // 1MB
-        
+
         assert_eq!(storage.current_usage, 0);
         assert_eq!(storage.max_storage_size, 1024 * 1024);
     }
-    
+
     #[tokio::test]
     async fn test_store_and_retrieve() {
         let node_id = NodeId::from_bytes([1u8; 32]);
         let mut storage = DhtStorage::new(node_id, 1024 * 1024);
-        
+
         let key = "test_key".to_string();
         let value = b"test_value".to_vec();
-        
+
         // Store value
-        storage.store(key.clone(), value.clone(), None).await.unwrap();
-        
+        storage
+            .store(key.clone(), value.clone(), None)
+            .await
+            .unwrap();
+
         // Retrieve value
         let retrieved = storage.get(&key).await.unwrap();
         assert_eq!(retrieved, Some(value));
-        
+
         // Check statistics
         let stats = storage.get_storage_stats();
         assert_eq!(stats.total_entries, 1);
@@ -2384,29 +2631,51 @@ mod tests {
         let result = storage.store(key, large_value, None).await;
         assert!(result.is_err());
     }
-    
+
     #[tokio::test]
     async fn test_remove() {
         let node_id = NodeId::from_bytes([1u8; 32]);
         let mut storage = DhtStorage::new(node_id, 1024);
-        
+
         let key = "test_key".to_string();
         let value = b"test_value".to_vec();
-        
+
         // Store and remove
         storage.store(key.clone(), value, None).await.unwrap();
         let removed = storage.remove(&key).await.unwrap();
         assert!(removed);
-        
+
         // Verify removal
         let retrieved = storage.get(&key).await.unwrap();
         assert_eq!(retrieved, None);
-        
+
         let stats = storage.get_storage_stats();
         assert_eq!(stats.total_entries, 0);
         assert_eq!(stats.total_size, 0);
     }
-    
+
+    #[tokio::test]
+    async fn test_clear_all() {
+        let node_id = NodeId::from_bytes([1u8; 32]);
+        let mut storage = DhtStorage::new(node_id, 1024 * 1024);
+
+        storage
+            .store("k1".to_string(), b"v1".to_vec(), None)
+            .await
+            .unwrap();
+        storage
+            .store("k2".to_string(), b"v2".to_vec(), None)
+            .await
+            .unwrap();
+
+        storage.clear_all().await.unwrap();
+
+        assert!(storage.list_keys().is_empty());
+        let stats = storage.get_storage_stats();
+        assert_eq!(stats.total_entries, 0);
+        assert_eq!(stats.total_size, 0);
+    }
+
     #[tokio::test]
     async fn test_expiry() {
         let node_id = NodeId::from_bytes([1u8; 32]);
@@ -2419,7 +2688,11 @@ mod tests {
         storage.store(key.clone(), value, None).await.unwrap();
 
         // Set expiry in the past
-        let past_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() - 3600;
+        let past_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - 3600;
         storage.set_expiry(&key, past_time).await.unwrap();
 
         // Try to retrieve expired value
@@ -2439,15 +2712,22 @@ mod tests {
 
         // Create persistent storage and add entries
         {
-            let mut storage = DhtStorage::new_persistent(
-                node_id.clone(),
-                1024 * 1024,
-                persist_path.clone(),
-            ).unwrap();
+            let mut storage =
+                DhtStorage::new_persistent(node_id.clone(), 1024 * 1024, persist_path.clone())
+                    .unwrap();
 
-            storage.store("key1".to_string(), b"value1".to_vec(), None).await.unwrap();
-            storage.store("key2".to_string(), b"value2".to_vec(), None).await.unwrap();
-            storage.store("key3".to_string(), b"longer_value_three".to_vec(), None).await.unwrap();
+            storage
+                .store("key1".to_string(), b"value1".to_vec(), None)
+                .await
+                .unwrap();
+            storage
+                .store("key2".to_string(), b"value2".to_vec(), None)
+                .await
+                .unwrap();
+            storage
+                .store("key3".to_string(), b"longer_value_three".to_vec(), None)
+                .await
+                .unwrap();
 
             let stats = storage.get_storage_stats();
             assert_eq!(stats.total_entries, 3);
@@ -2455,11 +2735,9 @@ mod tests {
 
         // Create new persistent storage and verify data auto-restored
         {
-            let mut storage = DhtStorage::new_persistent(
-                node_id.clone(),
-                1024 * 1024,
-                persist_path.clone(),
-            ).unwrap();
+            let mut storage =
+                DhtStorage::new_persistent(node_id.clone(), 1024 * 1024, persist_path.clone())
+                    .unwrap();
 
             let stats = storage.get_storage_stats();
             assert_eq!(stats.total_entries, 3);
@@ -2467,7 +2745,10 @@ mod tests {
             // Verify values
             assert_eq!(storage.get("key1").await.unwrap(), Some(b"value1".to_vec()));
             assert_eq!(storage.get("key2").await.unwrap(), Some(b"value2".to_vec()));
-            assert_eq!(storage.get("key3").await.unwrap(), Some(b"longer_value_three".to_vec()));
+            assert_eq!(
+                storage.get("key3").await.unwrap(),
+                Some(b"longer_value_three".to_vec())
+            );
         }
 
         // Clean up
@@ -2486,22 +2767,21 @@ mod tests {
 
         // Create persistent storage and store data
         {
-            let mut storage = DhtStorage::new_persistent(
-                node_id.clone(),
-                1024 * 1024,
-                persist_path.clone(),
-            ).unwrap();
-            storage.store("key1".to_string(), b"value1".to_vec(), None).await.unwrap();
+            let mut storage =
+                DhtStorage::new_persistent(node_id.clone(), 1024 * 1024, persist_path.clone())
+                    .unwrap();
+            storage
+                .store("key1".to_string(), b"value1".to_vec(), None)
+                .await
+                .unwrap();
         }
 
         // Create new persistent storage instance and verify data persists
         // (sled handles atomicity internally, so data should be there)
         {
-            let mut storage = DhtStorage::new_persistent(
-                node_id.clone(),
-                1024 * 1024,
-                persist_path.clone(),
-            ).unwrap();
+            let mut storage =
+                DhtStorage::new_persistent(node_id.clone(), 1024 * 1024, persist_path.clone())
+                    .unwrap();
 
             assert_eq!(storage.get("key1").await.unwrap(), Some(b"value1".to_vec()));
         }
@@ -2522,14 +2802,18 @@ mod tests {
 
         // Create persistent storage, store, and remove
         {
-            let mut storage = DhtStorage::new_persistent(
-                node_id.clone(),
-                1024 * 1024,
-                persist_path.clone(),
-            ).unwrap();
+            let mut storage =
+                DhtStorage::new_persistent(node_id.clone(), 1024 * 1024, persist_path.clone())
+                    .unwrap();
 
-            storage.store("key1".to_string(), b"value1".to_vec(), None).await.unwrap();
-            storage.store("key2".to_string(), b"value2".to_vec(), None).await.unwrap();
+            storage
+                .store("key1".to_string(), b"value1".to_vec(), None)
+                .await
+                .unwrap();
+            storage
+                .store("key2".to_string(), b"value2".to_vec(), None)
+                .await
+                .unwrap();
             storage.remove("key1").await.unwrap();
 
             let stats = storage.get_storage_stats();
@@ -2538,11 +2822,9 @@ mod tests {
 
         // Create new persistent storage and verify remove was persisted
         {
-            let mut storage = DhtStorage::new_persistent(
-                node_id.clone(),
-                1024 * 1024,
-                persist_path.clone(),
-            ).unwrap();
+            let mut storage =
+                DhtStorage::new_persistent(node_id.clone(), 1024 * 1024, persist_path.clone())
+                    .unwrap();
 
             let stats = storage.get_storage_stats();
             assert_eq!(stats.total_entries, 1);
@@ -2569,24 +2851,23 @@ mod tests {
 
         // First instance: create new persistent storage in non-existent directory
         {
-            let mut storage = DhtStorage::new_persistent(
-                node_id.clone(),
-                1024 * 1024,
-                persist_path.clone(),
-            ).unwrap();
+            let mut storage =
+                DhtStorage::new_persistent(node_id.clone(), 1024 * 1024, persist_path.clone())
+                    .unwrap();
 
-            storage.store("key1".to_string(), b"value1".to_vec(), None).await.unwrap();
+            storage
+                .store("key1".to_string(), b"value1".to_vec(), None)
+                .await
+                .unwrap();
             let stats = storage.get_storage_stats();
             assert_eq!(stats.total_entries, 1);
         }
 
         // Second instance: reopen should load the existing data
         {
-            let mut storage = DhtStorage::new_persistent(
-                node_id.clone(),
-                1024 * 1024,
-                persist_path.clone(),
-            ).unwrap();
+            let mut storage =
+                DhtStorage::new_persistent(node_id.clone(), 1024 * 1024, persist_path.clone())
+                    .unwrap();
 
             let stats = storage.get_storage_stats();
             assert_eq!(stats.total_entries, 1);
@@ -2599,24 +2880,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_sequence_tracking_replay_rejection() {
-        use crate::dht::network::DhtNetwork;
         use crate::dht::peer_registry::DhtPeerEntry;
-        use crate::types::dht_types::{DhtPeerIdentity, build_peer_identity};
-        use lib_identity::{ZhtpIdentity, IdentityType};
-        use std::net::SocketAddr;
+        use crate::types::dht_types::build_peer_identity;
+        use lib_identity::{IdentityType, ZhtpIdentity};
 
         // Create a storage instance
         let node_id = NodeId::from_bytes([1u8; 32]);
         let mut storage = DhtStorage::new(node_id.clone(), 1024 * 1024);
 
         // Create a test peer
-        let peer_identity = ZhtpIdentity::new_unified(
-            IdentityType::Device,
-            None,
-            None,
-            "test-peer",
-            None,
-        ).expect("Failed to create peer identity");
+        let peer_identity =
+            ZhtpIdentity::new_unified(IdentityType::Device, None, None, "test-peer", None)
+                .expect("Failed to create peer identity");
 
         let peer_node = DhtNode {
             peer: build_peer_identity(
@@ -2653,36 +2928,44 @@ mod tests {
         storage.router.registry.upsert(entry).unwrap();
 
         // Test sequence 1 is accepted
-        assert!(storage.router.check_and_update_sequence(&peer_identity.node_id, 1).is_ok());
-        
+        assert!(storage
+            .router
+            .check_and_update_sequence(&peer_identity.node_id, 1)
+            .is_ok());
+
         // Test sequence 2 is accepted
-        assert!(storage.router.check_and_update_sequence(&peer_identity.node_id, 2).is_ok());
-        
+        assert!(storage
+            .router
+            .check_and_update_sequence(&peer_identity.node_id, 2)
+            .is_ok());
+
         // Test replay of sequence 2 is rejected
-        assert!(storage.router.check_and_update_sequence(&peer_identity.node_id, 2).is_err());
-        
+        assert!(storage
+            .router
+            .check_and_update_sequence(&peer_identity.node_id, 2)
+            .is_err());
+
         // Test replay of sequence 1 is rejected
-        assert!(storage.router.check_and_update_sequence(&peer_identity.node_id, 1).is_err());
+        assert!(storage
+            .router
+            .check_and_update_sequence(&peer_identity.node_id, 1)
+            .is_err());
     }
 
     #[tokio::test]
     async fn test_sequence_tracking_increments_replay_counter() {
         use crate::dht::peer_registry::DhtPeerEntry;
-        use crate::types::dht_types::{DhtPeerIdentity, build_peer_identity};
-        use lib_identity::{ZhtpIdentity, IdentityType};
+        use crate::types::dht_types::build_peer_identity;
+        use lib_identity::{IdentityType, ZhtpIdentity};
 
         // Create a storage instance
         let node_id = NodeId::from_bytes([1u8; 32]);
         let mut storage = DhtStorage::new(node_id.clone(), 1024 * 1024);
 
         // Create a test peer
-        let peer_identity = ZhtpIdentity::new_unified(
-            IdentityType::Device,
-            None,
-            None,
-            "test-peer-2",
-            None,
-        ).expect("Failed to create peer identity");
+        let peer_identity =
+            ZhtpIdentity::new_unified(IdentityType::Device, None, None, "test-peer-2", None)
+                .expect("Failed to create peer identity");
 
         let peer_node = DhtNode {
             peer: build_peer_identity(
@@ -2722,10 +3005,14 @@ mod tests {
         assert_eq!(storage.get_replay_rejection_count(), 0);
 
         // Accept a valid sequence
-        let _ = storage.router.check_and_update_sequence(&peer_identity.node_id, 11);
+        let _ = storage
+            .router
+            .check_and_update_sequence(&peer_identity.node_id, 11);
 
         // Try to replay sequence 10 (should be rejected)
-        let _ = storage.router.check_and_update_sequence(&peer_identity.node_id, 10);
+        let _ = storage
+            .router
+            .check_and_update_sequence(&peer_identity.node_id, 10);
 
         // Note: The replay_rejections counter is only incremented in the message processing loop,
         // not in direct router calls, so we can't test it directly here without running the full loop.
@@ -2735,21 +3022,17 @@ mod tests {
     #[tokio::test]
     async fn test_sequence_wraparound_in_storage() {
         use crate::dht::peer_registry::DhtPeerEntry;
-        use crate::types::dht_types::{DhtPeerIdentity, build_peer_identity};
-        use lib_identity::{ZhtpIdentity, IdentityType};
+        use crate::types::dht_types::build_peer_identity;
+        use lib_identity::{IdentityType, ZhtpIdentity};
 
         // Create a storage instance
         let node_id = NodeId::from_bytes([1u8; 32]);
         let mut storage = DhtStorage::new(node_id.clone(), 1024 * 1024);
 
         // Create a test peer
-        let peer_identity = ZhtpIdentity::new_unified(
-            IdentityType::Device,
-            None,
-            None,
-            "test-peer-wrap",
-            None,
-        ).expect("Failed to create peer identity");
+        let peer_identity =
+            ZhtpIdentity::new_unified(IdentityType::Device, None, None, "test-peer-wrap", None)
+                .expect("Failed to create peer identity");
 
         let peer_node = DhtNode {
             peer: build_peer_identity(
@@ -2786,10 +3069,16 @@ mod tests {
         storage.router.registry.upsert(entry).unwrap();
 
         // Should accept sequence 0 as wraparound
-        assert!(storage.router.check_and_update_sequence(&peer_identity.node_id, 0).is_ok());
-        
+        assert!(storage
+            .router
+            .check_and_update_sequence(&peer_identity.node_id, 0)
+            .is_ok());
+
         // Should accept sequence 1 after wraparound
-        assert!(storage.router.check_and_update_sequence(&peer_identity.node_id, 1).is_ok());
+        assert!(storage
+            .router
+            .check_and_update_sequence(&peer_identity.node_id, 1)
+            .is_ok());
     }
 
     // ==========================================================================
@@ -2857,7 +3146,10 @@ mod tests {
         let storage = DhtStorage::new_with_config(node_id, 1024 * 1024, zk_config);
 
         // Verify config was applied
-        assert_eq!(storage.zk_verification_config().timeout, Duration::from_millis(500));
+        assert_eq!(
+            storage.zk_verification_config().timeout,
+            Duration::from_millis(500)
+        );
         assert!(storage.zk_verification_config().enable_metrics);
 
         // Verify metrics are initialized
@@ -2870,7 +3162,10 @@ mod tests {
         let mut storage = DhtStorage::new(node_id, 1024 * 1024);
 
         // Default config
-        assert_eq!(storage.zk_verification_config().timeout, Duration::from_secs(5));
+        assert_eq!(
+            storage.zk_verification_config().timeout,
+            Duration::from_secs(5)
+        );
 
         // Update config at runtime
         let new_config = ZkVerificationConfig {
@@ -2880,7 +3175,10 @@ mod tests {
         storage.set_zk_verification_config(new_config);
 
         // Verify update
-        assert_eq!(storage.zk_verification_config().timeout, Duration::from_secs(10));
+        assert_eq!(
+            storage.zk_verification_config().timeout,
+            Duration::from_secs(10)
+        );
         assert!(!storage.zk_verification_config().enable_metrics);
     }
 
@@ -2922,21 +3220,76 @@ mod tests {
         let mut metrics = ZkVerificationMetrics::new();
 
         // Record verifications with known times
-        metrics.record_success(100);  // avg = 100
-        metrics.record_success(200);  // avg = 150
-        metrics.record_success(300);  // avg = 200
+        metrics.record_success(100); // avg = 100
+        metrics.record_success(200); // avg = 150
+        metrics.record_success(300); // avg = 200
 
         // Average should be (100 + 200 + 300) / 3 = 200
         assert!((metrics.avg_verification_time_ms - 200.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_legacy_persistence_compat_constructors_use_in_memory_mode() {
+        let node_id = NodeId::from_bytes([9u8; 32]);
+        let compat = DhtStorage::new_with_persistence(
+            node_id.clone(),
+            1024 * 1024,
+            PathBuf::from("/tmp/ignored-path"),
+        );
+        assert_eq!(compat.local_node_id, node_id);
+        assert_eq!(compat.storage_cache.len(), 0);
+
+        let zk_cfg = ZkVerificationConfig {
+            timeout: Duration::from_secs(7),
+            enable_metrics: false,
+        };
+        let compat_with_cfg = DhtStorage::new_with_persistence_and_config(
+            NodeId::from_bytes([10u8; 32]),
+            1024 * 1024,
+            PathBuf::from("/tmp/ignored-path-2"),
+            zk_cfg.clone(),
+        );
+        assert_eq!(
+            compat_with_cfg.zk_verification_config.timeout,
+            zk_cfg.timeout
+        );
+        assert_eq!(
+            compat_with_cfg.zk_verification_config.enable_metrics,
+            zk_cfg.enable_metrics
+        );
+    }
+
+    #[tokio::test]
+    async fn test_legacy_save_and_load_compat_methods() {
+        let node_id = NodeId::from_bytes([11u8; 32]);
+        let mut storage = DhtStorage::new(node_id, 1024 * 1024);
+
+        storage
+            .save_to_file(Path::new("/tmp/ignored-storage-path"))
+            .await
+            .expect("legacy save compatibility method should succeed");
+
+        let err = storage
+            .load_from_file(Path::new("/tmp/ignored-storage-path"))
+            .await
+            .expect_err("legacy load compatibility method should return migration error");
+        assert!(
+            err.to_string().contains("new_persistent() constructor"),
+            "unexpected migration error: {}",
+            err
+        );
+
+        // Compatibility no-op should not alter state or panic.
+        storage.set_persist_path(PathBuf::from("/tmp/ignored-storage-path-2"));
     }
 
     #[tokio::test]
     async fn test_zk_verification_timeout_behavior() {
         // [DB-002] Critical P0 security test: Verify that timeouts work correctly
         // to prevent DoS attacks through crafted proofs.
-        
+
         let node_id = NodeId::from_bytes([42u8; 32]);
-        
+
         // Configure with a very short timeout (10 microseconds) to force timeout.
         // Note: In practice, Plonky2 verification takes >1ms even for small proofs,
         // so 10µs ensures timeout on any real verification attempt.
@@ -2946,9 +3299,9 @@ mod tests {
             timeout: Duration::from_micros(10),
             enable_metrics: true,
         };
-        
+
         let mut storage = DhtStorage::new_with_config(node_id, 1024 * 1024, zk_config);
-        
+
         // Create a ZK proof that looks valid enough to trigger actual verification
         // but will fail or timeout during the cryptographic operations
         let zk_proof = ZkProof {
@@ -2957,14 +3310,14 @@ mod tests {
             public_inputs: vec![5, 6, 7, 8],
             verification_key: vec![9, 10, 11, 12],
             plonky2_proof: None,
-            proof: vec![],  // Deprecated field
+            proof: vec![], // Deprecated field
         };
-        
+
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         let zk_value = ZkDhtValue {
             encrypted_data: vec![13, 14, 15, 16],
             validity_proof: ZkProof {
@@ -2983,26 +3336,30 @@ mod tests {
             access_level: crate::types::dht_types::AccessLevel::Public,
             timestamp: current_time,
         };
-        
+
         // Attempt verification - may either timeout or fail fast
         let result = storage.verify_zk_proof(&zk_proof, &zk_value).await;
-        
+
         // The result should be either:
         // 1. Error (timeout or verification error) - acceptable
         // 2. Ok(false) - fast rejection of invalid proof - also acceptable
         // What matters is that the timeout mechanism exists and metrics are tracked
-        
+
         let metrics = storage.zk_verification_metrics();
-        
+
         // At minimum, we should have recorded the verification attempt
-        assert_eq!(metrics.total_verifications, 1, "Should record one verification attempt");
-        
+        assert_eq!(
+            metrics.total_verifications, 1,
+            "Should record one verification attempt"
+        );
+
         match result {
             Err(e) => {
                 // Error case - could be timeout or other error
                 let error_msg = e.to_string();
-                if error_msg.to_lowercase().contains("timeout") || 
-                   error_msg.to_lowercase().contains("timed out") {
+                if error_msg.to_lowercase().contains("timeout")
+                    || error_msg.to_lowercase().contains("timed out")
+                {
                     // Timeout occurred - verify metrics
                     assert_eq!(metrics.timeout_count, 1, "Should record one timeout");
                     assert_eq!(metrics.successful_verifications, 0);
@@ -3015,7 +3372,10 @@ mod tests {
             Ok(false) => {
                 // Fast rejection - verification completed but proof was invalid
                 // This is acceptable as it shows the system can handle invalid proofs quickly
-                assert_eq!(metrics.failed_verifications, 1, "Should record one failed verification");
+                assert_eq!(
+                    metrics.failed_verifications, 1,
+                    "Should record one failed verification"
+                );
                 assert_eq!(metrics.timeout_count, 0);
             }
             Ok(true) => {

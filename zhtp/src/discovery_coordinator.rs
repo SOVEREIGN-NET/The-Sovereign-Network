@@ -3,13 +3,13 @@
 //! This module coordinates all discovery protocols (DHT, mDNS, BLE, WiFi Direct, etc.)
 //! to prevent duplicate peer discoveries and optimize network resource usage in QUIC-based mesh.
 
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::sync::{RwLock, mpsc};
-use anyhow::{Result, Context};
-use tracing::{info, debug, warn};
-use serde::{Serialize, Deserialize};
+use tokio::sync::{mpsc, RwLock};
+use tracing::{debug, info, warn};
 
 use lib_crypto::PublicKey;
 use lib_network::network_utils::get_local_ip;
@@ -81,19 +81,19 @@ impl DiscoveryProtocol {
             Self::Satellite => "Satellite",
         }
     }
-    
+
     /// Priority order (lower number = higher priority)
     pub fn priority(&self) -> u8 {
         match self {
-            Self::UdpMulticast => 1,  // Fastest, local
-            Self::MDns => 2,           // Fast, cross-subnet
-            Self::BluetoothLE => 3,    // Medium, mobile-friendly
-            Self::WiFiDirect => 4,     // Medium, good for phones
-            Self::DHT => 5,            // Slower, global
+            Self::UdpMulticast => 1,     // Fastest, local
+            Self::MDns => 2,             // Fast, cross-subnet
+            Self::BluetoothLE => 3,      // Medium, mobile-friendly
+            Self::WiFiDirect => 4,       // Medium, good for phones
+            Self::DHT => 5,              // Slower, global
             Self::BluetoothClassic => 6, // High bandwidth
-            Self::PortScan => 7,       // Slow, fallback only
-            Self::LoRaWAN => 8,        // Long range but slow
-            Self::Satellite => 9,      // Very slow, last resort
+            Self::PortScan => 7,         // Slow, fallback only
+            Self::LoRaWAN => 8,          // Long range but slow
+            Self::Satellite => 9,        // Very slow, last resort
         }
     }
 }
@@ -103,22 +103,22 @@ impl DiscoveryProtocol {
 pub struct DiscoveredPeer {
     /// Peer's public key (optional - may be learned after initial discovery)
     pub public_key: Option<PublicKey>,
-    
+
     /// Network addresses (can have multiple)
     pub addresses: Vec<String>,
-    
+
     /// Which protocol discovered this peer
     pub discovered_via: DiscoveryProtocol,
-    
+
     /// When this peer was first discovered
     pub first_seen: SystemTime,
-    
+
     /// When this peer was last seen
     pub last_seen: SystemTime,
-    
+
     /// Node ID (if available)
     pub node_id: Option<String>,
-    
+
     /// Node capabilities (if available)
     pub capabilities: Option<String>,
 }
@@ -131,25 +131,25 @@ pub enum DiscoveryStrategy {
         protocols: Vec<DiscoveryProtocol>,
         timeout: Duration,
     },
-    
+
     /// Thorough local + regional (< 10 seconds)
     Thorough {
         protocols: Vec<DiscoveryProtocol>,
         timeout: Duration,
     },
-    
+
     /// Global mesh discovery (< 30 seconds)
     Global {
         protocols: Vec<DiscoveryProtocol>,
         timeout: Duration,
     },
-    
+
     /// Battery-saving mode for mobile devices
     LowPower {
         protocols: Vec<DiscoveryProtocol>,
         interval: Duration,
     },
-    
+
     /// Custom strategy
     Custom {
         protocols: Vec<DiscoveryProtocol>,
@@ -161,10 +161,7 @@ pub enum DiscoveryStrategy {
 impl Default for DiscoveryStrategy {
     fn default() -> Self {
         Self::FastLocal {
-            protocols: vec![
-                DiscoveryProtocol::UdpMulticast,
-                DiscoveryProtocol::MDns,
-            ],
+            protocols: vec![DiscoveryProtocol::UdpMulticast, DiscoveryProtocol::MDns],
             timeout: Duration::from_secs(2),
         }
     }
@@ -180,11 +177,11 @@ impl DiscoveryStrategy {
             Self::LowPower { protocols, .. } => protocols.clone(),
             Self::Custom { protocols, .. } => protocols.clone(),
         };
-        
+
         protocols.sort_by_key(|p| p.priority());
         protocols
     }
-    
+
     /// Get timeout for this strategy
     pub fn timeout(&self) -> Duration {
         match self {
@@ -195,7 +192,7 @@ impl DiscoveryStrategy {
             Self::Custom { timeout, .. } => *timeout,
         }
     }
-    
+
     /// Whether to run protocols sequentially
     pub fn is_sequential(&self) -> bool {
         match self {
@@ -273,31 +270,39 @@ impl DiscoveryCoordinator {
             strategy: Arc::new(RwLock::new(DiscoveryStrategy::default())),
             runtime: Arc::new(RwLock::new(None)),
             action_queue: Arc::new(RwLock::new(None)),
-            max_peers: 10_000,           // SECURITY: Prevent unbounded peer collection
-            max_addresses_per_peer: 20,  // SECURITY: Prevent address bloat per peer
+            max_peers: 10_000, // SECURITY: Prevent unbounded peer collection
+            max_addresses_per_peer: 20, // SECURITY: Prevent address bloat per peer
         }
     }
 
     /// Set the NodeRuntime and action queue for policy integration
-    pub async fn set_runtime(&self, runtime: Arc<dyn crate::runtime::NodeRuntime>, action_queue: Arc<crate::runtime::node_runtime_orchestrator::ActionQueue>) {
+    pub async fn set_runtime(
+        &self,
+        runtime: Arc<dyn crate::runtime::NodeRuntime>,
+        action_queue: Arc<crate::runtime::node_runtime_orchestrator::ActionQueue>,
+    ) {
         *self.runtime.write().await = Some(runtime);
         *self.action_queue.write().await = Some(action_queue);
     }
-    
+
     /// Set discovery strategy
     pub async fn set_strategy(&self, strategy: DiscoveryStrategy) {
         info!("🔍 Discovery strategy set to: {:?}", strategy);
         *self.strategy.write().await = strategy;
     }
-    
+
     /// Get discovery event sender (for protocols to use)
     pub fn get_sender(&self) -> mpsc::UnboundedSender<DiscoveredPeer> {
         self.discovery_tx.clone()
     }
-    
+
     /// Start listening for discovery events
     pub async fn start_event_listener(&self) {
-        let mut rx = self.discovery_rx.write().await.take()
+        let mut rx = self
+            .discovery_rx
+            .write()
+            .await
+            .take()
             .expect("Event listener already started");
 
         let peers = self.peers.clone();
@@ -305,7 +310,7 @@ impl DiscoveryCoordinator {
         let stats = self.stats.clone();
         let runtime = self.runtime.clone();
         let action_queue = self.action_queue.clone();
-        let max_peers = self.max_peers;              // SECURITY: Capture limits
+        let max_peers = self.max_peers; // SECURITY: Capture limits
         let max_addresses_per_peer = self.max_addresses_per_peer;
 
         tokio::spawn(async move {
@@ -317,7 +322,9 @@ impl DiscoveryCoordinator {
                     pubkey.key_id.to_vec()
                 } else {
                     // Use primary address as key when PublicKey unavailable
-                    discovered_peer.addresses.first()
+                    discovered_peer
+                        .addresses
+                        .first()
                         .map(|addr| addr.as_bytes().to_vec())
                         .unwrap_or_default()
                 };
@@ -328,16 +335,21 @@ impl DiscoveryCoordinator {
 
                 if let Some(existing_peer) = peers_lock.get_mut(&peer_key) {
                     // SECURITY: Enforce max addresses per peer limit
-                    let addresses_to_add: Vec<String> = discovered_peer.addresses.iter()
+                    let addresses_to_add: Vec<String> = discovered_peer
+                        .addresses
+                        .iter()
                         .filter(|addr| !existing_peer.addresses.contains(addr))
                         .cloned()
                         .collect();
 
                     for addr in addresses_to_add {
                         if existing_peer.addresses.len() >= max_addresses_per_peer {
-                            warn!("Peer {} has reached max addresses ({}), not adding: {}",
-                                  hex::encode(&peer_key[..std::cmp::min(8, peer_key.len())]),
-                                  max_addresses_per_peer, addr);
+                            warn!(
+                                "Peer {} has reached max addresses ({}), not adding: {}",
+                                hex::encode(&peer_key[..std::cmp::min(8, peer_key.len())]),
+                                max_addresses_per_peer,
+                                addr
+                            );
                             break;
                         }
                         existing_peer.addresses.push(addr);
@@ -353,14 +365,19 @@ impl DiscoveryCoordinator {
                 } else {
                     // SECURITY: Enforce max peer count
                     if peers_lock.len() >= max_peers {
-                        warn!("Discovery coordinator reached max peer limit ({}), rejecting new peer",
-                              max_peers);
+                        warn!(
+                            "Discovery coordinator reached max peer limit ({}), rejecting new peer",
+                            max_peers
+                        );
                     } else {
                         // New peer - check address limit
                         let mut peer_to_insert = discovered_peer.clone();
                         if peer_to_insert.addresses.len() > max_addresses_per_peer {
-                            warn!("New peer has {} addresses, truncating to {}",
-                                  peer_to_insert.addresses.len(), max_addresses_per_peer);
+                            warn!(
+                                "New peer has {} addresses, truncating to {}",
+                                peer_to_insert.addresses.len(),
+                                max_addresses_per_peer
+                            );
                             peer_to_insert.addresses.truncate(max_addresses_per_peer);
                         }
 
@@ -387,7 +404,8 @@ impl DiscoveryCoordinator {
 
                 // Update stats
                 let mut stats_lock = stats.write().await;
-                let protocol_stats = stats_lock.entry(discovered_peer.discovered_via)
+                let protocol_stats = stats_lock
+                    .entry(discovered_peer.discovered_via)
                     .or_insert_with(ProtocolStats::default);
                 protocol_stats.peers_discovered += 1;
                 protocol_stats.success_count += 1;
@@ -405,15 +423,33 @@ impl DiscoveryCoordinator {
                                     public_key: pubkey,
                                     addresses: discovered_peer.addresses.clone(),
                                     discovered_via: match discovered_peer.discovered_via {
-                                        DiscoveryProtocol::UdpMulticast => crate::runtime::DiscoveryProtocol::UdpMulticast,
-                                        DiscoveryProtocol::MDns => crate::runtime::DiscoveryProtocol::UdpMulticast, // Treat mDNS as multicast-like
-                                        DiscoveryProtocol::BluetoothLE => crate::runtime::DiscoveryProtocol::BluetoothLE,
-                                        DiscoveryProtocol::BluetoothClassic => crate::runtime::DiscoveryProtocol::BluetoothClassic,
-                                        DiscoveryProtocol::WiFiDirect => crate::runtime::DiscoveryProtocol::WiFiDirect,
-                                        DiscoveryProtocol::DHT => crate::runtime::DiscoveryProtocol::UdpMulticast, // DHT uses UDP
-                                        DiscoveryProtocol::PortScan => crate::runtime::DiscoveryProtocol::UdpMulticast, // Port scan fallback uses UDP
-                                        DiscoveryProtocol::LoRaWAN => crate::runtime::DiscoveryProtocol::LoRaWAN,
-                                        DiscoveryProtocol::Satellite => crate::runtime::DiscoveryProtocol::Bootstrap, // Satellite discovery implies bootstrap
+                                        DiscoveryProtocol::UdpMulticast => {
+                                            crate::runtime::DiscoveryProtocol::UdpMulticast
+                                        }
+                                        DiscoveryProtocol::MDns => {
+                                            crate::runtime::DiscoveryProtocol::UdpMulticast
+                                        } // Treat mDNS as multicast-like
+                                        DiscoveryProtocol::BluetoothLE => {
+                                            crate::runtime::DiscoveryProtocol::BluetoothLE
+                                        }
+                                        DiscoveryProtocol::BluetoothClassic => {
+                                            crate::runtime::DiscoveryProtocol::BluetoothClassic
+                                        }
+                                        DiscoveryProtocol::WiFiDirect => {
+                                            crate::runtime::DiscoveryProtocol::WiFiDirect
+                                        }
+                                        DiscoveryProtocol::DHT => {
+                                            crate::runtime::DiscoveryProtocol::UdpMulticast
+                                        } // DHT uses UDP
+                                        DiscoveryProtocol::PortScan => {
+                                            crate::runtime::DiscoveryProtocol::UdpMulticast
+                                        } // Port scan fallback uses UDP
+                                        DiscoveryProtocol::LoRaWAN => {
+                                            crate::runtime::DiscoveryProtocol::LoRaWAN
+                                        }
+                                        DiscoveryProtocol::Satellite => {
+                                            crate::runtime::DiscoveryProtocol::Bootstrap
+                                        } // Satellite discovery implies bootstrap
                                     },
                                     first_seen: discovered_peer.first_seen,
                                     last_seen: discovered_peer.last_seen,
@@ -439,40 +475,42 @@ impl DiscoveryCoordinator {
             info!("📡 Discovery event listener stopped");
         });
     }
-    
+
     /// Register a discovered peer (thread-safe, deduplicates automatically)
     pub async fn register_peer(&self, peer: DiscoveredPeer) -> Result<bool> {
         // Send through channel for centralized processing
-        self.discovery_tx.send(peer)
+        self.discovery_tx
+            .send(peer)
             .context("Failed to send discovery event")?;
         Ok(true)
     }
-    
+
     /// Get all discovered peers
     pub async fn get_all_peers(&self) -> Vec<DiscoveredPeer> {
         let peers = self.peers.read().await;
         peers.values().cloned().collect()
     }
-    
+
     /// Get peers discovered by specific protocol
     pub async fn get_peers_by_protocol(&self, protocol: DiscoveryProtocol) -> Vec<DiscoveredPeer> {
         let peers = self.peers.read().await;
-        peers.values()
+        peers
+            .values()
             .filter(|p| p.discovered_via == protocol)
             .cloned()
             .collect()
     }
-    
+
     /// Get total peer count
     pub async fn peer_count(&self) -> usize {
         self.peers.read().await.len()
     }
-    
+
     /// Check if an address has been seen before
     pub async fn has_seen_address(&self, address: &str) -> bool {
         self.seen_addresses.read().await.contains(address)
     }
-    
+
     /// Mark a protocol as active
     pub async fn activate_protocol(&self, protocol: DiscoveryProtocol) {
         let mut active = self.active_protocols.write().await;
@@ -480,7 +518,7 @@ impl DiscoveryCoordinator {
             info!("✓ Activated {} discovery", protocol.name());
         }
     }
-    
+
     /// Mark a protocol as inactive
     pub async fn deactivate_protocol(&self, protocol: DiscoveryProtocol) {
         let mut active = self.active_protocols.write().await;
@@ -488,74 +526,78 @@ impl DiscoveryCoordinator {
             info!("✗ Deactivated {} discovery", protocol.name());
         }
     }
-    
+
     /// Get currently active protocols
     pub async fn active_protocols(&self) -> HashSet<DiscoveryProtocol> {
         self.active_protocols.read().await.clone()
     }
-    
+
     /// Get statistics for a protocol
     pub async fn get_protocol_stats(&self, protocol: DiscoveryProtocol) -> Option<ProtocolStats> {
         self.stats.read().await.get(&protocol).cloned()
     }
-    
+
     /// Get statistics for all protocols
     pub async fn get_all_stats(&self) -> HashMap<DiscoveryProtocol, ProtocolStats> {
         self.stats.read().await.clone()
     }
-    
+
     /// Record a discovery attempt
-    pub async fn record_attempt(&self, protocol: DiscoveryProtocol, success: bool, duration_ms: f64) {
+    pub async fn record_attempt(
+        &self,
+        protocol: DiscoveryProtocol,
+        success: bool,
+        duration_ms: f64,
+    ) {
         let mut stats = self.stats.write().await;
-        let protocol_stats = stats.entry(protocol)
-            .or_insert_with(ProtocolStats::default);
-        
+        let protocol_stats = stats.entry(protocol).or_insert_with(ProtocolStats::default);
+
         protocol_stats.discovery_attempts += 1;
-        
+
         if success {
             protocol_stats.success_count += 1;
             protocol_stats.last_success = Some(SystemTime::now());
         } else {
             protocol_stats.failure_count += 1;
         }
-        
+
         // Update rolling average
         let total = protocol_stats.discovery_attempts as f64;
-        protocol_stats.avg_discovery_time_ms = 
+        protocol_stats.avg_discovery_time_ms =
             (protocol_stats.avg_discovery_time_ms * (total - 1.0) + duration_ms) / total;
     }
-    
+
     /// Clean up stale peers (not seen for X duration)
     pub async fn cleanup_stale_peers(&self, max_age: Duration) -> usize {
         let mut peers = self.peers.write().await;
         let now = SystemTime::now();
-        
+
         let before_count = peers.len();
-        
+
         peers.retain(|_, peer| {
             now.duration_since(peer.last_seen)
                 .map(|age| age < max_age)
                 .unwrap_or(false)
         });
-        
+
         let removed = before_count - peers.len();
         if removed > 0 {
             info!("🗑️ Cleaned up {} stale peers", removed);
         }
-        
+
         removed
     }
-    
+
     /// Get discovery statistics summary
     pub async fn get_summary(&self) -> String {
         let peers = self.peers.read().await;
         let active = self.active_protocols.read().await;
         let stats = self.stats.read().await;
-        
+
         let mut summary = format!("Discovery Coordinator Summary:\n");
         summary.push_str(&format!("  Total Peers: {}\n", peers.len()));
         summary.push_str(&format!("  Active Protocols: {}\n", active.len()));
-        
+
         for protocol in active.iter() {
             if let Some(stat) = stats.get(protocol) {
                 summary.push_str(&format!(
@@ -566,14 +608,14 @@ impl DiscoveryCoordinator {
                 ));
             }
         }
-        
+
         summary
     }
-    
+
     // ========================================================================
     // HIGH-LEVEL DISCOVERY API - Used by RuntimeOrchestrator
     // ========================================================================
-    
+
     /// Discover ZHTP network using all available methods
     ///
     /// This is the main entry point for network discovery. It tries:
@@ -607,7 +649,7 @@ impl DiscoveryCoordinator {
             return Err(anyhow::anyhow!("No network peers found"));
         }
 
-        info!("✓ Discovered {} ZHTP peer(s)!", discovered_peers.len());
+        info!("✓ Discovered {} SOV peer(s)!", discovered_peers.len());
         for (i, peer) in discovered_peers.iter().enumerate() {
             info!("   {}. {}", i + 1, peer);
         }
@@ -628,7 +670,6 @@ impl DiscoveryCoordinator {
             environment: environment.clone(),
         })
     }
-    
 
     /// Perform active peer discovery using all methods
     ///
@@ -642,7 +683,10 @@ impl DiscoveryCoordinator {
 
         // Method 0: Bootstrap peers from runtime config (ALWAYS TRY FIRST)
         if !self.config.bootstrap_peers.is_empty() {
-            info!("   → Trying configured bootstrap peers ({} addresses)...", self.config.bootstrap_peers.len());
+            info!(
+                "   → Trying configured bootstrap peers ({} addresses)...",
+                self.config.bootstrap_peers.len()
+            );
 
             // SECURITY (MEDIUM #8): Hash peer IPs before logging to prevent information disclosure
             // Hashing reveals nothing about which IPs are actually used, but allows correlation
@@ -673,15 +717,24 @@ impl DiscoveryCoordinator {
                 // Trust configured bootstrap peers - QUIC connection will validate reachability
                 // No TCP check needed since we use UDP/QUIC only
                 if peer.parse::<std::net::SocketAddr>().is_ok() {
-                    debug!("      ✓ Adding bootstrap peer {} (will verify via QUIC)", peer_hash);
+                    debug!(
+                        "      ✓ Adding bootstrap peer {} (will verify via QUIC)",
+                        peer_hash
+                    );
                     discovered_peers.push(peer.clone());
                 } else {
-                    warn!("      ✗ Invalid bootstrap peer address format: {}", peer_hash);
+                    warn!(
+                        "      ✗ Invalid bootstrap peer address format: {}",
+                        peer_hash
+                    );
                 }
             }
-            info!("      Using {} configured bootstrap peer(s)", discovered_peers.len());
+            info!(
+                "      Using {} configured bootstrap peer(s)",
+                discovered_peers.len()
+            );
         }
-        
+
         // Method 1: Peer discovery via lib-network
         // NOTE: Peer discovery is handled by lib-network which correctly filters peers by node_id.
         // Waiting a moment here to allow discovery announcements to be processed.
@@ -690,7 +743,10 @@ impl DiscoveryCoordinator {
             tokio::time::sleep(Duration::from_millis(500)).await;
             let all_peers = self.get_all_peers().await;
             if !all_peers.is_empty() {
-                info!("      Found {} peer(s) via lib-network discovery", all_peers.len());
+                info!(
+                    "      Found {} peer(s) via lib-network discovery",
+                    all_peers.len()
+                );
                 for peer in all_peers {
                     for addr in &peer.addresses {
                         if !discovered_peers.contains(addr) {
@@ -700,7 +756,7 @@ impl DiscoveryCoordinator {
                 }
             }
         }
-        
+
         // Method 2: Port scanning (last resort fallback)
         if discovered_peers.is_empty() {
             info!("   → Trying port scan...");
@@ -712,15 +768,14 @@ impl DiscoveryCoordinator {
                 Err(e) => warn!("      Port scan failed: {}", e),
             }
         }
-        
+
         // Deduplicate
         discovered_peers.sort();
         discovered_peers.dedup();
-        
+
         Ok(discovered_peers)
     }
-    
-    
+
     /// Scan local subnet for ZHTP nodes via UDP multicast
     /// NOTE: We don't use TCP for discovery - ZHTP uses UDP multicast for local discovery
     /// and QUIC for mesh communication. Subnet scanning is handled by lib-network's
@@ -732,9 +787,7 @@ impl DiscoveryCoordinator {
         debug!("      Subnet scan delegated to UDP multicast discovery");
         Ok(Vec::new())
     }
-    
 
-    
     /// Get blockchain info for discovered peers
     /// NOTE: Actual blockchain sync happens via QUIC mesh protocol, not HTTP
     /// This just returns basic info indicating peers were found
@@ -744,7 +797,10 @@ impl DiscoveryCoordinator {
         let network_id = if peers.is_empty() {
             "zhtp-genesis".to_string()
         } else {
-            info!("      Will sync blockchain via QUIC mesh from {} peer(s)", peers.len());
+            info!(
+                "      Will sync blockchain via QUIC mesh from {} peer(s)",
+                peers.len()
+            );
             "zhtp-network".to_string()
         };
 
@@ -775,7 +831,7 @@ impl Default for DiscoveryCoordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_coordinator_deduplication() {
         let config = DiscoveryConfig::new(
@@ -785,9 +841,9 @@ mod tests {
         );
         let coordinator = DiscoveryCoordinator::new(config);
         coordinator.start_event_listener().await;
-        
+
         let pubkey = PublicKey::new(vec![1, 2, 3, 4]);
-        
+
         let peer1 = DiscoveredPeer {
             public_key: Some(pubkey.clone()),
             addresses: vec!["192.168.1.1:9333".to_string()],
@@ -807,31 +863,40 @@ mod tests {
             node_id: None,
             capabilities: None,
         };
-        
+
         coordinator.register_peer(peer1).await.unwrap();
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         coordinator.register_peer(peer2).await.unwrap();
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         // Should have 1 peer with 2 addresses
         assert_eq!(coordinator.peer_count().await, 1);
-        
+
         let peers = coordinator.get_all_peers().await;
         assert_eq!(peers[0].addresses.len(), 2);
     }
-    
+
     #[tokio::test]
     async fn test_protocol_stats() {
         let config = DiscoveryConfig::new(vec![], 9333, vec![]);
         let coordinator = DiscoveryCoordinator::new(config);
-        
-        coordinator.record_attempt(DiscoveryProtocol::UdpMulticast, true, 50.0).await;
-        coordinator.record_attempt(DiscoveryProtocol::UdpMulticast, true, 100.0).await;
-        coordinator.record_attempt(DiscoveryProtocol::UdpMulticast, false, 0.0).await;
-        
-        let stats = coordinator.get_protocol_stats(DiscoveryProtocol::UdpMulticast).await.unwrap();
-        
+
+        coordinator
+            .record_attempt(DiscoveryProtocol::UdpMulticast, true, 50.0)
+            .await;
+        coordinator
+            .record_attempt(DiscoveryProtocol::UdpMulticast, true, 100.0)
+            .await;
+        coordinator
+            .record_attempt(DiscoveryProtocol::UdpMulticast, false, 0.0)
+            .await;
+
+        let stats = coordinator
+            .get_protocol_stats(DiscoveryProtocol::UdpMulticast)
+            .await
+            .unwrap();
+
         assert_eq!(stats.discovery_attempts, 3);
         assert_eq!(stats.success_count, 2);
         assert_eq!(stats.failure_count, 1);

@@ -1,19 +1,20 @@
 //! State Transition Recursive Circuit Implementation
-//! 
+//!
 //! Advanced recursive circuits for proving chains of state transitions
 //! with efficient verification of blockchain state evolution.
 
-use anyhow::Result;
-use serde::{Serialize, Deserialize};
 use crate::circuits::StateTransitionProof;
+use crate::plonky2::{
+    CircuitBuilder, CircuitConfig, CircuitConstraint, Plonky2Proof, RecursiveProof,
+};
 use crate::state::StateCommitment;
-use crate::plonky2::{CircuitBuilder, CircuitConfig, CircuitConstraint, Plonky2Proof, 
-    RecursiveProof};
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 // Custom serialization for [u8; 64] arrays
 mod signatures_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    
+
     pub fn serialize<S>(signatures: &Vec<[u8; 64]>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -21,7 +22,7 @@ mod signatures_serde {
         let signatures_vec: Vec<Vec<u8>> = signatures.iter().map(|s| s.to_vec()).collect();
         signatures_vec.serialize(serializer)
     }
-    
+
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<[u8; 64]>, D::Error>
     where
         D: Deserializer<'de>,
@@ -67,10 +68,10 @@ pub struct TransitionValidationRules {
 impl Default for TransitionValidationRules {
     fn default() -> Self {
         Self {
-            max_height_gap: 1000,      // Allow up to 1000 blocks gap
-            max_time_gap: 86400,       // 24 hours
-            min_chain_length: 2,       // At least 2 transitions
-            max_chain_length: 100,     // Up to 100 transitions per proof
+            max_height_gap: 1000,  // Allow up to 1000 blocks gap
+            max_time_gap: 86400,   // 24 hours
+            min_chain_length: 2,   // At least 2 transitions
+            max_chain_length: 100, // Up to 100 transitions per proof
             require_validator_consistency: true,
             allow_balance_increases: true,
         }
@@ -253,7 +254,8 @@ impl StateTransitionRecursiveCircuit {
     /// Verify a chain validation proof
     pub fn verify_chain_proof(&self, proof: &ChainValidationProof) -> Result<bool> {
         // Verify recursive proof
-        let recursive_valid = crate::plonky2::verify_batch_recursive_proof(&proof.chain_recursive_proof)?;
+        let recursive_valid =
+            crate::plonky2::verify_batch_recursive_proof(&proof.chain_recursive_proof)?;
         if !recursive_valid {
             return Ok(false);
         }
@@ -279,24 +281,33 @@ impl StateTransitionRecursiveCircuit {
         }
 
         if chain.transitions.len() < self.validation_rules.min_chain_length as usize {
-            return Err(anyhow::anyhow!("Chain too short: {} < {}", 
-                chain.transitions.len(), self.validation_rules.min_chain_length));
+            return Err(anyhow::anyhow!(
+                "Chain too short: {} < {}",
+                chain.transitions.len(),
+                self.validation_rules.min_chain_length
+            ));
         }
 
         if chain.transitions.len() > self.validation_rules.max_chain_length as usize {
-            return Err(anyhow::anyhow!("Chain too long: {} > {}", 
-                chain.transitions.len(), self.validation_rules.max_chain_length));
+            return Err(anyhow::anyhow!(
+                "Chain too long: {} > {}",
+                chain.transitions.len(),
+                self.validation_rules.max_chain_length
+            ));
         }
 
         // Validate continuity between transitions
         for i in 1..chain.transitions.len() {
-            let prev = &chain.transitions[i-1];
+            let prev = &chain.transitions[i - 1];
             let curr = &chain.transitions[i];
 
             // Check block height continuity
             let height_diff = curr.public_inputs.block_height - prev.public_inputs.block_height;
             if height_diff > self.validation_rules.max_height_gap {
-                return Err(anyhow::anyhow!("Block height gap too large: {}", height_diff));
+                return Err(anyhow::anyhow!(
+                    "Block height gap too large: {}",
+                    height_diff
+                ));
             }
 
             // Check timestamp continuity
@@ -307,14 +318,20 @@ impl StateTransitionRecursiveCircuit {
 
             // Check state continuity
             if curr.public_inputs.prev_state_root != prev.public_inputs.new_state_root {
-                return Err(anyhow::anyhow!("State continuity broken at transition {}", i));
+                return Err(anyhow::anyhow!(
+                    "State continuity broken at transition {}",
+                    i
+                ));
             }
         }
 
         // Validate checkpoints
         for checkpoint in &chain.checkpoints {
             if checkpoint.position >= chain.transitions.len() as u32 {
-                return Err(anyhow::anyhow!("Invalid checkpoint position: {}", checkpoint.position));
+                return Err(anyhow::anyhow!(
+                    "Invalid checkpoint position: {}",
+                    checkpoint.position
+                ));
             }
         }
 
@@ -331,14 +348,14 @@ impl StateTransitionRecursiveCircuit {
         for _i in 1..chain.transitions.len() {
             let prev_end_wire = builder.add_private_input(None);
             let curr_start_wire = builder.add_private_input(None);
-            
+
             // Constrain that prev_end == curr_start
             builder.add_equality_constraint(prev_end_wire, curr_start_wire);
         }
 
         builder.add_constraint(CircuitConstraint {
             constraint_type: "block_height_progression".to_string(),
-            wires: vec![2, 3], // Placeholder wire indices
+            wires: vec![2, 3],        // Placeholder wire indices
             coefficients: vec![1, 1], // Placeholder coefficients
         });
 
@@ -354,14 +371,14 @@ impl StateTransitionRecursiveCircuit {
         // Verify supply conservation across the entire chain
         let genesis_supply_wire = builder.add_public_input(None);
         let final_supply_wire = builder.add_public_input(None);
-        
+
         // Calculate total fees across all transitions
         let mut total_fees_wire = builder.add_public_input(None); // Start with 0
         for _transition in &chain.transitions {
             let transition_fees_wire = builder.add_private_input(None);
             total_fees_wire = builder.add_addition(total_fees_wire, transition_fees_wire);
         }
-        
+
         // final_supply should equal genesis_supply - total_fees (fees are burned/redistributed)
         let expected_final_wire = builder.add_subtraction(genesis_supply_wire, total_fees_wire);
         builder.add_equality_constraint(final_supply_wire, expected_final_wire);
@@ -377,7 +394,7 @@ impl StateTransitionRecursiveCircuit {
     ) -> Result<()> {
         builder.add_constraint(CircuitConstraint {
             constraint_type: "timestamp_progression".to_string(),
-            wires: vec![6, 7], // Placeholder wire indices
+            wires: vec![6, 7],        // Placeholder wire indices
             coefficients: vec![1, 1], // Placeholder coefficients
         });
 
@@ -392,7 +409,7 @@ impl StateTransitionRecursiveCircuit {
     ) -> Result<()> {
         builder.add_constraint(CircuitConstraint {
             constraint_type: "checkpoint_validity".to_string(),
-            wires: vec![8, 9], // Placeholder wire indices
+            wires: vec![8, 9],        // Placeholder wire indices
             coefficients: vec![1, 1], // Placeholder coefficients
         });
 
@@ -400,11 +417,15 @@ impl StateTransitionRecursiveCircuit {
     }
 
     /// Generate recursive proof for the entire chain
-    fn generate_chain_recursive_proof(&self, chain: &StateTransitionChain) -> Result<RecursiveProof> {
-        use crate::plonky2::{RecursiveConfig, generate_batch_recursive_proof};
+    fn generate_chain_recursive_proof(
+        &self,
+        chain: &StateTransitionChain,
+    ) -> Result<RecursiveProof> {
+        use crate::plonky2::{generate_batch_recursive_proof, RecursiveConfig};
 
         // Extract Plonky2 proofs from all transitions
-        let transition_proofs: Vec<Plonky2Proof> = chain.transitions
+        let transition_proofs: Vec<Plonky2Proof> = chain
+            .transitions
             .iter()
             .map(|t| t.plonky2_proof.clone())
             .collect();
@@ -460,7 +481,7 @@ impl StateTransitionRecursiveCircuit {
         let transition_complexity = chain.transitions.len() as u64 * 100;
         let checkpoint_complexity = chain.checkpoints.len() as u64 * 50;
         let time_span_factor = (chain.chain_metadata.time_span / 3600).max(1); // Hours
-        
+
         (transition_complexity + checkpoint_complexity) * time_span_factor
     }
 
@@ -468,7 +489,7 @@ impl StateTransitionRecursiveCircuit {
         let base_usage = 1024 * 1024; // 1MB base
         let transition_usage = chain.transitions.len() as u64 * 10240; // 10KB per transition
         let checkpoint_usage = chain.checkpoints.len() as u64 * 5120; // 5KB per checkpoint
-        
+
         base_usage + transition_usage + checkpoint_usage
     }
 
@@ -482,15 +503,17 @@ impl StateTransitionRecursiveCircuit {
 
     fn calculate_total_fees(&self, chain: &StateTransitionChain) -> u64 {
         // Sum fees from all transitions
-        chain.transitions.iter()
+        chain
+            .transitions
+            .iter()
             .map(|t| t.metadata.transaction_count as u64 * 100) // Estimate: 100 units per transaction
             .sum()
     }
 
     fn calculate_total_rewards(&self, chain: &StateTransitionChain) -> u64 {
         // Calculate block rewards
-        let block_count = chain.chain_metadata.final_state.block_height - 
-                         chain.chain_metadata.genesis_state.block_height;
+        let block_count = chain.chain_metadata.final_state.block_height
+            - chain.chain_metadata.genesis_state.block_height;
         block_count * 1000 // Estimate: 1000 units per block reward
     }
 
@@ -514,15 +537,15 @@ impl StateTransitionRecursiveCircuit {
         if inputs.transition_count == 0 {
             return Err(anyhow::anyhow!("Invalid transition count"));
         }
-        
+
         if inputs.end_block_height < inputs.start_block_height {
             return Err(anyhow::anyhow!("Invalid block height progression"));
         }
-        
+
         if inputs.end_timestamp < inputs.start_timestamp {
             return Err(anyhow::anyhow!("Invalid timestamp progression"));
         }
-        
+
         Ok(())
     }
 
@@ -531,11 +554,11 @@ impl StateTransitionRecursiveCircuit {
         if proof.balance_proof.is_empty() {
             return Err(anyhow::anyhow!("Missing balance proof"));
         }
-        
+
         if proof.fee_distribution_proof.is_empty() {
             return Err(anyhow::anyhow!("Missing fee distribution proof"));
         }
-        
+
         Ok(())
     }
 }

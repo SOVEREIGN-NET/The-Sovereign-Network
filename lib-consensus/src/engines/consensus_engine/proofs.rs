@@ -1,6 +1,7 @@
 use super::*;
 use crate::proofs::StorageCapacityAttestation;
 use lib_crypto::{hash_blake3, Hash, PostQuantumSignature};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 impl ConsensusEngine {
     /// Create a new proposal
@@ -45,6 +46,7 @@ impl ConsensusEngine {
             id: proposal_id,
             proposer: validator_id.clone(),
             height: self.current_round.height,
+            round: self.current_round.round,
             previous_hash,
             block_data,
             timestamp: SystemTime::now()
@@ -67,33 +69,75 @@ impl ConsensusEngine {
 
     /// Get the hash of the previous block
     async fn get_previous_block_hash(&self) -> ConsensusResult<Hash> {
-        // In production, this would query the blockchain for the latest block hash
         if self.current_round.height == 0 {
-            // Genesis block
-            Ok(Hash([0u8; 32]))
-        } else {
-            // For demo, create deterministic previous hash based on height
-            let prev_hash_data = format!("block_{}", self.current_round.height - 1);
-            Ok(Hash::from_bytes(&hash_blake3(prev_hash_data.as_bytes())))
+            // Genesis block - no previous hash
+            return Ok(Hash([0u8; 32]));
         }
+
+        // Use blockchain provider if available
+        if let Some(ref provider) = self.blockchain_provider {
+            match provider.get_latest_block_hash().await {
+                Ok(hash) => {
+                    tracing::debug!(
+                        "Got previous block hash from blockchain: {:?}",
+                        &hash.as_bytes()[..8]
+                    );
+                    return Ok(hash);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to get block hash from blockchain provider: {} - using fallback",
+                        e
+                    );
+                }
+            }
+        }
+
+        // Fallback: deterministic hash based on height (for testing/single-node)
+        let prev_hash_data = format!("block_{}", self.current_round.height - 1);
+        Ok(Hash::from_bytes(&hash_blake3(prev_hash_data.as_bytes())))
     }
 
     /// Collect transactions for the new block
     async fn collect_block_transactions(&self) -> ConsensusResult<Vec<u8>> {
-        // In production, this would:
-        // 1. Get pending transactions from mempool
-        // 2. Validate transactions
-        // 3. Select transactions based on fees and priority
-        // 4. Create block data with transaction merkle tree
+        // Use blockchain provider if available
+        if let Some(ref provider) = self.blockchain_provider {
+            if provider.is_ready().await {
+                match provider.get_pending_transactions().await {
+                    Ok(tx_data) => {
+                        if !tx_data.is_empty() {
+                            tracing::info!(
+                                "📦 Collected {} bytes of pending transactions for block {}",
+                                tx_data.len(),
+                                self.current_round.height
+                            );
+                            return Ok(tx_data);
+                        } else {
+                            tracing::debug!(
+                                "No pending transactions for block {}",
+                                self.current_round.height
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to get pending transactions: {} - creating empty block",
+                            e
+                        );
+                    }
+                }
+            }
+        }
 
-        // For demo, create minimal block data
+        // Fallback: create minimal block data (for empty blocks or when provider unavailable)
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|e| ConsensusError::TimeError(e))?
             .as_secs();
 
+        // Empty block with just metadata
         let block_data = format!(
-            "block_height:{},timestamp:{},validator_count:{}",
+            "empty_block:height={},timestamp={},validators={}",
             self.current_round.height,
             timestamp,
             self.validator_manager.get_active_validators().len()
@@ -180,18 +224,6 @@ impl ConsensusEngine {
                     timestamp,
                 })
             }
-            ConsensusType::Hybrid => {
-                let stake_proof = self.create_stake_proof().await?;
-                let storage_proof = self.create_storage_proof().await?;
-                Ok(ConsensusProof {
-                    consensus_type,
-                    stake_proof: Some(stake_proof),
-                    storage_proof: Some(storage_proof),
-                    work_proof: None,
-                    zk_did_proof: None,
-                    timestamp,
-                })
-            }
             ConsensusType::ByzantineFaultTolerance => {
                 // BFT uses all proof types
                 let stake_proof = self.create_stake_proof().await?;
@@ -254,21 +286,31 @@ impl ConsensusEngine {
             .get_validator(validator_id)
             .ok_or_else(|| ConsensusError::ValidatorError("Validator not found".to_string()))?;
 
-        let provider = self
-            .storage_proof_provider
-            .as_ref()
-            .ok_or_else(|| {
-                ConsensusError::ProofVerificationFailed(
-                    "No storage proof provider configured".to_string(),
-                )
-            })?;
-
-        let unsigned = provider
-            .capacity_attestation(&Hash::from_bytes(validator_id.as_bytes()))
-            .await
-            .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
-
         let keypair = self.local_signing_keypair(validator)?;
+
+        if let Some(ref provider) = self.storage_proof_provider {
+            let unsigned = provider
+                .capacity_attestation(&Hash::from_bytes(validator_id.as_bytes()))
+                .await
+                .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
+
+            let attestation = unsigned
+                .sign(keypair)
+                .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
+
+            return Ok(attestation);
+        }
+
+        // No storage proof provider — emit a signed stub attestation (0 capacity, no challenges).
+        // This allows consensus to proceed on dev/testnet nodes that don't provide storage.
+        // Production (Mainnet) deployments should always configure a real provider.
+        let validator_hash = Hash::from_bytes(validator_id.as_bytes());
+        let unsigned = crate::proofs::StorageCapacityAttestation::new(
+            validator_hash,
+            0,      // storage_capacity: none
+            0,      // utilization: 0%
+            vec![], // no challenge results
+        );
         let attestation = unsigned
             .sign(keypair)
             .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
@@ -297,10 +339,7 @@ impl ConsensusEngine {
             routing_work,
             storage_work,
             compute_work,
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?
-                .as_secs(),
+            self.engine_start_time,
             validator_id.as_bytes().try_into().unwrap_or([0u8; 32]),
         )
         .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
@@ -348,14 +387,11 @@ impl ConsensusEngine {
         &self,
         validator: &crate::validators::Validator,
     ) -> ConsensusResult<&lib_crypto::KeyPair> {
-        let keypair = self
-            .validator_keypair
-            .as_ref()
-            .ok_or_else(|| {
-                ConsensusError::ValidatorError(
-                    "No signing keypair configured for local validator".to_string(),
-                )
-            })?;
+        let keypair = self.validator_keypair.as_ref().ok_or_else(|| {
+            ConsensusError::ValidatorError(
+                "No signing keypair configured for local validator".to_string(),
+            )
+        })?;
 
         if keypair.public_key.dilithium_pk != validator.consensus_key {
             return Err(ConsensusError::ValidatorError(

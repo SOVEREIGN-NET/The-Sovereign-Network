@@ -6,9 +6,7 @@
 pub mod registry;
 
 // Re-export core types and functions
-pub use registry::{DAORegistry, DAOEntry, derive_dao_id};
+pub use registry::{derive_dao_id, DAOEntry, DAORegistry};
 
 // Re-export Phase 3 sector claim types (Issue #658)
-pub use registry::{
-    SectorClaim, SectorClaimStatus, ApprovalVerifierType,
-};
+pub use registry::{ApprovalVerifierType, SectorClaim, SectorClaimStatus};

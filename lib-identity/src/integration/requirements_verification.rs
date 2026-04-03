@@ -1,9 +1,8 @@
 //! Requirements verification for cross-package integration
 
-
 use crate::identity::ZhtpIdentity;
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Requirements verification system for identity operations
 #[derive(Debug, Clone)]
@@ -112,24 +111,26 @@ impl RequirementsVerifier {
             let current_time = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_secs();
-            
+
             if cached_result.expires_at > current_time {
                 return Ok(cached_result.result.clone());
             }
         }
 
         // Get requirement definition
-        let requirement = self.requirements_db.get(requirement_id)
+        let requirement = self
+            .requirements_db
+            .get(requirement_id)
             .ok_or_else(|| format!("Unknown requirement: {}", requirement_id))?;
 
         // Perform verification
         let result = self.perform_verification(identity, requirement).await?;
-        
+
         // Cache result
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
-        
+
         let cached_result = CachedVerificationResult {
             requirement_id: requirement_id.to_string(),
             identity_id: hex::encode(&identity.id.0),
@@ -137,9 +138,9 @@ impl RequirementsVerifier {
             cached_at: current_time,
             expires_at: current_time + (requirement.validity_period_hours as u64 * 3600),
         };
-        
+
         self.verification_cache.insert(cache_key, cached_result);
-        
+
         Ok(result)
     }
 
@@ -172,18 +173,24 @@ impl RequirementsVerifier {
                         result.proofs_verified.push(verified_proof.clone());
                         total_confidence += verified_proof.confidence;
                         proofs_count += 1;
-                        
+
                         // Update trust level based on proof quality
                         let proof_trust_level = self.calculate_proof_trust_level(&verified_proof);
                         if proof_trust_level > result.trust_level_achieved {
                             result.trust_level_achieved = proof_trust_level;
                         }
                     } else {
-                        result.warnings.push(format!("Proof {} below minimum confidence", proof_req.proof_type));
+                        result.warnings.push(format!(
+                            "Proof {} below minimum confidence",
+                            proof_req.proof_type
+                        ));
                     }
-                },
+                }
                 Err(e) => {
-                    result.errors.push(format!("Failed to verify proof {}: {}", proof_req.proof_type, e));
+                    result.errors.push(format!(
+                        "Failed to verify proof {}: {}",
+                        proof_req.proof_type, e
+                    ));
                 }
             }
         }
@@ -196,7 +203,9 @@ impl RequirementsVerifier {
         };
 
         // Count attestations (simplified - would check actual attestations)
-        result.attestations_count = identity.metadata.get("attestation_count")
+        result.attestations_count = identity
+            .metadata
+            .get("attestation_count")
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(0) as u32;
 
@@ -207,14 +216,18 @@ impl RequirementsVerifier {
             && result.confidence_score >= 0.7; // Minimum overall confidence
 
         // Add metadata
-        result.metadata.insert("requirement_name".to_string(), 
-            serde_json::Value::String(requirement.name.clone()));
-        result.metadata.insert("verification_timestamp".to_string(),
+        result.metadata.insert(
+            "requirement_name".to_string(),
+            serde_json::Value::String(requirement.name.clone()),
+        );
+        result.metadata.insert(
+            "verification_timestamp".to_string(),
             serde_json::Value::Number(serde_json::Number::from(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)?
-                    .as_secs()
-            )));
+                    .as_secs(),
+            )),
+        );
 
         Ok(result)
     }
@@ -227,7 +240,7 @@ impl RequirementsVerifier {
     ) -> Result<VerifiedProof, Box<dyn std::error::Error>> {
         // In implementation, would integrate with actual proof verification system
         // For now, simulate verification based on identity data
-        
+
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
@@ -253,7 +266,7 @@ impl RequirementsVerifier {
         Ok(VerifiedProof {
             proof_type: proof_req.proof_type.clone(),
             issuer: "lib_identity_system".to_string(), // Would be actual issuer
-            issued_at: current_time - 86400, // Simulate issued yesterday
+            issued_at: current_time - 86400,           // Simulate issued yesterday
             verified_at: current_time,
             confidence,
             attributes_disclosed: disclosed_attributes,
@@ -276,82 +289,105 @@ impl RequirementsVerifier {
         let mut requirements = HashMap::new();
 
         // Citizenship verification requirement
-        requirements.insert("citizenship_verification".to_string(), VerificationRequirement {
-            requirement_id: "citizenship_verification".to_string(),
-            name: "Citizenship Verification".to_string(),
-            description: "Verify citizen status for UBI and DAO participation".to_string(),
-            required_proofs: vec![
-                ProofRequirement {
-                    proof_type: "citizenship_proof".to_string(),
-                    required_attributes: vec!["nationality".to_string(), "residence".to_string()],
-                    privacy_level: PrivacyLevel::Restricted,
-                    trusted_issuers: vec!["government_registry".to_string(), "lib_foundation".to_string()],
-                    minimum_confidence: 0.90,
-                },
-                ProofRequirement {
-                    proof_type: "identity_proof".to_string(),
-                    required_attributes: vec!["full_name".to_string(), "date_of_birth".to_string()],
-                    privacy_level: PrivacyLevel::Confidential,
-                    trusted_issuers: vec!["identity_authority".to_string()],
-                    minimum_confidence: 0.85,
-                }
-            ],
-            minimum_trust_level: TrustLevel::High,
-            validity_period_hours: 24,
-            required_attestations: 2,
-        });
+        requirements.insert(
+            "citizenship_verification".to_string(),
+            VerificationRequirement {
+                requirement_id: "citizenship_verification".to_string(),
+                name: "Citizenship Verification".to_string(),
+                description: "Verify citizen status for UBI and DAO participation".to_string(),
+                required_proofs: vec![
+                    ProofRequirement {
+                        proof_type: "citizenship_proof".to_string(),
+                        required_attributes: vec![
+                            "nationality".to_string(),
+                            "residence".to_string(),
+                        ],
+                        privacy_level: PrivacyLevel::Restricted,
+                        trusted_issuers: vec![
+                            "government_registry".to_string(),
+                            "lib_foundation".to_string(),
+                        ],
+                        minimum_confidence: 0.90,
+                    },
+                    ProofRequirement {
+                        proof_type: "identity_proof".to_string(),
+                        required_attributes: vec![
+                            "full_name".to_string(),
+                            "date_of_birth".to_string(),
+                        ],
+                        privacy_level: PrivacyLevel::Confidential,
+                        trusted_issuers: vec!["identity_authority".to_string()],
+                        minimum_confidence: 0.85,
+                    },
+                ],
+                minimum_trust_level: TrustLevel::High,
+                validity_period_hours: 24,
+                required_attestations: 2,
+            },
+        );
 
         // Age verification requirement
-        requirements.insert("age_verification".to_string(), VerificationRequirement {
-            requirement_id: "age_verification".to_string(),
-            name: "Age Verification".to_string(),
-            description: "Verify minimum age for service access".to_string(),
-            required_proofs: vec![
-                ProofRequirement {
+        requirements.insert(
+            "age_verification".to_string(),
+            VerificationRequirement {
+                requirement_id: "age_verification".to_string(),
+                name: "Age Verification".to_string(),
+                description: "Verify minimum age for service access".to_string(),
+                required_proofs: vec![ProofRequirement {
                     proof_type: "age_proof".to_string(),
                     required_attributes: vec!["age_over_18".to_string()],
                     privacy_level: PrivacyLevel::Restricted,
                     trusted_issuers: vec!["age_verification_service".to_string()],
                     minimum_confidence: 0.80,
-                }
-            ],
-            minimum_trust_level: TrustLevel::Standard,
-            validity_period_hours: 168, // 1 week
-            required_attestations: 1,
-        });
+                }],
+                minimum_trust_level: TrustLevel::Standard,
+                validity_period_hours: 168, // 1 week
+                required_attestations: 1,
+            },
+        );
 
         // Financial qualification requirement
-        requirements.insert("financial_qualification".to_string(), VerificationRequirement {
-            requirement_id: "financial_qualification".to_string(),
-            name: "Financial Qualification".to_string(),
-            description: "Verify financial standing for advanced services".to_string(),
-            required_proofs: vec![
-                ProofRequirement {
-                    proof_type: "income_proof".to_string(),
-                    required_attributes: vec!["income_level".to_string(), "employment_status".to_string()],
-                    privacy_level: PrivacyLevel::Confidential,
-                    trusted_issuers: vec!["financial_institution".to_string(), "employer".to_string()],
-                    minimum_confidence: 0.85,
-                },
-                ProofRequirement {
-                    proof_type: "credit_proof".to_string(),
-                    required_attributes: vec!["credit_score".to_string()],
-                    privacy_level: PrivacyLevel::Secret,
-                    trusted_issuers: vec!["credit_bureau".to_string()],
-                    minimum_confidence: 0.80,
-                }
-            ],
-            minimum_trust_level: TrustLevel::High,
-            validity_period_hours: 720, // 30 days
-            required_attestations: 3,
-        });
+        requirements.insert(
+            "financial_qualification".to_string(),
+            VerificationRequirement {
+                requirement_id: "financial_qualification".to_string(),
+                name: "Financial Qualification".to_string(),
+                description: "Verify financial standing for advanced services".to_string(),
+                required_proofs: vec![
+                    ProofRequirement {
+                        proof_type: "income_proof".to_string(),
+                        required_attributes: vec![
+                            "income_level".to_string(),
+                            "employment_status".to_string(),
+                        ],
+                        privacy_level: PrivacyLevel::Confidential,
+                        trusted_issuers: vec![
+                            "financial_institution".to_string(),
+                            "employer".to_string(),
+                        ],
+                        minimum_confidence: 0.85,
+                    },
+                    ProofRequirement {
+                        proof_type: "credit_proof".to_string(),
+                        required_attributes: vec!["credit_score".to_string()],
+                        privacy_level: PrivacyLevel::Secret,
+                        trusted_issuers: vec!["credit_bureau".to_string()],
+                        minimum_confidence: 0.80,
+                    },
+                ],
+                minimum_trust_level: TrustLevel::High,
+                validity_period_hours: 720, // 30 days
+                required_attestations: 3,
+            },
+        );
 
         requirements
     }
 
     /// Add new verification requirement
     pub fn add_requirement(&mut self, requirement: VerificationRequirement) {
-        self.requirements_db.insert(requirement.requirement_id.clone(), requirement);
+        self.requirements_db
+            .insert(requirement.requirement_id.clone(), requirement);
     }
 
     /// Get all available requirements
@@ -367,7 +403,8 @@ impl RequirementsVerifier {
     /// Get cache statistics
     pub fn get_cache_stats(&self) -> (usize, usize) {
         let active_entries = self.verification_cache.len();
-        let expired_entries = self.verification_cache
+        let expired_entries = self
+            .verification_cache
             .values()
             .filter(|entry| {
                 let current_time = std::time::SystemTime::now()
@@ -377,7 +414,7 @@ impl RequirementsVerifier {
                 entry.expires_at <= current_time
             })
             .count();
-        
+
         (active_entries, expired_entries)
     }
 }

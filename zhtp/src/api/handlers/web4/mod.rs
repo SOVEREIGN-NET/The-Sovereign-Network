@@ -14,27 +14,30 @@
 //! It intercepts requests like `myapp.zhtp.localhost` and routes them to
 //! the appropriate Web4 content.
 
-pub mod domains;
-pub mod content;
-pub mod gateway;
 pub mod chunked_upload;
+pub mod content;
+pub mod domains;
+pub mod gateway;
 
-pub use domains::*;
+pub use chunked_upload::{handle_chunked_upload, ChunkedUploadManager, UploadLimits, UploadStats};
 pub use content::*;
+pub use domains::*;
 pub use gateway::*;
-pub use chunked_upload::{ChunkedUploadManager, UploadLimits, UploadStats, handle_chunked_upload};
 
-use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
-use lib_protocols::zhtp::ZhtpResult;
-use lib_protocols::zhtp::ZhtpRequestHandler;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use lib_network::web4::{DomainRegistry, ContentPublisher, NameResolver, Web4ContentService};
-use tracing::{info, warn, error, debug};
-use serde::{Serialize, Deserialize};
+use crate::pouw::types::ProofType;
+use crate::pouw::validation::{ReceiptValidator, ValidatedReceipt};
 use chrono;
-use uuid;
 use hex;
+use lib_network::web4::{ContentPublisher, DomainRegistry, NameResolver, Web4ContentService};
+use lib_protocols::zhtp::ZhtpRequestHandler;
+use lib_protocols::zhtp::ZhtpResult;
+use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::RwLock;
+use tracing::{debug, error, info, warn};
+use uuid;
 
 /// Standardized error response format (Issue #11)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,7 +54,7 @@ pub struct Web4Handler {
     /// Read-only name resolver
     name_resolver: Arc<NameResolver>,
     /// Content publisher for publishing content
-    content_publisher: Arc<ContentPublisher>,
+    _content_publisher: Arc<ContentPublisher>,
     /// Content service for serving Web4 content
     content_service: Arc<Web4ContentService>,
     /// Wallet-content ownership manager
@@ -62,6 +65,10 @@ pub struct Web4Handler {
     blockchain: Arc<RwLock<lib_blockchain::Blockchain>>,
     /// Chunked upload manager for large files
     chunked_upload_manager: Arc<ChunkedUploadManager>,
+    /// Optional POUW validator for emitting Web4 receipts on successful serves/resolves
+    pouw_validator: Option<Arc<RwLock<ReceiptValidator>>>,
+    /// DID of this node (for receipt attribution)
+    node_did: Option<String>,
 }
 
 impl Web4Handler {
@@ -87,12 +94,14 @@ impl Web4Handler {
         Ok(Self {
             domain_registry,
             name_resolver,
-            content_publisher,
+            _content_publisher: content_publisher,
             content_service: Arc::new(content_service),
             wallet_content_manager: Arc::new(RwLock::new(wallet_content_manager)),
             identity_manager,
             blockchain,
             chunked_upload_manager: Arc::new(ChunkedUploadManager::new()),
+            pouw_validator: None,
+            node_did: None,
         })
     }
 
@@ -101,8 +110,79 @@ impl Web4Handler {
         Arc::clone(&self.domain_registry)
     }
 
+    /// Attach a POUW validator for emitting Web4 receipts on successful serves/resolves
+    pub fn with_pouw_validator(
+        mut self,
+        pouw_validator: Arc<RwLock<ReceiptValidator>>,
+        node_did: String,
+    ) -> Self {
+        self.pouw_validator = Some(pouw_validator);
+        self.node_did = Some(node_did);
+        self
+    }
+
+    /// Emit a Web4ContentServed receipt (server-side, fire-and-forget)
+    async fn emit_content_served(&self, domain: &str, bytes: u64) {
+        let Some(v) = &self.pouw_validator else {
+            return;
+        };
+        let node_did = self.node_did.as_deref().unwrap_or("did:zhtp:node");
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let mut nonce = vec![0u8; 16];
+        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce);
+        let receipt = ValidatedReceipt {
+            receipt_nonce: nonce,
+            client_did: node_did.to_string(),
+            task_id: vec![0u8; 16],
+            proof_type: ProofType::Web4ContentServed,
+            bytes_verified: bytes,
+            validated_at: now,
+            challenge_nonce: vec![0u8; 16],
+            manifest_cid: None,
+            domain: Some(domain.to_string()),
+            route_hops: None,
+            served_from_cache: Some(true),
+        };
+        v.read().await.emit_direct(receipt).await;
+    }
+
+    /// Emit a Web4ManifestRoute receipt (server-side, fire-and-forget)
+    async fn emit_manifest_route(&self, domain: &str, bytes: u64) {
+        let Some(v) = &self.pouw_validator else {
+            return;
+        };
+        let node_did = self.node_did.as_deref().unwrap_or("did:zhtp:node");
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let mut nonce = vec![0u8; 16];
+        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce);
+        let receipt = ValidatedReceipt {
+            receipt_nonce: nonce,
+            client_did: node_did.to_string(),
+            task_id: vec![0u8; 16],
+            proof_type: ProofType::Web4ManifestRoute,
+            bytes_verified: bytes,
+            validated_at: now,
+            challenge_nonce: vec![0u8; 16],
+            manifest_cid: None,
+            domain: Some(domain.to_string()),
+            route_hops: Some(1),
+            served_from_cache: None,
+        };
+        v.read().await.emit_direct(receipt).await;
+    }
+
     /// Create standardized JSON error response (Issue #11)
-    fn json_error(&self, status: ZhtpStatus, message: impl Into<String>) -> ZhtpResult<ZhtpResponse> {
+    fn json_error(
+        &self,
+        status: ZhtpStatus,
+        message: impl Into<String>,
+    ) -> ZhtpResult<ZhtpResponse> {
         let code = match status {
             ZhtpStatus::BadRequest => 400,
             ZhtpStatus::Unauthorized => 401,
@@ -124,7 +204,6 @@ impl Web4Handler {
 
     /// Get Web4 system statistics
     async fn get_web4_statistics(&self) -> ZhtpResult<ZhtpResponse> {
-
         match self.domain_registry.get_statistics().await {
             Ok(stats) => {
                 let stats_json = serde_json::to_vec(&stats)
@@ -207,7 +286,8 @@ impl Web4Handler {
     /// Resolve Web4 domain to DApp (Issue #9)
     /// GET /api/v1/web4/resolve/{domain}
     async fn resolve_web4_domain(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let domain = request.uri
+        let domain = request
+            .uri
             .strip_prefix("/api/v1/web4/resolve/")
             .ok_or_else(|| anyhow::anyhow!("Invalid resolve URL"))?;
 
@@ -230,6 +310,9 @@ impl Web4Handler {
 
                 let json = serde_json::to_vec(&response)
                     .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+
+                // Emit Web4ManifestRoute receipt for successful domain resolution
+                self.emit_manifest_route(domain, json.len() as u64).await;
 
                 Ok(ZhtpResponse::success_with_content_type(
                     json,
@@ -259,7 +342,8 @@ impl Web4Handler {
     async fn serve_content(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         // Parse domain and path from URL
         // URL format: /api/v1/web4/content/{domain}/{path...}
-        let content_path = request.uri
+        let content_path = request
+            .uri
             .strip_prefix("/api/v1/web4/content/")
             .ok_or_else(|| anyhow::anyhow!("Invalid content URL"))?;
 
@@ -294,13 +378,14 @@ impl Web4Handler {
                     "Content served successfully"
                 );
 
+                // Emit Web4ContentServed receipt for successful content serve
+                self.emit_content_served(&domain, result.content.len() as u64)
+                    .await;
+
                 // Build response with headers
-                let mut response = ZhtpResponse::success_with_content_type(
-                    result.content,
-                    result.mime_type,
-                    None,
-                )
-                .with_cache_control(result.cache_control);
+                let mut response =
+                    ZhtpResponse::success_with_content_type(result.content, result.mime_type, None)
+                        .with_cache_control(result.cache_control);
 
                 // Add ETag if present
                 if let Some(etag) = result.etag {
@@ -314,10 +399,8 @@ impl Web4Handler {
 
                 // Add fallback indicator header (useful for debugging SPA routing)
                 if result.is_fallback {
-                    response = response.with_custom_header(
-                        "X-Web4-Fallback".to_string(),
-                        "true".to_string(),
-                    );
+                    response = response
+                        .with_custom_header("X-Web4-Fallback".to_string(), "true".to_string());
                 }
 
                 Ok(response)
@@ -349,7 +432,9 @@ impl Web4Handler {
         }
 
         // This is an UPLOAD request - store the blob
-        let content_type = request.headers.content_type
+        let content_type = request
+            .headers
+            .content_type
             .clone()
             .unwrap_or_else(|| "application/octet-stream".to_string());
 
@@ -360,7 +445,10 @@ impl Web4Handler {
         );
 
         // Store blob in content-addressed storage
-        let content_id = self.domain_registry.store_content_by_cid(request.body.clone()).await
+        let content_id = self
+            .domain_registry
+            .store_content_by_cid(request.body.clone())
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to store blob: {}", e))?;
 
         let response = serde_json::json!({
@@ -399,7 +487,8 @@ impl Web4Handler {
         let manifest: serde_json::Value = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid manifest JSON: {}", e))?;
 
-        let files_count = manifest.get("files")
+        let files_count = manifest
+            .get("files")
             .and_then(|v| {
                 // Handle both array (Vec<FileEntry>) and object (HashMap<String, ManifestFile>) formats
                 if let Some(arr) = v.as_array() {
@@ -413,13 +502,19 @@ impl Web4Handler {
             .unwrap_or(0);
 
         debug!(
-            domain = manifest.get("domain").and_then(|v| v.as_str()).unwrap_or("unknown"),
+            domain = manifest
+                .get("domain")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown"),
             files = files_count,
             "Uploading manifest"
         );
 
         // Store manifest in content-addressed storage
-        let manifest_cid = self.domain_registry.store_content_by_cid(request.body.clone()).await
+        let manifest_cid = self
+            .domain_registry
+            .store_content_by_cid(request.body.clone())
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to store manifest: {}", e))?;
 
         let response = serde_json::json!({
@@ -446,7 +541,10 @@ impl Web4Handler {
     async fn fetch_content_by_cid(&self, cid: &str) -> ZhtpResult<ZhtpResponse> {
         info!("Fetching content by CID: {}", cid);
 
-        let content = self.domain_registry.get_content_by_cid(cid).await
+        let content = self
+            .domain_registry
+            .get_content_by_cid(cid)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to retrieve content: {}", e))?;
 
         match content {
@@ -501,19 +599,28 @@ impl ZhtpRequestHandler for Web4Handler {
             "/api/v1/web4/domains/resolve" if request.method == lib_protocols::ZhtpMethod::Post => {
                 self.resolve_domain_manifest(request).await
             }
-            "/api/v1/web4/domains/admin/migrate-domains" if request.method == lib_protocols::ZhtpMethod::Post => {
+            "/api/v1/web4/domains/admin/migrate-domains"
+                if request.method == lib_protocols::ZhtpMethod::Post =>
+            {
                 self.migrate_domains(request).await
             }
             "/api/v1/web4/domains/update" if request.method == lib_protocols::ZhtpMethod::Post => {
                 self.update_domain_version(request).await
             }
-            path if path.starts_with("/api/v1/web4/domains/status/") && request.method == lib_protocols::ZhtpMethod::Get => {
+            path if path.starts_with("/api/v1/web4/domains/status/")
+                && request.method == lib_protocols::ZhtpMethod::Get =>
+            {
                 self.get_domain_status(request).await
             }
-            path if path.starts_with("/api/v1/web4/domains/history/") && request.method == lib_protocols::ZhtpMethod::Get => {
+            path if path.starts_with("/api/v1/web4/domains/history/")
+                && request.method == lib_protocols::ZhtpMethod::Get =>
+            {
                 self.get_domain_history(request).await
             }
-            path if path.starts_with("/api/v1/web4/domains/") && path.ends_with("/rollback") && request.method == lib_protocols::ZhtpMethod::Post => {
+            path if path.starts_with("/api/v1/web4/domains/")
+                && path.ends_with("/rollback")
+                && request.method == lib_protocols::ZhtpMethod::Post =>
+            {
                 self.rollback_domain(request).await
             }
 
@@ -521,10 +628,14 @@ impl ZhtpRequestHandler for Web4Handler {
             path if path.starts_with("/api/v1/web4/domains/register") => {
                 self.register_domain_simple(request.body).await
             }
-            path if path.starts_with("/api/v1/web4/domains?") && request.method == lib_protocols::ZhtpMethod::Get => {
+            path if path.starts_with("/api/v1/web4/domains?")
+                && request.method == lib_protocols::ZhtpMethod::Get =>
+            {
                 self.list_domains(request).await
             }
-            path if path.starts_with("/api/v1/web4/domains/") && request.method == lib_protocols::ZhtpMethod::Get => {
+            path if path.starts_with("/api/v1/web4/domains/")
+                && request.method == lib_protocols::ZhtpMethod::Get =>
+            {
                 self.get_domain(request).await
             }
             path if path.starts_with("/api/v1/web4/domains/") && path.ends_with("/transfer") => {
@@ -538,7 +649,9 @@ impl ZhtpRequestHandler for Web4Handler {
             path if path.starts_with("/api/v1/web4/content/upload/") => {
                 // Extract owner DID from request headers or use placeholder
                 // In production, this should come from the authenticated principal via VerifiedPrincipal
-                let owner_did = request.headers.get("x-owner-did")
+                let owner_did = request
+                    .headers
+                    .get("x-owner-did")
                     .unwrap_or_else(|| "anonymous".to_string());
                 handle_chunked_upload(request, &self.chunked_upload_manager, &owner_did).await
             }
@@ -548,31 +661,39 @@ impl ZhtpRequestHandler for Web4Handler {
                 self.publish_content(request.body).await
             }
             // Blob upload/fetch endpoint
-            path if path == "/api/v1/web4/content/blob" && request.method == lib_protocols::ZhtpMethod::Post => {
+            path if path == "/api/v1/web4/content/blob"
+                && request.method == lib_protocols::ZhtpMethod::Post =>
+            {
                 self.handle_blob(request).await
             }
             // Manifest upload/fetch endpoint
-            path if path == "/api/v1/web4/content/manifest" && request.method == lib_protocols::ZhtpMethod::Post => {
+            path if path == "/api/v1/web4/content/manifest"
+                && request.method == lib_protocols::ZhtpMethod::Post =>
+            {
                 self.handle_manifest(request).await
             }
-            path if path.starts_with("/api/v1/web4/content/") && request.method == lib_protocols::ZhtpMethod::Put => {
+            path if path.starts_with("/api/v1/web4/content/")
+                && request.method == lib_protocols::ZhtpMethod::Put =>
+            {
                 self.update_content(request).await
             }
             path if path.starts_with("/api/v1/web4/content/") && path.ends_with("/metadata") => {
                 self.get_content_metadata(request).await
             }
-            path if path.starts_with("/api/v1/web4/content/") && request.method == lib_protocols::ZhtpMethod::Delete => {
+            path if path.starts_with("/api/v1/web4/content/")
+                && request.method == lib_protocols::ZhtpMethod::Delete =>
+            {
                 self.delete_content(request).await
             }
             // Content serving endpoint (GET) - uses Web4ContentService
-            path if path.starts_with("/api/v1/web4/content/") && request.method == lib_protocols::ZhtpMethod::Get => {
+            path if path.starts_with("/api/v1/web4/content/")
+                && request.method == lib_protocols::ZhtpMethod::Get =>
+            {
                 self.serve_content(request).await
             }
 
             // Statistics endpoint
-            "/api/v1/web4/statistics" => {
-                self.get_web4_statistics().await
-            }
+            "/api/v1/web4/statistics" => self.get_web4_statistics().await,
 
             _ => Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
@@ -613,5 +734,243 @@ impl ZhtpRequestHandler for Web4Handler {
     /// Get handler priority (higher than default)
     fn priority(&self) -> u32 {
         200 // Higher priority for Web4 endpoints
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use lib_network::storage_stub::UnifiedStorage;
+    use lib_network::web4::{
+        ContentPublisher, DomainEconomicSettings, DomainMetadata, DomainRegistrationRequest,
+        DomainRegistry,
+    };
+    use lib_proofs::ZeroKnowledgeProof;
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::collections::HashMap as StdHashMap;
+    use std::sync::{Arc, RwLock as StdRwLock};
+
+    #[derive(Clone, Default)]
+    struct TestStorage {
+        domains: Arc<StdRwLock<StdHashMap<String, Vec<u8>>>>,
+        manifests: Arc<StdRwLock<StdHashMap<String, Vec<u8>>>>,
+    }
+
+    #[async_trait]
+    impl UnifiedStorage for TestStorage {
+        async fn store_domain_record(&self, domain: &str, data: Vec<u8>) -> anyhow::Result<()> {
+            self.domains
+                .write()
+                .unwrap()
+                .insert(domain.to_string(), data);
+            Ok(())
+        }
+
+        async fn load_domain_record(&self, domain: &str) -> anyhow::Result<Option<Vec<u8>>> {
+            Ok(self.domains.read().unwrap().get(domain).cloned())
+        }
+
+        async fn delete_domain_record(&self, domain: &str) -> anyhow::Result<()> {
+            self.domains.write().unwrap().remove(domain);
+            Ok(())
+        }
+
+        async fn list_domain_records(&self) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
+            Ok(self
+                .domains
+                .read()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect())
+        }
+
+        async fn store_manifest(
+            &self,
+            domain: &str,
+            manifest_data: Vec<u8>,
+        ) -> anyhow::Result<()> {
+            self.manifests
+                .write()
+                .unwrap()
+                .insert(domain.to_string(), manifest_data);
+            Ok(())
+        }
+
+        async fn load_manifest(&self, domain: &str) -> anyhow::Result<Option<Vec<u8>>> {
+            Ok(self.manifests.read().unwrap().get(domain).cloned())
+        }
+
+        fn is_stub(&self) -> bool {
+            false
+        }
+    }
+
+    async fn setup_handler_with_domain_and_content(
+        domain: &str,
+        initial_content: HashMap<String, Vec<u8>>,
+    ) -> anyhow::Result<(Web4Handler, lib_identity::ZhtpIdentity)> {
+        let storage: Arc<dyn UnifiedStorage> = Arc::new(TestStorage::default());
+        let registry = Arc::new(DomainRegistry::new(storage.clone()).await?);
+        let publisher = Arc::new(ContentPublisher::new(registry.clone(), storage));
+
+        let owner = lib_identity::ZhtpIdentity::new_unified(
+            lib_identity::types::IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "observer-web4-test-owner",
+            None,
+        )?;
+
+        let mut identity_manager = lib_identity::IdentityManager::new();
+        identity_manager.add_identity(owner.clone());
+        let identity_manager = Arc::new(RwLock::new(identity_manager));
+        let blockchain = Arc::new(RwLock::new(lib_blockchain::Blockchain::new()?));
+
+        let handler =
+            Web4Handler::new_with_registry(registry.clone(), publisher, identity_manager, blockchain)
+                .await?;
+
+        let registration_proof = ZeroKnowledgeProof::new(
+            "Plonky2".to_string(),
+            lib_crypto::hash_blake3(b"observer-web4-proof").to_vec(),
+            owner.id.0.to_vec(),
+            owner.id.0.to_vec(),
+            None,
+        );
+
+        registry
+            .register_domain(DomainRegistrationRequest {
+                domain: domain.to_string(),
+                owner: owner.clone(),
+                duration_days: 365,
+                metadata: DomainMetadata {
+                    title: "Observer Web4".to_string(),
+                    description: "Observer-readiness Web4 test".to_string(),
+                    category: "test".to_string(),
+                    tags: vec!["observer".to_string(), "web4".to_string()],
+                    public: true,
+                    economic_settings: DomainEconomicSettings {
+                        registration_fee: 0.0,
+                        renewal_fee: 0.0,
+                        transfer_fee: 0.0,
+                        hosting_budget: 0.0,
+                    },
+                },
+                initial_content,
+                registration_proof,
+                deploy_manifest_cid: None,
+            })
+            .await?;
+
+        Ok((handler, owner))
+    }
+
+    async fn setup_handler_with_domain(
+        domain: &str,
+    ) -> anyhow::Result<(Web4Handler, lib_identity::ZhtpIdentity)> {
+        setup_handler_with_domain_and_content(domain, HashMap::new()).await
+    }
+
+    #[tokio::test]
+    async fn web4_handler_exposes_read_only_routes_for_observer_nodes() {
+        let (handler, _owner) = setup_handler_with_domain("observer-web4.zhtp")
+            .await
+            .expect("handler should initialize");
+
+        let stats_request =
+            ZhtpRequest::get("/api/v1/web4/statistics".to_string(), None).expect("request");
+        let resolve_request =
+            ZhtpRequest::get("/api/v1/web4/resolve/observer-web4.zhtp".to_string(), None)
+                .expect("request");
+        let content_request =
+            ZhtpRequest::get("/api/v1/web4/content/observer-web4.zhtp/index.html".to_string(), None)
+                .expect("request");
+
+        assert!(handler.can_handle(&stats_request));
+        assert!(handler.can_handle(&resolve_request));
+        assert!(handler.can_handle(&content_request));
+    }
+
+    #[tokio::test]
+    async fn web4_handler_resolves_registered_domain_for_observer_mode() {
+        let (handler, _owner) = setup_handler_with_domain("observer-web4.zhtp")
+            .await
+            .expect("handler should initialize");
+
+        let request =
+            ZhtpRequest::get("/api/v1/web4/resolve/observer-web4.zhtp".to_string(), None)
+                .expect("request");
+        let response = handler
+            .handle_request(request)
+            .await
+            .expect("resolve should return a response");
+
+        assert!(response.is_success());
+
+        let body: serde_json::Value =
+            serde_json::from_slice(&response.body).expect("response must be json");
+        assert_eq!(body["status"], "success");
+        assert_eq!(body["domain"], "observer-web4.zhtp");
+    }
+
+    #[tokio::test]
+    async fn web4_load_route_returns_domain_metadata_for_observer_mode() {
+        let (handler, _owner) = setup_handler_with_domain("observer-web4.zhtp")
+            .await
+            .expect("handler should initialize");
+
+        let request = ZhtpRequest::post(
+            "/api/v1/web4/load".to_string(),
+            serde_json::to_vec(&json!({ "url": "web4://observer-web4.zhtp/" }))
+                .expect("body"),
+            "application/json".to_string(),
+            None,
+        )
+        .expect("request");
+
+        let response = handler
+            .handle_request(request)
+            .await
+            .expect("load should return a response");
+
+        assert!(response.is_success());
+
+        let body: serde_json::Value =
+            serde_json::from_slice(&response.body).expect("response must be json");
+        assert_eq!(body["status"], "success");
+        assert_eq!(body["domain"], "observer-web4.zhtp");
+        assert_eq!(body["content_available"], false);
+    }
+
+    #[tokio::test]
+    async fn web4_content_route_serves_registered_bytes_for_observer_mode() {
+        let mut initial_content = HashMap::new();
+        initial_content.insert(
+            "/index.html".to_string(),
+            b"<html><body>observer-ready</body></html>".to_vec(),
+        );
+
+        let (handler, _owner) =
+            setup_handler_with_domain_and_content("observer-web4.zhtp", initial_content)
+                .await
+                .expect("handler should initialize");
+
+        let request =
+            ZhtpRequest::get("/api/v1/web4/content/observer-web4.zhtp/index.html".to_string(), None)
+                .expect("request");
+        let response = handler
+            .handle_request(request)
+            .await
+            .expect("content should return a response");
+
+        assert!(response.is_success());
+        assert_eq!(response.body, b"<html><body>observer-ready</body></html>");
+        assert_eq!(
+            response.headers.content_type.as_deref(),
+            Some("text/html; charset=utf-8")
+        );
     }
 }

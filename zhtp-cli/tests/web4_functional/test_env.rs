@@ -12,43 +12,42 @@ pub struct TestEnv {
 impl TestEnv {
     /// Create a new isolated test environment
     pub fn setup(test_name: &str) -> Self {
-        let temp_dir = TempDir::new()
-            .expect(&format!("Failed to create temp directory for {}", test_name));
-        
+        let temp_dir = TempDir::new().expect(&format!(
+            "Failed to create temp directory for {}",
+            test_name
+        ));
+
         TestEnv {
             temp_dir,
             test_name: test_name.to_string(),
         }
     }
-    
+
     /// Get the temporary directory path
     pub fn path(&self) -> &Path {
         self.temp_dir.path()
     }
-    
+
     /// Create a subdirectory within the test environment
     pub fn create_subdir(&self, name: &str) -> PathBuf {
         let path = self.temp_dir.path().join(name);
-        std::fs::create_dir_all(&path)
-            .expect(&format!("Failed to create subdirectory: {}", name));
+        std::fs::create_dir_all(&path).expect(&format!("Failed to create subdirectory: {}", name));
         path
     }
-    
+
     /// Write test data to a file in the environment
     pub fn write_file(&self, relative_path: &str, content: &str) -> PathBuf {
         let path = self.temp_dir.path().join(relative_path);
-        
+
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .expect("Failed to create parent directories");
+            std::fs::create_dir_all(parent).expect("Failed to create parent directories");
         }
-        
-        std::fs::write(&path, content)
-            .expect("Failed to write test file");
-        
+
+        std::fs::write(&path, content).expect("Failed to write test file");
+
         path
     }
-    
+
     /// Get test name
     pub fn name(&self) -> &str {
         &self.test_name
@@ -58,14 +57,14 @@ impl TestEnv {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_env_setup() {
         let env = TestEnv::setup("test_setup");
         assert!(env.path().exists());
         assert_eq!(env.name(), "test_setup");
     }
-    
+
     #[test]
     fn test_env_create_subdir() {
         let env = TestEnv::setup("test_subdir");
@@ -73,7 +72,7 @@ mod tests {
         assert!(subdir.exists());
         assert!(subdir.is_dir());
     }
-    
+
     #[test]
     fn test_env_write_file() {
         let env = TestEnv::setup("test_write");

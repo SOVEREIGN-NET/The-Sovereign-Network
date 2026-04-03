@@ -1,25 +1,24 @@
-use std::sync::Arc;
+use crate::refresh::tasks::inter::task::Task;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::thread::sleep;
 use std::time::Duration;
-use crate::refresh::tasks::inter::task::Task;
 
 pub struct RefreshHandler {
     //pub(crate) kademlia: Option<Box<dyn KademliaBase>>,
     tasks: Vec<Box<dyn Task>>,
     refresh_time: Arc<AtomicU64>,
-    running: Arc<AtomicBool>
+    running: Arc<AtomicBool>,
 }
 
 impl RefreshHandler {
-
     pub fn new() -> Self {
         Self {
             //kademlia: None,
             tasks: Vec::new(),
             refresh_time: Arc::new(AtomicU64::new(3600000)),
-            running: Arc::new(AtomicBool::new(false))
+            running: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -36,12 +35,13 @@ impl RefreshHandler {
 
         self.running.store(true, Ordering::Relaxed);
 
-        let handle = thread::spawn({
+        let _handle = thread::spawn({
             let tasks = self.tasks.clone();
             let refresh_time = Arc::clone(&self.refresh_time);
             let running = Arc::clone(&self.running);
             move || {
-                while running.load(Ordering::Relaxed) { //self.is_running()
+                while running.load(Ordering::Relaxed) {
+                    //self.is_running()
                     sleep(Duration::from_millis(refresh_time.load(Ordering::SeqCst)));
 
                     for task in &tasks {

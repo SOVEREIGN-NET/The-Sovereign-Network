@@ -3,10 +3,10 @@
 //! Manages trusted guardians for social recovery of identities.
 //! Guardians can help recover an account if the user loses their recovery phrase.
 
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use lib_crypto::PublicKey;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// A trusted guardian who can help recover an identity
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,11 +85,18 @@ impl GuardianConfig {
     ) -> Result<String, String> {
         // Security: Validate max guardians limit
         if self.guardians.len() >= self.max_guardians {
-            return Err(format!("Maximum number of guardians ({}) reached", self.max_guardians));
+            return Err(format!(
+                "Maximum number of guardians ({}) reached",
+                self.max_guardians
+            ));
         }
 
         // Security: Check for duplicate DID
-        if self.guardians.values().any(|g| g.guardian_did == guardian_did) {
+        if self
+            .guardians
+            .values()
+            .any(|g| g.guardian_did == guardian_did)
+        {
             return Err("Guardian with this DID already exists".to_string());
         }
 
@@ -179,11 +186,7 @@ mod tests {
         let mut config = GuardianConfig::default();
         let pubkey = PublicKey::new(vec![1, 2, 3, 4]);
 
-        let result = config.add_guardian(
-            "did:zhtp:alice".to_string(),
-            pubkey,
-            "Alice".to_string(),
-        );
+        let result = config.add_guardian("did:zhtp:alice".to_string(), pubkey, "Alice".to_string());
 
         assert!(result.is_ok());
         assert_eq!(config.guardians.len(), 1);
@@ -196,9 +199,15 @@ mod tests {
         let pubkey2 = PublicKey::new(vec![5, 6, 7, 8]);
         let pubkey3 = PublicKey::new(vec![9, 10, 11, 12]);
 
-        assert!(config.add_guardian("did:zhtp:alice".to_string(), pubkey1, "Alice".to_string()).is_ok());
-        assert!(config.add_guardian("did:zhtp:bob".to_string(), pubkey2, "Bob".to_string()).is_ok());
-        assert!(config.add_guardian("did:zhtp:carol".to_string(), pubkey3, "Carol".to_string()).is_err());
+        assert!(config
+            .add_guardian("did:zhtp:alice".to_string(), pubkey1, "Alice".to_string())
+            .is_ok());
+        assert!(config
+            .add_guardian("did:zhtp:bob".to_string(), pubkey2, "Bob".to_string())
+            .is_ok());
+        assert!(config
+            .add_guardian("did:zhtp:carol".to_string(), pubkey3, "Carol".to_string())
+            .is_err());
     }
 
     #[test]
@@ -207,8 +216,12 @@ mod tests {
         let pubkey1 = PublicKey::new(vec![1, 2, 3, 4]);
         let pubkey2 = PublicKey::new(vec![5, 6, 7, 8]);
 
-        assert!(config.add_guardian("did:zhtp:alice".to_string(), pubkey1, "Alice".to_string()).is_ok());
-        assert!(config.add_guardian("did:zhtp:alice".to_string(), pubkey2, "Alice2".to_string()).is_err());
+        assert!(config
+            .add_guardian("did:zhtp:alice".to_string(), pubkey1, "Alice".to_string())
+            .is_ok());
+        assert!(config
+            .add_guardian("did:zhtp:alice".to_string(), pubkey2, "Alice2".to_string())
+            .is_err());
     }
 
     #[test]
@@ -216,11 +229,9 @@ mod tests {
         let mut config = GuardianConfig::default();
         let pubkey = PublicKey::new(vec![1, 2, 3, 4]);
 
-        let guardian_id = config.add_guardian(
-            "did:zhtp:alice".to_string(),
-            pubkey,
-            "Alice".to_string(),
-        ).unwrap();
+        let guardian_id = config
+            .add_guardian("did:zhtp:alice".to_string(), pubkey, "Alice".to_string())
+            .unwrap();
 
         assert!(config.remove_guardian(&guardian_id).is_ok());
         assert_eq!(config.get_active_guardians().len(), 0);
@@ -235,8 +246,16 @@ mod tests {
         assert!(config.validate_threshold().is_err());
 
         // Add 2 guardians, threshold met
-        config.add_guardian("did:zhtp:alice".to_string(), pubkey.clone(), "Alice".to_string()).unwrap();
-        config.add_guardian("did:zhtp:bob".to_string(), pubkey, "Bob".to_string()).unwrap();
+        config
+            .add_guardian(
+                "did:zhtp:alice".to_string(),
+                pubkey.clone(),
+                "Alice".to_string(),
+            )
+            .unwrap();
+        config
+            .add_guardian("did:zhtp:bob".to_string(), pubkey, "Bob".to_string())
+            .unwrap();
         assert!(config.validate_threshold().is_ok());
     }
 
@@ -245,9 +264,23 @@ mod tests {
         let mut config = GuardianConfig::new(2, 5);
         let pubkey = PublicKey::new(vec![1, 2, 3, 4]);
 
-        config.add_guardian("did:zhtp:alice".to_string(), pubkey.clone(), "Alice".to_string()).unwrap();
-        config.add_guardian("did:zhtp:bob".to_string(), pubkey.clone(), "Bob".to_string()).unwrap();
-        config.add_guardian("did:zhtp:carol".to_string(), pubkey, "Carol".to_string()).unwrap();
+        config
+            .add_guardian(
+                "did:zhtp:alice".to_string(),
+                pubkey.clone(),
+                "Alice".to_string(),
+            )
+            .unwrap();
+        config
+            .add_guardian(
+                "did:zhtp:bob".to_string(),
+                pubkey.clone(),
+                "Bob".to_string(),
+            )
+            .unwrap();
+        config
+            .add_guardian("did:zhtp:carol".to_string(), pubkey, "Carol".to_string())
+            .unwrap();
 
         // Valid threshold
         assert!(config.set_threshold(2).is_ok());

@@ -1,7 +1,7 @@
 //! Integrity verification
 
-use serde::{Deserialize, Serialize};
 use lib_crypto::hashing::hash_blake3;
+use serde::{Deserialize, Serialize};
 
 /// Integrity verifier
 pub struct IntegrityVerifier {
@@ -21,7 +21,11 @@ impl IntegrityVerifier {
     }
 
     /// Verify multiple blocks
-    pub fn verify_blocks(&self, blocks: &[Vec<u8>], expected_checksums: &[[u8; 32]]) -> VerificationReport {
+    pub fn verify_blocks(
+        &self,
+        blocks: &[Vec<u8>],
+        expected_checksums: &[[u8; 32]],
+    ) -> VerificationReport {
         let mut verified = 0;
         let mut failed = 0;
         let mut failed_indices = Vec::new();
@@ -40,7 +44,11 @@ impl IntegrityVerifier {
             verified_blocks: verified,
             failed_blocks: failed,
             failed_indices,
-            passed: if self.strict_mode { failed == 0 } else { verified > failed },
+            passed: if self.strict_mode {
+                failed == 0
+            } else {
+                verified > failed
+            },
         }
     }
 }

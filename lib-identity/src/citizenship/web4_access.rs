@@ -1,9 +1,9 @@
 //! Web4 service access grants from the original identity.rs
 
+use crate::types::{AccessLevel, IdentityId};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::types::{IdentityId, AccessLevel};
 
 /// Web4 service access grants
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,7 +41,7 @@ impl Web4Access {
             restrictions,
         }
     }
-    
+
     /// Grant access to all Web4 services - IMPLEMENTATION FROM ORIGINAL
     pub async fn grant_web4_access(identity_id: &IdentityId) -> Result<Self> {
         let current_time = std::time::SystemTime::now()
@@ -50,7 +50,7 @@ impl Web4Access {
 
         // Generate service access tokens
         let mut service_tokens = HashMap::new();
-        
+
         // Core Web4 services
         let services = vec![
             "zhtp.browse",      // Web4 browsing
@@ -67,7 +67,12 @@ impl Web4Access {
 
         for service in services {
             let token = lib_crypto::hash_blake3(
-                &[identity_id.0.as_slice(), service.as_bytes(), &current_time.to_le_bytes()].concat()
+                &[
+                    identity_id.0.as_slice(),
+                    service.as_bytes(),
+                    &current_time.to_le_bytes(),
+                ]
+                .concat(),
             );
             service_tokens.insert(service.to_string(), hex::encode(token));
         }
@@ -78,7 +83,8 @@ impl Web4Access {
                 identity_id.0.as_slice(),
                 "web4_full_access".as_bytes(),
                 &current_time.to_le_bytes(),
-            ].concat()
+            ]
+            .concat(),
         );
 
         tracing::info!(
@@ -97,28 +103,26 @@ impl Web4Access {
         ))
     }
 
-    
     /// Check if has access to specific service
     pub fn has_service_access(&self, service: &str) -> bool {
-        self.service_tokens.contains_key(service) && 
-        self.access_level == AccessLevel::FullCitizen
+        self.service_tokens.contains_key(service) && self.access_level == AccessLevel::FullCitizen
     }
-    
+
     /// Get service token for specific service
     pub fn get_service_token(&self, service: &str) -> Option<&String> {
         self.service_tokens.get(service)
     }
-    
+
     /// Get all available services
     pub fn get_available_services(&self) -> Vec<&String> {
         self.service_tokens.keys().collect()
     }
-    
+
     /// Check if access is unrestricted
     pub fn is_unrestricted(&self) -> bool {
         self.restrictions.is_empty() && self.access_level == AccessLevel::FullCitizen
     }
-    
+
     /// Get access summary
     pub fn get_access_summary(&self) -> Web4AccessSummary {
         Web4AccessSummary {
@@ -130,29 +134,29 @@ impl Web4Access {
             restrictions_count: self.restrictions.len(),
         }
     }
-    
+
     /// Add new service access
     pub fn add_service_access(&mut self, service: String, token: String) {
         self.service_tokens.insert(service, token);
     }
-    
+
     /// Remove service access
     pub fn remove_service_access(&mut self, service: &str) {
         self.service_tokens.remove(service);
     }
-    
+
     /// Update access level
     pub fn update_access_level(&mut self, new_level: AccessLevel) {
         self.access_level = new_level;
     }
-    
+
     /// Add restriction
     pub fn add_restriction(&mut self, restriction: String) {
         if !self.restrictions.contains(&restriction) {
             self.restrictions.push(restriction);
         }
     }
-    
+
     /// Remove restriction
     pub fn remove_restriction(&mut self, restriction: &str) {
         self.restrictions.retain(|r| r != restriction);

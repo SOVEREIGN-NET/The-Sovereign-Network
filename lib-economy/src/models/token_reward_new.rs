@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
-use crate::types::{WorkMetrics, IspBypassWork};
+use crate::types::{WorkMetrics, IspBypassWork, WorkMetricsExt};
 use crate::models::EconomicModel;
 
 /// Token reward for infrastructure services
@@ -70,7 +70,7 @@ impl TokenReward {
             quality_bonus,
             uptime_bonus,
             total_reward: final_total,
-            currency: "ZHTP".to_string(),
+            currency: "SOV".to_string(),
         })
     }
 
@@ -113,7 +113,7 @@ impl TokenReward {
             quality_bonus,
             uptime_bonus,
             total_reward,
-            currency: "ZHTP".to_string(),
+            currency: "SOV".to_string(),
         })
     }
     
@@ -176,7 +176,7 @@ mod tests {
             quality_bonus: 30,
             uptime_bonus: 20,
             total_reward: 400,
-            currency: "ZHTP".to_string(),
+            currency: "SOV".to_string(),
         };
 
         let reward2 = TokenReward {
@@ -186,7 +186,7 @@ mod tests {
             quality_bonus: 10,
             uptime_bonus: 15,
             total_reward: 300,
-            currency: "ZHTP".to_string(),
+            currency: "SOV".to_string(),
         };
 
         reward1.combine(&reward2);

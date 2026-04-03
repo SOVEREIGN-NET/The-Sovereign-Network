@@ -21,6 +21,7 @@ path = "src/main.rs"
 [dependencies]
 # All ZHTP package dependencies - must be completed first
 lib-crypto = { path = "../lib-crypto" }
+lib-identity-core = { path = "../lib-identity-core" }
 lib-proofs = { path = "../lib-proofs" }
 lib-identity = { path = "../lib-identity" }
 lib-storage = { path = "../lib-storage" }
@@ -54,7 +55,10 @@ lru = "0.12"
 base64 = "0.22"
 md5 = "0.7"
 bincode = "1.3"
+ciborium = "0.2"  # CBOR serialization for mobile/web clients
 blake3 = "1.5"
+sha2 = "0.10"  # SHA256 for BIP39 checksum validation
+crystals-dilithium = "1.0"  # Pure Rust Dilithium for deterministic key generation from seed
 rpassword = "7.3"  # Secure password input
 dirs = "5.0"  # Home directory detection for keystore
 atty = "0.2"  # TTY detection for interactive TOFU prompts
@@ -62,6 +66,8 @@ lz4_flex = "0.11"  # LZ4 compression for DHT content decompression
 once_cell = "1.19"  # Global singleton for bootstrap peers
 zeroize = "1.7"  # Secure memory zeroization for passwords
 rand = "0.8"  # Cryptographically secure random number generation
+keyring = "3.6"  # System keyring for secure seed storage
+argon2 = "0.5"  # Password hashing for seed encryption
 
 # System integration
 sysinfo = "0.31"
@@ -109,6 +115,7 @@ features = [
 tokio-test = "0.4"
 tempfile = "3.8"
 criterion = "0.5"
+zhtp_client = { package = "lib-client", path = "../lib-client" }
 
 [features]
 default = ["production", "full-blockchain", "windows-bluetooth"]  # See Issue #739 for planned TLS pinning behavior
@@ -141,45 +148,4 @@ edge = ["minimal-blockchain"]  # Edge node (routing only)
 # Raspberry Pi optimized profile - minimal features for low-memory compilation
 rpi = ["basic-blockchain", "relay"]  # Raspberry Pi optimized build (no WASM runtime)
 
-[profile.dev]
-# Faster compilation, less memory usage
-opt-level = 0
-debug = true
-split-debuginfo = "unpacked"
-incremental = true
-
-[profile.release]
-# Standard release profile
-opt-level = 3
-lto = "thin"
-codegen-units = 16
-
-[profile.rpi]
-# Raspberry Pi optimized: lower memory usage during compilation
-inherits = "release"
-opt-level = 2           # Lower optimization = less memory
-lto = false             # Disable LTO = much faster, less memory
-codegen-units = 256     # More codegen units = more parallelism, less memory per unit
-debug = false
-strip = true            # Strip symbols to reduce binary size
-
-[profile.edge]
-# Edge node: ultra-lightweight for mesh routing
-inherits = "release"
-opt-level = "s"         # Optimize for SIZE not speed
-lto = false             # No LTO
-codegen-units = 256
-debug = false
-strip = true
-panic = "abort"         # No unwinding = smaller binary
-overflow-checks = false # Disable overflow checks for smaller code
-
-[profile.dev-fast]
-# Fast development iteration
-inherits = "dev"
-opt-level = 1           # Minimal optimization
-incremental = true
-debug = true
-split-debuginfo = "unpacked"
-
-# Mobile profiles (android, ios) removed - see archive/mobile-ffi-stubs branch when needed
+# Build profiles live at the workspace root `Cargo.toml`.

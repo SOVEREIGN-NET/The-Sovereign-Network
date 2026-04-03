@@ -31,15 +31,27 @@ fi
 # Extract key values for validation
 MESH_MODE=$(grep '^mesh_mode' "$CONFIG_FILE" | cut -d'"' -f2 2>/dev/null || echo "")
 SECURITY_LEVEL=$(grep '^security_level' "$CONFIG_FILE" | cut -d'"' -f2 2>/dev/null || echo "")
-VALIDATOR_ENABLED=$(grep '^validator_enabled' "$CONFIG_FILE" | cut -d'=' -f2 | tr -d ' ' 2>/dev/null || echo "")
-STORAGE_CAPACITY=$(grep '^storage_capacity_gb' "$CONFIG_FILE" | cut -d'=' -f2 | tr -d ' ' 2>/dev/null || echo "")
-MAX_PEERS=$(grep '^max_peers' "$CONFIG_FILE" | cut -d'=' -f2 | tr -d ' ' 2>/dev/null || echo "")
+VALIDATOR_ENABLED=$(grep '^validator_enabled' "$CONFIG_FILE" | cut -d'=' -f2 | cut -d'#' -f1 | tr -d ' ' 2>/dev/null || echo "")
+RUNTIME_ROLE=$(grep '^runtime_role' "$CONFIG_FILE" | cut -d'"' -f2 2>/dev/null || echo "")
+GATEWAY_ENABLED=$(grep '^gateway_enabled' "$CONFIG_FILE" | cut -d'=' -f2 | cut -d'#' -f1 | tr -d ' ' 2>/dev/null || echo "false")
+STORAGE_CAPACITY=$(grep '^storage_capacity_gb' "$CONFIG_FILE" | cut -d'=' -f2 | cut -d'#' -f1 | tr -d ' ' 2>/dev/null || echo "")
+MAX_PEERS=$(grep '^max_peers' "$CONFIG_FILE" | cut -d'=' -f2 | cut -d'#' -f1 | tr -d ' ' 2>/dev/null || echo "")
+
+if [ -z "$RUNTIME_ROLE" ]; then
+    echo " WARNING: runtime_role not specified in config (defaults to FULL)"
+fi
+
+if [ -z "$GATEWAY_ENABLED" ]; then
+    GATEWAY_ENABLED="false"
+fi
 
 echo
 echo "Configuration Summary:"
 echo "  Mesh Mode: $MESH_MODE"
 echo "  Security Level: $SECURITY_LEVEL"  
+echo "  Runtime Role: $RUNTIME_ROLE"
 echo "  Validator Enabled: $VALIDATOR_ENABLED"
+echo "  Gateway Enabled: $GATEWAY_ENABLED"
 echo "  Storage Capacity: ${STORAGE_CAPACITY}GB"
 echo "  Max Peers: $MAX_PEERS"
 
@@ -47,13 +59,22 @@ echo "  Max Peers: $MAX_PEERS"
 echo
 echo "Running validation checks..."
 
-# Check mesh mode vs protocols
-if [ "$MESH_MODE" = "PureMesh" ]; then
-    if grep -q '"tcp"' "$CONFIG_FILE"; then
-        echo " WARNING: Pure mesh mode should not include TCP protocol"
-    else
-        echo "Pure mesh mode: TCP protocol correctly excluded"
-    fi
+# Check transport invariants (QUIC-only mesh transport model)
+if grep -q '"tcp"' "$CONFIG_FILE"; then
+    echo " ERROR: TCP transport is forbidden"
+    exit 1
+fi
+
+if grep -Eqi '"(http|https|websocket|ws|grpc|udp)"' "$CONFIG_FILE"; then
+    echo " ERROR: HTTP/WebSocket/gRPC/UDP transports are forbidden in mesh protocols"
+    exit 1
+fi
+
+if ! grep -q '"quic"' "$CONFIG_FILE"; then
+    echo " ERROR: QUIC transport is required"
+    exit 1
+else
+    echo "Transport contract: QUIC-only mesh transport validated"
 fi
 
 # Check validator security requirements
@@ -63,6 +84,22 @@ if [ "$VALIDATOR_ENABLED" = "true" ]; then
     else
         echo "Validator security: Maximum level configured"
     fi
+
+    if [ "$RUNTIME_ROLE" = "EDGE" ] || [ "$RUNTIME_ROLE" = "RELAY" ] || [ "$RUNTIME_ROLE" = "BOOTSTRAP" ] || [ "$RUNTIME_ROLE" = "SERVICE" ]; then
+        echo " ERROR: runtime_role=$RUNTIME_ROLE cannot enable validator consensus role"
+        exit 1
+    fi
+fi
+
+# Gateway plane only for SERVICE role
+if [ "$GATEWAY_ENABLED" = "true" ] && [ "$RUNTIME_ROLE" != "SERVICE" ]; then
+    echo " ERROR: gateway_enabled=true is only allowed for runtime_role=SERVICE"
+    exit 1
+fi
+
+if [ "$RUNTIME_ROLE" = "SERVICE" ] && [ "$GATEWAY_ENABLED" != "true" ]; then
+    echo " ERROR: runtime_role=SERVICE requires gateway_enabled=true"
+    exit 1
 fi
 
 # Check storage capacity reasonableness
@@ -88,9 +125,9 @@ if [ ! -z "$MAX_PEERS" ]; then
 fi
 
 # Check port configurations
-MESH_PORT=$(grep '^mesh_port' "$CONFIG_FILE" | cut -d'=' -f2 | tr -d ' ' 2>/dev/null || echo "")
-DHT_PORT=$(grep '^dht_port' "$CONFIG_FILE" | cut -d'=' -f2 | tr -d ' ' 2>/dev/null || echo "")
-API_PORT=$(grep '^api_port' "$CONFIG_FILE" | cut -d'=' -f2 | tr -d ' ' 2>/dev/null || echo "")
+MESH_PORT=$(grep '^mesh_port' "$CONFIG_FILE" | cut -d'=' -f2 | cut -d'#' -f1 | tr -d ' ' 2>/dev/null || echo "")
+DHT_PORT=$(grep '^dht_port' "$CONFIG_FILE" | cut -d'=' -f2 | cut -d'#' -f1 | tr -d ' ' 2>/dev/null || echo "")
+API_PORT=$(grep '^api_port' "$CONFIG_FILE" | cut -d'=' -f2 | cut -d'#' -f1 | tr -d ' ' 2>/dev/null || echo "")
 
 if [ ! -z "$MESH_PORT" ] && [ ! -z "$DHT_PORT" ] && [ ! -z "$API_PORT" ]; then
     if [ "$MESH_PORT" = "$DHT_PORT" ] || [ "$MESH_PORT" = "$API_PORT" ] || [ "$DHT_PORT" = "$API_PORT" ]; then

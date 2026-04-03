@@ -1,5 +1,5 @@
 //! Complete Storage Integration for ZHTP Blockchain
-//! 
+//!
 //! Provides full integration between lib-blockchain and lib-storage, including:
 //! - Persistent blockchain state storage and recovery
 //! - Block and transaction archival with efficient retrieval
@@ -10,33 +10,31 @@
 //! - Erasure-coded backup for critical data
 
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
+use hex;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, debug, warn, error};
-use hex;
+use tracing::{debug, error, info, warn};
 
 // Import from lib-storage - use their types, not our own
-use lib_storage::{
-    UnifiedStorageSystem, UnifiedStorageConfig, UploadRequest, DownloadRequest, 
-    SearchQuery, AccessControlSettings, ContentStorageRequirements,
-    StorageRequirements
-};
+use lib_identity::{IdentityId, ZhtpIdentity};
 use lib_storage::types::{
-    ContentHash, StorageTier, EncryptionLevel, AccessPattern,
-    QualityRequirements, BudgetConstraints, DhtStats, EconomicStats, StorageStats,
-    PaymentSchedule
+    BudgetConstraints, ContentHash, DhtStats, EconomicStats, EncryptionLevel, PaymentSchedule,
+    QualityRequirements, StorageStats, StorageTier,
 };
-use lib_identity::{ZhtpIdentity, IdentityId};
+use lib_storage::{
+    AccessControlSettings, ContentStorageRequirements, DownloadRequest, SearchQuery,
+    StorageRequirements, UnifiedStorageConfig, UnifiedStorageSystem, UploadRequest,
+};
 
 // Import blockchain components
 use crate::{
-    blockchain::Blockchain,
     block::Block,
-    transaction::{Transaction, IdentityTransactionData, TransactionOutput},
-    types::Hash,
+    blockchain::Blockchain,
     mempool::Mempool,
+    transaction::{IdentityTransactionData, Transaction, TransactionOutput},
+    types::Hash,
 };
 
 /// Blockchain state for persistence and recovery
@@ -45,6 +43,9 @@ pub struct BlockchainState {
     pub height: u64,
     pub difficulty: crate::types::Difficulty,
     pub nullifier_set: HashSet<Hash>,
+    pub total_work: u128,
+    pub finality_depth: u64,
+    pub finalized_blocks: HashSet<u64>,
 }
 
 /// Persistent storage manager for blockchain data
@@ -181,14 +182,14 @@ impl BlockchainStorageManager {
                 dht_persist_path: None, // Blockchain uses its own persistence
             },
             erasure_config: lib_storage::ErasureConfig {
-                data_shards: 6,    // Higher redundancy for blockchain data
-                parity_shards: 4,  // Can recover from 4 failures
+                data_shards: 6,   // Higher redundancy for blockchain data
+                parity_shards: 4, // Can recover from 4 failures
             },
         };
 
         // Initialize unified storage system
         let storage_system = Arc::new(RwLock::new(
-            UnifiedStorageSystem::new(storage_config).await?
+            UnifiedStorageSystem::new(storage_config).await?,
         ));
 
         // Initialize cache
@@ -211,8 +212,14 @@ impl BlockchainStorageManager {
     }
 
     /// Store complete blockchain state with optional erasure coding
-    pub async fn store_blockchain_state(&mut self, blockchain: &Blockchain) -> Result<StorageOperationResult> {
-        info!("Storing complete blockchain state (height: {})", blockchain.height);
+    pub async fn store_blockchain_state(
+        &mut self,
+        blockchain: &Blockchain,
+    ) -> Result<StorageOperationResult> {
+        info!(
+            "Storing complete blockchain state (height: {})",
+            blockchain.height
+        );
 
         let start_time = std::time::Instant::now();
 
@@ -248,7 +255,7 @@ impl BlockchainStorageManager {
                     required_certifications: vec![],
                 },
                 budget_constraints: BudgetConstraints {
-                    max_total_cost: serialized_state.len() as u64 * 365,  // 1 ZHTP per byte per year
+                    max_total_cost: serialized_state.len() as u64 * 365, // 1 SOV per byte per year
                     max_cost_per_gb_day: 100,
                     payment_schedule: PaymentSchedule::Monthly,
                     max_price_volatility: 0.05,
@@ -264,24 +271,41 @@ impl BlockchainStorageManager {
             info!("Using erasure coding for blockchain state storage");
             let storage_requirements = StorageRequirements {
                 duration_days: 365 * 10,
-                quality_requirements: upload_request.storage_requirements.quality_requirements.clone(),
-                budget_constraints: upload_request.storage_requirements.budget_constraints.clone(),
+                quality_requirements: upload_request
+                    .storage_requirements
+                    .quality_requirements
+                    .clone(),
+                budget_constraints: upload_request
+                    .storage_requirements
+                    .budget_constraints
+                    .clone(),
                 geographic_preferences: vec![], // No specific geographic constraints
-                replication_factor: 3, // Standard replication for blockchain data
+                replication_factor: 3,          // Standard replication for blockchain data
             };
 
-            self.storage_system.write().await
-                .store_with_erasure_coding(serialized_state.clone(), storage_requirements, system_identity)
+            self.storage_system
+                .write()
+                .await
+                .store_with_erasure_coding(
+                    serialized_state.clone(),
+                    storage_requirements,
+                    system_identity,
+                )
                 .await?
         } else {
-            self.storage_system.write().await
+            self.storage_system
+                .write()
+                .await
                 .upload_content(upload_request, system_identity)
                 .await?
         };
 
         let elapsed = start_time.elapsed();
-        info!("Blockchain state stored successfully in {:?} (hash: {})", 
-              elapsed, hex::encode(content_hash.as_bytes()));
+        info!(
+            "Blockchain state stored successfully in {:?} (hash: {})",
+            elapsed,
+            hex::encode(content_hash.as_bytes())
+        );
 
         // Update statistics
         self.stats.total_content += 1;
@@ -307,8 +331,14 @@ impl BlockchainStorageManager {
     }
 
     /// Retrieve complete blockchain state from storage
-    pub async fn retrieve_blockchain_state(&mut self, content_hash: ContentHash) -> Result<Blockchain> {
-        info!("Retrieving blockchain state (hash: {})", hex::encode(content_hash.as_bytes()));
+    pub async fn retrieve_blockchain_state(
+        &mut self,
+        content_hash: ContentHash,
+    ) -> Result<Blockchain> {
+        info!(
+            "Retrieving blockchain state (hash: {})",
+            hex::encode(content_hash.as_bytes())
+        );
 
         let download_request = DownloadRequest {
             content_hash,
@@ -316,25 +346,35 @@ impl BlockchainStorageManager {
             version: None,
         };
 
-        let serialized_state = self.storage_system.write().await
+        let serialized_state = self
+            .storage_system
+            .write()
+            .await
             .download_content(download_request)
             .await?;
 
         let blockchain = self.deserialize_blockchain_state(&serialized_state)?;
 
-        info!("Blockchain state retrieved successfully (height: {})", blockchain.height);
+        info!(
+            "Blockchain state retrieved successfully (height: {})",
+            blockchain.height
+        );
         Ok(blockchain)
     }
 
     /// Store individual block with metadata
     pub async fn store_block(&mut self, block: &Block) -> Result<StorageOperationResult> {
-        debug!("Storing block {} (height: {})", hex::encode(block.hash().as_bytes()), block.height());
+        debug!(
+            "Storing block {} (height: {})",
+            hex::encode(block.hash().as_bytes()),
+            block.height()
+        );
 
         // Check cache first
         if let Ok(mut cache) = self.cache.try_write() {
             cache.blocks.insert(block.height(), block.clone());
             cache.current_size += self.estimate_block_size(block);
-            
+
             // Evict if cache is too large
             if cache.current_size > self.config.max_cache_size {
                 cache.evict_oldest_blocks();
@@ -371,7 +411,7 @@ impl BlockchainStorageManager {
                     required_certifications: vec![],
                 },
                 budget_constraints: BudgetConstraints {
-                    max_total_cost: serialized_block.len() as u64 * 365 * 10,  // 10 year storage budget
+                    max_total_cost: serialized_block.len() as u64 * 365 * 10, // 10 year storage budget
                     max_cost_per_gb_day: 100,
                     payment_schedule: PaymentSchedule::Monthly,
                     max_price_volatility: 0.1,
@@ -380,11 +420,17 @@ impl BlockchainStorageManager {
         };
 
         let system_identity = self.create_system_identity().await?;
-        let content_hash = self.storage_system.write().await
+        let content_hash = self
+            .storage_system
+            .write()
+            .await
             .upload_content(upload_request, system_identity)
             .await?;
 
-        debug!("Block stored successfully (hash: {})", hex::encode(content_hash.as_bytes()));
+        debug!(
+            "Block stored successfully (hash: {})",
+            hex::encode(content_hash.as_bytes())
+        );
 
         Ok(StorageOperationResult {
             success: true,
@@ -407,7 +453,10 @@ impl BlockchainStorageManager {
 
     /// Retrieve block by content hash
     pub async fn retrieve_block(&mut self, content_hash: ContentHash) -> Result<Block> {
-        debug!("Retrieving block (hash: {})", hex::encode(content_hash.as_bytes()));
+        debug!(
+            "Retrieving block (hash: {})",
+            hex::encode(content_hash.as_bytes())
+        );
 
         let download_request = DownloadRequest {
             content_hash,
@@ -415,7 +464,10 @@ impl BlockchainStorageManager {
             version: None,
         };
 
-        let serialized_block = self.storage_system.write().await
+        let serialized_block = self
+            .storage_system
+            .write()
+            .await
             .download_content(download_request)
             .await?;
 
@@ -452,12 +504,17 @@ impl BlockchainStorageManager {
         };
 
         let system_identity = self.create_system_identity().await?;
-        let search_results = self.storage_system.read().await
+        let search_results = self
+            .storage_system
+            .read()
+            .await
             .search_content(search_query, system_identity)
             .await?;
 
         if let Some(content_metadata) = search_results.first() {
-            let block = self.retrieve_block(content_metadata.content_hash.clone()).await?;
+            let block = self
+                .retrieve_block(content_metadata.content_hash.clone())
+                .await?;
             return Ok(Some(block));
         }
 
@@ -469,8 +526,14 @@ impl BlockchainStorageManager {
     }
 
     /// Store transaction with indexing
-    pub async fn store_transaction(&mut self, transaction: &Transaction) -> Result<StorageOperationResult> {
-        debug!("Storing transaction {}", hex::encode(transaction.hash().as_bytes()));
+    pub async fn store_transaction(
+        &mut self,
+        transaction: &Transaction,
+    ) -> Result<StorageOperationResult> {
+        debug!(
+            "Storing transaction {}",
+            hex::encode(transaction.hash().as_bytes())
+        );
 
         let serialized_tx = self.serialize_transaction(transaction)?;
 
@@ -478,7 +541,10 @@ impl BlockchainStorageManager {
             content: serialized_tx.clone(),
             filename: format!("tx_{}.dat", hex::encode(transaction.hash().as_bytes())),
             mime_type: "application/octet-stream".to_string(),
-            description: format!("Blockchain transaction (type: {:?})", transaction.transaction_type),
+            description: format!(
+                "Blockchain transaction (type: {:?})",
+                transaction.transaction_type
+            ),
             tags: vec![
                 "transaction".to_string(),
                 format!("type-{:?}", transaction.transaction_type),
@@ -503,7 +569,7 @@ impl BlockchainStorageManager {
                     required_certifications: vec![],
                 },
                 budget_constraints: BudgetConstraints {
-                    max_total_cost: serialized_tx.len() as u64 * 365 * 10,  // 10 year storage budget
+                    max_total_cost: serialized_tx.len() as u64 * 365 * 10, // 10 year storage budget
                     max_cost_per_gb_day: 100,
                     payment_schedule: PaymentSchedule::Monthly,
                     max_price_volatility: 0.1,
@@ -512,13 +578,18 @@ impl BlockchainStorageManager {
         };
 
         let system_identity = self.create_system_identity().await?;
-        let content_hash = self.storage_system.write().await
+        let content_hash = self
+            .storage_system
+            .write()
+            .await
             .upload_content(upload_request, system_identity)
             .await?;
 
         // Update cache
         if let Ok(mut cache) = self.cache.try_write() {
-            cache.transactions.insert(transaction.hash(), transaction.clone());
+            cache
+                .transactions
+                .insert(transaction.hash(), transaction.clone());
         }
 
         debug!("Transaction stored successfully");
@@ -543,7 +614,11 @@ impl BlockchainStorageManager {
     }
 
     /// Store identity data with access control
-    pub async fn store_identity_data(&mut self, did: &str, identity_data: &IdentityTransactionData) -> Result<StorageOperationResult> {
+    pub async fn store_identity_data(
+        &mut self,
+        did: &str,
+        identity_data: &IdentityTransactionData,
+    ) -> Result<StorageOperationResult> {
         info!("Storing identity data for DID: {}", did);
 
         let serialized_identity = self.serialize_identity_data(identity_data)?;
@@ -559,13 +634,15 @@ impl BlockchainStorageManager {
                 format!("type-{}", identity_data.identity_type),
             ],
             encrypt: match self.get_encryption_level_for_data_type("identity") {
-                EncryptionLevel::HighSecurity | EncryptionLevel::Standard | EncryptionLevel::QuantumResistant => true,
+                EncryptionLevel::HighSecurity
+                | EncryptionLevel::Standard
+                | EncryptionLevel::QuantumResistant => true,
                 EncryptionLevel::None => false,
             }, // Use proper encryption level for identity data
             compress: self.config.enable_compression,
             access_control: AccessControlSettings {
-                public_read: false, // Identity data is private
-                read_permissions: vec![], // Only owner can read
+                public_read: false,        // Identity data is private
+                read_permissions: vec![],  // Only owner can read
                 write_permissions: vec![], // Only owner can write
                 expires_at: None,
             },
@@ -579,8 +656,8 @@ impl BlockchainStorageManager {
                     required_certifications: vec!["identity-verified".to_string()],
                 },
                 budget_constraints: BudgetConstraints {
-                    max_total_cost: 1000,  // $1000 total budget for 20 year identity storage
-                    max_cost_per_gb_day: 150,  // Higher cost for identity data
+                    max_total_cost: 1000,     // $1000 total budget for 20 year identity storage
+                    max_cost_per_gb_day: 150, // Higher cost for identity data
                     payment_schedule: PaymentSchedule::Monthly,
                     max_price_volatility: 0.05,
                 },
@@ -588,13 +665,18 @@ impl BlockchainStorageManager {
         };
 
         let system_identity = self.create_system_identity().await?;
-        let content_hash = self.storage_system.write().await
+        let content_hash = self
+            .storage_system
+            .write()
+            .await
             .upload_content(upload_request, system_identity)
             .await?;
 
         // Update cache
         if let Ok(mut cache) = self.cache.try_write() {
-            cache.identities.insert(did.to_string(), identity_data.clone());
+            cache
+                .identities
+                .insert(did.to_string(), identity_data.clone());
         }
 
         info!("Identity data stored successfully for DID: {}", did);
@@ -619,7 +701,10 @@ impl BlockchainStorageManager {
     }
 
     /// Store UTXO set for fast synchronization
-    pub async fn store_utxo_set(&mut self, utxo_set: &HashMap<Hash, crate::transaction::TransactionOutput>) -> Result<StorageOperationResult> {
+    pub async fn store_utxo_set(
+        &mut self,
+        utxo_set: &HashMap<Hash, crate::transaction::TransactionOutput>,
+    ) -> Result<StorageOperationResult> {
         info!("Storing UTXO set ({} entries)", utxo_set.len());
 
         let serialized_utxo = bincode::serialize(utxo_set)
@@ -627,10 +712,13 @@ impl BlockchainStorageManager {
 
         let upload_request = UploadRequest {
             content: serialized_utxo.clone(),
-            filename: format!("utxo_set_{}.dat", std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs()),
+            filename: format!(
+                "utxo_set_{}.dat",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+            ),
             mime_type: "application/octet-stream".to_string(),
             description: format!("UTXO set with {} entries", utxo_set.len()),
             tags: vec![
@@ -644,10 +732,13 @@ impl BlockchainStorageManager {
                 public_read: false, // UTXO sets are sensitive
                 read_permissions: vec![],
                 write_permissions: vec![],
-                expires_at: Some(std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() + 30 * 24 * 3600), // Expire after 30 days
+                expires_at: Some(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                        + 30 * 24 * 3600,
+                ), // Expire after 30 days
             },
             storage_requirements: ContentStorageRequirements {
                 duration_days: 30, // Shorter duration for UTXO snapshots
@@ -659,7 +750,7 @@ impl BlockchainStorageManager {
                     required_certifications: vec![],
                 },
                 budget_constraints: BudgetConstraints {
-                    max_total_cost: serialized_utxo.len() as u64 * 30,  // 30 day storage budget
+                    max_total_cost: serialized_utxo.len() as u64 * 30, // 30 day storage budget
                     max_cost_per_gb_day: 100,
                     payment_schedule: PaymentSchedule::Monthly,
                     max_price_volatility: 0.1,
@@ -668,7 +759,10 @@ impl BlockchainStorageManager {
         };
 
         let system_identity = self.create_system_identity().await?;
-        let content_hash = self.storage_system.write().await
+        let content_hash = self
+            .storage_system
+            .write()
+            .await
             .upload_content(upload_request, system_identity)
             .await?;
 
@@ -702,26 +796,29 @@ impl BlockchainStorageManager {
 
         let upload_request = UploadRequest {
             content: serialized_mempool.clone(),
-            filename: format!("mempool_{}.dat", std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs()),
+            filename: format!(
+                "mempool_{}.dat",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+            ),
             mime_type: "application/octet-stream".to_string(),
             description: "Mempool state snapshot".to_string(),
-            tags: vec![
-                "mempool".to_string(),
-                "snapshot".to_string(),
-            ],
+            tags: vec!["mempool".to_string(), "snapshot".to_string()],
             encrypt: false, // Mempool can be unencrypted
             compress: true,
             access_control: AccessControlSettings {
                 public_read: false,
                 read_permissions: vec![],
                 write_permissions: vec![],
-                expires_at: Some(std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() + 24 * 3600), // Expire after 1 day
+                expires_at: Some(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                        + 24 * 3600,
+                ), // Expire after 1 day
             },
             storage_requirements: ContentStorageRequirements {
                 duration_days: 1, // Very short duration
@@ -733,8 +830,8 @@ impl BlockchainStorageManager {
                     required_certifications: vec![],
                 },
                 budget_constraints: BudgetConstraints {
-                    max_total_cost: serialized_mempool.len() as u64 * 1,  // 1 day storage budget
-                    max_cost_per_gb_day: 50,  // Lower cost for temporary data
+                    max_total_cost: serialized_mempool.len() as u64 * 1, // 1 day storage budget
+                    max_cost_per_gb_day: 50, // Lower cost for temporary data
                     payment_schedule: PaymentSchedule::Daily,
                     max_price_volatility: 0.2,
                 },
@@ -742,7 +839,10 @@ impl BlockchainStorageManager {
         };
 
         let system_identity = self.create_system_identity().await?;
-        let content_hash = self.storage_system.write().await
+        let content_hash = self
+            .storage_system
+            .write()
+            .await
             .upload_content(upload_request, system_identity)
             .await?;
 
@@ -768,8 +868,14 @@ impl BlockchainStorageManager {
     }
 
     /// Backup entire blockchain to distributed storage with erasure coding
-    pub async fn backup_blockchain(&mut self, blockchain: &Blockchain) -> Result<Vec<StorageOperationResult>> {
-        info!("Starting complete blockchain backup (height: {})", blockchain.height);
+    pub async fn backup_blockchain(
+        &mut self,
+        blockchain: &Blockchain,
+    ) -> Result<Vec<StorageOperationResult>> {
+        info!(
+            "Starting complete blockchain backup (height: {})",
+            blockchain.height
+        );
 
         let mut results = Vec::new();
 
@@ -782,7 +888,11 @@ impl BlockchainStorageManager {
             match self.store_block(block).await {
                 Ok(result) => results.push(result),
                 Err(e) => {
-                    error!("Error: Critical failure backing up block {}: {}", block.height(), e);
+                    error!(
+                        "Error: Critical failure backing up block {}: {}",
+                        block.height(),
+                        e
+                    );
                     results.push(StorageOperationResult {
                         success: false,
                         content_hash: None,
@@ -821,19 +931,27 @@ impl BlockchainStorageManager {
         let successful_backups = results.iter().filter(|r| r.success).count();
         let total_backups = results.len();
 
-        info!("Blockchain backup completed: {}/{} operations successful", 
-              successful_backups, total_backups);
+        info!(
+            "Blockchain backup completed: {}/{} operations successful",
+            successful_backups, total_backups
+        );
 
         Ok(results)
     }
 
     /// Restore blockchain from storage
-    pub async fn restore_blockchain(&mut self, state_content_hash: ContentHash) -> Result<Blockchain> {
+    pub async fn restore_blockchain(
+        &mut self,
+        state_content_hash: ContentHash,
+    ) -> Result<Blockchain> {
         info!("Restoring blockchain from storage");
 
         let blockchain = self.retrieve_blockchain_state(state_content_hash).await?;
 
-        info!("Blockchain restored successfully (height: {})", blockchain.height);
+        info!(
+            "Blockchain restored successfully (height: {})",
+            blockchain.height
+        );
         Ok(blockchain)
     }
 
@@ -847,7 +965,11 @@ impl BlockchainStorageManager {
         info!(" Performing storage maintenance");
 
         // Perform unified storage system maintenance
-        self.storage_system.write().await.perform_maintenance().await?;
+        self.storage_system
+            .write()
+            .await
+            .perform_maintenance()
+            .await?;
 
         // Clean up cache if it's too large
         if let Ok(mut cache) = self.cache.try_write() {
@@ -864,7 +986,7 @@ impl BlockchainStorageManager {
     /// Test storage functionality with a simple write/read operation
     pub async fn store_test_data(&mut self) -> Result<()> {
         let test_data = b"blockchain_storage_health_check".to_vec();
-        
+
         let upload_request = UploadRequest {
             content: test_data.clone(),
             filename: "health_check.dat".to_string(),
@@ -887,7 +1009,10 @@ impl BlockchainStorageManager {
         };
 
         let system_identity = self.create_system_identity().await?;
-        let content_hash = self.storage_system.write().await
+        let content_hash = self
+            .storage_system
+            .write()
+            .await
             .upload_content(upload_request, system_identity)
             .await?;
 
@@ -898,12 +1023,17 @@ impl BlockchainStorageManager {
             version: None,
         };
 
-        let retrieved = self.storage_system.write().await
+        let retrieved = self
+            .storage_system
+            .write()
+            .await
             .download_content(download_request)
             .await?;
 
         if retrieved != test_data {
-            return Err(anyhow::anyhow!("Storage health check failed: data mismatch"));
+            return Err(anyhow::anyhow!(
+                "Storage health check failed: data mismatch"
+            ));
         }
 
         Ok(())
@@ -911,18 +1041,66 @@ impl BlockchainStorageManager {
 
     /// Retrieve the latest blockchain state from storage
     pub async fn retrieve_latest_blockchain_state(&self) -> Result<Option<BlockchainState>> {
-        // Try to retrieve the latest blockchain state using a well-known content hash
-        // In a implementation, this would be tracked separately
         info!("Attempting to retrieve latest blockchain state");
-        
-        // For now, return None since we don't have a reliable way to retrieve without a content hash
-        // This would need to be implemented with a metadata system in lib-storage
-        warn!("Error: Latest state retrieval not implemented - requires metadata system");
-        Ok(None)
+
+        let query = SearchQuery {
+            terms: vec![
+                "blockchain".to_string(),
+                "state".to_string(),
+                "latest".to_string(),
+            ],
+            mime_type_filter: Some("application/octet-stream".to_string()),
+            owner_filter: None,
+            size_range: None,
+            date_range: None,
+            tag_filter: Some(vec![
+                "blockchain".to_string(),
+                "state".to_string(),
+                "latest".to_string(),
+            ]),
+        };
+
+        let system_identity = self.create_system_identity().await?;
+
+        let results = self
+            .storage_system
+            .write()
+            .await
+            .search_content(query, system_identity)
+            .await?;
+
+        if results.is_empty() {
+            return Ok(None);
+        }
+
+        let latest = results
+            .into_iter()
+            .max_by_key(|meta| meta.created_at)
+            .unwrap();
+
+        let download_request = DownloadRequest {
+            content_hash: latest.hash,
+            requester: self.create_system_identity().await?,
+            version: None,
+        };
+
+        let serialized_state = self
+            .storage_system
+            .write()
+            .await
+            .download_content(download_request)
+            .await?;
+
+        let state: BlockchainState = bincode::deserialize(&serialized_state)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize blockchain state: {}", e))?;
+
+        Ok(Some(state))
     }
 
     /// Retrieve the latest UTXO set from storage
-    pub async fn retrieve_latest_utxo_set(&self) -> Result<Option<HashMap<Hash, crate::transaction::TransactionOutput>>> {
+    pub async fn retrieve_latest_utxo_set(
+        &self,
+    ) -> Result<Option<HashMap<Hash, crate::transaction::TransactionOutput>>> {
         // For now, return None since we don't have a reliable way to retrieve without a content hash
         // This would need to be implemented with a metadata system in lib-storage
         info!("Attempting to retrieve latest UTXO set");
@@ -931,13 +1109,15 @@ impl BlockchainStorageManager {
     }
 
     /// Retrieve all identity data from storage
-    pub async fn retrieve_all_identities(&self) -> Result<HashMap<String, IdentityTransactionData>> {
+    pub async fn retrieve_all_identities(
+        &self,
+    ) -> Result<HashMap<String, IdentityTransactionData>> {
         let identities = HashMap::new();
-        
+
         // In a implementation, this would iterate through stored identity keys
         // For now, return empty map as this requires storage metadata support
         info!("Error: retrieve_all_identities requires storage indexing implementation");
-        
+
         Ok(identities)
     }
 
@@ -949,23 +1129,12 @@ impl BlockchainStorageManager {
     // Helper methods for storage configuration
     fn get_encryption_level_for_data_type(&self, data_type: &str) -> EncryptionLevel {
         match data_type {
-            "identity" => EncryptionLevel::HighSecurity,     // Identity data needs strong encryption
-            "blockchain" => EncryptionLevel::Standard, // Blockchain state needs medium encryption
-            "transaction" => EncryptionLevel::Standard, // Transactions need medium encryption  
-            "utxo" => EncryptionLevel::Standard,       // UTXO set needs medium encryption
-            "mempool" => EncryptionLevel::None,       // Mempool can use basic encryption
-            _ => EncryptionLevel::Standard,            // Default to medium encryption
-        }
-    }
-
-    fn get_access_pattern_for_data_type(&self, data_type: &str) -> AccessPattern {
-        match data_type {
-            "blockchain" => AccessPattern::Frequent, // Blockchain accessed frequently
-            "mempool" => AccessPattern::Frequent,        // Mempool accessed frequently
-            "utxo" => AccessPattern::Frequent,           // UTXO lookups are frequent
-            "identity" => AccessPattern::Rare,   // Identity data accessed infrequently
-            "transaction" => AccessPattern::Occasional, // Transactions accessed occasionally
-            _ => AccessPattern::Occasional,                 // Default to occasional access
+            "identity" => EncryptionLevel::HighSecurity, // Identity data needs strong encryption
+            "blockchain" => EncryptionLevel::Standard,   // Blockchain state needs medium encryption
+            "transaction" => EncryptionLevel::Standard,  // Transactions need medium encryption
+            "utxo" => EncryptionLevel::Standard,         // UTXO set needs medium encryption
+            "mempool" => EncryptionLevel::None,          // Mempool can use basic encryption
+            _ => EncryptionLevel::Standard,              // Default to medium encryption
         }
     }
 
@@ -981,8 +1150,7 @@ impl BlockchainStorageManager {
     }
 
     fn serialize_block(&self, block: &Block) -> Result<Vec<u8>> {
-        bincode::serialize(block)
-            .map_err(|e| anyhow::anyhow!("Failed to serialize block: {}", e))
+        bincode::serialize(block).map_err(|e| anyhow::anyhow!("Failed to serialize block: {}", e))
     }
 
     fn deserialize_block(&self, data: &[u8]) -> Result<Block> {
@@ -993,11 +1161,11 @@ impl BlockchainStorageManager {
     /// Get comprehensive DHT statistics for monitoring
     pub async fn get_dht_statistics(&self) -> Result<DhtStats> {
         let _storage_system = self.storage_system.read().await;
-        
+
         // In a implementation, these would be pulled from the storage system
         let dht_stats = DhtStats {
-            total_nodes: 0, // Would query DHT for actual node count
-            total_connections: 0, // Active peer connections
+            total_nodes: 0,         // Would query DHT for actual node count
+            total_connections: 0,   // Active peer connections
             total_messages_sent: 0, // DHT protocol messages
             total_messages_received: 0,
             replay_rejections: 0,
@@ -1005,12 +1173,14 @@ impl BlockchainStorageManager {
             storage_utilization: self.calculate_storage_utilization().await?,
             network_health: self.calculate_network_health().await?,
         };
-        
-        info!("DHT Statistics: {} nodes, {:.1}% storage utilization, {:.1}% network health", 
-              dht_stats.total_nodes, 
-              dht_stats.storage_utilization * 100.0,
-              dht_stats.network_health * 100.0);
-        
+
+        info!(
+            "DHT Statistics: {} nodes, {:.1}% storage utilization, {:.1}% network health",
+            dht_stats.total_nodes,
+            dht_stats.storage_utilization * 100.0,
+            dht_stats.network_health * 100.0
+        );
+
         Ok(dht_stats)
     }
 
@@ -1019,17 +1189,19 @@ impl BlockchainStorageManager {
         let economic_stats = EconomicStats {
             total_contracts: self.stats.active_contracts as u64,
             total_storage: self.stats.total_size,
-            total_value_locked: 0, // Would calculate from contract values
+            total_value_locked: 0,     // Would calculate from contract values
             average_contract_value: 0, // Would calculate from contracts
-            total_penalties: 0, // Would track penalty events
-            total_rewards: 0, // Would track reward distributions
+            total_penalties: 0,        // Would track penalty events
+            total_rewards: 0,          // Would track reward distributions
         };
-        
-        info!("Economic Statistics: {} contracts, {} bytes storage, {} tokens locked",
-              economic_stats.total_contracts,
-              economic_stats.total_storage,
-              economic_stats.total_value_locked);
-        
+
+        info!(
+            "Economic Statistics: {} contracts, {} bytes storage, {} tokens locked",
+            economic_stats.total_contracts,
+            economic_stats.total_storage,
+            economic_stats.total_value_locked
+        );
+
         Ok(economic_stats)
     }
 
@@ -1037,7 +1209,7 @@ impl BlockchainStorageManager {
     async fn calculate_storage_utilization(&self) -> Result<f64> {
         let max_storage = 1_000_000_000_000u64; // 1TB (from config)
         let used_storage = self.stats.total_size;
-        
+
         if max_storage == 0 {
             Ok(0.0)
         } else {
@@ -1048,23 +1220,23 @@ impl BlockchainStorageManager {
     /// Calculate network health score based on various metrics
     async fn calculate_network_health(&self) -> Result<f64> {
         let mut health_score = 1.0f64;
-        
+
         // Factor in DHT connectivity
         if self.stats.routing_table_size < 20 {
             health_score *= 0.8; // Reduce health if few DHT connections
         }
-        
+
         // Factor in storage distribution
         let storage_util = self.calculate_storage_utilization().await?;
         if storage_util > 0.9 {
             health_score *= 0.7; // Reduce health if storage nearly full
         }
-        
+
         // Factor in cache hit rate (simplified)
         if self.stats.cache_size == 0 {
             health_score *= 0.9; // Slight reduction if no caching
         }
-        
+
         Ok(health_score.max(0.0).min(1.0))
     }
 
@@ -1079,12 +1251,15 @@ impl BlockchainStorageManager {
     }
 
     fn estimate_block_size(&self, block: &Block) -> usize {
-        bincode::serialize(block).map(|data| data.len()).unwrap_or(1024)
+        bincode::serialize(block)
+            .map(|data| data.len())
+            .unwrap_or(1024)
     }
 
     async fn create_system_identity(&self) -> Result<ZhtpIdentity> {
         // Create a system identity for storage operations
-        use lib_identity::types::{IdentityType, AccessLevel};
+        use lib_crypto::PublicKey;
+        use lib_identity::types::{AccessLevel, IdentityType};
         use lib_identity::wallets::WalletManager;
         use lib_proofs::ZeroKnowledgeProof;
         use lib_crypto::PublicKey;
@@ -1096,8 +1271,9 @@ impl BlockchainStorageManager {
         let system_did = "did:zhtp:system".to_string();
 
         // Create system NodeId (deterministic)
-        let system_node_id = lib_identity::types::NodeId::from_did_device(&system_did, "system-node")
-            .unwrap_or_else(|_| lib_identity::types::NodeId::from_bytes([255u8; 32]));
+        let system_node_id =
+            lib_identity::types::NodeId::from_did_device(&system_did, "system-node")
+                .unwrap_or_else(|_| lib_identity::types::NodeId::from_bytes([255u8; 32]));
 
         // Initialize device_node_ids with system node
         let mut device_node_ids = HashMap::new();
@@ -1135,8 +1311,8 @@ impl BlockchainStorageManager {
                 .unwrap()
                 .as_secs(),
             recovery_keys: vec![],
-            owner_identity_id: None,  // System identity has no owner
-            reward_wallet_id: None,   // System identity doesn't need rewards
+            owner_identity_id: None, // System identity has no owner
+            reward_wallet_id: None,  // System identity doesn't need rewards
             encrypted_master_seed: None,
             next_wallet_index: 0,
             password_hash: None,
@@ -1154,13 +1330,17 @@ impl BlockchainStorageManager {
     /// Store blockchain state with a well-known latest key
     pub async fn store_latest_blockchain_state(&self, state: &BlockchainState) -> Result<()> {
         let serialized = bincode::serialize(state)?;
-        
+
         let upload_request = UploadRequest {
             content: serialized,
             filename: "latest_blockchain_state.dat".to_string(),
             mime_type: "application/octet-stream".to_string(),
             description: "Latest blockchain state".to_string(),
-            tags: vec!["blockchain".to_string(), "state".to_string(), "latest".to_string()],
+            tags: vec![
+                "blockchain".to_string(),
+                "state".to_string(),
+                "latest".to_string(),
+            ],
             encrypt: self.config.enable_encryption,
             compress: self.config.enable_compression,
             access_control: AccessControlSettings {
@@ -1177,23 +1357,33 @@ impl BlockchainStorageManager {
         };
 
         let system_identity = self.create_system_identity().await?;
-        let _content_hash = self.storage_system.write().await
+        let _content_hash = self
+            .storage_system
+            .write()
+            .await
             .upload_content(upload_request, system_identity)
             .await?;
-            
+
         Ok(())
     }
 
     /// Store UTXO set with a well-known latest key  
-    pub async fn store_latest_utxo_set(&self, utxo_set: &HashMap<Hash, crate::transaction::TransactionOutput>) -> Result<()> {
+    pub async fn store_latest_utxo_set(
+        &self,
+        utxo_set: &HashMap<Hash, crate::transaction::TransactionOutput>,
+    ) -> Result<()> {
         let serialized = bincode::serialize(utxo_set)?;
-        
+
         let upload_request = UploadRequest {
             content: serialized,
             filename: "latest_utxo_set.dat".to_string(),
             mime_type: "application/octet-stream".to_string(),
             description: "Latest UTXO set".to_string(),
-            tags: vec!["blockchain".to_string(), "utxo".to_string(), "latest".to_string()],
+            tags: vec![
+                "blockchain".to_string(),
+                "utxo".to_string(),
+                "latest".to_string(),
+            ],
             encrypt: self.config.enable_encryption,
             compress: self.config.enable_compression,
             access_control: AccessControlSettings {
@@ -1210,10 +1400,13 @@ impl BlockchainStorageManager {
         };
 
         let system_identity = self.create_system_identity().await?;
-        let _content_hash = self.storage_system.write().await
+        let _content_hash = self
+            .storage_system
+            .write()
+            .await
             .upload_content(upload_request, system_identity)
             .await?;
-            
+
         Ok(())
     }
 }
@@ -1235,11 +1428,11 @@ impl StorageCache {
         let target_size = self.blocks.len() / 4;
         let mut heights: Vec<u64> = self.blocks.keys().cloned().collect();
         heights.sort();
-        
+
         for height in heights.into_iter().take(target_size) {
             self.blocks.remove(&height);
         }
-        
+
         // Recalculate size (simplified)
         self.current_size = self.blocks.len() * 1024 + self.transactions.len() * 512;
     }
@@ -1247,12 +1440,17 @@ impl StorageCache {
     fn evict_oldest_transactions(&mut self) {
         // Remove oldest 25% of cached transactions
         let target_size = self.transactions.len() / 4;
-        let hashes: Vec<Hash> = self.transactions.keys().cloned().take(target_size).collect();
-        
+        let hashes: Vec<Hash> = self
+            .transactions
+            .keys()
+            .cloned()
+            .take(target_size)
+            .collect();
+
         for hash in hashes {
             self.transactions.remove(&hash);
         }
-        
+
         // Recalculate size (simplified)
         self.current_size = self.blocks.len() * 1024 + self.transactions.len() * 512;
     }
@@ -1373,13 +1571,12 @@ impl StorageEntry {
 mod tests {
     use super::*;
     use crate::blockchain::Blockchain;
-    
 
     #[tokio::test]
     async fn test_blockchain_storage_manager_creation() -> Result<()> {
         let config = BlockchainStorageConfig::default();
         let manager = BlockchainStorageManager::new(config).await;
-        
+
         assert!(manager.is_ok());
         Ok(())
     }
@@ -1416,22 +1613,22 @@ mod tests {
         let mut config = BlockchainStorageConfig::default();
         config.enable_encryption = false; // Disable encryption for test to avoid key mismatch
         let mut manager = BlockchainStorageManager::new(config).await?;
-        
+
         let blockchain = Blockchain::new()?;
         let genesis_block = blockchain.blocks[0].clone();
-        
+
         // Store block
         let store_result = manager.store_block(&genesis_block).await?;
         assert!(store_result.success);
         assert!(store_result.content_hash.is_some());
-        
+
         // Retrieve block
         let content_hash = store_result.content_hash.unwrap();
         let retrieved_block = manager.retrieve_block(content_hash).await?;
-        
+
         assert_eq!(retrieved_block.height(), genesis_block.height());
         assert_eq!(retrieved_block.hash(), genesis_block.hash());
-        
+
         Ok(())
     }
 
@@ -1439,7 +1636,7 @@ mod tests {
     async fn test_transaction_storage() -> Result<()> {
         let config = BlockchainStorageConfig::default();
         let mut manager = BlockchainStorageManager::new(config).await?;
-        
+
         // Create a test transaction
         let transaction = crate::transaction::Transaction::new(
             vec![],
@@ -1453,12 +1650,12 @@ mod tests {
             },
             "test transaction".as_bytes().to_vec(),
         );
-        
+
         // Store transaction
         let store_result = manager.store_transaction(&transaction).await?;
         assert!(store_result.success);
         assert!(store_result.content_hash.is_some());
-        
+
         Ok(())
     }
 
@@ -1466,7 +1663,7 @@ mod tests {
     async fn test_identity_data_storage() -> Result<()> {
         let config = BlockchainStorageConfig::default();
         let mut manager = BlockchainStorageManager::new(config).await?;
-        
+
         let identity_data = crate::transaction::IdentityTransactionData::new(
             "did:zhtp:test".to_string(),
             "Test User".to_string(),
@@ -1477,12 +1674,14 @@ mod tests {
             1000,
             100,
         );
-        
+
         // Store identity data
-        let store_result = manager.store_identity_data("did:zhtp:test", &identity_data).await?;
+        let store_result = manager
+            .store_identity_data("did:zhtp:test", &identity_data)
+            .await?;
         assert!(store_result.success);
         assert!(store_result.content_hash.is_some());
-        
+
         Ok(())
     }
 
@@ -1490,7 +1689,7 @@ mod tests {
     async fn test_utxo_set_storage() -> Result<()> {
         let config = BlockchainStorageConfig::default();
         let mut manager = BlockchainStorageManager::new(config).await?;
-        
+
         let mut utxo_set = HashMap::new();
         let test_hash = crate::types::Hash::from([1u8; 32]);
         let test_output = crate::transaction::TransactionOutput::new(
@@ -1499,12 +1698,12 @@ mod tests {
             crate::integration::crypto_integration::PublicKey::new(vec![4, 5, 6]),
         );
         utxo_set.insert(test_hash, test_output);
-        
+
         // Store UTXO set
         let store_result = manager.store_utxo_set(&utxo_set).await?;
         assert!(store_result.success);
         assert!(store_result.content_hash.is_some());
-        
+
         Ok(())
     }
 
@@ -1512,14 +1711,14 @@ mod tests {
     async fn test_mempool_storage() -> Result<()> {
         let config = BlockchainStorageConfig::default();
         let mut manager = BlockchainStorageManager::new(config).await?;
-        
+
         let mempool = crate::mempool::Mempool::default();
-        
+
         // Store mempool
         let store_result = manager.store_mempool(&mempool).await?;
         assert!(store_result.success);
         assert!(store_result.content_hash.is_some());
-        
+
         Ok(())
     }
 
@@ -1527,17 +1726,17 @@ mod tests {
     async fn test_blockchain_backup() -> Result<()> {
         let config = BlockchainStorageConfig::default();
         let mut manager = BlockchainStorageManager::new(config).await?;
-        
+
         let blockchain = Blockchain::new()?;
-        
+
         // Backup blockchain
         let backup_results = manager.backup_blockchain(&blockchain).await?;
         assert!(!backup_results.is_empty());
-        
+
         // Check that at least the blockchain state was backed up successfully
         let successful_backups = backup_results.iter().filter(|r| r.success).count();
         assert!(successful_backups > 0);
-        
+
         Ok(())
     }
 
@@ -1545,14 +1744,14 @@ mod tests {
     async fn test_storage_statistics() -> Result<()> {
         let config = BlockchainStorageConfig::default();
         let mut manager = BlockchainStorageManager::new(config).await?;
-        
+
         let stats = manager.get_storage_statistics().await?;
 
         // Basic validation that stats structure is correct
         // DHT is not initialized in this test, so total_nodes should be 0
         assert_eq!(stats.dht_stats.total_nodes, 0);
         assert_eq!(stats.storage_stats.total_content_count, 0);
-        
+
         Ok(())
     }
 
@@ -1560,11 +1759,11 @@ mod tests {
     async fn test_storage_maintenance() -> Result<()> {
         let config = BlockchainStorageConfig::default();
         let mut manager = BlockchainStorageManager::new(config).await?;
-        
+
         // Perform maintenance (should not fail)
         let maintenance_result = manager.perform_maintenance().await;
         assert!(maintenance_result.is_ok());
-        
+
         Ok(())
     }
 
@@ -1572,13 +1771,13 @@ mod tests {
     #[test]
     fn test_legacy_blockchain_serialization() -> Result<()> {
         let blockchain = Blockchain::new()?;
-        
+
         let serialized = serialize_blockchain_state(&blockchain)?;
         let deserialized = deserialize_blockchain_state(&serialized)?;
-        
+
         assert_eq!(blockchain.height, deserialized.height);
         assert_eq!(blockchain.difficulty, deserialized.difficulty);
-        
+
         Ok(())
     }
 
@@ -1606,12 +1805,12 @@ mod tests {
     fn test_legacy_storage_metadata() -> Result<()> {
         let test_data = b"test data for storage";
         let metadata = StorageMetadata::new(test_data, false);
-        
+
         assert_eq!(metadata.version, 1);
         assert!(!metadata.compressed);
         assert!(metadata.verify(test_data));
         assert!(!metadata.verify(b"different data"));
-        
+
         Ok(())
     }
 
@@ -1619,28 +1818,28 @@ mod tests {
     fn test_legacy_storage_entry() -> Result<()> {
         let test_data = b"test entry data".to_vec();
         let entry = StorageEntry::new(test_data.clone(), false)?;
-        
+
         assert!(entry.verify());
         assert_eq!(entry.data, test_data);
-        
+
         let serialized = entry.to_bytes()?;
         let deserialized = StorageEntry::from_bytes(&serialized)?;
-        
+
         assert!(deserialized.verify());
         assert_eq!(deserialized.data, test_data);
-        
+
         Ok(())
     }
 
     #[test]
     fn test_storage_cache() {
         let mut cache = StorageCache::new();
-        
+
         // Test initial state
         assert_eq!(cache.hit_count, 0);
         assert_eq!(cache.miss_count, 0);
         assert_eq!(cache.current_size, 0);
-        
+
         // Test eviction methods don't panic on empty cache
         cache.evict_oldest_blocks();
         cache.evict_oldest_transactions();
@@ -1649,7 +1848,7 @@ mod tests {
     #[test]
     fn test_blockchain_storage_config() {
         let config = BlockchainStorageConfig::default();
-        
+
         assert!(config.auto_persist_state);
         assert_eq!(config.persist_frequency, 100);
         assert!(config.enable_erasure_coding);

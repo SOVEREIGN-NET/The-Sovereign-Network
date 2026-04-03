@@ -61,15 +61,147 @@ use tracing;
 use crate::types::ConsensusStep;
 use crate::validators::validator_protocol::{HeartbeatMessage, NetworkSummary};
 
+// ============================================================================
+// CONSENSUS SAFETY METRICS (BFT-J, Issue #1014)
+// ============================================================================
+
+/// Safety and liveness metrics for the BFT consensus protocol.
+///
+/// These metrics are **non-authoritative telemetry** — they are exposed for
+/// monitoring and alerting but do not affect consensus decisions directly.
+///
+/// # Invariant
+///
+/// `fork_rate` MUST be `0.0` during correct BFT operation.  A non-zero
+/// `fork_rate` indicates that two conflicting blocks were committed at the
+/// same height, which is a **safety violation** that must be investigated
+/// immediately.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConsensusMetrics {
+    /// Whether the consensus protocol has made progress within the liveness window.
+    pub liveness: bool,
+    /// Latency of the most recent commit in milliseconds.
+    pub last_commit_latency_ms: u64,
+    /// Rate of conflicting commits (forks) observed.  MUST be `0.0` in BFT mode.
+    pub fork_rate: f64,
+    /// Number of rounds required to reach commit at the current height.
+    pub rounds_to_commit: u32,
+}
+
+impl Default for ConsensusMetrics {
+    fn default() -> Self {
+        Self {
+            liveness: true,
+            last_commit_latency_ms: 0,
+            fork_rate: 0.0,
+            rounds_to_commit: 1,
+        }
+    }
+}
+
+impl ConsensusMetrics {
+    /// Returns a set of metrics indicating a healthy consensus state.
+    pub fn healthy() -> Self {
+        Self::default()
+    }
+}
+
+/// Checks that consensus metrics are within acceptable safety bounds.
+///
+/// Returns `Ok(())` for a healthy consensus state, or an `Err` string
+/// describing the safety violation.
+///
+/// # Errors
+///
+/// - `fork_rate > 0.0` — a safety violation (conflicting commits observed).
+/// - `!liveness` — the consensus protocol has stalled.
+pub fn check_consensus_health(metrics: &ConsensusMetrics) -> Result<(), String> {
+    // Fail closed: reject NaN, infinity, and any non-zero value
+    if !metrics.fork_rate.is_finite() || metrics.fork_rate != 0.0 {
+        return Err(format!(
+            "consensus safety violation: fork_rate is {:.4e} (expected 0.0 in BFT mode)",
+            metrics.fork_rate
+        ));
+    }
+    if !metrics.liveness {
+        return Err(
+            "consensus liveness failure: no commit progress within liveness window".to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod consensus_metrics_tests {
+    use super::*;
+
+    #[test]
+    fn test_healthy_metrics_pass() {
+        let m = ConsensusMetrics::healthy();
+        assert!(check_consensus_health(&m).is_ok());
+    }
+
+    #[test]
+    fn test_nonzero_fork_rate_fails() {
+        let m = ConsensusMetrics {
+            fork_rate: 0.01,
+            ..ConsensusMetrics::healthy()
+        };
+        assert!(check_consensus_health(&m).is_err());
+    }
+
+    #[test]
+    fn test_liveness_failure_detected() {
+        let m = ConsensusMetrics {
+            liveness: false,
+            ..ConsensusMetrics::healthy()
+        };
+        assert!(check_consensus_health(&m).is_err());
+    }
+
+    #[test]
+    fn test_nan_fork_rate_fails() {
+        let m = ConsensusMetrics {
+            fork_rate: f64::NAN,
+            ..ConsensusMetrics::healthy()
+        };
+        assert!(check_consensus_health(&m).is_err());
+    }
+
+    #[test]
+    fn test_infinity_fork_rate_fails() {
+        let m = ConsensusMetrics {
+            fork_rate: f64::INFINITY,
+            ..ConsensusMetrics::healthy()
+        };
+        assert!(check_consensus_health(&m).is_err());
+    }
+
+    #[test]
+    fn test_negative_fork_rate_fails() {
+        let m = ConsensusMetrics {
+            fork_rate: -0.01,
+            ..ConsensusMetrics::healthy()
+        };
+        assert!(check_consensus_health(&m).is_err());
+    }
+}
+
 /// Error type for heartbeat validation
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum HeartbeatValidationError {
     /// Sender is not in the active validator set
     NotAValidator(String),
     /// Heartbeat height is too far from local height (skew > ±10)
-    HeightSkewTooLarge { heartbeat_height: u64, local_height: u64 },
+    HeightSkewTooLarge {
+        heartbeat_height: u64,
+        local_height: u64,
+    },
     /// Heartbeat timestamp is too far from current time (skew > ±30s)
-    TimestampSkewTooLarge { heartbeat_time: u64, current_time: u64 },
+    TimestampSkewTooLarge {
+        heartbeat_time: u64,
+        current_time: u64,
+    },
     /// Signature verification failed
     InvalidSignature(String),
 }
@@ -78,13 +210,29 @@ impl std::fmt::Display for HeartbeatValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             HeartbeatValidationError::NotAValidator(msg) => write!(f, "Not a validator: {}", msg),
-            HeartbeatValidationError::HeightSkewTooLarge { heartbeat_height, local_height } => {
-                write!(f, "Height skew too large: {} vs {}", heartbeat_height, local_height)
+            HeartbeatValidationError::HeightSkewTooLarge {
+                heartbeat_height,
+                local_height,
+            } => {
+                write!(
+                    f,
+                    "Height skew too large: {} vs {}",
+                    heartbeat_height, local_height
+                )
             }
-            HeartbeatValidationError::TimestampSkewTooLarge { heartbeat_time, current_time } => {
-                write!(f, "Timestamp skew too large: {} vs {}", heartbeat_time, current_time)
+            HeartbeatValidationError::TimestampSkewTooLarge {
+                heartbeat_time,
+                current_time,
+            } => {
+                write!(
+                    f,
+                    "Timestamp skew too large: {} vs {}",
+                    heartbeat_time, current_time
+                )
             }
-            HeartbeatValidationError::InvalidSignature(msg) => write!(f, "Invalid signature: {}", msg),
+            HeartbeatValidationError::InvalidSignature(msg) => {
+                write!(f, "Invalid signature: {}", msg)
+            }
         }
     }
 }
@@ -182,11 +330,13 @@ impl HeartbeatTracker {
     ///
     /// `Some(Duration)` if a heartbeat was recorded, `None` otherwise
     pub fn last_heartbeat_age(&self, validator_id: &IdentityId) -> Option<Duration> {
-        self.heartbeat_times.get(validator_id).map(|last_heartbeat| {
-            let now = current_time_secs();
-            let age_secs = now.saturating_sub(*last_heartbeat);
-            Duration::from_secs(age_secs)
-        })
+        self.heartbeat_times
+            .get(validator_id)
+            .map(|last_heartbeat| {
+                let now = current_time_secs();
+                let age_secs = now.saturating_sub(*last_heartbeat);
+                Duration::from_secs(age_secs)
+            })
     }
 
     /// Update the liveness timeout threshold
@@ -220,7 +370,8 @@ impl HeartbeatTracker {
         let cutoff = now.saturating_sub(cutoff_seconds);
         let original_len = self.heartbeat_times.len();
 
-        self.heartbeat_times.retain(|_, &mut last_time| last_time >= cutoff);
+        self.heartbeat_times
+            .retain(|_, &mut last_time| last_time >= cutoff);
 
         original_len - self.heartbeat_times.len()
     }
@@ -248,20 +399,25 @@ impl HeartbeatTracker {
 
         // Get validator identity - must be set before creating heartbeats
         let validator_id = self.local_validator.clone().unwrap_or_else(|| {
-            tracing::warn!("HeartbeatTracker: local_validator not set, heartbeat will be rejected by peers");
+            tracing::warn!(
+                "HeartbeatTracker: local_validator not set, heartbeat will be rejected by peers"
+            );
             // Use a distinct ID to signal configuration error, not zero bytes
             IdentityId::from_bytes(&hash_blake3(b"uninitialized-validator"))
         });
 
         // Generate message ID including validator to prevent collisions when
         // multiple validators send heartbeats in the same second
-        let message_id = Hash::from_bytes(&generate_message_id_with_validator(&validator_id, &timestamp));
+        let message_id = Hash::from_bytes(&generate_message_id_with_validator(
+            &validator_id,
+            &timestamp,
+        ));
 
         // Create a minimal network summary
         let network_summary = NetworkSummary {
             active_validators: active_validator_count,
             health_score: 0.95, // Placeholder: would be calculated from tracking
-            block_rate: 0.1, // Placeholder: would be calculated from block times
+            block_rate: 0.1,    // Placeholder: would be calculated from block times
         };
 
         HeartbeatMessage {
@@ -318,9 +474,10 @@ impl HeartbeatTracker {
     {
         // Check 1: Sender must be a validator
         if !is_validator(&heartbeat.validator) {
-            return Err(HeartbeatValidationError::NotAValidator(
-                format!("Validator {} not in active set", heartbeat.validator),
-            ));
+            return Err(HeartbeatValidationError::NotAValidator(format!(
+                "Validator {} not in active set",
+                heartbeat.validator
+            )));
         }
 
         // Check 2: Height must be within acceptable skew (±10 blocks)
@@ -569,7 +726,6 @@ mod tests {
                 active_validators: 10,
                 health_score: 0.95,
                 block_rate: 0.1,
-
             },
             timestamp: now,
             signature: create_test_signature(now),
@@ -596,7 +752,6 @@ mod tests {
                 active_validators: 10,
                 health_score: 0.95,
                 block_rate: 0.1,
-
             },
             timestamp: now,
             signature: create_test_signature(now),
@@ -623,7 +778,6 @@ mod tests {
                 active_validators: 10,
                 health_score: 0.95,
                 block_rate: 0.1,
-
             },
             timestamp: now,
             signature: create_test_signature(now),
@@ -653,7 +807,6 @@ mod tests {
                 active_validators: 10,
                 health_score: 0.95,
                 block_rate: 0.1,
-
             },
             timestamp: now,
             signature: create_test_signature(now),
@@ -682,7 +835,6 @@ mod tests {
                 active_validators: 10,
                 health_score: 0.95,
                 block_rate: 0.1,
-
             },
             timestamp: now,
             signature: create_test_signature(now),

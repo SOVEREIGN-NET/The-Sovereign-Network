@@ -39,30 +39,27 @@
 //! - Exposes node to potentially malicious services
 //! - Multicast discovery is the proper protocol-aware method
 
-use anyhow::{Result, anyhow, Context};
+use anyhow::{anyhow, Context, Result};
 use lib_crypto::PublicKey;
 use lib_identity::ZhtpIdentity;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-use crate::identity::unified_peer::UnifiedPeerId;
 use super::local_network::NodeAnnouncement;
+use crate::identity::unified_peer::UnifiedPeerId;
 
 /// Maximum addresses to store per peer (DoS protection)
 const MAX_ADDRESSES_PER_PEER: usize = 10;
 
 /// Maximum number of discovered peers to cache (DoS protection)
 const MAX_DISCOVERED_PEERS: usize = 1000;
-
-/// Bounded channel capacity for peer discovery events
-const DISCOVERY_CHANNEL_CAPACITY: usize = 100;
 
 /// Nonce expiration window in seconds (replay attack protection)
 const NONCE_EXPIRATION_SECS: u64 = 300; // 5 minutes
@@ -79,8 +76,8 @@ const MAX_PORT: u16 = 65535;
 /// Expected Dilithium public key size (Dilithium2)
 const DILITHIUM_PK_SIZE: usize = 1312;
 
-/// Expected Kyber public key size (Kyber768)
-const KYBER_PK_SIZE: usize = 1184;
+/// Expected Kyber public key size (Kyber1024)
+const KYBER_PK_SIZE: usize = 1568;
 
 // === Zero-Copy Optimization Note ===
 // For large payloads (>4KB), consider using:
@@ -150,11 +147,7 @@ impl NonceTracker {
         // Enforce max nonces limit (DoS protection)
         if nonces.len() >= self.max_nonces {
             // Remove oldest nonce
-            if let Some(oldest_nonce) = nonces
-                .iter()
-                .min_by_key(|(_, &ts)| ts)
-                .map(|(n, _)| *n)
-            {
+            if let Some(oldest_nonce) = nonces.iter().min_by_key(|(_, &ts)| ts).map(|(n, _)| *n) {
                 nonces.remove(&oldest_nonce);
             }
         }
@@ -366,7 +359,10 @@ impl PeerReputation {
                 self.banned = false;
                 self.ban_expires = None;
                 self.score = 20; // Give them a second chance with low score
-                info!("Peer {} ban expired, reputation reset to {}", self.peer_id, self.score);
+                info!(
+                    "Peer {} ban expired, reputation reset to {}",
+                    self.peer_id, self.score
+                );
                 return true;
             }
         }
@@ -415,11 +411,7 @@ impl ReputationTracker {
         // Enforce limit
         if reps.len() >= self.max_peers {
             // Remove peer with lowest score
-            if let Some(lowest_id) = reps
-                .iter()
-                .min_by_key(|(_, r)| r.score)
-                .map(|(id, _)| *id)
-            {
+            if let Some(lowest_id) = reps.iter().min_by_key(|(_, r)| r.score).map(|(id, _)| *id) {
                 reps.remove(&lowest_id);
             }
         }
@@ -464,7 +456,7 @@ impl Default for ReputationTracker {
 /// # Security
 /// Validates that public keys have correct sizes for post-quantum algorithms:
 /// - Dilithium2: 1312 bytes
-/// - Kyber768: 1184 bytes
+/// - Kyber1024: 1568 bytes
 ///
 /// This prevents malformed keys from being accepted before cryptographic verification.
 pub fn validate_public_key(public_key: &PublicKey) -> Result<()> {
@@ -473,7 +465,8 @@ pub fn validate_public_key(public_key: &PublicKey) -> Result<()> {
     if dilithium_len != DILITHIUM_PK_SIZE {
         return Err(anyhow!(
             "Invalid Dilithium public key size: expected {}, got {}",
-            DILITHIUM_PK_SIZE, dilithium_len
+            DILITHIUM_PK_SIZE,
+            dilithium_len
         ));
     }
 
@@ -482,21 +475,36 @@ pub fn validate_public_key(public_key: &PublicKey) -> Result<()> {
     if kyber_len != KYBER_PK_SIZE {
         return Err(anyhow!(
             "Invalid Kyber public key size: expected {}, got {}",
-            KYBER_PK_SIZE, kyber_len
+            KYBER_PK_SIZE,
+            kyber_len
         ));
     }
 
     // Validate key_id is not all zeros (indicates uninitialized key)
     if public_key.key_id.iter().all(|&b| b == 0) {
-        return Err(anyhow!("Invalid key_id: all zeros indicates uninitialized key"));
+        return Err(anyhow!(
+            "Invalid key_id: all zeros indicates uninitialized key"
+        ));
     }
 
     // Basic entropy check - keys should not be all same value
-    if public_key.dilithium_pk.iter().all(|&b| b == public_key.dilithium_pk[0]) {
-        return Err(anyhow!("Invalid Dilithium key: no entropy (all bytes identical)"));
+    if public_key
+        .dilithium_pk
+        .iter()
+        .all(|&b| b == public_key.dilithium_pk[0])
+    {
+        return Err(anyhow!(
+            "Invalid Dilithium key: no entropy (all bytes identical)"
+        ));
     }
-    if public_key.kyber_pk.iter().all(|&b| b == public_key.kyber_pk[0]) {
-        return Err(anyhow!("Invalid Kyber key: no entropy (all bytes identical)"));
+    if public_key
+        .kyber_pk
+        .iter()
+        .all(|&b| b == public_key.kyber_pk[0])
+    {
+        return Err(anyhow!(
+            "Invalid Kyber key: no entropy (all bytes identical)"
+        ));
     }
 
     Ok(())
@@ -665,10 +673,11 @@ pub struct UnifiedDiscoveryService {
     /// Discovered peers (deduplicated by peer_id)
     discovered_peers: Arc<RwLock<HashMap<Uuid, DiscoveryResult>>>,
     /// Optional callback for new peer discoveries
-    peer_discovered_callback:
-        Option<Arc<dyn Fn(DiscoveryResult) + Send + Sync>>,
+    peer_discovered_callback: Option<Arc<dyn Fn(DiscoveryResult) + Send + Sync>>,
     /// Whether the service is running
     running: Arc<RwLock<bool>>,
+    /// Signing context for TLS certificate pinning (Issue #739)
+    signing_ctx: Option<super::local_network::DiscoverySigningContext>,
 }
 
 impl UnifiedDiscoveryService {
@@ -680,26 +689,25 @@ impl UnifiedDiscoveryService {
     ///
     /// # Panics
     /// Panics if `mesh_port` is 0 (invalid)
-    pub fn new(
-        node_id: Uuid,
-        mesh_port: u16,
-        public_key: PublicKey,
-    ) -> Self {
+    pub fn new(node_id: Uuid, mesh_port: u16, public_key: PublicKey) -> Self {
         // Validate port is not zero
         if mesh_port == 0 {
             panic!("Invalid mesh_port: 0 is not a valid port number");
         }
-        
+
         // Log warning for privileged ports (< 1024)
         if mesh_port < MIN_PORT {
-            warn!("Using privileged port {} - may require elevated permissions", mesh_port);
+            warn!(
+                "Using privileged port {} - may require elevated permissions",
+                mesh_port
+            );
         }
-        
+
         // Validate port is in valid range
         if mesh_port > MAX_PORT {
             warn!("Port {} exceeds maximum valid port {}", mesh_port, MAX_PORT);
         }
-        
+
         Self {
             node_id,
             mesh_port,
@@ -707,7 +715,42 @@ impl UnifiedDiscoveryService {
             discovered_peers: Arc::new(RwLock::new(HashMap::new())),
             peer_discovered_callback: None,
             running: Arc::new(RwLock::new(false)),
+            signing_ctx: None,
         }
+    }
+
+    /// Create a new unified discovery service with TLS pinning enabled (Issue #739)
+    ///
+    /// # Arguments
+    /// * `node_id` - Local node identity
+    /// * `mesh_port` - Local mesh port
+    /// * `public_key` - Local public key
+    /// * `dilithium_sk` - Dilithium secret key for signing announcements
+    /// * `dilithium_pk` - Dilithium public key
+    /// * `tls_spki_sha256` - SHA256 hash of this node's TLS certificate SPKI
+    ///
+    /// # Security
+    /// - `mesh_port` validated to be in valid range (1024-65535)
+    /// - `public_key` must match the node's actual cryptographic identity
+    /// - TLS pinning enabled for secure peer discovery
+    ///
+    /// # Panics
+    /// Panics if `mesh_port` is 0 (invalid)
+    pub fn with_tls_pinning(
+        node_id: Uuid,
+        mesh_port: u16,
+        public_key: PublicKey,
+        dilithium_sk: Vec<u8>,
+        dilithium_pk: Vec<u8>,
+        tls_spki_sha256: [u8; 32],
+    ) -> Self {
+        let mut service = Self::new(node_id, mesh_port, public_key);
+        service.signing_ctx = Some(super::local_network::DiscoverySigningContext {
+            dilithium_sk,
+            dilithium_pk,
+            tls_spki_sha256,
+        });
+        service
     }
 
     /// Set callback for new peer discoveries
@@ -761,10 +804,15 @@ impl UnifiedDiscoveryService {
         let node_id = self.node_id;
         let mesh_port = self.mesh_port;
         let public_key = self.public_key.clone();
+        let signing_ctx = self.signing_ctx.clone();
 
         tokio::spawn(async move {
             let peer_callback = Arc::new(move |addr: String, pk: PublicKey| {
-                debug!("Multicast discovered peer: {} (key: {})", addr, hex::encode(&pk.as_bytes()[..8]));
+                debug!(
+                    "Multicast discovered peer: {} (key: {})",
+                    addr,
+                    hex::encode(&pk.as_bytes()[..8])
+                );
             });
 
             if let Err(e) = super::local_network::start_local_discovery(
@@ -772,7 +820,7 @@ impl UnifiedDiscoveryService {
                 mesh_port,
                 public_key,
                 Some(peer_callback),
-                None, // TODO: Pass signing context for TLS pinning (Issue #739)
+                signing_ctx, // Issue #739: Pass signing context for TLS pinning
             )
             .await
             {
@@ -824,13 +872,18 @@ impl UnifiedDiscoveryService {
                     .min_by_key(|(_, r)| r.discovered_at)
                     .map(|(id, _)| *id)
                 {
-                    warn!("Peer limit reached ({}), evicting oldest peer: {}",
-                          MAX_DISCOVERED_PEERS, oldest_id);
+                    warn!(
+                        "Peer limit reached ({}), evicting oldest peer: {}",
+                        MAX_DISCOVERED_PEERS, oldest_id
+                    );
                     peers.remove(&oldest_id);
                 }
             }
 
-            info!("📡 New peer discovered: {} via {:?}", peer_id, result.protocol);
+            info!(
+                "📡 New peer discovered: {} via {:?}",
+                peer_id, result.protocol
+            );
             peers.insert(peer_id, result.clone());
 
             if let Some(ref callback) = self.peer_discovered_callback {
@@ -941,7 +994,7 @@ mod tests {
     fn test_validate_public_key_valid() {
         let valid_key = PublicKey {
             dilithium_pk: (0..1312).map(|i| (i % 256) as u8).collect(),
-            kyber_pk: (0..1184).map(|i| (i % 256) as u8).collect(),
+            kyber_pk: (0..1568).map(|i| (i % 256) as u8).collect(), // Kyber1024
             key_id: [42u8; 32],
         };
 
@@ -952,7 +1005,7 @@ mod tests {
     fn test_validate_public_key_invalid_dilithium_size() {
         let invalid_key = PublicKey {
             dilithium_pk: vec![1u8; 1000], // Wrong size
-            kyber_pk: vec![2u8; 1184],
+            kyber_pk: vec![2u8; 1568],     // Kyber1024
             key_id: [3u8; 32],
         };
 
@@ -965,7 +1018,7 @@ mod tests {
     fn test_validate_public_key_invalid_kyber_size() {
         let invalid_key = PublicKey {
             dilithium_pk: vec![1u8; 1312],
-            kyber_pk: vec![2u8; 800], // Wrong size
+            kyber_pk: vec![2u8; 800], // Wrong size (not 1568)
             key_id: [3u8; 32],
         };
 
@@ -978,8 +1031,8 @@ mod tests {
     fn test_validate_public_key_zero_key_id() {
         let invalid_key = PublicKey {
             dilithium_pk: vec![1u8; 1312],
-            kyber_pk: vec![2u8; 1184],
-            key_id: [0u8; 32], // All zeros
+            kyber_pk: vec![2u8; 1568], // Kyber1024
+            key_id: [0u8; 32],         // All zeros
         };
 
         let result = validate_public_key(&invalid_key);
@@ -991,7 +1044,7 @@ mod tests {
     fn test_validate_public_key_no_entropy() {
         let invalid_key = PublicKey {
             dilithium_pk: vec![42u8; 1312], // All same value
-            kyber_pk: vec![2u8; 1184],
+            kyber_pk: vec![2u8; 1568],      // Kyber1024
             key_id: [3u8; 32],
         };
 

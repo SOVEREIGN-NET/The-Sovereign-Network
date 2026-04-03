@@ -1,0 +1,16 @@
+[package]
+name = "lib-tokens"
+version = "0.1.0"
+edition = "2021"
+description = "ZHTP Token Contract Specification v2"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+
+# Internal dependencies
+lib-types = { path = "../lib-types" }
+
+[dev-dependencies]
+serde_json = "1.0"

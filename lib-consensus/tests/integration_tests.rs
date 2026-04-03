@@ -3,13 +3,11 @@
 use anyhow::Result;
 use lib_consensus::{
     ByzantineFaultDetector, ConsensusConfig, ConsensusEngine, ConsensusType, DaoProposalType,
-    DaoVoteChoice, ValidatorStatus, NoOpBroadcaster,
+    DaoVoteChoice, NoOpBroadcaster, ValidatorStatus,
 };
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio_test;
 
 /// Helper function to create test identity
 fn create_test_identity(name: &str) -> IdentityId {
@@ -19,8 +17,8 @@ fn create_test_identity(name: &str) -> IdentityId {
 /// Helper function to create test consensus config
 fn create_test_config() -> ConsensusConfig {
     ConsensusConfig {
-        consensus_type: ConsensusType::Hybrid,
-        min_stake: 1000 * 1_000_000,           // 1000 ZHTP
+        consensus_type: ConsensusType::ByzantineFaultTolerance,
+        min_stake: 1000 * 1_000_000,           // 1000 SOV
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
         max_validators: 10,
         block_time: 1, // Fast for testing
@@ -62,6 +60,8 @@ async fn test_full_consensus_flow() -> Result<()> {
                 *stake,
                 *storage,
                 consensus_key,
+                vec![0xEEu8; 32], // networking_key
+                vec![0xFFu8; 32], // rewards_key
                 commission_rate,
                 i == 0, // First validator is genesis
             )
@@ -103,7 +103,9 @@ async fn test_dao_governance_integration() -> Result<()> {
                 identity,
                 2000 * 1_000_000,
                 200 * 1024 * 1024 * 1024,
-                vec![i as u8; 32],
+                vec![i as u8; 32], // consensus_key
+                vec![0xEEu8; 32],  // networking_key
+                vec![0xFFu8; 32],  // rewards_key
                 5,
                 i == 0,
             )
@@ -173,7 +175,9 @@ async fn test_byzantine_fault_handling() -> Result<()> {
                 identity,
                 2000 * 1_000_000,
                 200 * 1024 * 1024 * 1024,
-                vec![i as u8; 32],
+                vec![i as u8; 32], // consensus_key
+                vec![0xEEu8; 32],  // networking_key
+                vec![0xFFu8; 32],  // rewards_key
                 5,
                 i == 0,
             )
@@ -200,8 +204,8 @@ async fn test_byzantine_fault_handling() -> Result<()> {
     let mut byzantine_detector = ByzantineFaultDetector::new();
     let faults = byzantine_detector.detect_faults(consensus_engine.validator_manager())?;
 
-    // Check that the system can handle fault detection
-    assert!(faults.len() >= 0); // May or may not have faults
+    // Check that the system can handle fault detection (may or may not have faults)
+    let _ = faults.len();
 
     let validator_count_after = consensus_engine
         .validator_manager()
@@ -209,8 +213,7 @@ async fn test_byzantine_fault_handling() -> Result<()> {
         .len();
 
     // Verify that the system is working (validator counts should be reasonable)
-    assert!(validator_count_before >= 0);
-    assert!(validator_count_after >= 0);
+    let _ = (validator_count_before, validator_count_after);
 
     // Since we couldn't actually slash the validator in our simplified test,
     // we'll just verify the integration works by checking the validator exists
@@ -239,7 +242,9 @@ async fn test_consensus_with_insufficient_validators() -> Result<()> {
                 identity,
                 2000 * 1_000_000,
                 200 * 1024 * 1024 * 1024,
-                vec![i as u8; 32],
+                vec![i as u8; 32], // consensus_key
+                vec![0xEEu8; 32],  // networking_key
+                vec![0xFFu8; 32],  // rewards_key
                 5,
                 i == 0,
             )
@@ -260,7 +265,9 @@ async fn test_consensus_with_insufficient_validators() -> Result<()> {
                 identity,
                 2000 * 1_000_000,
                 200 * 1024 * 1024 * 1024,
-                vec![(i + 2) as u8; 32],
+                vec![(i + 2) as u8; 32], // consensus_key
+                vec![0xEEu8; 32],        // networking_key
+                vec![0xFFu8; 32],        // rewards_key
                 5,
                 false,
             )
@@ -289,7 +296,9 @@ async fn test_validator_lifecycle_management() -> Result<()> {
                 identity,
                 2000 * 1_000_000,
                 200 * 1024 * 1024 * 1024,
-                vec![i as u8; 32],
+                vec![i as u8; 32], // consensus_key
+                vec![0xEEu8; 32],  // networking_key
+                vec![0xFFu8; 32],  // rewards_key
                 5,
                 i == 0,
             )
@@ -306,7 +315,9 @@ async fn test_validator_lifecycle_management() -> Result<()> {
             new_validator.clone(),
             3000 * 1_000_000,
             300 * 1024 * 1024 * 1024,
-            vec![99u8; 32],
+            vec![99u8; 32],   // consensus_key
+            vec![0xEEu8; 32], // networking_key
+            vec![0xFFu8; 32], // rewards_key
             5,
             false,
         )
@@ -343,7 +354,9 @@ async fn test_treasury_integration() -> Result<()> {
                 identity,
                 2000 * 1_000_000,
                 200 * 1024 * 1024 * 1024,
-                vec![i as u8; 32],
+                vec![i as u8; 32], // consensus_key
+                vec![0xEEu8; 32],  // networking_key
+                vec![0xFFu8; 32],  // rewards_key
                 5,
                 i == 0,
             )
@@ -374,7 +387,16 @@ async fn test_reward_system_integration() -> Result<()> {
     for (i, (name, stake, storage)) in validators.iter().enumerate() {
         let identity = create_test_identity(name);
         consensus_engine
-            .register_validator(identity, *stake, *storage, vec![i as u8; 32], 5, i == 0)
+            .register_validator(
+                identity,
+                *stake,
+                *storage,
+                vec![i as u8; 32],
+                vec![0xEEu8; 32],
+                vec![0xFFu8; 32],
+                5,
+                i == 0,
+            )
             .await?;
     }
 
@@ -426,7 +448,6 @@ async fn test_multi_type_consensus_mechanisms() -> Result<()> {
         ConsensusType::ProofOfStake,
         ConsensusType::ProofOfStorage,
         ConsensusType::ProofOfUsefulWork,
-        ConsensusType::Hybrid,
         ConsensusType::ByzantineFaultTolerance,
     ];
 
@@ -443,7 +464,9 @@ async fn test_multi_type_consensus_mechanisms() -> Result<()> {
                 identity,
                 2000 * 1_000_000,
                 200 * 1024 * 1024 * 1024,
-                vec![1u8; 32],
+                vec![1u8; 32],    // consensus_key
+                vec![0xEEu8; 32], // networking_key
+                vec![0xFFu8; 32], // rewards_key
                 5,
                 true,
             )
@@ -472,7 +495,9 @@ async fn test_system_resilience_under_load() -> Result<()> {
                 identity,
                 1000 * 1_000_000,
                 100 * 1024 * 1024 * 1024,
-                vec![i as u8; 32],
+                vec![i as u8; 32], // consensus_key
+                vec![0xEEu8; 32],  // networking_key
+                vec![0xFFu8; 32],  // rewards_key
                 5,
                 i == 0,
             )

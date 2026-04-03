@@ -1,6 +1,6 @@
 // Range verifier implementation
+use crate::range::{AggregatedBulletproof, BulletproofRangeProof};
 use crate::types::VerificationResult;
-use crate::range::{BulletproofRangeProof, AggregatedBulletproof};
 use anyhow::Result;
 
 /// Range verifier for verifying range proofs

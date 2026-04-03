@@ -1,5 +1,5 @@
 //! Storage Integration Module (Phase 3 Implementation)
-//! 
+//!
 //! integration with lib-storage package for distributed content management,
 //! economic storage, DHT networking, and identity migration.
 
@@ -8,18 +8,17 @@
 // TODO: reintroduce real storage integration behind feature gates when needed.
 // pub use lib_storage::*;
 
-use crate::{ProtocolError, Result};
 use crate::types::{
-    ZhtpRequest, ContentMetadata, CachedContent, 
-    ContentSearchResult, StorageSearchQuery
+    CachedContent, ContentMetadata, ContentSearchResult, StorageSearchQuery, ZhtpRequest,
 };
+use crate::{ProtocolError, Result};
 // Placeholder types until storage integration is re-enabled.
 pub type ContentHash = Vec<u8>;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use lib_identity::{ZhtpIdentity, IdentityId};
 use lib_economy::EconomicModel;
+use lib_identity::{IdentityId, ZhtpIdentity};
 
 /// Storage integration for ZHTP protocols with lib-storage backend
 #[derive(Debug)]
@@ -54,7 +53,7 @@ impl Default for StorageConfig {
         Self {
             distributed_enabled: true,
             default_replication: 3,
-            price_per_gb_day: 1000, // 1000 units per GB per day
+            price_per_gb_day: 1000,              // 1000 units per GB per day
             max_content_size: 100 * 1024 * 1024, // 100MB
             default_encryption: true,
         }
@@ -97,21 +96,6 @@ pub enum ContractStatus {
     Cancelled,
 }
 
-/// Storage statistics
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct StorageStats {
-    /// Total content stored (bytes)
-    pub total_bytes_stored: u64,
-    /// Number of active contracts
-    pub active_contracts: u64,
-    /// Total storage fees paid
-    pub total_fees_paid: u64,
-    /// Average replication factor
-    pub avg_replication: f64,
-    /// Storage reliability percentage
-    pub reliability_percentage: f64,
-}
-
 /// Storage request for ZHTP content
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZhtpStorageRequest {
@@ -127,6 +111,47 @@ pub struct ZhtpStorageRequest {
     pub max_cost: Option<u64>,
     /// Preferred storage regions
     pub preferred_regions: Vec<String>,
+}
+
+fn calculate_relevance_score(
+    keywords: &[String],
+    metadata: &lib_storage::types::storage_types::ContentMetadata,
+) -> f64 {
+    if keywords.is_empty() {
+        return 0.5;
+    }
+
+    let mut score = 0.0;
+    let query_terms: Vec<&str> = keywords.iter().map(|s| s.to_lowercase()).collect();
+
+    // Check filename
+    let filename_lower = metadata.filename.to_lowercase();
+    for term in &query_terms {
+        if filename_lower.contains(term) {
+            score += 0.4; // Higher weight for filename matches
+        }
+    }
+
+    // Check description
+    let desc_lower = metadata.description.to_lowercase();
+    for term in &query_terms {
+        if desc_lower.contains(term) {
+            score += 0.3;
+        }
+    }
+
+    // Check tags
+    for tag in &metadata.tags {
+        let tag_lower = tag.to_lowercase();
+        for term in &query_terms {
+            if tag_lower.contains(term) {
+                score += 0.3;
+            }
+        }
+    }
+
+    // Normalize to 0.0-1.0 range
+    score.min(1.0)
 }
 
 impl StorageIntegration {
@@ -179,7 +204,9 @@ impl StorageIntegration {
         request: &ZhtpRequest,
     ) -> Result<String> {
         let _ = (content, metadata, uploader, request);
-        Err(ProtocolError::StorageError("Storage integration disabled".to_string()))
+        Err(ProtocolError::StorageError(
+            "Storage integration disabled".to_string(),
+        ))
     }
 
     /// Retrieve content using lib-storage with access control
@@ -193,18 +220,20 @@ impl StorageIntegration {
         if let Some(cached) = self.content_cache.get_mut(content_id) {
             // Update access statistics
             cached.access_count += 1;
-            
-            tracing::info!("Retrieved content {} from cache (access count: {})", 
-                          content_id, cached.access_count);
-            
+
+            tracing::info!(
+                "Retrieved content {} from cache (access count: {})",
+                content_id,
+                cached.access_count
+            );
+
             return Ok(Some((cached.content.clone(), cached.metadata.clone())));
         }
 
         // Parse content hash from string
-        let content_hash = lib_crypto::Hash::from_bytes(
-            &hex::decode(content_id)
-                .map_err(|e| ProtocolError::StorageError(format!("Invalid content ID format: {}", e)))?
-        );
+        let content_hash = lib_crypto::Hash::from_bytes(&hex::decode(content_id).map_err(|e| {
+            ProtocolError::StorageError(format!("Invalid content ID format: {}", e))
+        })?);
 
         // Create download request
         let download_request = DownloadRequest {
@@ -217,18 +246,25 @@ impl StorageIntegration {
         match self.storage_system.download_content(download_request).await {
             Ok(content) => {
                 // Get metadata from storage system
-                if let Some(storage_metadata) = self.storage_system.search_content(
-                    SearchQuery {
-                        terms: vec![],
-                        mime_type_filter: None,
-                        owner_filter: None,
-                        size_range: None,
-                        date_range: None,
-                        tag_filter: None,
-                    },
-                    requester
-                ).await.map_err(|e| ProtocolError::StorageError(format!("Failed to get metadata: {}", e)))?.first() {
-                    
+                if let Some(storage_metadata) = self
+                    .storage_system
+                    .search_content(
+                        SearchQuery {
+                            terms: vec![],
+                            mime_type_filter: None,
+                            owner_filter: None,
+                            size_range: None,
+                            date_range: None,
+                            tag_filter: None,
+                        },
+                        requester,
+                    )
+                    .await
+                    .map_err(|e| {
+                        ProtocolError::StorageError(format!("Failed to get metadata: {}", e))
+                    })?
+                    .first()
+                {
                     // Convert storage metadata to our ContentMetadata format
                     let metadata = crate::types::ContentMetadata {
                         content_type: storage_metadata.content_type.clone(),
@@ -271,17 +307,22 @@ impl StorageIntegration {
                         access_count: 1,
                     };
 
-                    self.content_cache.insert(content_id.to_string(), cached_content);
+                    self.content_cache
+                        .insert(content_id.to_string(), cached_content);
 
                     tracing::info!("Retrieved content {} from storage system", content_id);
                     Ok(Some((content, metadata)))
                 } else {
-                    Err(ProtocolError::StorageError("Content metadata not found".to_string()))
+                    Err(ProtocolError::StorageError(
+                        "Content metadata not found".to_string(),
+                    ))
                 }
             }
             Err(e) => {
                 if e.to_string().contains("Access denied") {
-                    Err(ProtocolError::AccessDenied("Access denied to content".to_string()))
+                    Err(ProtocolError::AccessDenied(
+                        "Access denied to content".to_string(),
+                    ))
                 } else {
                     tracing::warn!("Content {} not found in storage system: {}", content_id, e);
                     Ok(None)
@@ -307,12 +348,29 @@ impl StorageIntegration {
         };
 
         // Search through unified storage system
-        let search_results = self.storage_system.search_content(storage_query, requester).await
+        let search_results = self
+            .storage_system
+            .search_content(storage_query, requester)
+            .await
             .map_err(|e| ProtocolError::StorageError(format!("Search failed: {}", e)))?;
 
         // Convert storage metadata to our search result format
         let mut results = Vec::new();
         for storage_metadata in search_results {
+            let access_level = storage_metadata
+                .access_control
+                .first()
+                .map(|al| match al {
+                    lib_storage::types::dht_types::AccessLevel::Public => "public",
+                    lib_storage::types::dht_types::AccessLevel::Private => "private",
+                    lib_storage::types::dht_types::AccessLevel::Restricted => "restricted",
+                })
+                .unwrap_or("unknown")
+                .to_string();
+
+            // Calculate relevance score based on keyword matching
+            let relevance_score = calculate_relevance_score(&query.keywords, &storage_metadata);
+
             let result = ContentSearchResult {
                 content_id: storage_metadata.hash.to_string(),
                 filename: storage_metadata.filename,
@@ -321,9 +379,9 @@ impl StorageIntegration {
                 created_at: storage_metadata.created_at,
                 description: storage_metadata.description,
                 tags: storage_metadata.tags,
-                relevance_score: 1.0, // TODO: Implement relevance scoring
+                relevance_score,
                 owner_id: storage_metadata.owner.id.to_string(),
-                access_level: "private".to_string(), // TODO: Determine actual access level
+                access_level,
             };
             results.push(result);
         }
@@ -343,22 +401,22 @@ impl StorageIntegration {
     ) -> Result<bool> {
         // Remove from cache (simplified implementation)
         self.content_cache.remove(content_id);
-        
+
         // TODO: Implement actual deletion through storage system
         tracing::info!("Deleted content {} (simplified implementation)", content_id);
-        
+
         Ok(true)
     }
 
     /// Generate content ID
     fn generate_content_id(&self, content: &[u8], metadata: &ContentMetadata) -> String {
         use lib_crypto::hash_blake3;
-        
+
         let mut combined = Vec::new();
         combined.extend_from_slice(content);
         combined.extend_from_slice(metadata.content_type.as_bytes());
         combined.extend_from_slice(&metadata.size.to_le_bytes());
-        
+
         let hash = hash_blake3(&combined);
         format!("lib_content_{}", hex::encode(&hash[..16]))
     }
@@ -371,7 +429,7 @@ impl StorageIntegration {
     ) -> Result<Vec<String>> {
         // Simplified provider discovery
         let mut providers = Vec::new();
-        
+
         // Add preferred regional providers first
         for region in preferred_regions {
             providers.push(format!("provider_{}_{}", region, providers.len()));
@@ -379,54 +437,42 @@ impl StorageIntegration {
                 break;
             }
         }
-        
+
         // Add additional providers if needed
         while providers.len() < replication as usize {
             providers.push(format!("provider_global_{}", providers.len()));
         }
-        
+
         if providers.len() < replication as usize {
             return Err(ProtocolError::StorageError(
-                "Insufficient storage providers available".to_string()
+                "Insufficient storage providers available".to_string(),
             ));
         }
-        
+
         Ok(providers)
     }
 
     /// Distribute content to storage providers
-    async fn distribute_content(
-        &self,
-        _contract: &StorageContract,
-        _content: &[u8],
-    ) -> Result<()> {
+    async fn distribute_content(&self, _contract: &StorageContract, _content: &[u8]) -> Result<()> {
         // In a implementation, this would:
         // 1. Encrypt content if required
         // 2. Split content using erasure coding
         // 3. Send chunks to storage providers
         // 4. Verify storage confirmation
-        
+
         // Placeholder implementation
         Ok(())
     }
 
     /// Retrieve content from a specific provider
-    async fn retrieve_from_provider(
-        &self,
-        _provider: &str,
-        _content_id: &str,
-    ) -> Result<Vec<u8>> {
+    async fn retrieve_from_provider(&self, _provider: &str, _content_id: &str) -> Result<Vec<u8>> {
         // Placeholder implementation
         // In reality, this would connect to the provider and request content
         Ok(vec![1, 2, 3, 4]) // Dummy content
     }
 
     /// Delete content from a specific provider
-    async fn delete_from_provider(
-        &self,
-        _provider: &str,
-        _content_id: &str,
-    ) -> Result<()> {
+    async fn delete_from_provider(&self, _provider: &str, _content_id: &str) -> Result<()> {
         // Placeholder implementation
         Ok(())
     }
@@ -440,9 +486,7 @@ impl StorageIntegration {
     /// Get storage statistics (simplified)
     pub fn get_cache_stats(&self) -> (usize, usize) {
         let total_cached = self.content_cache.len();
-        let total_size: usize = self.content_cache.values()
-            .map(|c| c.content.len())
-            .sum();
+        let total_size: usize = self.content_cache.values().map(|c| c.content.len()).sum();
         (total_cached, total_size)
     }
 
@@ -457,11 +501,16 @@ impl StorageIntegration {
         let cutoff_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs() - 3600; // 1 hour
-            
-        self.content_cache.retain(|_, cached| cached.cached_at > cutoff_time);
-        
-        tracing::debug!("Cache management completed, {} items retained", self.content_cache.len());
+            .as_secs()
+            - 3600; // 1 hour
+
+        self.content_cache
+            .retain(|_, cached| cached.cached_at > cutoff_time);
+
+        tracing::debug!(
+            "Cache management completed, {} items retained",
+            self.content_cache.len()
+        );
         Ok(())
     }
 
@@ -476,7 +525,9 @@ impl StorageIntegration {
         credentials: &ZhtpIdentity,
         passphrase: &str,
     ) -> Result<()> {
-        self.storage_system.store_identity_credentials(identity_id, credentials, passphrase).await
+        self.storage_system
+            .store_identity_credentials(identity_id, credentials, passphrase)
+            .await
             .map_err(|e| ProtocolError::StorageError(format!("Failed to store identity: {}", e)))
     }
 
@@ -486,42 +537,60 @@ impl StorageIntegration {
         identity_id: &IdentityId,
         passphrase: &str,
     ) -> Result<ZhtpIdentity> {
-        self.storage_system.retrieve_identity_credentials(identity_id, passphrase).await
+        self.storage_system
+            .retrieve_identity_credentials(identity_id, passphrase)
+            .await
             .map_err(|e| ProtocolError::StorageError(format!("Failed to retrieve identity: {}", e)))
     }
 
     /// Check if identity exists in storage
     pub async fn identity_exists(&mut self, identity_id: &IdentityId) -> Result<bool> {
-        self.storage_system.identity_exists(identity_id).await
-            .map_err(|e| ProtocolError::StorageError(format!("Failed to check identity existence: {}", e)))
+        self.storage_system
+            .identity_exists(identity_id)
+            .await
+            .map_err(|e| {
+                ProtocolError::StorageError(format!("Failed to check identity existence: {}", e))
+            })
     }
 
     /// Migrate identity from blockchain to unified storage
     pub async fn migrate_identity_from_blockchain(
-        &mut self, 
+        &mut self,
         identity_id: &IdentityId,
         lib_identity: &ZhtpIdentity,
         passphrase: &str,
     ) -> Result<()> {
-        self.storage_system.migrate_identity_from_blockchain(identity_id, lib_identity, passphrase).await
+        self.storage_system
+            .migrate_identity_from_blockchain(identity_id, lib_identity, passphrase)
+            .await
             .map_err(|e| ProtocolError::StorageError(format!("Identity migration failed: {}", e)))
     }
 
     /// Get storage system statistics
     pub async fn get_storage_statistics(&mut self) -> Result<lib_storage::UnifiedStorageStats> {
-        self.storage_system.get_statistics().await
+        self.storage_system
+            .get_statistics()
+            .await
             .map_err(|e| ProtocolError::StorageError(format!("Failed to get statistics: {}", e)))
     }
 
     /// Add peer to storage network
-    pub async fn add_storage_peer(&mut self, peer_address: String, node_id: lib_identity::NodeId) -> Result<()> {
-        self.storage_system.add_peer(peer_address, node_id).await
+    pub async fn add_storage_peer(
+        &mut self,
+        peer_address: String,
+        node_id: lib_identity::NodeId,
+    ) -> Result<()> {
+        self.storage_system
+            .add_peer(peer_address, node_id)
+            .await
             .map_err(|e| ProtocolError::StorageError(format!("Failed to add peer: {}", e)))
     }
 
     /// Perform storage system maintenance
     pub async fn perform_storage_maintenance(&mut self) -> Result<()> {
-        self.storage_system.perform_maintenance().await
+        self.storage_system
+            .perform_maintenance()
+            .await
             .map_err(|e| ProtocolError::StorageError(format!("Maintenance failed: {}", e)))
     }
 }
@@ -552,11 +621,15 @@ pub mod utils {
     /// Validate content metadata
     pub fn validate_content_metadata(metadata: &ContentMetadata) -> Result<()> {
         if metadata.content_type.is_empty() {
-            return Err(ProtocolError::ContentError("Content type required".to_string()));
+            return Err(ProtocolError::ContentError(
+                "Content type required".to_string(),
+            ));
         }
 
         if metadata.size == 0 {
-            return Err(ProtocolError::ContentError("Content size must be positive".to_string()));
+            return Err(ProtocolError::ContentError(
+                "Content size must be positive".to_string(),
+            ));
         }
 
         Ok(())
@@ -586,7 +659,7 @@ mod tests {
         // For testing, we'll test the initialization and creation, not full storage
         // since UnifiedStorageSystem may require actual system resources
         let storage_result = StorageIntegration::new(config).await;
-        
+
         // The creation itself should work (initialization)
         if storage_result.is_err() {
             // If storage system initialization fails (e.g., in test environment),
@@ -594,9 +667,9 @@ mod tests {
             println!("Storage initialization failed as expected in test environment");
             return;
         }
-        
+
         let mut storage = storage_result.unwrap();
-        
+
         let metadata = ContentMetadata {
             content_type: "text/plain".to_string(),
             encoding: None,
@@ -616,7 +689,9 @@ mod tests {
             popularity_metrics: None,
             economic_info: None,
             privacy_level: 50,
-            hash: lib_storage::types::ContentHash::from_bytes(&lib_crypto::hash_blake3(b"Hello, ZHTP Storage!")),
+            hash: lib_storage::types::ContentHash::from_bytes(&lib_crypto::hash_blake3(
+                b"Hello, ZHTP Storage!",
+            )),
             encryption_info: None,
             compression_info: None,
             integrity_checksum: None,
@@ -629,15 +704,22 @@ mod tests {
         let uploader = create_test_identity();
         let request = create_test_zhtp_request();
 
-        let result = storage.store_content(&b"Hello, ZHTP Storage!".to_vec(), metadata, uploader, &request).await;
-        
+        let result = storage
+            .store_content(
+                &b"Hello, ZHTP Storage!".to_vec(),
+                metadata,
+                uploader,
+                &request,
+            )
+            .await;
+
         // In a test environment, this might fail due to storage infrastructure
         // We'll just ensure the method executes without panicking
         match result {
             Ok(contract_id) => {
                 assert!(!contract_id.is_empty());
                 assert!(contract_id.len() > 10); // Should be a proper ID
-            },
+            }
             Err(_e) => {
                 // Expected in test environment without full storage infrastructure
                 println!("Storage operation failed as expected in test environment");
@@ -649,11 +731,11 @@ mod tests {
     fn test_storage_cost_calculation() {
         let cost = utils::calculate_storage_cost(
             1024 * 1024 * 1024, // 1GB
-            30, // 30 days
-            3,  // 3x replication
-            1000, // 1000 units per GB per day
+            30,                 // 30 days
+            3,                  // 3x replication
+            1000,               // 1000 units per GB per day
         );
-        
+
         assert_eq!(cost, 90000); // 1GB * 30 days * 3 replicas * 1000 units
     }
 
@@ -678,7 +760,9 @@ mod tests {
             popularity_metrics: None,
             economic_info: None,
             privacy_level: 50,
-            hash: lib_storage::types::ContentHash::from_bytes(&lib_crypto::hash_blake3(b"test content")),
+            hash: lib_storage::types::ContentHash::from_bytes(&lib_crypto::hash_blake3(
+                b"test content",
+            )),
             encryption_info: None,
             compression_info: None,
             integrity_checksum: None,
@@ -743,8 +827,8 @@ mod tests {
     }
 
     fn create_test_zhtp_request() -> crate::types::ZhtpRequest {
-        use crate::types::{ZhtpRequest, ZhtpMethod, ZhtpHeaders};
-        
+        use crate::types::{ZhtpHeaders, ZhtpMethod, ZhtpRequest};
+
         ZhtpRequest {
             method: ZhtpMethod::Post,
             uri: "/content/store".to_string(),

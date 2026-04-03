@@ -1,13 +1,15 @@
 //! Local Network Discovery via Multicast
-//! 
+//!
 //! Automatically discovers ZHTP nodes on the same local network without needing bootstrap peers
 
+use crate::network_utils::get_local_ip;
+use crate::socket_utils::enable_socket_reuse;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::net::{SocketAddr, IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use tokio::net::UdpSocket;
-use tokio::time::{Duration, interval};
-use tracing::{info, warn, error, debug};
+use tokio::time::{interval, Duration};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 use crate::network_utils::get_local_ip;
 use crate::socket_utils::enable_socket_reuse;
@@ -43,7 +45,6 @@ pub struct NodeAnnouncement {
     pub announced_at: u64,
 
     // === TLS Certificate Pinning Fields (Issue #739) ===
-
     /// Dilithium public key for verifying record signature (1312 bytes for Dilithium2)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dilithium_pk: Option<Vec<u8>>,
@@ -143,7 +144,7 @@ impl NodeAnnouncement {
         dilithium_pk: Vec<u8>,
         tls_spki_sha256: [u8; 32],
     ) -> anyhow::Result<()> {
-        use lib_crypto::post_quantum::dilithium::dilithium2_sign;
+        use lib_crypto::post_quantum::dilithium::dilithium_sign;
 
         // Set the fields that will be signed
         self.dilithium_pk = Some(dilithium_pk);
@@ -158,7 +159,7 @@ impl NodeAnnouncement {
 
         // Compute canonical bytes and sign
         let canonical = self.canonical_bytes_for_signing();
-        let signature = dilithium2_sign(&canonical, dilithium_sk)?;
+        let signature = dilithium_sign(&canonical, dilithium_sk)?;
         self.record_sig = Some(signature);
 
         Ok(())
@@ -168,7 +169,7 @@ impl NodeAnnouncement {
     ///
     /// Returns Ok(true) if signature is valid, Ok(false) if invalid, Err if missing fields.
     pub fn verify_signature(&self) -> anyhow::Result<bool> {
-        use lib_crypto::post_quantum::dilithium::dilithium2_verify;
+        use lib_crypto::post_quantum::dilithium::dilithium_verify;
 
         let dilithium_pk = self
             .dilithium_pk
@@ -180,7 +181,7 @@ impl NodeAnnouncement {
             .ok_or_else(|| anyhow::anyhow!("Missing record_sig in announcement"))?;
 
         let canonical = self.canonical_bytes_for_signing();
-        dilithium2_verify(&canonical, record_sig, dilithium_pk)
+        dilithium_verify(&canonical, record_sig, dilithium_pk)
     }
 
     /// Check if this announcement is still valid (not expired)
@@ -238,11 +239,16 @@ pub async fn start_local_discovery(
     node_id: Uuid,
     mesh_port: u16,
     public_key: lib_crypto::PublicKey,
-    peer_discovered_callback: Option<std::sync::Arc<dyn Fn(String, lib_crypto::PublicKey) + Send + Sync>>,
+    peer_discovered_callback: Option<
+        std::sync::Arc<dyn Fn(String, lib_crypto::PublicKey) + Send + Sync>,
+    >,
     signing_ctx: Option<DiscoverySigningContext>,
 ) -> Result<()> {
     info!(" Starting UDP Multicast discovery...");
-    info!("   Multicast address: {}:{}", ZHTP_MULTICAST_ADDR, ZHTP_MULTICAST_PORT);
+    info!(
+        "   Multicast address: {}:{}",
+        ZHTP_MULTICAST_ADDR, ZHTP_MULTICAST_PORT
+    );
     info!("   Node ID: {}", node_id);
     info!("   Mesh port: {}", mesh_port);
     if signing_ctx.is_some() {
@@ -259,7 +265,9 @@ pub async fn start_local_discovery(
     let announce_node_id = node_id;
     let broadcast_signing_ctx = signing_ctx.clone();
     tokio::spawn(async move {
-        if let Err(e) = broadcast_announcements(announce_node_id, mesh_port, broadcast_signing_ctx).await {
+        if let Err(e) =
+            broadcast_announcements(announce_node_id, mesh_port, broadcast_signing_ctx).await
+        {
             error!(" Local announcement broadcaster failed: {}", e);
         }
     });
@@ -268,12 +276,18 @@ pub async fn start_local_discovery(
     let listen_node_id = node_id;
     let listen_public_key = public_key.clone();
     tokio::spawn(async move {
-        if let Err(e) = listen_for_announcements(listen_node_id, listen_public_key, peer_discovered_callback).await {
+        if let Err(e) =
+            listen_for_announcements(listen_node_id, listen_public_key, peer_discovered_callback)
+                .await
+        {
             error!(" Local discovery listener failed: {}", e);
         }
     });
 
-    info!(" UDP Multicast discovery active on {}:{}", ZHTP_MULTICAST_ADDR, ZHTP_MULTICAST_PORT);
+    info!(
+        " UDP Multicast discovery active on {}:{}",
+        ZHTP_MULTICAST_ADDR, ZHTP_MULTICAST_PORT
+    );
     info!("   Broadcasting announcements every 30 seconds");
     info!("   Listening for peer announcements");
     Ok(())
@@ -285,7 +299,7 @@ async fn send_immediate_announcement(
     mesh_port: u16,
     signing_ctx: Option<DiscoverySigningContext>,
 ) -> Result<()> {
-    use socket2::{Socket, Domain, Type, Protocol};
+    use socket2::{Domain, Protocol, Socket, Type};
 
     // Create ephemeral socket for immediate announcement
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
@@ -294,15 +308,22 @@ async fn send_immediate_announcement(
     let std_socket: std::net::UdpSocket = socket.into();
     let socket = UdpSocket::from_std(std_socket)?;
 
-    let multicast_addr: SocketAddr = format!("{}:{}", ZHTP_MULTICAST_ADDR, ZHTP_MULTICAST_PORT).parse()?;
-    let local_ip = get_local_ip().await.unwrap_or(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+    let multicast_addr: SocketAddr =
+        format!("{}:{}", ZHTP_MULTICAST_ADDR, ZHTP_MULTICAST_PORT).parse()?;
+    let local_ip = get_local_ip()
+        .await
+        .unwrap_or(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
 
     let mut announcement = NodeAnnouncement {
         node_id,
         mesh_port,
         quic_port: 9334, // QUIC-only nodes use port 9334
         local_ip,
-        protocols: vec!["quic".to_string(), "tcp".to_string(), "bluetooth".to_string(), "wifi_direct".to_string()],
+        protocols: vec![
+            "quic".to_string(),
+            "bluetooth".to_string(),
+            "wifi_direct".to_string(),
+        ],
         announced_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -312,7 +333,8 @@ async fn send_immediate_announcement(
 
     // Sign announcement if signing context provided (Issue #739)
     if let Some(ctx) = signing_ctx {
-        if let Err(e) = announcement.sign(&ctx.dilithium_sk, ctx.dilithium_pk, ctx.tls_spki_sha256) {
+        if let Err(e) = announcement.sign(&ctx.dilithium_sk, ctx.dilithium_pk, ctx.tls_spki_sha256)
+        {
             warn!("Failed to sign announcement: {}", e);
         } else {
             debug!("Signed announcement with TLS pin");
@@ -320,10 +342,16 @@ async fn send_immediate_announcement(
     }
 
     let announcement_json = serde_json::to_string(&announcement)?;
-    socket.send_to(announcement_json.as_bytes(), multicast_addr).await?;
-    info!(" Sent immediate announcement to {} (QUIC port: {}, signed: {})",
-        multicast_addr, 9334, announcement.has_tls_pin());
-    
+    socket
+        .send_to(announcement_json.as_bytes(), multicast_addr)
+        .await?;
+    info!(
+        " Sent immediate announcement to {} (QUIC port: {}, signed: {})",
+        multicast_addr,
+        9334,
+        announcement.has_tls_pin()
+    );
+
     Ok(())
 }
 
@@ -334,12 +362,16 @@ async fn broadcast_announcements(
     signing_ctx: Option<DiscoverySigningContext>,
 ) -> Result<()> {
     // Bind to the multicast port with SO_REUSEADDR to allow multiple processes
-    use socket2::{Socket, Domain, Type, Protocol};
+    use socket2::{Domain, Protocol, Socket, Type};
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     enable_socket_reuse(&socket)?;
 
     // Bind to the multicast port (not ephemeral) for proper multicast routing
-    socket.bind(&format!("0.0.0.0:{}", ZHTP_MULTICAST_PORT).parse::<std::net::SocketAddr>()?.into())?;
+    socket.bind(
+        &format!("0.0.0.0:{}", ZHTP_MULTICAST_PORT)
+            .parse::<std::net::SocketAddr>()?
+            .into(),
+    )?;
     socket.set_nonblocking(true)?;
     let std_socket: std::net::UdpSocket = socket.into();
     let socket = UdpSocket::from_std(std_socket)?;
@@ -350,10 +382,13 @@ async fn broadcast_announcements(
     socket.set_multicast_loop_v4(true)?; // Enable loopback for testing on same machine
     socket.join_multicast_v4(multicast_ipv4, Ipv4Addr::UNSPECIFIED)?;
 
-    let multicast_addr: SocketAddr = format!("{}:{}", ZHTP_MULTICAST_ADDR, ZHTP_MULTICAST_PORT).parse()?;
+    let multicast_addr: SocketAddr =
+        format!("{}:{}", ZHTP_MULTICAST_ADDR, ZHTP_MULTICAST_PORT).parse()?;
 
     // Get local IP address
-    let local_ip = get_local_ip().await.unwrap_or(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+    let local_ip = get_local_ip()
+        .await
+        .unwrap_or(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
 
     info!(" Broadcasting from local IP: {}", local_ip);
 
@@ -371,7 +406,11 @@ async fn broadcast_announcements(
             mesh_port,
             quic_port: 9334, // QUIC-only nodes use port 9334
             local_ip,
-            protocols: vec!["quic".to_string(), "tcp".to_string(), "bluetooth".to_string(), "wifi_direct".to_string()],
+            protocols: vec![
+                "quic".to_string(),
+                "bluetooth".to_string(),
+                "wifi_direct".to_string(),
+            ],
             announced_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -381,7 +420,11 @@ async fn broadcast_announcements(
 
         // Sign announcement if signing context provided (Issue #739)
         if let Some(ref ctx) = signing_ctx {
-            if let Err(e) = announcement.sign(&ctx.dilithium_sk, ctx.dilithium_pk.clone(), ctx.tls_spki_sha256) {
+            if let Err(e) = announcement.sign(
+                &ctx.dilithium_sk,
+                ctx.dilithium_pk.clone(),
+                ctx.tls_spki_sha256,
+            ) {
                 warn!("Failed to sign announcement: {}", e);
             }
         }
@@ -390,16 +433,24 @@ async fn broadcast_announcements(
             Ok(announcement_json) => {
                 announcement_count += 1;
                 if announcement_count == 1 || announcement_count % 10 == 0 {
-                    info!(" Broadcasting announcement #{} to {} (QUIC: 9334, mesh: {}, signed: {})",
-                        announcement_count, multicast_addr, mesh_port, announcement.has_tls_pin());
+                    info!(
+                        " Broadcasting announcement #{} to {} (QUIC: 9334, mesh: {}, signed: {})",
+                        announcement_count,
+                        multicast_addr,
+                        mesh_port,
+                        announcement.has_tls_pin()
+                    );
                 } else {
                     debug!("Broadcasting ZHTP node announcement to {}", multicast_addr);
                 }
 
-                if let Err(e) = socket.send_to(announcement_json.as_bytes(), multicast_addr).await {
+                if let Err(e) = socket
+                    .send_to(announcement_json.as_bytes(), multicast_addr)
+                    .await
+                {
                     warn!("Failed to send multicast announcement: {}", e);
                 }
-            },
+            }
             Err(e) => {
                 warn!("Failed to serialize announcement: {}", e);
             }
@@ -412,50 +463,65 @@ async fn broadcast_announcements(
 
 /// Listen for other ZHTP nodes on local network
 async fn listen_for_announcements(
-    our_node_id: Uuid, 
+    our_node_id: Uuid,
     our_public_key: lib_crypto::PublicKey,
-    peer_discovered_callback: Option<std::sync::Arc<dyn Fn(String, lib_crypto::PublicKey) + Send + Sync>>,
+    peer_discovered_callback: Option<
+        std::sync::Arc<dyn Fn(String, lib_crypto::PublicKey) + Send + Sync>,
+    >,
 ) -> Result<()> {
     // Use SO_REUSEADDR to allow multiple listeners on the same port
     // This lets both the persistent listener and temporary discovery scans coexist
-    use socket2::{Socket, Domain, Type, Protocol};
+    use socket2::{Domain, Protocol, Socket, Type};
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     enable_socket_reuse(&socket)?;
-    socket.bind(&format!("0.0.0.0:{}", ZHTP_MULTICAST_PORT).parse::<std::net::SocketAddr>()?.into())?;
+    socket.bind(
+        &format!("0.0.0.0:{}", ZHTP_MULTICAST_PORT)
+            .parse::<std::net::SocketAddr>()?
+            .into(),
+    )?;
     socket.set_nonblocking(true)?;
     let socket: std::net::UdpSocket = socket.into();
     let socket = UdpSocket::from_std(socket)?;
-    
+
     // Configure multicast socket options
     let multicast_addr: Ipv4Addr = ZHTP_MULTICAST_ADDR.parse()?;
     socket.set_multicast_loop_v4(true)?; // Enable loopback for testing on same machine
     socket.join_multicast_v4(multicast_addr, Ipv4Addr::UNSPECIFIED)?;
-    
-    info!(" Listening for ZHTP node announcements on multicast {}:{}", ZHTP_MULTICAST_ADDR, ZHTP_MULTICAST_PORT);
+
+    info!(
+        " Listening for ZHTP node announcements on multicast {}:{}",
+        ZHTP_MULTICAST_ADDR, ZHTP_MULTICAST_PORT
+    );
     info!("   Joined multicast group successfully");
-    
+
     let mut buf = [0; 1024];
     let mut discovery_count = 0;
     let mut packet_count = 0;
-    
+
     loop {
         match socket.recv_from(&mut buf).await {
             Ok((len, addr)) => {
                 packet_count += 1;
-                
+
                 // Log every packet received for debugging
                 if packet_count == 1 || packet_count % 10 == 0 {
-                    debug!(" Received multicast packet #{} from {} ({} bytes)", packet_count, addr, len);
+                    debug!(
+                        " Received multicast packet #{} from {} ({} bytes)",
+                        packet_count, addr, len
+                    );
                 }
-                
+
                 let announcement_str = String::from_utf8_lossy(&buf[..len]);
                 debug!("Packet content: {}", announcement_str);
-                
+
                 match serde_json::from_str::<NodeAnnouncement>(&announcement_str) {
                     Ok(announcement) => {
                         // Ignore our own announcements (check node_id)
                         if announcement.node_id == our_node_id {
-                            debug!("Ignoring our own multicast announcement (node_id={})", our_node_id);
+                            debug!(
+                                "Ignoring our own multicast announcement (node_id={})",
+                                our_node_id
+                            );
                             continue;
                         }
 
@@ -486,10 +552,13 @@ async fn listen_for_announcements(
                         }
 
                         discovery_count += 1;
-                        info!(" PEER DISCOVERED #{}: Node {} at {}",
-                            discovery_count,
-                            announcement.node_id,
-                            announcement.local_ip
+                        info!(
+                            " PEER DISCOVERED #{}: Node {} at {}",
+                            discovery_count, announcement.node_id, announcement.local_ip
+                        );
+                        info!(
+                            "   Mesh port: {}, QUIC port: {} (source validated)",
+                            announcement.mesh_port, announcement.quic_port
                         );
                         info!("   Mesh port: {}, QUIC port: {} (source validated)", announcement.mesh_port, announcement.quic_port);
                         info!("   Protocols: {:?}", announcement.protocols);
@@ -497,22 +566,31 @@ async fn listen_for_announcements(
                         // === TLS Certificate Pinning (Issue #739) ===
                         // Verify signature and cache TLS pin if announcement is signed
                         if announcement.has_tls_pin() {
-                            let peer_addr = format!("{}:{}", announcement.local_ip, announcement.quic_port);
+                            let peer_addr =
+                                format!("{}:{}", announcement.local_ip, announcement.quic_port);
                             match super::pin_cache::global_pin_cache()
                                 .process_announcement(&announcement, vec![peer_addr.clone()])
                                 .await
                             {
                                 Ok(true) => {
-                                    info!("   🔐 TLS pin cached for peer {} (expires: {})",
+                                    info!(
+                                        "   🔐 TLS pin cached for peer {} (expires: {})",
                                         announcement.node_id,
-                                        announcement.expires_at.unwrap_or(0));
+                                        announcement.expires_at.unwrap_or(0)
+                                    );
                                 }
                                 Ok(false) => {
-                                    warn!("   ⚠️ Invalid signature on announcement from {}", announcement.node_id);
+                                    warn!(
+                                        "   ⚠️ Invalid signature on announcement from {}",
+                                        announcement.node_id
+                                    );
                                     // Continue anyway - UHP will verify identity
                                 }
                                 Err(e) => {
-                                    warn!("   ⚠️ Failed to process TLS pin for {}: {}", announcement.node_id, e);
+                                    warn!(
+                                        "   ⚠️ Failed to process TLS pin for {}: {}",
+                                        announcement.node_id, e
+                                    );
                                 }
                             }
                         } else {
@@ -528,17 +606,21 @@ async fn listen_for_announcements(
                         // Notify coordinator if callback provided (Phase 3 integration)
                         if let Some(ref callback) = peer_discovered_callback {
                             // Pass QUIC port in address for QUIC-enabled peers
-                            let peer_addr = format!("{}:{}", announcement.local_ip, announcement.quic_port);
+                            let peer_addr =
+                                format!("{}:{}", announcement.local_ip, announcement.quic_port);
                             callback(peer_addr, our_public_key.clone());
-                            debug!("   ✓ Notified discovery coordinator (QUIC: {})", announcement.quic_port);
+                            debug!(
+                                "   ✓ Notified discovery coordinator (QUIC: {})",
+                                announcement.quic_port
+                            );
                         }
                         // Discovery is hint-only; coordinator must perform verified handshake.
-                    },
+                    }
                     Err(e) => {
                         debug!("Invalid announcement format from {}: {}", addr, e);
                     }
                 }
-            },
+            }
             Err(e) => {
                 warn!("Error receiving multicast announcement: {}", e);
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -550,12 +632,13 @@ async fn listen_for_announcements(
 /// Discover ZHTP nodes on local network immediately
 pub async fn discover_local_peers() -> Result<Vec<NodeAnnouncement>> {
     info!("Scanning for ZHTP peers on local network...");
-    
+
     let socket = UdpSocket::bind("0.0.0.0:0").await?;
     socket.set_broadcast(true)?;
-    
-    let multicast_addr: SocketAddr = format!("{}:{}", ZHTP_MULTICAST_ADDR, ZHTP_MULTICAST_PORT).parse()?;
-    
+
+    let multicast_addr: SocketAddr =
+        format!("{}:{}", ZHTP_MULTICAST_ADDR, ZHTP_MULTICAST_PORT).parse()?;
+
     // Send discovery request
     let discovery_request = serde_json::json!({
         "type": "discovery_request",
@@ -564,12 +647,53 @@ pub async fn discover_local_peers() -> Result<Vec<NodeAnnouncement>> {
             .unwrap()
             .as_secs()
     });
-    
-    socket.send_to(discovery_request.to_string().as_bytes(), multicast_addr).await?;
-    
+
+    socket
+        .send_to(discovery_request.to_string().as_bytes(), multicast_addr)
+        .await?;
+
     // Listen for responses (simplified - in implementation would be more sophisticated)
     tokio::time::sleep(Duration::from_secs(3)).await;
-    
+
     // TODO: Collect actual responses
     Ok(vec![])
+}
+
+/// Helper to create signing context from ZhtpIdentity and TLS certificate
+/// This enables TLS certificate pinning for secure peer discovery (Issue #739)
+///
+/// # Arguments
+/// * `identity` - The node's ZHTP identity containing Dilithium keys
+/// * `tls_cert_der` - The node's TLS certificate in DER format
+///
+/// # Returns
+/// * `Ok(DiscoverySigningContext)` - Context for signing discovery announcements
+/// * `Err(...)` - If SPKI extraction fails
+pub fn create_signing_context(
+    identity: &lib_identity::ZhtpIdentity,
+    tls_cert_der: &[u8],
+) -> Result<DiscoverySigningContext> {
+    use crate::pinned_verifier::PinnedCertVerifier;
+    use rustls::pki_types::CertificateDer;
+
+    // Extract Dilithium keys from identity
+    let dilithium_sk = identity
+        .private_key
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Identity missing private key"))?
+        .dilithium_sk
+        .clone();
+
+    let dilithium_pk = identity.public_key.dilithium_pk.clone();
+
+    // Extract TLS certificate SPKI hash
+    let cert_der = CertificateDer::from(tls_cert_der.to_vec());
+    let tls_spki_sha256 = PinnedCertVerifier::extract_spki_hash(&cert_der)
+        .map_err(|e| anyhow::anyhow!("Failed to extract TLS SPKI hash: {}", e))?;
+
+    Ok(DiscoverySigningContext {
+        dilithium_sk,
+        dilithium_pk,
+        tls_spki_sha256,
+    })
 }

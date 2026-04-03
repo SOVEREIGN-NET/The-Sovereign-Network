@@ -13,7 +13,7 @@ pub mod dao_treasury;
 
 // Re-export key types
 pub use dao_treasury::{
-    DaoTreasury, SpendingProposal, SpendingRecord, SpendingCategory, ProposalStatus,
-    DaoTreasuryError, DAO_ALLOCATION_PERCENTAGE, NUM_SECTOR_DAOS, PER_DAO_ALLOCATION_PERCENTAGE,
-    DAO_TIMELOCK_SECONDS, MIN_DAO_VOTING_POWER_FOR_PROPOSAL,
+    DaoTreasury, DaoTreasuryError, ProposalStatus, SpendingCategory, SpendingProposal,
+    SpendingRecord, DAO_ALLOCATION_PERCENTAGE, DAO_TIMELOCK_SECONDS,
+    MIN_DAO_VOTING_POWER_FOR_PROPOSAL, NUM_SECTOR_DAOS, PER_DAO_ALLOCATION_PERCENTAGE,
 };

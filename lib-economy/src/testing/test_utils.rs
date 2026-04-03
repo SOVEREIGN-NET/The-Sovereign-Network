@@ -9,8 +9,8 @@ pub fn create_test_transaction(
     priority: Priority,
 ) -> crate::transactions::Transaction {
     let from = [1u8; 32]; // Test address
-    let to = [2u8; 32];   // Test address
-    
+    let to = [2u8; 32]; // Test address
+
     crate::transactions::Transaction::new(from, to, amount, transaction_type.clone(), 250, priority)
         .unwrap_or_else(|_| {
             // Fallback: create transaction manually if new() fails
@@ -34,7 +34,7 @@ pub fn create_test_transaction(
 pub fn rand_u64() -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    
+
     let timestamp = current_timestamp();
     let mut hasher = DefaultHasher::new();
     timestamp.hash(&mut hasher);
@@ -92,7 +92,10 @@ pub fn assert_economic_range(value: u64, min: u64, max: u64, description: &str) 
     assert!(
         value >= min && value <= max,
         "{} value {} is outside acceptable range [{}, {}]",
-        description, value, min, max
+        description,
+        value,
+        min,
+        max
     );
 }
 
@@ -101,6 +104,7 @@ pub fn assert_valid_percentage(value: f64, description: &str) {
     assert!(
         value >= 0.0 && value <= 1.0,
         "{} percentage {} is outside valid range [0.0, 1.0]",
-        description, value
+        description,
+        value
     );
 }

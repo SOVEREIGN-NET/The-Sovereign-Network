@@ -6,9 +6,9 @@
 # CORE NODE SETTINGS - TESTNET
 # ============================================================================
 
-mesh_mode = "Hybrid"         # Support both mesh and TCP/IP
+mesh_mode = "Hybrid"         # Support both mesh and QUIC connectivity
 security_level = "High"      # High security but allow testing
-environment = "Testnet"      # Testnet environment
+runtime_role = "FULL"
 data_directory = "./data/testnet"  # Testnet-specific data isolation
 
 # ============================================================================
@@ -62,7 +62,7 @@ pricing_tier = "cold"       # Low-cost storage for testing
 [network_config]
 mesh_port = 33445           # Testnet mesh port (different from mainnet)
 max_peers = 100             # Moderate peer count for testing
-protocols = ["tcp", "quic", "bluetooth", "wifi_direct"]
+protocols = ["quic", "bluetooth", "wifi_direct"]
 bootstrap_peers = [
     "testnet-seed1.sovereign.net:9334",
     "testnet-seed2.sovereign.net:9334",

@@ -1,34 +1,34 @@
-use std::any::Any;
-use std::fmt;
-use std::fmt::Formatter;
-use crate::messages::wire::{FromWire, FromWireContext, FromWireLen, ToWire, ToWireContext, WireError};
+use crate::messages::wire::{
+    FromWire, FromWireContext, FromWireLen, ToWire, ToWireContext, WireError,
+};
 use crate::rr_data::inter::rr_data::{RRData, RRDataError};
 use crate::utils::hex;
 use crate::zone::inter::zone_rr_data::ZoneRRData;
 use crate::zone::zone_reader::{ErrorKind, ZoneReaderError};
+use std::any::Any;
+use std::fmt;
+use std::fmt::Formatter;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SmimeaRRData {
     usage: u8,
     selector: u8,
     matching_type: u8,
-    certificate: Vec<u8>
+    certificate: Vec<u8>,
 }
 
 impl Default for SmimeaRRData {
-
     fn default() -> Self {
         Self {
             usage: 0,
             selector: 0,
             matching_type: 0,
-            certificate: Vec::new()
+            certificate: Vec::new(),
         }
     }
 }
 
 impl RRData for SmimeaRRData {
-
     fn from_bytes(buf: &[u8]) -> Result<Self, RRDataError> {
         let usage = buf[0];
         let selector = buf[1];
@@ -40,7 +40,7 @@ impl RRData for SmimeaRRData {
             usage,
             selector,
             matching_type,
-            certificate
+            certificate,
         })
     }
 
@@ -73,18 +73,20 @@ impl RRData for SmimeaRRData {
     }
 
     fn eq_box(&self, other: &dyn RRData) -> bool {
-        other.as_any().downcast_ref::<Self>().map_or(false, |o| self == o)
+        other
+            .as_any()
+            .downcast_ref::<Self>()
+            .map_or(false, |o| self == o)
     }
 }
 
 impl SmimeaRRData {
-
     pub fn new(usage: u8, selector: u8, matching_type: u8, certificate: &[u8]) -> Self {
         Self {
             usage,
             selector,
             matching_type,
-            certificate: certificate.to_vec()
+            certificate: certificate.to_vec(),
         }
     }
 
@@ -122,7 +124,6 @@ impl SmimeaRRData {
 }
 
 impl FromWireLen for SmimeaRRData {
-
     fn from_wire_len(context: &mut FromWireContext, len: u16) -> Result<Self, WireError> {
         let usage = u8::from_wire(context)?;
         let selector = u8::from_wire(context)?;
@@ -134,13 +135,12 @@ impl FromWireLen for SmimeaRRData {
             usage,
             selector,
             matching_type,
-            certificate
+            certificate,
         })
     }
 }
 
 impl ToWire for SmimeaRRData {
-
     fn to_wire(&self, context: &mut ToWireContext) -> Result<(), WireError> {
         self.usage.to_wire(context)?;
         self.selector.to_wire(context)?;
@@ -151,14 +151,46 @@ impl ToWire for SmimeaRRData {
 }
 
 impl ZoneRRData for SmimeaRRData {
-
     fn set_data(&mut self, index: usize, value: &str) -> Result<(), ZoneReaderError> {
         Ok(match index {
-            0 => self.usage = value.parse().map_err(|_| ZoneReaderError::new(ErrorKind::Format, "unable to parse usage param for record type SMIMEA"))?,
-            1 => self.selector = value.parse().map_err(|_| ZoneReaderError::new(ErrorKind::Format, "unable to parse selector param for record type SMIMEA"))?,
-            2 => self.matching_type = value.parse().map_err(|_| ZoneReaderError::new(ErrorKind::Format, "unable to parse matching_type param for record type SMIMEA"))?,
-            3 => self.certificate = hex::decode(value).map_err(|_| ZoneReaderError::new(ErrorKind::Format, "unable to parse certificate param for record type SMIMEA"))?,
-            _ => return Err(ZoneReaderError::new(ErrorKind::ExtraRRData, "extra record data found for record type SMIMEA"))
+            0 => {
+                self.usage = value.parse().map_err(|_| {
+                    ZoneReaderError::new(
+                        ErrorKind::Format,
+                        "unable to parse usage param for record type SMIMEA",
+                    )
+                })?
+            }
+            1 => {
+                self.selector = value.parse().map_err(|_| {
+                    ZoneReaderError::new(
+                        ErrorKind::Format,
+                        "unable to parse selector param for record type SMIMEA",
+                    )
+                })?
+            }
+            2 => {
+                self.matching_type = value.parse().map_err(|_| {
+                    ZoneReaderError::new(
+                        ErrorKind::Format,
+                        "unable to parse matching_type param for record type SMIMEA",
+                    )
+                })?
+            }
+            3 => {
+                self.certificate = hex::decode(value).map_err(|_| {
+                    ZoneReaderError::new(
+                        ErrorKind::Format,
+                        "unable to parse certificate param for record type SMIMEA",
+                    )
+                })?
+            }
+            _ => {
+                return Err(ZoneReaderError::new(
+                    ErrorKind::ExtraRRData,
+                    "extra record data found for record type SMIMEA",
+                ))
+            }
         })
     }
 
@@ -168,18 +200,24 @@ impl ZoneRRData for SmimeaRRData {
 }
 
 impl fmt::Display for SmimeaRRData {
-
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {} {} {}", self.usage,
-               self.selector,
-               self.matching_type,
-               hex::encode(&self.certificate))
+        write!(
+            f,
+            "{} {} {} {}",
+            self.usage,
+            self.selector,
+            self.matching_type,
+            hex::encode(&self.certificate)
+        )
     }
 }
 
 #[test]
 fn test() {
-    let buf = vec![ 0x1, 0x2, 0x3, 0x30, 0x25, 0x1f, 0xd9, 0x47, 0x7c, 0xfd, 0x17, 0x6a, 0x98, 0x3a, 0x34, 0xe1, 0x90, 0xbb, 0x7d, 0xa3, 0xc2, 0xf3, 0x7c, 0xa, 0xba, 0x95 ];
+    let buf = vec![
+        0x1, 0x2, 0x3, 0x30, 0x25, 0x1f, 0xd9, 0x47, 0x7c, 0xfd, 0x17, 0x6a, 0x98, 0x3a, 0x34,
+        0xe1, 0x90, 0xbb, 0x7d, 0xa3, 0xc2, 0xf3, 0x7c, 0xa, 0xba, 0x95,
+    ];
     let record = SmimeaRRData::from_bytes(&buf).unwrap();
     assert_eq!(buf, record.to_bytes().unwrap());
 }

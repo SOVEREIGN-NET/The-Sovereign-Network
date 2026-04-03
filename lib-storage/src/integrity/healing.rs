@@ -1,9 +1,9 @@
 //! Self-healing mechanisms
 
-use anyhow::{Result, anyhow};
-use serde::{Deserialize, Serialize};
-use crate::integrity::ErasureParams;
 use crate::erasure::ErasureCoding;
+use crate::integrity::ErasureParams;
+use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
 
 /// Self-healing system
 pub struct SelfHealing {
@@ -30,22 +30,26 @@ impl SelfHealing {
             return Ok(HealingResult::NoHealingNeeded);
         }
 
+        if corrupted_indices.len() > self.max_repair_attempts {
+            return Ok(HealingResult::Failed(format!(
+                "Exceeded max repair attempts: {} requested, limit {}",
+                corrupted_indices.len(),
+                self.max_repair_attempts
+            )));
+        }
+
         // Check if we can recover
         if corrupted_indices.len() > erasure_params.parity_shards {
-            return Ok(HealingResult::Unrecoverable(
-                format!(
-                    "Too many corrupted blocks: {} corrupted, {} parity shards",
-                    corrupted_indices.len(),
-                    erasure_params.parity_shards
-                )
-            ));
+            return Ok(HealingResult::Unrecoverable(format!(
+                "Too many corrupted blocks: {} corrupted, {} parity shards",
+                corrupted_indices.len(),
+                erasure_params.parity_shards
+            )));
         }
 
         // Attempt recovery using erasure codes
-        let erasure_coder = ErasureCoding::new(
-            erasure_params.data_shards,
-            erasure_params.parity_shards,
-        )?;
+        let erasure_coder =
+            ErasureCoding::new(erasure_params.data_shards, erasure_params.parity_shards)?;
 
         // Combine data and parity blocks for repair
         let shard_size = blocks.first().map(|b| b.len()).unwrap_or(0);
@@ -65,10 +69,10 @@ impl SelfHealing {
                         blocks[idx] = all_shards.data_shards[idx].clone();
                     }
                 }
-                
+
                 Ok(HealingResult::Healed {
                     repaired_blocks: corrupted_indices.len(),
-                    attempts: 1,
+                    attempts: corrupted_indices.len(),
                 })
             }
             Err(e) => Ok(HealingResult::Failed(format!("Repair failed: {}", e))),
@@ -85,14 +89,16 @@ impl SelfHealing {
     ) -> Result<Vec<u8>> {
         // Validate inputs
         if block_index >= all_blocks.len() {
-            return Err(anyhow!("Block index {} out of range (total: {})", block_index, all_blocks.len()));
+            return Err(anyhow!(
+                "Block index {} out of range (total: {})",
+                block_index,
+                all_blocks.len()
+            ));
         }
 
         // Create erasure coder from params
-        let erasure_coder = ErasureCoding::new(
-            erasure_params.data_shards,
-            erasure_params.parity_shards,
-        )?;
+        let erasure_coder =
+            ErasureCoding::new(erasure_params.data_shards, erasure_params.parity_shards)?;
 
         // Prepare shards structure (same as heal_blocks)
         let shard_size = all_blocks.first().map(|b| b.len()).unwrap_or(0);
@@ -113,7 +119,10 @@ impl SelfHealing {
         if block_index < all_shards.data_shards.len() {
             Ok(all_shards.data_shards[block_index].clone())
         } else {
-            Err(anyhow!("Failed to extract repaired block at index {}", block_index))
+            Err(anyhow!(
+                "Failed to extract repaired block at index {}",
+                block_index
+            ))
         }
     }
 }
@@ -142,7 +151,10 @@ pub enum HealingResult {
 
 impl HealingResult {
     pub fn is_success(&self) -> bool {
-        matches!(self, HealingResult::NoHealingNeeded | HealingResult::Healed { .. })
+        matches!(
+            self,
+            HealingResult::NoHealingNeeded | HealingResult::Healed { .. }
+        )
     }
 
     pub fn is_failure(&self) -> bool {

@@ -1,11 +1,11 @@
 //! Monitoring Module
-//! 
+//!
 //! Provides peer reputation, performance metrics, and alerting
 
-pub mod reputation;
-pub mod metrics;
 pub mod alerts;
+pub mod metrics;
+pub mod reputation;
 
-pub use reputation::{PeerReputation, PeerRateLimit, PeerPerformanceStats};
-pub use metrics::{SyncPerformanceMetrics, BroadcastMetrics, MetricsSnapshot, MetricsHistory};
-pub use alerts::{AlertLevel, SyncAlert, AlertThresholds};
+pub use alerts::{AlertLevel, AlertThresholds, SyncAlert};
+pub use metrics::{BroadcastMetrics, MetricsHistory, MetricsSnapshot, SyncPerformanceMetrics};
+pub use reputation::{PeerPerformanceStats, PeerRateLimit, PeerReputation};

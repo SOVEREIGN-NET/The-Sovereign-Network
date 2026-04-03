@@ -13,10 +13,10 @@
 //! - Cryptographically linked history
 //! - Rollback via re-pointing to old manifest CID
 
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use lib_identity::{IdentityId, ZhtpIdentity};
 use lib_proofs::ZeroKnowledgeProof;
-use lib_identity::{ZhtpIdentity, IdentityId};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
 
 /// Manifest reference entry in version history
 /// CANONICAL: This is what appears in the manifest_index
@@ -146,7 +146,10 @@ pub struct Web4Manifest {
     /// BLAKE3 hash of the entire build output
     pub build_hash: String,
     /// File mappings (path -> content CID)
-    pub files: HashMap<String, ManifestFile>,
+    /// IMPORTANT: Using BTreeMap for deterministic iteration order.
+    /// HashMap serialization order is non-deterministic, which would cause
+    /// compute_cid() to produce different results for identical manifests.
+    pub files: BTreeMap<String, ManifestFile>,
     /// Creation timestamp
     pub created_at: u64,
     /// Creator identity (DID)
@@ -190,7 +193,9 @@ impl Web4Manifest {
         }
 
         // Version > 1 must have previous manifest
-        let prev_cid = self.previous_manifest.as_ref()
+        let prev_cid = self
+            .previous_manifest
+            .as_ref()
             .ok_or("Version > 1 must have previous_manifest")?;
 
         // If we have the previous manifest, validate the link
@@ -205,7 +210,8 @@ impl Web4Manifest {
             if self.version != prev.version + 1 {
                 return Err(format!(
                     "Version must be previous + 1: expected {}, got {}",
-                    prev.version + 1, self.version
+                    prev.version + 1,
+                    self.version
                 ));
             }
             if self.domain != prev.domain {

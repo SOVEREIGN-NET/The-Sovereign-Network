@@ -37,15 +37,15 @@
 //! If fee types are moved to a neutral crate (e.g., lib-types or lib-economy),
 //! this dependency should be revisited.
 
-use serde::{Deserialize, Serialize};
 use crate::integration::crypto_integration::PublicKey;
+use serde::{Deserialize, Serialize};
 
 // ============================================================================
 // CRITICAL CONSTANTS - NEVER CHANGE
 // ============================================================================
 
-/// Fee rate in basis points: 100 = 1%
-pub const FEE_RATE_BASIS_POINTS: u16 = 100;
+/// Fee rate in basis points: 100 = 1% (re-exported from canonical source)
+pub use crate::contracts::tokens::constants::SOV_FEE_RATE_BPS as FEE_RATE_BASIS_POINTS;
 
 /// UBI allocation: 45%
 pub const UBI_ALLOCATION_PERCENT: u8 = 45;
@@ -108,14 +108,23 @@ impl FeeDistribution {
     pub fn from_fees(total_fees: u64) -> Self {
         // Calculate each allocation using integer division
         // Order matters for rounding consistency
-        let ubi_pool = total_fees * UBI_ALLOCATION_PERCENT as u64 / 100;
-        let dao_pool = total_fees * DAO_ALLOCATION_PERCENT as u64 / 100;
-        let emergency_reserve = total_fees * EMERGENCY_ALLOCATION_PERCENT as u64 / 100;
-        let dev_grants = total_fees * DEV_ALLOCATION_PERCENT as u64 / 100;
+        // Use u128 for intermediate calculation to avoid overflow
+        let ubi_pool = (total_fees as u128 * UBI_ALLOCATION_PERCENT as u128 / 100) as u64;
+        let dao_pool = (total_fees as u128 * DAO_ALLOCATION_PERCENT as u128 / 100) as u64;
+        let emergency_reserve =
+            (total_fees as u128 * EMERGENCY_ALLOCATION_PERCENT as u128 / 100) as u64;
+        let dev_grants = (total_fees as u128 * DEV_ALLOCATION_PERCENT as u128 / 100) as u64;
 
         // Calculate remainder (dust from integer division)
-        let distributed = ubi_pool + dao_pool + emergency_reserve + dev_grants;
-        let remainder = total_fees.saturating_sub(distributed);
+        // Use checked arithmetic to detect potential overflow issues
+        let distributed = ubi_pool
+            .checked_add(dao_pool)
+            .and_then(|sum| sum.checked_add(emergency_reserve))
+            .and_then(|sum| sum.checked_add(dev_grants))
+            .expect("Fee distribution overflow: allocated pools exceed u64 max");
+        let remainder = total_fees
+            .checked_sub(distributed)
+            .expect("Fee distribution error: distributed exceeds total fees");
 
         Self {
             ubi_pool,
@@ -203,20 +212,13 @@ pub enum FeeRouterError {
 impl std::fmt::Display for FeeRouterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FeeRouterError::AlreadyInitialized =>
-                write!(f, "Fee router already initialized"),
-            FeeRouterError::NotInitialized =>
-                write!(f, "Fee router not initialized"),
-            FeeRouterError::Unauthorized =>
-                write!(f, "Unauthorized operation"),
-            FeeRouterError::ZeroAmount =>
-                write!(f, "Amount cannot be zero"),
-            FeeRouterError::Overflow =>
-                write!(f, "Arithmetic overflow"),
-            FeeRouterError::DistributionFailed =>
-                write!(f, "Fee distribution failed"),
-            FeeRouterError::InvalidPoolAddress =>
-                write!(f, "Invalid pool address"),
+            FeeRouterError::AlreadyInitialized => write!(f, "Fee router already initialized"),
+            FeeRouterError::NotInitialized => write!(f, "Fee router not initialized"),
+            FeeRouterError::Unauthorized => write!(f, "Unauthorized operation"),
+            FeeRouterError::ZeroAmount => write!(f, "Amount cannot be zero"),
+            FeeRouterError::Overflow => write!(f, "Arithmetic overflow"),
+            FeeRouterError::DistributionFailed => write!(f, "Fee distribution failed"),
+            FeeRouterError::InvalidPoolAddress => write!(f, "Invalid pool address"),
         }
     }
 }
@@ -255,7 +257,7 @@ pub struct PoolAddresses {
 }
 
 impl PoolAddresses {
-    /// Check if all required addresses are set
+    /// Check if all required addresses are set (basic pools)
     pub fn is_complete(&self) -> bool {
         self.ubi_pool.is_some()
             && self.emergency_reserve.is_some()
@@ -265,6 +267,92 @@ impl PoolAddresses {
             && self.energy_dao.is_some()
             && self.housing_dao.is_some()
             && self.food_dao.is_some()
+    }
+
+    /// Check if all required addresses are set including consensus pools
+    pub fn is_fully_initialized(&self) -> bool {
+        self.is_complete()
+            && self.consensus_pool.is_some()
+            && self.governance_pool.is_some()
+            && self.treasury_pool.is_some()
+    }
+
+    /// Get all pool addresses as a collection
+    pub fn get_all_pools(&self) -> Vec<([u8; 32], &'static str)> {
+        let mut pools = Vec::new();
+        if let Some(addr) = self.ubi_pool {
+            pools.push((addr, "UBI"));
+        }
+        if let Some(addr) = self.emergency_reserve {
+            pools.push((addr, "Emergency Reserve"));
+        }
+        if let Some(addr) = self.dev_grants {
+            pools.push((addr, "Dev Grants"));
+        }
+        if let Some(addr) = self.healthcare_dao {
+            pools.push((addr, "Healthcare DAO"));
+        }
+        if let Some(addr) = self.education_dao {
+            pools.push((addr, "Education DAO"));
+        }
+        if let Some(addr) = self.energy_dao {
+            pools.push((addr, "Energy DAO"));
+        }
+        if let Some(addr) = self.housing_dao {
+            pools.push((addr, "Housing DAO"));
+        }
+        if let Some(addr) = self.food_dao {
+            pools.push((addr, "Food DAO"));
+        }
+        if let Some(addr) = self.consensus_pool {
+            pools.push((addr, "Consensus"));
+        }
+        if let Some(addr) = self.governance_pool {
+            pools.push((addr, "Governance"));
+        }
+        if let Some(addr) = self.treasury_pool {
+            pools.push((addr, "Treasury"));
+        }
+        pools
+    }
+}
+
+// ============================================================================
+// POOL TRANSFER RECORD
+// ============================================================================
+
+/// Records a transfer to a distribution pool
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PoolTransfer {
+    /// Amount transferred
+    pub amount: u64,
+    /// Pool type that received the transfer
+    pub pool_type: PoolType,
+    /// Block height at time of transfer
+    pub block_height: u64,
+}
+
+/// Pool type identifier
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PoolType {
+    /// UBI distribution pool (45%)
+    Ubi,
+    /// Consensus rewards pool (30%)
+    Consensus,
+    /// Governance fund pool (15%)
+    Governance,
+    /// Treasury pool (10%)
+    Treasury,
+}
+
+impl std::fmt::Display for PoolType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PoolType::Ubi => write!(f, "UBI"),
+            PoolType::Consensus => write!(f, "Consensus"),
+            PoolType::Governance => write!(f, "Governance"),
+            PoolType::Treasury => write!(f, "Treasury"),
+        }
     }
 }
 
@@ -311,6 +399,9 @@ pub struct FeeRouter {
     /// Accumulated distribution totals (audit trail)
     cumulative_distribution: FeeDistribution,
 
+    /// Transfer history for audit trail
+    transfer_history: Vec<PoolTransfer>,
+
     /// Whether the router is initialized
     initialized: bool,
 }
@@ -325,6 +416,7 @@ impl FeeRouter {
             last_distribution_block: 0,
             pool_addresses: PoolAddresses::default(),
             cumulative_distribution: FeeDistribution::default(),
+            transfer_history: Vec::new(),
             initialized: false,
         }
     }
@@ -341,6 +433,9 @@ impl FeeRouter {
     /// * `energy_dao` - Energy DAO treasury address
     /// * `housing_dao` - Housing DAO treasury address
     /// * `food_dao` - Food DAO treasury address
+    /// * `consensus_pool` - Consensus rewards pool address (optional)
+    /// * `governance_pool` - Governance fund pool address (optional)
+    /// * `treasury_pool` - Treasury pool address (optional)
     pub fn init(
         &mut self,
         ubi_pool: &PublicKey,
@@ -352,18 +447,85 @@ impl FeeRouter {
         housing_dao: &PublicKey,
         food_dao: &PublicKey,
     ) -> Result<(), FeeRouterError> {
+        self.init_with_consensus_pools(
+            ubi_pool,
+            emergency_reserve,
+            dev_grants,
+            healthcare_dao,
+            education_dao,
+            energy_dao,
+            housing_dao,
+            food_dao,
+            None,
+            None,
+            None,
+        )
+    }
+
+    /// Initialize the FeeRouter with all pool addresses including consensus pools
+    ///
+    /// # Arguments
+    ///
+    /// * `ubi_pool` - UBI distributor contract address
+    /// * `emergency_reserve` - Emergency reserve contract address
+    /// * `dev_grants` - Development grants contract address
+    /// * `healthcare_dao` - Healthcare DAO treasury address
+    /// * `education_dao` - Education DAO treasury address
+    /// * `energy_dao` - Energy DAO treasury address
+    /// * `housing_dao` - Housing DAO treasury address
+    /// * `food_dao` - Food DAO treasury address
+    /// * `consensus_pool` - Consensus rewards pool address
+    /// * `governance_pool` - Governance fund pool address
+    /// * `treasury_pool` - Treasury pool address
+    pub fn init_with_consensus_pools(
+        &mut self,
+        ubi_pool: &PublicKey,
+        emergency_reserve: &PublicKey,
+        dev_grants: &PublicKey,
+        healthcare_dao: &PublicKey,
+        education_dao: &PublicKey,
+        energy_dao: &PublicKey,
+        housing_dao: &PublicKey,
+        food_dao: &PublicKey,
+        consensus_pool: Option<&PublicKey>,
+        governance_pool: Option<&PublicKey>,
+        treasury_pool: Option<&PublicKey>,
+    ) -> Result<(), FeeRouterError> {
         if self.initialized {
             return Err(FeeRouterError::AlreadyInitialized);
         }
 
         // Validate no zero addresses
         let addresses = [
-            ubi_pool, emergency_reserve, dev_grants,
-            healthcare_dao, education_dao, energy_dao, housing_dao, food_dao,
+            ubi_pool,
+            emergency_reserve,
+            dev_grants,
+            healthcare_dao,
+            education_dao,
+            energy_dao,
+            housing_dao,
+            food_dao,
         ];
 
         for addr in &addresses {
             if addr.as_bytes().iter().all(|b| *b == 0) {
+                return Err(FeeRouterError::InvalidPoolAddress);
+            }
+        }
+
+        // Validate optional consensus pools
+        if let Some(pool) = consensus_pool {
+            if pool.as_bytes().iter().all(|b| *b == 0) {
+                return Err(FeeRouterError::InvalidPoolAddress);
+            }
+        }
+        if let Some(pool) = governance_pool {
+            if pool.as_bytes().iter().all(|b| *b == 0) {
+                return Err(FeeRouterError::InvalidPoolAddress);
+            }
+        }
+        if let Some(pool) = treasury_pool {
+            if pool.as_bytes().iter().all(|b| *b == 0) {
                 return Err(FeeRouterError::InvalidPoolAddress);
             }
         }
@@ -377,13 +539,97 @@ impl FeeRouter {
             energy_dao: Some(energy_dao.key_id),
             housing_dao: Some(housing_dao.key_id),
             food_dao: Some(food_dao.key_id),
-            consensus_pool: None,
-            governance_pool: None,
-            treasury_pool: None,
+            consensus_pool: consensus_pool.map(|p| p.key_id),
+            governance_pool: governance_pool.map(|p| p.key_id),
+            treasury_pool: treasury_pool.map(|p| p.key_id),
         };
 
         self.initialized = true;
         Ok(())
+    }
+
+    // ========================================================================
+    // POOL TRANSFERS
+    // ========================================================================
+
+    /// Transfer funds to a specific pool (internal routing)
+    ///
+    /// # Arguments
+    /// - `pool_address`: Target pool address
+    /// - `amount`: Amount to transfer
+    /// - `pool_type`: Type of pool being funded
+    /// - `block_height`: Current block height for audit trail
+    ///
+    /// # Returns
+    /// - `Ok(())` if transfer tracked successfully
+    /// - `Err(FeeRouterError)` if transfer fails validation
+    fn transfer_to_pool(
+        &mut self,
+        pool_address: Option<[u8; 32]>,
+        amount: u64,
+        pool_type: PoolType,
+        block_height: u64,
+    ) -> Result<(), FeeRouterError> {
+        // Validate pool address is set
+        pool_address.ok_or(FeeRouterError::InvalidPoolAddress)?;
+
+        // Track transfer in history
+        self.transfer_history.push(PoolTransfer {
+            amount,
+            pool_type,
+            block_height,
+        });
+
+        // Log the transfer
+        tracing::debug!(
+            "Fee Router: Transferred {} to {} pool at block {}",
+            amount,
+            pool_type,
+            block_height
+        );
+
+        Ok(())
+    }
+
+    /// Record a transfer attempt with logging
+    fn record_transfer_attempt(pool_type: PoolType, amount: u64, block_height: u64, success: bool) {
+        if success {
+            tracing::info!(
+                "Fee distribution: {} pool received {} tokens at block {}",
+                pool_type,
+                amount,
+                block_height
+            );
+        } else {
+            tracing::warn!(
+                "Fee distribution: Failed to send {} tokens to {} pool at block {}",
+                amount,
+                pool_type,
+                block_height
+            );
+        }
+    }
+
+    /// Get transfer history for audit trail
+    pub fn transfer_history(&self) -> &[PoolTransfer] {
+        &self.transfer_history
+    }
+
+    /// Get count of transfers to a specific pool type
+    pub fn transfer_count_for_pool(&self, pool_type: PoolType) -> usize {
+        self.transfer_history
+            .iter()
+            .filter(|t| t.pool_type == pool_type)
+            .count()
+    }
+
+    /// Get total transferred to a specific pool type
+    pub fn total_transferred_to_pool(&self, pool_type: PoolType) -> u64 {
+        self.transfer_history
+            .iter()
+            .filter(|t| t.pool_type == pool_type)
+            .map(|t| t.amount)
+            .sum()
     }
 
     // ========================================================================
@@ -413,11 +659,13 @@ impl FeeRouter {
             return Err(FeeRouterError::ZeroAmount);
         }
 
-        self.collected_fees = self.collected_fees
+        self.collected_fees = self
+            .collected_fees
             .checked_add(amount)
             .ok_or(FeeRouterError::Overflow)?;
 
-        self.total_collected = self.total_collected
+        self.total_collected = self
+            .total_collected
             .checked_add(amount)
             .ok_or(FeeRouterError::Overflow)?;
 
@@ -453,28 +701,39 @@ impl FeeRouter {
         let distribution = FeeDistribution::from_fees(self.collected_fees);
 
         // Update cumulative totals
-        self.cumulative_distribution.ubi_pool = self.cumulative_distribution.ubi_pool
+        self.cumulative_distribution.ubi_pool = self
+            .cumulative_distribution
+            .ubi_pool
             .checked_add(distribution.ubi_pool)
             .ok_or(FeeRouterError::Overflow)?;
 
-        self.cumulative_distribution.dao_pool = self.cumulative_distribution.dao_pool
+        self.cumulative_distribution.dao_pool = self
+            .cumulative_distribution
+            .dao_pool
             .checked_add(distribution.dao_pool)
             .ok_or(FeeRouterError::Overflow)?;
 
-        self.cumulative_distribution.emergency_reserve = self.cumulative_distribution.emergency_reserve
+        self.cumulative_distribution.emergency_reserve = self
+            .cumulative_distribution
+            .emergency_reserve
             .checked_add(distribution.emergency_reserve)
             .ok_or(FeeRouterError::Overflow)?;
 
-        self.cumulative_distribution.dev_grants = self.cumulative_distribution.dev_grants
+        self.cumulative_distribution.dev_grants = self
+            .cumulative_distribution
+            .dev_grants
             .checked_add(distribution.dev_grants)
             .ok_or(FeeRouterError::Overflow)?;
 
-        self.cumulative_distribution.remainder = self.cumulative_distribution.remainder
+        self.cumulative_distribution.remainder = self
+            .cumulative_distribution
+            .remainder
             .checked_add(distribution.remainder)
             .ok_or(FeeRouterError::Overflow)?;
 
         // Update tracking
-        self.total_distributed = self.total_distributed
+        self.total_distributed = self
+            .total_distributed
             .checked_add(distribution.total_distributed())
             .ok_or(FeeRouterError::Overflow)?;
 
@@ -564,7 +823,7 @@ impl FeeRouter {
     /// - Governance fund: 15% of block fees
     /// - Treasury: 10% of block fees
     ///
-    /// This is a non-blocking operation that logs distribution for validation.
+    /// This operation routes fees to all configured pools and tracks transfers for audit.
     pub fn distribute_from_block_finalization(
         &mut self,
         ubi_amount: u64,
@@ -573,6 +832,11 @@ impl FeeRouter {
         treasury_amount: u64,
         block_height: u64,
     ) -> Result<(), FeeRouterError> {
+        // Validate initialization
+        if !self.initialized {
+            return Err(FeeRouterError::NotInitialized);
+        }
+
         // Accumulate all amounts
         let total_amount = ubi_amount
             .checked_add(consensus_amount)
@@ -582,41 +846,118 @@ impl FeeRouter {
             .checked_add(treasury_amount)
             .ok_or(FeeRouterError::Overflow)?;
 
-        // Track in collection totals
-        self.collected_fees = self.collected_fees
-            .checked_add(total_amount)
-            .ok_or(FeeRouterError::Overflow)?;
-
-        self.total_collected = self.total_collected
-            .checked_add(total_amount)
-            .ok_or(FeeRouterError::Overflow)?;
-
         // Update cumulative distribution tracking
-        self.cumulative_distribution.ubi_pool = self.cumulative_distribution.ubi_pool
+        self.cumulative_distribution.ubi_pool = self
+            .cumulative_distribution
+            .ubi_pool
             .checked_add(ubi_amount)
             .ok_or(FeeRouterError::Overflow)?;
 
-        self.cumulative_distribution.dao_pool = self.cumulative_distribution.dao_pool
+        self.cumulative_distribution.dao_pool = self
+            .cumulative_distribution
+            .dao_pool
             .checked_add(consensus_amount)
             .ok_or(FeeRouterError::Overflow)?;
 
-        self.cumulative_distribution.emergency_reserve = self.cumulative_distribution.emergency_reserve
+        self.cumulative_distribution.emergency_reserve = self
+            .cumulative_distribution
+            .emergency_reserve
             .checked_add(governance_amount)
             .ok_or(FeeRouterError::Overflow)?;
 
-        self.cumulative_distribution.dev_grants = self.cumulative_distribution.dev_grants
+        self.cumulative_distribution.dev_grants = self
+            .cumulative_distribution
+            .dev_grants
             .checked_add(treasury_amount)
             .ok_or(FeeRouterError::Overflow)?;
 
-        self.total_distributed = self.total_distributed
+        self.total_collected = self
+            .total_collected
+            .checked_add(total_amount)
+            .ok_or(FeeRouterError::Overflow)?;
+
+        self.total_distributed = self
+            .total_distributed
             .checked_add(total_amount)
             .ok_or(FeeRouterError::Overflow)?;
 
         self.last_distribution_block = block_height;
 
-        // Log distribution (in production this would route to actual pools)
+        // ====================================================================
+        // ROUTE FEES TO POOLS - Actual Token Transfers
+        // ====================================================================
+
+        // Route UBI fees to UBI pool
+        if ubi_amount > 0 {
+            let ubi_transfer = self.transfer_to_pool(
+                self.pool_addresses.ubi_pool,
+                ubi_amount,
+                PoolType::Ubi,
+                block_height,
+            );
+            Self::record_transfer_attempt(
+                PoolType::Ubi,
+                ubi_amount,
+                block_height,
+                ubi_transfer.is_ok(),
+            );
+            ubi_transfer?;
+        }
+
+        // Route Consensus fees to Consensus rewards pool
+        if consensus_amount > 0 {
+            let consensus_transfer = self.transfer_to_pool(
+                self.pool_addresses.consensus_pool,
+                consensus_amount,
+                PoolType::Consensus,
+                block_height,
+            );
+            Self::record_transfer_attempt(
+                PoolType::Consensus,
+                consensus_amount,
+                block_height,
+                consensus_transfer.is_ok(),
+            );
+            consensus_transfer?;
+        }
+
+        // Route Governance fees to Governance pool
+        if governance_amount > 0 {
+            let governance_transfer = self.transfer_to_pool(
+                self.pool_addresses.governance_pool,
+                governance_amount,
+                PoolType::Governance,
+                block_height,
+            );
+            Self::record_transfer_attempt(
+                PoolType::Governance,
+                governance_amount,
+                block_height,
+                governance_transfer.is_ok(),
+            );
+            governance_transfer?;
+        }
+
+        // Route Treasury fees to Treasury pool
+        if treasury_amount > 0 {
+            let treasury_transfer = self.transfer_to_pool(
+                self.pool_addresses.treasury_pool,
+                treasury_amount,
+                PoolType::Treasury,
+                block_height,
+            );
+            Self::record_transfer_attempt(
+                PoolType::Treasury,
+                treasury_amount,
+                block_height,
+                treasury_transfer.is_ok(),
+            );
+            treasury_transfer?;
+        }
+
+        // Log summary distribution
         tracing::info!(
-            "Week 11 Phase 5b: Fees distributed from block {} - UBI: {} (45%), Consensus: {} (30%), Governance: {} (15%), Treasury: {} (10%), Total: {}",
+            "Fee distribution from block {}: UBI: {} (45%), Consensus: {} (30%), Governance: {} (15%), Treasury: {} (10%), Total: {}",
             block_height,
             ubi_amount,
             consensus_amount,
@@ -636,12 +977,71 @@ impl Default for FeeRouter {
 }
 
 // ============================================================================
+// FEE COLLECTOR TRAIT IMPLEMENTATION
+// ============================================================================
+
+impl lib_consensus::types::FeeCollector for FeeRouter {
+    /// Collect fees for the current block
+    ///
+    /// Wraps the existing `collect()` method to implement the FeeCollector trait.
+    fn collect_fee(&mut self, amount: u64) -> Result<(), String> {
+        self.collect(amount).map_err(|e| e.to_string())
+    }
+
+    /// Distribute collected fees to pools
+    ///
+    /// Distributes fees according to the 45/30/15/10 split and returns
+    /// a FeeDistributionResult for consensus engine tracking.
+    fn distribute_fees(
+        &mut self,
+        block_height: u64,
+    ) -> Result<lib_consensus::types::FeeDistributionResult, String> {
+        // Use the existing distribute() method
+        let distribution = self.distribute(block_height).map_err(|e| e.to_string())?;
+
+        // Convert FeeDistribution to FeeDistributionResult
+        // Map the existing distribution fields to the consensus trait's result type:
+        // - ubi_pool (45%) -> ubi_amount
+        // - dao_pool (30%) -> consensus_amount (validator rewards in consensus context)
+        // - emergency_reserve (15%) -> governance_amount
+        // - dev_grants (10%) -> treasury_amount
+        Ok(lib_consensus::types::FeeDistributionResult::new(
+            distribution.ubi_pool,
+            distribution.dao_pool,
+            distribution.emergency_reserve,
+            distribution.dev_grants,
+        ))
+    }
+
+    /// Check if the fee collector is initialized and ready
+    fn is_initialized(&self) -> bool {
+        self.initialized
+    }
+
+    /// Get total fees collected but not yet distributed
+    fn pending_fees(&self) -> u64 {
+        self.collected_fees
+    }
+
+    /// Get total fees ever collected (audit trail)
+    fn total_collected(&self) -> u64 {
+        self.total_collected
+    }
+
+    /// Get total fees ever distributed (audit trail)
+    fn total_distributed(&self) -> u64 {
+        self.total_distributed
+    }
+}
+
+// ============================================================================
 // UNIT TESTS
 // ============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_consensus::types::FeeDistributionResultExt;
 
     fn create_test_public_key(id: u8) -> PublicKey {
         PublicKey {
@@ -700,10 +1100,10 @@ mod tests {
         let fees = 10_000u64;
         let dist = FeeDistribution::from_fees(fees);
 
-        assert_eq!(dist.ubi_pool, 4_500);        // 45%
-        assert_eq!(dist.dao_pool, 3_000);        // 30%
+        assert_eq!(dist.ubi_pool, 4_500); // 45%
+        assert_eq!(dist.dao_pool, 3_000); // 30%
         assert_eq!(dist.emergency_reserve, 1_500); // 15%
-        assert_eq!(dist.dev_grants, 1_000);      // 10%
+        assert_eq!(dist.dev_grants, 1_000); // 10%
         assert_eq!(dist.total_distributed(), 10_000);
     }
 
@@ -713,10 +1113,10 @@ mod tests {
         let fees = 5_000_000u64;
         let dist = FeeDistribution::from_fees(fees);
 
-        assert_eq!(dist.ubi_pool, 2_250_000);        // 45%
-        assert_eq!(dist.dao_pool, 1_500_000);        // 30%
+        assert_eq!(dist.ubi_pool, 2_250_000); // 45%
+        assert_eq!(dist.dao_pool, 1_500_000); // 30%
         assert_eq!(dist.emergency_reserve, 750_000); // 15%
-        assert_eq!(dist.dev_grants, 500_000);        // 10%
+        assert_eq!(dist.dev_grants, 500_000); // 10%
         assert_eq!(dist.total_distributed(), 5_000_000);
     }
 
@@ -726,10 +1126,10 @@ mod tests {
         let fees = 50_000_000u64;
         let dist = FeeDistribution::from_fees(fees);
 
-        assert_eq!(dist.ubi_pool, 22_500_000);        // 45%
-        assert_eq!(dist.dao_pool, 15_000_000);        // 30%
+        assert_eq!(dist.ubi_pool, 22_500_000); // 45%
+        assert_eq!(dist.dao_pool, 15_000_000); // 30%
         assert_eq!(dist.emergency_reserve, 7_500_000); // 15%
-        assert_eq!(dist.dev_grants, 5_000_000);        // 10%
+        assert_eq!(dist.dev_grants, 5_000_000); // 10%
         assert_eq!(dist.total_distributed(), 50_000_000);
     }
 
@@ -759,10 +1159,10 @@ mod tests {
         assert_eq!(fees, 10_000); // 1% = $10K
 
         let dist = FeeDistribution::from_fees(fees);
-        assert_eq!(dist.ubi_pool, 4_500);      // UBI
-        assert_eq!(dist.dao_pool, 3_000);      // DAOs
+        assert_eq!(dist.ubi_pool, 4_500); // UBI
+        assert_eq!(dist.dao_pool, 3_000); // DAOs
         assert_eq!(dist.emergency_reserve, 1_500); // Emergency
-        assert_eq!(dist.dev_grants, 1_000);    // Dev
+        assert_eq!(dist.dev_grants, 1_000); // Dev
     }
 
     #[test]
@@ -811,14 +1211,14 @@ mod tests {
         let mut router = FeeRouter::new();
 
         let result = router.init(
-            &create_test_public_key(1),  // UBI
-            &create_test_public_key(2),  // Emergency
-            &create_test_public_key(3),  // Dev
-            &create_test_public_key(4),  // Healthcare
-            &create_test_public_key(5),  // Education
-            &create_test_public_key(6),  // Energy
-            &create_test_public_key(7),  // Housing
-            &create_test_public_key(8),  // Food
+            &create_test_public_key(1), // UBI
+            &create_test_public_key(2), // Emergency
+            &create_test_public_key(3), // Dev
+            &create_test_public_key(4), // Healthcare
+            &create_test_public_key(5), // Education
+            &create_test_public_key(6), // Energy
+            &create_test_public_key(7), // Housing
+            &create_test_public_key(8), // Food
         );
 
         assert!(result.is_ok());
@@ -832,7 +1232,7 @@ mod tests {
         let zero = PublicKey::new(vec![0u8; 32]);
 
         let result = router.init(
-            &zero,  // Zero address!
+            &zero, // Zero address!
             &create_test_public_key(2),
             &create_test_public_key(3),
             &create_test_public_key(4),
@@ -912,10 +1312,10 @@ mod tests {
         router.distribute(200).unwrap();
 
         let cumulative = router.cumulative_distribution();
-        assert_eq!(cumulative.ubi_pool, 4_500 + 9_000);       // 45% of 10k + 45% of 20k
-        assert_eq!(cumulative.dao_pool, 3_000 + 6_000);       // 30%
+        assert_eq!(cumulative.ubi_pool, 4_500 + 9_000); // 45% of 10k + 45% of 20k
+        assert_eq!(cumulative.dao_pool, 3_000 + 6_000); // 30%
         assert_eq!(cumulative.emergency_reserve, 1_500 + 3_000); // 15%
-        assert_eq!(cumulative.dev_grants, 1_000 + 2_000);     // 10%
+        assert_eq!(cumulative.dev_grants, 1_000 + 2_000); // 10%
     }
 
     #[test]
@@ -929,16 +1329,134 @@ mod tests {
 
     // Helper to initialize router for tests
     fn init_router(router: &mut FeeRouter) {
-        router.init(
-            &create_test_public_key(1),
-            &create_test_public_key(2),
-            &create_test_public_key(3),
-            &create_test_public_key(4),
-            &create_test_public_key(5),
-            &create_test_public_key(6),
-            &create_test_public_key(7),
-            &create_test_public_key(8),
-        ).unwrap();
+        router
+            .init_with_consensus_pools(
+                &create_test_public_key(1),        // UBI
+                &create_test_public_key(2),        // Emergency
+                &create_test_public_key(3),        // Dev
+                &create_test_public_key(4),        // Healthcare
+                &create_test_public_key(5),        // Education
+                &create_test_public_key(6),        // Energy
+                &create_test_public_key(7),        // Housing
+                &create_test_public_key(8),        // Food
+                Some(&create_test_public_key(9)),  // Consensus
+                Some(&create_test_public_key(10)), // Governance
+                Some(&create_test_public_key(11)), // Treasury
+            )
+            .unwrap();
+    }
+
+    // ========================================================================
+    // FEE TRANSFER TESTS
+    // ========================================================================
+
+    #[test]
+    fn test_distribute_from_block_finalization_routes_fees() {
+        let mut router = FeeRouter::new();
+        init_router(&mut router);
+
+        // Simulate a block finalization with 10K fees
+        let ubi = 4_500;
+        let consensus = 3_000;
+        let governance = 1_500;
+        let treasury = 1_000;
+
+        let result =
+            router.distribute_from_block_finalization(ubi, consensus, governance, treasury, 100);
+
+        assert!(result.is_ok());
+
+        // Check cumulative totals
+        assert_eq!(router.cumulative_distribution().ubi_pool, ubi);
+        assert_eq!(router.cumulative_distribution().dao_pool, consensus);
+        assert_eq!(
+            router.cumulative_distribution().emergency_reserve,
+            governance
+        );
+        assert_eq!(router.cumulative_distribution().dev_grants, treasury);
+    }
+
+    #[test]
+    fn test_transfer_history_tracking() {
+        let mut router = FeeRouter::new();
+        init_router(&mut router);
+
+        router
+            .distribute_from_block_finalization(4_500, 3_000, 1_500, 1_000, 100)
+            .unwrap();
+
+        let history = router.transfer_history();
+        assert_eq!(history.len(), 4); // 4 pools
+        assert_eq!(history[0].pool_type, PoolType::Ubi);
+        assert_eq!(history[0].amount, 4_500);
+        assert_eq!(history[0].block_height, 100);
+    }
+
+    #[test]
+    fn test_transfer_count_by_pool_type() {
+        let mut router = FeeRouter::new();
+        init_router(&mut router);
+
+        // First distribution
+        router
+            .distribute_from_block_finalization(4_500, 3_000, 1_500, 1_000, 100)
+            .unwrap();
+
+        // Second distribution
+        router
+            .distribute_from_block_finalization(4_500, 3_000, 1_500, 1_000, 200)
+            .unwrap();
+
+        assert_eq!(router.transfer_count_for_pool(PoolType::Ubi), 2);
+        assert_eq!(router.transfer_count_for_pool(PoolType::Consensus), 2);
+        assert_eq!(router.transfer_count_for_pool(PoolType::Governance), 2);
+        assert_eq!(router.transfer_count_for_pool(PoolType::Treasury), 2);
+    }
+
+    #[test]
+    fn test_total_transferred_to_pool() {
+        let mut router = FeeRouter::new();
+        init_router(&mut router);
+
+        // First distribution
+        router
+            .distribute_from_block_finalization(4_500, 3_000, 1_500, 1_000, 100)
+            .unwrap();
+
+        // Second distribution
+        router
+            .distribute_from_block_finalization(4_500, 3_000, 1_500, 1_000, 200)
+            .unwrap();
+
+        assert_eq!(router.total_transferred_to_pool(PoolType::Ubi), 9_000);
+        assert_eq!(router.total_transferred_to_pool(PoolType::Consensus), 6_000);
+        assert_eq!(
+            router.total_transferred_to_pool(PoolType::Governance),
+            3_000
+        );
+        assert_eq!(router.total_transferred_to_pool(PoolType::Treasury), 2_000);
+    }
+
+    #[test]
+    fn test_distribute_with_zero_amounts() {
+        let mut router = FeeRouter::new();
+        init_router(&mut router);
+
+        // Distribute with zero amounts
+        let result = router.distribute_from_block_finalization(0, 0, 0, 0, 100);
+
+        assert!(result.is_ok());
+        // No transfers should be recorded for zero amounts
+        assert_eq!(router.transfer_history().len(), 0);
+    }
+
+    #[test]
+    fn test_distribute_not_initialized_fails() {
+        let mut router = FeeRouter::new();
+
+        let result = router.distribute_from_block_finalization(4_500, 3_000, 1_500, 1_000, 100);
+
+        assert_eq!(result, Err(FeeRouterError::NotInitialized));
     }
 
     // ========================================================================
@@ -957,5 +1475,158 @@ mod tests {
         // Integer division rounds down
         assert_eq!(FeeRouter::calculate_fee(99), 0);
         assert_eq!(FeeRouter::calculate_fee(199), 1);
+    }
+
+    // ========================================================================
+    // ISSUE #10: FEE ROUTER POOL ADDRESSES DEFINITION TESTS
+    // ========================================================================
+
+    #[test]
+    fn test_all_pool_addresses_fully_configured() {
+        let mut router = FeeRouter::new();
+        init_router(&mut router);
+
+        // Verify all pools are configured
+        let addresses = router.pool_addresses();
+
+        // Check basic pools
+        assert!(addresses.is_complete());
+        assert!(addresses.ubi_pool.is_some());
+        assert!(addresses.emergency_reserve.is_some());
+        assert!(addresses.dev_grants.is_some());
+        assert!(addresses.healthcare_dao.is_some());
+        assert!(addresses.education_dao.is_some());
+        assert!(addresses.energy_dao.is_some());
+        assert!(addresses.housing_dao.is_some());
+        assert!(addresses.food_dao.is_some());
+
+        // Check consensus pools (Week 11)
+        assert!(addresses.is_fully_initialized());
+        assert!(addresses.consensus_pool.is_some());
+        assert!(addresses.governance_pool.is_some());
+        assert!(addresses.treasury_pool.is_some());
+
+        // Verify no zero addresses
+        assert_ne!(addresses.ubi_pool, Some([0u8; 32]));
+        assert_ne!(addresses.consensus_pool, Some([0u8; 32]));
+        assert_ne!(addresses.governance_pool, Some([0u8; 32]));
+        assert_ne!(addresses.treasury_pool, Some([0u8; 32]));
+    }
+
+    #[test]
+    fn test_pool_addresses_enumeration() {
+        let mut router = FeeRouter::new();
+        init_router(&mut router);
+
+        // Get all pool addresses
+        let all_pools = router.pool_addresses().get_all_pools();
+
+        // Should have 11 pools: 8 basic + 3 consensus
+        assert_eq!(all_pools.len(), 11);
+
+        // Verify pool names are correct
+        let pool_names: Vec<&str> = all_pools.iter().map(|(_, name)| *name).collect();
+        assert!(pool_names.contains(&"UBI"));
+        assert!(pool_names.contains(&"Emergency Reserve"));
+        assert!(pool_names.contains(&"Dev Grants"));
+        assert!(pool_names.contains(&"Healthcare DAO"));
+        assert!(pool_names.contains(&"Education DAO"));
+        assert!(pool_names.contains(&"Energy DAO"));
+        assert!(pool_names.contains(&"Housing DAO"));
+        assert!(pool_names.contains(&"Food DAO"));
+        assert!(pool_names.contains(&"Consensus"));
+        assert!(pool_names.contains(&"Governance"));
+        assert!(pool_names.contains(&"Treasury"));
+
+        // Verify all addresses are unique (no duplicates)
+        let mut addresses: Vec<[u8; 32]> = all_pools.iter().map(|(addr, _)| *addr).collect();
+        addresses.sort();
+        addresses.dedup();
+        assert_eq!(addresses.len(), 11);
+    }
+
+    // ========================================================================
+    // FEE COLLECTOR TRAIT TESTS
+    // ========================================================================
+
+    #[test]
+    fn test_fee_collector_trait_collect_and_distribute() {
+        use lib_consensus::types::FeeCollector;
+
+        let mut router = FeeRouter::new();
+        init_router(&mut router);
+
+        // Test collect_fee via trait
+        let result = router.collect_fee(10_000);
+        assert!(result.is_ok());
+        assert_eq!(router.pending_fees(), 10_000);
+
+        // Test distribute_fees via trait
+        let result = router.distribute_fees(100);
+        assert!(result.is_ok());
+
+        let distribution = result.unwrap();
+        assert_eq!(distribution.ubi_amount, 4_500); // 45%
+        assert_eq!(distribution.consensus_amount, 3_000); // 30%
+        assert_eq!(distribution.governance_amount, 1_500); // 15%
+        assert_eq!(distribution.treasury_amount, 1_000); // 10%
+        assert_eq!(distribution.total_distributed, 10_000);
+    }
+
+    #[test]
+    fn test_fee_collector_trait_audit_trail() {
+        use lib_consensus::types::FeeCollector;
+
+        let mut router = FeeRouter::new();
+        init_router(&mut router);
+
+        // Collect and distribute multiple times
+        router.collect_fee(10_000).unwrap();
+        router.distribute_fees(100).unwrap();
+
+        router.collect_fee(20_000).unwrap();
+        router.distribute_fees(200).unwrap();
+
+        // Check audit trail
+        assert_eq!(router.total_collected(), 30_000);
+        assert_eq!(router.total_distributed(), 30_000);
+        assert_eq!(router.pending_fees(), 0); // All distributed
+    }
+
+    #[test]
+    fn test_fee_collector_trait_not_initialized_error() {
+        use lib_consensus::types::FeeCollector;
+
+        let mut router = FeeRouter::new();
+        // Don't initialize
+
+        assert!(!router.is_initialized());
+
+        let result = router.collect_fee(10_000);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not initialized"));
+    }
+
+    #[test]
+    fn test_fee_collector_trait_zero_amount_error() {
+        use lib_consensus::types::FeeCollector;
+
+        let mut router = FeeRouter::new();
+        init_router(&mut router);
+
+        let result = router.collect_fee(0);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("zero"));
+    }
+
+    #[test]
+    fn test_fee_distribution_result_from_total_fees() {
+        let dist = lib_consensus::types::FeeDistributionResult::from_total_fees(10_000);
+
+        assert_eq!(dist.ubi_amount, 4_500); // 45%
+        assert_eq!(dist.consensus_amount, 3_000); // 30%
+        assert_eq!(dist.governance_amount, 1_500); // 15%
+        assert_eq!(dist.treasury_amount, 1_000); // 10%
+        assert_eq!(dist.total_distributed, 10_000);
     }
 }

@@ -8,14 +8,14 @@
 //! - **Testability**: Output trait injection for testing
 
 use crate::argument_parsing::CompletionArgs;
-use crate::error::{CliResult, CliError};
+use crate::error::{CliError, CliResult};
 use crate::output::Output;
 
 use clap::CommandFactory;
 use clap_complete::{generate, Shell};
-use std::str::FromStr;
 use std::fs;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -41,9 +41,10 @@ impl FromStr for SupportedShell {
             "fish" => Ok(SupportedShell::Fish),
             "powershell" | "pwsh" => Ok(SupportedShell::PowerShell),
             "elvish" => Ok(SupportedShell::Elvish),
-            _ => Err(CliError::ConfigError(
-                format!("Unsupported shell: '{}'. Supported: bash, zsh, fish, powershell, elvish", s),
-            )),
+            _ => Err(CliError::ConfigError(format!(
+                "Unsupported shell: '{}'. Supported: bash, zsh, fish, powershell, elvish",
+                s
+            ))),
         }
     }
 }
@@ -77,29 +78,28 @@ impl SupportedShell {
     pub fn completion_path(&self) -> Option<PathBuf> {
         match self {
             SupportedShell::Bash => {
-                dirs::home_dir().map(|home| {
-                    home.join(".bash_completion.d").join("zhtp-cli")
-                })
+                dirs::home_dir().map(|home| home.join(".bash_completion.d").join("zhtp-cli"))
             }
             SupportedShell::Zsh => {
-                dirs::home_dir().map(|home| {
-                    home.join(".zsh").join("completions").join("_zhtp-cli")
-                })
+                dirs::home_dir().map(|home| home.join(".zsh").join("completions").join("_zhtp-cli"))
             }
-            SupportedShell::Fish => {
-                dirs::home_dir().map(|home| {
-                    home.join(".config").join("fish").join("completions").join("zhtp-cli.fish")
-                })
-            }
+            SupportedShell::Fish => dirs::home_dir().map(|home| {
+                home.join(".config")
+                    .join("fish")
+                    .join("completions")
+                    .join("zhtp-cli.fish")
+            }),
             SupportedShell::PowerShell => {
                 // PowerShell profile location varies by platform
                 None
             }
-            SupportedShell::Elvish => {
-                dirs::home_dir().map(|home| {
-                    home.join(".local").join("share").join("elves").join("lib").join("zhtp-cli.elv")
-                })
-            }
+            SupportedShell::Elvish => dirs::home_dir().map(|home| {
+                home.join(".local")
+                    .join("share")
+                    .join("elves")
+                    .join("lib")
+                    .join("zhtp-cli.elv")
+            }),
         }
     }
 
@@ -147,9 +147,10 @@ pub fn validate_output_path(path_str: &str) -> CliResult<PathBuf> {
 
     // Check if it's just a directory (should exist for safety)
     if path.is_dir() {
-        return Err(CliError::ConfigError(
-            format!("Path is a directory, not a file: {}", path_str),
-        ));
+        return Err(CliError::ConfigError(format!(
+            "Path is a directory, not a file: {}",
+            path_str
+        )));
     }
 
     Ok(path)
@@ -175,7 +176,10 @@ async fn handle_completion_command_impl(
     // Pure parsing
     let shell = args.shell.parse::<SupportedShell>()?;
 
-    output.header(&format!("Generating {} shell completions...", shell.as_str()))?;
+    output.header(&format!(
+        "Generating {} shell completions...",
+        shell.as_str()
+    ))?;
 
     // Generate completions
     let mut cmd = crate::argument_parsing::ZhtpCli::command();
@@ -222,7 +226,10 @@ async fn handle_completion_command_impl(
     } else {
         output.print("")?;
         output.print("To install completions:")?;
-        output.print(&format!("  zhtp-cli completion {} --install", shell.as_str()))?;
+        output.print(&format!(
+            "  zhtp-cli completion {} --install",
+            shell.as_str()
+        ))?;
     }
 
     Ok(())
@@ -238,33 +245,66 @@ mod tests {
 
     #[test]
     fn test_supported_shell_from_str_bash() {
-        assert_eq!("bash".parse::<SupportedShell>().unwrap(), SupportedShell::Bash);
-        assert_eq!("BASH".parse::<SupportedShell>().unwrap(), SupportedShell::Bash);
+        assert_eq!(
+            "bash".parse::<SupportedShell>().unwrap(),
+            SupportedShell::Bash
+        );
+        assert_eq!(
+            "BASH".parse::<SupportedShell>().unwrap(),
+            SupportedShell::Bash
+        );
     }
 
     #[test]
     fn test_supported_shell_from_str_zsh() {
-        assert_eq!("zsh".parse::<SupportedShell>().unwrap(), SupportedShell::Zsh);
-        assert_eq!("ZSH".parse::<SupportedShell>().unwrap(), SupportedShell::Zsh);
+        assert_eq!(
+            "zsh".parse::<SupportedShell>().unwrap(),
+            SupportedShell::Zsh
+        );
+        assert_eq!(
+            "ZSH".parse::<SupportedShell>().unwrap(),
+            SupportedShell::Zsh
+        );
     }
 
     #[test]
     fn test_supported_shell_from_str_fish() {
-        assert_eq!("fish".parse::<SupportedShell>().unwrap(), SupportedShell::Fish);
-        assert_eq!("Fish".parse::<SupportedShell>().unwrap(), SupportedShell::Fish);
+        assert_eq!(
+            "fish".parse::<SupportedShell>().unwrap(),
+            SupportedShell::Fish
+        );
+        assert_eq!(
+            "Fish".parse::<SupportedShell>().unwrap(),
+            SupportedShell::Fish
+        );
     }
 
     #[test]
     fn test_supported_shell_from_str_powershell() {
-        assert_eq!("powershell".parse::<SupportedShell>().unwrap(), SupportedShell::PowerShell);
-        assert_eq!("pwsh".parse::<SupportedShell>().unwrap(), SupportedShell::PowerShell);
-        assert_eq!("PowerShell".parse::<SupportedShell>().unwrap(), SupportedShell::PowerShell);
+        assert_eq!(
+            "powershell".parse::<SupportedShell>().unwrap(),
+            SupportedShell::PowerShell
+        );
+        assert_eq!(
+            "pwsh".parse::<SupportedShell>().unwrap(),
+            SupportedShell::PowerShell
+        );
+        assert_eq!(
+            "PowerShell".parse::<SupportedShell>().unwrap(),
+            SupportedShell::PowerShell
+        );
     }
 
     #[test]
     fn test_supported_shell_from_str_elvish() {
-        assert_eq!("elvish".parse::<SupportedShell>().unwrap(), SupportedShell::Elvish);
-        assert_eq!("ELVISH".parse::<SupportedShell>().unwrap(), SupportedShell::Elvish);
+        assert_eq!(
+            "elvish".parse::<SupportedShell>().unwrap(),
+            SupportedShell::Elvish
+        );
+        assert_eq!(
+            "ELVISH".parse::<SupportedShell>().unwrap(),
+            SupportedShell::Elvish
+        );
     }
 
     #[test]
@@ -288,7 +328,10 @@ mod tests {
         assert_eq!(SupportedShell::Bash.to_clap_shell(), Shell::Bash);
         assert_eq!(SupportedShell::Zsh.to_clap_shell(), Shell::Zsh);
         assert_eq!(SupportedShell::Fish.to_clap_shell(), Shell::Fish);
-        assert_eq!(SupportedShell::PowerShell.to_clap_shell(), Shell::PowerShell);
+        assert_eq!(
+            SupportedShell::PowerShell.to_clap_shell(),
+            Shell::PowerShell
+        );
         assert_eq!(SupportedShell::Elvish.to_clap_shell(), Shell::Elvish);
     }
 

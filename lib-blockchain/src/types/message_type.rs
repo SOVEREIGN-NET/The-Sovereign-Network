@@ -50,7 +50,7 @@ impl MessageType {
             MessageType::GroupMessage => 4000, // Higher cost for group distribution
             MessageType::FileAttachment => 5000, // Highest cost for file handling
             MessageType::SystemMessage => 1000, // Lower cost for system messages
-            MessageType::BurnRequest => 1500, // Moderate cost for burning
+            MessageType::BurnRequest => 1500,  // Moderate cost for burning
         }
     }
 }

@@ -1,29 +1,27 @@
 //! Content Management Module
-//! 
+//!
 //! High-level content management with access control, versioning, and search capabilities.
 //! Integrates with DHT storage and economic manager for contract creation.
 //! Enhanced with encryption and key management using lib-crypto.
 
-use crate::types::*;
-use crate::types::economic_types::{EconomicManagerConfig, PaymentSchedule, DisputeResolution,
-                                   QualityRequirements, BudgetConstraints, EconomicStorageRequest, 
-                                   PaymentPreferences, EscrowPreferences}; // Explicit import
 use crate::dht::storage::DhtStorage;
-use crate::economic::manager::EconomicStorageManager;
-use anyhow::{Result, anyhow};
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
-use lib_crypto::{Hash, KeyPair, encrypt_data, decrypt_data, derive_keys, hash_blake3};
+use crate::types::economic_types::{
+    BudgetConstraints, DisputeResolution, EconomicManagerConfig, EconomicStorageRequest,
+    EscrowPreferences, PaymentPreferences, PaymentSchedule, QualityRequirements,
+}; // Explicit import
+use crate::types::*;
+use anyhow::{anyhow, Result};
+use lib_crypto::{decrypt_data, derive_keys, encrypt_data, hash_blake3, Hash, KeyPair};
 use lib_identity::ZhtpIdentity;
 use log::info;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// High-level content manager with encryption and key management
 #[derive(Debug)]
 pub struct ContentManager {
     /// DHT storage backend
     dht_storage: DhtStorage,
-    /// Economic manager for contracts
-    economic_manager: EconomicStorageManager,
     /// Content metadata
     content_metadata: HashMap<ContentHash, ContentMetadata>,
     /// Access control lists
@@ -151,22 +149,18 @@ pub struct SearchQuery {
 
 impl ContentManager {
     /// Create new content manager with encryption capabilities
-    pub fn new(
-        dht_storage: DhtStorage,
-        economic_config: EconomicManagerConfig,
-    ) -> Result<Self> {
+    pub fn new(dht_storage: DhtStorage, _economic_config: EconomicManagerConfig) -> Result<Self> {
         // Generate master keypair for this storage node
-        let master_keypair = KeyPair::generate()
-            .map_err(|e| anyhow!("Failed to generate master keypair: {}", e))?;
-        
+        let master_keypair =
+            KeyPair::generate().map_err(|e| anyhow!("Failed to generate master keypair: {}", e))?;
+
         // Generate key derivation salt
         let mut salt = [0u8; 32];
         use rand::RngCore;
         rand::rngs::OsRng.fill_bytes(&mut salt);
-        
+
         Ok(Self {
             dht_storage,
-            economic_manager: EconomicStorageManager::new(economic_config),
             content_metadata: HashMap::new(),
             access_control: HashMap::new(),
             content_versions: HashMap::new(),
@@ -177,17 +171,16 @@ impl ContentManager {
             wallet_content_manager: crate::wallet_content_integration::WalletContentManager::new(),
         })
     }
-    
+
     /// Create new content manager with existing keypair
     pub fn new_with_keypair(
         dht_storage: DhtStorage,
-        economic_config: EconomicManagerConfig,
+        _economic_config: EconomicManagerConfig,
         master_keypair: KeyPair,
         key_derivation_salt: [u8; 32],
     ) -> Self {
         Self {
             dht_storage,
-            economic_manager: EconomicStorageManager::new(economic_config),
             content_metadata: HashMap::new(),
             access_control: HashMap::new(),
             content_versions: HashMap::new(),
@@ -198,32 +191,37 @@ impl ContentManager {
             wallet_content_manager: crate::wallet_content_integration::WalletContentManager::new(),
         }
     }
-    
+
     /// Get master public key for key exchange
     pub fn get_master_public_key(&self) -> &lib_crypto::PublicKey {
         &self.master_keypair.public_key
     }
-    
+
     /// Generate or retrieve content encryption key
     fn get_or_create_content_key(&mut self, content_hash: &ContentHash) -> Result<[u8; 32]> {
         if let Some(key) = self.content_keys.get(content_hash) {
             return Ok(*key);
         }
-        
+
         // Derive deterministic key for this content
         let key_info = [
             b"ZHTP-content-key-v1",
             content_hash.as_bytes(),
             &self.key_derivation_salt,
-        ].concat();
-        
-        let derived_key = derive_keys(&self.master_keypair.private_key.dilithium_sk[..32], &key_info, 32)?;
+        ]
+        .concat();
+
+        let derived_key = derive_keys(
+            &self.master_keypair.private_key.dilithium_sk[..32],
+            &key_info,
+            32,
+        )?;
         let mut key_array = [0u8; 32];
         key_array.copy_from_slice(&derived_key[..32]);
-        
+
         // Cache the key
         self.content_keys.insert(content_hash.clone(), key_array);
-        
+
         Ok(key_array)
     }
 
@@ -236,14 +234,20 @@ impl ContentManager {
         // Calculate hash of ORIGINAL content before processing
         let original_hash = Hash::from_bytes(&blake3::hash(&request.content).as_bytes()[..32]);
         let original_size = request.content.len();
-        
+
         info!(" 📤 Uploading content: {} bytes", original_size);
-        info!("    Original hash: {}", hex::encode(original_hash.as_bytes()));
-        info!("    Compress: {}, Encrypt: {}", request.compress, request.encrypt);
-        
+        info!(
+            "    Original hash: {}",
+            hex::encode(original_hash.as_bytes())
+        );
+        info!(
+            "    Compress: {}, Encrypt: {}",
+            request.compress, request.encrypt
+        );
+
         // Process content (compression, encryption)
         let processed_content = self.process_content_for_upload(&request).await?;
-        
+
         // Calculate hash of PROCESSED content (what's actually stored in DHT)
         let content_hash = Hash::from_bytes(&blake3::hash(&processed_content).as_bytes()[..32]);
         let processed_size = processed_content.len();
@@ -272,8 +276,27 @@ impl ContentManager {
             }
         }
 
+        // If content was encrypted, the key was stored under the pre-encryption hash.
+        // We need to also register it under the final (post-encryption) hash for retrieval.
+        if request.encrypt {
+            // Get the pre-encryption hash (after possible compression)
+            let pre_encryption_content = if request.compress {
+                self.compress_content(&request.content).await?
+            } else {
+                request.content.clone()
+            };
+            let pre_encryption_hash =
+                Hash::from_bytes(&blake3::hash(&pre_encryption_content).as_bytes()[..32]);
+
+            // Copy encryption key from pre-encryption hash to post-encryption hash
+            if let Some(key) = self.content_keys.get(&pre_encryption_hash).cloned() {
+                self.content_keys.insert(content_hash.clone(), key);
+                info!("    Registered encryption key under storage hash for decryption");
+            }
+        }
+
         // Create economic storage request
-        let economic_request = EconomicStorageRequest {
+        let _economic_request = EconomicStorageRequest {
             content: processed_content.clone(),
             filename: request.filename.clone(),
             content_type: request.mime_type.clone(),
@@ -283,7 +306,7 @@ impl ContentManager {
                 duration_days: request.storage_requirements.duration_days,
                 quality_requirements: request.storage_requirements.quality_requirements.clone(),
                 budget_constraints: request.storage_requirements.budget_constraints.clone(),
-                replication_factor: 3, // Default replication
+                replication_factor: 3,          // Default replication
                 geographic_preferences: vec![], // No specific preferences
             },
             payment_preferences: PaymentPreferences {
@@ -300,15 +323,21 @@ impl ContentManager {
 
         // TESTING MODE: Skip provider registration and economic contracts - store directly in DHT
         info!(" TEST MODE: Bypassing storage provider registration, storing directly in DHT");
-        
+
         // Skip economic manager for testing
         // let quote = self.economic_manager.process_storage_request(economic_request).await?;
         // let _contract_id = self.economic_manager.create_contract(quote, content_hash.clone(), processed_content.len() as u64).await?;
 
         // Store content directly in DHT (no provider requirements)
         let hex_hash = hex::encode(content_hash.as_bytes());
-        info!(" Storing {} bytes directly in DHT storage (test mode) with hash: {}", processed_content.len(), hex_hash);
-        self.dht_storage.store_data(content_hash.clone(), processed_content.clone()).await?;
+        info!(
+            " Storing {} bytes directly in DHT storage (test mode) with hash: {}",
+            processed_content.len(),
+            hex_hash
+        );
+        self.dht_storage
+            .store_data(content_hash.clone(), processed_content.clone())
+            .await?;
         info!("  Content stored in DHT with hex key: {}", hex_hash);
 
         // Create metadata
@@ -316,7 +345,7 @@ impl ContentManager {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         let metadata = ContentMetadata {
             hash: content_hash.clone(),
             content_hash: content_hash.clone(),
@@ -331,20 +360,29 @@ impl ContentManager {
             is_encrypted: request.encrypt,
             is_compressed: request.compress,
             tier: StorageTier::Hot, // Default to hot storage
-            encryption: if request.encrypt { EncryptionLevel::Standard } else { EncryptionLevel::None },
+            encryption: if request.encrypt {
+                EncryptionLevel::Standard
+            } else {
+                EncryptionLevel::None
+            },
             access_pattern: AccessPattern::Frequent, // Default access pattern
-            replication_factor: 3, // Default replication
+            replication_factor: 3,                   // Default replication
             access_count: 0,
             expires_at: None,
-            cost_per_day: 100, // Default cost
+            cost_per_day: 100,                          // Default cost
             access_control: vec![AccessLevel::Private], // Default to private
-            total_chunks: 1, // Single chunk for now
-            checksum: content_hash.clone(), // Use content hash as checksum
+            total_chunks: 1,                            // Single chunk for now
+            checksum: content_hash.clone(),             // Use content hash as checksum
         };
 
         // Extract wallet ID for content ownership registration (before uploader is moved)
-        let owner_wallet_id = uploader.wallet_manager.wallets.values().next().map(|w| w.id.clone());
-        
+        let owner_wallet_id = uploader
+            .wallet_manager
+            .wallets
+            .values()
+            .next()
+            .map(|w| w.id.clone());
+
         // Create access control
         let acl = AccessControlList {
             content_hash: content_hash.clone(),
@@ -371,10 +409,12 @@ impl ContentManager {
             size: request.content.len() as u64,
         };
 
-        self.content_versions.insert(content_hash.clone(), vec![version]);
+        self.content_versions
+            .insert(content_hash.clone(), vec![version]);
 
         // Update search index
-        self.update_search_index(&content_hash, &request.tags, &request.filename).await?;
+        self.update_search_index(&content_hash, &request.tags, &request.filename)
+            .await?;
 
         // Store metadata in DHT for distributed access
         if let Err(e) = self.store_metadata_in_dht(&content_hash).await {
@@ -403,82 +443,106 @@ impl ContentManager {
     /// Store content metadata in DHT for distributed access
     async fn store_metadata_in_dht(&mut self, content_hash: &ContentHash) -> Result<()> {
         // Get metadata from local cache
-        let metadata = self.content_metadata.get(content_hash)
+        let metadata = self
+            .content_metadata
+            .get(content_hash)
             .ok_or_else(|| anyhow!("Metadata not found for content hash"))?;
-        
+
         // Serialize metadata to binary
         let serialized_metadata = bincode::serialize(metadata)
             .map_err(|e| anyhow!("Failed to serialize metadata: {}", e))?;
-        
+
         // Create DHT key for metadata: hash("metadata:{content_hash}")
         let metadata_key_bytes = [b"metadata:", content_hash.as_bytes()].concat();
         let metadata_hash = hash_blake3(&metadata_key_bytes);
         let metadata_key = Hash::from_bytes(&metadata_hash[..32]);
-        
+
         // Store in DHT
-        self.dht_storage.store_data(metadata_key, serialized_metadata).await?;
-        
-        info!(" Stored metadata for content {} in DHT", hex::encode(&content_hash.as_bytes()[..8]));
+        self.dht_storage
+            .store_data(metadata_key, serialized_metadata)
+            .await?;
+
+        info!(
+            " Stored metadata for content {} in DHT",
+            hex::encode(&content_hash.as_bytes()[..8])
+        );
         Ok(())
     }
 
     /// Retrieve content metadata from DHT or local cache
-    pub async fn get_content_metadata(&mut self, content_hash: &ContentHash) -> Result<ContentMetadata> {
+    pub async fn get_content_metadata(
+        &mut self,
+        content_hash: &ContentHash,
+    ) -> Result<ContentMetadata> {
         // Try local cache first
         if let Some(metadata) = self.content_metadata.get(content_hash) {
             return Ok(metadata.clone());
         }
-        
+
         // Retrieve from DHT
         let metadata_key_bytes = [b"metadata:", content_hash.as_bytes()].concat();
         let metadata_hash = hash_blake3(&metadata_key_bytes);
         let metadata_key = Hash::from_bytes(&metadata_hash[..32]);
-        
-        let serialized_metadata = self.dht_storage.retrieve_data(metadata_key).await?
+
+        let serialized_metadata = self
+            .dht_storage
+            .retrieve_data(metadata_key)
+            .await?
             .ok_or_else(|| anyhow!("Metadata not found in DHT for content hash"))?;
-        
+
         // Deserialize metadata
         let metadata: ContentMetadata = bincode::deserialize(&serialized_metadata)
             .map_err(|e| anyhow!("Failed to deserialize metadata: {}", e))?;
-        
+
         // Cache locally
-        self.content_metadata.insert(content_hash.clone(), metadata.clone());
-        
-        info!("📥 Retrieved metadata for content {} from DHT", hex::encode(&content_hash.as_bytes()[..8]));
+        self.content_metadata
+            .insert(content_hash.clone(), metadata.clone());
+
+        info!(
+            "📥 Retrieved metadata for content {} from DHT",
+            hex::encode(&content_hash.as_bytes()[..8])
+        );
         Ok(metadata)
     }
 
     /// Calculate storage cost based on size, tier, and replication
-    pub fn calculate_storage_cost(&self, size: u64, tier: &StorageTier, replication_factor: u8, duration_days: u32) -> u64 {
+    pub fn calculate_storage_cost(
+        &self,
+        size: u64,
+        tier: &StorageTier,
+        replication_factor: u8,
+        duration_days: u32,
+    ) -> u64 {
         // Base cost per GB per day
         let base_cost_per_gb_day = match tier {
-            StorageTier::Hot => 100,      // 100 ZHTP per GB per day
-            StorageTier::Warm => 50,      // 50 ZHTP per GB per day
-            StorageTier::Cold => 10,      // 10 ZHTP per GB per day
-            StorageTier::Archive => 1,    // 1 ZHTP per GB per day
+            StorageTier::Hot => 100,   // 100 SOV per GB per day
+            StorageTier::Warm => 50,   // 50 SOV per GB per day
+            StorageTier::Cold => 10,   // 10 SOV per GB per day
+            StorageTier::Archive => 1, // 1 SOV per GB per day
         };
-        
+
         // Calculate size in GB
         let size_gb = (size as f64) / (1024.0 * 1024.0 * 1024.0);
-        
+
         // Apply replication multiplier
         let replication_multiplier = replication_factor as f64;
-        
+
         // Calculate total cost
-        let cost_per_day = (size_gb * base_cost_per_gb_day as f64 * replication_multiplier).ceil() as u64;
+        let cost_per_day =
+            (size_gb * base_cost_per_gb_day as f64 * replication_multiplier).ceil() as u64;
         let total_cost = cost_per_day * duration_days as u64;
-        
-        // Minimum cost of 1 ZHTP per day
+
+        // Minimum cost of 1 SOV per day
         total_cost.max(duration_days as u64)
     }
 
     /// Download content with access control checks
-    pub async fn download_content(
-        &mut self,
-        request: DownloadRequest,
-    ) -> Result<Vec<u8>> {
+    pub async fn download_content(&mut self, request: DownloadRequest) -> Result<Vec<u8>> {
         // Check access permissions
-        if !self.check_read_permission(&request.content_hash, &request.requester).await? {
+        if !self
+            .check_read_permission(&request.content_hash, &request.requester)
+            .await?
+        {
             return Err(anyhow!("Access denied"));
         }
 
@@ -496,7 +560,7 @@ impl ContentManager {
                 .unwrap()
                 .as_secs();
             metadata.access_count += 1;
-            
+
             // Update in DHT (don't fail download if this fails)
             if let Err(e) = self.store_metadata_in_dht(&content_hash).await {
                 log::warn!("Failed to update metadata in DHT: {}", e);
@@ -504,11 +568,16 @@ impl ContentManager {
         }
 
         // Retrieve from DHT
-        let content = self.dht_storage.retrieve_data(content_hash.clone()).await?
+        let content = self
+            .dht_storage
+            .retrieve_data(content_hash.clone())
+            .await?
             .ok_or_else(|| anyhow!("Content not found"))?;
 
         // Process content (decompression, decryption)
-        let processed_content = self.process_content_for_download(&content_hash, content).await?;
+        let processed_content = self
+            .process_content_for_download(&content_hash, content)
+            .await?;
 
         Ok(processed_content)
     }
@@ -523,7 +592,7 @@ impl ContentManager {
 
         // Search by terms
         let mut candidate_hashes = Vec::new();
-        
+
         if query.terms.is_empty() {
             // No search terms, get all content
             candidate_hashes.extend(self.content_metadata.keys().cloned());
@@ -543,7 +612,10 @@ impl ContentManager {
         for content_hash in candidate_hashes {
             if let Some(metadata) = self.content_metadata.get(&content_hash) {
                 // Check access permissions
-                if !self.check_read_permission(&content_hash, &requester).await? {
+                if !self
+                    .check_read_permission(&content_hash, &requester)
+                    .await?
+                {
                     continue;
                 }
 
@@ -616,10 +688,14 @@ impl ContentManager {
         let new_content_hash = Hash::from_bytes(&blake3::hash(&processed_content).as_bytes()[..32]);
 
         // Store new version in DHT
-        self.dht_storage.store_data(new_content_hash.clone(), processed_content).await?;
+        self.dht_storage
+            .store_data(new_content_hash.clone(), processed_content)
+            .await?;
 
         // Create new version entry
-        let versions = self.content_versions.get_mut(&content_hash)
+        let versions = self
+            .content_versions
+            .get_mut(&content_hash)
             .ok_or_else(|| anyhow!("Content versions not found"))?;
 
         let version_number = versions.len() as u32 + 1;
@@ -660,7 +736,9 @@ impl ContentManager {
         // Remove all versions from DHT
         if let Some(versions) = self.content_versions.get(&content_hash) {
             for version in versions {
-                self.dht_storage.remove_data(version.content_hash.clone()).await?;
+                self.dht_storage
+                    .remove_data(version.content_hash.clone())
+                    .await?;
             }
         }
 
@@ -686,7 +764,11 @@ impl ContentManager {
     }
 
     /// Check read permission
-    async fn check_read_permission(&self, content_hash: &ContentHash, requester: &ZhtpIdentity) -> Result<bool> {
+    async fn check_read_permission(
+        &self,
+        content_hash: &ContentHash,
+        requester: &ZhtpIdentity,
+    ) -> Result<bool> {
         if let Some(acl) = self.access_control.get(content_hash) {
             // Check expiry
             if let Some(expires_at) = acl.expires_at {
@@ -700,8 +782,8 @@ impl ContentManager {
             }
 
             // Check permissions
-            Ok(acl.public_read 
-                || &acl.owner == requester 
+            Ok(acl.public_read
+                || &acl.owner == requester
                 || acl.read_permissions.contains(requester)
                 || acl.write_permissions.contains(requester))
         } else {
@@ -710,7 +792,11 @@ impl ContentManager {
     }
 
     /// Check write permission
-    async fn check_write_permission(&self, content_hash: &ContentHash, requester: &ZhtpIdentity) -> Result<bool> {
+    async fn check_write_permission(
+        &self,
+        content_hash: &ContentHash,
+        requester: &ZhtpIdentity,
+    ) -> Result<bool> {
         if let Some(acl) = self.access_control.get(content_hash) {
             Ok(&acl.owner == requester || acl.write_permissions.contains(requester))
         } else {
@@ -730,10 +816,10 @@ impl ContentManager {
             // Pre-calculate content hash for key derivation
             let content_hash_bytes = hash_blake3(&content);
             let content_hash = Hash::from_bytes(&content_hash_bytes[..32]);
-            
+
             // Get or create encryption key for this content
             let encryption_key = self.get_or_create_content_key(&content_hash)?;
-            
+
             // Encrypt using ChaCha20-Poly1305
             content = encrypt_data(&content, &encryption_key)
                 .map_err(|e| anyhow!("Content encryption failed: {}", e))?;
@@ -743,15 +829,20 @@ impl ContentManager {
     }
 
     /// Process content for download with decryption
-    async fn process_content_for_download(&mut self, content_hash: &ContentHash, content: Vec<u8>) -> Result<Vec<u8>> {
+    async fn process_content_for_download(
+        &mut self,
+        content_hash: &ContentHash,
+        content: Vec<u8>,
+    ) -> Result<Vec<u8>> {
         let mut processed = content;
 
         // Get metadata before borrowing self mutably
-        let (is_encrypted, is_compressed) = if let Some(metadata) = self.content_metadata.get(content_hash) {
-            (metadata.is_encrypted, metadata.is_compressed)
-        } else {
-            (false, false)
-        };
+        let (is_encrypted, is_compressed) =
+            if let Some(metadata) = self.content_metadata.get(content_hash) {
+                (metadata.is_encrypted, metadata.is_compressed)
+            } else {
+                (false, false)
+            };
 
         if is_encrypted {
             processed = self.decrypt_content(&processed, content_hash).await?;
@@ -780,27 +871,38 @@ impl ContentManager {
     }
 
     /// Decrypt content using ChaCha20-Poly1305 decryption
-    async fn decrypt_content(&mut self, content: &[u8], content_hash: &ContentHash) -> Result<Vec<u8>> {
+    async fn decrypt_content(
+        &mut self,
+        content: &[u8],
+        content_hash: &ContentHash,
+    ) -> Result<Vec<u8>> {
         // Get content-specific encryption key
         let encryption_key = self.get_or_create_content_key(content_hash)?;
-        
+
         // Decrypt using ChaCha20-Poly1305
         decrypt_data(content, &encryption_key)
             .map_err(|e| anyhow!("Content decryption failed: {}", e))
     }
 
     /// Update search index
-    async fn update_search_index(&mut self, content_hash: &ContentHash, tags: &[String], filename: &str) -> Result<()> {
+    async fn update_search_index(
+        &mut self,
+        content_hash: &ContentHash,
+        tags: &[String],
+        filename: &str,
+    ) -> Result<()> {
         // Index tags
         for tag in tags {
-            self.search_index.entry(tag.to_lowercase())
+            self.search_index
+                .entry(tag.to_lowercase())
                 .or_insert_with(Vec::new)
                 .push(content_hash.clone());
         }
 
         // Index filename words
         for word in filename.split_whitespace() {
-            self.search_index.entry(word.to_lowercase())
+            self.search_index
+                .entry(word.to_lowercase())
                 .or_insert_with(Vec::new)
                 .push(content_hash.clone());
         }
@@ -822,22 +924,25 @@ impl ContentManager {
 
     /// Export encryption keys for backup/migration
     pub fn export_content_keys(&self) -> Vec<(ContentHash, [u8; 32])> {
-        self.content_keys.iter().map(|(hash, key)| (hash.clone(), *key)).collect()
+        self.content_keys
+            .iter()
+            .map(|(hash, key)| (hash.clone(), *key))
+            .collect()
     }
-    
+
     /// Import encryption keys from backup/migration
     pub fn import_content_keys(&mut self, keys: Vec<(ContentHash, [u8; 32])>) {
         for (hash, key) in keys {
             self.content_keys.insert(hash, key);
         }
     }
-    
+
     /// Rotate master key (generates new keypair and re-encrypts all content keys)
     pub fn rotate_master_key(&mut self) -> Result<()> {
         // Generate new master keypair
         let new_keypair = KeyPair::generate()
             .map_err(|e| anyhow!("Failed to generate new master keypair: {}", e))?;
-        
+
         // Re-derive all content keys with new master key
         let mut new_content_keys = HashMap::new();
         for (content_hash, _old_key) in &self.content_keys {
@@ -845,22 +950,24 @@ impl ContentManager {
                 b"ZHTP-content-key-v1",
                 content_hash.as_bytes(),
                 &self.key_derivation_salt,
-            ].concat();
-            
-            let derived_key = derive_keys(&new_keypair.private_key.dilithium_sk[..32], &key_info, 32)?;
+            ]
+            .concat();
+
+            let derived_key =
+                derive_keys(&new_keypair.private_key.dilithium_sk[..32], &key_info, 32)?;
             let mut key_array = [0u8; 32];
             key_array.copy_from_slice(&derived_key[..32]);
-            
+
             new_content_keys.insert(content_hash.clone(), key_array);
         }
-        
+
         // Update with new keypair and keys
         self.master_keypair = new_keypair;
         self.content_keys = new_content_keys;
-        
+
         Ok(())
     }
-    
+
     /// Get key derivation salt for backup
     pub fn get_key_derivation_salt(&self) -> [u8; 32] {
         self.key_derivation_salt
@@ -882,6 +989,7 @@ impl ContentManager {
         #[derive(serde::Serialize)]
         struct PrivateKeyBlob {
             dilithium_sk: Vec<u8>,
+            dilithium_pk: Vec<u8>,
             kyber_sk: Vec<u8>,
             master_seed: Vec<u8>,
         }
@@ -900,7 +1008,10 @@ impl ContentManager {
             device_node_ids: std::collections::HashMap<String, lib_identity::types::NodeId>,
             primary_device: String,
             ownership_proof: lib_proofs::ZeroKnowledgeProof,
-            credentials: std::collections::HashMap<lib_identity::types::CredentialType, lib_identity::credentials::ZkCredential>,
+            credentials: std::collections::HashMap<
+                lib_identity::types::CredentialType,
+                lib_identity::credentials::ZkCredential,
+            >,
             reputation: u64,
             age: Option<u64>,
             access_level: lib_identity::types::AccessLevel,
@@ -921,9 +1032,13 @@ impl ContentManager {
         }
 
         // Extract private key; required for safe reconstruction
-        let private_key = credentials.private_key.clone().ok_or_else(|| anyhow::anyhow!("Identity missing private key for storage"))?;
+        let private_key = credentials
+            .private_key
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Identity missing private key for storage"))?;
         let private_key_blob = PrivateKeyBlob {
             dilithium_sk: private_key.dilithium_sk.clone(),
+            dilithium_pk: private_key.dilithium_pk.clone(),
             kyber_sk: private_key.kyber_sk.clone(),
             master_seed: private_key.master_seed.clone(),
         };
@@ -958,7 +1073,10 @@ impl ContentManager {
         };
 
         let json_view = serde_json::to_string(&serialized_view)?;
-        let blob = IdentityBlob { json_view, private_key: private_key_blob };
+        let blob = IdentityBlob {
+            json_view,
+            private_key: private_key_blob,
+        };
         let credentials_data = bincode::serialize(&blob)?;
         let encryption_key = self.derive_key_from_passphrase(passphrase, identity_id.as_bytes())?;
         let encrypted_credentials = encrypt_data(&credentials_data, &encryption_key)?;
@@ -968,9 +1086,14 @@ impl ContentManager {
         let content_hash = Hash::from_bytes(&storage_hash[..32]);
 
         // Store in DHT for distributed access
-        self.dht_storage.store_data(content_hash, encrypted_credentials).await?;
+        self.dht_storage
+            .store_data(content_hash, encrypted_credentials)
+            .await?;
 
-        println!("Stored identity credentials for ID: {}", hex::encode(identity_id.as_bytes()));
+        println!(
+            "Stored identity credentials for ID: {}",
+            hex::encode(identity_id.as_bytes())
+        );
         Ok(())
     }
 
@@ -987,14 +1110,21 @@ impl ContentManager {
         // Try to retrieve from DHT
         if let Some(encrypted_data) = self.dht_storage.retrieve_data(content_hash).await? {
             // Decrypt the credentials
-            let decryption_key = self.derive_key_from_passphrase(passphrase, identity_id.as_bytes())?;
-            let decrypted_data = decrypt_data(&encrypted_data, &decryption_key)
-                .map_err(|e| anyhow!("Failed to decrypt identity credentials: {}. Wrong passphrase?", e))?;
+            let decryption_key =
+                self.derive_key_from_passphrase(passphrase, identity_id.as_bytes())?;
+            let decrypted_data = decrypt_data(&encrypted_data, &decryption_key).map_err(|e| {
+                anyhow!(
+                    "Failed to decrypt identity credentials: {}. Wrong passphrase?",
+                    e
+                )
+            })?;
 
             // Deserialize safe blob and reconstruct identity using lib-identity API
             #[derive(serde::Deserialize)]
             struct PrivateKeyBlob {
                 dilithium_sk: Vec<u8>,
+                #[serde(default)]
+                dilithium_pk: Vec<u8>, // Optional for backward compatibility with old backups
                 kyber_sk: Vec<u8>,
                 master_seed: Vec<u8>,
             }
@@ -1007,6 +1137,7 @@ impl ContentManager {
             let identity = if let Ok(blob) = bincode::deserialize::<IdentityBlob>(&decrypted_data) {
                 let private_key = lib_crypto::PrivateKey {
                     dilithium_sk: blob.private_key.dilithium_sk,
+                    dilithium_pk: blob.private_key.dilithium_pk,
                     kyber_sk: blob.private_key.kyber_sk,
                     master_seed: blob.private_key.master_seed,
                 };
@@ -1019,7 +1150,10 @@ impl ContentManager {
                 return Err(anyhow::anyhow!("Failed to parse identity blob; storage format mismatch. Please re-store credentials."));
             };
 
-            println!("Retrieved identity credentials for ID: {}", hex::encode(identity_id.as_bytes()));
+            println!(
+                "Retrieved identity credentials for ID: {}",
+                hex::encode(identity_id.as_bytes())
+            );
             return Ok(identity);
         }
 
@@ -1028,7 +1162,10 @@ impl ContentManager {
     }
 
     /// Check if identity exists in storage
-    pub async fn identity_exists(&mut self, identity_id: &lib_identity::IdentityId) -> Result<bool> {
+    pub async fn identity_exists(
+        &mut self,
+        identity_id: &lib_identity::IdentityId,
+    ) -> Result<bool> {
         let storage_hash = hash_blake3(&[b"identity:", identity_id.as_bytes()].concat());
         let content_hash = Hash::from_bytes(&storage_hash[..32]);
 
@@ -1042,14 +1179,15 @@ impl ContentManager {
 
     /// Migrate identity from blockchain to unified storage (called from protocols layer)
     pub async fn migrate_identity_from_blockchain(
-        &mut self, 
+        &mut self,
         identity_id: &lib_identity::IdentityId,
         lib_identity: &lib_identity::ZhtpIdentity,
         passphrase: &str,
     ) -> Result<()> {
         // Store the provided ZhtpIdentity in unified storage
-        self.store_identity_credentials(identity_id, lib_identity, passphrase).await?;
-        
+        self.store_identity_credentials(identity_id, lib_identity, passphrase)
+            .await?;
+
         println!("Successfully migrated identity from blockchain to unified storage");
         Ok(())
     }
@@ -1061,13 +1199,14 @@ impl ContentManager {
         key_material.extend_from_slice(passphrase.as_bytes());
         key_material.extend_from_slice(salt);
         key_material.extend_from_slice(b"ZHTP-IDENTITY-KEY-V1");
-        
+
         // Multiple rounds of hashing for key strengthening
         let mut derived_key = hash_blake3(&key_material);
-        for _ in 0..10000 { // 10,000 rounds for key strengthening
+        for _ in 0..10000 {
+            // 10,000 rounds for key strengthening
             derived_key = hash_blake3(&[&derived_key[..], &key_material].concat());
         }
-        
+
         Ok(derived_key.to_vec())
     }
 
@@ -1083,7 +1222,7 @@ impl ContentManager {
             Err(anyhow!("Content not found"))
         }
     }
-    
+
     /// Get direct access to DHT storage (for UnifiedStorageSystem to query the correct instance)
     pub async fn get_from_dht_storage(&mut self, key: &str) -> Result<Option<Vec<u8>>> {
         self.dht_storage.get(key).await
@@ -1092,10 +1231,8 @@ impl ContentManager {
 
 impl Default for ContentManager {
     fn default() -> Self {
-        Self::new(
-            DhtStorage::new_default(),
-            EconomicManagerConfig::default(),
-        ).expect("Failed to create default ContentManager")
+        Self::new(DhtStorage::new_default(), EconomicManagerConfig::default())
+            .expect("Failed to create default ContentManager")
     }
 }
 
@@ -1143,31 +1280,48 @@ mod tests {
     #[ignore = "ZhtpIdentity secure deserialization currently restricted"]
     async fn test_identity_storage_round_trip() -> Result<()> {
         let mut manager = ContentManager::default();
-        
+
         // Create test identity using a simple structure
         let identity_id = IdentityId::from_bytes(&[1u8; 32]);
         let test_identity = create_test_identity(identity_id.clone(), 1234567890);
         let passphrase = "test_passphrase_123";
 
         // Store identity
-        let store_result = manager.store_identity_credentials(&identity_id, &test_identity, passphrase).await;
-        assert!(store_result.is_ok(), "Failed to store identity: {:?}", store_result);
+        let store_result = manager
+            .store_identity_credentials(&identity_id, &test_identity, passphrase)
+            .await;
+        assert!(
+            store_result.is_ok(),
+            "Failed to store identity: {:?}",
+            store_result
+        );
 
         // Check existence
         let exists = manager.identity_exists(&identity_id).await.unwrap();
         assert!(exists, "Identity should exist after storage");
 
         // Retrieve identity
-        let retrieved = manager.retrieve_identity_credentials(&identity_id, passphrase).await;
-        assert!(retrieved.is_ok(), "Failed to retrieve identity: {:?}", retrieved);
-        
+        let retrieved = manager
+            .retrieve_identity_credentials(&identity_id, passphrase)
+            .await;
+        assert!(
+            retrieved.is_ok(),
+            "Failed to retrieve identity: {:?}",
+            retrieved
+        );
+
         let retrieved_identity = retrieved.unwrap();
         assert_eq!(retrieved_identity.id, test_identity.id);
         assert_eq!(retrieved_identity.created_at, test_identity.created_at);
 
         // Test wrong passphrase
-        let wrong_passphrase_result = manager.retrieve_identity_credentials(&identity_id, "wrong_passphrase").await;
-        assert!(wrong_passphrase_result.is_err(), "Should fail with wrong passphrase");
+        let wrong_passphrase_result = manager
+            .retrieve_identity_credentials(&identity_id, "wrong_passphrase")
+            .await;
+        assert!(
+            wrong_passphrase_result.is_err(),
+            "Should fail with wrong passphrase"
+        );
 
         Ok(())
     }
@@ -1178,17 +1332,22 @@ mod tests {
     #[ignore = "ZhtpIdentity secure deserialization currently restricted"]
     async fn test_identity_migration() -> Result<()> {
         let mut manager = ContentManager::default();
-        
+
         let identity_id = IdentityId::from_bytes(&[2u8; 32]);
         let test_identity = create_test_identity(identity_id.clone(), 9876543210);
         let passphrase = "migration_test_passphrase";
 
         // Test migration
-        let migration_result = manager.migrate_identity_from_blockchain(&identity_id, &test_identity, passphrase).await;
+        let migration_result = manager
+            .migrate_identity_from_blockchain(&identity_id, &test_identity, passphrase)
+            .await;
         assert!(migration_result.is_ok(), "Migration should succeed");
 
         // Verify the migrated identity can be retrieved
-        let retrieved = manager.retrieve_identity_credentials(&identity_id, passphrase).await.unwrap();
+        let retrieved = manager
+            .retrieve_identity_credentials(&identity_id, passphrase)
+            .await
+            .unwrap();
         assert_eq!(retrieved.id, test_identity.id);
         assert_eq!(retrieved.created_at, test_identity.created_at);
 
@@ -1208,16 +1367,12 @@ mod tests {
         };
         let private_key = PrivateKey {
             dilithium_sk: vec![4, 5, 6],
+            dilithium_pk: vec![1, 2, 3], // Matches public_key.dilithium_pk
             kyber_sk: vec![],
             master_seed: vec![7, 8, 9],
         };
-        let ownership_proof = ZeroKnowledgeProof::new(
-            "test".to_string(),
-            vec![],
-            vec![],
-            vec![],
-            None,
-        );
+        let ownership_proof =
+            ZeroKnowledgeProof::new("test".to_string(), vec![], vec![], vec![], None);
 
         let mut identity = ZhtpIdentity::new(
             IdentityType::Human,

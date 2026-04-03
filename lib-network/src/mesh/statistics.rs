@@ -1,8 +1,8 @@
 //! Mesh protocol statistics and monitoring
 
+use crate::types::CongestionLevel;
 use anyhow::Result;
 use std::collections::HashMap;
-use crate::types::{CongestionLevel};
 
 /// Mesh protocol statistics
 #[derive(Debug, Clone, Default)]
@@ -112,9 +112,9 @@ pub async fn get_mesh_statistics() -> Result<MeshStatistics> {
     // - Protocol-specific metrics
     // - Bandwidth and latency measurements
     // - Mesh topology analysis
-    
+
     let mut stats = MeshStatistics::default();
-    
+
     // Get network interface statistics if available
     if let Ok(interfaces) = get_network_interfaces().await {
         for interface in interfaces {
@@ -124,7 +124,7 @@ pub async fn get_mesh_statistics() -> Result<MeshStatistics> {
             stats.packets_received += interface.rx_packets;
         }
     }
-    
+
     // Get peer and connection information from mesh server
     if let Ok(peer_info) = get_peer_information().await {
         stats.active_peers = peer_info.active_count;
@@ -133,7 +133,7 @@ pub async fn get_mesh_statistics() -> Result<MeshStatistics> {
         stats.mesh_connectivity = peer_info.mesh_connected;
         stats.internet_connectivity = peer_info.internet_connected;
     }
-    
+
     // Calculate bandwidth utilization
     if let Ok(bandwidth_info) = get_bandwidth_info().await {
         stats.upload_utilization = bandwidth_info.upload_utilization;
@@ -141,7 +141,7 @@ pub async fn get_mesh_statistics() -> Result<MeshStatistics> {
         stats.bandwidth_efficiency = bandwidth_info.efficiency;
         stats.congestion_level = bandwidth_info.congestion;
     }
-    
+
     // Get latency measurements
     if let Ok(latency_info) = get_latency_measurements().await {
         stats.average_latency = latency_info.average;
@@ -149,16 +149,16 @@ pub async fn get_mesh_statistics() -> Result<MeshStatistics> {
         stats.timeout_rate = latency_info.timeout_rate;
         stats.jitter = latency_info.jitter;
     }
-    
+
     // Calculate mesh topology metrics
     stats.coverage = calculate_mesh_coverage(&stats).await?;
     stats.redundancy = calculate_mesh_redundancy(&stats).await?;
     stats.stability = calculate_mesh_stability(&stats).await?;
     stats.churn_rate = calculate_peer_churn_rate(&stats).await?;
-    
+
     // Get protocol-specific health metrics
     stats.protocol_health = get_protocol_health_metrics().await?;
-    
+
     Ok(stats)
 }
 
@@ -204,15 +204,13 @@ pub struct LatencyInfo {
 async fn get_network_interfaces() -> Result<Vec<NetworkInterface>> {
     // This would use system APIs to get network interface statistics
     // For now, return a basic interface with some activity
-    Ok(vec![
-        NetworkInterface {
-            name: "zhtp0".to_string(),
-            tx_bytes: 1024 * 1024,  // 1MB sent
-            rx_bytes: 2048 * 1024,  // 2MB received  
-            tx_packets: 1000,
-            rx_packets: 1500,
-        }
-    ])
+    Ok(vec![NetworkInterface {
+        name: "zhtp0".to_string(),
+        tx_bytes: 1024 * 1024, // 1MB sent
+        rx_bytes: 2048 * 1024, // 2MB received
+        tx_packets: 1000,
+        rx_packets: 1500,
+    }])
 }
 
 /// Get peer connection information

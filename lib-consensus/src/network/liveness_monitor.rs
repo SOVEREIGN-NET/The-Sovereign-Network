@@ -6,6 +6,19 @@
 //! due to validator liveness failures. It monitors validator heartbeat timeouts and
 //! emits `ConsensusStalled` events when quorum becomes impossible.
 //!
+//! # Liveness Thresholds (Explicit Invariants)
+//!
+//! All liveness thresholds are declared as named constants below. No magic numbers
+//! should appear in monitoring logic; all behavior is derived from these constants.
+//!
+//! | Constant                       | Value | Meaning                                     |
+//! |--------------------------------|-------|---------------------------------------------|
+//! | `MAX_MISSED_BLOCKS`            | 100   | Missed blocks before liveness flag          |
+//! | `ROUND_TIMEOUT_SECS`           | 30    | Seconds per consensus round before timeout  |
+//! | `LIVENESS_JAIL_THRESHOLD`      | 500   | Missed blocks that trigger jailing          |
+//! | `MAX_CONSECUTIVE_ROUND_TIMEOUTS` | 10  | Consecutive round timeouts before jail      |
+//! | `HEARTBEAT_LIVENESS_TIMEOUT_SECS` | 30 | Seconds of silence before validator deemed offline |
+//!
 //! # Core Invariants
 //!
 //! ## Invariant 1: Timeouts are Observable Facts
@@ -30,8 +43,8 @@
 //!
 //! Each validator's timeout state is determined solely by its own heartbeat history.
 //! There are no cross-validator dependencies, no aggregate scores, no reputation
-//! weighting. If validator V hasn't sent a heartbeat in 10 seconds, V is timed out.
-//! What other validators do is irrelevant.
+//! weighting. If validator V hasn't sent a heartbeat in `HEARTBEAT_LIVENESS_TIMEOUT_SECS`
+//! seconds, V is timed out. What other validators do is irrelevant.
 //!
 //! ## Invariant 4: Recovery is Evidence-Based
 //!
@@ -56,7 +69,7 @@
 //! This component is intentionally simple:
 //! - No machine learning
 //! - No predictions or forecasts
-//! - No heuristics or tuning parameters
+//! - No heuristics or tuning parameters (all thresholds are explicit named constants)
 //! - No complex state machines
 //! - No automatic recovery mechanisms
 //!
@@ -75,8 +88,122 @@
 //! These concerns belong to higher-level components that will be implemented
 //! in future tickets.
 
-use std::collections::{HashMap, HashSet};
 use lib_identity::IdentityId;
+use std::collections::{HashMap, HashSet};
+
+// =============================================================================
+// NOTE: CONSENSUS SAFETY INVARIANTS ARE ENFORCED BY THE CONSENSUS ENGINE
+// =============================================================================
+//
+// This liveness monitor is intentionally restricted to *observing* validator
+// heartbeat activity and *emitting* high-level events (e.g. `ConsensusStalled`)
+// when it detects that progress is unlikely, as documented in the module
+// overview above.
+//
+// Core BFT safety invariants (e.g. no forks, monotonic height, quorum
+// requirements, and finality) MUST be enforced in the consensus engine or
+// blockchain state machine where state transitions are applied, not here.
+//
+// For consensus safety invariant checking, see:
+//   - `lib-consensus/src/invariants.rs` - Invariant definitions and enforcement
+//   - `lib-consensus/src/engines/consensus_engine/mod.rs` - Integration points
+//   - `lib-blockchain/src/blockchain.rs` - Block commit validation
+//
+// The liveness monitor may *observe* or *report* on the effects of such
+// invariants (for example, via events), but it does not define or enforce
+// them directly.
+// =============================================================================
+
+// =============================================================================
+// LIVENESS THRESHOLD CONSTANTS
+// =============================================================================
+
+/// Maximum number of consecutive missed blocks before a validator is flagged
+/// for liveness monitoring.
+///
+/// A "missed block" is counted when a validator fails to cast a vote (PreVote
+/// or PreCommit) in a round where they were expected to participate.
+///
+/// After `MAX_MISSED_BLOCKS` consecutive misses, the validator is recorded as
+/// having a liveness issue. After `LIVENESS_JAIL_THRESHOLD` misses, they are
+/// jailed (see `LIVENESS_JAIL_THRESHOLD`).
+///
+/// # Invariant LIVE-INV-1
+///
+/// `MAX_MISSED_BLOCKS` must be less than `LIVENESS_JAIL_THRESHOLD`.
+/// Blocks-before-flag must come before blocks-before-jail.
+pub const MAX_MISSED_BLOCKS: u64 = 100;
+
+/// Seconds allowed per consensus round before the round is declared timed out.
+///
+/// A consensus round consists of: Propose → PreVote → PreCommit → Commit.
+/// If the round does not progress to the next step within `ROUND_TIMEOUT_SECS`
+/// seconds, the timeout fires and the round is advanced.
+///
+/// At the default block time of 10 seconds, `ROUND_TIMEOUT_SECS = 30` allows
+/// three full block times of latency before giving up on a round.
+///
+/// # Invariant LIVE-INV-2
+///
+/// `ROUND_TIMEOUT_SECS` must be at least 2× the target block time to allow
+/// for normal network propagation delays. With block_time=10s, minimum is 20s.
+pub const ROUND_TIMEOUT_SECS: u64 = 30;
+
+/// Number of missed blocks that triggers validator jailing for liveness failure.
+///
+/// When a validator has missed `LIVENESS_JAIL_THRESHOLD` or more consecutive
+/// blocks without casting a vote, they are jailed. The jail duration is
+/// determined by the slashing policy (see `JAIL_DURATION_BLOCKS` in the
+/// slashing module).
+///
+/// # Invariant LIVE-INV-3
+///
+/// `LIVENESS_JAIL_THRESHOLD` must be greater than `MAX_MISSED_BLOCKS`:
+/// monitoring starts before jailing triggers.
+pub const LIVENESS_JAIL_THRESHOLD: u64 = 500;
+
+/// Maximum number of consecutive round timeouts before a validator is jailed.
+///
+/// A "round timeout" is counted when a validator fails to respond (vote or
+/// propose) within `ROUND_TIMEOUT_SECS` in a round where they were expected
+/// to participate.
+///
+/// This threshold is separate from `MAX_MISSED_BLOCKS` because round timeouts
+/// are measured per-round while missed blocks are measured per-block.
+pub const MAX_CONSECUTIVE_ROUND_TIMEOUTS: u32 = 10;
+
+/// Seconds of heartbeat silence before a validator is considered offline.
+///
+/// The `HeartbeatTracker` uses this value as the default liveness timeout.
+/// If a validator has not sent a heartbeat within this window, they are
+/// considered non-responsive by the `LivenessMonitor`.
+///
+/// At `ROUND_TIMEOUT_SECS = 30` and `HEARTBEAT_LIVENESS_TIMEOUT_SECS = 30`,
+/// a validator that misses ~1 round of heartbeats will be flagged as timed out.
+///
+/// # Invariant LIVE-INV-4
+///
+/// `HEARTBEAT_LIVENESS_TIMEOUT_SECS` must be at least `ROUND_TIMEOUT_SECS`
+/// to prevent false positives during normal round timeouts.
+pub const HEARTBEAT_LIVENESS_TIMEOUT_SECS: u64 = 30;
+
+// Compile-time invariant: LIVE-INV-1
+const _: () = assert!(
+    MAX_MISSED_BLOCKS < LIVENESS_JAIL_THRESHOLD,
+    "LIVE-INV-1: MAX_MISSED_BLOCKS must be less than LIVENESS_JAIL_THRESHOLD"
+);
+
+// Compile-time invariant: LIVE-INV-2 — round timeout must be at least 20s
+const _: () = assert!(
+    ROUND_TIMEOUT_SECS >= 20,
+    "LIVE-INV-2: ROUND_TIMEOUT_SECS must be at least 20 seconds"
+);
+
+// Compile-time invariant: LIVE-INV-4 — heartbeat timeout must be at least round timeout
+const _: () = assert!(
+    HEARTBEAT_LIVENESS_TIMEOUT_SECS >= ROUND_TIMEOUT_SECS,
+    "LIVE-INV-4: HEARTBEAT_LIVENESS_TIMEOUT_SECS must be >= ROUND_TIMEOUT_SECS"
+);
 
 /// Validator timeout state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -304,7 +431,8 @@ impl LivenessMonitor {
     /// - Maximum responsive: n - t <= n - (floor(n/3) + 1) = floor(2n/3) < 2n/3 + 1
     /// - Cannot reach quorum
     pub fn is_stalled(&self) -> bool {
-        let timed_out_count = self.validator_states
+        let timed_out_count = self
+            .validator_states
             .values()
             .filter(|state| **state == TimeoutState::TimedOut)
             .count();
@@ -406,23 +534,17 @@ mod tests {
         let mut monitor = LivenessMonitor::new();
 
         // 4 validators: threshold = floor(4/3) + 1 = 2
-        let validators: Vec<_> = (0..4)
-            .map(|i| IdentityId::from_bytes(&[i; 32]))
-            .collect();
+        let validators: Vec<_> = (0..4).map(|i| IdentityId::from_bytes(&[i; 32])).collect();
         monitor.update_validator_set(&validators);
         assert_eq!(monitor.stall_threshold, 2);
 
         // 7 validators: threshold = floor(7/3) + 1 = 3
-        let validators: Vec<_> = (0..7)
-            .map(|i| IdentityId::from_bytes(&[i; 32]))
-            .collect();
+        let validators: Vec<_> = (0..7).map(|i| IdentityId::from_bytes(&[i; 32])).collect();
         monitor.update_validator_set(&validators);
         assert_eq!(monitor.stall_threshold, 3);
 
         // 10 validators: threshold = floor(10/3) + 1 = 4
-        let validators: Vec<_> = (0..10)
-            .map(|i| IdentityId::from_bytes(&[i; 32]))
-            .collect();
+        let validators: Vec<_> = (0..10).map(|i| IdentityId::from_bytes(&[i; 32])).collect();
         monitor.update_validator_set(&validators);
         assert_eq!(monitor.stall_threshold, 4);
     }
@@ -430,9 +552,7 @@ mod tests {
     #[test]
     fn test_stall_state_transitions() {
         let mut monitor = LivenessMonitor::new();
-        let validators: Vec<_> = (0..4)
-            .map(|i| IdentityId::from_bytes(&[i; 32]))
-            .collect();
+        let validators: Vec<_> = (0..4).map(|i| IdentityId::from_bytes(&[i; 32])).collect();
         monitor.update_validator_set(&validators);
 
         // No transition initially
@@ -466,9 +586,7 @@ mod tests {
     #[test]
     fn test_validator_set_updates() {
         let mut monitor = LivenessMonitor::new();
-        let validators_v1: Vec<_> = (0..4)
-            .map(|i| IdentityId::from_bytes(&[i; 32]))
-            .collect();
+        let validators_v1: Vec<_> = (0..4).map(|i| IdentityId::from_bytes(&[i; 32])).collect();
         monitor.update_validator_set(&validators_v1);
 
         // Mark one validator timed out
@@ -476,9 +594,7 @@ mod tests {
         assert_eq!(monitor.timed_out_validators().len(), 1);
 
         // Update set to remove that validator and add new ones
-        let validators_v2: Vec<_> = (2..6)
-            .map(|i| IdentityId::from_bytes(&[i; 32]))
-            .collect();
+        let validators_v2: Vec<_> = (2..6).map(|i| IdentityId::from_bytes(&[i; 32])).collect();
         monitor.update_validator_set(&validators_v2);
 
         // Old timed-out validator should be removed
@@ -491,9 +607,7 @@ mod tests {
     #[test]
     fn test_edge_case_exactly_one_third() {
         let mut monitor = LivenessMonitor::new();
-        let validators: Vec<_> = (0..4)
-            .map(|i| IdentityId::from_bytes(&[i; 32]))
-            .collect();
+        let validators: Vec<_> = (0..4).map(|i| IdentityId::from_bytes(&[i; 32])).collect();
         monitor.update_validator_set(&validators);
 
         // With 4 validators, threshold = 2
@@ -523,5 +637,73 @@ mod tests {
         // Recovery clears stall
         monitor.mark_responsive(&validator);
         assert!(!monitor.is_stalled());
+    }
+
+    // =========================================================================
+    // THRESHOLD CONSTANT TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_constants_satisfy_live_inv1() {
+        // LIVE-INV-1: MAX_MISSED_BLOCKS < LIVENESS_JAIL_THRESHOLD
+        assert!(
+            MAX_MISSED_BLOCKS < LIVENESS_JAIL_THRESHOLD,
+            "LIVE-INV-1 violated: MAX_MISSED_BLOCKS ({}) must be < LIVENESS_JAIL_THRESHOLD ({})",
+            MAX_MISSED_BLOCKS,
+            LIVENESS_JAIL_THRESHOLD
+        );
+    }
+
+    #[test]
+    fn test_constants_satisfy_live_inv2() {
+        // LIVE-INV-2: ROUND_TIMEOUT_SECS >= 20
+        assert!(
+            ROUND_TIMEOUT_SECS >= 20,
+            "LIVE-INV-2 violated: ROUND_TIMEOUT_SECS ({}) must be >= 20",
+            ROUND_TIMEOUT_SECS
+        );
+    }
+
+    #[test]
+    fn test_constants_satisfy_live_inv4() {
+        // LIVE-INV-4: HEARTBEAT_LIVENESS_TIMEOUT_SECS >= ROUND_TIMEOUT_SECS
+        assert!(
+            HEARTBEAT_LIVENESS_TIMEOUT_SECS >= ROUND_TIMEOUT_SECS,
+            "LIVE-INV-4 violated: HEARTBEAT_LIVENESS_TIMEOUT_SECS ({}) must be >= ROUND_TIMEOUT_SECS ({})",
+            HEARTBEAT_LIVENESS_TIMEOUT_SECS,
+            ROUND_TIMEOUT_SECS
+        );
+    }
+
+    #[test]
+    fn test_liveness_jail_threshold_is_reasonable() {
+        // Threshold should be large enough to not trigger on transient outages
+        assert!(
+            LIVENESS_JAIL_THRESHOLD >= 100,
+            "LIVENESS_JAIL_THRESHOLD too small"
+        );
+        // But not so large that misbehaving validators go unpunished for hours
+        assert!(
+            LIVENESS_JAIL_THRESHOLD <= 10_000,
+            "LIVENESS_JAIL_THRESHOLD too large"
+        );
+    }
+
+    #[test]
+    fn test_max_missed_blocks_is_reasonable() {
+        // Should be low enough to detect persistent downtime
+        assert!(MAX_MISSED_BLOCKS >= 10, "MAX_MISSED_BLOCKS too small");
+        // But not so low that transient issues trigger false positives
+        assert!(MAX_MISSED_BLOCKS <= 1_000, "MAX_MISSED_BLOCKS too large");
+    }
+
+    #[test]
+    fn test_liveness_constants_known_values() {
+        // Known value check — if this changes, the test flags it for review
+        assert_eq!(MAX_MISSED_BLOCKS, 100);
+        assert_eq!(ROUND_TIMEOUT_SECS, 30);
+        assert_eq!(LIVENESS_JAIL_THRESHOLD, 500);
+        assert_eq!(MAX_CONSECUTIVE_ROUND_TIMEOUTS, 10);
+        assert_eq!(HEARTBEAT_LIVENESS_TIMEOUT_SECS, 30);
     }
 }

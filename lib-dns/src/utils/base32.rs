@@ -53,14 +53,18 @@ fn encode_inner(input: &[u8], table: &[u8; 32], pad: bool) -> String {
             1 => {
                 out.push(table[(b1 >> 3) as usize] as char);
                 out.push(table[((b1 & 0x07) << 2) as usize] as char);
-                if pad { out.push_str("======"); }
+                if pad {
+                    out.push_str("======");
+                }
             }
             2 => {
                 out.push(table[(b1 >> 3) as usize] as char);
                 out.push(table[((b1 & 0x07) << 2 | (b2 >> 6)) as usize] as char);
                 out.push(table[((b2 >> 1) & 0x1F) as usize] as char);
                 out.push(table[((b2 & 0x01) << 4) as usize] as char);
-                if pad { out.push_str("===="); }
+                if pad {
+                    out.push_str("====");
+                }
             }
             3 => {
                 out.push(table[(b1 >> 3) as usize] as char);
@@ -68,7 +72,9 @@ fn encode_inner(input: &[u8], table: &[u8; 32], pad: bool) -> String {
                 out.push(table[((b2 >> 1) & 0x1F) as usize] as char);
                 out.push(table[((b2 & 0x01) << 4 | (b3 >> 4)) as usize] as char);
                 out.push(table[((b3 & 0x0F) << 1) as usize] as char);
-                if pad { out.push_str("==="); }
+                if pad {
+                    out.push_str("===");
+                }
             }
             4 => {
                 out.push(table[(b1 >> 3) as usize] as char);
@@ -78,7 +84,9 @@ fn encode_inner(input: &[u8], table: &[u8; 32], pad: bool) -> String {
                 out.push(table[((b3 & 0x0F) << 1 | (b4 >> 7)) as usize] as char);
                 out.push(table[((b4 >> 2) & 0x1F) as usize] as char);
                 out.push(table[((b4 & 0x03) << 3) as usize] as char);
-                if pad { out.push('='); }
+                if pad {
+                    out.push('=');
+                }
             }
             _ => unreachable!(),
         }
@@ -104,13 +112,20 @@ fn decode_inner(input: &str, table: &[u8; 32], accept_pad: bool) -> io::Result<V
     let mut bits: u8 = 0;
     let mut out = Vec::new();
 
-    for &ch in input.as_bytes().iter().filter(|&&b| !b" \t\r\n".contains(&b)) {
+    for &ch in input
+        .as_bytes()
+        .iter()
+        .filter(|&&b| !b" \t\r\n".contains(&b))
+    {
         if accept_pad && ch == b'=' {
             break; // padding ends stream
         }
         let v = map.get(ch as usize).copied().unwrap_or(255);
         if v == 255 {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid base32 symbol"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid base32 symbol",
+            ));
         }
         acc = (acc << 5) | (v as u32);
         bits += 5;

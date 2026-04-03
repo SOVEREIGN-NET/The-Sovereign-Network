@@ -5,6 +5,9 @@
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser;
+    use zhtp_cli::argument_parsing::{OracleAction, OracleArgs, ZhtpCli, ZhtpCommand};
+
     #[test]
     fn test_zhtp_cli_parse_help() {
         // Test that --help is recognized
@@ -107,8 +110,14 @@ mod tests {
     fn test_command_help_availability() {
         // Test that help is available for major commands
         let commands_with_help = vec![
-            "wallet", "dao", "component", "network",
-            "blockchain", "identity", "node", "reward"
+            "wallet",
+            "dao",
+            "component",
+            "network",
+            "blockchain",
+            "identity",
+            "node",
+            "reward",
         ];
 
         for cmd in commands_with_help {
@@ -159,5 +168,79 @@ mod tests {
         let test_user_id = "user-123";
         assert!(!test_user_id.is_empty());
         assert!(test_user_id.len() > 0);
+    }
+
+    #[test]
+    fn test_oracle_committee_update_cli_flow_parsing() {
+        let cli = ZhtpCli::try_parse_from([
+            "zhtp-cli",
+            "oracle",
+            "committee-update",
+            "--members",
+            "11aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,22bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "--activate-epoch",
+            "12",
+            "--reason",
+            "Rotate committee",
+            "--voting-period-days",
+            "7",
+        ])
+        .expect("oracle committee update command should parse");
+
+        match cli.command {
+            ZhtpCommand::Oracle(OracleArgs {
+                action:
+                    OracleAction::CommitteeUpdate {
+                        members,
+                        activate_epoch,
+                        ..
+                    },
+            }) => {
+                assert_eq!(members.len(), 2);
+                assert_eq!(activate_epoch, 12);
+            }
+            other => panic!("unexpected command variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_oracle_config_update_cli_flow_parsing() {
+        let cli = ZhtpCli::try_parse_from([
+            "zhtp-cli",
+            "oracle",
+            "config-update",
+            "--epoch-duration",
+            "600",
+            "--max-source-age",
+            "120",
+            "--max-deviation-bps",
+            "900",
+            "--max-price-staleness-epochs",
+            "10",
+            "--activate-epoch",
+            "15",
+            "--reason",
+            "Tune oracle config",
+        ])
+        .expect("oracle config update command should parse");
+
+        match cli.command {
+            ZhtpCommand::Oracle(OracleArgs {
+                action:
+                    OracleAction::ConfigUpdate {
+                        epoch_duration,
+                        max_source_age,
+                        max_deviation_bps,
+                        activate_epoch,
+                        ..
+                    },
+            }) => {
+                assert_eq!(epoch_duration, 600);
+                assert_eq!(max_source_age, 120);
+                assert_eq!(max_deviation_bps, 900);
+                assert_eq!(activate_epoch, 15);
+            }
+            other => panic!("unexpected command variant: {other:?}"),
+        }
     }
 }

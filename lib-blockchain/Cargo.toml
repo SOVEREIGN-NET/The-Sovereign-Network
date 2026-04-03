@@ -18,8 +18,10 @@ tokio = { version = "1.0", features = ["full"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 anyhow = "1.0"
 hex = "0.4"
+toml = "0.8"
 blake3 = "1.5"
 rand = "0.8"
+primitive-types = "0.12"
 
 # Additional dependencies for contracts
 chrono = { version = "0.4", features = ["serde"] }
@@ -28,7 +30,15 @@ indexmap = "2.0"
 # WASM runtime dependencies (optional)
 wasmtime = { version = "37.0.1", optional = true }
 
+# Storage caching (for persistent contract storage - optional)
+lru = { version = "0.12", optional = true }
+
+# Primary storage backend (required for new storage layer)
+sled = "0.34"
+
 # Internal ZHTP dependencies (Foundation Layer Only)
+lib-types = { path = "../lib-types" }
+lib-fees = { path = "../lib-fees" }
 lib-crypto = { path = "../lib-crypto" }
 lib-proofs = { path = "../lib-proofs" }
 lib-identity = { path = "../lib-identity" }
@@ -42,6 +52,7 @@ testing = []
 contracts = []
 wasm-runtime = ["wasmtime"]
 wasmtime = ["dep:wasmtime"]
+persistent-contracts = ["lru"]
 
 [dev-dependencies]
 tokio-test = "0.4"

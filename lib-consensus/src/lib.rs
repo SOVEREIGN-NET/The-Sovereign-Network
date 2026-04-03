@@ -14,11 +14,16 @@ pub mod chain_evaluation;
 pub mod dao;
 pub mod difficulty;
 pub mod engines;
+pub mod evidence;
+pub mod fault_model;
+pub mod invariants;
 pub mod mempool;
 pub mod mining;
 pub mod network;
+pub mod observer;
 pub mod proofs;
 pub mod rewards;
+pub mod slashing;
 pub mod testing;
 pub mod types;
 pub mod validators;
@@ -27,14 +32,33 @@ pub mod validators;
 pub use chain_evaluation::{ChainDecision, ChainEvaluator, ChainMergeResult, ChainSummary};
 pub use difficulty::{DifficultyConfig, DifficultyError, DifficultyManager, DifficultyResult};
 pub use engines::enhanced_bft_engine::{ConsensusStatus, EnhancedBftEngine};
+pub use engines::consensus_engine::ValidatorSetUpdate;
 pub use engines::ConsensusEngine;
-pub use mempool::{Mempool, MempoolTransaction, MempoolStats};
+pub use evidence::{
+    isolation_action, Evidence, EvidenceRecord, EvidenceStore, IsolationAction, SlashingParams,
+};
+pub use invariants::{
+    check_invariant, enforce_consensus_invariants, ConsensusInvariant, ConsensusState,
+};
+pub use mempool::{Mempool, MempoolStats, MempoolTransaction};
 pub use mining::{should_mine_block, IdentityData};
-pub use network::{BincodeConsensusCodec, CodecError, ConsensusMessageCodec};
+pub use network::{
+    check_consensus_health, BincodeConsensusCodec, CodecError, ConsensusMessageCodec,
+    ConsensusMetrics,
+};
 pub use proofs::*;
+pub use slashing::{
+    calculate_slash_amount, check_unjail_eligibility, check_unjail_eligibility_legacy,
+    jail_end_block, liveness_jail_status, safety_ban_status, stake_after_unjail, BanReason,
+    JailStatus, RecoveryError, SlashPolicyError, SlashSeverity, DOUBLE_SIGN_SLASH_PERCENT,
+    JAIL_DURATION_BLOCKS, JAIL_EXIT_WAIT_BLOCKS, LIVENESS_SLASH_PERCENT, MIN_STAKE_TO_UNJAIL,
+    REMOVAL_SLASH_COUNT, SAFETY_OFFENSE_ALWAYS_PERMANENT,
+};
 pub use testing::NoOpBroadcaster;
 pub use types::*;
-pub use validators::{Validator, ValidatorManager};
+pub use validators::{
+    Validator, ValidatorManager, MAX_VALIDATORS, MAX_VALIDATORS_HARD_CAP, MIN_VALIDATORS,
+};
 
 #[cfg(feature = "dao")]
 pub use dao::*;
@@ -78,8 +102,8 @@ pub enum ConsensusError {
     #[error("Identity error: {0}")]
     IdentityError(String),
 
-    // #[error("Storage error: {0}")]
-    // StorageError(#[from] lib_storage::StorageError),  // TODO: Uncomment when storage is implemented
+    #[error("Storage error: {0}")]
+    StorageError(#[from] lib_storage::StorageError),
     #[error("Network error: {0}")]
     NetworkError(String),
 
@@ -140,3 +164,4 @@ mod tests {
         assert!(result.is_ok());
     }
 }
+pub mod finality_model;

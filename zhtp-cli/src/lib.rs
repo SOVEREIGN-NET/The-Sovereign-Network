@@ -13,14 +13,15 @@
 //! - **Output Abstraction** (`output/` module): Testable printing interface
 
 // Core modules
-pub mod commands;
 pub mod argument_parsing;
 pub mod banner;
+pub mod cli_config;
+pub mod commands;
 
 // Architecture modules (new)
 pub mod error;
-pub mod output;
 pub mod logic;
+pub mod output;
 
 // Legacy modules (disabled for refactoring)
 // pub mod execution;  // Disabled for now - old implementation not used
@@ -29,7 +30,7 @@ pub mod logic;
 // pub mod interactive_shell;  // Disabled for now - needs refactoring
 
 // Re-export main types for public use
-pub use argument_parsing::{ZhtpCli, ZhtpCommand, run_cli, format_output};
+pub use argument_parsing::{format_output, run_cli, ZhtpCli, ZhtpCommand};
 pub use error::{CliError, CliResult};
 pub use output::Output;
 

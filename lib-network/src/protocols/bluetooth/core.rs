@@ -20,7 +20,12 @@ impl BluetoothMeshProtocol {
         info!(" DEBUG: About to call register_mesh_gatt_service...");
         self.register_mesh_gatt_service(
             lib_mesh_service,
-            vec![zk_auth_char, quantum_routing_char, mesh_data_char, mesh_coord_char],
+            vec![
+                zk_auth_char,
+                quantum_routing_char,
+                mesh_data_char,
+                mesh_coord_char,
+            ],
         )
         .await?;
         info!(" DEBUG: register_mesh_gatt_service completed!");

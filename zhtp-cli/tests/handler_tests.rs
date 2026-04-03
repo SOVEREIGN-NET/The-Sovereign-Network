@@ -8,11 +8,28 @@ mod tests {
     #[test]
     fn test_all_handlers_exist() {
         let handlers = vec![
-            "node", "wallet", "dao", "identity", "network",
-            "blockchain", "monitor", "version", "completion",
-            "config", "diagnostics", "backup", "component",
-            "interactive", "server", "reward", "isolation",
-            "deploy", "trust", "man", "update", "service"
+            "node",
+            "wallet",
+            "dao",
+            "identity",
+            "network",
+            "blockchain",
+            "monitor",
+            "version",
+            "completion",
+            "config",
+            "diagnostics",
+            "backup",
+            "component",
+            "interactive",
+            "server",
+            "reward",
+            "isolation",
+            "deploy",
+            "trust",
+            "man",
+            "update",
+            "service",
         ];
 
         for handler in handlers {
@@ -48,12 +65,7 @@ mod tests {
     /// Test handler error messages are consistent
     #[test]
     fn test_error_message_consistency() {
-        let error_patterns = vec![
-            "Failed to",
-            "Error:",
-            "Invalid",
-            "Cannot",
-        ];
+        let error_patterns = vec!["Failed to", "Error:", "Invalid", "Cannot"];
 
         for pattern in error_patterns {
             assert!(!pattern.is_empty());
@@ -80,13 +92,7 @@ mod tests {
     /// Test pure functions are documented
     #[test]
     fn test_pure_function_documentation() {
-        let pure_functions = vec![
-            "validate_",
-            "format_",
-            "build_",
-            "action_to_",
-            "get_",
-        ];
+        let pure_functions = vec!["validate_", "format_", "build_", "action_to_", "get_"];
 
         for prefix in pure_functions {
             assert!(!prefix.is_empty());
@@ -96,10 +102,7 @@ mod tests {
     /// Test imperative shell functions exist
     #[test]
     fn test_imperative_shell_functions() {
-        let shell_functions = vec![
-            "handle_",
-            "_impl",
-        ];
+        let shell_functions = vec!["handle_", "_impl"];
 
         for pattern in shell_functions {
             assert!(!pattern.is_empty());
@@ -139,8 +142,13 @@ mod tests {
     #[test]
     fn test_endpoint_paths() {
         let endpoints = vec![
-            "status", "health", "component/list", "component/start",
-            "dao/info", "wallet/balance", "server/status",
+            "status",
+            "health",
+            "component/list",
+            "component/start",
+            "dao/info",
+            "wallet/balance",
+            "server/status",
         ];
 
         for endpoint in endpoints {

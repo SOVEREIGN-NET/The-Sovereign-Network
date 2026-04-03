@@ -1,7 +1,7 @@
 //! Verification cache for identity verification results
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 /// Verification cache for storing and retrieving verification results
@@ -121,7 +121,7 @@ impl VerificationCache {
     ) -> Result<String, Box<dyn std::error::Error>> {
         // Generate cache key
         let cache_key = self.generate_cache_key(identity_id, verification_type, &result);
-        
+
         // Check if cache is full and evict if necessary
         if self.cache.len() >= self.config.max_entries {
             self.evict_entries()?;
@@ -147,22 +147,21 @@ impl VerificationCache {
         self.cache.insert(cache_key.clone(), entry);
         self.stats.total_entries = self.cache.len();
 
-        println!("✓ Stored verification result in cache: {} (expires in {} minutes)", cache_key, ttl);
+        println!(
+            "✓ Stored verification result in cache: {} (expires in {} minutes)",
+            cache_key, ttl
+        );
         Ok(cache_key)
     }
 
     /// Retrieve verification result from cache
-    pub fn get(
-        &mut self,
-        identity_id: &str,
-        verification_type: &str,
-    ) -> CacheLookupResult {
+    pub fn get(&mut self, identity_id: &str, verification_type: &str) -> CacheLookupResult {
         let start_time = Instant::now();
         self.stats.total_lookups += 1;
 
         // Generate lookup key (simplified - would use more sophisticated matching)
         let _lookup_key = format!("{}:{}", identity_id, verification_type);
-        
+
         // Find matching cache entry
         let mut matching_key = None;
         for (key, entry) in &self.cache {
@@ -184,7 +183,7 @@ impl VerificationCache {
                     // Update access statistics
                     entry.access_count += 1;
                     entry.last_accessed = Instant::now();
-                    
+
                     self.stats.cache_hits += 1;
                     CacheLookupResult::Hit(entry.verification_result.clone())
                 }
@@ -211,19 +210,19 @@ impl VerificationCache {
         verification_type: &str,
         result: &CachedVerificationResult,
     ) -> String {
-        use sha2::{Sha256, Digest};
-        
+        use sha2::{Digest, Sha256};
+
         let mut hasher = Sha256::new();
         hasher.update(identity_id.as_bytes());
         hasher.update(verification_type.as_bytes());
         hasher.update(result.verification_level.as_bytes());
         hasher.update(result.verified_at.to_string().as_bytes());
-        
+
         // Include verification methods in key
         for method in &result.verification_methods {
             hasher.update(method.as_bytes());
         }
-        
+
         format!("{:x}", hasher.finalize())[..16].to_string()
     }
 
@@ -235,13 +234,15 @@ impl VerificationCache {
 
         // Find oldest entries to evict (evict 25% of cache)
         let evict_count = self.config.max_entries / 4;
-        let mut entries_by_access: Vec<_> = self.cache.iter()
+        let mut entries_by_access: Vec<_> = self
+            .cache
+            .iter()
             .map(|(key, entry)| (key.clone(), entry.last_accessed))
             .collect();
-        
+
         // Sort by last accessed time (oldest first)
         entries_by_access.sort_by_key(|(_, last_accessed)| *last_accessed);
-        
+
         // Evict oldest entries
         for (key, _) in entries_by_access.iter().take(evict_count) {
             self.cache.remove(key);
@@ -250,7 +251,7 @@ impl VerificationCache {
 
         self.stats.total_entries = self.cache.len();
         println!("✓ Evicted {} cache entries", evict_count);
-        
+
         Ok(())
     }
 
@@ -258,25 +259,25 @@ impl VerificationCache {
     pub fn cleanup_expired(&mut self) -> usize {
         let current_time = Instant::now();
         let mut expired_keys = Vec::new();
-        
+
         for (key, entry) in &self.cache {
             if current_time > entry.expires_at {
                 expired_keys.push(key.clone());
             }
         }
-        
+
         let expired_count = expired_keys.len();
         for key in expired_keys {
             self.cache.remove(&key);
         }
-        
+
         self.stats.total_entries = self.cache.len();
         self.stats.last_cleanup = current_time;
-        
+
         if expired_count > 0 {
             println!("✓ Cleaned up {} expired cache entries", expired_count);
         }
-        
+
         expired_count
     }
 
@@ -294,7 +295,7 @@ impl VerificationCache {
         if self.stats.total_lookups > 0 {
             self.stats.hit_rate = self.stats.cache_hits as f64 / self.stats.total_lookups as f64;
         }
-        
+
         self.stats.clone()
     }
 
@@ -302,8 +303,9 @@ impl VerificationCache {
     fn update_access_metrics(&mut self, access_time_ms: f64) {
         if self.config.enable_metrics {
             let total_lookups = self.stats.total_lookups as f64;
-            self.stats.average_access_time_ms = 
-                (self.stats.average_access_time_ms * (total_lookups - 1.0) + access_time_ms) / total_lookups;
+            self.stats.average_access_time_ms =
+                (self.stats.average_access_time_ms * (total_lookups - 1.0) + access_time_ms)
+                    / total_lookups;
         }
     }
 
@@ -315,7 +317,7 @@ impl VerificationCache {
     /// Update cache configuration
     pub fn update_config(&mut self, new_config: CacheConfig) {
         self.config = new_config;
-        
+
         // If max entries reduced, evict excess entries
         if self.cache.len() > self.config.max_entries {
             let _ = self.evict_entries();
@@ -324,36 +326,43 @@ impl VerificationCache {
 
     /// Get entries by identity
     pub fn get_entries_for_identity(&self, identity_id: &str) -> Vec<&CachedVerificationEntry> {
-        self.cache.values()
+        self.cache
+            .values()
             .filter(|entry| entry.identity_id == identity_id)
             .collect()
     }
 
     /// Get entries by verification type
     pub fn get_entries_by_type(&self, verification_type: &str) -> Vec<&CachedVerificationEntry> {
-        self.cache.values()
+        self.cache
+            .values()
             .filter(|entry| entry.verification_type == verification_type)
             .collect()
     }
 
     /// Remove entries for specific identity
     pub fn remove_identity_entries(&mut self, identity_id: &str) -> usize {
-        let keys_to_remove: Vec<_> = self.cache.iter()
+        let keys_to_remove: Vec<_> = self
+            .cache
+            .iter()
             .filter(|(_, entry)| entry.identity_id == identity_id)
             .map(|(key, _)| key.clone())
             .collect();
-        
+
         let removed_count = keys_to_remove.len();
         for key in keys_to_remove {
             self.cache.remove(&key);
         }
-        
+
         self.stats.total_entries = self.cache.len();
-        
+
         if removed_count > 0 {
-            println!("✓ Removed {} cache entries for identity {}", removed_count, identity_id);
+            println!(
+                "✓ Removed {} cache entries for identity {}",
+                removed_count, identity_id
+            );
         }
-        
+
         removed_count
     }
 
@@ -361,25 +370,27 @@ impl VerificationCache {
     pub fn get_memory_usage_estimate(&self) -> usize {
         // Rough estimate of memory usage
         let mut total_size = 0;
-        
+
         for (key, entry) in &self.cache {
             total_size += key.len();
             total_size += entry.cache_key.len();
             total_size += entry.verification_type.len();
             total_size += entry.identity_id.len();
             total_size += std::mem::size_of::<CachedVerificationEntry>();
-            
+
             // Estimate verification result size
             total_size += serde_json::to_string(&entry.verification_result)
-                .unwrap_or_default().len();
+                .unwrap_or_default()
+                .len();
         }
-        
+
         total_size
     }
 
     /// Check if automatic cleanup is needed
     pub fn should_cleanup(&self) -> bool {
-        let cleanup_interval = Duration::from_secs(self.config.cleanup_interval_minutes as u64 * 60);
+        let cleanup_interval =
+            Duration::from_secs(self.config.cleanup_interval_minutes as u64 * 60);
         Instant::now() - self.stats.last_cleanup > cleanup_interval
     }
 
@@ -388,7 +399,7 @@ impl VerificationCache {
         if self.should_cleanup() {
             self.cleanup_expired();
         }
-        
+
         // Additional maintenance tasks could be added here
         // e.g., compacting cache, updating statistics, etc.
     }

@@ -1,6 +1,6 @@
 //! Connectivity helpers for Bluetooth mesh protocol.
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(not(target_os = "macos"))]
 use anyhow::anyhow;
 use anyhow::Result;
 use tracing::info;
@@ -58,21 +58,6 @@ impl BluetoothMeshProtocol {
         Ok(connection)
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    pub(crate) async fn connect_mesh_peer(&self, peer: &MeshPeer) -> Result<BluetoothConnection> {
-        Ok(BluetoothConnection {
-            peer_id: peer.peer_id.clone(),
-            connected_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            mtu: 247,
-            address: peer.address.clone(),
-            last_seen: peer.last_seen,
-            rssi: peer.rssi,
-        })
-    }
-
     #[cfg(target_os = "linux")]
     async fn linux_connect_mesh_peer(peer: &MeshPeer) -> Result<BluetoothConnection> {
         use crate::protocols::bluetooth::linux_ops::LinuxBluetoothOps;
@@ -114,7 +99,11 @@ impl BluetoothMeshProtocol {
         gatt_manager.connect_device(&peer.address).await?;
 
         let services = gatt_manager.discover_services(&peer.address).await?;
-        info!(" Windows: Connected to {} with {} services", peer.address, services.len());
+        info!(
+            " Windows: Connected to {} with {} services",
+            peer.address,
+            services.len()
+        );
 
         Ok(BluetoothConnection {
             peer_id: peer.peer_id.clone(),
@@ -151,7 +140,9 @@ impl BluetoothMeshProtocol {
 
                 let bluetooth_address = self.parse_windows_bluetooth_address(peer_address)?;
 
-                if let Ok(device_async) = BluetoothLEDevice::FromBluetoothAddressAsync(bluetooth_address) {
+                if let Ok(device_async) =
+                    BluetoothLEDevice::FromBluetoothAddressAsync(bluetooth_address)
+                {
                     if let Ok(device) = device_async.get() {
                         drop(device);
                     }
@@ -162,7 +153,13 @@ impl BluetoothMeshProtocol {
             {
                 use std::process::Command;
                 let _ = Command::new("powershell")
-                    .args(&["-Command", &format!("Remove-NetRoute -DestinationPrefix '*{}*' -Confirm:$false", peer_address)])
+                    .args(&[
+                        "-Command",
+                        &format!(
+                            "Remove-NetRoute -DestinationPrefix '*{}*' -Confirm:$false",
+                            peer_address
+                        ),
+                    ])
                     .output();
                 info!("Windows: Attempted disconnect via PowerShell");
             }

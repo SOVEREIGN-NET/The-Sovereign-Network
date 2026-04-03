@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
-use crate::types::{WorkMetrics, IspBypassWork};
+use crate::types::{WorkMetrics, IspBypassWork, WorkMetricsExt};
 use crate::models::EconomicModel; calculation and         // Routing: 10 SOV per MB routed (covers bandwidth costs)
         let routing_reward = (work.routing_work / 1_000_000).saturating_mul(model.base_routing_rate); // bytes to MB
         
@@ -85,7 +85,7 @@ impl TokenReward {
             quality_bonus,
             uptime_bonus,
             total_reward: final_total,
-            currency: "ZHTP".to_string(),
+            currency: "SOV".to_string(),
         })
     }
     
@@ -131,7 +131,7 @@ impl TokenReward {
             quality_bonus,
             uptime_bonus,
             total_reward,
-            currency: "ZHTP".to_string(),
+            currency: "SOV".to_string(),
         })
     }
     
@@ -168,7 +168,7 @@ impl Default for TokenReward {
             quality_bonus: 0,
             uptime_bonus: 0,
             total_reward: 0,
-            currency: "ZHTP".to_string(),
+            currency: "SOV".to_string(),
         }
     }
 }

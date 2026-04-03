@@ -238,7 +238,10 @@ mod tests {
 
     #[test]
     fn test_namespace_names() {
-        assert_eq!(WelfareSectorId::Healthcare.namespace_name(), "health.dao.sov");
+        assert_eq!(
+            WelfareSectorId::Healthcare.namespace_name(),
+            "health.dao.sov"
+        );
         assert_eq!(WelfareSectorId::Education.namespace_name(), "edu.dao.sov");
         assert_eq!(WelfareSectorId::Energy.namespace_name(), "energy.dao.sov");
         assert_eq!(WelfareSectorId::Housing.namespace_name(), "housing.dao.sov");
@@ -276,10 +279,7 @@ mod tests {
             WelfareSectorId::from_namespace_name("HEALTH.DAO.SOV"),
             Some(WelfareSectorId::Healthcare)
         );
-        assert_eq!(
-            WelfareSectorId::from_namespace_name("invalid.sov"),
-            None
-        );
+        assert_eq!(WelfareSectorId::from_namespace_name("invalid.sov"), None);
     }
 
     #[test]
@@ -328,8 +328,11 @@ mod tests {
 
     #[test]
     fn test_verification_level_ordering() {
-        assert!(VerificationLevel::L3ConstitutionalActor.meets_minimum(VerificationLevel::L0Unverified));
-        assert!(VerificationLevel::L3ConstitutionalActor.meets_minimum(VerificationLevel::L2VerifiedEntity));
+        assert!(
+            VerificationLevel::L3ConstitutionalActor.meets_minimum(VerificationLevel::L0Unverified)
+        );
+        assert!(VerificationLevel::L3ConstitutionalActor
+            .meets_minimum(VerificationLevel::L2VerifiedEntity));
         assert!(!VerificationLevel::L1BasicDID.meets_minimum(VerificationLevel::L2VerifiedEntity));
     }
 

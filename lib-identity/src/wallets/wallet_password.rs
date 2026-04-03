@@ -1,12 +1,12 @@
 //! Optional password protection for individual wallets
-//! 
+//!
 //! This provides an additional security layer where specific wallets
 //! can require a password even if the user has signed into their DID.
 //! This is useful for high-value wallets (savings, business, etc.)
 
-use anyhow::Result;
-use lib_crypto::{hash_blake3, derive_keys};
 use crate::wallets::WalletId;
+use anyhow::Result;
+use lib_crypto::{derive_keys, hash_blake3};
 use std::collections::HashMap;
 use zeroize::Zeroize;
 
@@ -33,16 +33,41 @@ impl std::fmt::Display for WalletPasswordError {
             WalletPasswordError::WalletNotFound => write!(f, "Wallet not found"),
             WalletPasswordError::InvalidPassword => write!(f, "Invalid wallet password"),
             WalletPasswordError::PasswordNotSet => write!(f, "No password set for this wallet"),
-            WalletPasswordError::WeakPassword => write!(f, "Wallet password does not meet security requirements"),
-            WalletPasswordError::PasswordAlreadySet => write!(f, "Wallet already has a password set"),
-            WalletPasswordError::TooShort => write!(f, "Wallet password too short - minimum 6 characters required"),
-            WalletPasswordError::TooLong => write!(f, "Wallet password too long - maximum 128 characters allowed"),
-            WalletPasswordError::NoUppercase => write!(f, "Wallet password must contain at least one uppercase letter (A-Z)"),
-            WalletPasswordError::NoLowercase => write!(f, "Wallet password must contain at least one lowercase letter (a-z)"),
-            WalletPasswordError::NoDigit => write!(f, "Wallet password must contain at least one digit (0-9)"),
-            WalletPasswordError::ContainsSpaces => write!(f, "Wallet password cannot contain spaces"),
-            WalletPasswordError::CommonPassword => write!(f, "Wallet password is too common - please choose a more unique password"),
-            WalletPasswordError::SameAsOldPassword => write!(f, "New wallet password must be different from old password"),
+            WalletPasswordError::WeakPassword => {
+                write!(f, "Wallet password does not meet security requirements")
+            }
+            WalletPasswordError::PasswordAlreadySet => {
+                write!(f, "Wallet already has a password set")
+            }
+            WalletPasswordError::TooShort => write!(
+                f,
+                "Wallet password too short - minimum 6 characters required"
+            ),
+            WalletPasswordError::TooLong => write!(
+                f,
+                "Wallet password too long - maximum 128 characters allowed"
+            ),
+            WalletPasswordError::NoUppercase => write!(
+                f,
+                "Wallet password must contain at least one uppercase letter (A-Z)"
+            ),
+            WalletPasswordError::NoLowercase => write!(
+                f,
+                "Wallet password must contain at least one lowercase letter (a-z)"
+            ),
+            WalletPasswordError::NoDigit => {
+                write!(f, "Wallet password must contain at least one digit (0-9)")
+            }
+            WalletPasswordError::ContainsSpaces => {
+                write!(f, "Wallet password cannot contain spaces")
+            }
+            WalletPasswordError::CommonPassword => write!(
+                f,
+                "Wallet password is too common - please choose a more unique password"
+            ),
+            WalletPasswordError::SameAsOldPassword => {
+                write!(f, "New wallet password must be different from old password")
+            }
         }
     }
 }
@@ -83,7 +108,7 @@ impl WalletPasswordManager {
     /// Validate wallet password strength (slightly relaxed compared to DID passwords)
     fn validate_password_strength(password: &str) -> Result<(), WalletPasswordError> {
         let length = password.len();
-        
+
         // Check length constraints (6 min for wallets vs 8 for DIDs)
         if length < 6 {
             return Err(WalletPasswordError::TooShort);
@@ -91,17 +116,17 @@ impl WalletPasswordManager {
         if length > 128 {
             return Err(WalletPasswordError::TooLong);
         }
-        
+
         // Check for spaces
         if password.contains(' ') {
             return Err(WalletPasswordError::ContainsSpaces);
         }
-        
+
         // Check character requirements
         let has_uppercase = password.chars().any(|c| c.is_uppercase());
         let has_lowercase = password.chars().any(|c| c.is_lowercase());
         let has_digit = password.chars().any(|c| c.is_numeric());
-        
+
         if !has_uppercase {
             return Err(WalletPasswordError::NoUppercase);
         }
@@ -111,27 +136,39 @@ impl WalletPasswordManager {
         if !has_digit {
             return Err(WalletPasswordError::NoDigit);
         }
-        
+
         // Check against common passwords
         if Self::is_common_password(password) {
             return Err(WalletPasswordError::CommonPassword);
         }
-        
+
         Ok(())
     }
 
     /// Check if password is in common password list
     fn is_common_password(password: &str) -> bool {
         const COMMON_PASSWORDS: &[&str] = &[
-            "wallet", "Wallet1", "Wallet123", "123456", "wallet1",
-            "password", "Password1", "123456789", "qwerty", "abc123",
-            "savings", "Savings1", "money", "Money123", "cash",
+            "wallet",
+            "Wallet1",
+            "Wallet123",
+            "123456",
+            "wallet1",
+            "password",
+            "Password1",
+            "123456789",
+            "qwerty",
+            "abc123",
+            "savings",
+            "Savings1",
+            "money",
+            "Money123",
+            "cash",
         ];
-        
+
         let lower = password.to_lowercase();
-        COMMON_PASSWORDS.iter().any(|&common| {
-            password == common || lower == common.to_lowercase()
-        })
+        COMMON_PASSWORDS
+            .iter()
+            .any(|&common| password == common || lower == common.to_lowercase())
     }
 
     /// Set password for a wallet (must not already have one)
@@ -150,11 +187,7 @@ impl WalletPasswordManager {
         Self::validate_password_strength(password)?;
 
         // Generate salt using wallet seed for consistency
-        let salt_material = [
-            wallet_seed,
-            wallet_id.0.as_slice(),
-            b"wallet_password_salt"
-        ].concat();
+        let salt_material = [wallet_seed, wallet_id.0.as_slice(), b"wallet_password_salt"].concat();
         let salt = hash_blake3(&salt_material);
 
         // Derive password hash using HKDF
@@ -162,14 +195,12 @@ impl WalletPasswordManager {
             password.as_bytes(),
             &salt,
             wallet_seed,
-            wallet_id.0.as_slice()
-        ].concat();
-        
-        let derived_key = derive_keys(
-            &password_key_material,
-            b"ZHTP_wallet_password_v1",
-            32
-        ).map_err(|_| WalletPasswordError::WeakPassword)?;
+            wallet_id.0.as_slice(),
+        ]
+        .concat();
+
+        let derived_key = derive_keys(&password_key_material, b"ZHTP_wallet_password_v1", 32)
+            .map_err(|_| WalletPasswordError::WeakPassword)?;
 
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&derived_key[..32]);
@@ -183,7 +214,8 @@ impl WalletPasswordManager {
                 .as_secs(),
         };
 
-        self.password_hashes.insert(wallet_id.clone(), password_hash);
+        self.password_hashes
+            .insert(wallet_id.clone(), password_hash);
 
         tracing::info!(
             "🔐 Wallet password set for wallet {}",
@@ -260,7 +292,9 @@ impl WalletPasswordManager {
         wallet_seed: &[u8],
     ) -> Result<WalletPasswordValidation, WalletPasswordError> {
         // Get stored password hash
-        let stored_hash = self.password_hashes.get(wallet_id)
+        let stored_hash = self
+            .password_hashes
+            .get(wallet_id)
             .ok_or(WalletPasswordError::PasswordNotSet)?;
 
         // Recreate password hash using same process
@@ -268,15 +302,13 @@ impl WalletPasswordManager {
             password.as_bytes(),
             &stored_hash.salt,
             wallet_seed,
-            wallet_id.0.as_slice()
-        ].concat();
+            wallet_id.0.as_slice(),
+        ]
+        .concat();
 
         // Derive hash using same method
-        let derived_key = derive_keys(
-            &password_key_material,
-            b"ZHTP_wallet_password_v1",
-            32
-        ).map_err(|_| WalletPasswordError::InvalidPassword)?;
+        let derived_key = derive_keys(&password_key_material, b"ZHTP_wallet_password_v1", 32)
+            .map_err(|_| WalletPasswordError::InvalidPassword)?;
 
         let mut test_hash = [0u8; 32];
         test_hash.copy_from_slice(&derived_key[..32]);
@@ -327,7 +359,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    
+
     let mut result = 0u8;
     for i in 0..a.len() {
         result |= a[i] ^ b[i];
@@ -346,16 +378,22 @@ mod tests {
         let wallet_id = Hash::from_bytes(&[1u8; 32]);
         let wallet_seed = [42u8; 32];
         let password = "WalletPass123!";
-        
+
         // Set password
-        assert!(wpm.set_wallet_password(&wallet_id, password, &wallet_seed).is_ok());
-        
+        assert!(wpm
+            .set_wallet_password(&wallet_id, password, &wallet_seed)
+            .is_ok());
+
         // Validate correct password
-        let validation = wpm.validate_password(&wallet_id, password, &wallet_seed).unwrap();
+        let validation = wpm
+            .validate_password(&wallet_id, password, &wallet_seed)
+            .unwrap();
         assert!(validation.valid);
-        
+
         // Validate wrong password
-        let validation = wpm.validate_password(&wallet_id, "wrong", &wallet_seed).unwrap();
+        let validation = wpm
+            .validate_password(&wallet_id, "wrong", &wallet_seed)
+            .unwrap();
         assert!(!validation.valid);
     }
 
@@ -364,19 +402,26 @@ mod tests {
         let mut wpm = WalletPasswordManager::new();
         let wallet_id = Hash::from_bytes(&[2u8; 32]);
         let wallet_seed = [84u8; 32];
-        
+
         // Set initial password
-        wpm.set_wallet_password(&wallet_id, "OldPass123!", &wallet_seed).unwrap();
+        wpm.set_wallet_password(&wallet_id, "OldPass123!", &wallet_seed)
+            .unwrap();
 
         // Change password
-        assert!(wpm.change_wallet_password(&wallet_id, "OldPass123!", "NewPass123!", &wallet_seed).is_ok());
+        assert!(wpm
+            .change_wallet_password(&wallet_id, "OldPass123!", "NewPass123!", &wallet_seed)
+            .is_ok());
 
         // Old password should not work
-        let validation = wpm.validate_password(&wallet_id, "OldPass123!", &wallet_seed).unwrap();
+        let validation = wpm
+            .validate_password(&wallet_id, "OldPass123!", &wallet_seed)
+            .unwrap();
         assert!(!validation.valid);
 
         // New password should work
-        let validation = wpm.validate_password(&wallet_id, "NewPass123!", &wallet_seed).unwrap();
+        let validation = wpm
+            .validate_password(&wallet_id, "NewPass123!", &wallet_seed)
+            .unwrap();
         assert!(validation.valid);
     }
 
@@ -386,13 +431,16 @@ mod tests {
         let wallet_id = Hash::from_bytes(&[3u8; 32]);
         let wallet_seed = [126u8; 32];
         let password = "RemoveMe123!";
-        
+
         // Set password
-        wpm.set_wallet_password(&wallet_id, password, &wallet_seed).unwrap();
+        wpm.set_wallet_password(&wallet_id, password, &wallet_seed)
+            .unwrap();
         assert!(wpm.has_password(&wallet_id));
-        
+
         // Remove password
-        assert!(wpm.remove_wallet_password(&wallet_id, password, &wallet_seed).is_ok());
+        assert!(wpm
+            .remove_wallet_password(&wallet_id, password, &wallet_seed)
+            .is_ok());
         assert!(!wpm.has_password(&wallet_id));
     }
 
@@ -401,7 +449,7 @@ mod tests {
         let mut wpm = WalletPasswordManager::new();
         let wallet_id = Hash::from_bytes(&[4u8; 32]);
         let wallet_seed = [200u8; 32];
-        
+
         // Should reject weak passwords
         assert!(matches!(
             wpm.set_wallet_password(&wallet_id, "short", &wallet_seed),

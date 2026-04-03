@@ -53,7 +53,7 @@
 //! let plaintext = enc.decrypt_payload(&ciphertext, 42)?;
 //! ```
 
-use crate::encryption::{ProtocolEncryption, ChaCha20Poly1305Encryption, EncryptionStats};
+use crate::encryption::{ChaCha20Poly1305Encryption, EncryptionStats, ProtocolEncryption};
 use anyhow::Result;
 use tracing::debug;
 
@@ -71,12 +71,12 @@ mod core {
     /// - LoRaWAN protocol is isolated from other protocols (protocol_id separation)
     pub fn build_aad(device_eui: &[u8; 8], frame_counter: u16) -> Vec<u8> {
         let mut aad = Vec::new();
-        aad.extend_from_slice(b"lorawan");     // protocol_id
-        aad.push(0x00);                         // separator
-        aad.extend_from_slice(b"v1");           // version
-        aad.push(0x00);                         // separator
-        aad.extend_from_slice(device_eui);     // device_eui (8 bytes)
-        aad.push(0x00);                         // separator
+        aad.extend_from_slice(b"lorawan"); // protocol_id
+        aad.push(0x00); // separator
+        aad.extend_from_slice(b"v1"); // version
+        aad.push(0x00); // separator
+        aad.extend_from_slice(device_eui); // device_eui (8 bytes)
+        aad.push(0x00); // separator
         aad.extend_from_slice(&frame_counter.to_be_bytes()); // frame_counter (2 bytes)
         aad
     }
@@ -281,7 +281,10 @@ mod tests {
 
         // Try to decrypt with different frame counter
         let result = enc.decrypt_payload(&ciphertext, 43);
-        assert!(result.is_err(), "Decryption with wrong frame counter should fail");
+        assert!(
+            result.is_err(),
+            "Decryption with wrong frame counter should fail"
+        );
     }
 
     #[test]
@@ -321,6 +324,9 @@ mod tests {
 
         // Device 2 cannot decrypt device 1's message (different AAD due to different device_eui)
         let result = enc2.decrypt_payload(&ct1, frame_counter);
-        assert!(result.is_err(), "Different devices should not be able to decrypt each other's messages");
+        assert!(
+            result.is_err(),
+            "Different devices should not be able to decrypt each other's messages"
+        );
     }
 }

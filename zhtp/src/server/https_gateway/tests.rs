@@ -66,23 +66,33 @@ fn test_config_without_http() {
 
 #[test]
 fn test_effective_paths_with_explicit() {
-    let config = GatewayTlsConfig::default()
-        .with_certs(
-            PathBuf::from("/custom/cert.pem"),
-            PathBuf::from("/custom/key.pem"),
-        );
+    let config = GatewayTlsConfig::default().with_certs(
+        PathBuf::from("/custom/cert.pem"),
+        PathBuf::from("/custom/key.pem"),
+    );
 
-    assert_eq!(config.effective_cert_path(), PathBuf::from("/custom/cert.pem"));
-    assert_eq!(config.effective_key_path(), PathBuf::from("/custom/key.pem"));
+    assert_eq!(
+        config.effective_cert_path(),
+        PathBuf::from("/custom/cert.pem")
+    );
+    assert_eq!(
+        config.effective_key_path(),
+        PathBuf::from("/custom/key.pem")
+    );
 }
 
 #[test]
 fn test_effective_paths_fallback() {
-    let config = GatewayTlsConfig::default()
-        .with_data_dir(PathBuf::from("/var/lib/gateway"));
+    let config = GatewayTlsConfig::default().with_data_dir(PathBuf::from("/var/lib/gateway"));
 
-    assert_eq!(config.effective_cert_path(), PathBuf::from("/var/lib/gateway/server.crt"));
-    assert_eq!(config.effective_key_path(), PathBuf::from("/var/lib/gateway/server.key"));
+    assert_eq!(
+        config.effective_cert_path(),
+        PathBuf::from("/var/lib/gateway/server.crt")
+    );
+    assert_eq!(
+        config.effective_key_path(),
+        PathBuf::from("/var/lib/gateway/server.key")
+    );
 }
 
 #[test]
@@ -122,7 +132,10 @@ fn test_config_validate_private_ca_requires_ca_cert() {
         ..Default::default()
     };
     let result = config.validate();
-    assert!(result.is_err(), "PrivateCa without ca_cert_path should fail validation");
+    assert!(
+        result.is_err(),
+        "PrivateCa without ca_cert_path should fail validation"
+    );
     assert!(result.unwrap_err().contains("ca_cert_path"));
 }
 
@@ -136,7 +149,10 @@ fn test_config_validate_private_ca_requires_cert_path() {
         ..Default::default()
     };
     let result = config.validate();
-    assert!(result.is_err(), "PrivateCa without cert_path should fail validation");
+    assert!(
+        result.is_err(),
+        "PrivateCa without cert_path should fail validation"
+    );
     assert!(result.unwrap_err().contains("cert_path"));
 }
 
@@ -149,7 +165,10 @@ fn test_config_validate_private_ca_success() {
         ca_cert_path: Some(PathBuf::from("/etc/pki/ca.crt")),
         ..Default::default()
     };
-    assert!(config.validate().is_ok(), "PrivateCa with all paths should pass validation");
+    assert!(
+        config.validate().is_ok(),
+        "PrivateCa with all paths should pass validation"
+    );
 }
 
 #[test]

@@ -11,10 +11,10 @@
 //! - **Bluetooth LE**: Low-energy GATT for phone integration
 //! - **Bluetooth Classic**: High-throughput RFCOMM for mobile devices
 
-pub mod wifi;
-pub mod bluetooth_le;
 pub mod bluetooth_classic;
+pub mod bluetooth_le;
+pub mod wifi;
 
-pub use wifi::WiFiRouter;
-pub use bluetooth_le::BluetoothRouter;
 pub use bluetooth_classic::{BluetoothClassicRouter, ClassicProtocol};
+pub use bluetooth_le::BluetoothRouter;
+pub use wifi::WiFiRouter;

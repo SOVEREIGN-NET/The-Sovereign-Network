@@ -21,7 +21,7 @@
 use async_trait::async_trait;
 use std::path::Path;
 use thiserror::Error;
-use tracing::{debug, info};
+use tracing::{debug, error, info, warn};
 
 // ============================================================================
 // Error Types
@@ -205,7 +205,11 @@ pub trait StorageBackend: Send + Sync {
     ///
     /// # Errors
     /// - `StorageError::ScanFailed` on database error
-    async fn scan_prefix(&self, prefix: &[u8], limit: Option<usize>) -> Result<Vec<(Vec<u8>, Vec<u8>)>>;
+    async fn scan_prefix(
+        &self,
+        prefix: &[u8],
+        limit: Option<usize>,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>>;
 
     /// Execute a batch of operations atomically
     ///
@@ -284,9 +288,13 @@ fn validate_tree_name(name: &str) -> Result<()> {
             MAX_TREE_NAME_LENGTH
         )));
     }
-    if !name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+    if !name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+    {
         return Err(StorageError::InvalidTreeName(
-            "Tree name must contain only alphanumeric characters, underscores, or hyphens".to_string(),
+            "Tree name must contain only alphanumeric characters, underscores, or hyphens"
+                .to_string(),
         ));
     }
     Ok(())
@@ -369,13 +377,80 @@ impl SledBackend {
     ///
     /// * `path` - Directory path for the database files
     /// * `cache_capacity` - Page cache size in bytes
+    ///
+    /// # Auto-Recovery
+    ///
+    /// If sled database is corrupted, automatically clears and recreates it.
+    /// Data will be lost, but the node can restart. DHT data will be
+    /// re-synchronized from peers.
     pub fn open_with_config<P: AsRef<Path>>(path: P, cache_capacity: u64) -> Result<Self> {
-        let db = sled::Config::default()
+        let db = match sled::Config::default()
             .path(path.as_ref())
             .cache_capacity(cache_capacity)
             .mode(sled::Mode::HighThroughput)
             .open()
-            .map_err(|e| StorageError::OpenFailed(e.to_string()))?;
+        {
+            Ok(db) => db,
+            Err(e) => {
+                let err_str = e.to_string().to_lowercase();
+                // Detect corruption indicators in error message
+                if err_str.contains("corrupt")
+                    || err_str.contains("crc")
+                    || err_str.contains("checksum")
+                    || err_str.contains("invalid")
+                {
+                    warn!(
+                        "SLED CORRUPTION DETECTED at {:?}: {}. \
+                         Auto-recovering by clearing corrupted database.",
+                        path.as_ref(),
+                        e
+                    );
+
+                    // Clear the corrupted database
+                    if let Err(rm_err) = std::fs::remove_dir_all(path.as_ref()) {
+                        error!(
+                            "Failed to remove corrupted sled database at {:?}: {}. \
+                             Manual intervention required.",
+                            path.as_ref(),
+                            rm_err
+                        );
+                        return Err(StorageError::OpenFailed(format!(
+                            "Sled database corrupted and auto-recovery failed: {}. \
+                             Original error: {}. Please manually delete {:?}",
+                            rm_err,
+                            e,
+                            path.as_ref()
+                        )));
+                    }
+
+                    info!(
+                        "Cleared corrupted sled database at {:?}. Recreating fresh database.",
+                        path.as_ref()
+                    );
+
+                    // Ensure parent directory exists for recreation
+                    if let Some(parent) = path.as_ref().parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+
+                    // Retry opening
+                    sled::Config::default()
+                        .path(path.as_ref())
+                        .cache_capacity(cache_capacity)
+                        .mode(sled::Mode::HighThroughput)
+                        .open()
+                        .map_err(|e2| {
+                            StorageError::OpenFailed(format!(
+                                "Failed to recreate sled database after corruption recovery: {}",
+                                e2
+                            ))
+                        })?
+                } else {
+                    // Non-corruption error - fail immediately
+                    return Err(StorageError::OpenFailed(e.to_string()));
+                }
+            }
+        };
 
         info!(
             "Opened sled database at {:?} with {}MB cache",
@@ -401,7 +476,8 @@ impl SledBackend {
     pub fn open_tree(&self, name: &str) -> Result<SledTree> {
         validate_tree_name(name)?;
 
-        let tree = self.db
+        let tree = self
+            .db
             .open_tree(name)
             .map_err(|e| StorageError::TreeFailed(e.to_string()))?;
 
@@ -533,7 +609,11 @@ impl StorageBackend for SledTree {
         .map_err(|e| StorageError::TaskFailed(e.to_string()))?
     }
 
-    async fn scan_prefix(&self, prefix: &[u8], limit: Option<usize>) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    async fn scan_prefix(
+        &self,
+        prefix: &[u8],
+        limit: Option<usize>,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
         let tree = self.tree.clone();
         let prefix = prefix.to_vec();
         let max = limit.unwrap_or(DEFAULT_SCAN_LIMIT);
@@ -592,11 +672,7 @@ impl StorageBackend for SledTree {
 
         tokio::task::spawn_blocking(move || {
             let result = tree
-                .compare_and_swap(
-                    key,
-                    expected.as_deref(),
-                    new.as_deref(),
-                )
+                .compare_and_swap(key, expected.as_deref(), new.as_deref())
                 .map_err(|e| StorageError::WriteFailed(e.to_string()))?;
 
             match result {
@@ -688,7 +764,11 @@ impl StorageBackend for SledBackend {
         .map_err(|e| StorageError::TaskFailed(e.to_string()))?
     }
 
-    async fn scan_prefix(&self, prefix: &[u8], limit: Option<usize>) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    async fn scan_prefix(
+        &self,
+        prefix: &[u8],
+        limit: Option<usize>,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
         let db = self.db.clone();
         let prefix = prefix.to_vec();
         let max = limit.unwrap_or(DEFAULT_SCAN_LIMIT);
@@ -747,11 +827,7 @@ impl StorageBackend for SledBackend {
 
         tokio::task::spawn_blocking(move || {
             let result = db
-                .compare_and_swap(
-                    key,
-                    expected.as_deref(),
-                    new.as_deref(),
-                )
+                .compare_and_swap(key, expected.as_deref(), new.as_deref())
                 .map_err(|e| StorageError::WriteFailed(e.to_string()))?;
 
             match result {
@@ -880,9 +956,18 @@ mod tests {
 
         backend.write_batch(&ops).await.unwrap();
 
-        assert_eq!(backend.get(b"batch:1").await.unwrap(), Some(b"value1".to_vec()));
-        assert_eq!(backend.get(b"batch:2").await.unwrap(), Some(b"value2".to_vec()));
-        assert_eq!(backend.get(b"batch:3").await.unwrap(), Some(b"value3".to_vec()));
+        assert_eq!(
+            backend.get(b"batch:1").await.unwrap(),
+            Some(b"value1".to_vec())
+        );
+        assert_eq!(
+            backend.get(b"batch:2").await.unwrap(),
+            Some(b"value2".to_vec())
+        );
+        assert_eq!(
+            backend.get(b"batch:3").await.unwrap(),
+            Some(b"value3".to_vec())
+        );
     }
 
     #[tokio::test]
@@ -903,7 +988,10 @@ mod tests {
 
         backend.write_batch(&ops).await.unwrap();
 
-        assert_eq!(backend.get(b"new_key").await.unwrap(), Some(b"new_value".to_vec()));
+        assert_eq!(
+            backend.get(b"new_key").await.unwrap(),
+            Some(b"new_value".to_vec())
+        );
         assert_eq!(backend.get(b"to_delete").await.unwrap(), None);
     }
 
@@ -920,7 +1008,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(backend.get(b"cas_key").await.unwrap(), Some(b"updated".to_vec()));
+        assert_eq!(
+            backend.get(b"cas_key").await.unwrap(),
+            Some(b"updated".to_vec())
+        );
     }
 
     #[tokio::test]
@@ -935,7 +1026,10 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(StorageError::CasConflict)));
-        assert_eq!(backend.get(b"cas_key").await.unwrap(), Some(b"actual".to_vec()));
+        assert_eq!(
+            backend.get(b"cas_key").await.unwrap(),
+            Some(b"actual".to_vec())
+        );
     }
 
     #[tokio::test]
@@ -948,7 +1042,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(backend.get(b"new_cas_key").await.unwrap(), Some(b"value".to_vec()));
+        assert_eq!(
+            backend.get(b"new_cas_key").await.unwrap(),
+            Some(b"value".to_vec())
+        );
 
         // Second attempt should fail
         let result = backend
@@ -969,8 +1066,14 @@ mod tests {
         dht_tree.put(b"key1", b"dht_value").await.unwrap();
         peer_tree.put(b"key1", b"peer_value").await.unwrap();
 
-        assert_eq!(dht_tree.get(b"key1").await.unwrap(), Some(b"dht_value".to_vec()));
-        assert_eq!(peer_tree.get(b"key1").await.unwrap(), Some(b"peer_value".to_vec()));
+        assert_eq!(
+            dht_tree.get(b"key1").await.unwrap(),
+            Some(b"dht_value".to_vec())
+        );
+        assert_eq!(
+            peer_tree.get(b"key1").await.unwrap(),
+            Some(b"peer_value".to_vec())
+        );
     }
 
     #[tokio::test]
@@ -1008,7 +1111,10 @@ mod tests {
 
         {
             let backend = SledBackend::open(&path).unwrap();
-            backend.put(b"persistent_key", b"persistent_value").await.unwrap();
+            backend
+                .put(b"persistent_key", b"persistent_value")
+                .await
+                .unwrap();
             backend.flush().await.unwrap();
         }
 

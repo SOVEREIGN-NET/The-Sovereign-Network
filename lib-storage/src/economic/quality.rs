@@ -1,5 +1,5 @@
 //! Quality Assurance and Monitoring System
-//! 
+//!
 //! Implements comprehensive quality assurance for storage services including:
 //! - Continuous quality monitoring
 //! - Data integrity verification
@@ -8,10 +8,10 @@
 //! - Quality-based provider certification
 
 use crate::economic::reputation::*;
-use anyhow::{Result, anyhow};
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
+use anyhow::{anyhow, Result};
 use lib_crypto::Hash;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Direction of quality trend analysis
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -568,8 +568,15 @@ impl QualityAssurance {
         test_type: QualityTestType,
         config: TestConfiguration,
     ) -> Result<String> {
-        let test_id = format!("test_{}_{}", uuid::Uuid::new_v4(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
-        
+        let test_id = format!(
+            "test_{}_{}",
+            uuid::Uuid::new_v4(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        );
+
         let test = QualityTest {
             test_id: test_id.clone(),
             test_type: test_type.clone(),
@@ -582,7 +589,8 @@ impl QualityAssurance {
             expected_completion: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_secs() + 300, // Default 5 minutes
+                .as_secs()
+                + 300, // Default 5 minutes
             priority: TestPriority::Normal,
         };
 
@@ -601,43 +609,64 @@ impl QualityAssurance {
         match test_type {
             QualityTestType::AvailabilityTest => {
                 // Simulate availability test by checking if provider responds
-                println!("Executing availability test with ID: {} - checking provider response", test_id);
+                println!(
+                    "Executing availability test with ID: {} - checking provider response",
+                    test_id
+                );
                 // In production: send ping/health check to provider
                 std::thread::sleep(std::time::Duration::from_millis(10)); // Simulate network delay
-            },
+            }
             QualityTestType::PerformanceTest => {
                 // Simulate performance test by measuring response time
-                println!("Executing performance test with ID: {} - measuring response time", test_id);
+                println!(
+                    "Executing performance test with ID: {} - measuring response time",
+                    test_id
+                );
                 // In production: measure upload/download speeds, latency
                 std::thread::sleep(std::time::Duration::from_millis(50)); // Simulate performance test
-            },
+            }
             QualityTestType::DataIntegrityTest => {
                 // Simulate data integrity test by verifying checksums
-                println!("Executing data integrity test with ID: {} - verifying data checksums", test_id);
+                println!(
+                    "Executing data integrity test with ID: {} - verifying data checksums",
+                    test_id
+                );
                 // In production: challenge provider to return data hash proofs
                 std::thread::sleep(std::time::Duration::from_millis(20)); // Simulate hash verification
-            },
+            }
             QualityTestType::SecurityTest => {
                 // Simulate security test by checking encryption
-                println!("Executing security test with ID: {} - verifying encryption compliance", test_id);
+                println!(
+                    "Executing security test with ID: {} - verifying encryption compliance",
+                    test_id
+                );
                 // In production: verify encryption standards, key management
                 std::thread::sleep(std::time::Duration::from_millis(30)); // Simulate security audit
-            },
+            }
             QualityTestType::ReliabilityTest => {
                 // Simulate reliability test by checking uptime history
-                println!("Executing reliability test with ID: {} - checking uptime history", test_id);
+                println!(
+                    "Executing reliability test with ID: {} - checking uptime history",
+                    test_id
+                );
                 std::thread::sleep(std::time::Duration::from_millis(15)); // Simulate reliability check
-            },
+            }
             QualityTestType::ResponsivenessTest => {
                 // Simulate responsiveness test by measuring response times
-                println!("Executing responsiveness test with ID: {} - measuring response times", test_id);
+                println!(
+                    "Executing responsiveness test with ID: {} - measuring response times",
+                    test_id
+                );
                 std::thread::sleep(std::time::Duration::from_millis(25)); // Simulate responsiveness test
-            },
+            }
             QualityTestType::EndToEndTest => {
                 // Simulate comprehensive end-to-end test
-                println!("Executing end-to-end test with ID: {} - running comprehensive test suite", test_id);
+                println!(
+                    "Executing end-to-end test with ID: {} - running comprehensive test suite",
+                    test_id
+                );
                 std::thread::sleep(std::time::Duration::from_millis(100)); // Simulate comprehensive test
-            },
+            }
         }
         Ok(())
     }
@@ -649,19 +678,22 @@ impl QualityAssurance {
         test_results: Vec<TestResult>,
     ) -> Result<()> {
         // Pre-calculate metrics to avoid borrowing conflicts (do this before the mutable borrow)
-        let test_metrics: Vec<_> = test_results.iter()
+        let test_metrics: Vec<_> = test_results
+            .iter()
             .map(|result| {
                 let metric = self.test_type_to_metric(&result.test_type);
                 (metric, result)
             })
             .collect();
-        
-        let monitor = self.quality_monitors.get_mut(provider_id)
+
+        let monitor = self
+            .quality_monitors
+            .get_mut(provider_id)
             .ok_or_else(|| anyhow!("Quality monitor not found for provider"))?;
 
         // Calculate new metrics based on test results
         let mut new_metrics = monitor.current_metrics.clone();
-        
+
         for (metric, result) in test_metrics.iter() {
             // Update benchmarks based on test results
             if let Some(benchmark) = self.benchmarks.get_mut(metric) {
@@ -674,7 +706,7 @@ impl QualityAssurance {
                         .as_secs();
                 }
             }
-            
+
             match result.test_type {
                 QualityTestType::DataIntegrityTest => {
                     new_metrics.data_integrity = result.score;
@@ -703,13 +735,14 @@ impl QualityAssurance {
 
         // Calculate weighted overall score
         let weights = &self.config.metric_weights;
-        new_metrics.overall_score = 
-            new_metrics.data_integrity * weights.get(&QualityMetric::DataIntegrity).unwrap_or(&0.2) +
-            new_metrics.availability * weights.get(&QualityMetric::Availability).unwrap_or(&0.2) +
-            new_metrics.performance * weights.get(&QualityMetric::Performance).unwrap_or(&0.2) +
-            new_metrics.reliability * weights.get(&QualityMetric::Reliability).unwrap_or(&0.15) +
-            new_metrics.security * weights.get(&QualityMetric::Security).unwrap_or(&0.15) +
-            new_metrics.responsiveness * weights.get(&QualityMetric::Responsiveness).unwrap_or(&0.1);
+        new_metrics.overall_score = new_metrics.data_integrity
+            * weights.get(&QualityMetric::DataIntegrity).unwrap_or(&0.2)
+            + new_metrics.availability * weights.get(&QualityMetric::Availability).unwrap_or(&0.2)
+            + new_metrics.performance * weights.get(&QualityMetric::Performance).unwrap_or(&0.2)
+            + new_metrics.reliability * weights.get(&QualityMetric::Reliability).unwrap_or(&0.15)
+            + new_metrics.security * weights.get(&QualityMetric::Security).unwrap_or(&0.15)
+            + new_metrics.responsiveness
+                * weights.get(&QualityMetric::Responsiveness).unwrap_or(&0.1);
 
         // Update confidence based on number of tests
         new_metrics.confidence = (monitor.quality_history.len() as f64 / 100.0).min(1.0);
@@ -747,16 +780,22 @@ impl QualityAssurance {
         period_start: u64,
         period_end: u64,
     ) -> Result<QualityReport> {
-        let monitor = self.quality_monitors.get(provider_id)
+        let monitor = self
+            .quality_monitors
+            .get(provider_id)
             .ok_or_else(|| anyhow!("Quality monitor not found"))?;
 
         // Filter quality history for the specified period
-        let period_snapshots: Vec<_> = monitor.quality_history.iter()
+        let period_snapshots: Vec<_> = monitor
+            .quality_history
+            .iter()
             .filter(|s| s.timestamp >= period_start && s.timestamp <= period_end)
             .collect();
 
         if period_snapshots.is_empty() {
-            return Err(anyhow!("No quality data available for the specified period"));
+            return Err(anyhow!(
+                "No quality data available for the specified period"
+            ));
         }
 
         // Calculate summary metrics
@@ -783,7 +822,8 @@ impl QualityAssurance {
         };
 
         // Store the report in quality_reports field
-        self.quality_reports.entry(provider_id.to_string())
+        self.quality_reports
+            .entry(provider_id.to_string())
             .or_insert_with(Vec::new)
             .push(report.clone());
 
@@ -817,20 +857,48 @@ impl QualityAssurance {
         }
 
         let len = snapshots.len() as f64;
-        
+
         QualityMetrics {
-            data_integrity: snapshots.iter().map(|s| s.metrics.data_integrity).sum::<f64>() / len,
-            availability: snapshots.iter().map(|s| s.metrics.availability).sum::<f64>() / len,
+            data_integrity: snapshots
+                .iter()
+                .map(|s| s.metrics.data_integrity)
+                .sum::<f64>()
+                / len,
+            availability: snapshots
+                .iter()
+                .map(|s| s.metrics.availability)
+                .sum::<f64>()
+                / len,
             performance: snapshots.iter().map(|s| s.metrics.performance).sum::<f64>() / len,
             reliability: snapshots.iter().map(|s| s.metrics.reliability).sum::<f64>() / len,
             security: snapshots.iter().map(|s| s.metrics.security).sum::<f64>() / len,
-            responsiveness: snapshots.iter().map(|s| s.metrics.responsiveness).sum::<f64>() / len,
-            overall_score: snapshots.iter().map(|s| s.metrics.overall_score).sum::<f64>() / len,
+            responsiveness: snapshots
+                .iter()
+                .map(|s| s.metrics.responsiveness)
+                .sum::<f64>()
+                / len,
+            overall_score: snapshots
+                .iter()
+                .map(|s| s.metrics.overall_score)
+                .sum::<f64>()
+                / len,
             confidence: snapshots.iter().map(|s| s.metrics.confidence).sum::<f64>() / len,
             uptime: snapshots.iter().map(|s| s.metrics.uptime).sum::<f64>() / len,
-            avg_response_time: (snapshots.iter().map(|s| s.metrics.avg_response_time as f64).sum::<f64>() / len) as u64,
-            bandwidth_utilization: snapshots.iter().map(|s| s.metrics.bandwidth_utilization).sum::<f64>() / len,
-            response_time: (snapshots.iter().map(|s| s.metrics.response_time as f64).sum::<f64>() / len) as u64,
+            avg_response_time: (snapshots
+                .iter()
+                .map(|s| s.metrics.avg_response_time as f64)
+                .sum::<f64>()
+                / len) as u64,
+            bandwidth_utilization: snapshots
+                .iter()
+                .map(|s| s.metrics.bandwidth_utilization)
+                .sum::<f64>()
+                / len,
+            response_time: (snapshots
+                .iter()
+                .map(|s| s.metrics.response_time as f64)
+                .sum::<f64>()
+                / len) as u64,
         }
     }
 
@@ -840,39 +908,55 @@ impl QualityAssurance {
         let mut performance_trends = HashMap::new();
         let mut total_incidents = 0u32;
         let mut incidents_by_type = HashMap::new();
-        
+
         // Process each snapshot to build analysis
         for snapshot in snapshots {
             // Count quality incidents from the incidents field
             total_incidents += snapshot.incidents.len() as u32;
         }
-        
+
         // Create trend analysis for each quality metric
-        performance_trends.insert(QualityMetric::DataIntegrity, TrendAnalysis {
-            direction: if total_incidents > 10 { TrendDirection::Declining } else { TrendDirection::Stable },
-            change_rate: -0.1,
-            confidence: 0.85,
-            predictions: vec![(86400, 0.8), (172800, 0.75)], // 1-2 day predictions
-        });
-        performance_trends.insert(QualityMetric::Availability, TrendAnalysis {
-            direction: TrendDirection::Stable,
-            change_rate: 0.0,
-            confidence: 0.9,
-            predictions: vec![(86400, 0.95), (172800, 0.95)],
-        });
-        performance_trends.insert(QualityMetric::Performance, TrendAnalysis {
-            direction: TrendDirection::Stable,
-            change_rate: 0.05,
-            confidence: 0.8,
-            predictions: vec![(86400, 0.85), (172800, 0.87)],
-        });
-        
+        performance_trends.insert(
+            QualityMetric::DataIntegrity,
+            TrendAnalysis {
+                direction: if total_incidents > 10 {
+                    TrendDirection::Declining
+                } else {
+                    TrendDirection::Stable
+                },
+                change_rate: -0.1,
+                confidence: 0.85,
+                predictions: vec![(86400, 0.8), (172800, 0.75)], // 1-2 day predictions
+            },
+        );
+        performance_trends.insert(
+            QualityMetric::Availability,
+            TrendAnalysis {
+                direction: TrendDirection::Stable,
+                change_rate: 0.0,
+                confidence: 0.9,
+                predictions: vec![(86400, 0.95), (172800, 0.95)],
+            },
+        );
+        performance_trends.insert(
+            QualityMetric::Performance,
+            TrendAnalysis {
+                direction: TrendDirection::Stable,
+                change_rate: 0.05,
+                confidence: 0.8,
+                predictions: vec![(86400, 0.85), (172800, 0.87)],
+            },
+        );
+
         // Categorize incidents by type using proper QualityIncidentType enum
         incidents_by_type.insert(QualityIncidentType::DataCorruption, total_incidents / 4);
         incidents_by_type.insert(QualityIncidentType::ServiceDegradation, total_incidents / 4);
         incidents_by_type.insert(QualityIncidentType::PerformanceIssue, total_incidents / 4);
-        incidents_by_type.insert(QualityIncidentType::AvailabilityIssue, total_incidents - (3 * total_incidents / 4));
-        
+        incidents_by_type.insert(
+            QualityIncidentType::AvailabilityIssue,
+            total_incidents - (3 * total_incidents / 4),
+        );
+
         QualityAnalysis {
             performance_trends,
             incident_analysis: IncidentAnalysis {
@@ -924,7 +1008,8 @@ impl QualityAssurance {
 
     /// Get quality metrics for a provider
     pub fn get_quality_metrics(&self, provider_id: &str) -> Option<&QualityMetrics> {
-        self.quality_monitors.get(provider_id)
+        self.quality_monitors
+            .get(provider_id)
             .map(|monitor| &monitor.current_metrics)
     }
 
@@ -934,10 +1019,13 @@ impl QualityAssurance {
         provider_id: &str,
         level: CertificationLevel,
     ) -> Result<bool> {
-        let metrics = self.get_quality_metrics(provider_id)
+        let metrics = self
+            .get_quality_metrics(provider_id)
             .ok_or_else(|| anyhow!("No quality metrics found for provider"))?;
 
-        let threshold = self.config.certification_thresholds
+        let threshold = self
+            .config
+            .certification_thresholds
             .get(&level)
             .copied()
             .unwrap_or(0.8);
@@ -948,7 +1036,7 @@ impl QualityAssurance {
     /// Get node quality metrics for a specific provider
     pub async fn get_node_metrics(&self, node_id: &Hash) -> anyhow::Result<Option<QualityMetrics>> {
         let node_id_str = hex::encode(node_id.as_bytes());
-        
+
         if let Some(monitor) = self.quality_monitors.get(&node_id_str) {
             Ok(Some(monitor.current_metrics.clone()))
         } else {
@@ -1004,7 +1092,8 @@ impl QualityAssurance {
                         monitoring_requirements: self.get_monitoring_requirements(&level),
                     };
 
-                    self.certifications.insert(provider_id.to_string(), certification);
+                    self.certifications
+                        .insert(provider_id.to_string(), certification);
                     break; // Provider gets the highest level they qualify for
                 }
             }
@@ -1130,10 +1219,10 @@ impl Default for QualityConfig {
 
         let mut test_frequencies = HashMap::new();
         test_frequencies.insert(QualityTestType::DataIntegrityTest, 3600); // Hourly
-        test_frequencies.insert(QualityTestType::AvailabilityTest, 300);   // Every 5 minutes
-        test_frequencies.insert(QualityTestType::PerformanceTest, 1800);   // Every 30 minutes
-        test_frequencies.insert(QualityTestType::ReliabilityTest, 86400);  // Daily
-        test_frequencies.insert(QualityTestType::SecurityTest, 604800);    // Weekly
+        test_frequencies.insert(QualityTestType::AvailabilityTest, 300); // Every 5 minutes
+        test_frequencies.insert(QualityTestType::PerformanceTest, 1800); // Every 30 minutes
+        test_frequencies.insert(QualityTestType::ReliabilityTest, 86400); // Daily
+        test_frequencies.insert(QualityTestType::SecurityTest, 604800); // Weekly
         test_frequencies.insert(QualityTestType::ResponsivenessTest, 900); // Every 15 minutes
 
         let mut metric_weights = HashMap::new();
@@ -1173,9 +1262,9 @@ mod tests {
     fn test_start_monitoring() {
         let config = QualityConfig::default();
         let mut qa = QualityAssurance::new(config);
-        
+
         qa.start_monitoring("provider1".to_string()).unwrap();
-        
+
         assert!(qa.quality_monitors.contains_key("provider1"));
         let monitor = qa.quality_monitors.get("provider1").unwrap();
         assert_eq!(monitor.current_metrics.overall_score, 1.0);
@@ -1185,10 +1274,12 @@ mod tests {
     fn test_certification_eligibility() {
         let config = QualityConfig::default();
         let mut qa = QualityAssurance::new(config);
-        
+
         qa.start_monitoring("provider1".to_string()).unwrap();
-        
-        let eligible = qa.check_certification_eligibility("provider1", CertificationLevel::Basic).unwrap();
+
+        let eligible = qa
+            .check_certification_eligibility("provider1", CertificationLevel::Basic)
+            .unwrap();
         assert!(eligible); // Should be eligible with perfect initial scores
     }
 }

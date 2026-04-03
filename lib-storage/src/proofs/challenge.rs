@@ -1,9 +1,9 @@
 //! Challenge generation and management for storage proofs
 
-use anyhow::{Result, anyhow};
+use crate::types::ContentHash;
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
-use crate::types::ContentHash;
 
 // Convert nonce bytes to u64 for challenge ID
 fn nonce_to_u64(nonce: [u8; 12]) -> u64 {
@@ -336,12 +336,8 @@ mod tests {
     #[test]
     fn test_audit_challenge_creation() {
         let content_hash = content_hash("test_content");
-        let challenge = StorageChallenge::new_audit_challenge(
-            content_hash,
-            3,
-            "auditor1".to_string(),
-            600,
-        );
+        let challenge =
+            StorageChallenge::new_audit_challenge(content_hash, 3, "auditor1".to_string(), 600);
 
         assert_eq!(challenge.challenge_type, ChallengeType::PeriodicAudit);
         assert_eq!(challenge.block_index, Some(3));
@@ -353,18 +349,12 @@ mod tests {
         let generator = ChallengeGenerator::new(300, 5);
         let content_hash = content_hash("test_content");
 
-        let storage_challenge = generator.generate_storage_challenge(
-            content_hash.clone(),
-            20,
-            "node1".to_string(),
-        );
+        let storage_challenge =
+            generator.generate_storage_challenge(content_hash.clone(), 20, "node1".to_string());
         assert!(storage_challenge.is_ok());
 
-        let retrieval_challenge = generator.generate_retrieval_challenge(
-            content_hash.clone(),
-            20,
-            "node1".to_string(),
-        );
+        let retrieval_challenge =
+            generator.generate_retrieval_challenge(content_hash.clone(), 20, "node1".to_string());
         assert!(retrieval_challenge.is_ok());
     }
 
@@ -373,12 +363,8 @@ mod tests {
         let generator = ChallengeGenerator::default();
         let content_hash = content_hash("test_content");
 
-        let challenges = generator.generate_batch_challenges(
-            content_hash,
-            50,
-            5,
-            "node1".to_string(),
-        );
+        let challenges =
+            generator.generate_batch_challenges(content_hash, 50, 5, "node1".to_string());
 
         assert!(challenges.is_ok());
         let challenges = challenges.unwrap();
@@ -388,7 +374,7 @@ mod tests {
     #[test]
     fn test_challenge_validation() {
         let content_hash = content_hash("test");
-        
+
         // Valid storage challenge
         let valid_challenge = StorageChallenge::new_storage_challenge(
             content_hash.clone(),
@@ -399,12 +385,8 @@ mod tests {
         assert!(valid_challenge.validate().is_ok());
 
         // Invalid retrieval challenge (no sample count)
-        let mut invalid_challenge = StorageChallenge::new_retrieval_challenge(
-            content_hash,
-            10,
-            "node1".to_string(),
-            300,
-        );
+        let mut invalid_challenge =
+            StorageChallenge::new_retrieval_challenge(content_hash, 10, "node1".to_string(), 300);
         invalid_challenge.sample_count = None;
         assert!(invalid_challenge.validate().is_err());
     }

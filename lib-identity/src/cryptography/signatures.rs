@@ -3,9 +3,11 @@
 // IMPLEMENTATIONS using lib-crypto
 
 use crate::cryptography::PostQuantumKeypair;
-use serde::{Deserialize, Serialize};
-use lib_crypto::post_quantum::{dilithium2_sign, dilithium2_verify, dilithium5_sign, dilithium5_verify};
 use anyhow::Result;
+use lib_crypto::post_quantum::{
+    dilithium2_sign, dilithium2_verify, dilithium5_sign, dilithium5_verify,
+};
+use serde::{Deserialize, Serialize};
 
 /// Post-quantum signature using CRYSTALS-Dilithium
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,22 +35,22 @@ pub fn sign_with_identity(
     params: Option<SignatureParams>,
 ) -> Result<PostQuantumSignature, String> {
     let params = params.unwrap_or_default();
-    
+
     // Add context and domain separation if specified
     let mut signing_input = Vec::new();
-    
+
     if let Some(context) = &params.context {
         signing_input.extend_from_slice(context.as_bytes());
         signing_input.push(0x00); // Separator
     }
-    
+
     if let Some(domain) = &params.domain_separation {
         signing_input.extend_from_slice(domain.as_bytes());
         signing_input.push(0x01); // Separator
     }
-    
+
     signing_input.extend_from_slice(message);
-    
+
     // Generate signature using lib-crypto implementations
     let signature = match keypair.security_level {
         2 => dilithium2_sign(&signing_input, &keypair.private_key)
@@ -57,12 +59,12 @@ pub fn sign_with_identity(
             .map_err(|e| format!("Dilithium5 signing failed: {}", e))?,
         _ => return Err("Unsupported security level (supported: 2, 5)".to_string()),
     };
-    
+
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    
+
     Ok(PostQuantumSignature {
         signature,
         algorithm: keypair.algorithm.clone(),
@@ -80,22 +82,22 @@ pub fn verify_signature(
     params: Option<SignatureParams>,
 ) -> Result<bool, String> {
     let params = params.unwrap_or_default();
-    
+
     // Reconstruct signing input
     let mut signing_input = Vec::new();
-    
+
     if let Some(context) = &params.context {
         signing_input.extend_from_slice(context.as_bytes());
         signing_input.push(0x00);
     }
-    
+
     if let Some(domain) = &params.domain_separation {
         signing_input.extend_from_slice(domain.as_bytes());
         signing_input.push(0x01);
     }
-    
+
     signing_input.extend_from_slice(message);
-    
+
     // Verify signature using lib-crypto implementations
     match signature.security_level {
         2 => dilithium2_verify(&signing_input, &signature.signature, public_key)
@@ -114,12 +116,12 @@ pub fn batch_verify_signatures(
     params: Option<SignatureParams>,
 ) -> Result<Vec<bool>, String> {
     let mut results = Vec::with_capacity(verifications.len());
-    
+
     for (public_key, message, signature) in verifications {
         let result = verify_signature(public_key, message, signature, params.clone())?;
         results.push(result);
     }
-    
+
     Ok(results)
 }
 
@@ -148,7 +150,7 @@ pub fn verify_detached_signature(
         signature_type: "PostQuantumSignature2024".to_string(),
         timestamp: 0, // Not used in verification
     };
-    
+
     verify_signature(public_key, message, &signature, params)
 }
 

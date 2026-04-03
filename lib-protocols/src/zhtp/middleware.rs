@@ -1,15 +1,17 @@
 //! ZHTP Middleware Stack
-//! 
+//!
 //! Comprehensive middleware system for ZHTP protocol including authentication,
 //! authorization, compression, CORS, logging, economic validation, rate limiting,
 //! security headers, and Web4-specific middleware components.
 
+#![allow(dead_code)]
+
 use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
-use crate::zhtp::{ZhtpMiddleware, ZhtpResult};
 use crate::zhtp::config::ServerConfig;
+use crate::zhtp::{ZhtpMiddleware, ZhtpResult};
 
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH, Instant};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// Middleware execution order
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -148,19 +150,19 @@ impl CorsMiddleware {
             max_age: 86400, // 24 hours
         }
     }
-    
+
     /// Configure allowed origins
     pub fn with_origins(mut self, origins: Vec<String>) -> Self {
         self.allowed_origins = origins;
         self
     }
-    
+
     /// Configure allowed methods
     pub fn with_methods(mut self, methods: Vec<String>) -> Self {
         self.allowed_methods = methods;
         self
     }
-    
+
     /// Configure allowed headers
     pub fn with_headers(mut self, headers: Vec<String>) -> Self {
         self.allowed_headers = headers;
@@ -172,16 +174,18 @@ impl CorsMiddleware {
 impl ZhtpMiddleware for CorsMiddleware {
     async fn before_request(&self, request: &mut ZhtpRequest) -> ZhtpResult<()> {
         // Add CORS context to request for later processing
-        request.headers.set(
-            "X-CORS-Processed",
-            "true".to_string(),
+        request.headers.set("X-CORS-Processed", "true".to_string());
+
+        tracing::debug!(
+            "CORS middleware: Processing request from origin: {}",
+            request
+                .headers
+                .get("Origin")
+                .unwrap_or("unknown".to_string())
         );
-        
-        tracing::debug!("CORS middleware: Processing request from origin: {}",
-                        request.headers.get("Origin").unwrap_or("unknown".to_string()));
         Ok(())
     }
-    
+
     async fn after_response(&self, response: &mut ZhtpResponse) -> ZhtpResult<()> {
         // Add CORS headers
         response.headers.set(
@@ -192,34 +196,32 @@ impl ZhtpMiddleware for CorsMiddleware {
                 self.allowed_origins.join(", ")
             },
         );
-        
+
         response.headers.set(
             "Access-Control-Allow-Methods",
             self.allowed_methods.join(", "),
         );
-        
+
         response.headers.set(
             "Access-Control-Allow-Headers",
             self.allowed_headers.join(", "),
         );
-        
+
         response.headers.set(
             "Access-Control-Expose-Headers",
             self.exposed_headers.join(", "),
         );
-        
+
         if self.allow_credentials {
-            response.headers.set(
-                "Access-Control-Allow-Credentials",
-                "true".to_string(),
-            );
+            response
+                .headers
+                .set("Access-Control-Allow-Credentials", "true".to_string());
         }
-        
-        response.headers.set(
-            "Access-Control-Max-Age",
-            self.max_age.to_string(),
-        );
-        
+
+        response
+            .headers
+            .set("Access-Control-Max-Age", self.max_age.to_string());
+
         Ok(())
     }
 }
@@ -246,13 +248,13 @@ impl AuthenticationMiddleware {
             signature_verification: true,
         }
     }
-    
+
     /// Configure required authentication methods
     pub fn with_auth_methods(mut self, methods: Vec<String>) -> Self {
         self.required_auth_methods = methods;
         self
     }
-    
+
     /// Configure JWT secret
     pub fn with_jwt_secret(mut self, secret: String) -> Self {
         self.jwt_secret = Some(secret);
@@ -265,7 +267,7 @@ impl ZhtpMiddleware for AuthenticationMiddleware {
     async fn before_request(&self, request: &mut ZhtpRequest) -> ZhtpResult<()> {
         let mut authenticated = false;
         let mut auth_method_used = String::new();
-        
+
         // Check ZK proof authentication
         if self.zk_proof_verification {
             if let Some(zk_proof) = request.headers.get("X-ZK-Proof") {
@@ -276,7 +278,7 @@ impl ZhtpMiddleware for AuthenticationMiddleware {
                 }
             }
         }
-        
+
         // Check signature authentication
         if !authenticated && self.signature_verification {
             if let Some(signature) = request.headers.get("X-Signature") {
@@ -287,7 +289,7 @@ impl ZhtpMiddleware for AuthenticationMiddleware {
                 }
             }
         }
-        
+
         // Check JWT authentication
         if !authenticated && self.jwt_secret.is_some() {
             if let Some(auth_header) = request.headers.get("Authorization") {
@@ -301,38 +303,34 @@ impl ZhtpMiddleware for AuthenticationMiddleware {
                 }
             }
         }
-        
+
         // Set authentication context
-        request.headers.set(
-            "X-Authenticated",
-            authenticated.to_string(),
-        );
-        
+        request
+            .headers
+            .set("X-Authenticated", authenticated.to_string());
+
         if authenticated {
-            request.headers.set(
-                "X-Auth-Method",
-                auth_method_used,
-            );
+            request.headers.set("X-Auth-Method", auth_method_used);
         }
-        
+
         // Check if authentication is required
         if !self.required_auth_methods.is_empty() && !authenticated {
             return Err(anyhow::anyhow!("Authentication required"));
         }
-        
+
         Ok(())
     }
-    
+
     async fn after_response(&self, response: &mut ZhtpResponse) -> ZhtpResult<()> {
         // Add authentication-related headers
         response.headers.set(
             "X-Auth-Required",
             (!self.required_auth_methods.is_empty()).to_string(),
         );
-        
+
         Ok(())
     }
-    
+
     async fn on_error(&self, error: &anyhow::Error) -> ZhtpResult<Option<ZhtpResponse>> {
         if error.to_string().contains("Authentication required") {
             let response = ZhtpResponse::error(
@@ -353,14 +351,14 @@ impl AuthenticationMiddleware {
         // For now, basic validation
         Ok(zk_proof.len() > 32 && zk_proof.starts_with("zk_"))
     }
-    
+
     /// Verify signature
     async fn verify_signature(&self, _request: &ZhtpRequest, signature: &str) -> ZhtpResult<bool> {
         // In production, this would verify the actual signature
         // For now, basic validation
         Ok(signature.len() >= 64 && signature.chars().all(|c| c.is_ascii_hexdigit()))
     }
-    
+
     /// Verify JWT token
     async fn verify_jwt(&self, token: &str) -> ZhtpResult<bool> {
         // In production, this would use a JWT library for verification
@@ -399,74 +397,84 @@ impl ZhtpMiddleware for EconomicMiddleware {
         if !self.enabled {
             return Ok(());
         }
-        
+
         // Extract DAO fee from request
-        let dao_fee = request.headers.get("X-DAO-Fee")
+        let dao_fee = request
+            .headers
+            .get("X-DAO-Fee")
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(0);
-        
+
         // Calculate required fee based on transaction value
-        let transaction_value = request.headers.get("X-Transaction-Value")
+        let transaction_value = request
+            .headers
+            .get("X-Transaction-Value")
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(self.calculate_default_transaction_value(request));
-        
+
         let required_fee = std::cmp::max(
             self.min_dao_fee,
-            (transaction_value as f64 * self.dao_fee_percentage) as u64
+            (transaction_value as f64 * self.dao_fee_percentage) as u64,
         );
-        
+
         // Validate DAO fee
         if dao_fee < required_fee {
             return Err(anyhow::anyhow!(
                 "Insufficient DAO fee: required {} wei, provided {} wei",
-                required_fee, dao_fee
+                required_fee,
+                dao_fee
             ));
         }
-        
+
         // Calculate UBI allocation
         let ubi_allocation = (dao_fee as f64 * self.ubi_percentage) as u64;
-        
+
         // Calculate economic impact score
         let impact_score = self.calculate_economic_impact(transaction_value, dao_fee);
-        
+
         // Add economic context to request
-        request.headers.set("X-Required-DAO-Fee", required_fee.to_string());
-        request.headers.set("X-UBI-Allocation", ubi_allocation.to_string());
-        request.headers.set("X-Economic-Impact", impact_score.to_string());
-        request.headers.set("X-Economic-Validated", "true".to_string());
-        
-        tracing::info!("Economic validation: fee={} wei, UBI={} wei, impact={}",
-                      dao_fee, ubi_allocation, impact_score);
-        
+        request
+            .headers
+            .set("X-Required-DAO-Fee", required_fee.to_string());
+        request
+            .headers
+            .set("X-UBI-Allocation", ubi_allocation.to_string());
+        request
+            .headers
+            .set("X-Economic-Impact", impact_score.to_string());
+        request
+            .headers
+            .set("X-Economic-Validated", "true".to_string());
+
+        tracing::info!(
+            "Economic validation: fee={} wei, UBI={} wei, impact={}",
+            dao_fee,
+            ubi_allocation,
+            impact_score
+        );
+
         Ok(())
     }
-    
+
     async fn after_response(&self, response: &mut ZhtpResponse) -> ZhtpResult<()> {
         if !self.enabled {
             return Ok(());
         }
-        
+
         // Add economic information to response
-        response.headers.set(
-            "X-DAO-Fee-Processed",
-            "true".to_string(),
-        );
-        
-        response.headers.set(
-            "X-UBI-System",
-            "enabled".to_string(),
-        );
-        
+        response
+            .headers
+            .set("X-DAO-Fee-Processed", "true".to_string());
+
+        response.headers.set("X-UBI-System", "enabled".to_string());
+
         Ok(())
     }
-    
+
     async fn on_error(&self, error: &anyhow::Error) -> ZhtpResult<Option<ZhtpResponse>> {
         let error_msg = error.to_string();
         if error_msg.contains("Insufficient DAO fee") {
-            let response = ZhtpResponse::error(
-                ZhtpStatus::PaymentRequired,
-                error_msg,
-            );
+            let response = ZhtpResponse::error(ZhtpStatus::PaymentRequired, error_msg);
             Ok(Some(response))
         } else {
             Ok(None)
@@ -490,23 +498,23 @@ impl EconomicMiddleware {
             crate::types::ZhtpMethod::Connect => 6000,
             crate::types::ZhtpMethod::Trace => 1500,
         };
-        
+
         // Add size component
         let size_value = (request.body.len() as u64).saturating_mul(10);
-        
+
         base_value.saturating_add(size_value)
     }
-    
+
     /// Calculate economic impact score
     fn calculate_economic_impact(&self, transaction_value: u64, dao_fee: u64) -> u32 {
         let fee_ratio = dao_fee as f64 / transaction_value.max(1) as f64;
-        
+
         match fee_ratio {
-            r if r >= 0.1 => 100,  // Very high impact (10%+ fee ratio)
-            r if r >= 0.05 => 80,  // High impact (5-10% fee ratio)
-            r if r >= 0.02 => 60,  // Medium impact (2-5% fee ratio)
-            r if r >= 0.01 => 40,  // Low impact (1-2% fee ratio)
-            _ => 20,               // Very low impact (<1% fee ratio)
+            r if r >= 0.1 => 100, // Very high impact (10%+ fee ratio)
+            r if r >= 0.05 => 80, // High impact (5-10% fee ratio)
+            r if r >= 0.02 => 60, // Medium impact (2-5% fee ratio)
+            r if r >= 0.01 => 40, // Low impact (1-2% fee ratio)
+            _ => 20,              // Very low impact (<1% fee ratio)
         }
     }
 }
@@ -542,13 +550,13 @@ impl CompressionMiddleware {
             level: 6,
         }
     }
-    
+
     /// Configure compression algorithms
     pub fn with_algorithms(mut self, algorithms: Vec<CompressionAlgorithm>) -> Self {
         self.algorithms = algorithms;
         self
     }
-    
+
     /// Configure minimum compression size
     pub fn with_min_size(mut self, min_size: usize) -> Self {
         self.min_size = min_size;
@@ -564,60 +572,63 @@ impl ZhtpMiddleware for CompressionMiddleware {
             let decompressed = self.decompress_data(&request.body, &encoding)?;
             request.body = decompressed;
             request.headers.remove("Content-Encoding");
-            
+
             // Update content length
-            request.headers.set(
-                "Content-Length",
-                request.body.len().to_string(),
+            request
+                .headers
+                .set("Content-Length", request.body.len().to_string());
+
+            tracing::debug!(
+                " Decompressed request body: {} -> {} bytes",
+                encoding,
+                request.body.len()
             );
-            
-            tracing::debug!(" Decompressed request body: {} -> {} bytes",
-                           encoding, request.body.len());
         }
-        
+
         Ok(())
     }
-    
+
     async fn after_response(&self, response: &mut ZhtpResponse) -> ZhtpResult<()> {
         // Skip compression for small responses
         if response.body.len() < self.min_size {
             return Ok(());
         }
-        
+
         // Check if client accepts compression
         // Note: In a implementation, we'd check the Accept-Encoding header
         // from the original request
-        
+
         // Compress response body
         if let Some(algorithm) = self.algorithms.first() {
             let compressed = self.compress_data(&response.body, algorithm)?;
-            
+
             // Only use compression if it actually reduces size
             if compressed.len() < response.body.len() {
                 response.body = compressed;
-                
+
                 let encoding = match algorithm {
                     CompressionAlgorithm::Gzip => "gzip",
                     CompressionAlgorithm::Deflate => "deflate",
                     CompressionAlgorithm::Brotli => "br",
                     CompressionAlgorithm::Zstd => "zstd",
                 };
-                
-                response.headers.set(
-                    "Content-Encoding",
-                    encoding.to_string(),
+
+                response
+                    .headers
+                    .set("Content-Encoding", encoding.to_string());
+
+                response
+                    .headers
+                    .set("Content-Length", response.body.len().to_string());
+
+                tracing::debug!(
+                    " Compressed response body with {}: {} bytes",
+                    encoding,
+                    response.body.len()
                 );
-                
-                response.headers.set(
-                    "Content-Length",
-                    response.body.len().to_string(),
-                );
-                
-                tracing::debug!(" Compressed response body with {}: {} bytes",
-                               encoding, response.body.len());
             }
         }
-        
+
         Ok(())
     }
 }
@@ -630,7 +641,7 @@ impl CompressionMiddleware {
                 use flate2::write::GzEncoder;
                 use flate2::Compression;
                 use std::io::Write;
-                
+
                 let mut encoder = GzEncoder::new(Vec::new(), Compression::new(self.level));
                 encoder.write_all(data)?;
                 Ok(encoder.finish()?)
@@ -639,7 +650,7 @@ impl CompressionMiddleware {
                 use flate2::write::DeflateEncoder;
                 use flate2::Compression;
                 use std::io::Write;
-                
+
                 let mut encoder = DeflateEncoder::new(Vec::new(), Compression::new(self.level));
                 encoder.write_all(data)?;
                 Ok(encoder.finish()?)
@@ -656,14 +667,14 @@ impl CompressionMiddleware {
             }
         }
     }
-    
+
     /// Decompress data using specified encoding
     fn decompress_data(&self, data: &[u8], encoding: &str) -> ZhtpResult<Vec<u8>> {
         match encoding {
             "gzip" => {
                 use flate2::read::GzDecoder;
                 use std::io::Read;
-                
+
                 let mut decoder = GzDecoder::new(data);
                 let mut decompressed = Vec::new();
                 decoder.read_to_end(&mut decompressed)?;
@@ -672,7 +683,7 @@ impl CompressionMiddleware {
             "deflate" => {
                 use flate2::read::DeflateDecoder;
                 use std::io::Read;
-                
+
                 let mut decoder = DeflateDecoder::new(data);
                 let mut decompressed = Vec::new();
                 decoder.read_to_end(&mut decompressed)?;
@@ -688,7 +699,10 @@ impl CompressionMiddleware {
                 // For now, return original data
                 Ok(data.to_vec())
             }
-            _ => Err(anyhow::anyhow!("Unsupported compression encoding: {}", encoding)),
+            _ => Err(anyhow::anyhow!(
+                "Unsupported compression encoding: {}",
+                encoding
+            )),
         }
     }
 }
@@ -737,66 +751,62 @@ impl ZhtpMiddleware for RateLimitMiddleware {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         // Generate rate limit key
         let mut limit_keys = Vec::new();
-        
+
         if self.limit_by_ip {
-            let client_ip_raw = request.headers.get("X-Real-IP")
+            let client_ip_raw = request
+                .headers
+                .get("X-Real-IP")
                 .or_else(|| request.headers.get("X-Forwarded-For"))
                 .unwrap_or("unknown".to_string());
-            let client_ip = client_ip_raw
-                .split(',')
-                .next()
-                .unwrap_or("unknown")
-                .trim();
+            let client_ip = client_ip_raw.split(',').next().unwrap_or("unknown").trim();
             limit_keys.push(format!("ip:{}", client_ip));
         }
-        
+
         if self.limit_by_identity {
             if let Some(user_id) = request.headers.get("X-User-ID") {
                 limit_keys.push(format!("user:{}", user_id));
             }
         }
-        
+
         // Check rate limits for each key
         for key in limit_keys {
             if self.is_rate_limited(&key, current_time) {
                 return Err(anyhow::anyhow!("Rate limit exceeded for {}", key));
             }
         }
-        
+
         tracing::debug!("🚦 Rate limit check passed");
         Ok(())
     }
-    
+
     async fn after_response(&self, response: &mut ZhtpResponse) -> ZhtpResult<()> {
         // Add rate limit headers
-        response.headers.set(
-            "X-RateLimit-Limit",
-            self.requests_per_minute.to_string(),
-        );
-        
-        response.headers.set(
-            "X-RateLimit-Burst",
-            self.burst_size.to_string(),
-        );
-        
+        response
+            .headers
+            .set("X-RateLimit-Limit", self.requests_per_minute.to_string());
+
+        response
+            .headers
+            .set("X-RateLimit-Burst", self.burst_size.to_string());
+
         Ok(())
     }
-    
+
     async fn on_error(&self, error: &anyhow::Error) -> ZhtpResult<Option<ZhtpResponse>> {
         if error.to_string().contains("Rate limit exceeded") {
             let mut response = ZhtpResponse::error(
                 ZhtpStatus::TooManyRequests,
                 "Rate limit exceeded".to_string(),
             );
-            
+
             response.headers.set(
                 "Retry-After",
                 "60".to_string(), // Retry after 60 seconds
             );
-            
+
             Ok(Some(response))
         } else {
             Ok(None)
@@ -806,7 +816,7 @@ impl ZhtpMiddleware for RateLimitMiddleware {
 
 impl RateLimitMiddleware {
     /// Check if request should be rate limited
-    fn is_rate_limited(&self, _key: &str, current_time: u64) -> bool {
+    fn is_rate_limited(&self, _key: &str, _current_time: u64) -> bool {
         // This is a simplified implementation
         // In production, would use a more sophisticated algorithm like token bucket
         // and would need to be thread-safe with proper synchronization
@@ -839,19 +849,19 @@ impl LoggingMiddleware {
             max_body_log_size: 1024,
         }
     }
-    
+
     /// Configure request logging
     pub fn with_request_logging(mut self, enabled: bool) -> Self {
         self.log_requests = enabled;
         self
     }
-    
+
     /// Configure response logging
     pub fn with_response_logging(mut self, enabled: bool) -> Self {
         self.log_responses = enabled;
         self
     }
-    
+
     /// Configure body logging
     pub fn with_body_logging(mut self, enabled: bool) -> Self {
         self.log_request_bodies = enabled;
@@ -865,21 +875,23 @@ impl ZhtpMiddleware for LoggingMiddleware {
     async fn before_request(&self, request: &mut ZhtpRequest) -> ZhtpResult<()> {
         if self.log_requests {
             let mut log_msg = format!("Request: {} {}", request.method as u8, request.uri);
-            
+
             if self.log_request_bodies && !request.body.is_empty() {
                 let body_preview = if request.body.len() <= self.max_body_log_size {
                     String::from_utf8_lossy(&request.body).to_string()
                 } else {
-                    format!("{}... ({} bytes)",
-                           String::from_utf8_lossy(&request.body[..self.max_body_log_size]),
-                           request.body.len())
+                    format!(
+                        "{}... ({} bytes)",
+                        String::from_utf8_lossy(&request.body[..self.max_body_log_size]),
+                        request.body.len()
+                    )
                 };
                 log_msg.push_str(&format!(" | Body: {}", body_preview));
             }
-            
+
             tracing::info!("{}", log_msg);
         }
-        
+
         // Add request start time for performance measurement
         request.headers.set(
             "X-Request-Start-Time",
@@ -889,33 +901,37 @@ impl ZhtpMiddleware for LoggingMiddleware {
                 .as_millis()
                 .to_string(),
         );
-        
+
         Ok(())
     }
-    
+
     async fn after_response(&self, response: &mut ZhtpResponse) -> ZhtpResult<()> {
         if self.log_responses {
-            let mut log_msg = format!(" Response: {} {}", 
-                                    response.status.code(), 
-                                    response.status.reason_phrase());
-            
+            let mut log_msg = format!(
+                " Response: {} {}",
+                response.status.code(),
+                response.status.reason_phrase()
+            );
+
             if self.log_response_bodies && !response.body.is_empty() {
                 let body_preview = if response.body.len() <= self.max_body_log_size {
                     String::from_utf8_lossy(&response.body).to_string()
                 } else {
-                    format!("{}... ({} bytes)",
-                           String::from_utf8_lossy(&response.body[..self.max_body_log_size]),
-                           response.body.len())
+                    format!(
+                        "{}... ({} bytes)",
+                        String::from_utf8_lossy(&response.body[..self.max_body_log_size]),
+                        response.body.len()
+                    )
                 };
                 log_msg.push_str(&format!(" | Body: {}", body_preview));
             }
-            
+
             tracing::info!("{}", log_msg);
         }
-        
+
         Ok(())
     }
-    
+
     async fn on_error(&self, error: &anyhow::Error) -> ZhtpResult<Option<ZhtpResponse>> {
         tracing::error!("Middleware error: {}", error);
         Ok(None)
@@ -934,20 +950,25 @@ impl SecurityHeadersMiddleware {
     /// Create new security headers middleware
     pub fn new() -> Self {
         let mut custom_headers = HashMap::new();
-        
+
         // Standard security headers
         custom_headers.insert("X-Content-Type-Options".to_string(), "nosniff".to_string());
         custom_headers.insert("X-Frame-Options".to_string(), "DENY".to_string());
         custom_headers.insert("X-XSS-Protection".to_string(), "1; mode=block".to_string());
-        custom_headers.insert("Strict-Transport-Security".to_string(), 
-                            "max-age=31536000; includeSubDomains".to_string());
-        custom_headers.insert("Referrer-Policy".to_string(), "strict-origin-when-cross-origin".to_string());
-        
+        custom_headers.insert(
+            "Strict-Transport-Security".to_string(),
+            "max-age=31536000; includeSubDomains".to_string(),
+        );
+        custom_headers.insert(
+            "Referrer-Policy".to_string(),
+            "strict-origin-when-cross-origin".to_string(),
+        );
+
         // ZHTP-specific security headers
         custom_headers.insert("X-ZHTP-Security".to_string(), "enabled".to_string());
         custom_headers.insert("X-ZK-Privacy".to_string(), "protected".to_string());
         custom_headers.insert("X-Post-Quantum".to_string(), "ready".to_string());
-        
+
         Self {
             add_security_headers: true,
             custom_headers,
@@ -961,14 +982,14 @@ impl ZhtpMiddleware for SecurityHeadersMiddleware {
         // Security headers are added in after_response
         Ok(())
     }
-    
+
     async fn after_response(&self, response: &mut ZhtpResponse) -> ZhtpResult<()> {
         if self.add_security_headers {
             for (header, value) in &self.custom_headers {
                 response.headers.set(&header, value.clone());
             }
         }
-        
+
         Ok(())
     }
 }
@@ -976,13 +997,13 @@ impl ZhtpMiddleware for SecurityHeadersMiddleware {
 /// Create default middleware stack for ZHTP server
 pub fn create_default_middleware_stack(config: &ServerConfig) -> Vec<Box<dyn ZhtpMiddleware>> {
     let mut middleware: Vec<Box<dyn ZhtpMiddleware>> = Vec::new();
-    
+
     // Security headers (first)
     middleware.push(Box::new(SecurityHeadersMiddleware::new()));
-    
+
     // CORS
     middleware.push(Box::new(CorsMiddleware::new()));
-    
+
     // Rate limiting
     if config.security.enable_rate_limiting {
         middleware.push(Box::new(RateLimitMiddleware::new(
@@ -990,10 +1011,10 @@ pub fn create_default_middleware_stack(config: &ServerConfig) -> Vec<Box<dyn Zht
             config.security.rate_limiting.burst_size,
         )));
     }
-    
+
     // Authentication
     middleware.push(Box::new(AuthenticationMiddleware::new()));
-    
+
     // Economic validation
     if config.economic.enable_dao_fees {
         middleware.push(Box::new(EconomicMiddleware::new(
@@ -1002,15 +1023,15 @@ pub fn create_default_middleware_stack(config: &ServerConfig) -> Vec<Box<dyn Zht
             config.economic.ubi_percentage,
         )));
     }
-    
+
     // Compression
     if config.enable_compression {
         middleware.push(Box::new(CompressionMiddleware::new()));
     }
-    
+
     // Logging (last)
     middleware.push(Box::new(LoggingMiddleware::new()));
-    
+
     middleware
 }
 
@@ -1022,12 +1043,12 @@ mod tests {
     #[tokio::test]
     async fn test_cors_middleware() {
         use lib_economy::{EconomicModel, Priority};
-        
+
         let cors = CorsMiddleware::new();
-        
+
         // Create a test economic model
         let economic_model = EconomicModel::new();
-        
+
         let mut request = ZhtpRequest::new(
             ZhtpMethod::Get,
             "/test".to_string(),
@@ -1035,21 +1056,25 @@ mod tests {
             None, // requester
             Priority::Normal,
             &economic_model,
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         cors.before_request(&mut request).await.unwrap();
-        assert_eq!(request.headers.get("X-CORS-Processed"), Some("true".to_string()));
+        assert_eq!(
+            request.headers.get("X-CORS-Processed"),
+            Some("true".to_string())
+        );
     }
 
     #[tokio::test]
     async fn test_economic_middleware() {
         use lib_economy::{EconomicModel, Priority};
-        
+
         let economic = EconomicMiddleware::new(1000, 0.02, 0.8);
-        
+
         // Create a test economic model
         let economic_model = EconomicModel::new();
-        
+
         let mut request = ZhtpRequest::new(
             ZhtpMethod::Post,
             "/test".to_string(),
@@ -1057,14 +1082,20 @@ mod tests {
             None, // requester
             Priority::Normal,
             &economic_model,
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         // Set the required headers after creating the request
         request.headers.set("X-DAO-Fee", "2000".to_string());
-        request.headers.set("X-Transaction-Value", "50000".to_string());
-        
+        request
+            .headers
+            .set("X-Transaction-Value", "50000".to_string());
+
         economic.before_request(&mut request).await.unwrap();
-        assert_eq!(request.headers.get("X-Economic-Validated"), Some("true".to_string()));
+        assert_eq!(
+            request.headers.get("X-Economic-Validated"),
+            Some("true".to_string())
+        );
     }
 
     #[tokio::test]
@@ -1072,9 +1103,9 @@ mod tests {
         let compression = CompressionMiddleware::new().with_min_size(10);
         let test_data = b"This is test data that should be compressed".repeat(10);
         let mut response = ZhtpResponse::success(test_data, None);
-        
+
         compression.after_response(&mut response).await.unwrap();
-        
+
         // Should have compression headers if compressed
         if response.headers.get("Content-Encoding").is_some() {
             assert!(response.body.len() > 0);

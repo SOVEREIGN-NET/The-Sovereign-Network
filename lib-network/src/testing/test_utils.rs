@@ -1,24 +1,26 @@
-use anyhow::Result;
-use std::path::PathBuf;
-use lib_crypto::hash_blake3;
-use crate::protocols::NetworkProtocol;
 use crate::mesh::server::ZhtpMeshServer;
+use crate::protocols::NetworkProtocol;
 use crate::storage_stub::{UnifiedStorageConfig, UnifiedStorageSystem};
+use anyhow::Result;
+use lib_crypto::hash_blake3;
+use lib_identity::types::NodeId;
+use std::path::PathBuf;
 
 /// Create a test mesh server for development with implementations
 pub async fn create_test_mesh_server() -> Result<ZhtpMeshServer> {
-    let node_id = hash_blake3(b"test-mesh-server");
+    let node_id_bytes = hash_blake3(b"test-mesh-server");
+    let node_id = NodeId::from_bytes(node_id_bytes);
     let storage_config = UnifiedStorageConfig::default();
     let storage = UnifiedStorageSystem::new(storage_config).await?;
-    
+
     let protocols = vec![
         NetworkProtocol::BluetoothLE,
         NetworkProtocol::WiFiDirect,
         NetworkProtocol::LoRaWAN,
     ];
-    
+
     // Create dummy owner key for testing
-    let owner_key = lib_crypto::PublicKey::new(node_id.to_vec());
+    let owner_key = lib_crypto::PublicKey::new(node_id_bytes.to_vec());
     ZhtpMeshServer::new(node_id, owner_key, storage, protocols, vec![]).await
 }
 
@@ -47,10 +49,10 @@ impl TestStorageSystem {
         if !config.storage_path.exists() {
             std::fs::create_dir_all(&config.storage_path)?;
         }
-        
+
         Ok(TestStorageSystem { config })
     }
-    
+
     /// Store data in the test storage system
     pub async fn store(&mut self, key: &[u8], data: &[u8]) -> Result<()> {
         let key_hex = hex::encode(key);
@@ -58,7 +60,7 @@ impl TestStorageSystem {
         tokio::fs::write(file_path, data).await?;
         Ok(())
     }
-    
+
     /// Retrieve data from the test storage system
     pub async fn retrieve(&self, key: &[u8]) -> Result<Vec<u8>> {
         let key_hex = hex::encode(key);
@@ -66,14 +68,14 @@ impl TestStorageSystem {
         let data = tokio::fs::read(file_path).await?;
         Ok(data)
     }
-    
+
     /// Check if data exists in the test storage system
     pub async fn exists(&self, key: &[u8]) -> bool {
         let key_hex = hex::encode(key);
         let file_path = self.config.storage_path.join(format!("{}.dat", key_hex));
         file_path.exists()
     }
-    
+
     /// Get storage statistics
     pub async fn get_stats(&self) -> TestStorageStats {
         TestStorageStats {
@@ -106,19 +108,19 @@ pub struct TestEconomicModel {
 impl TestEconomicModel {
     pub fn new() -> Self {
         TestEconomicModel {
-            total_supply: 21_000_000_000, // 21 billion tokens
+            total_supply: 21_000_000_000,      // 21 billion tokens
             circulating_supply: 1_000_000_000, // 1 billion in circulation
-            dao_treasury: 100_000_000, // 100 million in treasury
+            dao_treasury: 100_000_000,         // 100 million in treasury
         }
     }
-    
+
     /// Transfer tokens between accounts
     pub async fn transfer(&mut self, from: &str, to: &str, amount: u64) -> Result<()> {
         // Simplified transfer logic for testing
         println!("Test transfer: {} tokens from {} to {}", amount, from, to);
         Ok(())
     }
-    
+
     /// Get account balance
     pub async fn get_balance(&self, account: &str) -> u64 {
         // Simplified balance for testing
@@ -128,13 +130,13 @@ impl TestEconomicModel {
             _ => 0,
         }
     }
-    
+
     /// Calculate transaction fee
     pub fn calculate_fee(&self, transaction_size: usize) -> u64 {
         // Simple fee calculation: 1 token per KB
         (transaction_size / 1024) as u64 + 1
     }
-    
+
     /// Get economic statistics
     pub fn get_stats(&self) -> TestEconomicStats {
         TestEconomicStats {
@@ -159,29 +161,31 @@ pub struct TestEconomicStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_mesh_server_creation() {
         let server = create_test_mesh_server().await;
         assert!(server.is_ok(), "Test mesh server creation should succeed");
     }
-    
+
     #[tokio::test]
     async fn test_economic_model() {
         let mut economics = TestEconomicModel::new();
-        
+
         // Test balance check
         let balance = economics.get_balance("test_account").await;
         assert_eq!(balance, 1000);
-        
+
         // Test transfer
-        let result = economics.transfer("test_account", "other_account", 100).await;
+        let result = economics
+            .transfer("test_account", "other_account", 100)
+            .await;
         assert!(result.is_ok());
-        
+
         // Test fee calculation
         let fee = economics.calculate_fee(2048); // 2KB transaction
         assert_eq!(fee, 3); // 2KB/1KB + 1 = 3 tokens
-        
+
         // Test statistics
         let stats = economics.get_stats();
         assert_eq!(stats.total_supply, 21_000_000_000);

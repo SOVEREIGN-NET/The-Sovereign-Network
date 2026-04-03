@@ -93,7 +93,7 @@ async fn main() -> anyhow::Result<()> {
     // Initialize consensus with hybrid PoS + PoStorage
     let config = ConsensusConfig {
         consensus_type: ConsensusType::Hybrid,
-        min_stake: 1000 * 1_000_000, // 1000 ZHTP
+        min_stake: 1000 * 1_000_000, // 1000 SOV
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
         max_validators: 100,
         block_time: 10,
@@ -146,7 +146,7 @@ consensus.dao_engine_mut().cast_dao_vote(
 // Get validator statistics
 let stats = consensus.validator_manager().get_validator_stats();
 println!("Active validators: {}", stats.active_validators);
-println!("Total stake: {} ZHTP", stats.total_stake);
+println!("Total stake: {} SOV", stats.total_stake);
 
 // Check Byzantine threshold
 let threshold = consensus.validator_manager().get_byzantine_threshold();

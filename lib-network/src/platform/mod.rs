@@ -1,9 +1,9 @@
-pub mod windows;
 pub mod linux;
 pub mod macos;
+pub mod windows;
 
-pub use windows::*;
 pub use linux::*;
 pub use macos::*;
+pub use windows::*;
 
 // Platform-specific implementations for hardware discovery

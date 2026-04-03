@@ -32,7 +32,19 @@ use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 /// Wire protocol version
 pub const WIRE_VERSION: u16 = 1;
 
-/// Maximum message size (16 MB)
+/// Maximum ZHTP wire message size (16 MB).
+///
+/// Guards `read_framed_message()`, which allocates a `Vec` of exactly `len`
+/// bytes from a peer-supplied length field before any validation.  The cap
+/// bounds worst-case per-stream allocation when multiple concurrent QUIC
+/// streams are open.
+///
+/// This limit applies to ZHTP API request/response payloads only (domain
+/// registration, content upload, deployment, etc.).  Consensus validator
+/// messages are transported separately via the P2P mesh (bincode over QUIC
+/// UNI streams) with their own per-codec 8 MB cap and never flow through
+/// this wire protocol.  Large block-sync transfers must be chunked or
+/// streamed at a higher protocol layer rather than sent as a single frame.
 pub const MAX_MESSAGE_SIZE: u32 = 16 * 1024 * 1024;
 
 /// Authentication context derived from UHP handshake
@@ -41,8 +53,8 @@ pub const MAX_MESSAGE_SIZE: u32 = 16 * 1024 * 1024;
 /// and cannot be replayed or forged.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthContext {
-    /// Session ID from UHP handshake (16 bytes)
-    pub session_id: [u8; 16],
+    /// Session ID from UHP handshake (32 bytes, v2)
+    pub session_id: [u8; 32],
 
     /// Client DID (from handshake identity verification)
     pub client_did: String,
@@ -60,14 +72,14 @@ impl AuthContext {
     ///
     /// The MAC is computed over: session_id || sequence || request_hash
     pub fn new(
-        session_id: [u8; 16],
+        session_id: [u8; 32],
         client_did: String,
         sequence: u64,
         session_key: &[u8; 32],
         request_hash: &[u8; 32],
     ) -> Self {
         // Compute MAC binding session, sequence, and request content
-        let mut mac_input = Vec::with_capacity(16 + 8 + 32);
+        let mut mac_input = Vec::with_capacity(32 + 8 + 32);
         mac_input.extend_from_slice(&session_id);
         mac_input.extend_from_slice(&sequence.to_le_bytes());
         mac_input.extend_from_slice(request_hash);
@@ -85,7 +97,7 @@ impl AuthContext {
 
     /// Verify the auth context MAC
     pub fn verify(&self, session_key: &[u8; 32], request_hash: &[u8; 32]) -> bool {
-        let mut mac_input = Vec::with_capacity(16 + 8 + 32);
+        let mut mac_input = Vec::with_capacity(32 + 8 + 32);
         mac_input.extend_from_slice(&self.session_id);
         mac_input.extend_from_slice(&self.sequence.to_le_bytes());
         mac_input.extend_from_slice(request_hash);
@@ -135,8 +147,7 @@ impl ZhtpRequestWire {
     /// requests over UHP-authenticated connections.
     pub fn new(request: ZhtpRequest) -> Self {
         let mut request_id = [0u8; 16];
-        getrandom::getrandom(&mut request_id)
-            .expect("Failed to generate secure request_id");
+        getrandom::getrandom(&mut request_id).expect("Failed to generate secure request_id");
 
         let timestamp_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -157,34 +168,67 @@ impl ZhtpRequestWire {
     /// The auth_context binds the request to the UHP session and includes
     /// a MAC that proves request integrity.
     ///
-    /// The MAC is computed over canonical CBOR-serialized request bytes
-    /// to ensure deterministic verification across implementations.
+    /// V2 MAC is computed as: HMAC-SHA3-256(mac_key, canonical_bytes || counter_BE || session_id)
+    /// where canonical_bytes = method(1) + path_len(u16BE) + path + body_len(u32BE) + body
     pub fn new_authenticated(
         request: ZhtpRequest,
-        session_id: [u8; 16],
+        session_id: [u8; 32],
         client_did: String,
         sequence: u64,
         session_key: &[u8; 32],
     ) -> Self {
+        use hmac::{Hmac, Mac};
+        use sha3::Sha3_256;
+
         let mut request_id = [0u8; 16];
-        getrandom::getrandom(&mut request_id)
-            .expect("Failed to generate secure request_id");
+        getrandom::getrandom(&mut request_id).expect("Failed to generate secure request_id");
 
         let timestamp_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
 
-        // Compute canonical request hash using CBOR (deterministic serialization)
-        let request_hash = Self::compute_canonical_request_hash(&request, &request_id, timestamp_ms);
+        // Build canonical request bytes matching V2 server expectations
+        // Format: method(1) + path_len(u16BE) + path + body_len(u32BE) + body
+        let method_byte = match request.method {
+            crate::types::ZhtpMethod::Get => 0u8,
+            crate::types::ZhtpMethod::Post => 1u8,
+            crate::types::ZhtpMethod::Put => 2u8,
+            crate::types::ZhtpMethod::Delete => 3u8,
+            crate::types::ZhtpMethod::Patch => 4u8,
+            crate::types::ZhtpMethod::Head => 5u8,
+            crate::types::ZhtpMethod::Options => 6u8,
+            _ => 255u8,
+        };
 
-        let auth_context = AuthContext::new(
+        let path_len = request.uri.len() as u16;
+        let body_len = request.body.len() as u32;
+
+        let mut canonical_bytes =
+            Vec::with_capacity(1 + 2 + request.uri.len() + 4 + body_len as usize);
+        canonical_bytes.push(method_byte);
+        canonical_bytes.extend_from_slice(&path_len.to_be_bytes());
+        canonical_bytes.extend_from_slice(request.uri.as_bytes());
+        canonical_bytes.extend_from_slice(&body_len.to_be_bytes());
+        canonical_bytes.extend_from_slice(&request.body);
+
+        // Compute V2 MAC: HMAC-SHA3-256(mac_key, canonical_bytes || counter_BE || session_id)
+        type HmacSha3 = Hmac<Sha3_256>;
+        let mut mac = HmacSha3::new_from_slice(session_key).expect("HMAC can take key of any size");
+        mac.update(&canonical_bytes);
+        mac.update(&sequence.to_be_bytes());
+        mac.update(&session_id);
+
+        let result = mac.finalize();
+        let mut request_mac = [0u8; 32];
+        request_mac.copy_from_slice(&result.into_bytes());
+
+        let auth_context = AuthContext {
             session_id,
             client_did,
             sequence,
-            session_key,
-            &request_hash,
-        );
+            request_mac,
+        };
 
         Self {
             version: WIRE_VERSION,
@@ -199,7 +243,11 @@ impl ZhtpRequestWire {
     ///
     /// This creates a deterministic hash by including all request fields
     /// in a fixed order with CBOR serialization.
-    pub fn compute_canonical_request_hash(request: &ZhtpRequest, request_id: &[u8; 16], timestamp_ms: u64) -> [u8; 32] {
+    pub fn compute_canonical_request_hash(
+        request: &ZhtpRequest,
+        request_id: &[u8; 16],
+        timestamp_ms: u64,
+    ) -> [u8; 32] {
         // Build canonical input: version || request_id || timestamp || method || uri || body
         // Using CBOR ensures deterministic byte representation
         let mut hasher = blake3::Hasher::new();
@@ -305,8 +353,7 @@ impl ZhtpRequestWire {
 
     /// Deserialize from CBOR bytes
     pub fn from_cbor(bytes: &[u8]) -> Result<Self> {
-        ciborium::from_reader(bytes)
-            .map_err(|e| anyhow!("CBOR deserialization failed: {}", e))
+        ciborium::from_reader(bytes).map_err(|e| anyhow!("CBOR deserialization failed: {}", e))
     }
 
     /// Encode with length prefix for framing
@@ -315,7 +362,11 @@ impl ZhtpRequestWire {
         let len = payload.len() as u32;
 
         if len > MAX_MESSAGE_SIZE {
-            return Err(anyhow!("Message too large: {} bytes (max {})", len, MAX_MESSAGE_SIZE));
+            return Err(anyhow!(
+                "Message too large: {} bytes (max {})",
+                len,
+                MAX_MESSAGE_SIZE
+            ));
         }
 
         let mut framed = Vec::with_capacity(4 + payload.len());
@@ -379,8 +430,7 @@ impl ZhtpResponseWire {
 
     /// Deserialize from CBOR bytes
     pub fn from_cbor(bytes: &[u8]) -> Result<Self> {
-        ciborium::from_reader(bytes)
-            .map_err(|e| anyhow!("CBOR deserialization failed: {}", e))
+        ciborium::from_reader(bytes).map_err(|e| anyhow!("CBOR deserialization failed: {}", e))
     }
 
     /// Encode with length prefix for framing
@@ -389,7 +439,11 @@ impl ZhtpResponseWire {
         let len = payload.len() as u32;
 
         if len > MAX_MESSAGE_SIZE {
-            return Err(anyhow!("Message too large: {} bytes (max {})", len, MAX_MESSAGE_SIZE));
+            return Err(anyhow!(
+                "Message too large: {} bytes (max {})",
+                len,
+                MAX_MESSAGE_SIZE
+            ));
         }
 
         let mut framed = Vec::with_capacity(4 + payload.len());
@@ -413,18 +467,26 @@ impl ZhtpResponseWire {
 pub async fn read_framed_message<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<Vec<u8>> {
     // Read length prefix (4 bytes, big-endian)
     let mut len_buf = [0u8; 4];
-    reader.read_exact(&mut len_buf).await
+    reader
+        .read_exact(&mut len_buf)
+        .await
         .map_err(|e| anyhow!("Failed to read message length: {}", e))?;
 
     let len = u32::from_be_bytes(len_buf);
 
     if len > MAX_MESSAGE_SIZE {
-        return Err(anyhow!("Message too large: {} bytes (max {})", len, MAX_MESSAGE_SIZE));
+        return Err(anyhow!(
+            "Message too large: {} bytes (max {})",
+            len,
+            MAX_MESSAGE_SIZE
+        ));
     }
 
     // Read payload
     let mut payload = vec![0u8; len as usize];
-    reader.read_exact(&mut payload).await
+    reader
+        .read_exact(&mut payload)
+        .await
         .map_err(|e| anyhow!("Failed to read message payload: {}", e))?;
 
     Ok(payload)
@@ -438,18 +500,28 @@ pub async fn write_framed_message<W: AsyncWriteExt + Unpin>(
     let len = payload.len() as u32;
 
     if len > MAX_MESSAGE_SIZE {
-        return Err(anyhow!("Message too large: {} bytes (max {})", len, MAX_MESSAGE_SIZE));
+        return Err(anyhow!(
+            "Message too large: {} bytes (max {})",
+            len,
+            MAX_MESSAGE_SIZE
+        ));
     }
 
     // Write length prefix
-    writer.write_all(&len.to_be_bytes()).await
+    writer
+        .write_all(&len.to_be_bytes())
+        .await
         .map_err(|e| anyhow!("Failed to write message length: {}", e))?;
 
     // Write payload
-    writer.write_all(payload).await
+    writer
+        .write_all(payload)
+        .await
         .map_err(|e| anyhow!("Failed to write message payload: {}", e))?;
 
-    writer.flush().await
+    writer
+        .flush()
+        .await
         .map_err(|e| anyhow!("Failed to flush: {}", e))?;
 
     Ok(())

@@ -1,11 +1,298 @@
+#[derive(Debug, Clone)]
+pub enum MeshTestScenario {
+    FiveNodeMesh,
+    NodeDepartureAndRejoin,
+    RandomRestarts,
+    RoutingVerification,
+    ConvergenceTimeline,
+    PartitionRecovery,
+    StabilityMetrics,
+}
+
+pub fn mesh_scenario_nodes(scenario: &MeshTestScenario) -> Vec<(&'static str, [u8; 64])> {
+    match scenario {
+        MeshTestScenario::FiveNodeMesh => vec![
+            ("mesh-node-a", [0x11; 64]),
+            ("mesh-node-b", [0x22; 64]),
+            ("mesh-node-c", [0x33; 64]),
+            ("mesh-node-d", [0x44; 64]),
+            ("mesh-node-e", [0x55; 64]),
+        ],
+        MeshTestScenario::NodeDepartureAndRejoin => vec![
+            ("mesh-stable-a", [0x1A; 64]),
+            ("mesh-stable-b", [0x2B; 64]),
+            ("mesh-stable-c", [0x3C; 64]),
+            ("mesh-stable-d", [0x4D; 64]),
+        ],
+        MeshTestScenario::RandomRestarts => vec![
+            ("stable-mesh-1", [0xA1; 64]),
+            ("stable-mesh-2", [0xA2; 64]),
+            ("stable-mesh-3", [0xA3; 64]),
+            ("stable-mesh-4", [0xA4; 64]),
+            ("stable-mesh-5", [0xA5; 64]),
+        ],
+        MeshTestScenario::RoutingVerification => vec![
+            ("route-node-1", [0xF1; 64]),
+            ("route-node-2", [0xF2; 64]),
+            ("route-node-3", [0xF3; 64]),
+            ("route-node-4", [0xF4; 64]),
+        ],
+        MeshTestScenario::ConvergenceTimeline => vec![
+            ("join-mesh-1", [0x61; 64]),
+            ("join-mesh-2", [0x62; 64]),
+            ("join-mesh-3", [0x63; 64]),
+            ("join-mesh-4", [0x64; 64]),
+            ("join-mesh-5", [0x65; 64]),
+            ("join-mesh-6", [0x66; 64]),
+        ],
+        MeshTestScenario::PartitionRecovery => vec![
+            ("partition-1", [0x71; 64]),
+            ("partition-2", [0x72; 64]),
+            ("partition-3", [0x73; 64]),
+            ("partition-4", [0x74; 64]),
+            ("partition-5", [0x75; 64]),
+        ],
+        MeshTestScenario::StabilityMetrics => vec![
+            ("metrics-a", [0x8A; 64]),
+            ("metrics-b", [0x8B; 64]),
+            ("metrics-c", [0x8C; 64]),
+            ("metrics-d", [0x8D; 64]),
+        ],
+    }
+}
+
+pub fn run_mesh_scenario(scenario: MeshTestScenario) -> anyhow::Result<()> {
+    let nodes = mesh_scenario_nodes(&scenario);
+    match scenario {
+        MeshTestScenario::FiveNodeMesh => {
+            let (_identities, topology) = create_mesh_topology_from_nodes(&nodes)?;
+            assert!(
+                verify_mesh_fully_connected(&topology, 4),
+                "5-node mesh should be fully connected with 4 peers each"
+            );
+        }
+        MeshTestScenario::NodeDepartureAndRejoin => {
+            simulate_node_departure_and_rejoin(&nodes)?;
+        }
+        MeshTestScenario::RandomRestarts => {
+            simulate_random_restarts(&nodes, &[1, 3])?;
+        }
+        MeshTestScenario::RoutingVerification => {
+            simulate_routing_verification(&nodes)?;
+        }
+        MeshTestScenario::ConvergenceTimeline => {
+            let identities = create_identities_from_nodes(&nodes)?;
+            build_incremental_mesh_and_verify(&identities);
+        }
+        MeshTestScenario::PartitionRecovery => {
+            simulate_partition_and_recovery(&nodes, &[2, 3])?;
+        }
+        MeshTestScenario::StabilityMetrics => {
+            let (_identities, mut topology) = create_mesh_topology_from_nodes(&nodes)?;
+            simulate_stable_cycles_and_verify(&mut topology, 5, 4);
+        }
+    }
+    Ok(())
+}
+/// Simulate node departure and rejoin in a mesh
+pub fn simulate_node_departure_and_rejoin(nodes: &[(&str, [u8; 64])]) -> anyhow::Result<()> {
+    let (identities, mut topology) = create_mesh_topology_from_nodes(nodes)?;
+    assert!(
+        topology.is_fully_connected(),
+        "Initial mesh should be fully connected"
+    );
+    // Remove node B from network
+    topology.deactivate_node(1);
+    assert_eq!(
+        topology.get_active_node_count(),
+        nodes.len() - 1,
+        "Should have {} active nodes",
+        nodes.len() - 1
+    );
+    // Node B rejoins with same NodeId
+    let node_b_restarted = create_test_identity_with_seed(nodes[1].0, nodes[1].1)?;
+    assert_eq!(
+        identities[1].node_id, node_b_restarted.node_id,
+        "Node B must have same NodeId after restart"
+    );
+    // Reactivate in topology
+    topology.reactivate_node(1);
+    assert!(
+        topology.is_fully_connected(),
+        "Mesh should be fully connected after node rejoin"
+    );
+    Ok(())
+}
+
+/// Simulate random node restarts in a mesh
+pub fn simulate_random_restarts(
+    nodes: &[(&str, [u8; 64])],
+    deactivate: &[usize],
+) -> anyhow::Result<()> {
+    let (_identities, mut topology) = create_mesh_topology_from_nodes(nodes)?;
+    assert!(
+        topology.is_fully_connected(),
+        "Initial mesh should be connected"
+    );
+    // Deactivate nodes
+    for &idx in deactivate {
+        topology.deactivate_node(idx);
+    }
+    assert_eq!(
+        topology.get_active_node_count(),
+        nodes.len() - deactivate.len(),
+        "Should have {} active nodes after deactivation",
+        nodes.len() - deactivate.len()
+    );
+    // Reactivate nodes
+    for &idx in deactivate {
+        topology.reactivate_node(idx);
+    }
+    // Verify all nodes reconnected
+    assert_eq!(
+        topology.get_active_node_count(),
+        nodes.len(),
+        "All nodes should be active again"
+    );
+    assert!(
+        verify_mesh_fully_connected(&topology, nodes.len() - 1),
+        "Network should be fully connected after restarts"
+    );
+    Ok(())
+}
+
+/// Simulate mesh partition and recovery
+pub fn simulate_partition_and_recovery(
+    nodes: &[(&str, [u8; 64])],
+    partition: &[usize],
+) -> anyhow::Result<()> {
+    let (_identities, mut topology) = create_mesh_topology_from_nodes(nodes)?;
+    assert!(
+        topology.is_fully_connected(),
+        "Initial mesh fully connected"
+    );
+    // Simulate partition - remove nodes
+    for &idx in partition {
+        topology.deactivate_node(idx);
+    }
+    assert_eq!(
+        topology.get_active_node_count(),
+        nodes.len() - partition.len(),
+        "{} nodes should remain active",
+        nodes.len() - partition.len()
+    );
+    // Heal partition - reactivate nodes
+    for &idx in partition {
+        topology.reactivate_node(idx);
+    }
+    // Verify network is whole again
+    assert!(
+        topology.is_fully_connected(),
+        "Mesh should recover after partition healing"
+    );
+    assert_eq!(
+        topology.get_active_node_count(),
+        nodes.len(),
+        "All nodes should be reconnected"
+    );
+    Ok(())
+}
+
+/// Simulate mesh routing verification
+pub fn simulate_routing_verification(nodes: &[(&str, [u8; 64])]) -> anyhow::Result<()> {
+    let (_identities, topology) = create_mesh_topology_from_nodes(nodes)?;
+    verify_all_routing_paths(&topology);
+    Ok(())
+}
+/// Build mesh incrementally and verify full connectivity after each addition
+pub fn build_incremental_mesh_and_verify(identities: &[lib_identity::ZhtpIdentity]) {
+    let mut topology = MeshTopology::new();
+    topology.add_node(identities[0].node_id.clone());
+    topology.advance_cycle();
+
+    for i in 1..identities.len() {
+        topology.add_node(identities[i].node_id.clone());
+        topology.connect_all_peers();
+        topology.advance_cycle();
+        assert!(
+            topology.is_fully_connected(),
+            "Mesh should be fully connected after adding node {}",
+            i + 1
+        );
+    }
+
+    assert_eq!(
+        topology.nodes.len(),
+        identities.len(),
+        "Should have {} nodes",
+        identities.len()
+    );
+    assert!(
+        verify_mesh_fully_connected(&topology, identities.len() - 1),
+        "All nodes should have {} peers in mesh",
+        identities.len() - 1
+    );
+}
+
+/// Simulate N cycles of stable mesh operation and verify connectivity
+pub fn simulate_stable_cycles_and_verify(
+    topology: &mut MeshTopology,
+    cycles: usize,
+    expected_active: usize,
+) {
+    for cycle in 0..cycles {
+        topology.connect_all_peers();
+        topology.advance_cycle();
+        assert!(
+            topology.is_fully_connected(),
+            "Mesh should remain stable in cycle {}",
+            cycle
+        );
+        assert_eq!(
+            topology.get_active_node_count(),
+            expected_active,
+            "Should have {} active nodes in cycle {}",
+            expected_active,
+            cycle
+        );
+    }
+}
 // Shared network test logic for mesh, dht, and multi-node tests
 // Move all common setup, orchestration, and assertion logic here
 
 use anyhow::Result;
-use std::collections::{HashSet, HashMap};
+use lib_identity::{IdentityType, NodeId, ZhtpIdentity};
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use uuid::Uuid;
-use lib_identity::{NodeId, ZhtpIdentity};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// IDENTITY CREATION HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Create a test identity with optional seed (Human type).
+/// Used by multi-node tests.
+pub fn create_test_identity(device: &str, seed: Option<[u8; 64]>) -> Result<ZhtpIdentity> {
+    ZhtpIdentity::new_unified(
+        IdentityType::Human,
+        Some(25),
+        Some("US".to_string()),
+        device,
+        seed,
+    )
+}
+
+/// Create a test identity with required seed (Device type).
+/// Used by mesh and DHT tests.
+pub fn create_test_identity_with_seed(device: &str, seed: [u8; 64]) -> Result<ZhtpIdentity> {
+    ZhtpIdentity::new_unified(IdentityType::Device, None, None, device, Some(seed))
+}
+
+/// Convert NodeId to UUID for peer identification.
+pub fn peer_id_from_node_id(node_id: &NodeId) -> Uuid {
+    Uuid::from_slice(&node_id.as_bytes()[..16])
+        .expect("NodeId::as_bytes() must return at least 16 bytes for UUID conversion")
+}
 
 // --- Mesh Formation Shared Logic ---
 #[derive(Debug, Clone)]
@@ -74,31 +361,85 @@ impl MeshTopology {
     }
     pub fn is_fully_connected(&self) -> bool {
         let active_count = self.nodes.iter().filter(|n| n.is_active).count();
-        self.nodes.iter().all(|node| {
-            !node.is_active || node.peer_count() == active_count - 1
-        })
+        self.nodes
+            .iter()
+            .all(|node| !node.is_active || node.peer_count() == active_count - 1)
     }
-    pub fn advance_cycle(&mut self) {
-        self.cycle += 1;
+    pub fn peer_count(&self, index: usize) -> usize {
+        self.nodes[index].peer_count()
     }
     pub fn get_active_node_count(&self) -> usize {
         self.nodes.iter().filter(|n| n.is_active).count()
     }
     pub fn deactivate_node(&mut self, index: usize) {
-        if index < self.nodes.len() {
-            self.nodes[index].is_active = false;
+        let node_id = self.nodes[index].node_id.clone();
+        self.nodes[index].deactivate();
+        for i in 0..self.nodes.len() {
+            if i != index {
+                self.nodes[i].remove_peer(&node_id);
+            }
         }
     }
     pub fn reactivate_node(&mut self, index: usize) {
-        if index < self.nodes.len() {
-            self.nodes[index].is_active = true;
+        self.cycle += 1;
+        self.nodes[index].reactivate(self.cycle);
+        let node_id_to_add = self.nodes[index].node_id.clone();
+        for j in 0..self.nodes.len() {
+            if j != index && self.nodes[j].is_active {
+                let peer_id = self.nodes[j].node_id.clone();
+                self.nodes[index].add_peer(peer_id);
+                self.nodes[j].add_peer(node_id_to_add.clone());
+            }
         }
+    }
+    pub fn advance_cycle(&mut self) {
+        self.cycle += 1;
     }
 }
 
 pub async fn run_shared_mesh_formation_test() -> Result<()> {
     // TODO: Move mesh formation orchestration logic here
     Ok(())
+}
+
+// --- Mesh Formation Helper Functions ---
+
+/// Helper: Create identities and build a connected mesh topology
+pub fn create_mesh_topology_from_nodes(
+    nodes: &[(&str, [u8; 64])],
+) -> Result<(Vec<ZhtpIdentity>, MeshTopology)> {
+    let identities = create_identities_from_nodes(nodes)?;
+    let mut topology = MeshTopology::new();
+    for identity in &identities {
+        topology.add_node(identity.node_id.clone());
+    }
+    topology.connect_all_peers();
+    Ok((identities, topology))
+}
+
+/// Helper: Verify mesh is fully connected with expected peer count
+pub fn verify_mesh_fully_connected(topology: &MeshTopology, expected_peer_count: usize) -> bool {
+    topology.is_fully_connected()
+        && topology
+            .nodes
+            .iter()
+            .all(|n| !n.is_active || n.peer_count() == expected_peer_count)
+}
+
+/// Helper: Verify all routing paths exist between all node pairs
+pub fn verify_all_routing_paths(topology: &MeshTopology) {
+    for i in 0..topology.nodes.len() {
+        for j in 0..topology.nodes.len() {
+            if i != j && topology.nodes[i].is_active && topology.nodes[j].is_active {
+                assert!(
+                    topology.nodes[i].has_peer(&topology.nodes[j].node_id),
+                    "Node {} should have direct route to Node {}",
+                    i,
+                    j
+                );
+            }
+        }
+    }
 }
 
 // --- DHT Persistence Shared Logic ---
@@ -134,10 +475,8 @@ impl DhtRoutingState {
         }
     }
     pub fn add_peer(&mut self, node_id: NodeId, peer_uuid: Uuid, cycle: u32) {
-        self.routing_table.insert(
-            node_id.clone(),
-            DhtEntry::new(node_id, peer_uuid, cycle),
-        );
+        self.routing_table
+            .insert(node_id.clone(), DhtEntry::new(node_id, peer_uuid, cycle));
     }
     pub fn has_peer(&self, node_id: &NodeId) -> bool {
         self.routing_table.contains_key(node_id)
@@ -156,6 +495,63 @@ impl DhtRoutingState {
     }
 }
 
+// --- DHT Helper Functions ---
+
+/// Helper: Create identities from a list of (device_name, seed) tuples
+pub fn create_identities_from_nodes(
+    nodes: &[(&str, [u8; 64])],
+) -> Result<Vec<lib_identity::ZhtpIdentity>> {
+    nodes
+        .iter()
+        .map(|(device, seed)| create_test_identity_with_seed(device, *seed))
+        .collect()
+}
+
+/// Helper: Create DHT routing states for a list of identities
+pub fn create_dht_states(identities: &[lib_identity::ZhtpIdentity]) -> Vec<DhtRoutingState> {
+    identities
+        .iter()
+        .map(|id| DhtRoutingState::new(id.node_id.clone()))
+        .collect()
+}
+
+/// Helper: Populate DHT routing tables with all peers (full mesh)
+pub fn populate_dht_full_mesh(
+    dht_states: &mut [DhtRoutingState],
+    identities: &[lib_identity::ZhtpIdentity],
+    cycle: u32,
+) -> Result<()> {
+    for i in 0..identities.len() {
+        for j in 0..identities.len() {
+            if i != j {
+                let peer_node_id = identities[j].node_id.clone();
+                let peer_uuid = peer_id_from_node_id(&peer_node_id);
+                dht_states[i].add_peer(peer_node_id, peer_uuid, cycle);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Helper: Verify all NodeIds match between two identity lists
+pub fn verify_node_ids_match(
+    identities_a: &[lib_identity::ZhtpIdentity],
+    identities_b: &[lib_identity::ZhtpIdentity],
+) -> bool {
+    identities_a.len() == identities_b.len()
+        && identities_a
+            .iter()
+            .zip(identities_b.iter())
+            .all(|(a, b)| a.node_id == b.node_id)
+}
+
+/// Helper: Verify all DHT states have expected peer count
+pub fn verify_dht_peer_counts(dht_states: &[DhtRoutingState], expected_count: usize) -> bool {
+    dht_states
+        .iter()
+        .all(|dht| dht.peer_count() == expected_count)
+}
+
 pub async fn run_shared_dht_persistence_test() -> Result<()> {
     // TODO: Move DHT persistence orchestration logic here
     Ok(())
@@ -165,162 +561,4 @@ pub async fn run_shared_dht_persistence_test() -> Result<()> {
 pub async fn run_shared_multi_node_network_test() -> Result<()> {
     // TODO: Move multi-node network orchestration logic here
     Ok(())
-}
-
-// --- Shared Helper Functions ---
-
-/// Create test identities from a list of (device, seed) tuples
-pub fn create_test_identities<F>(
-    nodes: &[(&str, [u8; 64])],
-    identity_fn: F,
-) -> Vec<ZhtpIdentity>
-where
-    F: Fn(&str, [u8; 64]) -> Result<ZhtpIdentity>,
-{
-    nodes
-        .iter()
-        .filter_map(|(device, seed)| identity_fn(device, *seed).ok())
-        .collect()
-}
-
-/// Build mesh topology from identities
-pub fn build_mesh_topology(identities: &[ZhtpIdentity]) -> MeshTopology {
-    let mut topology = MeshTopology::new();
-    for identity in identities {
-        topology.add_node(identity.node_id.clone());
-    }
-    topology.connect_all_peers();
-    topology
-}
-
-/// Assert mesh is fully connected with expected peer count
-pub fn assert_fully_connected(topology: &MeshTopology, expected_peer_count: usize) {
-    assert!(topology.is_fully_connected(), "Mesh should be fully connected");
-    for (i, node) in topology.nodes.iter().enumerate() {
-        assert_eq!(
-            node.peer_count(),
-            expected_peer_count,
-            "Node {} should have {} peers",
-            i,
-            expected_peer_count
-        );
-    }
-}
-
-/// Build DHT states from identities
-pub fn build_dht_states(identities: &[ZhtpIdentity], convergence_cycle: u32) -> Vec<DhtRoutingState> {
-    identities
-        .iter()
-        .map(|id| {
-            let mut dht = DhtRoutingState::new(id.node_id.clone());
-            dht.set_convergence_cycle(convergence_cycle);
-            dht
-        })
-        .collect()
-}
-
-/// Populate DHT peers for all nodes
-pub fn populate_dht_peers(dht_states: &mut [DhtRoutingState], identities: &[ZhtpIdentity], cycle: u32) {
-    for i in 0..identities.len() {
-        for j in 0..identities.len() {
-            if i != j {
-                let peer_node_id = identities[j].node_id.clone();
-                if let Ok(peer_uuid) = Uuid::from_slice(&peer_node_id.as_bytes()[..16]) {
-                    dht_states[i].add_peer(peer_node_id, peer_uuid, cycle);
-                }
-            }
-        }
-    }
-}
-
-/// Assert all DHT states have expected peer count
-pub fn assert_dht_peer_counts(dht_states: &[DhtRoutingState], expected_count: usize) {
-    for (i, dht) in dht_states.iter().enumerate() {
-        assert_eq!(
-            dht.peer_count(),
-            expected_count,
-            "Node {} should have {} peers",
-            i,
-            expected_count
-        );
-    }
-}
-
-/// Assert node IDs are stable across restart
-pub fn assert_node_id_stability(before: &[ZhtpIdentity], after: &[ZhtpIdentity]) {
-    for (i, (b, a)) in before.iter().zip(after.iter()).enumerate() {
-        assert_eq!(
-            b.node_id, a.node_id,
-            "Node {} NodeId must survive restart",
-            i
-        );
-    }
-}
-
-/// Assert node IDs match baseline
-pub fn assert_node_ids_match(identities: &[ZhtpIdentity], baseline: &[NodeId], cycle: usize) {
-    for (i, identity) in identities.iter().enumerate() {
-        assert_eq!(
-            identity.node_id, baseline[i],
-            "Node {} NodeId must be consistent in cycle {}",
-            i,
-            cycle
-        );
-    }
-}
-
-/// Assert convergence cycle for all DHT states
-pub fn assert_convergence_cycle(dht_states: &[DhtRoutingState], expected_cycle: u32) {
-    for dht in dht_states {
-        assert_eq!(
-            dht.get_convergence_cycle(),
-            expected_cycle,
-            "All nodes should have convergence cycle {}",
-            expected_cycle
-        );
-    }
-}
-
-/// Assert convergence progressed between two DHT state snapshots
-pub fn assert_convergence_progressed(before: &[DhtRoutingState], after: &[DhtRoutingState]) {
-    for (b, a) in before.iter().zip(after.iter()) {
-        assert!(
-            a.get_convergence_cycle() > b.get_convergence_cycle(),
-            "Convergence cycle must progress"
-        );
-    }
-}
-
-/// Assert DHT routing table consistency
-pub fn assert_dht_consistency(
-    dht_states: &[DhtRoutingState],
-    stored_routing_tables: &[Vec<NodeId>],
-    cycle: usize,
-) {
-    for (i, dht) in dht_states.iter().enumerate() {
-        for peer_node_id in &stored_routing_tables[i] {
-            assert!(
-                dht.has_peer(peer_node_id),
-                "Node {} should have consistent peer entry in cycle {}",
-                i,
-                cycle
-            );
-        }
-    }
-}
-
-/// Assert mesh routing paths exist between all node pairs
-pub fn assert_mesh_routing_paths(topology: &MeshTopology) {
-    for i in 0..topology.nodes.len() {
-        for j in 0..topology.nodes.len() {
-            if i != j {
-                assert!(
-                    topology.nodes[i].has_peer(&topology.nodes[j].node_id),
-                    "Node {} should have direct route to Node {}",
-                    i,
-                    j
-                );
-            }
-        }
-    }
 }

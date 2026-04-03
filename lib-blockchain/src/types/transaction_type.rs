@@ -2,78 +2,171 @@
 //!
 //! Defines the types of transactions supported by the ZHTP blockchain.
 //! Note: Identity transaction processing is handled by integration with lib-identity package.
+//!
+//! # Serialization Stability
+//!
+//! IMPORTANT: This enum uses explicit discriminant values via `#[repr(u8)]` to ensure
+//! stable serialization across versions. When adding new variants:
+//! 1. ALWAYS assign an explicit value (do NOT rely on implicit ordering)
+//! 2. NEVER reuse a value from a removed variant
+//! 3. NEVER change the value of an existing variant
+//!
+//! The explicit `#[repr(u8)]` ensures bincode serializes to a single byte with
+//! predictable values, making cross-platform compatibility reliable.
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Transaction types supported by ZHTP blockchain
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+///
+/// Uses explicit discriminant values (`#[repr(u8)]`) for stable serialization.
+/// Bincode will serialize these as single bytes with the assigned values.
+/// See module-level documentation for rules on adding new variants.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum TransactionType {
     /// Standard value transfer between accounts
-    Transfer,
+    Transfer = 0,
+    /// Coinbase transaction (block reward, no inputs)
+    Coinbase = 1,
+    /// Token transfer (balance model, not UTXO)
+    TokenTransfer = 2,
     /// Identity registration on blockchain (delegates to lib-identity)
-    IdentityRegistration,
-    /// Identity update/modification (delegates to lib-identity)  
-    IdentityUpdate,
+    IdentityRegistration = 3,
+    /// Identity update/modification (delegates to lib-identity)
+    IdentityUpdate = 4,
     /// Identity revocation (delegates to lib-identity)
-    IdentityRevocation,
+    IdentityRevocation = 5,
     /// Smart contract deployment (delegates to lib-contracts)
-    ContractDeployment,
+    ContractDeployment = 6,
     /// Smart contract execution (delegates to lib-contracts)
-    ContractExecution,
+    ContractExecution = 7,
     /// Session creation for audit/tracking purposes
-    SessionCreation,
+    SessionCreation = 8,
     /// Session termination for audit/tracking purposes
-    SessionTermination,
+    SessionTermination = 9,
     /// Content upload transaction
-    ContentUpload,
+    ContentUpload = 10,
     /// Universal Basic Income distribution
-    UbiDistribution,
+    UbiDistribution = 11,
     /// Wallet registration/creation on blockchain
-    WalletRegistration,
+    WalletRegistration = 12,
     /// Validator registration for consensus participation
-    ValidatorRegistration,
+    ValidatorRegistration = 13,
     /// Validator information update
-    ValidatorUpdate,
+    ValidatorUpdate = 14,
     /// Validator unregistration/exit from consensus
-    ValidatorUnregister,
+    ValidatorUnregister = 15,
     /// DAO governance proposal submission
-    DaoProposal,
+    DaoProposal = 16,
     /// DAO governance vote on a proposal
-    DaoVote,
+    DaoVote = 17,
     /// DAO proposal execution (treasury spending)
-    DaoExecution,
+    DaoExecution = 18,
     /// Difficulty parameter update (via DAO governance)
     ///
     /// Used to update the blockchain's difficulty adjustment parameters
     /// after a DifficultyParameterUpdate DAO proposal has been approved.
-    DifficultyUpdate,
+    DifficultyUpdate = 19,
     /// UBI claim - citizen-initiated claim from UBI pool (Week 7)
     ///
     /// Distinct from UbiDistribution (system-initiated push).
     /// This is a pull-based model where citizens claim their allocation.
-    UBIClaim,
+    UBIClaim = 20,
     /// Profit declaration - enforces 20% tribute from for-profit to nonprofit (Week 7)
     ///
     /// Validates that tribute_amount == profit_amount * 20 / 100.
     /// Integrates with TributeRouter for enforcement.
-    ProfitDeclaration,
+    ProfitDeclaration = 21,
+    /// Token governance configuration update (Phase 3D)
+    ///
+    /// Allows authorized governance addresses to update specific token configuration:
+    /// - set_fee_schedule: Update fee parameters
+    /// - set_transfer_policy: Switch between supported policies (not ComplianceGated)
+    /// - pause/unpause: Emergency circuit breaker
+    ///
+    /// Requires: caller has Governance role in token's authorities
+    GovernanceConfigUpdate = 22,
+    /// Wallet update (owner/public key rebinding, rotation, metadata updates)
+    WalletUpdate = 23,
+    /// Token mint (system-controlled issuance, e.g., welcome bonus, UBI, migrations)
+    TokenMint = 24,
+    /// Token creation (deploy new token contract with initial supply)
+    TokenCreation = 25,
+    /// Token swap (exchange one token for another via AMM pool)
+    TokenSwap = 26,
+    /// Create AMM liquidity pool
+    CreatePool = 27,
+    /// Add liquidity to AMM pool
+    AddLiquidity = 28,
+    /// Remove liquidity from AMM pool
+    RemoveLiquidity = 29,
+    /// Bonding curve token deployment
+    BondingCurveDeploy = 30,
+    /// Buy tokens from bonding curve
+    BondingCurveBuy = 31,
+    /// Sell tokens back to bonding curve
+    BondingCurveSell = 32,
+    /// Graduate bonding curve token to AMM
+    BondingCurveGraduate = 33,
+    /// Update oracle committee membership (via DAO governance)
+    UpdateOracleCommittee = 34,
+    /// Update oracle configuration parameters (via DAO governance)
+    UpdateOracleConfig = 35,
+    /// Oracle price attestation (validator submits price for epoch)
+    OracleAttestation = 36,
+    /// Cancel pending oracle update (via DAO governance)
+    CancelOracleUpdate = 37,
+    /// Initialize entity registry with CBE and Nonprofit treasury addresses (one-time, irreversible)
+    ///
+    /// Requires Bootstrap Council threshold approvals. Locks EntityRegistry permanently after execution.
+    InitEntityRegistry = 38,
+    /// Record an oracle committee-attested fiat→CBE on-ramp trade.
+    ///
+    /// Requires OracleCommittee threshold approvals. Updates `OnRampState` for VWAP derivation.
+    RecordOnRampTrade = 39,
+    /// Execute a governance-approved treasury allocation (SOV treasury → DAO wallet).
+    ///
+    /// Requires Bootstrap Council threshold approvals.
+    TreasuryAllocation = 40,
+    /// Initialize the CBE token contract (one-time, irreversible)
+    ///
+    /// Sets the CBE token's initial parameters (name, symbol, total supply, vesting schedules).
+    /// Must be signed by a Bootstrap Council member. Locks CbeToken permanently after execution.
+    InitCbeToken = 41,
+    /// Create an employment contract between an employer entity and an employee wallet
+    ///
+    /// Records the contract terms (salary, payment schedule, profit-share %) on-chain via EmploymentRegistry.
+    CreateEmploymentContract = 42,
+    /// Process payroll disbursement for an active employment contract
+    ///
+    /// Disburses CBE salary and optional profit-share from employer treasury to employee wallet.
+    ProcessPayroll = 43,
 }
 
 impl TransactionType {
     /// Check if this transaction type relates to identity management
     pub fn is_identity_transaction(&self) -> bool {
-        matches!(self, 
-            TransactionType::IdentityRegistration |
-            TransactionType::IdentityUpdate |
-            TransactionType::IdentityRevocation
+        matches!(
+            self,
+            TransactionType::IdentityRegistration
+                | TransactionType::IdentityUpdate
+                | TransactionType::IdentityRevocation
         )
     }
 
     /// Check if this transaction type relates to smart contracts
     pub fn is_contract_transaction(&self) -> bool {
-        matches!(self,
-            TransactionType::ContractDeployment |
-            TransactionType::ContractExecution
+        matches!(
+            self,
+            TransactionType::ContractDeployment | TransactionType::ContractExecution
+        )
+    }
+
+    /// Check if this transaction type relates to wallet management
+    pub fn is_wallet_transaction(&self) -> bool {
+        matches!(
+            self,
+            TransactionType::WalletRegistration | TransactionType::WalletUpdate
         )
     }
 
@@ -82,29 +175,65 @@ impl TransactionType {
         matches!(self, TransactionType::Transfer)
     }
 
+    /// Check if this is a coinbase (block reward) transaction
+    pub fn is_coinbase(&self) -> bool {
+        matches!(self, TransactionType::Coinbase)
+    }
+
+    /// Check if this is a token transfer transaction
+    pub fn is_token_transfer(&self) -> bool {
+        matches!(self, TransactionType::TokenTransfer)
+    }
+
     /// Check if this transaction type relates to validator management
     pub fn is_validator_transaction(&self) -> bool {
-        matches!(self,
-            TransactionType::ValidatorRegistration |
-            TransactionType::ValidatorUpdate |
-            TransactionType::ValidatorUnregister
+        matches!(
+            self,
+            TransactionType::ValidatorRegistration
+                | TransactionType::ValidatorUpdate
+                | TransactionType::ValidatorUnregister
         )
     }
 
     /// Check if this transaction type relates to DAO governance
     pub fn is_dao_transaction(&self) -> bool {
-        matches!(self,
-            TransactionType::DaoProposal |
-            TransactionType::DaoVote |
-            TransactionType::DaoExecution |
-            TransactionType::DifficultyUpdate
+        matches!(
+            self,
+            TransactionType::DaoProposal
+                | TransactionType::DaoVote
+                | TransactionType::DaoExecution
+                | TransactionType::DifficultyUpdate
+                | TransactionType::UpdateOracleCommittee
+                | TransactionType::UpdateOracleConfig
+                | TransactionType::InitEntityRegistry
+                | TransactionType::TreasuryAllocation
         )
+    }
+
+    /// Check if this is a one-time entity registry initialization transaction
+    pub fn is_entity_registry_init(&self) -> bool {
+        matches!(self, TransactionType::InitEntityRegistry)
+    }
+
+    /// Check if this transaction type relates to oracle governance
+    pub fn is_oracle_governance_transaction(&self) -> bool {
+        matches!(
+            self,
+            TransactionType::UpdateOracleCommittee | TransactionType::UpdateOracleConfig
+        )
+    }
+
+    /// Check if this transaction type is an oracle attestation
+    pub fn is_oracle_attestation(&self) -> bool {
+        matches!(self, TransactionType::OracleAttestation)
     }
 
     /// Get a human-readable description of the transaction type
     pub fn description(&self) -> &'static str {
         match self {
             TransactionType::Transfer => "Standard value transfer",
+            TransactionType::Coinbase => "Block reward (coinbase)",
+            TransactionType::TokenTransfer => "Token transfer (balance model)",
             TransactionType::IdentityRegistration => "Identity registration",
             TransactionType::IdentityUpdate => "Identity update",
             TransactionType::IdentityRevocation => "Identity revocation",
@@ -115,6 +244,7 @@ impl TransactionType {
             TransactionType::ContentUpload => "Content upload transaction",
             TransactionType::UbiDistribution => "Universal Basic Income distribution",
             TransactionType::WalletRegistration => "Wallet registration/creation",
+            TransactionType::WalletUpdate => "Wallet update (metadata/ownership)",
             TransactionType::ValidatorRegistration => "Validator registration for consensus",
             TransactionType::ValidatorUpdate => "Validator information update",
             TransactionType::ValidatorUnregister => "Validator unregistration/exit",
@@ -124,6 +254,47 @@ impl TransactionType {
             TransactionType::DifficultyUpdate => "Difficulty parameter update (via DAO governance)",
             TransactionType::UBIClaim => "UBI claim - citizen-initiated claim from pool",
             TransactionType::ProfitDeclaration => "Profit declaration - enforces 20% tribute",
+            TransactionType::GovernanceConfigUpdate => "Token governance configuration update",
+            TransactionType::TokenMint => {
+                "System-controlled token mint (welcome bonus, UBI, migrations)"
+            }
+            TransactionType::TokenCreation => "Token creation (new token contract deployment)",
+            TransactionType::TokenSwap => "Token swap via AMM pool",
+            TransactionType::CreatePool => "Create AMM liquidity pool",
+            TransactionType::AddLiquidity => "Add liquidity to AMM pool",
+            TransactionType::RemoveLiquidity => "Remove liquidity from AMM pool",
+            TransactionType::BondingCurveDeploy => "Bonding curve token deployment",
+            TransactionType::BondingCurveBuy => "Buy tokens from bonding curve",
+            TransactionType::BondingCurveSell => "Sell tokens back to bonding curve",
+            TransactionType::BondingCurveGraduate => "Graduate bonding curve token to AMM",
+            TransactionType::UpdateOracleCommittee => {
+                "Update oracle committee membership (via DAO governance)"
+            }
+            TransactionType::UpdateOracleConfig => {
+                "Update oracle configuration parameters (via DAO governance)"
+            }
+            TransactionType::OracleAttestation => {
+                "Oracle price attestation (validator submits price for epoch)"
+            }
+            TransactionType::CancelOracleUpdate => {
+                "Cancel pending oracle update (via DAO governance)"
+            }
+            TransactionType::InitEntityRegistry => {
+                "Initialize entity registry with CBE and Nonprofit treasury addresses (one-time)"
+            }
+            TransactionType::RecordOnRampTrade => {
+                "Record oracle committee-attested fiat→CBE on-ramp trade"
+            }
+            TransactionType::TreasuryAllocation => {
+                "Execute governance-approved treasury allocation (CBE treasury → DAO wallet)"
+            }
+            TransactionType::InitCbeToken => "Initialize CBE token contract (one-time)",
+            TransactionType::CreateEmploymentContract => {
+                "Create employment contract on-chain via EmploymentRegistry"
+            }
+            TransactionType::ProcessPayroll => {
+                "Process payroll disbursement for active employment contract"
+            }
         }
     }
 
@@ -131,6 +302,8 @@ impl TransactionType {
     pub fn as_str(&self) -> &'static str {
         match self {
             TransactionType::Transfer => "transfer",
+            TransactionType::Coinbase => "coinbase",
+            TransactionType::TokenTransfer => "token_transfer",
             TransactionType::IdentityRegistration => "identity_registration",
             TransactionType::IdentityUpdate => "identity_update",
             TransactionType::IdentityRevocation => "identity_revocation",
@@ -141,6 +314,7 @@ impl TransactionType {
             TransactionType::ContentUpload => "content_upload",
             TransactionType::UbiDistribution => "ubi_distribution",
             TransactionType::WalletRegistration => "wallet_registration",
+            TransactionType::WalletUpdate => "wallet_update",
             TransactionType::ValidatorRegistration => "validator_registration",
             TransactionType::ValidatorUpdate => "validator_update",
             TransactionType::ValidatorUnregister => "validator_unregister",
@@ -150,6 +324,27 @@ impl TransactionType {
             TransactionType::DifficultyUpdate => "difficulty_update",
             TransactionType::UBIClaim => "ubi_claim",
             TransactionType::ProfitDeclaration => "profit_declaration",
+            TransactionType::GovernanceConfigUpdate => "governance_config_update",
+            TransactionType::TokenMint => "token_mint",
+            TransactionType::TokenCreation => "token_creation",
+            TransactionType::TokenSwap => "token_swap",
+            TransactionType::CreatePool => "create_pool",
+            TransactionType::AddLiquidity => "add_liquidity",
+            TransactionType::RemoveLiquidity => "remove_liquidity",
+            TransactionType::BondingCurveDeploy => "bonding_curve_deploy",
+            TransactionType::BondingCurveBuy => "bonding_curve_buy",
+            TransactionType::BondingCurveSell => "bonding_curve_sell",
+            TransactionType::BondingCurveGraduate => "bonding_curve_graduate",
+            TransactionType::UpdateOracleCommittee => "update_oracle_committee",
+            TransactionType::UpdateOracleConfig => "update_oracle_config",
+            TransactionType::OracleAttestation => "oracle_attestation",
+            TransactionType::CancelOracleUpdate => "cancel_oracle_update",
+            TransactionType::InitEntityRegistry => "init_entity_registry",
+            TransactionType::RecordOnRampTrade => "record_on_ramp_trade",
+            TransactionType::TreasuryAllocation => "treasury_allocation",
+            TransactionType::InitCbeToken => "init_cbe_token",
+            TransactionType::CreateEmploymentContract => "create_employment_contract",
+            TransactionType::ProcessPayroll => "process_payroll",
         }
     }
 
@@ -157,6 +352,8 @@ impl TransactionType {
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "transfer" => Some(TransactionType::Transfer),
+            "coinbase" => Some(TransactionType::Coinbase),
+            "token_transfer" => Some(TransactionType::TokenTransfer),
             "identity_registration" => Some(TransactionType::IdentityRegistration),
             "identity_update" => Some(TransactionType::IdentityUpdate),
             "identity_revocation" => Some(TransactionType::IdentityRevocation),
@@ -167,6 +364,7 @@ impl TransactionType {
             "content_upload" => Some(TransactionType::ContentUpload),
             "ubi_distribution" => Some(TransactionType::UbiDistribution),
             "wallet_registration" => Some(TransactionType::WalletRegistration),
+            "wallet_update" => Some(TransactionType::WalletUpdate),
             "validator_registration" => Some(TransactionType::ValidatorRegistration),
             "validator_update" => Some(TransactionType::ValidatorUpdate),
             "validator_unregister" => Some(TransactionType::ValidatorUnregister),
@@ -176,8 +374,34 @@ impl TransactionType {
             "difficulty_update" => Some(TransactionType::DifficultyUpdate),
             "ubi_claim" => Some(TransactionType::UBIClaim),
             "profit_declaration" => Some(TransactionType::ProfitDeclaration),
+            "governance_config_update" => Some(TransactionType::GovernanceConfigUpdate),
+            "token_mint" => Some(TransactionType::TokenMint),
+            "token_creation" => Some(TransactionType::TokenCreation),
+            "token_swap" => Some(TransactionType::TokenSwap),
+            "create_pool" => Some(TransactionType::CreatePool),
+            "add_liquidity" => Some(TransactionType::AddLiquidity),
+            "remove_liquidity" => Some(TransactionType::RemoveLiquidity),
+            "bonding_curve_deploy" => Some(TransactionType::BondingCurveDeploy),
+            "bonding_curve_buy" => Some(TransactionType::BondingCurveBuy),
+            "bonding_curve_sell" => Some(TransactionType::BondingCurveSell),
+            "bonding_curve_graduate" => Some(TransactionType::BondingCurveGraduate),
+            "update_oracle_committee" => Some(TransactionType::UpdateOracleCommittee),
+            "update_oracle_config" => Some(TransactionType::UpdateOracleConfig),
+            "oracle_attestation" => Some(TransactionType::OracleAttestation),
+            "cancel_oracle_update" => Some(TransactionType::CancelOracleUpdate),
+            "init_entity_registry" => Some(TransactionType::InitEntityRegistry),
+            "record_on_ramp_trade" => Some(TransactionType::RecordOnRampTrade),
+            "treasury_allocation" => Some(TransactionType::TreasuryAllocation),
+            "init_cbe_token" => Some(TransactionType::InitCbeToken),
+            "create_employment_contract" => Some(TransactionType::CreateEmploymentContract),
+            "process_payroll" => Some(TransactionType::ProcessPayroll),
             _ => None,
         }
+    }
+
+    /// Check if this transaction type is a governance config update
+    pub fn is_governance_config_update(&self) -> bool {
+        matches!(self, TransactionType::GovernanceConfigUpdate)
     }
 
     /// Check if this transaction type relates to UBI (pull-based claims vs system-initiated distribution)
@@ -188,5 +412,15 @@ impl TransactionType {
     /// Check if this transaction type relates to profit declarations (for-profit to nonprofit tribute)
     pub fn is_profit_declaration(&self) -> bool {
         matches!(self, TransactionType::ProfitDeclaration)
+    }
+
+    /// Check if this is a record on-ramp trade transaction
+    pub fn is_record_on_ramp_trade(&self) -> bool {
+        matches!(self, TransactionType::RecordOnRampTrade)
+    }
+
+    /// Check if this is a treasury allocation transaction
+    pub fn is_treasury_allocation(&self) -> bool {
+        matches!(self, TransactionType::TreasuryAllocation)
     }
 }

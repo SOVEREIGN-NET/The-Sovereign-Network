@@ -9,16 +9,15 @@
 //! - Error message handling
 //! - General message orchestration flow
 
-use anyhow::Result;
-use crate::handshake::{HandshakeMessage, HandshakePayload};
 use crate::handshake::core::HandshakeIoError;
+use crate::handshake::{HandshakeMessage, HandshakePayload};
+use anyhow::Result;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 // Re-export commonly used types
 pub use crate::handshake::{
-    ClientHello, ServerHello, ClientFinish,
-    HandshakeContext, HandshakeCapabilities, HandshakeResult, HandshakeSessionInfo,
-    NonceTracker,
+    ClientFinish, ClientHello, HandshakeCapabilities, HandshakeContext, HandshakeResult,
+    HandshakeSessionInfo, NonceTracker, ServerHello,
 };
 
 /// Helper to send a handshake message with error handling
@@ -32,14 +31,13 @@ pub async fn send_hello<S>(
 where
     S: AsyncWrite + Unpin,
 {
-    crate::handshake::core::send_message(stream, message).await
-        .map_err(|e| {
-            match e {
-                HandshakeIoError::Io(io_err) => {
-                    HandshakeIoError::Protocol(format!("Failed to send {}: {}", message_type, io_err))
-                }
-                other => other,
+    crate::handshake::core::send_message(stream, message)
+        .await
+        .map_err(|e| match e {
+            HandshakeIoError::Io(io_err) => {
+                HandshakeIoError::Protocol(format!("Failed to send {}: {}", message_type, io_err))
             }
+            other => other,
         })
 }
 
@@ -53,17 +51,16 @@ pub async fn recv_hello<S>(
 where
     S: AsyncRead + Unpin,
 {
-    crate::handshake::core::recv_message(stream).await
-        .map_err(|e| {
-            match e {
-                HandshakeIoError::Io(io_err) => {
-                    HandshakeIoError::Protocol(format!("Failed to receive {}: {}", expected_type, io_err))
-                }
-                other => other,
-            }
+    crate::handshake::core::recv_message(stream)
+        .await
+        .map_err(|e| match e {
+            HandshakeIoError::Io(io_err) => HandshakeIoError::Protocol(format!(
+                "Failed to receive {}: {}",
+                expected_type, io_err
+            )),
+            other => other,
         })
 }
-
 
 /// Helper for initiator message exchange pattern
 ///
@@ -86,8 +83,7 @@ where
     let response = recv_hello(stream, expect_type).await?;
 
     // Verify response format/content
-    verify_fn(&response)
-        .map_err(|e| HandshakeIoError::Protocol(e))?;
+    verify_fn(&response).map_err(|e| HandshakeIoError::Protocol(e))?;
 
     Ok(response)
 }
@@ -110,8 +106,7 @@ where
     let received = recv_hello(stream, expect_type).await?;
 
     // Verify message format/content
-    verify_fn(&received)
-        .map_err(|e| HandshakeIoError::Protocol(e))?;
+    verify_fn(&received).map_err(|e| HandshakeIoError::Protocol(e))?;
 
     // Send response
     send_hello(stream, message_to_send, send_type).await?;
@@ -127,11 +122,10 @@ pub fn extract_payload<T>(
     expected: &str,
     extractor: impl Fn(&HandshakePayload) -> Option<T>,
 ) -> Result<T, HandshakeIoError> {
-    extractor(&message.payload)
-        .ok_or_else(|| HandshakeIoError::UnexpectedMessageType {
-            expected: expected.to_string(),
-            got: format!("{:?}", message.payload),
-        })
+    extractor(&message.payload).ok_or_else(|| HandshakeIoError::UnexpectedMessageType {
+        expected: expected.to_string(),
+        got: format!("{:?}", message.payload),
+    })
 }
 
 /// Helper to handle handshake errors
@@ -146,7 +140,6 @@ pub fn check_for_error(message: &HandshakeMessage) -> Result<(), HandshakeIoErro
     }
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {

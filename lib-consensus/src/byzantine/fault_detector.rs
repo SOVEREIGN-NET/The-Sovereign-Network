@@ -49,6 +49,7 @@ pub struct ByzantineFaultDetector {
     partition_check_interval_secs: u64,
 
     /// Configuration
+    #[allow(dead_code)]
     config: FaultDetectorConfig,
 }
 
@@ -113,7 +114,10 @@ impl ByzantineFaultDetector {
             liveness_violations: HashMap::new(),
             invalid_proposals: HashMap::new(),
             first_votes: HashMap::new(),
-            replay_cache: BoundedLruCache::new(config.replay_cache_max_size, config.replay_detection_window_secs),
+            replay_cache: BoundedLruCache::new(
+                config.replay_cache_max_size,
+                config.replay_detection_window_secs,
+            ),
             forensic_records: VecDeque::new(),
             forensic_max_size: config.forensic_max_records,
             forensic_ttl_secs: config.forensic_ttl_secs,
@@ -125,7 +129,10 @@ impl ByzantineFaultDetector {
     }
 
     /// Detect Byzantine faults among validators
-    pub fn detect_faults(&mut self, _validator_manager: &ValidatorManager) -> Result<Vec<ByzantineFault>> {
+    pub fn detect_faults(
+        &mut self,
+        _validator_manager: &ValidatorManager,
+    ) -> Result<Vec<ByzantineFault>> {
         let mut detected_faults = Vec::new();
 
         // Check for double signing
@@ -254,10 +261,16 @@ impl ByzantineFaultDetector {
     }
 
     /// Process detected faults and apply penalties
+    ///
+    /// # Arguments
+    /// * `faults` - List of detected Byzantine faults
+    /// * `validator_manager` - Validator manager to apply slashing
+    /// * `current_block` - Current block height for jail tracking
     pub fn process_faults(
         &mut self,
         faults: Vec<ByzantineFault>,
         validator_manager: &mut ValidatorManager,
+        current_block: u64,
     ) -> Result<()> {
         for fault in faults {
             match fault.fault_type {
@@ -271,6 +284,7 @@ impl ByzantineFaultDetector {
                         &fault.validator,
                         SlashType::DoubleSign,
                         slash_percentage,
+                        current_block,
                     ) {
                         tracing::warn!("Failed to slash validator for double signing: {}", e);
                     }
@@ -285,6 +299,7 @@ impl ByzantineFaultDetector {
                         &fault.validator,
                         SlashType::Liveness,
                         slash_percentage,
+                        current_block,
                     ) {
                         tracing::warn!("Failed to slash validator for liveness violation: {}", e);
                     }
@@ -294,6 +309,7 @@ impl ByzantineFaultDetector {
                         &fault.validator,
                         SlashType::InvalidProposal,
                         2, // 2% slash for invalid proposals
+                        current_block,
                     ) {
                         tracing::warn!("Failed to slash validator for invalid proposal: {}", e);
                     }
@@ -363,7 +379,8 @@ impl ByzantineFaultDetector {
                 reported_by_peer_b: reported_by_peer.clone(),
             };
 
-            self.evidence_log.push(ByzantineEvidence::Equivocation(evidence.clone()));
+            self.evidence_log
+                .push(ByzantineEvidence::Equivocation(evidence.clone()));
             return Some(evidence);
         }
 
@@ -414,7 +431,8 @@ impl ByzantineFaultDetector {
 
             // Update cache with new count
             self.replay_cache.insert(key, metadata, current_time);
-            self.evidence_log.push(ByzantineEvidence::Replay(evidence.clone()));
+            self.evidence_log
+                .push(ByzantineEvidence::Replay(evidence.clone()));
             return Some(evidence);
         }
 
@@ -442,6 +460,12 @@ impl ByzantineFaultDetector {
         round: u32,
         current_time: u64,
     ) -> Option<PartitionSuspectedEvidence> {
+        // Single-validator bootstrap mode cannot form a "partition" in BFT terms.
+        // Emitting partition evidence for 1/1 timed out is noisy and misleading.
+        if liveness_monitor.total_validators <= 1 {
+            return None;
+        }
+
         // Rate limiting: only check every partition_check_interval_secs
         if current_time < self.last_partition_check + self.partition_check_interval_secs {
             return None;
@@ -464,7 +488,8 @@ impl ByzantineFaultDetector {
             detected_at: current_time,
         };
 
-        self.evidence_log.push(ByzantineEvidence::PartitionSuspected(evidence.clone()));
+        self.evidence_log
+            .push(ByzantineEvidence::PartitionSuspected(evidence.clone()));
         Some(evidence)
     }
 
@@ -539,12 +564,7 @@ impl ByzantineFaultDetector {
         // NEW: Clean first votes (keep last 100 heights)
         if self.first_votes.len() > 400 {
             // Rough estimate: 4 vote types per height
-            let min_height = self
-                .first_votes
-                .keys()
-                .map(|k| k.height)
-                .min()
-                .unwrap_or(0);
+            let min_height = self.first_votes.keys().map(|k| k.height).min().unwrap_or(0);
             let cutoff_height = min_height + 100;
 
             self.first_votes

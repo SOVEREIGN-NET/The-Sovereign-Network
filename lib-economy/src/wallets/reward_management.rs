@@ -1,15 +1,18 @@
-//! Reward management system for ZHTP network participants
-//! 
+//! Reward management system for SOV network participants
+//!
 //! Manages calculation, accumulation, and distribution of rewards for network services
 //! including bandwidth sharing, data storage, mesh routing, and  activities.
 
-use anyhow::{Result, anyhow};
-use serde::{Serialize, Deserialize};
+use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::models::{TokenReward, EconomicModel};
-use crate::types::{WorkMetrics, IspBypassWork, NetworkStats, TransactionType};
+use crate::models::{EconomicModel, TokenReward};
+use crate::types::{
+    IspBypassWork, IspBypassWorkExt, NetworkStats, NetworkStatsExt, TransactionType, WorkMetrics,
+    WorkMetricsExt,
+};
 use crate::wallets::WalletBalance;
 use crate::wasm::logging::info;
 
@@ -79,7 +82,7 @@ pub struct IspBypassRewards {
     pub bypass_multiplier: f64,
 }
 
-/// Bandwidth sharing metrics for 
+/// Bandwidth sharing metrics for
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BandwidthMetrics {
     /// Total bandwidth shared in GB
@@ -145,7 +148,7 @@ pub struct DiscoveryStats {
 /// Multi-wallet support for different reward types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultiWallet {
-    /// Main ZHTP wallet
+    /// Main SOV wallet
     pub primary_wallet: WalletBalance,
     /// Specialized wallets for different reward types
     pub reward_wallets: HashMap<String, WalletBalance>,
@@ -269,7 +272,7 @@ impl RewardManager {
         self.current_work.add_routing_work(work.routing_work);
         self.current_work.add_storage_work(work.storage_work);
         self.current_work.add_compute_work(work.compute_work);
-        
+
         // Update quality score and track history
         self.current_work.update_quality_score(work.quality_score);
         self.quality_history.push(work.quality_score);
@@ -285,18 +288,26 @@ impl RewardManager {
 
     /// Record  activities
     pub fn record_isp_bypass_work(&mut self, work: IspBypassWork) -> Result<()> {
-        self.isp_bypass_work.add_bandwidth_shared(work.bandwidth_shared_gb);
-        self.isp_bypass_work.add_packets_routed(work.packets_routed_mb);
-        self.isp_bypass_work.update_connection_quality(work.connection_quality);
+        self.isp_bypass_work
+            .add_bandwidth_shared(work.bandwidth_shared_gb);
+        self.isp_bypass_work
+            .add_packets_routed(work.packets_routed_mb);
+        self.isp_bypass_work
+            .update_connection_quality(work.connection_quality);
         self.isp_bypass_work.add_users_served(work.users_served);
-        self.isp_bypass_work.add_cost_savings(work.cost_savings_provided);
+        self.isp_bypass_work
+            .add_cost_savings(work.cost_savings_provided);
         self.isp_bypass_work.uptime_hours += work.uptime_hours;
 
         Ok(())
     }
 
     /// Calculate and queue pending rewards
-    pub fn calculate_rewards(&mut self, economic_model: &EconomicModel, network_stats: &NetworkStats) -> Result<TokenReward> {
+    pub fn calculate_rewards(
+        &mut self,
+        economic_model: &EconomicModel,
+        network_stats: &NetworkStats,
+    ) -> Result<TokenReward> {
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -312,7 +323,9 @@ impl RewardManager {
 
         // Calculate  rewards if applicable
         let mut total_reward = network_reward;
-        if self.isp_bypass_work.bandwidth_shared_gb > 0 || self.isp_bypass_work.packets_routed_mb > 0 {
+        if self.isp_bypass_work.bandwidth_shared_gb > 0
+            || self.isp_bypass_work.packets_routed_mb > 0
+        {
             let bypass_reward = TokenReward::calculate_isp_bypass(&self.isp_bypass_work)?;
             total_reward.combine(&bypass_reward);
         }
@@ -320,7 +333,8 @@ impl RewardManager {
         // Apply network utilization adjustments
         let adjustment_multiplier = network_stats.get_reward_adjustment_multiplier();
         if adjustment_multiplier != 100 {
-            total_reward.total_reward = (total_reward.total_reward as f64 * adjustment_multiplier as f64 / 100.0) as u64;
+            total_reward.total_reward =
+                (total_reward.total_reward as f64 * adjustment_multiplier as f64 / 100.0) as u64;
         }
 
         // Queue the reward
@@ -369,10 +383,12 @@ impl RewardManager {
     /// Estimate value of current uncalculated work
     fn estimate_current_work_value(&self) -> u64 {
         // Simple estimation based on work metrics
-        let routing_est = (self.current_work.routing_work / 1_000_000) * crate::DEFAULT_ROUTING_RATE;
-        let storage_est = (self.current_work.storage_work / 1_000_000_000) * crate::DEFAULT_STORAGE_RATE;
+        let routing_est =
+            (self.current_work.routing_work / 1_000_000) * crate::DEFAULT_ROUTING_RATE;
+        let storage_est =
+            (self.current_work.storage_work / 1_000_000_000) * crate::DEFAULT_STORAGE_RATE;
         let compute_est = self.current_work.compute_work * crate::DEFAULT_COMPUTE_RATE;
-        
+
         routing_est + storage_est + compute_est
     }
 
@@ -422,7 +438,7 @@ impl UptimeTracker {
             .unwrap()
             .as_secs();
         let total_hours = (current_time - self.session_start) / 3600;
-        
+
         if total_hours == 0 {
             100.0
         } else {
@@ -476,7 +492,7 @@ impl StakingSystem {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         let time_diff = current_time - self.last_reward_calc;
         let days_passed = time_diff / 86400;
 
@@ -506,13 +522,13 @@ impl StakingSystem {
 
         // Calculate final rewards including any last-minute accumulation
         let final_rewards = self.calculate_staking_rewards()?;
-        
+
         // Add final calculated rewards to accumulated rewards for complete payout
         let total_rewards = self.accumulated_rewards + final_rewards;
         let staked_amount = self.staked_amount;
-        
+
         info!(
-            "Unstaking completed: {} ZHTP staked, {} accumulated + {} final = {} total rewards",
+            "Unstaking completed: {} SOV staked, {} accumulated + {} final = {} total rewards",
             staked_amount, self.accumulated_rewards, final_rewards, total_rewards
         );
 
@@ -547,7 +563,7 @@ impl IspBypassRewards {
         };
 
         let mut reward = TokenReward::calculate_isp_bypass(&work)?;
-        
+
         // Apply bypass multiplier for exceptional service
         if self.bypass_multiplier != 1.0 {
             reward.total_reward = (reward.total_reward as f64 * self.bypass_multiplier) as u64;
@@ -558,16 +574,15 @@ impl IspBypassRewards {
 
     pub fn update_bandwidth_metrics(&mut self, shared_gb: u64, utilization: f64, efficiency: f64) {
         self.bandwidth_metrics.total_shared_gb += shared_gb;
-        self.bandwidth_metrics.avg_utilization = 
+        self.bandwidth_metrics.avg_utilization =
             (self.bandwidth_metrics.avg_utilization + utilization) / 2.0;
-        self.bandwidth_metrics.transfer_efficiency = 
+        self.bandwidth_metrics.transfer_efficiency =
             (self.bandwidth_metrics.transfer_efficiency + efficiency) / 2.0;
     }
 
     pub fn update_connection_stats(&mut self, users: u32, quality: f64, hours: u64) {
         self.connection_stats.users_served += users;
-        self.connection_stats.avg_quality = 
-            (self.connection_stats.avg_quality + quality) / 2.0;
+        self.connection_stats.avg_quality = (self.connection_stats.avg_quality + quality) / 2.0;
         self.connection_stats.connection_hours += hours;
     }
 }
@@ -605,8 +620,9 @@ impl MeshDiscoveryRewards {
 
     pub fn calculate_mesh_rewards(&self) -> Result<TokenReward> {
         // Calculate rewards based on mesh contribution
-        let routing_reward = (self.routing_metrics.packets_routed / 1_000_000) * crate::DEFAULT_ROUTING_RATE;
-        
+        let routing_reward =
+            (self.routing_metrics.packets_routed / 1_000_000) * crate::DEFAULT_ROUTING_RATE;
+
         // Bonus for high-quality routing
         let quality_bonus = if self.routing_metrics.success_rate > 0.95 {
             (routing_reward as f64 * 0.5) as u64
@@ -632,16 +648,15 @@ impl MeshDiscoveryRewards {
 
     pub fn update_routing_metrics(&mut self, packets: u64, latency: u64, success_rate: f64) {
         self.routing_metrics.packets_routed += packets;
-        self.routing_metrics.avg_latency_ms = 
-            (self.routing_metrics.avg_latency_ms + latency) / 2;
-        self.routing_metrics.success_rate = 
+        self.routing_metrics.avg_latency_ms = (self.routing_metrics.avg_latency_ms + latency) / 2;
+        self.routing_metrics.success_rate =
             (self.routing_metrics.success_rate + success_rate) / 2.0;
     }
 
     pub fn update_discovery_stats(&mut self, peers: u32, requests: u64, geo_score: f64) {
         self.discovery_stats.peers_discovered += peers;
         self.discovery_stats.discovery_requests += requests;
-        self.discovery_stats.geo_diversity_score = 
+        self.discovery_stats.geo_diversity_score =
             (self.discovery_stats.geo_diversity_score + geo_score) / 2.0;
         self.discovery_stats.topology_updates += 1;
     }
@@ -683,7 +698,8 @@ impl MultiWallet {
             return Err(anyhow!("Wallet type already exists"));
         }
 
-        self.reward_wallets.insert(wallet_type.clone(), WalletBalance::new(node_id));
+        self.reward_wallets
+            .insert(wallet_type.clone(), WalletBalance::new(node_id));
         self.transfer_capabilities.supported_types.push(wallet_type);
 
         Ok(())
@@ -702,7 +718,8 @@ impl MultiWallet {
         let from_wallet = if from == "primary" {
             &mut self.primary_wallet
         } else {
-            self.reward_wallets.get_mut(from)
+            self.reward_wallets
+                .get_mut(from)
                 .ok_or_else(|| anyhow!("Source wallet not found"))?
         };
 
@@ -716,7 +733,8 @@ impl MultiWallet {
         let to_wallet = if to == "primary" {
             &mut self.primary_wallet
         } else {
-            self.reward_wallets.get_mut(to)
+            self.reward_wallets
+                .get_mut(to)
                 .ok_or_else(|| anyhow!("Destination wallet not found"))?
         };
 
@@ -727,7 +745,9 @@ impl MultiWallet {
 
     pub fn get_total_balance(&self) -> u64 {
         let primary_balance = self.primary_wallet.total_balance();
-        let reward_balance: u64 = self.reward_wallets.values()
+        let reward_balance: u64 = self
+            .reward_wallets
+            .values()
             .map(|w| w.total_balance())
             .sum();
 
@@ -757,8 +777,8 @@ impl MultiWallet {
 impl TransferCapabilities {
     pub fn new() -> Self {
         Self {
-            daily_transfer_limit: 1_000_000, // 1M ZHTP
-            transfer_fee_rate: 50, // 0.5%
+            daily_transfer_limit: 1_000_000, // 1M SOV
+            transfer_fee_rate: 50,           // 0.5%
             supported_types: vec!["primary".to_string()],
             auto_consolidate: true,
         }
@@ -777,7 +797,7 @@ impl TransactionHistory {
     pub fn add_transaction(&mut self, transaction: HistoricalTransaction) {
         self.transactions.push(transaction.clone());
         self.analytics.update_with_transaction(&transaction);
-        
+
         // Keep only last 10,000 transactions
         if self.transactions.len() > 10_000 {
             self.transactions.remove(0);
@@ -785,17 +805,24 @@ impl TransactionHistory {
     }
 
     pub fn search_transactions(&self, query: &str) -> Vec<&HistoricalTransaction> {
-        self.transactions.iter()
+        self.transactions
+            .iter()
             .filter(|tx| {
                 // Search in transaction type, location, etc.
-                format!("{:?}", tx.tx_type).to_lowercase().contains(&query.to_lowercase()) ||
-                tx.location.as_ref().map_or(false, |loc| loc.contains(query))
+                format!("{:?}", tx.tx_type)
+                    .to_lowercase()
+                    .contains(&query.to_lowercase())
+                    || tx
+                        .location
+                        .as_ref()
+                        .map_or(false, |loc| loc.contains(query))
             })
             .collect()
     }
 
     pub fn filter_transactions(&self) -> Vec<&HistoricalTransaction> {
-        self.transactions.iter()
+        self.transactions
+            .iter()
             .filter(|tx| {
                 // Apply date range filter
                 if let Some((start, end)) = self.filters.date_range {
@@ -805,7 +832,8 @@ impl TransactionHistory {
                 }
 
                 // Apply transaction type filter
-                if !self.filters.tx_types.is_empty() && !self.filters.tx_types.contains(&tx.tx_type) {
+                if !self.filters.tx_types.is_empty() && !self.filters.tx_types.contains(&tx.tx_type)
+                {
                     return false;
                 }
 
@@ -824,9 +852,15 @@ impl TransactionHistory {
     pub fn get_transaction_summary(&self) -> TransactionSummary {
         let total_count = self.transactions.len();
         let total_value: u64 = self.transactions.iter().map(|tx| tx.amount).sum();
-        let avg_value = if total_count > 0 { total_value as f64 / total_count as f64 } else { 0.0 };
+        let avg_value = if total_count > 0 {
+            total_value as f64 / total_count as f64
+        } else {
+            0.0
+        };
 
-        let recent_count = self.transactions.iter()
+        let recent_count = self
+            .transactions
+            .iter()
             .filter(|tx| {
                 let current_time = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -865,10 +899,10 @@ impl TransactionAnalytics {
 
     pub fn update_with_transaction(&mut self, transaction: &HistoricalTransaction) {
         let tx_type_str = format!("{:?}", transaction.tx_type);
-        
+
         // Update volume by type
         *self.volume_by_type.entry(tx_type_str.clone()).or_insert(0) += transaction.amount;
-        
+
         // Update average values
         let current_avg = self.avg_values.get(&tx_type_str).unwrap_or(&0.0);
         let new_avg = (current_avg + transaction.amount as f64) / 2.0;

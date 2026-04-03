@@ -3,15 +3,16 @@
 //! This allows components to share a single PersistentStorageSystem instance,
 //! avoiding sled database lock conflicts.
 
-use std::sync::OnceLock;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use lib_storage::PersistentStorageSystem;
 use anyhow::Result;
+use lib_storage::PersistentStorageSystem;
+use std::sync::Arc;
+use std::sync::OnceLock;
+use tokio::sync::RwLock;
 use tracing::info;
 
 /// Global storage provider instance
-static GLOBAL_STORAGE: OnceLock<Arc<RwLock<Option<Arc<RwLock<PersistentStorageSystem>>>>>> = OnceLock::new();
+static GLOBAL_STORAGE: OnceLock<Arc<RwLock<Option<Arc<RwLock<PersistentStorageSystem>>>>>> =
+    OnceLock::new();
 
 fn get_storage_holder() -> &'static Arc<RwLock<Option<Arc<RwLock<PersistentStorageSystem>>>>> {
     GLOBAL_STORAGE.get_or_init(|| Arc::new(RwLock::new(None)))
@@ -28,7 +29,9 @@ pub async fn set_global_storage(storage: Arc<RwLock<PersistentStorageSystem>>) -
 /// Get the global storage instance
 pub async fn get_global_storage() -> Result<Arc<RwLock<PersistentStorageSystem>>> {
     let holder = get_storage_holder();
-    holder.read().await
+    holder
+        .read()
+        .await
         .as_ref()
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("Global storage not initialized"))
