@@ -411,8 +411,8 @@ impl lib_consensus::validators::ValidatorInfo for BlockchainValidatorAdapter {
         self.0.storage_provided
     }
 
-    fn consensus_key(&self) -> Vec<u8> {
-        self.0.consensus_key.clone()
+    fn consensus_key(&self) -> [u8; 2592] {
+        self.0.consensus_key
     }
 
     fn networking_key(&self) -> Vec<u8> {
@@ -1459,7 +1459,8 @@ impl std::fmt::Debug for ConsensusComponent {
 }
 
 /// Decode bootstrap consensus key from hex string (accepts 0x prefix or plain hex).
-pub fn decode_bootstrap_consensus_key(consensus_key_hex: &str) -> Option<Vec<u8>> {
+/// Returns fixed-size [u8; 2592] for Dilithium5 public key.
+pub fn decode_bootstrap_consensus_key(consensus_key_hex: &str) -> Option<[u8; 2592]> {
     let trimmed = consensus_key_hex.trim();
     if trimmed.is_empty() {
         return None;
@@ -1470,7 +1471,12 @@ pub fn decode_bootstrap_consensus_key(consensus_key_hex: &str) -> Option<Vec<u8>
         .or_else(|| trimmed.strip_prefix("0X"))
         .unwrap_or(trimmed);
 
-    hex::decode(normalized).ok().filter(|k| !k.is_empty())
+    let bytes = hex::decode(normalized).ok()?;
+    if bytes.len() != 2592 {
+        return None;
+    }
+    
+    Some(bytes.as_slice().try_into().ok()?)
 }
 
 impl ConsensusComponent {

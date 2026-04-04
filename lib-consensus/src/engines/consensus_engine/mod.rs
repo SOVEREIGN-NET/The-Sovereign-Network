@@ -398,8 +398,8 @@ struct PendingValidatorAdd {
     identity: IdentityId,
     stake: u64,
     storage_capacity: u64,
-    /// BFT vote-signing key (Dilithium2, hot). Must differ from networking_key and rewards_key.
-    consensus_key: Vec<u8>,
+    /// BFT vote-signing key (Dilithium5, hot). Must differ from networking_key and rewards_key.
+    consensus_key: [u8; 2592],
     /// P2P transport identity key (Ed25519/X25519, hot). Must differ from consensus_key and rewards_key.
     networking_key: Vec<u8>,
     /// Rewards wallet public key (cold-capable). Must differ from consensus_key and networking_key.
@@ -542,7 +542,7 @@ pub struct ValidatorSetUpdate {
 pub struct ValidatorUpdateEntry {
     pub identity_id: IdentityId,
     pub stake: u64,
-    pub consensus_key: Vec<u8>,
+    pub consensus_key: [u8; 2592],
 }
 
 impl ConsensusEngine {
@@ -1033,7 +1033,7 @@ impl ConsensusEngine {
         identity: IdentityId,
         stake: u64,
         storage_capacity: u64,
-        consensus_key: Vec<u8>,
+        consensus_key: [u8; 2592],
         networking_key: Vec<u8>,
         rewards_key: Vec<u8>,
         commission_rate: u8,

@@ -4794,13 +4794,23 @@ pub(super) fn seed_validators_from_bootstrap_config(
     }
     let mut count = 0usize;
     for bv in bootstrap_validators {
+        // Decode bootstrap consensus key (must be 2592 bytes for Dilithium5)
+        // If not provided, generate a deterministic key from identity hash
         let consensus_key = crate::runtime::components::consensus::decode_bootstrap_consensus_key(
             &bv.consensus_key,
         )
         .unwrap_or_else(|| {
-            blake3::hash(format!("{}::consensus", bv.identity_id).as_bytes())
-                .as_bytes()
-                .to_vec()
+            // Generate deterministic Dilithium5 key from identity hash
+            // This is for testing/bootstrap only - real validators must provide real keys
+            let mut key = [0u8; 2592];
+            let hash = blake3::hash(format!("{}::consensus", bv.identity_id).as_bytes());
+            key[..32].copy_from_slice(hash.as_bytes());
+            // Fill rest with derived data to avoid all-zeros
+            for i in 1..(2592/32) {
+                let chunk_hash = blake3::hash(&[hash.as_bytes(), &[i as u8]].concat());
+                key[i*32..(i+1)*32].copy_from_slice(chunk_hash.as_bytes());
+            }
+            key
         });
         let networking_key = blake3::hash(format!("{}::networking", bv.identity_id).as_bytes())
             .as_bytes()
@@ -5536,13 +5546,11 @@ mod oracle_startup_tests {
 
     #[test]
     fn bootstrap_from_validator_registry_populates_committee() {
-        const DILITHIUM2_PK_LEN: usize = 1312;
-
         let mut bc = Blockchain::new().expect("Blockchain::new");
         assert!(bc.oracle_state.committee.members().is_empty());
 
-        // Insert an active validator with a Dilithium2-sized consensus key.
-        let consensus_key = vec![0xABu8; DILITHIUM2_PK_LEN];
+        // Insert an active validator with a Dilithium5-sized consensus key.
+        let consensus_key = [0xABu8; 2592];
         let key_id = lib_blockchain::blake3_hash(&consensus_key).as_array();
         bc.validator_registry.insert(
             "did:zhtp:validator-test".to_string(),
@@ -5550,7 +5558,7 @@ mod oracle_startup_tests {
                 identity_id: "did:zhtp:validator-test".to_string(),
                 stake: 1_000_000,
                 storage_provided: 0,
-                consensus_key: consensus_key.clone(),
+                consensus_key,
                 networking_key: vec![0xCDu8; 32],
                 rewards_key: vec![0xEFu8; 32],
                 network_address: "10.0.0.1:9334".to_string(),
@@ -5567,17 +5575,14 @@ mod oracle_startup_tests {
         );
 
         // Replicate the bootstrap logic from seed_blockchain_validator_registry.
-        let mut committee_members: Vec<([u8; 32], Vec<u8>)> = bc
+        // Type system now enforces 2592-byte keys, no length check needed.
+        let mut committee_members: Vec<([u8; 32], [u8; 2592])> = bc
             .validator_registry
             .values()
             .filter(|v| v.status == "active")
-            .filter_map(|v| {
-                if v.consensus_key.len() == DILITHIUM2_PK_LEN {
-                    let kid = lib_blockchain::blake3_hash(&v.consensus_key).as_array();
-                    Some((kid, v.consensus_key.clone()))
-                } else {
-                    None
-                }
+            .map(|v| {
+                let kid = lib_blockchain::blake3_hash(&v.consensus_key).as_array();
+                (kid, v.consensus_key)
             })
             .collect();
         committee_members.sort_by(|(a, _), (b, _)| a.cmp(b));
@@ -5591,17 +5596,18 @@ mod oracle_startup_tests {
     }
 
     #[test]
-    fn bootstrap_skips_validators_with_wrong_key_length() {
+    fn bootstrap_skips_validators_with_all_zeros_key() {
         let mut bc = Blockchain::new().expect("Blockchain::new");
 
-        // Insert a validator with an invalid consensus key length.
+        // Insert a validator with an all-zeros consensus key (invalid).
+        // Type system enforces 2592-byte size, but we can still test for invalid content.
         bc.validator_registry.insert(
             "did:zhtp:bad-validator".to_string(),
             ValidatorInfo {
                 identity_id: "did:zhtp:bad-validator".to_string(),
                 stake: 1_000_000,
                 storage_provided: 0,
-                consensus_key: vec![0xFFu8; 64], // wrong length — neither Dilithium2 nor Dilithium5
+                consensus_key: [0u8; 2592], // all zeros — invalid key
                 networking_key: vec![0x01u8; 32],
                 rewards_key: vec![0x02u8; 32],
                 network_address: "10.0.0.2:9334".to_string(),
@@ -5617,28 +5623,22 @@ mod oracle_startup_tests {
             },
         );
 
-        const DILITHIUM2_PK_LEN: usize = 1312;
-        const DILITHIUM5_PK_LEN: usize = 2592;
-
-        let committee_members: Vec<([u8; 32], Vec<u8>)> = bc
+        // Filter out validators with all-zeros keys (invalid)
+        let committee_members: Vec<([u8; 32], [u8; 2592])> = bc
             .validator_registry
             .values()
             .filter(|v| v.status == "active")
-            .filter_map(|v| {
-                let len = v.consensus_key.len();
-                if len == DILITHIUM2_PK_LEN || len == DILITHIUM5_PK_LEN {
-                    let kid = lib_blockchain::blake3_hash(&v.consensus_key).as_array();
-                    Some((kid, v.consensus_key.clone()))
-                } else {
-                    None
-                }
+            .filter(|v| v.consensus_key != [0u8; 2592]) // skip all-zeros
+            .map(|v| {
+                let kid = lib_blockchain::blake3_hash(&v.consensus_key).as_array();
+                (kid, v.consensus_key)
             })
             .collect();
 
         // No valid keys — bootstrap should not be called, committee stays empty.
         assert!(
             committee_members.is_empty(),
-            "bad key lengths should be filtered out"
+            "all-zeros keys should be filtered out"
         );
         assert!(bc.oracle_state.committee.members().is_empty());
     }
@@ -5655,7 +5655,7 @@ mod validator_startup_tests {
             identity_id: id.to_string(),
             stake: 1,
             storage_provided: 0,
-            consensus_key: vec![0u8; 32],
+            consensus_key: [0u8; 2592], // Dilithium5 public key size
             networking_key: vec![0u8; 32],
             rewards_key: vec![0u8; 32],
             network_address: String::new(),

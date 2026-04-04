@@ -479,7 +479,8 @@ pub struct ValidatorInfo {
     /// Post-quantum Dilithium5 public key used exclusively for signing BFT consensus
     /// messages (proposals, pre-votes, pre-commits).  MUST differ from `networking_key`
     /// and `rewards_key`.
-    pub consensus_key: Vec<u8>,
+    /// Fixed size [u8; 2592] for Dilithium5 public key.
+    pub consensus_key: [u8; 2592],
     /// Ed25519 / X25519 public key used for P2P transport identity (QUIC TLS, DHT node
     /// ID).  MUST differ from `consensus_key` and `rewards_key`.
     pub networking_key: Vec<u8>,

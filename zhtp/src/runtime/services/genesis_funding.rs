@@ -16,7 +16,7 @@ pub struct GenesisValidator {
     pub stake: u64,
     pub storage_provided: u64,
     pub commission_rate: u16, // basis points (e.g., 500 = 5%)
-    pub consensus_key: Vec<u8>,
+    pub consensus_key: [u8; 2592], // Dilithium5 public key
     pub network_address: String,
 }
 

@@ -694,7 +694,7 @@ mod tests {
 
     /// Build a minimal ValidatorInfo for tests — fills only the fields that
     /// `validate_oracle_attestation_transaction` inspects.
-    fn make_validator_info(identity: &str, consensus_key: Vec<u8>) -> ValidatorInfo {
+    fn make_validator_info(identity: &str, consensus_key: [u8; 2592]) -> ValidatorInfo {
         let oracle_key_id = lib_crypto::hash_blake3(&consensus_key);
         ValidatorInfo {
             identity_id: identity.to_string(),
