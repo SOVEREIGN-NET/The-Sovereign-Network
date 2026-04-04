@@ -1150,6 +1150,40 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
         }
     }
 
+    async fn commit_finalized_block_with_proof(
+        &self,
+        proposal: &lib_consensus::types::ConsensusProposal,
+        quorum_proof: lib_types::consensus::BftQuorumProof,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Commit the block itself (all existing validation + persistence).
+        self.commit_finalized_block(proposal).await?;
+
+        // Persist the quorum proof in a separate sled tree so catch-up sync
+        // can verify BFT finality from the proof alone, without relying on
+        // the bft_active_height guard.
+        let slot = self.blockchain_slot.read().await;
+        if let Some(bc_arc) = slot.as_ref() {
+            let bc = bc_arc.read().await;
+            if let Some(ref store) = bc.store {
+                if let Err(e) = store.put_quorum_proof(proposal.height, &quorum_proof) {
+                    tracing::warn!(
+                        "Failed to persist quorum proof for height {}: {} (non-fatal)",
+                        proposal.height,
+                        e,
+                    );
+                } else {
+                    tracing::info!(
+                        "📜 Persisted BFT quorum proof for height {} ({} attestations)",
+                        proposal.height,
+                        quorum_proof.attestations.len(),
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     async fn get_active_validator_count(
         &self,
     ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {

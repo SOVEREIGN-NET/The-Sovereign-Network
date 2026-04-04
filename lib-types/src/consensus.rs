@@ -339,3 +339,74 @@ mod tests {
         }
     }
 }
+
+// =============================================================================
+// BFT QUORUM PROOF — cryptographic evidence of BFT finality
+// =============================================================================
+
+/// A single validator's commit attestation within a quorum proof.
+///
+/// Carries the Dilithium signature and the fields needed to reconstruct the
+/// signed envelope (`vote_id || voter || proposal_id || vote_type || height || round`)
+/// so that any node can verify the attestation without access to the consensus engine.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitAttestation {
+    /// The validator who cast this commit vote (IdentityId bytes).
+    pub validator_id: [u8; 32],
+    /// Vote identifier — needed to reconstruct the signing envelope.
+    pub vote_id: [u8; 32],
+    /// The proposal ID this commit vote was for.
+    pub proposal_id: [u8; 32],
+    /// The consensus round in which the commit was cast.
+    pub round: u32,
+    /// The raw Dilithium signature bytes from the commit vote.
+    pub signature: Vec<u8>,
+    /// The Dilithium public key bytes that produced this signature.
+    pub public_key: Vec<u8>,
+}
+
+/// BFT quorum proof: cryptographic evidence that 2f+1 validators committed
+/// a block.
+///
+/// Stored separately from the block (in sled `quorum_proofs` tree) to avoid
+/// breaking bincode deserialization of existing blocks.  Transmitted alongside
+/// blocks during catch-up sync so the receiving node can verify BFT finality
+/// without participating in the live consensus round.
+///
+/// # Verification
+///
+/// For each attestation, reconstruct the vote signing envelope:
+/// ```text
+/// vote_id || validator_id || proposal_id || VoteType::Commit(3u8) || height_le || round_le
+/// ```
+/// Verify the Dilithium signature against the validator's registered consensus
+/// key.  Accept the proof if >= `(2 * total_validators / 3) + 1` unique
+/// attestations verify successfully.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BftQuorumProof {
+    /// Block height this proof attests to.
+    pub height: u64,
+    /// The proposal ID that achieved quorum.
+    pub proposal_id: [u8; 32],
+    /// Total number of validators in the committee at this height.
+    pub total_validators: u32,
+    /// The individual commit attestations (>= 2f+1 required).
+    pub attestations: Vec<CommitAttestation>,
+}
+
+impl BftQuorumProof {
+    /// Reconstruct the vote signing envelope for a commit attestation.
+    ///
+    /// This must produce the exact same byte sequence as
+    /// `ConsensusEngine::serialize_vote_data` in lib-consensus.
+    pub fn reconstruct_vote_envelope(attestation: &CommitAttestation, height: u64) -> Vec<u8> {
+        let mut data = Vec::with_capacity(32 + 32 + 32 + 1 + 8 + 4);
+        data.extend_from_slice(&attestation.vote_id);
+        data.extend_from_slice(&attestation.validator_id);
+        data.extend_from_slice(&attestation.proposal_id);
+        data.push(3u8); // VoteType::Commit = 3
+        data.extend_from_slice(&height.to_le_bytes());
+        data.extend_from_slice(&attestation.round.to_le_bytes());
+        data
+    }
+}

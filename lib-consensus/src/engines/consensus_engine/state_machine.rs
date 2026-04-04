@@ -892,8 +892,40 @@ impl ConsensusEngine {
         // Validate the block one more time before applying
         self.validate_committed_block(&proposal).await?;
 
-        // Apply block to state (Issue #938: This triggers BlockCommitCallback → persistence)
-        self.apply_block_to_state(&proposal).await?;
+        // Build the BFT quorum proof from the commit votes in the vote pool.
+        let quorum_proof = {
+            let attestations: Vec<lib_types::consensus::CommitAttestation> = self
+                .vote_pool
+                .iter()
+                .filter(|(k, (_, voted_id))| {
+                    k.height == self.current_round.height
+                        && k.round == self.current_round.round
+                        && k.vote_type == VoteType::Commit
+                        && voted_id == proposal_id
+                })
+                .map(|(_, (vote, _))| lib_types::consensus::CommitAttestation {
+                    validator_id: vote.voter.0,
+                    vote_id: vote.id.0,
+                    proposal_id: vote.proposal_id.0,
+                    round: vote.round,
+                    signature: vote.signature.signature.clone(),
+                    public_key: vote.signature.public_key.dilithium_pk.clone(),
+                })
+                .collect();
+
+            lib_types::consensus::BftQuorumProof {
+                height: self.current_round.height,
+                proposal_id: proposal_id.0,
+                total_validators: total_validators as u32,
+                attestations,
+            }
+        };
+
+        // Apply block to state with its quorum proof.
+        // The callback persists the proof alongside the block so catch-up sync
+        // can verify BFT finality from the block itself.
+        self.apply_block_to_state_with_proof(&proposal, quorum_proof)
+            .await?;
 
         // Update validator activities and reputation
         self.update_validator_metrics(&proposal).await?;
@@ -1118,35 +1150,29 @@ impl ConsensusEngine {
     /// - These checkpoints are persisted in Blockchain.consensus_checkpoints (BTreeMap)
     /// - Used for bootstrap validation and sync verification via BlockchainSyncManager
     ///
-    /// # Safety Guarantee (Issue #938)
-    /// Network-received blocks MUST flow through:
-    /// 1. Network → proposal submission (proposal-only, no persistence)
-    /// 2. BFT validation (2/3+1 validators agree)
-    /// 3. THIS method (BlockCommitCallback → persistence)
+    /// Apply a finalized block with its BFT quorum proof.
     ///
-    /// Any path that bypasses this flow violates consensus safety.
-    async fn apply_block_to_state(&mut self, proposal: &ConsensusProposal) -> ConsensusResult<()> {
-        // Call the block commit callback if configured
-        // This is the bridge to the actual blockchain storage layer
+    /// Calls `commit_finalized_block_with_proof` on the callback so the runtime
+    /// can persist the proof alongside the block.  Falls back to the proofless
+    /// path if no callback is configured.
+    async fn apply_block_to_state_with_proof(
+        &mut self,
+        proposal: &ConsensusProposal,
+        quorum_proof: lib_types::consensus::BftQuorumProof,
+    ) -> ConsensusResult<()> {
         if let Some(ref callback) = self.block_commit_callback {
-            match callback.commit_finalized_block(proposal).await {
+            match callback
+                .commit_finalized_block_with_proof(proposal, quorum_proof)
+                .await
+            {
                 Ok(()) => {
                     info!(
                         block_height = proposal.height,
                         proposal_id = ?proposal.id,
-                        "BFT finalized block committed to blockchain"
+                        "BFT finalized block + quorum proof committed to blockchain"
                     );
-                    info!("Issue #938: Block persisted ONLY after 2/3+1 commit votes");
                 }
                 Err(e) => {
-                    // A BFT-finalized block that fails to apply locally means our chain state
-                    // has diverged from consensus. Continuing to vote would permanently deadlock
-                    // the network (Issue #1914): the node stays on a stale fork, BFT splits 2+2,
-                    // no new blocks can be committed, and all mempool transactions are stuck.
-                    //
-                    // We must NOT continue. Return an error so the consensus engine halts this
-                    // node. Operators should wipe the sled store and restart to resync from peers:
-                    //   systemctl stop zhtp && rm -rf <data-dir>/sled && systemctl start zhtp
                     tracing::error!(
                         "⚠️ Failed to commit BFT finalized block to blockchain: {} (height: {}, proposal: {:?}). \
                         Local chain state has diverged from consensus. Halting to prevent network deadlock.",
@@ -1163,7 +1189,6 @@ impl ConsensusEngine {
                 }
             }
         } else {
-            // No callback configured - log the state change for debugging
             tracing::info!(
                 "📝 Block finalized by BFT consensus (height: {}, size: {} bytes) - no commit callback configured",
                 proposal.height,
