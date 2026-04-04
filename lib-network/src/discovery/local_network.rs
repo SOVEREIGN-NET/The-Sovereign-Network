@@ -689,8 +689,8 @@ pub fn create_signing_context(
         .map_err(|e| anyhow::anyhow!("Failed to extract TLS SPKI hash: {}", e))?;
 
     Ok(DiscoverySigningContext {
-        dilithium_sk,
-        dilithium_pk,
+        dilithium_sk: dilithium_sk.to_vec(),
+        dilithium_pk: dilithium_pk.to_vec(),
         tls_spki_sha256,
     })
 }

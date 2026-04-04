@@ -1205,7 +1205,7 @@ impl BluetoothClassicProtocol {
     /// Get node ID as PublicKey
     pub fn get_node_id(&self) -> Result<PublicKey> {
         // Convert node_id bytes to PublicKey
-        Ok(PublicKey::new(self.node_id.to_vec()))
+        Ok(PublicKey::new(self.node_id.as_slice().try_into().unwrap_or([0u8; 2592])))
     }
 
     /// Transmit packet via RFCOMM

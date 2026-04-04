@@ -317,6 +317,6 @@ async fn simulate_gateway_detection(frequency_hz: u32) -> Result<LoRaWANGatewayI
         gateway_eui: format!("{:016X}", rand::random::<u64>()),
         frequency_hz,
         coverage_radius_km: 8.0 + rand::random::<f64>() * 12.0, // 8-20km realistic
-        operator_key: PublicKey::new(vec![rand::random(), rand::random(), rand::random()]),
+        operator_key: PublicKey::new([0u8; 2592]),
     })
 }

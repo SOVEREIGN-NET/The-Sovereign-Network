@@ -20,7 +20,7 @@ pub async fn create_test_mesh_server() -> Result<ZhtpMeshServer> {
     ];
 
     // Create dummy owner key for testing
-    let owner_key = lib_crypto::PublicKey::new(node_id_bytes.to_vec());
+    let owner_key = lib_crypto::PublicKey::new(node_id_bytes.as_slice().try_into().unwrap_or([0u8; 2592]));
     ZhtpMeshServer::new(node_id, owner_key, storage, protocols, vec![]).await
 }
 
