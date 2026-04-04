@@ -30,17 +30,17 @@ pub fn verify_quorum_proof(
     proof: &BftQuorumProof,
     validator_keys: &HashMap<[u8; 32], Vec<u8>>,
 ) -> Result<(), String> {
+    use lib_types::consensus::threshold::has_supermajority;
+
     let n = proof.total_validators as u64;
     if n == 0 {
         return Err("total_validators is zero".to_string());
     }
-    let threshold = (2 * n / 3) + 1;
 
-    if (proof.attestations.len() as u64) < threshold {
+    if !has_supermajority(proof.attestations.len() as u64, n) {
         return Err(format!(
-            "insufficient attestations: {} < {} (quorum for {} validators)",
+            "insufficient attestations: {} / {} does not meet supermajority",
             proof.attestations.len(),
-            threshold,
             n
         ));
     }
@@ -103,12 +103,12 @@ pub fn verify_quorum_proof(
         }
     }
 
-    if valid_count >= threshold {
+    if has_supermajority(valid_count, n) {
         Ok(())
     } else {
         Err(format!(
-            "only {} valid attestations, need {}",
-            valid_count, threshold
+            "only {} valid attestations out of {} — does not meet supermajority",
+            valid_count, n
         ))
     }
 }

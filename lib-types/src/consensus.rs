@@ -6,6 +6,48 @@
 use serde::{Deserialize, Serialize};
 
 // =============================================================================
+// BFT THRESHOLD ARITHMETIC — basis-point encoded, single comparison function
+// =============================================================================
+
+/// Basis-point threshold: 10_000 = 100%.
+///
+/// All consensus-critical thresholds are expressed in basis points to
+/// eliminate scattered `>=` / `>` / `<` comparisons that differ by a
+/// single operator.  The comparison is always the same function:
+/// `meets_threshold(numerator, denominator, bps)`.
+pub mod threshold {
+    /// BFT supermajority: 6667 bps = 66.67%.
+    /// `(n * 2 / 3) + 1` is equivalent to `> 66.66%` which is `>= 6667 bps`
+    /// when using integer math.  This encodes the same threshold but makes
+    /// the intent explicit and immune to off-by-one operator mistakes.
+    pub const BFT_SUPERMAJORITY_BPS: u64 = 6667;
+
+    /// Check whether `numerator / denominator >= threshold_bps / 10_000`.
+    ///
+    /// Uses cross-multiplication to avoid floating point:
+    /// `numerator * 10_000 >= denominator * threshold_bps`
+    ///
+    /// Returns `false` if `denominator` is zero.
+    #[inline]
+    pub fn meets_threshold(numerator: u64, denominator: u64, threshold_bps: u64) -> bool {
+        if denominator == 0 {
+            return false;
+        }
+        // Use u128 to avoid overflow on multiplication.
+        (numerator as u128) * 10_000 >= (denominator as u128) * (threshold_bps as u128)
+    }
+
+    /// Check BFT supermajority: `matching_votes / total_validators >= 66.67%`.
+    ///
+    /// This is the ONLY function that should be used for quorum checks.
+    /// It replaces `check_supermajority` and the raw `(n * 2 / 3) + 1` formula.
+    #[inline]
+    pub fn has_supermajority(matching_votes: u64, total_validators: u64) -> bool {
+        meets_threshold(matching_votes, total_validators, BFT_SUPERMAJORITY_BPS)
+    }
+}
+
+// =============================================================================
 // PHASE 1: Simple Enums (no external dependencies)
 // =============================================================================
 
@@ -337,6 +379,44 @@ mod tests {
             // SlashType doesn't implement Serialize, just verify it exists
             let _ = format!("{:?}", st);
         }
+    }
+
+    /// Verify that `has_supermajority` produces identical results to the old
+    /// `(n * 2 / 3) + 1` formula for all validator counts 1..=200.
+    #[test]
+    fn test_bps_supermajority_matches_integer_formula() {
+        use super::threshold::has_supermajority;
+
+        for n in 1u64..=200 {
+            let old_threshold = (n * 2 / 3) + 1;
+            // The old formula: matching >= (n*2/3)+1
+            // The BPS formula: matching * 10000 >= n * 6667
+            // They must agree on every (matching, n) pair.
+            for votes in 0..=n {
+                let old_result = votes >= old_threshold;
+                let new_result = has_supermajority(votes, n);
+                assert_eq!(
+                    old_result, new_result,
+                    "mismatch at n={}, votes={}: old={}, new={}",
+                    n, votes, old_result, new_result
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_meets_threshold_zero_denominator() {
+        use super::threshold::meets_threshold;
+        assert!(!meets_threshold(1, 0, 5000));
+    }
+
+    #[test]
+    fn test_meets_threshold_basic() {
+        use super::threshold::meets_threshold;
+        // 50% threshold = 5000 bps
+        assert!(meets_threshold(5, 10, 5000));  // exactly 50%
+        assert!(!meets_threshold(4, 10, 5000)); // 40% < 50%
+        assert!(meets_threshold(6, 10, 5000));  // 60% > 50%
     }
 }
 
