@@ -782,7 +782,7 @@ impl IdentityHandler {
             "identity_id": sign_req.identity_id,
             "message": sign_req.message,
             "signature": signature_hex,
-            "signature_algorithm": "CRYSTALS-Dilithium2",
+            "signature_algorithm": "CRYSTALS-Dilithium5",
             "public_key": hex::encode(&identity.public_key.as_bytes()),
         });
 

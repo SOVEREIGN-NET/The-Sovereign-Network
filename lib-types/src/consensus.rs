@@ -424,11 +424,20 @@ mod tests {
 // BFT QUORUM PROOF — cryptographic evidence of BFT finality
 // =============================================================================
 
+/// Dilithium5 signature size in bytes (NIST FIPS 204, ML-DSA level 5).
+pub const DILITHIUM5_SIG_BYTES: usize = 4595;
+/// Dilithium5 public key size in bytes.
+pub const DILITHIUM5_PK_BYTES: usize = 2592;
+
 /// A single validator's commit attestation within a quorum proof.
 ///
-/// Carries the Dilithium signature and the fields needed to reconstruct the
+/// Carries the Dilithium5 signature and the fields needed to reconstruct the
 /// signed envelope (`vote_id || voter || proposal_id || vote_type || height || round`)
 /// so that any node can verify the attestation without access to the consensus engine.
+///
+/// `signature` MUST be exactly [`DILITHIUM5_SIG_BYTES`] (4595) bytes.
+/// `public_key` MUST be exactly [`DILITHIUM5_PK_BYTES`] (2592) bytes.
+/// Use [`CommitAttestation::validate_sizes`] to enforce.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommitAttestation {
     /// The validator who cast this commit vote (IdentityId bytes).
@@ -439,10 +448,31 @@ pub struct CommitAttestation {
     pub proposal_id: [u8; 32],
     /// The consensus round in which the commit was cast.
     pub round: u32,
-    /// The raw Dilithium signature bytes from the commit vote.
+    /// Dilithium5 signature — must be exactly 4595 bytes.
     pub signature: Vec<u8>,
-    /// The Dilithium public key bytes that produced this signature.
+    /// Dilithium5 public key — must be exactly 2592 bytes.
     pub public_key: Vec<u8>,
+}
+
+impl CommitAttestation {
+    /// Validate that signature and public key have the correct Dilithium5 sizes.
+    pub fn validate_sizes(&self) -> Result<(), String> {
+        if self.signature.len() != DILITHIUM5_SIG_BYTES {
+            return Err(format!(
+                "signature length {} != {} (Dilithium5)",
+                self.signature.len(),
+                DILITHIUM5_SIG_BYTES
+            ));
+        }
+        if self.public_key.len() != DILITHIUM5_PK_BYTES {
+            return Err(format!(
+                "public_key length {} != {} (Dilithium5)",
+                self.public_key.len(),
+                DILITHIUM5_PK_BYTES
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// BFT quorum proof: cryptographic evidence that 2f+1 validators committed

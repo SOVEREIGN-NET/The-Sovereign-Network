@@ -2871,12 +2871,8 @@ impl DaoHandler {
         let sig_bytes = hex::decode(&req.signature_hex)
             .map_err(|e| anyhow::anyhow!("Invalid signature_hex: {}", e))?;
 
-        let algorithm = match req.algorithm.as_deref().unwrap_or("Dilithium5") {
-            "Dilithium2" => {
-                lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium2
-            }
-            _ => lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
-        };
+        let algorithm =
+            lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5;
 
         let mut store = PENDING_PROPOSALS.write().await;
         let proposal = store

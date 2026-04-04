@@ -441,7 +441,7 @@ pub struct Blockchain {
 /// ### 1. `consensus_key` — Consensus / Vote-Signing Key
 /// Used exclusively for signing BFT consensus messages: block proposals, pre-votes,
 /// pre-commits, and view-change messages.
-/// - **Algorithm**: Post-quantum Dilithium2 (lattice-based).
+/// - **Algorithm**: Post-quantum Dilithium5 (NIST FIPS 204, ML-DSA level 5).
 /// - **Exposure**: Hot — must be online during every consensus round.
 /// - **Compromise impact**: Attacker can equivocate (double-sign) on behalf of this
 ///   validator, triggering slashing of the staked SOV.
@@ -457,7 +457,7 @@ pub struct Blockchain {
 /// ### 3. `rewards_key` — Rewards / Fee-Collection Key
 /// Identifies the wallet address to which block rewards and fee distributions are sent.
 /// This is the public key of the validator's rewards wallet (see `WalletTransactionData`).
-/// - **Algorithm**: Dilithium2 or Ed25519 depending on wallet type.
+/// - **Algorithm**: Dilithium5 or Ed25519 depending on wallet type.
 /// - **Exposure**: Can be kept cold — only needed when claiming accumulated rewards.
 /// - **Compromise impact**: Attacker can redirect future reward payments; historical
 ///   rewards already on-chain are unaffected.
@@ -476,7 +476,7 @@ pub struct ValidatorInfo {
     pub stake: u64,
     /// Storage provided (in bytes)
     pub storage_provided: u64,
-    /// Post-quantum Dilithium2 public key used exclusively for signing BFT consensus
+    /// Post-quantum Dilithium5 public key used exclusively for signing BFT consensus
     /// messages (proposals, pre-votes, pre-commits).  MUST differ from `networking_key`
     /// and `rewards_key`.
     pub consensus_key: Vec<u8>,

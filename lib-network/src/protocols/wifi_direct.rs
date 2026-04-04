@@ -408,7 +408,7 @@ impl WiFiDirectMeshProtocol {
         use crate::protocols::zhtp_auth::ZhtpAuthManager;
 
         info!(" Initializing ZHTP authentication for WiFi Direct");
-        info!("   Post-quantum Dilithium2 signatures enabled");
+        info!("   Post-quantum Dilithium5 signatures enabled");
         info!("   Only ZHTP nodes with blockchain identity can connect");
 
         let auth_manager = ZhtpAuthManager::new(blockchain_pubkey)?;
@@ -451,7 +451,7 @@ impl WiFiDirectMeshProtocol {
                             " WiFi Direct peer {} authenticated successfully",
                             &device_id[..16.min(device_id.len())]
                         );
-                        info!("   Blockchain identity verified with Dilithium2 signature");
+                        info!("   Blockchain identity verified with Dilithium5 signature");
                         info!("   Trust score: {:.2}", verification.trust_score);
 
                         // Store authenticated peer

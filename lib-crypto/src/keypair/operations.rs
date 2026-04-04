@@ -26,38 +26,34 @@ use chacha20poly1305::{
 
 /// The only valid signature scheme for BFT consensus votes and commits.
 ///
-/// # BFT-I Consensus Signature Scheme Policy (Issue #1009)
+/// # BFT Consensus Signature Scheme Policy
 ///
 /// All consensus-critical operations (prevote, precommit, block commit
-/// certificates) MUST use Dilithium2. This ensures:
-/// - Uniform signature size across validators (predictable aggregation)
-/// - NIST post-quantum standard compliance
+/// certificates, quorum proofs) MUST use Dilithium5 (NIST FIPS 204,
+/// ML-DSA security level 5). This ensures:
+/// - Uniform signature size across validators (4595 bytes)
+/// - Highest post-quantum security level
 /// - No scheme mixing within a consensus round
-///
-/// Dilithium5 is reserved for non-consensus identity operations only.
-/// No other scheme is permitted for consensus votes or commits.
 ///
 /// # Aggregation Rules
 ///
-/// - Single scheme only: all votes in a round MUST use Dilithium2.
-/// - Multi-signature aggregation is NOT supported in the current protocol.
-/// - A quorum certificate collects 2f+1 individual Dilithium2 signatures.
-pub const CONSENSUS_SIGNATURE_SCHEME: &str = "Dilithium2";
+/// - Single scheme only: all votes in a round MUST use Dilithium5.
+/// - A quorum certificate collects 2f+1 individual Dilithium5 signatures.
+pub const CONSENSUS_SIGNATURE_SCHEME: &str = "Dilithium5";
 
 /// Validates that a given signature scheme is permissible for BFT consensus.
 ///
 /// This guard MUST be called before signing or accepting any consensus
 /// vote (prevote/precommit) or commit certificate. Any scheme other than
-/// [CONSENSUS_SIGNATURE_SCHEME] ("Dilithium2") is rejected to enforce
-/// uniform vote aggregation rules across all protocol participants.
+/// [CONSENSUS_SIGNATURE_SCHEME] ("Dilithium5") is rejected.
 ///
 /// # Errors
 ///
-/// Returns Err when scheme is not "Dilithium2".
+/// Returns Err when scheme is not "Dilithium5".
 pub fn validate_consensus_signature_scheme(scheme: &str) -> anyhow::Result<()> {
     if scheme != CONSENSUS_SIGNATURE_SCHEME {
         return Err(anyhow::anyhow!(
-            "consensus signature scheme violation: only Dilithium2 is permitted for consensus votes and commits; received {}",
+            "consensus signature scheme violation: only Dilithium5 is permitted for consensus votes and commits; received {}",
             scheme
         ));
     }
@@ -69,16 +65,16 @@ mod consensus_scheme_tests {
     use super::validate_consensus_signature_scheme;
 
     #[test]
-    fn test_dilithium2_accepted_as_consensus_scheme() {
+    fn test_dilithium5_accepted_as_consensus_scheme() {
         assert!(
-            validate_consensus_signature_scheme("Dilithium2").is_ok(),
-            "Dilithium2 must be accepted as the consensus signature scheme"
+            validate_consensus_signature_scheme("Dilithium5").is_ok(),
+            "Dilithium5 must be accepted as the consensus signature scheme"
         );
     }
 
     #[test]
-    fn test_non_dilithium2_rejected_for_consensus() {
-        let invalid_schemes = ["Dilithium5", "Ed25519", "SHA256", "ECDSA", ""];
+    fn test_non_dilithium5_rejected_for_consensus() {
+        let invalid_schemes = ["Dilithium2", "Ed25519", "SHA256", "ECDSA", ""];
         for scheme in &invalid_schemes {
             let result = validate_consensus_signature_scheme(scheme);
             assert!(

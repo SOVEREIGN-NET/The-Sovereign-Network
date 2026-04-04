@@ -49,6 +49,15 @@ pub fn verify_quorum_proof(
     let mut valid_count = 0u64;
 
     for att in &proof.attestations {
+        // Validate Dilithium5 sizes
+        if let Err(e) = att.validate_sizes() {
+            return Err(format!(
+                "attestation from validator {}: {}",
+                hex::encode(&att.validator_id[..8]),
+                e,
+            ));
+        }
+
         // Reject duplicates
         if !seen.insert(att.validator_id) {
             return Err(format!(
@@ -66,7 +75,7 @@ pub fn verify_quorum_proof(
         })?;
 
         // Key in attestation must match registered key
-        if att.public_key != *registered_key {
+        if att.public_key.as_slice() != registered_key.as_slice() {
             return Err(format!(
                 "public key mismatch for validator {}",
                 hex::encode(&att.validator_id[..8]),
@@ -77,9 +86,9 @@ pub fn verify_quorum_proof(
         let envelope =
             BftQuorumProof::reconstruct_vote_envelope(att, proof.height);
 
-        let public_key = lib_crypto::PublicKey::new(att.public_key.clone());
+        let public_key = lib_crypto::PublicKey::new(att.public_key.to_vec());
         let signature = lib_crypto::PostQuantumSignature {
-            signature: att.signature.clone(),
+            signature: att.signature.to_vec(),
             public_key: public_key.clone(),
             algorithm: lib_crypto::SignatureAlgorithm::Dilithium5,
             timestamp: 0,
