@@ -389,19 +389,18 @@ impl ConsensusEngine {
         self.apply_epoch_boundary_changes(self.current_round.height)?;
         self.snapshot_validator_set(self.current_round.height);
 
-        // Select proposer for this round
+        // Select proposer from the frozen snapshot for this height.
         let proposer = self
-            .validator_manager
-            .select_proposer(self.current_round.height, self.current_round.round)
+            .compute_proposer_for_round(self.current_round.height, self.current_round.round)
             .ok_or_else(|| ConsensusError::ValidatorError("No proposer available".to_string()))?;
 
-        self.current_round.proposer = Some(proposer.identity.clone());
+        self.current_round.proposer = Some(proposer.clone());
 
         tracing::info!(
             "Starting consensus round {} at height {} with proposer {:?}",
             self.current_round.round,
             self.current_round.height,
-            proposer.identity
+            proposer
         );
 
         // Run consensus steps
@@ -1236,12 +1235,11 @@ impl ConsensusEngine {
             self.current_round.timed_out = false;
             self.current_round.locked_proposal = None;
             self.current_round.valid_proposal = None;
-            // Update proposer selection for the new round
+            // Update proposer from the frozen snapshot (round changed, not height).
             if let Some(proposer) = self
-                .validator_manager
-                .select_proposer(self.current_round.height, self.current_round.round)
+                .compute_proposer_for_round(self.current_round.height, self.current_round.round)
             {
-                self.current_round.proposer = Some(proposer.identity.clone());
+                self.current_round.proposer = Some(proposer);
             }
             self.snapshot_validator_set(self.current_round.height);
         }
@@ -1756,26 +1754,25 @@ impl ConsensusEngine {
     /// All nodes must call this so `current_round.proposer` is set before any
     /// incoming proposals are processed by `on_proposal()`.
     pub(super) async fn enter_propose_step(&mut self) -> ConsensusResult<()> {
-        // Select proposer for this height/round (deterministic round-robin)
-        let proposer = self
-            .validator_manager
-            .select_proposer(self.current_round.height, self.current_round.round);
+        // Select proposer from the frozen snapshot for this height.
+        let proposer_id = self
+            .compute_proposer_for_round(self.current_round.height, self.current_round.round);
 
-        if let Some(proposer) = proposer {
-            self.current_round.proposer = Some(proposer.identity.clone());
+        if let Some(proposer_id) = proposer_id {
+            self.current_round.proposer = Some(proposer_id.clone());
 
             tracing::info!(
                 "🎯 Proposer for height {} round {}: {:?}",
                 self.current_round.height,
                 self.current_round.round,
-                proposer.identity
+                proposer_id
             );
 
             // If we are the proposer, create and broadcast the proposal.
             let is_local_proposer = self
                 .validator_identity
                 .as_ref()
-                .map(|id| *id == proposer.identity)
+                .map(|id| *id == proposer_id)
                 .unwrap_or(false);
 
             if is_local_proposer {

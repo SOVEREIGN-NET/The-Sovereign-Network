@@ -793,28 +793,44 @@ impl ConsensusEngine {
         validator_count >= crate::types::MIN_BFT_VALIDATORS
     }
 
-    /// Compute the proposer (leader) for a given (height, round) using round-robin rotation.
+    /// Compute the proposer (leader) for a given (height, round) using round-robin
+    /// rotation over the **frozen validator snapshot** for that height.
     ///
     /// # Algorithm
     ///
     /// ```text
     /// proposer_index = (height + round as u64) % num_validators
-    /// proposer       = sorted_validators[proposer_index]
+    /// proposer       = sorted_snapshot_validators[proposer_index]
     /// ```
     ///
-    /// The validator set is sorted by identity ID bytes for determinism. This guarantees
-    /// every node independently computes the same proposer for the same (height, round).
+    /// The snapshot is sorted by identity ID bytes for determinism. This guarantees
+    /// every node independently computes the same proposer for the same (height, round),
+    /// regardless of whether the live `validator_manager` set has changed since the
+    /// snapshot was sealed.
+    ///
+    /// Falls back to the live `validator_manager` if no snapshot exists for the
+    /// requested height (e.g. during bootstrap before the first snapshot).
     ///
     /// # Invariant
     ///
     /// This implements `LEADER_ROTATION_RULE`. Any change to leader selection logic
     /// must update that constant and the module-level documentation.
-    ///
-    /// # Returns
-    ///
-    /// `Some(IdentityId)` if there is at least one validator, `None` if the validator
-    /// set is empty (should not happen in normal operation).
     pub fn compute_proposer_for_round(&self, height: u64, round: u32) -> Option<IdentityId> {
+        if let Some(snapshot) = self.validator_set_for_height(height) {
+            if snapshot.is_empty() {
+                return None;
+            }
+            let mut sorted: Vec<_> = snapshot.iter().cloned().collect();
+            sorted.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+            let index = ((height + round as u64) % sorted.len() as u64) as usize;
+            return Some(sorted[index].clone());
+        }
+
+        // Fallback: no snapshot yet (bootstrap). Use live set.
+        tracing::debug!(
+            "No validator snapshot for height {} — falling back to live set for proposer selection",
+            height,
+        );
         self.validator_manager
             .select_proposer(height, round)
             .map(|v| v.identity.clone())
