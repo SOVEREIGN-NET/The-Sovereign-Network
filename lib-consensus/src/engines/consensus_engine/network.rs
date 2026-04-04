@@ -552,12 +552,17 @@ impl ConsensusEngine {
                     None, // peer_id if available from network layer
                 );
 
-                // Route to handler (Against already returned above)
+                // Route to handler
                 match vote.vote_type {
                     VoteType::PreVote => self.on_prevote(vote).await?,
                     VoteType::PreCommit => self.on_precommit(vote).await?,
                     VoteType::Commit => self.on_commit_vote(vote).await?,
-                    VoteType::Against => unreachable!("Against votes are filtered above"),
+                    VoteType::Against => {
+                        // Defensive: filtered by the early return above, but a
+                        // refactor could remove that guard.  Never panic on a
+                        // network-facing message — just drop it.
+                        tracing::warn!("Against vote reached routing (should have been filtered)");
+                    }
                 }
             }
             ValidatorMessage::Heartbeat { message } => {
