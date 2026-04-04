@@ -1,4 +1,4 @@
-//! Main consensus engine implementation combining all consensus mechanisms
+//! Consensus engine — Tendermint-like BFT
 //!
 //! # Consensus Algorithm Specification
 //!
@@ -73,16 +73,28 @@
 //!
 //! 1. **Signature**: Cryptographically valid, verified against the vote's own data (height/round), not local state
 //! 2. **Validator membership**: Sender is in the validator set for the target height (height-scoped)
-//! 3. **Height**: vote.height == local.height (rejects votes for wrong height)
-//! 4. **Round**: vote.round == local.round (rejects votes for wrong round)
-//! 5. **Vote type coherence**: PreVote ONLY valid in PreVote step; PreCommit ONLY valid in PreCommit step (strict equality)
+//! 3. **Height**: vote.height == local.height (stale past-height votes are discarded;
+//!    future-height votes trigger catch-up sync and are discarded)
+//! 4. **Round**: vote.round >= local.round (stale rounds are rejected; higher rounds are
+//!    accepted to enable Tendermint round-skip — `on_prevote`/`on_precommit` advance to
+//!    the peer's round so all nodes converge without waiting for timer cycles)
+//! 5. **Vote type**: Only PreVote, PreCommit, and Commit are valid in BFT; Against is
+//!    rejected unconditionally. All three accepted types are stored regardless of the
+//!    local step — quorum safety is enforced by `maybe_finalize()` and `vote_pool`
+//!    composite-key deduplication, not by step-gating at admission.
 //!
 //! This is enforced by `validate_remote_vote()` and `on_commit_vote()`.
 //!
-//! **Critical Fixes** (CONSENSUS-NET-4.3 Issue Corrections):
-//! - Signature verification uses vote data bound to vote.height/round, not local consensus state
-//! - Vote type validation uses strict == equality, rejecting late votes unconditionally
-//! - Validator membership is height-scoped using per-height snapshots
+//! ## Proposal Admission (validate_incoming_proposal)
+//!
+//! Incoming proposals are validated before storage or prevote transition:
+//!
+//! 1. **Expected proposer**: Must match `compute_proposer_for_round(height, round)`
+//! 2. **Proposal signature**: Valid Dilithium signature from the proposer's registered consensus key
+//! 3. **Previous-hash continuity**: Links to local chain tip (when verifiable)
+//! 4. **Block payload decode**: `block_data` bytes are decodable by the blockchain provider
+//!
+//! This is enforced by `validate_incoming_proposal()` in `on_proposal()`.
 //!
 //! ## Quorum is Proposal-Scoped, Not Round-Scoped
 //!
@@ -106,13 +118,19 @@
 //! - 2 votes for proposal A + 2 votes for proposal B = 0 quorum (mixed votes)
 //! - 3 votes for proposal A = quorum reached
 //!
-//! ## No Vote Can Advance Consensus Unless It Matches Local Step
+//! ## Step-Independent Vote Storage
 //!
-//! PreVotes advance consensus only during PreVote step, PreCommits only during PreCommit step.
-//! This is enforced in `on_prevote()` and `on_precommit()` which call `validate_remote_vote()`.
+//! Votes for the correct height and round are stored regardless of the local consensus
+//! step. In an asynchronous network, nodes advance through Propose/PreVote/PreCommit/Commit
+//! at different wall-clock times. Step-gating at admission would cause a node in the
+//! Commit step to reject valid PreVotes from a peer still in PreVote, making quorum
+//! impossible.
 //!
-//! Exception: Commit votes can finalize immediately regardless of local step,
-//! but only if 2/3+1 identical commit votes are present (CE-L1, CE-L2 liveness rules).
+//! Safety is preserved because:
+//! - Quorum thresholds (2f+1) are enforced in `maybe_finalize()`, not at admission.
+//! - Each validator gets exactly one vote per (H, R, type) via `vote_pool` composite-key
+//!   deduplication.
+//! - Commit votes can finalize immediately regardless of local step (CE-L1, CE-L2).
 //!
 //! ## No Vote Equivocation
 //!
@@ -213,6 +231,21 @@ mod tests;
 // ---------------------------------------------------------------------------
 // Consensus Algorithm Constants (closes #964)
 // ---------------------------------------------------------------------------
+
+/// Consensus wire-protocol version.
+///
+/// Proposals and votes are signed over domain-tagged envelopes that include
+/// this version.  Nodes on different protocol versions will deterministically
+/// reject each other's proposals/votes (signature mismatch) rather than
+/// silently stalling consensus.
+///
+/// Bump this constant whenever the signed envelope format changes (e.g. new
+/// fields bound into the signature, domain tag changes, serialization order).
+///
+/// History:
+///   1 — initial: proposal ID/signature include round + domain tags
+///       `ZHTP/PROPOSAL/ID/v1` and `ZHTP/PROPOSAL/SIG/v1`
+pub const CONSENSUS_PROTOCOL_VERSION: u32 = 1;
 
 /// Human-readable name of the consensus algorithm variant implemented here.
 ///
@@ -760,28 +793,44 @@ impl ConsensusEngine {
         validator_count >= crate::types::MIN_BFT_VALIDATORS
     }
 
-    /// Compute the proposer (leader) for a given (height, round) using round-robin rotation.
+    /// Compute the proposer (leader) for a given (height, round) using round-robin
+    /// rotation over the **frozen validator snapshot** for that height.
     ///
     /// # Algorithm
     ///
     /// ```text
     /// proposer_index = (height + round as u64) % num_validators
-    /// proposer       = sorted_validators[proposer_index]
+    /// proposer       = sorted_snapshot_validators[proposer_index]
     /// ```
     ///
-    /// The validator set is sorted by identity ID bytes for determinism. This guarantees
-    /// every node independently computes the same proposer for the same (height, round).
+    /// The snapshot is sorted by identity ID bytes for determinism. This guarantees
+    /// every node independently computes the same proposer for the same (height, round),
+    /// regardless of whether the live `validator_manager` set has changed since the
+    /// snapshot was sealed.
+    ///
+    /// Falls back to the live `validator_manager` if no snapshot exists for the
+    /// requested height (e.g. during bootstrap before the first snapshot).
     ///
     /// # Invariant
     ///
     /// This implements `LEADER_ROTATION_RULE`. Any change to leader selection logic
     /// must update that constant and the module-level documentation.
-    ///
-    /// # Returns
-    ///
-    /// `Some(IdentityId)` if there is at least one validator, `None` if the validator
-    /// set is empty (should not happen in normal operation).
     pub fn compute_proposer_for_round(&self, height: u64, round: u32) -> Option<IdentityId> {
+        if let Some(snapshot) = self.validator_set_for_height(height) {
+            if snapshot.is_empty() {
+                return None;
+            }
+            let mut sorted: Vec<_> = snapshot.iter().cloned().collect();
+            sorted.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+            let index = ((height + round as u64) % sorted.len() as u64) as usize;
+            return Some(sorted[index].clone());
+        }
+
+        // Fallback: no snapshot yet (bootstrap). Use live set.
+        tracing::debug!(
+            "No validator snapshot for height {} — falling back to live set for proposer selection",
+            height,
+        );
         self.validator_manager
             .select_proposer(height, round)
             .map(|v| v.identity.clone())
@@ -1369,23 +1418,38 @@ impl ConsensusEngine {
         self.get_validator_ids_for_height(self.current_round.height)
     }
 
-    /// Snapshot validator membership for a specific height
+    /// Snapshot validator membership for a specific height.
+    ///
+    /// **Write-once**: if a snapshot for this height already exists it is NOT
+    /// overwritten.  This guarantees that once a height's validator committee
+    /// is sealed, no runtime event (validator registration, mode transition,
+    /// round-skip) can mutate it.  Membership checks via
+    /// `is_validator_member` are therefore immutable for the lifetime of a
+    /// height, which is required for BFT safety.
+    ///
+    /// New validators arriving mid-height are registered in the
+    /// `validator_manager` (so they're included in _future_ snapshots) but do
+    /// not retroactively join the current height's committee.
     pub(super) fn snapshot_validator_set(&mut self, height: u64) {
+        // Write-once: do not overwrite an existing snapshot.
+        if self
+            .validator_set_history
+            .iter()
+            .any(|snapshot| snapshot.height == height)
+        {
+            tracing::debug!(
+                "Validator snapshot for height {} already sealed — skipping re-snapshot",
+                height,
+            );
+            return;
+        }
+
         let validators: HashSet<IdentityId> = self
             .validator_manager
             .get_active_validators()
             .iter()
             .map(|v| v.identity.clone())
             .collect();
-
-        if let Some(existing) = self
-            .validator_set_history
-            .iter_mut()
-            .find(|snapshot| snapshot.height == height)
-        {
-            existing.validators = validators;
-            return;
-        }
 
         self.validator_set_history
             .push_back(ValidatorSetSnapshot { height, validators });

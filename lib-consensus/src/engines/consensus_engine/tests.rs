@@ -99,6 +99,7 @@ async fn register_local_validator(
         .expect("Failed to set validator keypair");
 
     attach_storage_provider(engine, validator_id).await;
+    attach_test_blockchain_provider(engine);
 }
 
 async fn attach_storage_provider(engine: &mut ConsensusEngine, validator_id: IdentityId) {
@@ -121,6 +122,46 @@ async fn attach_storage_provider(engine: &mut ConsensusEngine, validator_id: Ide
         .expect("Failed to register content");
 
     engine.set_storage_proof_provider(Arc::new(provider));
+}
+
+/// Attach a minimal blockchain provider that is always ready and returns
+/// empty transactions / zero previous hash.  Required after the removal of
+/// nondeterministic fallbacks in `create_proposal`.
+fn attach_test_blockchain_provider(engine: &mut ConsensusEngine) {
+    use crate::types::NoOpBlockchainProvider;
+
+    /// Thin wrapper that overrides `is_ready` to return true.
+    struct ReadyProvider;
+
+    #[async_trait::async_trait]
+    impl crate::types::ConsensusBlockchainProvider for ReadyProvider {
+        async fn get_latest_block_hash(
+            &self,
+        ) -> Result<Hash, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(Hash([0u8; 32]))
+        }
+        async fn get_pending_transactions(
+            &self,
+        ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(Vec::new())
+        }
+        async fn get_blockchain_height(
+            &self,
+        ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(0)
+        }
+        async fn is_ready(&self) -> bool {
+            true
+        }
+        async fn decode_block_data(
+            &self,
+            _block_data: &[u8],
+        ) -> Result<(u32, u64), Box<dyn std::error::Error + Send + Sync>> {
+            Ok((0, 0))
+        }
+    }
+
+    engine.set_blockchain_provider(Arc::new(ReadyProvider));
 }
 
 async fn register_validator_with_keypair(
@@ -311,6 +352,7 @@ async fn test_validator_set_passed_to_broadcaster() {
         .expect("Failed to set validator keypair");
     engine.snapshot_validator_set(engine.current_round.height);
     attach_storage_provider(&mut engine, validator_ids[0].clone()).await;
+    attach_test_blockchain_provider(&mut engine);
 
     // Create a proposal to vote on
     engine.current_round.proposer = Some(validator_ids[0].clone());
@@ -862,6 +904,12 @@ async fn test_ce_l1_commit_quorum_finalizes_regardless_of_local_step() {
 
     // Verify: Step is still PreVote
     assert_eq!(engine.current_round.step, ConsensusStep::PreVote);
+
+    // Stage the proposal artifact so finalization can find it.
+    let h = engine.current_round.height;
+    let r = engine.current_round.round;
+    let (ref prop_id, ref prop_kp) = validators[0];
+    stage_stub_proposal(&mut engine, proposal_id.clone(), h, r, prop_id, prop_kp);
 
     // Call maybe_finalize: should transition to Commit step and finalize
     engine
@@ -1637,6 +1685,11 @@ async fn test_canonical_convergence_different_vote_order() {
     engine_a.current_round.step = ConsensusStep::PreVote;
     engine_b.current_round.step = ConsensusStep::PreVote;
 
+    // Stage the proposal artifact on both engines so finalization can find it.
+    let (ref prop_id, ref prop_kp) = validators[0];
+    stage_stub_proposal(&mut engine_a, proposal_id.clone(), height, round, prop_id, prop_kp);
+    stage_stub_proposal(&mut engine_b, proposal_id.clone(), height, round, prop_id, prop_kp);
+
     // Node A: Process votes in order V1 → V2 → V3
     engine_a
         .on_commit_vote(vote_1.clone())
@@ -1946,6 +1999,11 @@ async fn test_canonical_convergence_seven_validators() {
     engine_a.current_round.step = ConsensusStep::PreVote;
     engine_b.current_round.step = ConsensusStep::PreVote;
 
+    // Stage proposal artifact on both engines.
+    let (ref prop_id, ref prop_kp) = validators[0];
+    stage_stub_proposal(&mut engine_a, proposal_id.clone(), height, round, prop_id, prop_kp);
+    stage_stub_proposal(&mut engine_b, proposal_id.clone(), height, round, prop_id, prop_kp);
+
     // Node A: Sequential order 0→1→2→3→4
     for vote in &votes {
         engine_a
@@ -2104,6 +2162,11 @@ async fn test_canonical_convergence_with_equivocation() {
     engine_a.current_round.step = ConsensusStep::PreVote;
     engine_b.current_round.step = ConsensusStep::PreVote;
 
+    // Stage proposal artifacts on both engines (proposal_a is the one that reaches quorum).
+    let (ref prop_id, ref prop_kp) = validators[0];
+    stage_stub_proposal(&mut engine_a, proposal_a.clone(), height, round, prop_id, prop_kp);
+    stage_stub_proposal(&mut engine_b, proposal_a.clone(), height, round, prop_id, prop_kp);
+
     // Node A: sees vote_0a first → accepted; vote_0b rejected as equivocation.
     // Final pool for A: v0→A, v1→A, v2→A, v3→A = 4 votes for proposal A.
     engine_a
@@ -2216,5 +2279,431 @@ async fn test_validator_keypair_allowed_for_registered_local_validator() {
     assert!(
         result.is_ok(),
         "Registered local validator should be allowed to load signing key"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Proposal admission gate (validate_incoming_proposal) tests
+// ---------------------------------------------------------------------------
+
+/// Stage a properly-signed stub proposal in `pending_proposals` so that
+/// `process_committed_block` can find and validate the artifact by ID.
+/// Used by tests that exercise vote-quorum mechanics without full proposal
+/// creation.  The proposal is signed by the first registered validator's
+/// keypair so that `verify_proposal_signature` passes.
+fn stage_stub_proposal(
+    engine: &mut ConsensusEngine,
+    proposal_id: Hash,
+    height: u64,
+    round: u32,
+    proposer: &IdentityId,
+    keypair: &KeyPair,
+) {
+    let previous_hash = Hash([0u8; 32]);
+    let block_data: Vec<u8> = vec![];
+
+    let proposal_data = engine
+        .serialize_proposal_data(&proposal_id, proposer, height, round, &previous_hash, &block_data)
+        .expect("serialize_proposal_data");
+    let signature = sign_bytes(keypair, &proposal_data);
+
+    engine.current_round.proposals.push(proposal_id.clone());
+    engine.pending_proposals.push_back(ConsensusProposal {
+        id: proposal_id,
+        proposer: proposer.clone(),
+        height,
+        round,
+        protocol_version: super::CONSENSUS_PROTOCOL_VERSION,
+        previous_hash,
+        block_data,
+        timestamp: 0,
+        signature,
+        consensus_proof: crate::types::ConsensusProof {
+            consensus_type: crate::types::ConsensusType::ByzantineFaultTolerance,
+            stake_proof: None,
+            storage_proof: None,
+            work_proof: None,
+            zk_did_proof: None,
+            timestamp: 0,
+        },
+    });
+}
+
+/// Build a correctly-signed proposal for a given validator at (height, round).
+/// The engine must have the validator registered and a keypair set.
+fn make_signed_proposal(
+    engine: &ConsensusEngine,
+    proposer: &IdentityId,
+    keypair: &KeyPair,
+    height: u64,
+    round: u32,
+    previous_hash: Hash,
+    block_data: Vec<u8>,
+) -> ConsensusProposal {
+    let proposal_id = Hash::from_bytes(&hash_blake3(
+        &[
+            b"ZHTP/PROPOSAL/ID/v1\0" as &[u8],
+            proposer.as_bytes(),
+            &height.to_le_bytes(),
+            &round.to_le_bytes(),
+            previous_hash.as_bytes(),
+            &block_data,
+        ]
+        .concat(),
+    ));
+
+    let proposal_data = engine
+        .serialize_proposal_data(&proposal_id, proposer, height, round, &previous_hash, &block_data)
+        .expect("serialize_proposal_data");
+
+    let signature = sign_bytes(keypair, &proposal_data);
+
+    ConsensusProposal {
+        id: proposal_id,
+        proposer: proposer.clone(),
+        height,
+        round,
+        protocol_version: super::CONSENSUS_PROTOCOL_VERSION,
+        previous_hash,
+        block_data,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+        signature,
+        consensus_proof: crate::types::ConsensusProof {
+            consensus_type: crate::types::ConsensusType::ByzantineFaultTolerance,
+            stake_proof: None,
+            storage_proof: None,
+            work_proof: None,
+            zk_did_proof: None,
+            timestamp: 0,
+        },
+    }
+}
+
+/// Set up a 4-validator engine in BFT mode at the given height/round.
+/// Returns (engine, vec of (validator_id, keypair)), with validator[0] as local.
+async fn setup_bft_engine(height: u64, round: u32) -> (ConsensusEngine, Vec<(IdentityId, KeyPair)>) {
+    let config = ConsensusConfig {
+        development_mode: true,
+        ..Default::default()
+    };
+    let broadcaster: Arc<dyn MessageBroadcaster> = Arc::new(MockMessageBroadcaster::new());
+    let mut engine = ConsensusEngine::new(config, broadcaster).expect("create engine");
+
+    let mut validators = Vec::new();
+    for i in 1..=4u8 {
+        let vid = test_validator_id(i);
+        let kp = create_test_keypair();
+        register_validator_with_keypair(&mut engine, vid.clone(), &kp, i == 1).await;
+        validators.push((vid, kp));
+    }
+
+    // Set local identity + keypair to validator[0]
+    engine.validator_identity = Some(validators[0].0.clone());
+    engine
+        .set_validator_keypair(validators[0].1.clone())
+        .expect("set keypair");
+
+    engine.current_round.height = height;
+    engine.current_round.round = round;
+    engine.current_round.step = ConsensusStep::Propose;
+    engine.snapshot_validator_set(height);
+
+    // Compute the expected proposer for this (height, round) and set it.
+    if let Some(proposer) = engine.compute_proposer_for_round(height, round) {
+        engine.current_round.proposer = Some(proposer);
+    }
+
+    (engine, validators)
+}
+
+#[tokio::test]
+async fn test_proposal_admission_wrong_proposer_rejected() {
+    let (engine, validators) = setup_bft_engine(1, 0).await;
+    let expected = engine.compute_proposer_for_round(1, 0).unwrap();
+
+    // Pick a validator that is NOT the expected proposer.
+    let (wrong_id, wrong_kp) = validators
+        .iter()
+        .find(|(id, _)| *id != expected)
+        .expect("need a non-proposer validator");
+
+    let proposal = make_signed_proposal(
+        &engine,
+        wrong_id,
+        wrong_kp,
+        1,
+        0,
+        Hash([0u8; 32]),
+        b"block".to_vec(),
+    );
+
+    let result = engine.validate_incoming_proposal(&proposal).await;
+    assert!(result.is_err(), "wrong proposer must be rejected");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("not the expected leader"),
+        "error should mention expected leader, got: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn test_proposal_admission_invalid_signature_rejected() {
+    let (engine, validators) = setup_bft_engine(1, 0).await;
+    let expected = engine.compute_proposer_for_round(1, 0).unwrap();
+    let (proposer_id, proposer_kp) = validators
+        .iter()
+        .find(|(id, _)| *id == expected)
+        .expect("proposer must exist");
+
+    let mut proposal = make_signed_proposal(
+        &engine,
+        proposer_id,
+        proposer_kp,
+        1,
+        0,
+        Hash([0u8; 32]),
+        b"block".to_vec(),
+    );
+
+    // Corrupt the signature bytes so cryptographic verify fails.
+    proposal.signature.signature = vec![0xFFu8; proposal.signature.signature.len()];
+
+    let result = engine.validate_incoming_proposal(&proposal).await;
+    assert!(result.is_err(), "corrupted signature must be rejected");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("signature rejected") || err.contains("invalid signature"),
+        "error should mention signature, got: {}",
+        err
+    );
+}
+
+/// Mock blockchain provider that reports a specific chain height and tip hash.
+struct MockChainProvider {
+    chain_height: u64,
+    tip_hash: Hash,
+    decode_result: Result<(u32, u64), String>,
+}
+
+#[async_trait::async_trait]
+impl crate::types::ConsensusBlockchainProvider for MockChainProvider {
+    async fn get_latest_block_hash(
+        &self,
+    ) -> Result<Hash, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(self.tip_hash.clone())
+    }
+    async fn get_pending_transactions(
+        &self,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(Vec::new())
+    }
+    async fn get_blockchain_height(&self) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(self.chain_height)
+    }
+    async fn is_ready(&self) -> bool {
+        true
+    }
+    async fn decode_block_data(
+        &self,
+        _block_data: &[u8],
+    ) -> Result<(u32, u64), Box<dyn std::error::Error + Send + Sync>> {
+        self.decode_result
+            .clone()
+            .map_err(|e| e.into())
+    }
+}
+
+#[tokio::test]
+async fn test_proposal_admission_previous_hash_mismatch_rejected() {
+    // Height 2, round 0 — local chain is at height 1 so previous-hash is verifiable.
+    let (mut engine, validators) = setup_bft_engine(2, 0).await;
+    let expected = engine.compute_proposer_for_round(2, 0).unwrap();
+    let (proposer_id, proposer_kp) = validators
+        .iter()
+        .find(|(id, _)| *id == expected)
+        .expect("proposer must exist");
+
+    let real_tip = Hash::from_bytes(&hash_blake3(b"real-block-1"));
+    let wrong_prev = Hash::from_bytes(&hash_blake3(b"wrong-previous"));
+
+    // Attach a provider that says chain is at height 1 with a known tip.
+    engine.set_blockchain_provider(Arc::new(MockChainProvider {
+        chain_height: 1,
+        tip_hash: real_tip,
+        decode_result: Ok((0, 0)),
+    }));
+
+    let proposal = make_signed_proposal(
+        &engine,
+        proposer_id,
+        proposer_kp,
+        2,
+        0,
+        wrong_prev,
+        b"block".to_vec(),
+    );
+
+    let result = engine.validate_incoming_proposal(&proposal).await;
+    assert!(result.is_err(), "wrong previous_hash must be rejected");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("previous_hash") || err.contains("previous hash"),
+        "error should mention previous hash, got: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn test_proposal_admission_decode_failure_rejected() {
+    let (mut engine, validators) = setup_bft_engine(1, 0).await;
+    let expected = engine.compute_proposer_for_round(1, 0).unwrap();
+    let (proposer_id, proposer_kp) = validators
+        .iter()
+        .find(|(id, _)| *id == expected)
+        .expect("proposer must exist");
+
+    // Attach a provider whose decode_block_data always fails.
+    engine.set_blockchain_provider(Arc::new(MockChainProvider {
+        chain_height: 0,
+        tip_hash: Hash([0u8; 32]),
+        decode_result: Err("malformed block payload".to_string()),
+    }));
+
+    let proposal = make_signed_proposal(
+        &engine,
+        proposer_id,
+        proposer_kp,
+        1,
+        0,
+        Hash([0u8; 32]),
+        b"garbage".to_vec(),
+    );
+
+    let result = engine.validate_incoming_proposal(&proposal).await;
+    assert!(result.is_err(), "decode failure must reject proposal");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("decode failed"),
+        "error should mention decode, got: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn test_proposal_admission_valid_proposal_accepted() {
+    let (engine, validators) = setup_bft_engine(1, 0).await;
+    let expected = engine.compute_proposer_for_round(1, 0).unwrap();
+    let (proposer_id, proposer_kp) = validators
+        .iter()
+        .find(|(id, _)| *id == expected)
+        .expect("proposer must exist");
+
+    let proposal = make_signed_proposal(
+        &engine,
+        proposer_id,
+        proposer_kp,
+        1,
+        0,
+        Hash([0u8; 32]),
+        b"valid-block".to_vec(),
+    );
+
+    let result = engine.validate_incoming_proposal(&proposal).await;
+    assert!(
+        result.is_ok(),
+        "correctly signed proposal from expected proposer must be accepted, got: {:?}",
+        result,
+    );
+}
+
+#[tokio::test]
+async fn test_proposal_admission_wrong_protocol_version_rejected() {
+    let (engine, validators) = setup_bft_engine(1, 0).await;
+    let expected = engine.compute_proposer_for_round(1, 0).unwrap();
+    let (proposer_id, proposer_kp) = validators
+        .iter()
+        .find(|(id, _)| *id == expected)
+        .expect("proposer must exist");
+
+    let mut proposal = make_signed_proposal(
+        &engine,
+        proposer_id,
+        proposer_kp,
+        1,
+        0,
+        Hash([0u8; 32]),
+        b"block".to_vec(),
+    );
+
+    // Simulate a node running an older or newer protocol version.
+    proposal.protocol_version = 999;
+
+    let result = engine.validate_incoming_proposal(&proposal).await;
+    assert!(result.is_err(), "mismatched protocol version must be rejected");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("protocol version mismatch"),
+        "error should mention protocol version, got: {}",
+        err
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Validator snapshot write-once invariant tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_validator_snapshot_is_write_once() {
+    let (mut engine, validators) = setup_bft_engine(1, 0).await;
+
+    // Snapshot is already sealed by setup_bft_engine. Record the committee.
+    let original: Vec<_> = engine
+        .validator_set_for_height(1)
+        .expect("snapshot must exist")
+        .iter()
+        .cloned()
+        .collect();
+    assert_eq!(original.len(), 4, "should have 4 validators");
+
+    // Register a 5th validator.
+    let new_id = test_validator_id(99);
+    let new_kp = create_test_keypair();
+    register_validator_with_keypair(&mut engine, new_id.clone(), &new_kp, false).await;
+
+    // Re-snapshot at the same height — must be a no-op (write-once).
+    engine.snapshot_validator_set(1);
+
+    let after: Vec<_> = engine
+        .validator_set_for_height(1)
+        .expect("snapshot must still exist")
+        .iter()
+        .cloned()
+        .collect();
+    assert_eq!(
+        after.len(),
+        4,
+        "snapshot at height 1 must NOT include the new validator"
+    );
+    assert!(
+        !after.contains(&new_id),
+        "new validator must NOT appear in sealed height-1 snapshot"
+    );
+
+    // But a snapshot at the NEXT height picks up the new validator.
+    engine.snapshot_validator_set(2);
+    let next: Vec<_> = engine
+        .validator_set_for_height(2)
+        .expect("snapshot must exist for height 2")
+        .iter()
+        .cloned()
+        .collect();
+    assert_eq!(next.len(), 5, "height 2 should have 5 validators");
+    assert!(
+        next.contains(&new_id),
+        "new validator must appear in height-2 snapshot"
     );
 }
