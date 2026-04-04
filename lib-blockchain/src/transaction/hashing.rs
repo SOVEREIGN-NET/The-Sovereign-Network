@@ -151,24 +151,18 @@ pub fn create_encrypted_note(
 
     // Add sender's signature to the note for authenticity
     let mut signed_note_data = note_data.clone();
-    // Create authenticated note with sender signature using lib-identity
-    // Convert PrivateKey to PostQuantumKeypair for lib-identity signing
-    let post_quantum_keypair = lib_identity::cryptography::key_generation::PostQuantumKeypair {
-        public_key: recipient_key.dilithium_pk.clone(),
-        private_key: sender_key.dilithium_sk.clone(),
-        algorithm: "Dilithium5".to_string(),
-        security_level: 5,
-        key_id: format!("tx_signing_{}", hex::encode(&sender_key.dilithium_sk[..8])),
-    };
-
-    // Sign the note data using lib-identity's post-quantum signing
-    if let Ok(signature) = lib_identity::cryptography::signatures::sign_with_identity(
-        &post_quantum_keypair,
-        &note_data,
-        None, // No additional signature parameters
-    ) {
-        // Append the actual signature to note data
-        signed_note_data.extend_from_slice(&signature.signature);
+    
+    // Sign the note data using lib-crypto's Dilithium5 signing directly
+    // The sender's private key is used to create the signature
+    match lib_crypto::post_quantum::dilithium::dilithium5_sign(&note_data, &sender_key.dilithium_sk) {
+        Ok(signature) => {
+            // Append the signature to note data
+            signed_note_data.extend_from_slice(&signature);
+        }
+        Err(e) => {
+            // Log error but continue (signature is optional for note hashing)
+            tracing::warn!("Failed to sign note: {}", e);
+        }
     }
 
     // Encrypt the note using hybrid encryption with the recipient's public key

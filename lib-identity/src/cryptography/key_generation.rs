@@ -7,7 +7,15 @@ use lib_crypto::post_quantum::{dilithium2_keypair, dilithium5_keypair};
 use lib_crypto::KeyPair as CryptoKeyPair;
 use serde::{Deserialize, Serialize};
 
-/// Post-quantum keypair using CRYSTALS-Dilithium
+/// DEPRECATED: Use `lib_crypto::KeyPair` directly.
+/// 
+/// This struct is kept for backward compatibility but will be removed in a future version.
+/// All new code should use `lib_crypto::KeyPair` which provides the same functionality
+/// with proper fixed-size array types for security.
+#[deprecated(
+    since = "0.1.0",
+    note = "Use lib_crypto::KeyPair directly instead"
+)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PostQuantumKeypair {
     pub public_key: Vec<u8>,
@@ -24,7 +32,15 @@ pub struct KeyGenParams {
     pub security_level: u32,
 }
 
-/// Generate post-quantum keypair using CRYSTALS-Dilithium from lib-crypto
+/// DEPRECATED: Use `lib_crypto::KeyPair::generate()` directly.
+/// 
+/// This function is kept for backward compatibility but will be removed in a future version.
+/// All new code should use `lib_crypto::KeyPair::generate()` which provides the same
+/// functionality with proper fixed-size array types for security.
+#[deprecated(
+    since = "0.1.0",
+    note = "Use lib_crypto::KeyPair::generate() directly instead"
+)]
 pub fn generate_pq_keypair(params: Option<KeyGenParams>) -> Result<PostQuantumKeypair, String> {
     let params = params.unwrap_or_default();
 
