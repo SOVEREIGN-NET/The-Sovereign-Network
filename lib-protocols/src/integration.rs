@@ -163,10 +163,12 @@ impl ZhtpIntegration {
                     ProtocolError::ZkProofError(format!("Invalid public key format: {}", e))
                 })?
             } else {
-                vec![0u8; 32] // Default key for validation
+                vec![0u8; 2592] // Default key for validation (Dilithium5 size)
             };
 
-            // Create signature object using the actual lib_crypto::Signature structure
+            // Convert to fixed-size array and create public key
+            let public_key_bytes: [u8; 2592] = public_key_bytes.as_slice().try_into()
+                .map_err(|_| ProtocolError::ZkProofError("Invalid public key size: expected 2592 bytes".to_string()))?;
             let public_key = lib_crypto::PublicKey::new(public_key_bytes);
             let signature = lib_crypto::Signature {
                 signature: signature_bytes.to_vec(),
