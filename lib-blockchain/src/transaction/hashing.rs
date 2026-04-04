@@ -20,8 +20,8 @@ pub fn hash_transaction(transaction: &Transaction) -> Hash {
     tx_for_hash.signature = Signature {
         signature: Vec::new(),
         public_key: PublicKey {
-            dilithium_pk: Vec::new(),
-            kyber_pk: Vec::new(),
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: [0u8; 32], // All zeros - must match client's zeroed signature
         },
         algorithm: SignatureAlgorithm::Dilithium5,
@@ -301,7 +301,7 @@ pub mod utils {
         let mut tx_content = transaction.clone();
         tx_content.signature = Signature {
             signature: Vec::new(),
-            public_key: PublicKey::new(Vec::new()),
+            public_key: PublicKey::new([0u8; 2592]),
             algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         };

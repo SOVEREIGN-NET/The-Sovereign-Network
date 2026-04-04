@@ -465,8 +465,8 @@ impl GenesisConfig {
 
         // ── bonding curve ────────────────────────────────────────────────────
         let genesis_creator = PublicKey {
-            dilithium_pk: vec![],
-            kyber_pk: vec![],
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: [0u8; 32],
         };
         let token_id = crate::Blockchain::derive_cbe_token_id_pub();
@@ -670,8 +670,8 @@ impl GenesisConfig {
                 // Use empty dilithium_pk — the SOV balance key is derived solely from
                 // the wallet_id (key_id), matching the pattern in collect_sov_backfill_entries.
                 let pk = PublicKey {
-                    dilithium_pk: vec![],
-                    kyber_pk: vec![],
+                    dilithium_pk: [0u8; 2592],
+                    kyber_pk: [0u8; 1568],
                     key_id,
                 };
                 if let Err(e) = token.mint(&pk, entry.balance) {
@@ -725,8 +725,8 @@ fn key_from_hex_or_stub(
 ) -> crate::integration::crypto_integration::PublicKey {
     if hex_str.is_empty() {
         return crate::integration::crypto_integration::PublicKey {
-            dilithium_pk: vec![],
-            kyber_pk: vec![],
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: [fill; 32],
         };
     }
@@ -738,8 +738,8 @@ fn key_from_hex_or_stub(
                 fill, e
             );
             crate::integration::crypto_integration::PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: [fill; 32],
             }
         }
@@ -753,9 +753,11 @@ fn key_from_hex(hex_str: &str) -> Result<crate::integration::crypto_integration:
     let trimmed = hex_str.strip_prefix("0x").unwrap_or(hex_str);
     let bytes = hex::decode(trimmed).context("Invalid hex in genesis.toml key")?;
     let key_id = lib_crypto::hash_blake3(&bytes);
+    let dilithium_pk: [u8; 2592] = bytes.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid Dilithium key length in genesis.toml key: expected 2592 bytes, got {}", bytes.len()))?;
     Ok(crate::integration::crypto_integration::PublicKey {
-        dilithium_pk: bytes,
-        kyber_pk: vec![],
+        dilithium_pk,
+        kyber_pk: [0u8; 1568],
         key_id,
     })
 }

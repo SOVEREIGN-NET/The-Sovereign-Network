@@ -72,7 +72,7 @@ pub fn verify_transaction_signature(
     let mut tx_for_verification = transaction.clone();
     tx_for_verification.signature = lib_crypto::Signature {
         signature: Vec::new(),
-        public_key: lib_crypto::PublicKey::new(Vec::new()),
+        public_key: lib_crypto::PublicKey::new([0u8; 2592]),
         algorithm: lib_crypto::SignatureAlgorithm::Dilithium5,
         timestamp: 0,
     };

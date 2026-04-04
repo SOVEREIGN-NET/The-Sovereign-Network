@@ -577,13 +577,13 @@ impl Blockchain {
         let current_epoch = self.oracle_state.epoch_id(block_timestamp);
 
         let oracle_pubkeys = self.oracle_state.oracle_signing_pubkeys.clone();
-        let key_map: Vec<([u8; 32], Vec<u8>)> = self
+        let key_map: Vec<([u8; 32], [u8; 2592])> = self
             .validator_registry
             .values()
             .filter(|v| !v.consensus_key.is_empty())
             .map(|v| {
                 let kid = crate::types::hash::blake3_hash(&v.consensus_key).as_array();
-                (kid, v.consensus_key.clone())
+                (kid, v.consensus_key)
             })
             .collect();
 
@@ -596,7 +596,7 @@ impl Blockchain {
             key_map
                 .iter()
                 .find(|(kid, _)| *kid == key_id)
-                .map(|(_, pk)| pk.clone())
+                .map(|(_, pk)| pk.to_vec())
         });
 
         match result {

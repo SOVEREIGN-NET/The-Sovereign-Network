@@ -14,7 +14,9 @@ impl Blockchain {
             vec![],
             Signature {
                 signature: identity_data.ownership_proof.clone(),
-                public_key: PublicKey::new(identity_data.public_key.clone()),
+                public_key: PublicKey::new(
+                    identity_data.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
+                ),
                 algorithm: SignatureAlgorithm::Dilithium2,
                 timestamp: identity_data.created_at,
             },
@@ -99,7 +101,9 @@ impl Blockchain {
             100,
             Signature {
                 signature: updated_data.ownership_proof.clone(),
-                public_key: PublicKey::new(updated_data.public_key.clone()),
+                public_key: PublicKey::new(
+                    updated_data.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
+                ),
                 algorithm: SignatureAlgorithm::Dilithium2,
                 timestamp: updated_data.created_at,
             },
@@ -152,7 +156,7 @@ impl Blockchain {
             50,
             Signature {
                 signature: authorizing_signature,
-                public_key: PublicKey::new(vec![]),
+                public_key: PublicKey::new([0u8; 2592]),
                 algorithm: SignatureAlgorithm::Dilithium2,
                 timestamp: crate::utils::time::current_timestamp(),
             },
@@ -532,7 +536,9 @@ impl Blockchain {
             vec![],
             Signature {
                 signature: vec![0xAA; 64],
-                public_key: PublicKey::new(public_key.clone()),
+                public_key: PublicKey::new(
+                    public_key.as_slice().try_into().unwrap_or([0u8; 2592])
+                ),
                 algorithm: SignatureAlgorithm::Dilithium2,
                 timestamp: identity_data.created_at,
             },

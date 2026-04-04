@@ -137,8 +137,8 @@ impl Blockchain {
         }
 
         let genesis_creator = PublicKey {
-            dilithium_pk: vec![],
-            kyber_pk: vec![],
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: [0u8; 32],
         };
 
@@ -189,23 +189,23 @@ impl Blockchain {
         }
 
         let compensation_addr = PublicKey {
-            dilithium_pk: vec![],
-            kyber_pk: vec![],
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: [0x01; 32],
         };
         let operational_addr = PublicKey {
-            dilithium_pk: vec![],
-            kyber_pk: vec![],
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: [0x02; 32],
         };
         let performance_addr = PublicKey {
-            dilithium_pk: vec![],
-            kyber_pk: vec![],
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: [0x03; 32],
         };
         let strategic_addr = PublicKey {
-            dilithium_pk: vec![],
-            kyber_pk: vec![],
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: [0x04; 32],
         };
 
@@ -489,7 +489,7 @@ impl Blockchain {
                                 identity_id: validator_data.identity_id.clone(),
                                 stake: validator_data.stake,
                                 storage_provided: validator_data.storage_provided,
-                                consensus_key: validator_data.consensus_key.clone(),
+                                consensus_key: validator_data.consensus_key.as_slice().try_into().unwrap_or([0u8; 2592]),
                                 networking_key: validator_data.networking_key.clone(),
                                 rewards_key: validator_data.rewards_key.clone(),
                                 network_address: validator_data.network_address.clone(),

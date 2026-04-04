@@ -77,7 +77,7 @@ pub fn verify_quorum_proof(
         let envelope =
             BftQuorumProof::reconstruct_vote_envelope(att, proof.height);
 
-        let public_key = lib_crypto::PublicKey::new(att.public_key.to_vec());
+        let public_key = lib_crypto::PublicKey::new(att.public_key);
         let signature = lib_crypto::PostQuantumSignature {
             signature: att.signature.to_vec(),
             public_key: public_key.clone(),

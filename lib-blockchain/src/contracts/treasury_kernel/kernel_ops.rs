@@ -219,8 +219,8 @@ impl TreasuryKernel {
 
         // Build recipient PublicKey from key_id for mint_kernel_only
         let recipient = PublicKey {
-            dilithium_pk: Vec::new(),
-            kyber_pk: Vec::new(),
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: auth.recipient_key_id,
         };
 
@@ -291,8 +291,8 @@ impl TreasuryKernel {
 
         // Build from PublicKey from key_id
         let from = PublicKey {
-            dilithium_pk: Vec::new(),
-            kyber_pk: Vec::new(),
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: auth.from_key_id,
         };
 

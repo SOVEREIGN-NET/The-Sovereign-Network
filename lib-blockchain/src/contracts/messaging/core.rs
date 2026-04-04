@@ -231,8 +231,8 @@ impl WhisperMessage {
     /// Get the message size in bytes
     pub fn size(&self) -> usize {
         32 + // message_id
-        self.sender.size() + // sender
-        self.recipient.as_ref().map_or(1, |r| r.size() + 1) + // recipient (optional)
+        self.sender.as_bytes().len() + // sender
+        self.recipient.as_ref().map_or(1, |r| r.as_bytes().len() + 1) + // recipient (optional)
         33 + // group_id (optional)
         4 + self.encrypted_content.len() + // encrypted_content with length prefix
         bincode::serialized_size(&self.message_type).unwrap_or(0) as usize + // message_type

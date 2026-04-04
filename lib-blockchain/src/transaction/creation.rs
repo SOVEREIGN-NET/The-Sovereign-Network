@@ -194,7 +194,7 @@ impl TransactionBuilder {
             fee: self.fee,
             signature: Signature {
                 signature: Vec::new(),
-                public_key: PublicKey::new(Vec::new()),
+                public_key: PublicKey::new([0u8; 2592]),
                 algorithm: SignatureAlgorithm::Dilithium5,
                 timestamp: 0,
             }, // Will be set below
@@ -314,7 +314,7 @@ impl TransactionBuilder {
         let mut tx_for_signing = transaction.clone();
         tx_for_signing.signature = Signature {
             signature: Vec::new(),
-            public_key: PublicKey::new(Vec::new()),
+            public_key: PublicKey::new([0u8; 2592]),
             algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         };
