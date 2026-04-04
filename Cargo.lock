@@ -3594,6 +3594,7 @@ dependencies = [
  "blake3",
  "getrandom 0.2.17",
  "hex",
+ "lib-crypto",
  "serde",
  "serde_json",
 ]

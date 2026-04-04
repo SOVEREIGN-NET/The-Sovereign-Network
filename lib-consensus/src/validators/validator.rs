@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// ### `consensus_key` — BFT Vote-Signing Key
 /// Signs block proposals, pre-votes, pre-commits, and view-change messages.
-/// - **Algorithm**: Post-quantum Dilithium2.
+/// - **Algorithm**: Post-quantum Dilithium5.
 /// - **Exposure**: Hot — present online during every consensus round.
 /// - **Compromise impact**: Attacker can equivocate (double-sign), triggering slashing.
 ///
@@ -48,10 +48,10 @@ pub struct Validator {
     pub storage_provided: u64,
     /// Validator status
     pub status: ValidatorStatus,
-    /// Post-quantum Dilithium2 public key used exclusively for signing BFT consensus
+    /// Post-quantum Dilithium5 public key used exclusively for signing BFT consensus
     /// messages (proposals, pre-votes, pre-commits).  MUST differ from `networking_key`
     /// and `rewards_key`.
-    pub consensus_key: Vec<u8>,
+    pub consensus_key: [u8; 2592],
     /// Ed25519 / X25519 public key used for P2P transport identity (QUIC TLS, DHT node
     /// ID).  MUST differ from `consensus_key` and `rewards_key`.
     pub networking_key: Vec<u8>,
@@ -89,18 +89,18 @@ impl Validator {
         identity: IdentityId,
         stake: u64,
         storage_provided: u64,
-        consensus_key: Vec<u8>,
+        consensus_key: [u8; 2592],
         networking_key: Vec<u8>,
         rewards_key: Vec<u8>,
         commission_rate: u8,
     ) -> Self {
         // Enforce key separation invariant at construction time.
         debug_assert_ne!(
-            consensus_key, networking_key,
+            consensus_key.as_slice(), networking_key.as_slice(),
             "Key separation violation: consensus_key and networking_key must be different"
         );
         debug_assert_ne!(
-            consensus_key, rewards_key,
+            consensus_key.as_slice(), rewards_key.as_slice(),
             "Key separation violation: consensus_key and rewards_key must be different"
         );
         debug_assert_ne!(

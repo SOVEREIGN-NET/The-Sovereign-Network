@@ -424,21 +424,20 @@ mod tests {
 // BFT QUORUM PROOF — cryptographic evidence of BFT finality
 // =============================================================================
 
-/// Dilithium5 signature size in bytes (NIST FIPS 204, ML-DSA level 5).
-pub const DILITHIUM5_SIG_BYTES: usize = 4595;
-/// Dilithium5 public key size in bytes.
-pub const DILITHIUM5_PK_BYTES: usize = 2592;
+// Re-export canonical post-quantum constants from lib-crypto
+pub use lib_crypto::post_quantum::constants::{
+    DILITHIUM5_PUBLICKEY_BYTES as DILITHIUM5_PK_BYTES,
+    DILITHIUM5_SIGNATURE_BYTES as DILITHIUM5_SIG_BYTES,
+    KYBER1024_CIPHERTEXT_BYTES as KYBER1024_CT_BYTES,
+    KYBER1024_PUBLICKEY_BYTES as KYBER1024_PK_BYTES,
+};
 
 /// A single validator's commit attestation within a quorum proof.
 ///
 /// Carries the Dilithium5 signature and the fields needed to reconstruct the
 /// signed envelope (`vote_id || voter || proposal_id || vote_type || height || round`)
 /// so that any node can verify the attestation without access to the consensus engine.
-///
-/// `signature` MUST be exactly [`DILITHIUM5_SIG_BYTES`] (4595) bytes.
-/// `public_key` MUST be exactly [`DILITHIUM5_PK_BYTES`] (2592) bytes.
-/// Use [`CommitAttestation::validate_sizes`] to enforce.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitAttestation {
     /// The validator who cast this commit vote (IdentityId bytes).
     pub validator_id: [u8; 32],
@@ -448,30 +447,65 @@ pub struct CommitAttestation {
     pub proposal_id: [u8; 32],
     /// The consensus round in which the commit was cast.
     pub round: u32,
-    /// Dilithium5 signature — must be exactly 4595 bytes.
-    pub signature: Vec<u8>,
-    /// Dilithium5 public key — must be exactly 2592 bytes.
-    pub public_key: Vec<u8>,
+    /// Dilithium5 signature — exactly 4595 bytes.
+    pub signature: [u8; 4595],
+    /// Dilithium5 public key — exactly 2592 bytes.
+    pub public_key: [u8; 2592],
 }
 
-impl CommitAttestation {
-    /// Validate that signature and public key have the correct Dilithium5 sizes.
-    pub fn validate_sizes(&self) -> Result<(), String> {
-        if self.signature.len() != DILITHIUM5_SIG_BYTES {
-            return Err(format!(
-                "signature length {} != {} (Dilithium5)",
-                self.signature.len(),
-                DILITHIUM5_SIG_BYTES
-            ));
+// Manual serde implementation for large fixed arrays
+impl serde::Serialize for CommitAttestation {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("CommitAttestation", 6)?;
+        state.serialize_field("validator_id", &self.validator_id)?;
+        state.serialize_field("vote_id", &self.vote_id)?;
+        state.serialize_field("proposal_id", &self.proposal_id)?;
+        state.serialize_field("round", &self.round)?;
+        state.serialize_field("signature", &self.signature.as_slice())?;
+        state.serialize_field("public_key", &self.public_key.as_slice())?;
+        state.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for CommitAttestation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct CommitAttestationHelper {
+            validator_id: [u8; 32],
+            vote_id: [u8; 32],
+            proposal_id: [u8; 32],
+            round: u32,
+            signature: Vec<u8>,
+            public_key: Vec<u8>,
         }
-        if self.public_key.len() != DILITHIUM5_PK_BYTES {
-            return Err(format!(
-                "public_key length {} != {} (Dilithium5)",
-                self.public_key.len(),
-                DILITHIUM5_PK_BYTES
-            ));
-        }
-        Ok(())
+
+        let helper = CommitAttestationHelper::deserialize(deserializer)?;
+        
+        let signature: [u8; 4595] = helper.signature.try_into()
+            .map_err(|v: Vec<u8>| serde::de::Error::custom(
+                format!("signature must be 4595 bytes, got {}", v.len())
+            ))?;
+        
+        let public_key: [u8; 2592] = helper.public_key.try_into()
+            .map_err(|v: Vec<u8>| serde::de::Error::custom(
+                format!("public_key must be 2592 bytes, got {}", v.len())
+            ))?;
+
+        Ok(CommitAttestation {
+            validator_id: helper.validator_id,
+            vote_id: helper.vote_id,
+            proposal_id: helper.proposal_id,
+            round: helper.round,
+            signature,
+            public_key,
+        })
     }
 }
 

@@ -1019,10 +1019,10 @@ impl ContentManager {
             .clone()
             .ok_or_else(|| anyhow::anyhow!("Identity missing private key for storage"))?;
         let private_key_blob = PrivateKeyBlob {
-            dilithium_sk: private_key.dilithium_sk.clone(),
-            dilithium_pk: private_key.dilithium_pk.clone(),
-            kyber_sk: private_key.kyber_sk.clone(),
-            master_seed: private_key.master_seed.clone(),
+            dilithium_sk: private_key.dilithium_sk.to_vec(),
+            dilithium_pk: private_key.dilithium_pk.to_vec(),
+            kyber_sk: private_key.kyber_sk.to_vec(),
+            master_seed: private_key.master_seed.to_vec(),
         };
 
         let serialized_view = SerializedViewCompat {
@@ -1117,11 +1117,20 @@ impl ContentManager {
             }
             // First try structured blob; fallback to direct serialized view + private_key
             let identity = if let Ok(blob) = bincode::deserialize::<IdentityBlob>(&decrypted_data) {
+                // Convert Vec<u8> to fixed-size arrays for PrivateKey
+                let dilithium_sk: [u8; 4864] = blob.private_key.dilithium_sk.as_slice().try_into()
+                    .map_err(|_| anyhow::anyhow!("Invalid dilithium_sk size: expected 4864 bytes"))?;
+                let dilithium_pk: [u8; 2592] = blob.private_key.dilithium_pk.as_slice().try_into()
+                    .map_err(|_| anyhow::anyhow!("Invalid dilithium_pk size: expected 2592 bytes"))?;
+                let kyber_sk: [u8; 3168] = blob.private_key.kyber_sk.as_slice().try_into()
+                    .map_err(|_| anyhow::anyhow!("Invalid kyber_sk size: expected 3168 bytes"))?;
+                let master_seed: [u8; 64] = blob.private_key.master_seed.as_slice().try_into()
+                    .map_err(|_| anyhow::anyhow!("Invalid master_seed size: expected 64 bytes"))?;
                 let private_key = lib_crypto::PrivateKey {
-                    dilithium_sk: blob.private_key.dilithium_sk,
-                    dilithium_pk: blob.private_key.dilithium_pk,
-                    kyber_sk: blob.private_key.kyber_sk,
-                    master_seed: blob.private_key.master_seed,
+                    dilithium_sk,
+                    dilithium_pk,
+                    kyber_sk,
+                    master_seed,
                 };
                 lib_identity::ZhtpIdentity::from_serialized(&blob.json_view, &private_key)?
             } else {

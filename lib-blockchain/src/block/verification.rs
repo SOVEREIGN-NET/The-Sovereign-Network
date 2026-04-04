@@ -49,15 +49,6 @@ pub fn verify_quorum_proof(
     let mut valid_count = 0u64;
 
     for att in &proof.attestations {
-        // Validate Dilithium5 sizes
-        if let Err(e) = att.validate_sizes() {
-            return Err(format!(
-                "attestation from validator {}: {}",
-                hex::encode(&att.validator_id[..8]),
-                e,
-            ));
-        }
-
         // Reject duplicates
         if !seen.insert(att.validator_id) {
             return Err(format!(
