@@ -952,6 +952,7 @@ impl BlockchainConsensusCoordinator {
             id: proposal_id.clone(),
             height,
             round: 0,
+            protocol_version: 1,
             proposer: self
                 .local_validator_id
                 .clone()

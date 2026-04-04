@@ -2257,6 +2257,7 @@ fn make_signed_proposal(
         proposer: proposer.clone(),
         height,
         round,
+        protocol_version: super::CONSENSUS_PROTOCOL_VERSION,
         previous_hash,
         block_data,
         timestamp: std::time::SystemTime::now()
@@ -2510,5 +2511,37 @@ async fn test_proposal_admission_valid_proposal_accepted() {
         result.is_ok(),
         "correctly signed proposal from expected proposer must be accepted, got: {:?}",
         result,
+    );
+}
+
+#[tokio::test]
+async fn test_proposal_admission_wrong_protocol_version_rejected() {
+    let (engine, validators) = setup_bft_engine(1, 0).await;
+    let expected = engine.compute_proposer_for_round(1, 0).unwrap();
+    let (proposer_id, proposer_kp) = validators
+        .iter()
+        .find(|(id, _)| *id == expected)
+        .expect("proposer must exist");
+
+    let mut proposal = make_signed_proposal(
+        &engine,
+        proposer_id,
+        proposer_kp,
+        1,
+        0,
+        Hash([0u8; 32]),
+        b"block".to_vec(),
+    );
+
+    // Simulate a node running an older or newer protocol version.
+    proposal.protocol_version = 999;
+
+    let result = engine.validate_incoming_proposal(&proposal).await;
+    assert!(result.is_err(), "mismatched protocol version must be rejected");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("protocol version mismatch"),
+        "error should mention protocol version, got: {}",
+        err
     );
 }

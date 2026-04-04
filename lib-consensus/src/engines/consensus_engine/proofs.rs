@@ -53,6 +53,7 @@ impl ConsensusEngine {
             proposer: validator_id.clone(),
             height: self.current_round.height,
             round: self.current_round.round,
+            protocol_version: super::CONSENSUS_PROTOCOL_VERSION,
             previous_hash,
             block_data,
             timestamp: SystemTime::now()

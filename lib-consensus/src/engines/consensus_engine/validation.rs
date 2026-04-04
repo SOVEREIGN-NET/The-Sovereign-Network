@@ -480,6 +480,21 @@ impl ConsensusEngine {
         &self,
         proposal: &ConsensusProposal,
     ) -> ConsensusResult<()> {
+        // ── 0. Protocol version ──────────────────────────────────────────
+        // Fast-reject proposals from nodes running a different wire format.
+        // This turns silent signature mismatches into an explicit error.
+        if proposal.protocol_version != super::CONSENSUS_PROTOCOL_VERSION {
+            return Err(ConsensusError::ByzantineFault(format!(
+                "Proposal rejected: protocol version mismatch — proposal has v{}, \
+                 we require v{} (proposer {} at H={} R={})",
+                proposal.protocol_version,
+                super::CONSENSUS_PROTOCOL_VERSION,
+                proposal.proposer,
+                proposal.height,
+                proposal.round,
+            )));
+        }
+
         // ── 1. Expected proposer for (height, round) ────────────────────
         let expected_proposer = self.compute_proposer_for_round(proposal.height, proposal.round);
         if expected_proposer.as_ref() != Some(&proposal.proposer) {

@@ -232,6 +232,21 @@ mod tests;
 // Consensus Algorithm Constants (closes #964)
 // ---------------------------------------------------------------------------
 
+/// Consensus wire-protocol version.
+///
+/// Proposals and votes are signed over domain-tagged envelopes that include
+/// this version.  Nodes on different protocol versions will deterministically
+/// reject each other's proposals/votes (signature mismatch) rather than
+/// silently stalling consensus.
+///
+/// Bump this constant whenever the signed envelope format changes (e.g. new
+/// fields bound into the signature, domain tag changes, serialization order).
+///
+/// History:
+///   1 — initial: proposal ID/signature include round + domain tags
+///       `ZHTP/PROPOSAL/ID/v1` and `ZHTP/PROPOSAL/SIG/v1`
+pub const CONSENSUS_PROTOCOL_VERSION: u32 = 1;
+
 /// Human-readable name of the consensus algorithm variant implemented here.
 ///
 /// This engine implements a Tendermint-like BFT protocol as described in

@@ -2087,6 +2087,7 @@ mod state_machine_tests {
             proposer: lib_crypto::Hash([0u8; 32]),
             height: 42,
             round: 0,
+            protocol_version: 1,
             previous_hash: lib_crypto::Hash([0u8; 32]),
             block_data: vec![],
             timestamp: 0,
