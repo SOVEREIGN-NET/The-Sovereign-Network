@@ -51,7 +51,7 @@ members = []
 [bonding_curve]
 # CBE public sale bonding curve parameters (legacy in-memory curve)
 reserve_ratio_ppm    = 200_000   # 20% reserve ratio
-graduation_threshold = 2_745_966_000
+graduation_threshold = 2_745_966  # USD — must match GRADUATION_THRESHOLD_USD
 
 [cbe_curve]
 # Canonical 18-decimal integer bonding curve (BFT-A / #1922).

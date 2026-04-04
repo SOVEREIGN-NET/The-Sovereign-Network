@@ -1418,7 +1418,7 @@ impl OracleState {
     ///
     /// # Arguments
     /// * `reserve_sov` - Reserve balance in SOV (atomic units)
-    /// * `threshold_usd` - Graduation threshold in USD (whole dollars, e.g., 269_000)
+    /// * `threshold_usd` - Graduation threshold in USD (whole dollars, e.g., 2_745_966)
     ///
     /// # Returns
     /// `true` if reserve value >= threshold (using latest finalized SOV/USD price)
@@ -2372,20 +2372,20 @@ mod tests {
         assert!(state.try_finalize_price(price));
 
         // Test threshold validation
-        // At $1.00 SOV, need 269,000 SOV for $269K USD
-        // 269,000 SOV = 26,900,000_000_000 atomic units
-        let reserve_sov = 26_900_000_000_000u64;
-        let threshold_usd = 269_000u64;
+        // At $1.00 SOV, need 2,745,966 SOV for $2,745,966 USD
+        // 2,745,966 SOV = 274,596,600_000_000 atomic units
+        let reserve_sov = 274_596_600_000_000u64;
+        let threshold_usd = 2_745_966u64;
 
         let result = state.validate_graduation_threshold(reserve_sov, threshold_usd);
         assert!(result.is_ok(), "Should not error: {:?}", result);
-        assert!(result.unwrap(), "Should meet threshold at exactly $269K");
+        assert!(result.unwrap(), "Should meet threshold at exactly $2,745,966");
 
         // Test just below threshold
-        let reserve_sov_below = 26_899_000_000_000u64; // Slightly less
+        let reserve_sov_below = 274_596_500_000_000u64; // Slightly less
         let result = state.validate_graduation_threshold(reserve_sov_below, threshold_usd);
         assert!(result.is_ok());
-        assert!(!result.unwrap(), "Should not meet threshold below $269K");
+        assert!(!result.unwrap(), "Should not meet threshold below $2,745,966");
     }
 
     /// Issue #1847: Test graduation validation with different SOV prices.
@@ -2405,9 +2405,9 @@ mod tests {
         };
         assert!(state.try_finalize_price(price));
 
-        // At $2.00 SOV, need 134,500 SOV for $269K USD
-        let reserve_sov = 13_450_000_000_000u64;
-        let threshold_usd = 269_000u64;
+        // At $2.00 SOV, need 1,372,983 SOV for $2,745,966 USD
+        let reserve_sov = 137_298_300_000_000u64;
+        let threshold_usd = 2_745_966u64;
 
         let result = state.validate_graduation_threshold(reserve_sov, threshold_usd);
         assert!(result.unwrap(), "Should meet threshold at $2.00 SOV price");
@@ -2425,8 +2425,8 @@ mod tests {
         };
         assert!(state2.try_finalize_price(price2));
 
-        // At $0.50 SOV, need 538,000 SOV for $269K USD
-        let reserve_sov = 53_800_000_000_000u64;
+        // At $0.50 SOV, need 5,491,932 SOV for $2,745,966 USD
+        let reserve_sov = 549_193_200_000_000u64;
         let result = state2.validate_graduation_threshold(reserve_sov, threshold_usd);
         assert!(result.unwrap(), "Should meet threshold at $0.50 SOV price");
     }

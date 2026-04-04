@@ -349,7 +349,7 @@ impl Blockchain {
         use crate::contracts::tokens::CBE_SYMBOL;
         use crate::oracle::ORACLE_PRICE_SCALE;
 
-        const CBE_GRADUATION_THRESHOLD_USD: u128 = 269_000;
+        use crate::contracts::bonding_curve::types::GRADUATION_THRESHOLD_USD;
         const MICRO_USD_PER_USD: u128 = 1_000_000;
 
         let token = if let Some(store) = &self.store {
@@ -382,7 +382,7 @@ impl Blockchain {
         let usd_value_micro = usd_value_scaled.checked_div(ORACLE_PRICE_SCALE).ok_or_else(|| {
             anyhow::anyhow!("CBE graduation blocked: division by zero in USD value calculation")
         })?;
-        let threshold_micro_usd = CBE_GRADUATION_THRESHOLD_USD * MICRO_USD_PER_USD;
+        let threshold_micro_usd = GRADUATION_THRESHOLD_USD * MICRO_USD_PER_USD;
 
         if usd_value_micro < threshold_micro_usd {
             return Err(anyhow::anyhow!(

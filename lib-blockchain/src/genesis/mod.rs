@@ -794,7 +794,7 @@ mod tests {
         assert_eq!(config.chain.chain_id, 1);
         assert_eq!(config.cbe_token.total_supply, 100_000_000_000);
         assert_eq!(config.bootstrap_council.threshold, 3);
-        assert_eq!(config.bonding_curve.graduation_threshold, 2_745_966_000);
+        assert_eq!(config.bonding_curve.graduation_threshold, 2_745_966);
     }
 
     #[test]
