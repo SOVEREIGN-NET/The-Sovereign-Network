@@ -1,7 +1,6 @@
 use super::*;
 use crate::proofs::StorageCapacityAttestation;
 use lib_crypto::{hash_blake3, Hash, PostQuantumSignature};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 impl ConsensusEngine {
     /// Create a new proposal
@@ -48,6 +47,9 @@ impl ConsensusEngine {
 
         let signature = self.sign_proposal_data(&proposal_data).await?;
 
+        // Use height as the proposal timestamp — deterministic across all
+        // nodes.  Wall-clock timestamps are nondeterministic and would cause
+        // different nodes to compute different proposal IDs for the same block.
         let proposal = ConsensusProposal {
             id: proposal_id,
             proposer: validator_id.clone(),
@@ -56,10 +58,7 @@ impl ConsensusEngine {
             protocol_version: super::CONSENSUS_PROTOCOL_VERSION,
             previous_hash,
             block_data,
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?
-                .as_secs(),
+            timestamp: self.current_round.height,
             signature,
             consensus_proof,
         };
@@ -74,83 +73,75 @@ impl ConsensusEngine {
         Ok(proposal)
     }
 
-    /// Get the hash of the previous block
+    /// Get the hash of the previous block.
+    ///
+    /// Returns an error if the blockchain provider is unavailable or fails.
+    /// A proposer MUST know the chain tip to create a valid proposal — a
+    /// synthetic fallback hash would be rejected by every other validator's
+    /// `validate_previous_hash` check.
     async fn get_previous_block_hash(&self) -> ConsensusResult<Hash> {
         if self.current_round.height == 0 {
-            // Genesis block - no previous hash
             return Ok(Hash([0u8; 32]));
         }
 
-        // Use blockchain provider if available
-        if let Some(ref provider) = self.blockchain_provider {
-            match provider.get_latest_block_hash().await {
-                Ok(hash) => {
-                    tracing::debug!(
-                        "Got previous block hash from blockchain: {:?}",
-                        &hash.as_bytes()[..8]
-                    );
-                    return Ok(hash);
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to get block hash from blockchain provider: {} - using fallback",
-                        e
-                    );
-                }
-            }
-        }
+        let provider = self.blockchain_provider.as_ref().ok_or_else(|| {
+            ConsensusError::ValidatorError(
+                "Cannot propose: no blockchain provider configured".to_string(),
+            )
+        })?;
 
-        // Fallback: deterministic hash based on height (for testing/single-node)
-        let prev_hash_data = format!("block_{}", self.current_round.height - 1);
-        Ok(Hash::from_bytes(&hash_blake3(prev_hash_data.as_bytes())))
+        provider.get_latest_block_hash().await.map_err(|e| {
+            ConsensusError::ValidatorError(format!(
+                "Cannot propose at height {}: failed to get previous block hash: {}",
+                self.current_round.height, e,
+            ))
+        })
     }
 
-    /// Collect transactions for the new block
+    /// Collect transactions for the new block.
+    ///
+    /// Returns the serialized block payload from the blockchain provider.
+    /// If the provider returns an empty payload (no pending transactions),
+    /// that is a valid empty block — returned as-is.  If the provider is
+    /// unavailable or not ready, returns an error.
+    ///
+    /// The old fallback generated a nondeterministic `"empty_block:..."` string
+    /// containing `SystemTime::now()`, which would produce different proposal
+    /// IDs on different nodes and break consensus.
     async fn collect_block_transactions(&self) -> ConsensusResult<Vec<u8>> {
-        // Use blockchain provider if available
-        if let Some(ref provider) = self.blockchain_provider {
-            if provider.is_ready().await {
-                match provider.get_pending_transactions().await {
-                    Ok(tx_data) => {
-                        if !tx_data.is_empty() {
-                            tracing::info!(
-                                "📦 Collected {} bytes of pending transactions for block {}",
-                                tx_data.len(),
-                                self.current_round.height
-                            );
-                            return Ok(tx_data);
-                        } else {
-                            tracing::debug!(
-                                "No pending transactions for block {}",
-                                self.current_round.height
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to get pending transactions: {} - creating empty block",
-                            e
-                        );
-                    }
-                }
-            }
+        let provider = self.blockchain_provider.as_ref().ok_or_else(|| {
+            ConsensusError::ValidatorError(
+                "Cannot propose: no blockchain provider configured".to_string(),
+            )
+        })?;
+
+        if !provider.is_ready().await {
+            return Err(ConsensusError::ValidatorError(
+                "Cannot propose: blockchain provider is not ready".to_string(),
+            ));
         }
 
-        // Fallback: create minimal block data (for empty blocks or when provider unavailable)
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| ConsensusError::TimeError(e))?
-            .as_secs();
+        let tx_data = provider.get_pending_transactions().await.map_err(|e| {
+            ConsensusError::ValidatorError(format!(
+                "Cannot propose at height {}: failed to get pending transactions: {}",
+                self.current_round.height, e,
+            ))
+        })?;
 
-        // Empty block with just metadata
-        let block_data = format!(
-            "empty_block:height={},timestamp={},validators={}",
-            self.current_round.height,
-            timestamp,
-            self.validator_manager.get_active_validators().len()
-        );
+        if !tx_data.is_empty() {
+            tracing::info!(
+                "📦 Collected {} bytes of pending transactions for block {}",
+                tx_data.len(),
+                self.current_round.height
+            );
+        } else {
+            tracing::debug!(
+                "No pending transactions for block {}",
+                self.current_round.height
+            );
+        }
 
-        Ok(block_data.into_bytes())
+        Ok(tx_data)
     }
 
     /// Serialize proposal data for signing.
@@ -199,10 +190,8 @@ impl ConsensusEngine {
     /// Create consensus proof based on configuration
     async fn create_consensus_proof(&self) -> ConsensusResult<ConsensusProof> {
         let consensus_type = self.config.consensus_type.clone();
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| ConsensusError::TimeError(e))?
-            .as_secs();
+        // Deterministic: height-based logical timestamp, not wall-clock.
+        let timestamp = self.current_round.height;
 
         match consensus_type {
             ConsensusType::ProofOfStake => {

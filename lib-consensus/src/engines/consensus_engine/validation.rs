@@ -513,27 +513,19 @@ impl ConsensusEngine {
             .await?;
 
         // ── 4. Block payload decode ─────────────────────────────────────
-        // Timeout guards against a stuck provider stalling the consensus hot path.
+        // The decode check must be deterministic: given the same proposal bytes,
+        // every honest node must reach the same accept/reject decision.  A
+        // tokio::time::timeout here would make validity depend on local scheduling
+        // and IO load — one node could time out and reject while another accepts,
+        // breaking consensus liveness.  The provider's decode_block_data is
+        // expected to be a pure deserialization (sub-millisecond); if the provider
+        // hangs, that is a local operational failure, not a proposal property.
         if let Some(ref provider) = self.blockchain_provider {
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(2),
-                provider.decode_block_data(&proposal.block_data),
-            )
-            .await
-            {
-                Ok(Ok(_)) => {}
-                Ok(Err(e)) => {
-                    return Err(ConsensusError::ByzantineFault(format!(
-                        "Proposal rejected: block_data decode failed for H={} R={} from {}: {}",
-                        proposal.height, proposal.round, proposal.proposer, e,
-                    )));
-                }
-                Err(_elapsed) => {
-                    return Err(ConsensusError::ByzantineFault(format!(
-                        "Proposal rejected: block_data decode timed out for H={} R={} from {}",
-                        proposal.height, proposal.round, proposal.proposer,
-                    )));
-                }
+            if let Err(e) = provider.decode_block_data(&proposal.block_data).await {
+                return Err(ConsensusError::ByzantineFault(format!(
+                    "Proposal rejected: block_data decode failed for H={} R={} from {}: {}",
+                    proposal.height, proposal.round, proposal.proposer, e,
+                )));
             }
         }
 

@@ -99,6 +99,7 @@ async fn register_local_validator(
         .expect("Failed to set validator keypair");
 
     attach_storage_provider(engine, validator_id).await;
+    attach_test_blockchain_provider(engine);
 }
 
 async fn attach_storage_provider(engine: &mut ConsensusEngine, validator_id: IdentityId) {
@@ -121,6 +122,46 @@ async fn attach_storage_provider(engine: &mut ConsensusEngine, validator_id: Ide
         .expect("Failed to register content");
 
     engine.set_storage_proof_provider(Arc::new(provider));
+}
+
+/// Attach a minimal blockchain provider that is always ready and returns
+/// empty transactions / zero previous hash.  Required after the removal of
+/// nondeterministic fallbacks in `create_proposal`.
+fn attach_test_blockchain_provider(engine: &mut ConsensusEngine) {
+    use crate::types::NoOpBlockchainProvider;
+
+    /// Thin wrapper that overrides `is_ready` to return true.
+    struct ReadyProvider;
+
+    #[async_trait::async_trait]
+    impl crate::types::ConsensusBlockchainProvider for ReadyProvider {
+        async fn get_latest_block_hash(
+            &self,
+        ) -> Result<Hash, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(Hash([0u8; 32]))
+        }
+        async fn get_pending_transactions(
+            &self,
+        ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(Vec::new())
+        }
+        async fn get_blockchain_height(
+            &self,
+        ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(0)
+        }
+        async fn is_ready(&self) -> bool {
+            true
+        }
+        async fn decode_block_data(
+            &self,
+            _block_data: &[u8],
+        ) -> Result<(u32, u64), Box<dyn std::error::Error + Send + Sync>> {
+            Ok((0, 0))
+        }
+    }
+
+    engine.set_blockchain_provider(Arc::new(ReadyProvider));
 }
 
 async fn register_validator_with_keypair(
@@ -311,6 +352,7 @@ async fn test_validator_set_passed_to_broadcaster() {
         .expect("Failed to set validator keypair");
     engine.snapshot_validator_set(engine.current_round.height);
     attach_storage_provider(&mut engine, validator_ids[0].clone()).await;
+    attach_test_blockchain_provider(&mut engine);
 
     // Create a proposal to vote on
     engine.current_round.proposer = Some(validator_ids[0].clone());
