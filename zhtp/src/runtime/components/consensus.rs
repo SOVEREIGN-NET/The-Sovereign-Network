@@ -1204,12 +1204,25 @@ impl lib_consensus::types::ConsensusBlockchainProvider for ConsensusBlockchainAd
 
         let blockchain = blockchain_arc.read().await;
         let pending = blockchain.pending_transactions.clone();
+        // Capture a nonce-validity snapshot while we hold the read lock.
+        // This is the last-line defense: even if a stale tx slipped past
+        // mempool admission, it will be filtered out here before the
+        // proposer includes it in the BFT proposal.
+        let nonce_valid: Vec<bool> = pending.iter().map(|tx| blockchain.is_nonce_current(tx)).collect();
         let previous_hash = blockchain
             .latest_block()
             .map(|b| b.hash())
             .unwrap_or_default();
         let next_height = blockchain.height.saturating_add(1);
         drop(blockchain);
+
+        // Pre-filter: only pass nonce-valid transactions to block selection.
+        let pending_count = pending.len();
+        let valid_pending: Vec<_> = pending
+            .into_iter()
+            .zip(nonce_valid)
+            .filter_map(|(tx, valid)| if valid { Some(tx) } else { None })
+            .collect();
 
         // Use the environment mining config (Bootstrap on dev = instant mining, Mainnet = full PoW).
         // This must match what add_block's PoW validation expects — both use get_mining_config_from_env().
@@ -1218,7 +1231,7 @@ impl lib_consensus::types::ConsensusBlockchainProvider for ConsensusBlockchainAd
         let mining_config = lib_blockchain::types::mining::get_mining_config_from_env();
 
         let selected = lib_blockchain::block::creation::select_transactions_for_block(
-            &pending,
+            &valid_pending,
             lib_blockchain::MAX_TRANSACTIONS_PER_BLOCK,
             lib_blockchain::MAX_BLOCK_SIZE,
         );
@@ -1243,7 +1256,7 @@ impl lib_consensus::types::ConsensusBlockchainProvider for ConsensusBlockchainAd
             next_height,
             mined_block.transactions.len(),
             tx_data.len(),
-            pending.len()
+            pending_count
         );
 
         Ok(tx_data)

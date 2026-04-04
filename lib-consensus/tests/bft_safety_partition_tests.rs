@@ -92,6 +92,7 @@ fn create_test_proposal(
         proposer: proposer.clone(),
         height,
         round: 0,
+        protocol_version: 1,
         previous_hash: previous_hash.clone(),
         block_data,
         timestamp,

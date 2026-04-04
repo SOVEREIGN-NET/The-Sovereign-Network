@@ -145,6 +145,14 @@ pub struct ConsensusProposal {
     /// Consensus round this proposal is for
     #[serde(default)]
     pub round: u32,
+    /// Consensus wire-protocol version.
+    ///
+    /// Nodes reject proposals whose version doesn't match their own
+    /// `CONSENSUS_PROTOCOL_VERSION`, producing a clear error instead of
+    /// silently stalling on signature mismatches after an envelope change.
+    /// Defaults to 0 for proposals from pre-versioning nodes.
+    #[serde(default)]
+    pub protocol_version: u32,
     /// Previous block hash
     pub previous_hash: Hash,
     /// Proposed block data

@@ -444,6 +444,7 @@ mod tests {
             proposer: IdentityId::from_bytes(&[2u8; 32]),
             height,
             round,
+            protocol_version: 1,
             previous_hash: Hash::from_bytes(&[0u8; 32]),
             block_data: vec![0u8; 32],
             timestamp: 0,

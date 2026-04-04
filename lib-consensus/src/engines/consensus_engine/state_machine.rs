@@ -1,26 +1,4 @@
 //! Consensus state-machine implementation.
-//!
-//! # State Growth Controls
-//!
-//! The consensus engine is responsible for triggering checkpoint creation and
-//! enforcing snapshot policies as the chain grows.  The following constants
-//! define the growth-control boundaries and are mirrored here so that the
-//! consensus engine can enforce them independently of the blockchain layer.
-//!
-//! ## Checkpoints
-//!
-//! A checkpoint is created by the block-finalization path every
-//! [`CHECKPOINT_INTERVAL_BLOCKS`] blocks.  The consensus engine SHOULD verify
-//! that a checkpoint was produced at the expected height before advancing to the
-//! next epoch.
-//!
-//! ## Snapshots
-//!
-//! UTXO and contract-state snapshots MUST be taken at least once every
-//! [`MAX_BLOCKS_WITHOUT_SNAPSHOT`] blocks.  The consensus engine can enforce
-//! this by checking `(current_height % MAX_BLOCKS_WITHOUT_SNAPSHOT == 0)` after
-//! each committed block and demanding that the blockchain layer produce a snapshot
-//! before proceeding.
 
 use super::*;
 use crate::types::ConsensusStepExt;
@@ -189,52 +167,6 @@ mod consensus_audit_log_tests {
         assert_eq!(ConsensusStep::NewRound.display_name(), "NewRound");
     }
 }
-
-// ============================================================================
-// STATE GROWTH CONTROL CONSTANTS (mirrors lib-blockchain values)
-// ============================================================================
-
-/// Number of blocks between mandatory checkpoint creations.
-///
-/// A checkpoint is a cryptographically signed commitment to the full world
-/// state (UTXO + identity + wallet + contract) at a specific block height.
-/// The consensus engine enforces that a checkpoint is created at every block
-/// height that is a non-zero multiple of this value.
-///
-/// This constant mirrors [`lib_blockchain::blockchain::CHECKPOINT_INTERVAL_BLOCKS`]
-/// and is defined here so the consensus engine can enforce the invariant without
-/// depending on the blockchain crate at compile time.
-#[allow(dead_code)]
-pub const CHECKPOINT_INTERVAL_BLOCKS: u64 = 1000;
-
-/// Maximum number of consecutive committed blocks without a UTXO snapshot.
-///
-/// If the blockchain layer has not saved a snapshot within this many blocks,
-/// the consensus engine SHOULD refuse to finalize the next block until a
-/// snapshot is produced.  This prevents unbounded memory growth and ensures
-/// that reorg recovery is always possible within a bounded replay window.
-///
-/// This constant mirrors [`lib_blockchain::blockchain::MAX_BLOCKS_WITHOUT_SNAPSHOT`].
-#[allow(dead_code)]
-pub const MAX_BLOCKS_WITHOUT_SNAPSHOT: u64 = 10_000;
-
-// ============================================================================
-// AUDIT AND LOGGING CONSTANTS
-// ============================================================================
-
-/// Maximum number of audit records to display in logs
-///
-/// When logging per-transaction fee audit records during fee collection,
-/// limit output to avoid log spam in blocks with many transactions.
-/// Full audit trails are still maintained in the audit data structures.
-///
-/// **Usage**: `.take(MAX_AUDIT_RECORDS_TO_LOG)` on audit record iterators
-/// when displaying in logs.
-///
-/// **Timeline**: Will be used in Week 13 when FeeCollector trait integration
-/// adds per-transaction audit record logging to collect_and_distribute_fees().
-#[allow(dead_code)] // Will be used in Week 13 audit logging
-const MAX_AUDIT_RECORDS_TO_LOG: usize = 10;
 
 impl ConsensusEngine {
     /// Process a single consensus event (pure component method)
@@ -457,19 +389,18 @@ impl ConsensusEngine {
         self.apply_epoch_boundary_changes(self.current_round.height)?;
         self.snapshot_validator_set(self.current_round.height);
 
-        // Select proposer for this round
+        // Select proposer from the frozen snapshot for this height.
         let proposer = self
-            .validator_manager
-            .select_proposer(self.current_round.height, self.current_round.round)
+            .compute_proposer_for_round(self.current_round.height, self.current_round.round)
             .ok_or_else(|| ConsensusError::ValidatorError("No proposer available".to_string()))?;
 
-        self.current_round.proposer = Some(proposer.identity.clone());
+        self.current_round.proposer = Some(proposer.clone());
 
         tracing::info!(
             "Starting consensus round {} at height {} with proposer {:?}",
             self.current_round.round,
             self.current_round.height,
-            proposer.identity
+            proposer
         );
 
         // Run consensus steps
@@ -915,53 +846,83 @@ impl ConsensusEngine {
             proposal_id
         );
 
-        // Find and process the committed proposal
-        if let Some(proposal_index) = self
+        // Find the committed proposal artifact.  A missing artifact after
+        // quorum is a hard error — silently returning Ok(()) would mean BFT
+        // agreed on a block that this node never applies, breaking safety.
+        //
+        // Exception: if the artifact was already consumed by a prior
+        // `process_committed_block` call for the same proposal (e.g. a 4th
+        // commit vote arrives after the 3rd already triggered finalization),
+        // that is idempotent — the block is already applied.
+        let proposal_index = match self
             .pending_proposals
             .iter()
             .position(|p| &p.id == proposal_id)
         {
-            // Safe: index came from position() which found it
-            let proposal = self
-                .pending_proposals
-                .remove(proposal_index)
-                .expect("Proposal index came from position(), element must exist");
-
-            // Validate the block one more time before applying
-            self.validate_committed_block(&proposal).await?;
-
-            // Apply block to state (Issue #938: This triggers BlockCommitCallback → persistence)
-            self.apply_block_to_state(&proposal).await?;
-
-            // Update validator activities and reputation
-            self.update_validator_metrics(&proposal).await?;
-
-            // Calculate and distribute block rewards
-            let reward_round = self
-                .reward_calculator
-                .calculate_round_rewards(&self.validator_manager, self.current_round.height)?;
-            self.reward_calculator.distribute_rewards(&reward_round)?;
-
-            // Collect and distribute fees from block.
-            // Mirrors reward distribution pattern - happens at block finalization.
-            let block_metadata = self.extract_block_metadata(&proposal).await;
-            if let Err(e) = self.collect_and_distribute_fees(&block_metadata) {
-                tracing::warn!("Error collecting fees for block {}: {}", proposal.height, e);
-                // Non-critical: Fee collection failure does NOT block consensus
-                // See Invariant CE-ENG-4: Consensus correctness independent of fee collection
+            Some(idx) => idx,
+            None => {
+                // The artifact is not in pending_proposals.  This is expected
+                // when a surplus commit vote triggers maybe_finalize after the
+                // artifact was already consumed by a prior finalization.  It is
+                // NOT expected if this is the first finalization attempt (the
+                // proposal was never received).  We distinguish the two cases
+                // by checking current_round.proposals which records every
+                // proposal ID that was ever admitted at this height.
+                if self.current_round.proposals.contains(proposal_id) {
+                    tracing::debug!(
+                        "Proposal {:?} already finalized (artifact consumed) — idempotent skip",
+                        proposal_id,
+                    );
+                    return Ok(());
+                }
+                return Err(ConsensusError::ValidatorError(format!(
+                    "FINALIZATION FAILED: commit quorum reached for proposal {:?} at H={} R={} \
+                     but the proposal artifact was never received. \
+                     This node cannot apply the committed block.",
+                    proposal_id, self.current_round.height, self.current_round.round,
+                )));
             }
+        };
 
-            // Process any DAO proposals that may have expired
-            if let Err(e) = self.dao_engine.process_expired_proposals().await {
-                tracing::warn!("Error processing DAO proposals: {}", e);
-            }
+        let proposal = self
+            .pending_proposals
+            .remove(proposal_index)
+            .expect("Proposal index came from position(), element must exist");
 
-            tracing::info!(
-                " Successfully processed committed block: {:?} at height {}",
-                proposal.id,
-                proposal.height
-            );
+        // Validate the block one more time before applying
+        self.validate_committed_block(&proposal).await?;
+
+        // Apply block to state (Issue #938: This triggers BlockCommitCallback → persistence)
+        self.apply_block_to_state(&proposal).await?;
+
+        // Update validator activities and reputation
+        self.update_validator_metrics(&proposal).await?;
+
+        // Calculate and distribute block rewards
+        let reward_round = self
+            .reward_calculator
+            .calculate_round_rewards(&self.validator_manager, self.current_round.height)?;
+        self.reward_calculator.distribute_rewards(&reward_round)?;
+
+        // Collect and distribute fees from block.
+        // Mirrors reward distribution pattern - happens at block finalization.
+        let block_metadata = self.extract_block_metadata(&proposal).await;
+        if let Err(e) = self.collect_and_distribute_fees(&block_metadata) {
+            tracing::warn!("Error collecting fees for block {}: {}", proposal.height, e);
+            // Non-critical: Fee collection failure does NOT block consensus
+            // See Invariant CE-ENG-4: Consensus correctness independent of fee collection
         }
+
+        // Process any DAO proposals that may have expired
+        if let Err(e) = self.dao_engine.process_expired_proposals().await {
+            tracing::warn!("Error processing DAO proposals: {}", e);
+        }
+
+        tracing::info!(
+            " Successfully processed committed block: {:?} at height {}",
+            proposal.id,
+            proposal.height
+        );
 
         Ok(())
     }
@@ -1120,53 +1081,7 @@ impl ConsensusEngine {
 
     /// Validate committed block before applying
     async fn validate_committed_block(&self, proposal: &ConsensusProposal) -> ConsensusResult<()> {
-        // Verify proposal signature
-        let proposal_data = self.serialize_proposal_data(
-            &proposal.id,
-            &proposal.proposer,
-            proposal.height,
-            &proposal.previous_hash,
-            &proposal.block_data,
-        )?;
-
-        let proposer = self
-            .validator_manager
-            .get_validator(&proposal.proposer)
-            .ok_or_else(|| {
-                ConsensusError::ValidatorError(
-                    "Proposer not found for proposal validation".to_string(),
-                )
-            })?;
-
-        if proposer.consensus_key.is_empty() || proposer.consensus_key.len() <= 32 {
-            return Err(ConsensusError::ProofVerificationFailed(
-                "Proposer has non-verifiable registered consensus key".to_string(),
-            ));
-        }
-
-        if proposer.consensus_key != proposal.signature.public_key.dilithium_pk {
-            return Err(ConsensusError::ProofVerificationFailed(
-                "Proposal signature key does not match proposer consensus key".to_string(),
-            ));
-        }
-
-        if let Err(e) = lib_crypto::validate_consensus_vote_signature_scheme(
-            &proposal.signature.public_key.dilithium_pk,
-        ) {
-            return Err(ConsensusError::ProofVerificationFailed(format!(
-                "Proposal signature key uses unsupported scheme: {}",
-                e
-            )));
-        }
-
-        if !self
-            .verify_signature(&proposal_data, &proposal.signature)
-            .await?
-        {
-            return Err(ConsensusError::ProofVerificationFailed(
-                "Invalid proposal signature".to_string(),
-            ));
-        }
+        self.verify_proposal_signature(proposal).await?;
 
         // BFT consensus security is provided by vote quorum (2/3+1 commit votes),
         // not by per-block proofs.  verify_consensus_proof() always returns false
@@ -1350,12 +1265,11 @@ impl ConsensusEngine {
             self.current_round.timed_out = false;
             self.current_round.locked_proposal = None;
             self.current_round.valid_proposal = None;
-            // Update proposer selection for the new round
+            // Update proposer from the frozen snapshot (round changed, not height).
             if let Some(proposer) = self
-                .validator_manager
-                .select_proposer(self.current_round.height, self.current_round.round)
+                .compute_proposer_for_round(self.current_round.height, self.current_round.round)
             {
-                self.current_round.proposer = Some(proposer.identity.clone());
+                self.current_round.proposer = Some(proposer);
             }
             self.snapshot_validator_set(self.current_round.height);
         }
@@ -1368,7 +1282,18 @@ impl ConsensusEngine {
             return Ok(());
         }
 
-        if Some(&proposal.proposer) != self.current_round.proposer.as_ref() {
+        // Full admission gate: proposer identity, cryptographic signature,
+        // previous-hash continuity, and block payload decode.
+        // Subsumes the old `proposer == expected` identity-only check.
+        if let Err(e) = self.validate_incoming_proposal(&proposal).await {
+            tracing::warn!(
+                "Proposal {:?} from {} at H={} R={} rejected by admission gate: {} — discarding",
+                proposal.id,
+                proposal.proposer,
+                proposal.height,
+                proposal.round,
+                e,
+            );
             return Ok(());
         }
 
@@ -1859,26 +1784,25 @@ impl ConsensusEngine {
     /// All nodes must call this so `current_round.proposer` is set before any
     /// incoming proposals are processed by `on_proposal()`.
     pub(super) async fn enter_propose_step(&mut self) -> ConsensusResult<()> {
-        // Select proposer for this height/round (deterministic round-robin)
-        let proposer = self
-            .validator_manager
-            .select_proposer(self.current_round.height, self.current_round.round);
+        // Select proposer from the frozen snapshot for this height.
+        let proposer_id = self
+            .compute_proposer_for_round(self.current_round.height, self.current_round.round);
 
-        if let Some(proposer) = proposer {
-            self.current_round.proposer = Some(proposer.identity.clone());
+        if let Some(proposer_id) = proposer_id {
+            self.current_round.proposer = Some(proposer_id.clone());
 
             tracing::info!(
                 "🎯 Proposer for height {} round {}: {:?}",
                 self.current_round.height,
                 self.current_round.round,
-                proposer.identity
+                proposer_id
             );
 
             // If we are the proposer, create and broadcast the proposal.
             let is_local_proposer = self
                 .validator_identity
                 .as_ref()
-                .map(|id| *id == proposer.identity)
+                .map(|id| *id == proposer_id)
                 .unwrap_or(false);
 
             if is_local_proposer {
@@ -2153,65 +2077,7 @@ impl ConsensusEngine {
 }
 
 #[cfg(test)]
-mod state_growth_constants_tests {
-    use super::{CHECKPOINT_INTERVAL_BLOCKS, MAX_BLOCKS_WITHOUT_SNAPSHOT};
-
-    /// Verify the consensus-layer checkpoint interval matches the expected value.
-    #[test]
-    fn checkpoint_interval_is_1000() {
-        assert_eq!(
-            CHECKPOINT_INTERVAL_BLOCKS, 1000,
-            "CHECKPOINT_INTERVAL_BLOCKS must be 1000; changing this is a governance action"
-        );
-    }
-
-    /// Verify the max-blocks-without-snapshot constant matches the expected value.
-    #[test]
-    fn max_blocks_without_snapshot_is_10000() {
-        assert_eq!(
-            MAX_BLOCKS_WITHOUT_SNAPSHOT, 10_000,
-            "MAX_BLOCKS_WITHOUT_SNAPSHOT must be 10000; changing this is a governance action"
-        );
-    }
-
-    /// Verify that the snapshot limit exceeds the checkpoint interval so that
-    /// checkpoints always precede snapshot expiry.
-    #[test]
-    fn snapshot_limit_exceeds_checkpoint_interval() {
-        assert!(
-            MAX_BLOCKS_WITHOUT_SNAPSHOT > CHECKPOINT_INTERVAL_BLOCKS,
-            "MAX_BLOCKS_WITHOUT_SNAPSHOT must be greater than CHECKPOINT_INTERVAL_BLOCKS"
-        );
-    }
-
-    /// Verify that checkpoint heights are correctly identified.
-    #[test]
-    fn checkpoint_heights_are_multiples_of_interval() {
-        let checkpoint_heights = [1000u64, 2000, 5000, 10_000, 100_000];
-        for &h in &checkpoint_heights {
-            assert_eq!(
-                h % CHECKPOINT_INTERVAL_BLOCKS,
-                0,
-                "height {} should be a checkpoint boundary",
-                h
-            );
-        }
-    }
-
-    /// Verify that non-checkpoint heights are correctly identified.
-    #[test]
-    fn non_checkpoint_heights_are_not_multiples() {
-        let non_checkpoint_heights = [1u64, 500, 999, 1001, 9999];
-        for &h in &non_checkpoint_heights {
-            assert_ne!(
-                h % CHECKPOINT_INTERVAL_BLOCKS,
-                0,
-                "height {} should NOT be a checkpoint boundary",
-                h
-            );
-        }
-    }
-
+mod state_machine_tests {
     // Regression guard: a BlockCommitCallback returning Err must NOT be silently
     // swallowed — errors must propagate so the node halts rather than continuing
     // to vote on a stale fork ("log and continue" bug).
@@ -2248,6 +2114,7 @@ mod state_growth_constants_tests {
             proposer: lib_crypto::Hash([0u8; 32]),
             height: 42,
             round: 0,
+            protocol_version: 1,
             previous_hash: lib_crypto::Hash([0u8; 32]),
             block_data: vec![],
             timestamp: 0,
