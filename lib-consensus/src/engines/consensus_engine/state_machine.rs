@@ -846,53 +846,83 @@ impl ConsensusEngine {
             proposal_id
         );
 
-        // Find and process the committed proposal
-        if let Some(proposal_index) = self
+        // Find the committed proposal artifact.  A missing artifact after
+        // quorum is a hard error — silently returning Ok(()) would mean BFT
+        // agreed on a block that this node never applies, breaking safety.
+        //
+        // Exception: if the artifact was already consumed by a prior
+        // `process_committed_block` call for the same proposal (e.g. a 4th
+        // commit vote arrives after the 3rd already triggered finalization),
+        // that is idempotent — the block is already applied.
+        let proposal_index = match self
             .pending_proposals
             .iter()
             .position(|p| &p.id == proposal_id)
         {
-            // Safe: index came from position() which found it
-            let proposal = self
-                .pending_proposals
-                .remove(proposal_index)
-                .expect("Proposal index came from position(), element must exist");
-
-            // Validate the block one more time before applying
-            self.validate_committed_block(&proposal).await?;
-
-            // Apply block to state (Issue #938: This triggers BlockCommitCallback → persistence)
-            self.apply_block_to_state(&proposal).await?;
-
-            // Update validator activities and reputation
-            self.update_validator_metrics(&proposal).await?;
-
-            // Calculate and distribute block rewards
-            let reward_round = self
-                .reward_calculator
-                .calculate_round_rewards(&self.validator_manager, self.current_round.height)?;
-            self.reward_calculator.distribute_rewards(&reward_round)?;
-
-            // Collect and distribute fees from block.
-            // Mirrors reward distribution pattern - happens at block finalization.
-            let block_metadata = self.extract_block_metadata(&proposal).await;
-            if let Err(e) = self.collect_and_distribute_fees(&block_metadata) {
-                tracing::warn!("Error collecting fees for block {}: {}", proposal.height, e);
-                // Non-critical: Fee collection failure does NOT block consensus
-                // See Invariant CE-ENG-4: Consensus correctness independent of fee collection
+            Some(idx) => idx,
+            None => {
+                // The artifact is not in pending_proposals.  This is expected
+                // when a surplus commit vote triggers maybe_finalize after the
+                // artifact was already consumed by a prior finalization.  It is
+                // NOT expected if this is the first finalization attempt (the
+                // proposal was never received).  We distinguish the two cases
+                // by checking current_round.proposals which records every
+                // proposal ID that was ever admitted at this height.
+                if self.current_round.proposals.contains(proposal_id) {
+                    tracing::debug!(
+                        "Proposal {:?} already finalized (artifact consumed) — idempotent skip",
+                        proposal_id,
+                    );
+                    return Ok(());
+                }
+                return Err(ConsensusError::ValidatorError(format!(
+                    "FINALIZATION FAILED: commit quorum reached for proposal {:?} at H={} R={} \
+                     but the proposal artifact was never received. \
+                     This node cannot apply the committed block.",
+                    proposal_id, self.current_round.height, self.current_round.round,
+                )));
             }
+        };
 
-            // Process any DAO proposals that may have expired
-            if let Err(e) = self.dao_engine.process_expired_proposals().await {
-                tracing::warn!("Error processing DAO proposals: {}", e);
-            }
+        let proposal = self
+            .pending_proposals
+            .remove(proposal_index)
+            .expect("Proposal index came from position(), element must exist");
 
-            tracing::info!(
-                " Successfully processed committed block: {:?} at height {}",
-                proposal.id,
-                proposal.height
-            );
+        // Validate the block one more time before applying
+        self.validate_committed_block(&proposal).await?;
+
+        // Apply block to state (Issue #938: This triggers BlockCommitCallback → persistence)
+        self.apply_block_to_state(&proposal).await?;
+
+        // Update validator activities and reputation
+        self.update_validator_metrics(&proposal).await?;
+
+        // Calculate and distribute block rewards
+        let reward_round = self
+            .reward_calculator
+            .calculate_round_rewards(&self.validator_manager, self.current_round.height)?;
+        self.reward_calculator.distribute_rewards(&reward_round)?;
+
+        // Collect and distribute fees from block.
+        // Mirrors reward distribution pattern - happens at block finalization.
+        let block_metadata = self.extract_block_metadata(&proposal).await;
+        if let Err(e) = self.collect_and_distribute_fees(&block_metadata) {
+            tracing::warn!("Error collecting fees for block {}: {}", proposal.height, e);
+            // Non-critical: Fee collection failure does NOT block consensus
+            // See Invariant CE-ENG-4: Consensus correctness independent of fee collection
         }
+
+        // Process any DAO proposals that may have expired
+        if let Err(e) = self.dao_engine.process_expired_proposals().await {
+            tracing::warn!("Error processing DAO proposals: {}", e);
+        }
+
+        tracing::info!(
+            " Successfully processed committed block: {:?} at height {}",
+            proposal.id,
+            proposal.height
+        );
 
         Ok(())
     }

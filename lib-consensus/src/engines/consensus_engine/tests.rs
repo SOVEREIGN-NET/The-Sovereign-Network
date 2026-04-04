@@ -863,6 +863,12 @@ async fn test_ce_l1_commit_quorum_finalizes_regardless_of_local_step() {
     // Verify: Step is still PreVote
     assert_eq!(engine.current_round.step, ConsensusStep::PreVote);
 
+    // Stage the proposal artifact so finalization can find it.
+    let h = engine.current_round.height;
+    let r = engine.current_round.round;
+    let (ref prop_id, ref prop_kp) = validators[0];
+    stage_stub_proposal(&mut engine, proposal_id.clone(), h, r, prop_id, prop_kp);
+
     // Call maybe_finalize: should transition to Commit step and finalize
     engine
         .maybe_finalize(
@@ -1637,6 +1643,11 @@ async fn test_canonical_convergence_different_vote_order() {
     engine_a.current_round.step = ConsensusStep::PreVote;
     engine_b.current_round.step = ConsensusStep::PreVote;
 
+    // Stage the proposal artifact on both engines so finalization can find it.
+    let (ref prop_id, ref prop_kp) = validators[0];
+    stage_stub_proposal(&mut engine_a, proposal_id.clone(), height, round, prop_id, prop_kp);
+    stage_stub_proposal(&mut engine_b, proposal_id.clone(), height, round, prop_id, prop_kp);
+
     // Node A: Process votes in order V1 → V2 → V3
     engine_a
         .on_commit_vote(vote_1.clone())
@@ -1946,6 +1957,11 @@ async fn test_canonical_convergence_seven_validators() {
     engine_a.current_round.step = ConsensusStep::PreVote;
     engine_b.current_round.step = ConsensusStep::PreVote;
 
+    // Stage proposal artifact on both engines.
+    let (ref prop_id, ref prop_kp) = validators[0];
+    stage_stub_proposal(&mut engine_a, proposal_id.clone(), height, round, prop_id, prop_kp);
+    stage_stub_proposal(&mut engine_b, proposal_id.clone(), height, round, prop_id, prop_kp);
+
     // Node A: Sequential order 0→1→2→3→4
     for vote in &votes {
         engine_a
@@ -2104,6 +2120,11 @@ async fn test_canonical_convergence_with_equivocation() {
     engine_a.current_round.step = ConsensusStep::PreVote;
     engine_b.current_round.step = ConsensusStep::PreVote;
 
+    // Stage proposal artifacts on both engines (proposal_a is the one that reaches quorum).
+    let (ref prop_id, ref prop_kp) = validators[0];
+    stage_stub_proposal(&mut engine_a, proposal_a.clone(), height, round, prop_id, prop_kp);
+    stage_stub_proposal(&mut engine_b, proposal_a.clone(), height, round, prop_id, prop_kp);
+
     // Node A: sees vote_0a first → accepted; vote_0b rejected as equivocation.
     // Final pool for A: v0→A, v1→A, v2→A, v3→A = 4 votes for proposal A.
     engine_a
@@ -2222,6 +2243,49 @@ async fn test_validator_keypair_allowed_for_registered_local_validator() {
 // ---------------------------------------------------------------------------
 // Proposal admission gate (validate_incoming_proposal) tests
 // ---------------------------------------------------------------------------
+
+/// Stage a properly-signed stub proposal in `pending_proposals` so that
+/// `process_committed_block` can find and validate the artifact by ID.
+/// Used by tests that exercise vote-quorum mechanics without full proposal
+/// creation.  The proposal is signed by the first registered validator's
+/// keypair so that `verify_proposal_signature` passes.
+fn stage_stub_proposal(
+    engine: &mut ConsensusEngine,
+    proposal_id: Hash,
+    height: u64,
+    round: u32,
+    proposer: &IdentityId,
+    keypair: &KeyPair,
+) {
+    let previous_hash = Hash([0u8; 32]);
+    let block_data: Vec<u8> = vec![];
+
+    let proposal_data = engine
+        .serialize_proposal_data(&proposal_id, proposer, height, round, &previous_hash, &block_data)
+        .expect("serialize_proposal_data");
+    let signature = sign_bytes(keypair, &proposal_data);
+
+    engine.current_round.proposals.push(proposal_id.clone());
+    engine.pending_proposals.push_back(ConsensusProposal {
+        id: proposal_id,
+        proposer: proposer.clone(),
+        height,
+        round,
+        protocol_version: super::CONSENSUS_PROTOCOL_VERSION,
+        previous_hash,
+        block_data,
+        timestamp: 0,
+        signature,
+        consensus_proof: crate::types::ConsensusProof {
+            consensus_type: crate::types::ConsensusType::ByzantineFaultTolerance,
+            stake_proof: None,
+            storage_proof: None,
+            work_proof: None,
+            zk_did_proof: None,
+            timestamp: 0,
+        },
+    });
+}
 
 /// Build a correctly-signed proposal for a given validator at (height, round).
 /// The engine must have the validator registered and a keypair set.
