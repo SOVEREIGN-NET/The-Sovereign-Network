@@ -160,11 +160,29 @@ pub fn estimate_block_time(difficulty: Difficulty, hash_rate_hps: f64) -> f64 {
     (difficulty.bits() as f64).max(1.0) / hash_rate_hps
 }
 
-/// Select transactions for block creation
+/// Select transactions for block creation.
+///
+/// Transactions are sorted by fee rate (highest first) and selected greedily
+/// up to the block limits.  The optional `is_valid` predicate is called for
+/// each candidate — if it returns `false` the transaction is skipped.  Pass
+/// a nonce-checking closure here to prevent stale-nonce transactions from
+/// entering a block proposal.
 pub fn select_transactions_for_block(
     available_transactions: &[Transaction],
     max_transactions: usize,
     max_block_size: usize,
+) -> Vec<Transaction> {
+    select_transactions_for_block_filtered(available_transactions, max_transactions, max_block_size, |_| true)
+}
+
+/// Like [`select_transactions_for_block`] but accepts a predicate that gates
+/// each candidate transaction.  Transactions for which `is_valid` returns
+/// `false` are silently skipped.
+pub fn select_transactions_for_block_filtered(
+    available_transactions: &[Transaction],
+    max_transactions: usize,
+    max_block_size: usize,
+    is_valid: impl Fn(&Transaction) -> bool,
 ) -> Vec<Transaction> {
     let mut selected = Vec::new();
     let mut total_size = 0;
@@ -182,6 +200,10 @@ pub fn select_transactions_for_block(
     for tx in tx_refs {
         if selected.len() >= max_transactions {
             break;
+        }
+
+        if !is_valid(tx) {
+            continue;
         }
 
         let tx_size = crate::utils::size::transaction_size(tx);
