@@ -470,7 +470,11 @@ impl ConsensusEngine {
                         }
                     }
                     if added > 0 {
-                        tracing::info!("Validator set updated from runtime: {} new", added);
+                        tracing::info!(
+                            "Validator set updated from runtime: {} new (staged for height {}+)",
+                            added,
+                            self.current_round.height + 1,
+                        );
                     }
                     if let Some(id) = update.local_identity {
                         let _ = self.set_local_validator_identity(id);
@@ -478,6 +482,10 @@ impl ConsensusEngine {
                     if let Some(kp) = update.local_keypair {
                         let _ = self.set_validator_keypair(kp);
                     }
+                    // Snapshot is write-once: if this height is already sealed the
+                    // new validators will appear in the next height's snapshot.
+                    // Attempt to snapshot anyway for the case where the current
+                    // height hasn't been sealed yet (e.g. bootstrap startup).
                     self.snapshot_validator_set(self.current_round.height);
                 }
             }

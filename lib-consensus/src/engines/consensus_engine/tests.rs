@@ -2545,3 +2545,59 @@ async fn test_proposal_admission_wrong_protocol_version_rejected() {
         err
     );
 }
+
+// ---------------------------------------------------------------------------
+// Validator snapshot write-once invariant tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_validator_snapshot_is_write_once() {
+    let (mut engine, validators) = setup_bft_engine(1, 0).await;
+
+    // Snapshot is already sealed by setup_bft_engine. Record the committee.
+    let original: Vec<_> = engine
+        .validator_set_for_height(1)
+        .expect("snapshot must exist")
+        .iter()
+        .cloned()
+        .collect();
+    assert_eq!(original.len(), 4, "should have 4 validators");
+
+    // Register a 5th validator.
+    let new_id = test_validator_id(99);
+    let new_kp = create_test_keypair();
+    register_validator_with_keypair(&mut engine, new_id.clone(), &new_kp, false).await;
+
+    // Re-snapshot at the same height — must be a no-op (write-once).
+    engine.snapshot_validator_set(1);
+
+    let after: Vec<_> = engine
+        .validator_set_for_height(1)
+        .expect("snapshot must still exist")
+        .iter()
+        .cloned()
+        .collect();
+    assert_eq!(
+        after.len(),
+        4,
+        "snapshot at height 1 must NOT include the new validator"
+    );
+    assert!(
+        !after.contains(&new_id),
+        "new validator must NOT appear in sealed height-1 snapshot"
+    );
+
+    // But a snapshot at the NEXT height picks up the new validator.
+    engine.snapshot_validator_set(2);
+    let next: Vec<_> = engine
+        .validator_set_for_height(2)
+        .expect("snapshot must exist for height 2")
+        .iter()
+        .cloned()
+        .collect();
+    assert_eq!(next.len(), 5, "height 2 should have 5 validators");
+    assert!(
+        next.contains(&new_id),
+        "new validator must appear in height-2 snapshot"
+    );
+}

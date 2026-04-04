@@ -1402,23 +1402,38 @@ impl ConsensusEngine {
         self.get_validator_ids_for_height(self.current_round.height)
     }
 
-    /// Snapshot validator membership for a specific height
+    /// Snapshot validator membership for a specific height.
+    ///
+    /// **Write-once**: if a snapshot for this height already exists it is NOT
+    /// overwritten.  This guarantees that once a height's validator committee
+    /// is sealed, no runtime event (validator registration, mode transition,
+    /// round-skip) can mutate it.  Membership checks via
+    /// `is_validator_member` are therefore immutable for the lifetime of a
+    /// height, which is required for BFT safety.
+    ///
+    /// New validators arriving mid-height are registered in the
+    /// `validator_manager` (so they're included in _future_ snapshots) but do
+    /// not retroactively join the current height's committee.
     pub(super) fn snapshot_validator_set(&mut self, height: u64) {
+        // Write-once: do not overwrite an existing snapshot.
+        if self
+            .validator_set_history
+            .iter()
+            .any(|snapshot| snapshot.height == height)
+        {
+            tracing::debug!(
+                "Validator snapshot for height {} already sealed — skipping re-snapshot",
+                height,
+            );
+            return;
+        }
+
         let validators: HashSet<IdentityId> = self
             .validator_manager
             .get_active_validators()
             .iter()
             .map(|v| v.identity.clone())
             .collect();
-
-        if let Some(existing) = self
-            .validator_set_history
-            .iter_mut()
-            .find(|snapshot| snapshot.height == height)
-        {
-            existing.validators = validators;
-            return;
-        }
 
         self.validator_set_history
             .push_back(ValidatorSetSnapshot { height, validators });
