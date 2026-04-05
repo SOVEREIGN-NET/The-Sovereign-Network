@@ -1118,7 +1118,7 @@ impl ContentManager {
             // First try structured blob; fallback to direct serialized view + private_key
             let identity = if let Ok(blob) = bincode::deserialize::<IdentityBlob>(&decrypted_data) {
                 // Convert Vec<u8> to fixed-size arrays for PrivateKey
-                let dilithium_sk: [u8; 4864] = blob.private_key.dilithium_sk.as_slice().try_into()
+                let dilithium_sk: [u8; 4896] = blob.private_key.dilithium_sk.as_slice().try_into()
                     .map_err(|_| anyhow::anyhow!("Invalid dilithium_sk size: expected 4864 bytes"))?;
                 let dilithium_pk: [u8; 2592] = blob.private_key.dilithium_pk.as_slice().try_into()
                     .map_err(|_| anyhow::anyhow!("Invalid dilithium_pk size: expected 2592 bytes"))?;

@@ -740,7 +740,7 @@ impl UnifiedDiscoveryService {
         node_id: Uuid,
         mesh_port: u16,
         public_key: PublicKey,
-        dilithium_sk: [u8; 4864],
+        dilithium_sk: [u8; 4896],
         dilithium_pk: [u8; 2592],
         tls_spki_sha256: [u8; 32],
     ) -> Self {
