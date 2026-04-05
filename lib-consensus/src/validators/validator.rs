@@ -5,7 +5,6 @@ use crate::slashing::{
 };
 use crate::types::{SlashType, ValidatorStatus};
 use lib_identity::IdentityId;
-use serde::{Deserialize, Serialize};
 
 /// Consensus-layer representation of a registered validator.
 ///
@@ -20,7 +19,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// ### `consensus_key` — BFT Vote-Signing Key
 /// Signs block proposals, pre-votes, pre-commits, and view-change messages.
-/// - **Algorithm**: Post-quantum Dilithium2.
+/// - **Algorithm**: Post-quantum Dilithium5.
 /// - **Exposure**: Hot — present online during every consensus round.
 /// - **Compromise impact**: Attacker can equivocate (double-sign), triggering slashing.
 ///
@@ -38,7 +37,7 @@ use serde::{Deserialize, Serialize};
 /// - **Exposure**: Can be kept cold — only needed when claiming accumulated rewards.
 /// - **Compromise impact**: Attacker can redirect future rewards; past on-chain
 ///   balances already credited are unaffected.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Validator {
     /// Validator identity
     pub identity: IdentityId,
@@ -48,10 +47,10 @@ pub struct Validator {
     pub storage_provided: u64,
     /// Validator status
     pub status: ValidatorStatus,
-    /// Post-quantum Dilithium2 public key used exclusively for signing BFT consensus
+    /// Post-quantum Dilithium5 public key used exclusively for signing BFT consensus
     /// messages (proposals, pre-votes, pre-commits).  MUST differ from `networking_key`
     /// and `rewards_key`.
-    pub consensus_key: Vec<u8>,
+    pub consensus_key: [u8; 2592],
     /// Ed25519 / X25519 public key used for P2P transport identity (QUIC TLS, DHT node
     /// ID).  MUST differ from `consensus_key` and `rewards_key`.
     pub networking_key: Vec<u8>,
@@ -89,18 +88,18 @@ impl Validator {
         identity: IdentityId,
         stake: u64,
         storage_provided: u64,
-        consensus_key: Vec<u8>,
+        consensus_key: [u8; 2592],
         networking_key: Vec<u8>,
         rewards_key: Vec<u8>,
         commission_rate: u8,
     ) -> Self {
         // Enforce key separation invariant at construction time.
         debug_assert_ne!(
-            consensus_key, networking_key,
+            consensus_key.as_slice(), networking_key.as_slice(),
             "Key separation violation: consensus_key and networking_key must be different"
         );
         debug_assert_ne!(
-            consensus_key, rewards_key,
+            consensus_key.as_slice(), rewards_key.as_slice(),
             "Key separation violation: consensus_key and rewards_key must be different"
         );
         debug_assert_ne!(
@@ -426,6 +425,84 @@ impl Validator {
         );
 
         Ok(())
+    }
+}
+
+// Manual serde implementations to handle [u8; 2592] which doesn't implement Deserialize by default
+impl serde::Serialize for Validator {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Validator", 15)?;
+        state.serialize_field("identity", &self.identity)?;
+        state.serialize_field("stake", &self.stake)?;
+        state.serialize_field("storage_provided", &self.storage_provided)?;
+        state.serialize_field("status", &self.status)?;
+        state.serialize_field("consensus_key", &self.consensus_key.as_slice())?;
+        state.serialize_field("networking_key", &self.networking_key)?;
+        state.serialize_field("rewards_key", &self.rewards_key)?;
+        state.serialize_field("voting_power", &self.voting_power)?;
+        state.serialize_field("commission_rate", &self.commission_rate)?;
+        state.serialize_field("reputation", &self.reputation)?;
+        state.serialize_field("last_activity", &self.last_activity)?;
+        state.serialize_field("slash_count", &self.slash_count)?;
+        #[allow(deprecated)]
+        state.serialize_field("jail_until", &self.jail_until)?;
+        state.serialize_field("jail_status", &self.jail_status)?;
+        state.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Validator {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct ValidatorHelper {
+            identity: IdentityId,
+            stake: u64,
+            storage_provided: u64,
+            status: ValidatorStatus,
+            consensus_key: Vec<u8>,
+            networking_key: Vec<u8>,
+            rewards_key: Vec<u8>,
+            voting_power: u64,
+            commission_rate: u8,
+            reputation: u32,
+            last_activity: u64,
+            slash_count: u32,
+            #[allow(deprecated)]
+            jail_until: Option<u64>,
+            jail_status: JailStatus,
+        }
+
+        let helper = ValidatorHelper::deserialize(deserializer)?;
+        
+        let consensus_key: [u8; 2592] = helper.consensus_key.try_into()
+            .map_err(|v: Vec<u8>| serde::de::Error::custom(
+                format!("consensus_key must be 2592 bytes, got {}", v.len())
+            ))?;
+
+        Ok(Validator {
+            identity: helper.identity,
+            stake: helper.stake,
+            storage_provided: helper.storage_provided,
+            status: helper.status,
+            consensus_key,
+            networking_key: helper.networking_key,
+            rewards_key: helper.rewards_key,
+            voting_power: helper.voting_power,
+            commission_rate: helper.commission_rate,
+            reputation: helper.reputation,
+            last_activity: helper.last_activity,
+            slash_count: helper.slash_count,
+            #[allow(deprecated)]
+            jail_until: helper.jail_until,
+            jail_status: helper.jail_status,
+        })
     }
 }
 

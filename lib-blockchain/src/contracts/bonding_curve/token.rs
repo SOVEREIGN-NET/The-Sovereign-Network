@@ -1007,10 +1007,10 @@ mod tests {
     // Issue #1846: Graduation Threshold Detection Tests
     // ============================================================================
 
-    /// Issue #1846: Test USD-based graduation threshold with oracle.
-    /// Verifies graduation triggers at exactly $269K USD reserve value.
+    /// Test USD-based graduation threshold with oracle.
+    /// Verifies graduation triggers at exactly $2,745,966 USD reserve value.
     #[test]
-    fn test_usd_graduation_threshold_269k() {
+    fn test_usd_graduation_threshold() {
         use crate::contracts::bonding_curve::types::GRADUATION_THRESHOLD_USD;
 
         let mut token = BondingCurveToken::deploy(
@@ -1019,9 +1019,9 @@ mod tests {
             "USDT".to_string(),
             CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
             Threshold::ReserveValueUsd {
-                threshold_usd: GRADUATION_THRESHOLD_USD, // $269,000
-                max_price_age_seconds: 300,              // 5 minutes
-                confirmation_blocks: 3,                  // 3 blocks
+                threshold_usd: GRADUATION_THRESHOLD_USD,
+                max_price_age_seconds: 300,
+                confirmation_blocks: 3,
             },
             true,
             test_pubkey(1),
@@ -1034,10 +1034,8 @@ mod tests {
         // Oracle price: $1 SOV = 100_000_000 (8-decimal)
         let sov_usd_price = 100_000_000; // $1.00
 
-        // Calculate SOV needed for $269K USD
-        // reserve_value_usd = (reserve_sov / TOKEN_SCALE) * sov_usd_price / USD_PRICE_SCALE
-        // For $269K at $1 SOV: need 269,000 SOV = 26,900,000,000,000 atomic units
-        let target_reserve_sov = GRADUATION_THRESHOLD_USD * TOKEN_SCALE; // 26,900,000,000,000
+        // Calculate SOV needed for $2,745,966 USD at $1 SOV
+        let target_reserve_sov = GRADUATION_THRESHOLD_USD * TOKEN_SCALE;
 
         // Verify the math using the actual token method
         let mut test_token = BondingCurveToken::deploy(
@@ -1256,7 +1254,7 @@ mod tests {
             "VAL".to_string(),
             CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
             Threshold::ReserveValueUsd {
-                threshold_usd: 269_000,
+                threshold_usd: GRADUATION_THRESHOLD_USD,
                 max_price_age_seconds: 300,
                 confirmation_blocks: 3,
             },

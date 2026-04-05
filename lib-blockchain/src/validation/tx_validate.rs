@@ -416,7 +416,7 @@ mod tests {
             Signature {
                 signature: vec![0u8; 64],
                 public_key: PublicKey::new(vec![0u8; 32]),
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::Dilithium5,
                 timestamp: 0,
             },
             vec![],
@@ -431,7 +431,7 @@ mod tests {
             Signature {
                 signature: vec![0u8; 64],
                 public_key: PublicKey::new(vec![0u8; 32]),
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::Dilithium5,
                 timestamp: 0,
             },
             vec![],
@@ -461,7 +461,7 @@ mod tests {
             Signature {
                 signature: vec![],
                 public_key: PublicKey::new(vec![]),
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::Dilithium5,
                 timestamp: 0,
             },
             vec![],

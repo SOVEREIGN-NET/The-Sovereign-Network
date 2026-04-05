@@ -439,11 +439,11 @@ impl HeartbeatTracker {
                     sig
                 },
                 public_key: PublicKey {
-                    dilithium_pk: vec![],
-                    kyber_pk: vec![],
+                    dilithium_pk: [0u8; 2592],
+                    kyber_pk: [0u8; 1568],
                     key_id: [0u8; 32],
                 },
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::Dilithium5,
                 timestamp,
             },
         }

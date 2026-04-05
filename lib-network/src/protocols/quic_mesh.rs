@@ -1136,7 +1136,7 @@ impl QuicMeshProtocol {
                                                 }
 
                                                 if let Some(ref handler) = message_handler {
-                                                    let peer_pk = PublicKey::new(node_id.clone());
+                                                    let peer_pk = PublicKey::new(node_id.as_slice().try_into().unwrap_or([0u8; 2592]));
                                                     if let Err(e) = handler
                                                         .read()
                                                         .await
@@ -1393,7 +1393,7 @@ impl QuicMeshProtocol {
                                                                                 entry.touch();
                                                                             }
                                                                             if let Some(ref h) = handler_for_loop {
-                                                                                let peer_pk = PublicKey::new(node_id_for_loop.clone());
+                                                                                let peer_pk = PublicKey::new(node_id_for_loop.as_slice().try_into().unwrap_or([0u8; 2592]));
                                                                                 let handler_clone = Arc::clone(h);
                                                                                 // Wrap message handling with panic recovery
                                                                                 match crate::panic_recovery::catch_unwind_handler(

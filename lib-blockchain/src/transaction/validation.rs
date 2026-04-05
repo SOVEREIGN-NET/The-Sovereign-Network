@@ -875,8 +875,8 @@ impl TransactionValidator {
             signature: Vec::new(),
             // CRITICAL: Must use all-zero key_id for consistent hashing
             public_key: PublicKey {
-                dilithium_pk: Vec::new(),
-                kyber_pk: Vec::new(),
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
             algorithm: transaction.signature.algorithm.clone(),
@@ -1640,7 +1640,7 @@ impl<'a> StatefulTransactionValidator<'a> {
                 let is_active_validator = blockchain
                     .validator_registry
                     .values()
-                    .any(|v| v.status == "active" && v.consensus_key == signer_pk);
+                    .any(|v| v.status == "active" && v.consensus_key.as_slice() == signer_pk.as_slice());
                 if !is_active_validator {
                     return Err(ValidationError::InvalidTransaction);
                 }
@@ -1690,7 +1690,9 @@ impl<'a> StatefulTransactionValidator<'a> {
                         .wallet_registry
                         .get(&wallet_id_hex)
                         .ok_or(ValidationError::InvalidTransaction)?;
-                    let wallet_pk = lib_crypto::PublicKey::new(wallet.public_key.clone());
+                    let wallet_pk = lib_crypto::PublicKey::new(
+                        wallet.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
+                    );
                     if wallet_pk.key_id != transaction.signature.public_key.key_id {
                         return Err(ValidationError::InvalidTransaction);
                     }

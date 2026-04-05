@@ -7,7 +7,15 @@ use lib_crypto::post_quantum::{dilithium2_keypair, dilithium5_keypair};
 use lib_crypto::KeyPair as CryptoKeyPair;
 use serde::{Deserialize, Serialize};
 
-/// Post-quantum keypair using CRYSTALS-Dilithium
+/// DEPRECATED: Use `lib_crypto::KeyPair` directly.
+/// 
+/// This struct is kept for backward compatibility but will be removed in a future version.
+/// All new code should use `lib_crypto::KeyPair` which provides the same functionality
+/// with proper fixed-size array types for security.
+#[deprecated(
+    since = "0.1.0",
+    note = "Use lib_crypto::KeyPair directly instead"
+)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PostQuantumKeypair {
     pub public_key: Vec<u8>,
@@ -24,7 +32,15 @@ pub struct KeyGenParams {
     pub security_level: u32,
 }
 
-/// Generate post-quantum keypair using CRYSTALS-Dilithium from lib-crypto
+/// DEPRECATED: Use `lib_crypto::KeyPair::generate()` directly.
+/// 
+/// This function is kept for backward compatibility but will be removed in a future version.
+/// All new code should use `lib_crypto::KeyPair::generate()` which provides the same
+/// functionality with proper fixed-size array types for security.
+#[deprecated(
+    since = "0.1.0",
+    note = "Use lib_crypto::KeyPair::generate() directly instead"
+)]
 pub fn generate_pq_keypair(params: Option<KeyGenParams>) -> Result<PostQuantumKeypair, String> {
     let params = params.unwrap_or_default();
 
@@ -43,11 +59,12 @@ pub fn generate_pq_keypair(params: Option<KeyGenParams>) -> Result<PostQuantumKe
             (pk, sk, "CRYSTALS-Dilithium5".to_string(), kid)
         }
         _ => {
-            // Default to the pure post-quantum lib-crypto keypair (Dilithium2 + Kyber1024 only)
+            // Default to the pure post-quantum lib-crypto keypair (Dilithium5 + Kyber1024)
             let crypto_keypair = CryptoKeyPair::generate()
                 .map_err(|e| format!("Failed to generate crypto keypair: {}", e))?;
-            let pk = crypto_keypair.public_key.dilithium_pk.clone();
-            let sk = crypto_keypair.private_key.dilithium_sk.clone();
+            // Convert fixed arrays to Vec for PostQuantumKeypair API compatibility
+            let pk = crypto_keypair.public_key.dilithium_pk.to_vec();
+            let sk = crypto_keypair.private_key.dilithium_sk.to_vec();
             let kid = hex::encode(&crypto_keypair.public_key.key_id);
             (pk, sk, "CRYSTALS-Dilithium-PureQuantum".to_string(), kid)
         }

@@ -540,6 +540,23 @@ pub trait BlockCommitCallback: Send + Sync {
         proposal: &ConsensusProposal,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
+    /// Commit a finalized block with its BFT quorum proof.
+    ///
+    /// Called by the consensus engine when it has both the proposal artifact
+    /// and the 2f+1 commit vote signatures.  The quorum proof should be
+    /// persisted alongside the block so catch-up sync can verify BFT finality
+    /// from the block itself, without relying on the `bft_active_height` guard.
+    ///
+    /// Default: delegates to `commit_finalized_block`, discarding the proof.
+    /// Override this to persist the proof.
+    async fn commit_finalized_block_with_proof(
+        &self,
+        proposal: &ConsensusProposal,
+        _quorum_proof: lib_types::consensus::BftQuorumProof,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.commit_finalized_block(proposal).await
+    }
+
     /// Get the number of active validators for mode switching
     ///
     /// Returns the count of validators currently registered and active.

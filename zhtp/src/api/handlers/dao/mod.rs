@@ -403,8 +403,8 @@ impl DaoHandler {
     /// `HashMap` key within `DAORegistry`, where equality is determined by `key_id`.
     fn public_key_from_key_id(key_id: [u8; 32]) -> PublicKey {
         PublicKey {
-            dilithium_pk: Vec::new(),
-            kyber_pk: Vec::new(),
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id,
         }
     }
@@ -2871,12 +2871,8 @@ impl DaoHandler {
         let sig_bytes = hex::decode(&req.signature_hex)
             .map_err(|e| anyhow::anyhow!("Invalid signature_hex: {}", e))?;
 
-        let algorithm = match req.algorithm.as_deref().unwrap_or("Dilithium5") {
-            "Dilithium2" => {
-                lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium2
-            }
-            _ => lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
-        };
+        let algorithm =
+            lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5;
 
         let mut store = PENDING_PROPOSALS.write().await;
         let proposal = store
@@ -2910,8 +2906,8 @@ impl DaoHandler {
 
         let approval = Approval {
             public_key: lib_blockchain::integration::crypto_integration::PublicKey {
-                dilithium_pk: pk_bytes,
-                kyber_pk: Vec::new(),
+                dilithium_pk: pk_bytes.as_slice().try_into().unwrap_or([0u8; 2592]),
+                kyber_pk: [0u8; 1568],
                 key_id,
             },
             algorithm,

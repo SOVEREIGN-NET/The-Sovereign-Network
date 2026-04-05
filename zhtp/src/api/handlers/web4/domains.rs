@@ -251,7 +251,7 @@ impl Web4Handler {
         info!("   Signature length: {} bytes", signature_bytes.len());
         info!(
             "   Public key length: {} bytes",
-            owner_identity.public_key.size()
+            core::mem::size_of_val(&owner_identity.public_key.dilithium_pk)
         );
         info!("   Expected public key length: 1312 (Dilithium2)");
 
@@ -326,8 +326,8 @@ impl Web4Handler {
                 .ok_or_else(|| anyhow!("Primary wallet not found for identity"))?;
 
             let owner_wallet_key = lib_blockchain::integration::crypto_integration::PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: owner_wallet_id.into(),
             };
 
@@ -836,7 +836,7 @@ impl Web4Handler {
 
             let owner_wallet_pubkey =
                 lib_blockchain::integration::crypto_integration::PublicKey::new(
-                    owner_wallet.public_key.clone(),
+                    owner_wallet.public_key.as_slice().try_into().unwrap_or([0u8; 2592]),
                 );
             if fee_payment_tx.signature.public_key.key_id != owner_wallet_pubkey.key_id {
                 return Err(anyhow!(

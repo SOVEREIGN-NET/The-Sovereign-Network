@@ -432,7 +432,7 @@ impl EconomicTransactionProcessor {
                 )
                 .as_bytes(),
             ),
-            recipient: PublicKey::new(economy_tx.to.to_vec()),
+            recipient: PublicKey::new([0u8; 2592]), // Use empty dilithium key for economy transaction
         }];
 
         // Map economy transaction type to blockchain transaction type
@@ -529,7 +529,7 @@ impl EconomicTransactionProcessor {
         // Create temporary transaction for signing
         let temp_signature = Signature {
             signature: Vec::new(),
-            public_key: PublicKey::new(keypair.public_key.dilithium_pk.to_vec()),
+            public_key: PublicKey::new(keypair.public_key.dilithium_pk),
             algorithm: SignatureAlgorithm::Dilithium2,
             timestamp: economy_tx.timestamp,
         };
@@ -554,7 +554,7 @@ impl EconomicTransactionProcessor {
 
         Ok(Signature {
             signature: crypto_signature.signature,
-            public_key: PublicKey::new(keypair.public_key.dilithium_pk.to_vec()),
+            public_key: PublicKey::new(keypair.public_key.dilithium_pk),
             algorithm: SignatureAlgorithm::Dilithium2,
             timestamp: economy_tx.timestamp,
         })

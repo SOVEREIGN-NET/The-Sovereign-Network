@@ -202,7 +202,9 @@ pub fn verify_message_signature_bytes(
     message: &DhtMessage,
     dilithium_pk: &[u8],
 ) -> Result<bool, VerificationError> {
-    let public_key = PublicKey::new(dilithium_pk.to_vec());
+    let dilithium_pk: [u8; 2592] = dilithium_pk.try_into()
+        .map_err(|_| VerificationError::InvalidPublicKey("Invalid Dilithium5 public key size".to_string()))?;
+    let public_key = PublicKey::new(dilithium_pk);
     verify_message_signature(message, &public_key)
 }
 

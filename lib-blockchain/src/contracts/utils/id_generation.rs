@@ -145,8 +145,8 @@ pub fn generate_time_based_id(additional_entropy: &[u8]) -> [u8; 32] {
 /// This mirrors `Blockchain::wallet_key_for_sov`.
 pub fn wallet_key_for_sov(wallet_id: [u8; 32]) -> PublicKey {
     PublicKey {
-        dilithium_pk: Vec::new(),
-        kyber_pk: Vec::new(),
+        dilithium_pk: [0u8; 2592],
+        kyber_pk: [0u8; 1568],
         key_id: wallet_id,
     }
 }

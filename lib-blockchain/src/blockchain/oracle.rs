@@ -349,7 +349,7 @@ impl Blockchain {
         use crate::contracts::tokens::CBE_SYMBOL;
         use crate::oracle::ORACLE_PRICE_SCALE;
 
-        const CBE_GRADUATION_THRESHOLD_USD: u128 = 269_000;
+        use crate::contracts::bonding_curve::types::GRADUATION_THRESHOLD_USD;
         const MICRO_USD_PER_USD: u128 = 1_000_000;
 
         let token = if let Some(store) = &self.store {
@@ -382,7 +382,7 @@ impl Blockchain {
         let usd_value_micro = usd_value_scaled.checked_div(ORACLE_PRICE_SCALE).ok_or_else(|| {
             anyhow::anyhow!("CBE graduation blocked: division by zero in USD value calculation")
         })?;
-        let threshold_micro_usd = CBE_GRADUATION_THRESHOLD_USD * MICRO_USD_PER_USD;
+        let threshold_micro_usd = GRADUATION_THRESHOLD_USD * MICRO_USD_PER_USD;
 
         if usd_value_micro < threshold_micro_usd {
             return Err(anyhow::anyhow!(
@@ -577,13 +577,13 @@ impl Blockchain {
         let current_epoch = self.oracle_state.epoch_id(block_timestamp);
 
         let oracle_pubkeys = self.oracle_state.oracle_signing_pubkeys.clone();
-        let key_map: Vec<([u8; 32], Vec<u8>)> = self
+        let key_map: Vec<([u8; 32], [u8; 2592])> = self
             .validator_registry
             .values()
             .filter(|v| !v.consensus_key.is_empty())
             .map(|v| {
                 let kid = crate::types::hash::blake3_hash(&v.consensus_key).as_array();
-                (kid, v.consensus_key.clone())
+                (kid, v.consensus_key)
             })
             .collect();
 
@@ -596,7 +596,7 @@ impl Blockchain {
             key_map
                 .iter()
                 .find(|(kid, _)| *kid == key_id)
-                .map(|(_, pk)| pk.clone())
+                .map(|(_, pk)| pk.to_vec())
         });
 
         match result {

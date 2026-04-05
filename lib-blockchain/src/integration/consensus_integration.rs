@@ -279,9 +279,9 @@ impl BlockchainConsensusCoordinator {
                 identity.clone(),
                 stake_amount,
                 storage_capacity,
-                consensus_keypair.public_key.dilithium_pk.clone(),
-                networking_keypair.public_key.dilithium_pk.clone(),
-                rewards_keypair.public_key.dilithium_pk.clone(),
+                consensus_keypair.public_key.dilithium_pk,
+                networking_keypair.public_key.dilithium_pk.to_vec(),
+                rewards_keypair.public_key.dilithium_pk.to_vec(),
                 commission_rate,
                 false, // Not genesis validator
             )
@@ -962,8 +962,8 @@ impl BlockchainConsensusCoordinator {
             timestamp: consensus_timestamp,
             signature: lib_crypto::Signature {
                 signature: vec![0u8; 64], // Would be properly signed in production
-                public_key: lib_crypto::PublicKey::new(vec![0u8; 32]),
-                algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
+                public_key: lib_crypto::PublicKey::new([0u8; 2592]),
+                algorithm: lib_crypto::SignatureAlgorithm::Dilithium5,
                 timestamp: current_timestamp(),
             },
             consensus_proof: ConsensusProof {
@@ -1096,7 +1096,7 @@ impl BlockchainConsensusCoordinator {
                     commitment: BlockchainHash::from_slice(&citizen_id.as_bytes()[..32]),
                     note: BlockchainHash::from_slice(b"UBI_PAYMENT_________________"),
                     recipient: crate::integration::crypto_integration::PublicKey::new(
-                        citizen_id.as_bytes().to_vec(),
+                        citizen_id.as_bytes().iter().cycle().take(2592).copied().collect::<Vec<_>>().try_into().unwrap_or([0u8; 2592]),
                     ),
                 }],
                 10, // UBI transaction fee
@@ -1176,7 +1176,7 @@ impl BlockchainConsensusCoordinator {
                     commitment: BlockchainHash::from_slice(service_address),
                     note: BlockchainHash::from_slice(b"WELFARE_FUNDING_____________"),
                     recipient: crate::integration::crypto_integration::PublicKey::new(
-                        service_address.to_vec(),
+                        service_address.iter().cycle().take(2592).copied().collect::<Vec<_>>().try_into().unwrap_or([0u8; 2592]),
                     ),
                 }],
                 25, // Welfare transaction fee
@@ -1489,7 +1489,7 @@ impl BlockchainConsensusCoordinator {
                 hex::encode(&identity.as_bytes()[..8])
             ),
             display_name: format!("Validator {}", hex::encode(&identity.as_bytes()[..4])),
-            public_key: consensus_keypair.public_key.dilithium_pk.clone(),
+            public_key: consensus_keypair.public_key.dilithium_pk.to_vec(),
             identity_type: "validator".to_string(),
             did_document_hash: BlockchainHash::from(hash_blake3(
                 &consensus_keypair.public_key.dilithium_pk,
@@ -1505,7 +1505,7 @@ impl BlockchainConsensusCoordinator {
         // Create transaction with empty signature first, then sign the hash
         let empty_signature = crate::integration::crypto_integration::Signature {
             signature: Vec::new(),
-            public_key: crate::integration::crypto_integration::PublicKey::new(Vec::new()),
+            public_key: crate::integration::crypto_integration::PublicKey::new([0u8; 2592]),
             algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
             timestamp: current_timestamp(),
         };
@@ -1566,13 +1566,13 @@ impl BlockchainConsensusCoordinator {
                     commitment: BlockchainHash::from(hash_blake3(&commitment_data)),
                     note: BlockchainHash::from(hash_blake3(&note_data)),
                     recipient: crate::integration::crypto_integration::PublicKey::new(
-                        validator_id.as_bytes().to_vec(),
+                        [0u8; 2592], // Use empty dilithium key for system transaction
                     ),
                 };
 
                 let signature = crate::integration::crypto_integration::Signature {
                     signature: hash_blake3(b"system_reward").to_vec(),
-                    public_key: crate::integration::crypto_integration::PublicKey::new(vec![0; 32]),
+                    public_key: crate::integration::crypto_integration::PublicKey::new([0u8; 2592]),
                     algorithm:
                         crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
                     timestamp: current_timestamp(),

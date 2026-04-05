@@ -716,7 +716,7 @@ impl DhtProtocolHandler {
 
         Ok(PostQuantumSignature {
             signature: signature_bytes,
-            public_key: PublicKey::new(public_key.to_vec()),
+            public_key: PublicKey::new(public_key.try_into().unwrap_or([0u8; 2592])),
             algorithm: SignatureAlgorithm::Dilithium2,
             timestamp,
         })

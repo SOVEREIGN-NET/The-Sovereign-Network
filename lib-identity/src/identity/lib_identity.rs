@@ -330,7 +330,7 @@ impl ZhtpIdentity {
             staked_balance: 0,
             pending_rewards: 0,
             owner_id: Some(id.clone()),
-            public_key: public_key.dilithium_pk.clone(),
+            public_key: public_key.dilithium_pk.to_vec(),
             seed_phrase: None,
             encrypted_seed: None,
             seed_commitment: None,
@@ -479,23 +479,32 @@ impl ZhtpIdentity {
         let dao_member_id = Self::derive_dao_member_id(&did)?;
 
         // Step 9: Generate operational Kyber keypair (random)
-        let (kyber_pk, kyber_sk) = lib_crypto::post_quantum::kyber::kyber1024_keypair();
+        let (kyber_pk_vec, kyber_sk_vec) = lib_crypto::post_quantum::kyber::kyber1024_keypair();
+
+        // Convert Vec<u8> to fixed-size arrays for lib-crypto types
+        let dilithium_pk: [u8; 2592] = rsk.public_key.as_slice().try_into()
+            .map_err(|_| anyhow!("Invalid Dilithium public key size: expected 2592 bytes"))?;
+        let dilithium_sk: [u8; 4864] = rsk.secret_key.as_slice().try_into()
+            .map_err(|_| anyhow!("Invalid Dilithium secret key size: expected 4864 bytes"))?;
+        let kyber_pk: [u8; 1568] = kyber_pk_vec.as_slice().try_into()
+            .map_err(|_| anyhow!("Invalid Kyber public key size: expected 1568 bytes"))?;
+        let kyber_sk: [u8; 3168] = kyber_sk_vec.as_slice().try_into()
+            .map_err(|_| anyhow!("Invalid Kyber secret key size: expected 3168 bytes"))?;
 
         // Construct canonical lib-crypto key types:
         // - Dilithium keys are the ROOT signing keys (anchor identity)
         // - Kyber keys are OPERATIONAL (transport/KEM) keys
-        let key_id =
-            lib_crypto::hash_blake3(&[rsk.public_key.as_slice(), kyber_pk.as_slice()].concat());
+        let key_id = lib_crypto::hash_blake3(&[dilithium_pk.as_slice(), kyber_pk.as_slice()].concat());
         let public_key = PublicKey {
-            dilithium_pk: rsk.public_key.clone(),
-            kyber_pk: kyber_pk.clone(),
+            dilithium_pk,
+            kyber_pk,
             key_id,
         };
         let private_key = PrivateKey {
-            dilithium_sk: rsk.secret_key.clone(),
-            dilithium_pk: rsk.public_key.clone(),
-            kyber_sk: kyber_sk.clone(),
-            master_seed: seed.to_vec(), // Root Secret (RS), 64 bytes
+            dilithium_sk,
+            dilithium_pk,
+            kyber_sk,
+            master_seed: seed, // Root Secret (RS), 64 bytes
         };
 
         // Step 10: Initialize WalletManager (seeded for deterministic recovery)
@@ -524,7 +533,7 @@ impl ZhtpIdentity {
             proof_system: "dilithium-pop-v1".to_string(),
             proof_data: pop_signature.signature,
             public_inputs: did.as_bytes().to_vec(),
-            verification_key: public_key.dilithium_pk.clone(),
+            verification_key: public_key.dilithium_pk.to_vec(),
             plonky2_proof: None,
             proof: vec![],
         };
@@ -670,6 +679,8 @@ impl ZhtpIdentity {
         wallet_manager: crate::wallets::WalletManager,
     ) -> Result<Self> {
         // Convert Vec<u8> to PublicKey
+        let public_key_bytes: [u8; 2592] = public_key_bytes.as_slice().try_into()
+            .map_err(|_| anyhow!("Invalid public key size: expected 2592 bytes for Dilithium5"))?;
         let public_key = PublicKey::new(public_key_bytes);
 
         // Derive DID from public key (canonical)

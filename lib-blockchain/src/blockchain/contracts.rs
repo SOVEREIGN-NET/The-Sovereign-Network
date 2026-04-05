@@ -163,7 +163,9 @@ impl Blockchain {
                             ));
                         }
 
-                        let from_wallet_pk = PublicKey::new(from_wallet.public_key.clone());
+                        let from_wallet_pk = PublicKey::new(
+                            from_wallet.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
+                        );
                         if from_wallet_pk.key_id != sender_pk.key_id {
                             return Err(anyhow::anyhow!(
                                 "TokenTransfer SOV sender does not own wallet"
@@ -216,7 +218,9 @@ impl Blockchain {
                             .ok_or_else(|| {
                                 anyhow::anyhow!("TokenTransfer CBE recipient not found")
                             })?;
-                        let recipient_pk = PublicKey::new(recipient_pk_bytes);
+                        let recipient_pk = PublicKey::new(
+                            recipient_pk_bytes.as_slice().try_into().unwrap_or([0u8; 2592])
+                        );
 
                         let ctx = crate::contracts::executor::ExecutionContext::new(
                             sender_pk.clone(),
@@ -237,7 +241,9 @@ impl Blockchain {
                         let recipient_pk_bytes = self
                             .resolve_public_key_by_key_id(&transfer.to)
                             .ok_or_else(|| anyhow::anyhow!("TokenTransfer recipient not found"))?;
-                        let recipient_pk = PublicKey::new(recipient_pk_bytes);
+                        let recipient_pk = PublicKey::new(
+                            recipient_pk_bytes.as_slice().try_into().unwrap_or([0u8; 2592])
+                        );
 
                         let ctx = crate::contracts::executor::ExecutionContext::new(
                             sender_pk.clone(),
@@ -327,7 +333,9 @@ impl Blockchain {
                         let recipient_pk_bytes = self
                             .resolve_public_key_by_key_id(&mint.to)
                             .ok_or_else(|| anyhow::anyhow!("TokenMint recipient not found"))?;
-                        PublicKey::new(recipient_pk_bytes)
+                        PublicKey::new(
+                            recipient_pk_bytes.as_slice().try_into().unwrap_or([0u8; 2592])
+                        )
                     };
 
                     let mut migration_from: Option<PublicKey> = None;
@@ -392,7 +400,9 @@ impl Blockchain {
                         } else if let Some(rest) = memo_str.strip_prefix("TOKEN_MIGRATE_V1:") {
                             let old_pk_bytes = hex::decode(rest)
                                 .map_err(|_| anyhow::anyhow!("Invalid TOKEN_MIGRATE_V1 memo"))?;
-                            migration_from = Some(PublicKey::new(old_pk_bytes));
+                            migration_from = Some(PublicKey::new(
+                                old_pk_bytes.as_slice().try_into().unwrap_or([0u8; 2592])
+                            ));
                         }
                     }
 
@@ -545,8 +555,8 @@ impl Blockchain {
                         .mint(&creator, creator_allocation)
                         .map_err(|e| anyhow::anyhow!("TokenCreation mint failed: {}", e))?;
                     let treasury_pk = lib_crypto::types::keys::PublicKey {
-                        dilithium_pk: vec![],
-                        kyber_pk: vec![],
+                        dilithium_pk: [0u8; 2592],
+                        kyber_pk: [0u8; 1568],
                         key_id: payload.treasury_recipient,
                     };
                     token.mint(&treasury_pk, treasury_allocation).map_err(|e| {
@@ -777,15 +787,15 @@ impl Blockchain {
 
                 let to: lib_crypto::types::keys::PublicKey = if to_bytes.len() == 32 {
                     lib_crypto::types::keys::PublicKey {
-                        dilithium_pk: vec![],
-                        kyber_pk: vec![],
+                        dilithium_pk: [0u8; 2592],
+                        kyber_pk: [0u8; 1568],
                         key_id: to_bytes.try_into().unwrap_or([0u8; 32]),
                     }
                 } else {
                     bincode::deserialize(&to_bytes).unwrap_or_else(|_| {
                         lib_crypto::types::keys::PublicKey {
-                            dilithium_pk: vec![],
-                            kyber_pk: vec![],
+                            dilithium_pk: [0u8; 2592],
+                            kyber_pk: [0u8; 1568],
                             key_id: [0u8; 32],
                         }
                     })

@@ -87,18 +87,28 @@ impl KeyPair {
         hasher.update(&kyber_keys.public);
         let key_id: [u8; 32] = hasher.finalize().into();
 
-        let dilithium_pk_bytes = dilithium_pk.as_bytes().to_vec();
+        // Convert to fixed-size arrays
+        let dilithium_pk_array: [u8; 2592] = dilithium_pk.as_bytes().try_into()
+            .map_err(|_| anyhow::anyhow!("Dilithium5 public key must be 2592 bytes"))?;
+        let kyber_pk_array: [u8; 1568] = kyber_keys.public.try_into()
+            .map_err(|_| anyhow::anyhow!("Kyber1024 public key must be 1568 bytes"))?;
+        let dilithium_sk_array: [u8; 4864] = dilithium_sk.as_bytes().try_into()
+            .map_err(|_| anyhow::anyhow!("Dilithium5 secret key must be 4864 bytes"))?;
+        let kyber_sk_array: [u8; 3168] = kyber_keys.secret.try_into()
+            .map_err(|_| anyhow::anyhow!("Kyber1024 secret key must be 3168 bytes"))?;
+        
         let keypair = KeyPair {
             public_key: PublicKey {
-                dilithium_pk: dilithium_pk_bytes.clone(),
-                kyber_pk: kyber_keys.public.to_vec(),
+                dilithium_pk: dilithium_pk_array,
+                kyber_pk: kyber_pk_array,
                 key_id,
             },
             private_key: PrivateKey {
-                dilithium_sk: dilithium_sk.as_bytes().to_vec(),
-                dilithium_pk: dilithium_pk_bytes,
-                kyber_sk: kyber_keys.secret.to_vec(),
-                master_seed,
+                dilithium_sk: dilithium_sk_array,
+                dilithium_pk: dilithium_pk_array,
+                kyber_sk: kyber_sk_array,
+                master_seed: master_seed.try_into()
+                    .map_err(|_| anyhow::anyhow!("Master seed must be 64 bytes"))?,
             },
         };
 

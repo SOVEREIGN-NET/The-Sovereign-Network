@@ -27,7 +27,7 @@ fn create_test_cbe_token(token_id: [u8; 32], reserve_micro_usd: u128) -> Bonding
         curve_type: lib_blockchain::contracts::bonding_curve::CurveType::PiecewiseLinear(
             PiecewiseLinearCurve::cbe_default(),
         ),
-        threshold: Threshold::ReserveAmount(269_000_000_000u128), // $269K
+        threshold: Threshold::ReserveAmount(2_745_966u128), // $2,745,966 USD
         sell_enabled: true,
         amm_pool_id: None,
         creator: PublicKey::new(vec![1u8; 32]),

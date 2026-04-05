@@ -620,7 +620,7 @@ impl ReceiptValidator {
         let identity = mgr
             .get_identity_by_did(client_did)
             .ok_or_else(|| anyhow::anyhow!("DID not registered: {}", client_did))?;
-        Ok(identity.public_key.dilithium_pk.clone())
+        Ok(identity.public_key.dilithium_pk.to_vec())
     }
 
     /// Parse Web4 context fields from receipt aux JSON

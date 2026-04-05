@@ -33,6 +33,8 @@ pub fn build_identity_envelope(
 
     for device in devices {
         let (_signing, encryption_pk) = get_device_keys(&document, &device.device_id)?;
+        let encryption_pk: [u8; 1568] = encryption_pk.as_slice().try_into()
+            .map_err(|_| "Invalid Kyber public key size: expected 1568 bytes".to_string())?;
         let recipient_pk = PublicKey::from_kyber_public_key(encryption_pk);
         let ciphertext = encrypt_with_public_key(&recipient_pk, plaintext, ad.as_bytes())
             .map_err(|e| format!("Encrypt failed for device {}: {}", device.device_id, e))?;
@@ -465,6 +467,8 @@ fn verify_pouw_stamp_with_document(stamp: &PoUwStamp, doc: &DidDocument) -> Resu
     let devices = list_active_devices(doc);
     for device in devices {
         let (signing_pk, _encryption_pk) = get_device_keys(doc, &device.device_id)?;
+        let signing_pk: [u8; 2592] = signing_pk.as_slice().try_into()
+            .map_err(|_| "Invalid Dilithium public key size: expected 2592 bytes".to_string())?;
         let pk = PublicKey::new(signing_pk);
         if pk.key_id == stamp.sender_device_key_id {
             return verify_pouw_stamp(stamp, &pk);

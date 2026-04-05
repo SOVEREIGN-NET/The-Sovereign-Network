@@ -33,12 +33,12 @@ impl Blockchain {
         if validator_info.rewards_key.is_empty() {
             return Err(anyhow::anyhow!("Validator rewards_key must not be empty"));
         }
-        if validator_info.consensus_key == validator_info.networking_key {
+        if validator_info.consensus_key.as_slice() == validator_info.networking_key.as_slice() {
             return Err(anyhow::anyhow!(
                 "Validator key separation violation: consensus_key and networking_key must be different keys. Reusing the same key across roles collapses security domain boundaries."
             ));
         }
-        if validator_info.consensus_key == validator_info.rewards_key {
+        if validator_info.consensus_key.as_slice() == validator_info.rewards_key.as_slice() {
             return Err(anyhow::anyhow!(
                 "Validator key separation violation: consensus_key and rewards_key must be different keys. A compromised consensus key must not give an attacker control over staking rewards."
             ));
@@ -68,7 +68,7 @@ impl Blockchain {
         let validator_tx_data = IdentityTransactionData {
             did: validator_info.identity_id.clone(),
             display_name: format!("Validator: {}", validator_info.network_address),
-            public_key: validator_info.consensus_key.clone(),
+            public_key: validator_info.consensus_key.to_vec(),
             ownership_proof: vec![],
             identity_type: "validator".to_string(),
             did_document_hash: crate::types::hash::blake3_hash(
@@ -89,8 +89,8 @@ impl Blockchain {
             validator_tx_data,
             vec![],
             Signature {
-                signature: validator_info.consensus_key.clone(),
-                public_key: PublicKey::new(validator_info.consensus_key.clone()),
+                signature: validator_info.consensus_key.to_vec(),
+                public_key: PublicKey::new(validator_info.consensus_key),
                 algorithm: SignatureAlgorithm::Dilithium2,
                 timestamp: validator_info.registered_at,
             },
@@ -153,7 +153,7 @@ impl Blockchain {
         let validator_tx_data = IdentityTransactionData {
             did: updated_info.identity_id.clone(),
             display_name: format!("Validator Update: {}", updated_info.network_address),
-            public_key: updated_info.consensus_key.clone(),
+            public_key: updated_info.consensus_key.to_vec(),
             ownership_proof: vec![],
             identity_type: "validator".to_string(),
             did_document_hash: crate::types::hash::blake3_hash(
@@ -176,8 +176,8 @@ impl Blockchain {
             vec![],
             100,
             Signature {
-                signature: updated_info.consensus_key.clone(),
-                public_key: PublicKey::new(updated_info.consensus_key.clone()),
+                signature: updated_info.consensus_key.to_vec(),
+                public_key: PublicKey::new(updated_info.consensus_key),
                 algorithm: SignatureAlgorithm::Dilithium2,
                 timestamp: updated_info.last_activity,
             },
@@ -207,8 +207,8 @@ impl Blockchain {
             vec![],
             100,
             Signature {
-                signature: validator_info.consensus_key.clone(),
-                public_key: PublicKey::new(validator_info.consensus_key.clone()),
+                signature: validator_info.consensus_key.to_vec(),
+                public_key: PublicKey::new(validator_info.consensus_key),
                 algorithm: SignatureAlgorithm::Dilithium2,
                 timestamp: validator_info.last_activity,
             },
@@ -283,7 +283,7 @@ impl Blockchain {
                     identity_id: validator_data.identity_id.clone(),
                     stake: validator_data.stake,
                     storage_provided: validator_data.storage_provided,
-                    consensus_key: validator_data.consensus_key.clone(),
+                    consensus_key: validator_data.consensus_key.as_slice().try_into().unwrap_or([0u8; 2592]),
                     networking_key: validator_data.networking_key.clone(),
                     rewards_key: validator_data.rewards_key.clone(),
                     network_address: validator_data.network_address.clone(),

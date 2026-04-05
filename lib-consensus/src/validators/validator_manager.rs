@@ -33,11 +33,12 @@ pub trait ValidatorInfo {
     fn stake(&self) -> u64;
     /// Get storage provided
     fn storage_provided(&self) -> u64;
-    /// Get the BFT vote-signing key (Dilithium2, hot).
+    /// Get the BFT vote-signing key (Dilithium5, hot).
     ///
     /// Used exclusively for signing block proposals, pre-votes, pre-commits, and
     /// view-change messages.  MUST differ from [`networking_key`] and [`rewards_key`].
-    fn consensus_key(&self) -> Vec<u8>;
+    /// Fixed size [u8; 2592] for Dilithium5 public key.
+    fn consensus_key(&self) -> [u8; 2592];
     /// Get the P2P transport identity key (Ed25519/X25519, hot).
     ///
     /// Used for QUIC TLS handshakes, DHT node ID derivation, and peer authentication.
@@ -112,7 +113,7 @@ impl ValidatorManager {
         identity: IdentityId,
         stake: u64,
         storage_provided: u64,
-        consensus_key: Vec<u8>,
+        consensus_key: [u8; 2592],
         networking_key: Vec<u8>,
         rewards_key: Vec<u8>,
         commission_rate: u8,
@@ -143,8 +144,10 @@ impl ValidatorManager {
         }
 
         // KEY SEPARATION ASSERTIONS
-        if consensus_key.is_empty() {
-            return Err(anyhow::anyhow!("consensus_key must not be empty"));
+        // Fixed-size consensus_key cannot be empty (always 2592 bytes)
+        // Check for all-zeros (invalid key)
+        if consensus_key == [0u8; 2592] {
+            return Err(anyhow::anyhow!("consensus_key must not be all zeros"));
         }
         if networking_key.is_empty() {
             return Err(anyhow::anyhow!("networking_key must not be empty"));
@@ -152,13 +155,14 @@ impl ValidatorManager {
         if rewards_key.is_empty() {
             return Err(anyhow::anyhow!("rewards_key must not be empty"));
         }
-        if consensus_key == networking_key {
+        // Compare consensus_key (fixed array) with networking_key (Vec)
+        if consensus_key.as_slice() == networking_key.as_slice() {
             return Err(anyhow::anyhow!(
                 "Key separation violation: consensus_key and networking_key must be different. \
                  Reusing the same key across roles collapses security domain boundaries."
             ));
         }
-        if consensus_key == rewards_key {
+        if consensus_key.as_slice() == rewards_key.as_slice() {
             return Err(anyhow::anyhow!(
                 "Key separation violation: consensus_key and rewards_key must be different. \
                  A compromised consensus key must not give an attacker control over staking rewards."

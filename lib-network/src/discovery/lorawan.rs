@@ -240,15 +240,16 @@ async fn perform_rtl_sdr_lorawan_scan(frequency_hz: u32) -> Result<LoRaWANGatewa
 
             if signal_strength > -120.0 {
                 // Minimum detectable signal
+                // Generate random 2592-byte public key for detected gateway
+                let mut pk = [0u8; 2592];
+                for i in 0..2592 {
+                    pk[i] = rand::random();
+                }
                 return Ok(LoRaWANGatewayInfo {
                     gateway_eui: format!("RTL_DETECTED_{:08X}", rand::random::<u32>()),
                     frequency_hz,
                     coverage_radius_km: estimate_coverage_from_signal(signal_strength),
-                    operator_key: PublicKey::new(vec![
-                        rand::random(),
-                        rand::random(),
-                        rand::random(),
-                    ]),
+                    operator_key: PublicKey::new(pk),
                 });
             }
         }
@@ -317,6 +318,6 @@ async fn simulate_gateway_detection(frequency_hz: u32) -> Result<LoRaWANGatewayI
         gateway_eui: format!("{:016X}", rand::random::<u64>()),
         frequency_hz,
         coverage_radius_km: 8.0 + rand::random::<f64>() * 12.0, // 8-20km realistic
-        operator_key: PublicKey::new(vec![rand::random(), rand::random(), rand::random()]),
+        operator_key: PublicKey::new([0u8; 2592]),
     })
 }

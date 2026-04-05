@@ -105,7 +105,7 @@
 //!   - Same round
 //!   - Same proposal/block hash
 //!   - Same vote type (PreVote or PreCommit)
-//! - **Threshold calculation**: (total_validators * 2 / 3) + 1 using integer division
+//! - **Threshold calculation**: 6667 basis points (66.67%) via `has_supermajority()`
 //!
 //! - **Mixed or split votes DO NOT count**: If validators disagree on which proposal to vote for,
 //!   no supermajority is reached until 2/3+1 agree on the same proposal.
@@ -353,22 +353,21 @@ impl RoundTimer {
     }
 }
 
-/// Check supermajority with explicit quorum calculation
+/// Check BFT supermajority (2/3+1 quorum).
 ///
-/// Makes quorum math explicit and correct:
-/// - threshold = (total_validators * 2 / 3) + 1 (using integer division, which is equivalent to floor for positive integers)
-/// - Matching votes means same height, round, proposal/block hash, and vote type
-/// - Mixed or split votes MUST NOT count toward quorum
+/// Delegates to `lib_types::consensus::threshold::has_supermajority` which
+/// uses basis-point arithmetic (6667 bps = 66.67%) instead of raw `>=`
+/// comparisons.  This eliminates the risk of off-by-one operator mistakes
+/// in consensus-critical threshold checks.
 ///
 /// **Invariant**: Supermajority requires identical votes, not aggregate counts.
-/// A supermajority on a proposal means 2/3 + 1 validators agree on ALL aspects:
+/// A supermajority on a proposal means 2/3+1 validators agree on ALL aspects:
 /// - Same height
 /// - Same round
 /// - Same proposal/block hash
 /// - Same vote type (PreVote or PreCommit)
 fn check_supermajority(matching_votes: u64, total_validators: u64) -> bool {
-    let threshold = (total_validators * 2 / 3) + 1;
-    matching_votes >= threshold
+    lib_types::consensus::threshold::has_supermajority(matching_votes, total_validators)
 }
 
 /// Vote pool entry key: composite key to prevent equivocation
@@ -399,8 +398,8 @@ struct PendingValidatorAdd {
     identity: IdentityId,
     stake: u64,
     storage_capacity: u64,
-    /// BFT vote-signing key (Dilithium2, hot). Must differ from networking_key and rewards_key.
-    consensus_key: Vec<u8>,
+    /// BFT vote-signing key (Dilithium5, hot). Must differ from networking_key and rewards_key.
+    consensus_key: [u8; 2592],
     /// P2P transport identity key (Ed25519/X25519, hot). Must differ from consensus_key and rewards_key.
     networking_key: Vec<u8>,
     /// Rewards wallet public key (cold-capable). Must differ from consensus_key and networking_key.
@@ -543,7 +542,7 @@ pub struct ValidatorSetUpdate {
 pub struct ValidatorUpdateEntry {
     pub identity_id: IdentityId,
     pub stake: u64,
-    pub consensus_key: Vec<u8>,
+    pub consensus_key: [u8; 2592],
 }
 
 impl ConsensusEngine {
@@ -1034,7 +1033,7 @@ impl ConsensusEngine {
         identity: IdentityId,
         stake: u64,
         storage_capacity: u64,
-        consensus_key: Vec<u8>,
+        consensus_key: [u8; 2592],
         networking_key: Vec<u8>,
         rewards_key: Vec<u8>,
         commission_rate: u8,
