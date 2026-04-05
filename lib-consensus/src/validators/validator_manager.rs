@@ -9,9 +9,9 @@ use std::collections::HashMap;
 /// Minimum validator count required for BFT safety.
 pub const MIN_VALIDATORS: usize = crate::types::MIN_BFT_VALIDATORS;
 /// Default governance target for maximum active validators.
-pub const MAX_VALIDATORS: u32 = 100;
+pub const MAX_VALIDATORS: u32 = 21;
 /// Hard protocol cap for maximum active validators.
-pub const MAX_VALIDATORS_HARD_CAP: u32 = 256;
+pub const MAX_VALIDATORS_HARD_CAP: u32 = 21;
 
 /// Trait for validator info structures that can be synced from blockchain.
 ///

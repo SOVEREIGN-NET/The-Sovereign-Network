@@ -772,14 +772,14 @@ impl ConsensusEngine {
         }
     }
 
-    /// Check if BFT consensus mode is active (>= 4 validators)
+    /// Check if BFT consensus mode is active (>= 3 validators)
     ///
     /// Returns true if there are enough validators for BFT consensus.
-    /// In bootstrap mode (< 4 validators), the mining loop handles block production directly.
+    /// In bootstrap mode (< 3 validators), the mining loop handles block production directly.
     ///
     /// # Invariant
     ///
-    /// BFT mode requires at least `BFT_MIN_VALIDATORS` (= 4) validators. This matches
+    /// BFT mode requires at least `BFT_MIN_VALIDATORS` (= 3) validators. This matches
     /// `crate::types::MIN_BFT_VALIDATORS`. The compile-time assertion in the module
     /// ensures these two constants stay in sync.
     pub fn is_bft_mode_active(&self) -> bool {

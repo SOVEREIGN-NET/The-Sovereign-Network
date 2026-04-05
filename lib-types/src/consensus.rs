@@ -146,8 +146,8 @@ pub enum SlashType {
 /// `max_validators` is the governance-adjustable upper bound on the active
 /// validator set. Its valid range at runtime is:
 ///
-/// - **Minimum**: `MIN_VALIDATORS` (= 4) — the BFT safety floor
-/// - **Maximum**: `MAX_VALIDATORS_HARD_CAP` (= 256) — the protocol ceiling
+/// - **Minimum**: `MIN_VALIDATORS` (= 3) — the BFT bootstrap floor
+/// - **Maximum**: `MAX_VALIDATORS_HARD_CAP` (= 21) — the protocol ceiling
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConsensusConfig {
     /// Type of consensus mechanism
@@ -190,7 +190,7 @@ impl Default for ConsensusConfig {
             consensus_type: ConsensusType::ByzantineFaultTolerance,
             min_stake: 1000 * 1_000_000,           // 1000 SOV tokens
             min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
-            max_validators: 100,
+            max_validators: 21,
             block_time: 10, // 10 seconds
             epoch_length_blocks: 100,
             propose_timeout: 3000,   // 3 seconds
@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn test_consensus_config_default() {
         let config = ConsensusConfig::default();
-        assert_eq!(config.max_validators, 100);
+        assert_eq!(config.max_validators, 21);
         assert_eq!(config.block_time, 10);
         assert_eq!(config.min_stake, 1000 * 1_000_000);
         assert!(matches!(
@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn test_min_bft_validators_constant() {
-        assert_eq!(MIN_BFT_VALIDATORS, 4);
+        assert_eq!(MIN_BFT_VALIDATORS, 3);
     }
 
     #[test]
