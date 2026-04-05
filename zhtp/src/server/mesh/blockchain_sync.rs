@@ -61,13 +61,11 @@ impl MeshRouter {
                             let mgr = identity_mgr.read().await;
                             if let Some(identity) = mgr.list_identities().first() {
                                 let pubkey_bytes = identity.public_key.as_bytes();
-                                let mut key_id = [0u8; 32];
-                                let len = pubkey_bytes.len().min(32);
-                                key_id[..len].copy_from_slice(&pubkey_bytes[..len]);
+                                let key_id = identity.public_key.key_id;
                                 lib_crypto::PublicKey {
                                     key_id,
-                                    dilithium_pk: vec![],
-                                    kyber_pk: vec![],
+                                    dilithium_pk: [0u8; 2592],
+                                    kyber_pk: [0u8; 1568],
                                 }
                             } else {
                                 warn!(
@@ -150,13 +148,11 @@ impl MeshRouter {
                             let mgr = identity_mgr.read().await;
                             if let Some(identity) = mgr.list_identities().first() {
                                 let pubkey_bytes = identity.public_key.as_bytes();
-                                let mut key_id = [0u8; 32];
-                                let len = pubkey_bytes.len().min(32);
-                                key_id[..len].copy_from_slice(&pubkey_bytes[..len]);
+                                let key_id = identity.public_key.key_id;
                                 lib_crypto::PublicKey {
                                     key_id,
-                                    dilithium_pk: vec![],
-                                    kyber_pk: vec![],
+                                    dilithium_pk: [0u8; 2592],
+                                    kyber_pk: [0u8; 1568],
                                 }
                             } else {
                                 warn!("No identity available for sender - skipping transaction broadcast");
@@ -313,8 +309,8 @@ impl MeshRouter {
 
                 return Ok(PublicKey {
                     key_id,
-                    dilithium_pk: vec![],
-                    kyber_pk: vec![],
+                    dilithium_pk: [0u8; 2592],
+                    kyber_pk: [0u8; 1568],
                 });
             }
         }

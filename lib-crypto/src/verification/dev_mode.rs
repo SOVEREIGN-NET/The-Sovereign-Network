@@ -2,7 +2,7 @@
 //!
 //! DEVELOPMENT MODE IS NOT AVAILABLE IN PRODUCTION BUILD
 //! These functions are only enabled when the "development" feature flag is active.
-//! In production builds, all signatures MUST use Dilithium2 (CONSENSUS_SIGNATURE_SCHEME).
+//! In production builds, all signatures MUST use Dilithium5 (CONSENSUS_SIGNATURE_SCHEME).
 
 #[cfg(feature = "development")]
 pub mod development {

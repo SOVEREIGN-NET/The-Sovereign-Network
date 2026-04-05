@@ -345,11 +345,11 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
             peer: peer_identity,
             addresses: vec![peer_address],
             public_key: PostQuantumSignature {
-                algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
+                algorithm: lib_crypto::SignatureAlgorithm::Dilithium5,
                 signature: vec![],
                 public_key: lib_crypto::PublicKey {
-                    dilithium_pk: vec![],
-                    kyber_pk: vec![],
+                    dilithium_pk: [0u8; 2592],
+                    kyber_pk: [0u8; 1568],
                     key_id: [0u8; 32],
                 },
                 timestamp: 0,
@@ -514,8 +514,8 @@ impl UnifiedStorageSystem<dht::backend::SledBackend> {
         let peer_identity = types::dht_types::DhtPeerIdentity {
             node_id: node_id.clone(),
             public_key: lib_crypto::PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
             did: String::from("did:zhtp:placeholder"),

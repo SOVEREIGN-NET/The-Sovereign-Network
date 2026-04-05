@@ -582,8 +582,8 @@ impl CbeToken {
 
         // Create a temporary PublicKey for vested_balance_of lookup
         let source_pk = PublicKey {
-            dilithium_pk: vec![],
-            kyber_pk: vec![],
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: source_key_id,
         };
 

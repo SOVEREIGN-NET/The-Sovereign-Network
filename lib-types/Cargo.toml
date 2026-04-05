@@ -11,6 +11,7 @@ blake3 = "1.5"
 hex = "0.4"
 anyhow = "1.0"
 getrandom = "0.2"
+lib-crypto = { path = "../lib-crypto" }
 
 [dev-dependencies]
 bincode = "1.3"

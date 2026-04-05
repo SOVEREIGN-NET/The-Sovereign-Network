@@ -1382,4 +1382,25 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         key_id: &[u8; 32],
         state: &lib_types::BondingCurveAccountState,
     ) -> StorageResult<()>;
+
+    // =========================================================================
+    // BFT Quorum Proof Operations (default no-ops for non-sled backends)
+    // =========================================================================
+
+    /// Store a BFT quorum proof for a given block height.
+    fn put_quorum_proof(
+        &self,
+        _height: u64,
+        _proof: &lib_types::consensus::BftQuorumProof,
+    ) -> StorageResult<()> {
+        Ok(())
+    }
+
+    /// Retrieve the BFT quorum proof for a given block height.
+    fn get_quorum_proof(
+        &self,
+        _height: u64,
+    ) -> StorageResult<Option<lib_types::consensus::BftQuorumProof>> {
+        Ok(None)
+    }
 }

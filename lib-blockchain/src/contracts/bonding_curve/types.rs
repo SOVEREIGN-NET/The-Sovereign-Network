@@ -27,9 +27,10 @@ const TOKEN_SCALE: u128 = SCALE;
 
 /// Graduation threshold in USD (whole dollars).
 ///
-/// Per CBE Token Launch specification: $269,000 USD reserve value triggers graduation.
-/// This constant ensures the threshold is defined in one place and used consistently.
-pub const GRADUATION_THRESHOLD_USD: u128 = 269_000;
+/// $2,745,966 USD reserve value triggers graduation.
+/// This constant is the single source of truth — every graduation check
+/// must reference this value, never a hardcoded literal.
+pub const GRADUATION_THRESHOLD_USD: u128 = 2_745_966;
 
 /// Maximum acceptable age for oracle price data (in seconds).
 ///
@@ -207,7 +208,7 @@ pub enum Threshold {
     /// Graduation triggers when `reserve_sov * sov_usd_price >= threshold_usd`.
     /// Requires oracle price data that is not stale (within MAX_ORACLE_PRICE_AGE_SECONDS).
     ReserveValueUsd {
-        /// Minimum reserve value in USD (whole dollars, e.g., 269_000 for $269K)
+        /// Minimum reserve value in USD (whole dollars) — use GRADUATION_THRESHOLD_USD
         threshold_usd: u128,
         /// Maximum age of oracle price (seconds) - safety mechanism
         max_price_age_seconds: u64,

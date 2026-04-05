@@ -6,6 +6,48 @@
 use serde::{Deserialize, Serialize};
 
 // =============================================================================
+// BFT THRESHOLD ARITHMETIC — basis-point encoded, single comparison function
+// =============================================================================
+
+/// Basis-point threshold: 10_000 = 100%.
+///
+/// All consensus-critical thresholds are expressed in basis points to
+/// eliminate scattered `>=` / `>` / `<` comparisons that differ by a
+/// single operator.  The comparison is always the same function:
+/// `meets_threshold(numerator, denominator, bps)`.
+pub mod threshold {
+    /// BFT supermajority: 6667 bps = 66.67%.
+    /// `(n * 2 / 3) + 1` is equivalent to `> 66.66%` which is `>= 6667 bps`
+    /// when using integer math.  This encodes the same threshold but makes
+    /// the intent explicit and immune to off-by-one operator mistakes.
+    pub const BFT_SUPERMAJORITY_BPS: u64 = 6667;
+
+    /// Check whether `numerator / denominator >= threshold_bps / 10_000`.
+    ///
+    /// Uses cross-multiplication to avoid floating point:
+    /// `numerator * 10_000 >= denominator * threshold_bps`
+    ///
+    /// Returns `false` if `denominator` is zero.
+    #[inline]
+    pub fn meets_threshold(numerator: u64, denominator: u64, threshold_bps: u64) -> bool {
+        if denominator == 0 {
+            return false;
+        }
+        // Use u128 to avoid overflow on multiplication.
+        (numerator as u128) * 10_000 >= (denominator as u128) * (threshold_bps as u128)
+    }
+
+    /// Check BFT supermajority: `matching_votes / total_validators >= 66.67%`.
+    ///
+    /// This is the ONLY function that should be used for quorum checks.
+    /// It replaces `check_supermajority` and the raw `(n * 2 / 3) + 1` formula.
+    #[inline]
+    pub fn has_supermajority(matching_votes: u64, total_validators: u64) -> bool {
+        meets_threshold(matching_votes, total_validators, BFT_SUPERMAJORITY_BPS)
+    }
+}
+
+// =============================================================================
 // PHASE 1: Simple Enums (no external dependencies)
 // =============================================================================
 
@@ -337,5 +379,178 @@ mod tests {
             // SlashType doesn't implement Serialize, just verify it exists
             let _ = format!("{:?}", st);
         }
+    }
+
+    /// Verify that `has_supermajority` produces identical results to the old
+    /// `(n * 2 / 3) + 1` formula for all validator counts 1..=200.
+    #[test]
+    fn test_bps_supermajority_matches_integer_formula() {
+        use super::threshold::has_supermajority;
+
+        for n in 1u64..=200 {
+            let old_threshold = (n * 2 / 3) + 1;
+            // The old formula: matching >= (n*2/3)+1
+            // The BPS formula: matching * 10000 >= n * 6667
+            // They must agree on every (matching, n) pair.
+            for votes in 0..=n {
+                let old_result = votes >= old_threshold;
+                let new_result = has_supermajority(votes, n);
+                assert_eq!(
+                    old_result, new_result,
+                    "mismatch at n={}, votes={}: old={}, new={}",
+                    n, votes, old_result, new_result
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_meets_threshold_zero_denominator() {
+        use super::threshold::meets_threshold;
+        assert!(!meets_threshold(1, 0, 5000));
+    }
+
+    #[test]
+    fn test_meets_threshold_basic() {
+        use super::threshold::meets_threshold;
+        // 50% threshold = 5000 bps
+        assert!(meets_threshold(5, 10, 5000));  // exactly 50%
+        assert!(!meets_threshold(4, 10, 5000)); // 40% < 50%
+        assert!(meets_threshold(6, 10, 5000));  // 60% > 50%
+    }
+}
+
+// =============================================================================
+// BFT QUORUM PROOF — cryptographic evidence of BFT finality
+// =============================================================================
+
+// Re-export canonical post-quantum constants from lib-crypto
+pub use lib_crypto::post_quantum::constants::{
+    DILITHIUM5_PUBLICKEY_BYTES as DILITHIUM5_PK_BYTES,
+    DILITHIUM5_SIGNATURE_BYTES as DILITHIUM5_SIG_BYTES,
+    KYBER1024_CIPHERTEXT_BYTES as KYBER1024_CT_BYTES,
+    KYBER1024_PUBLICKEY_BYTES as KYBER1024_PK_BYTES,
+};
+
+/// A single validator's commit attestation within a quorum proof.
+///
+/// Carries the Dilithium5 signature and the fields needed to reconstruct the
+/// signed envelope (`vote_id || voter || proposal_id || vote_type || height || round`)
+/// so that any node can verify the attestation without access to the consensus engine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitAttestation {
+    /// The validator who cast this commit vote (IdentityId bytes).
+    pub validator_id: [u8; 32],
+    /// Vote identifier — needed to reconstruct the signing envelope.
+    pub vote_id: [u8; 32],
+    /// The proposal ID this commit vote was for.
+    pub proposal_id: [u8; 32],
+    /// The consensus round in which the commit was cast.
+    pub round: u32,
+    /// Dilithium5 signature — exactly 4595 bytes.
+    pub signature: [u8; 4595],
+    /// Dilithium5 public key — exactly 2592 bytes.
+    pub public_key: [u8; 2592],
+}
+
+// Manual serde implementation for large fixed arrays
+impl serde::Serialize for CommitAttestation {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("CommitAttestation", 6)?;
+        state.serialize_field("validator_id", &self.validator_id)?;
+        state.serialize_field("vote_id", &self.vote_id)?;
+        state.serialize_field("proposal_id", &self.proposal_id)?;
+        state.serialize_field("round", &self.round)?;
+        state.serialize_field("signature", &self.signature.as_slice())?;
+        state.serialize_field("public_key", &self.public_key.as_slice())?;
+        state.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for CommitAttestation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct CommitAttestationHelper {
+            validator_id: [u8; 32],
+            vote_id: [u8; 32],
+            proposal_id: [u8; 32],
+            round: u32,
+            signature: Vec<u8>,
+            public_key: Vec<u8>,
+        }
+
+        let helper = CommitAttestationHelper::deserialize(deserializer)?;
+        
+        let signature: [u8; 4595] = helper.signature.try_into()
+            .map_err(|v: Vec<u8>| serde::de::Error::custom(
+                format!("signature must be 4595 bytes, got {}", v.len())
+            ))?;
+        
+        let public_key: [u8; 2592] = helper.public_key.try_into()
+            .map_err(|v: Vec<u8>| serde::de::Error::custom(
+                format!("public_key must be 2592 bytes, got {}", v.len())
+            ))?;
+
+        Ok(CommitAttestation {
+            validator_id: helper.validator_id,
+            vote_id: helper.vote_id,
+            proposal_id: helper.proposal_id,
+            round: helper.round,
+            signature,
+            public_key,
+        })
+    }
+}
+
+/// BFT quorum proof: cryptographic evidence that 2f+1 validators committed
+/// a block.
+///
+/// Stored separately from the block (in sled `quorum_proofs` tree) to avoid
+/// breaking bincode deserialization of existing blocks.  Transmitted alongside
+/// blocks during catch-up sync so the receiving node can verify BFT finality
+/// without participating in the live consensus round.
+///
+/// # Verification
+///
+/// For each attestation, reconstruct the vote signing envelope:
+/// ```text
+/// vote_id || validator_id || proposal_id || VoteType::Commit(3u8) || height_le || round_le
+/// ```
+/// Verify the Dilithium signature against the validator's registered consensus
+/// key.  Accept the proof if >= `(2 * total_validators / 3) + 1` unique
+/// attestations verify successfully.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BftQuorumProof {
+    /// Block height this proof attests to.
+    pub height: u64,
+    /// The proposal ID that achieved quorum.
+    pub proposal_id: [u8; 32],
+    /// Total number of validators in the committee at this height.
+    pub total_validators: u32,
+    /// The individual commit attestations (>= 2f+1 required).
+    pub attestations: Vec<CommitAttestation>,
+}
+
+impl BftQuorumProof {
+    /// Reconstruct the vote signing envelope for a commit attestation.
+    ///
+    /// This must produce the exact same byte sequence as
+    /// `ConsensusEngine::serialize_vote_data` in lib-consensus.
+    pub fn reconstruct_vote_envelope(attestation: &CommitAttestation, height: u64) -> Vec<u8> {
+        let mut data = Vec::with_capacity(32 + 32 + 32 + 1 + 8 + 4);
+        data.extend_from_slice(&attestation.vote_id);
+        data.extend_from_slice(&attestation.validator_id);
+        data.extend_from_slice(&attestation.proposal_id);
+        data.push(3u8); // VoteType::Commit = 3
+        data.extend_from_slice(&height.to_le_bytes());
+        data.extend_from_slice(&attestation.round.to_le_bytes());
+        data
     }
 }

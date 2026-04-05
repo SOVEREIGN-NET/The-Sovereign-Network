@@ -95,9 +95,10 @@ impl GenesisValidator {
 
         // Try to parse as hex
         if let Ok(bytes) = hex::decode(key_str) {
+            let dilithium_pk: [u8; 2592] = bytes.as_slice().try_into().ok()?;
             Some(PublicKey {
-                dilithium_pk: bytes,
-                kyber_pk: Vec::new(),
+                dilithium_pk,
+                kyber_pk: [0u8; 1568],
                 key_id: identity_id.0,
             })
         } else {
@@ -115,7 +116,7 @@ impl GenesisValidator {
     pub fn consensus_key_bytes(&self) -> Vec<u8> {
         self.consensus_key
             .as_ref()
-            .map(|k| k.dilithium_pk.clone())
+            .map(|k| k.dilithium_pk.to_vec())
             .unwrap_or_default()
     }
 }

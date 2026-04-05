@@ -474,8 +474,8 @@ impl TokenHandler {
                     .unwrap_or(0) as u64
             } else {
                 let wallet_key = PublicKey {
-                    dilithium_pk: vec![],
-                    kyber_pk: vec![],
+                    dilithium_pk: [0u8; 2592],
+                    kyber_pk: [0u8; 1568],
                     key_id: wallet_id,
                 };
                 token.balance_of(&wallet_key)
@@ -609,7 +609,9 @@ impl TokenHandler {
 
         let blockchain = self.blockchain.read().await;
         let target_key_id = if let Some(wallet) = blockchain.wallet_registry.get(address) {
-            let wallet_pk = PublicKey::new(wallet.public_key.clone());
+            let wallet_pk = PublicKey::new(
+                wallet.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
+            );
             wallet_pk.key_id
         } else {
             let pubkey = self.identity_to_pubkey(address)?;
@@ -633,8 +635,8 @@ impl TokenHandler {
             let balance = if *token_id == native_token_id {
                 if let Some(wallet_id) = sov_wallet_id {
                     let wallet_key = PublicKey {
-                        dilithium_pk: vec![],
-                        kyber_pk: vec![],
+                        dilithium_pk: [0u8; 2592],
+                        kyber_pk: [0u8; 1568],
                         key_id: wallet_id,
                     };
                     token.balance_of(&wallet_key)
@@ -722,13 +724,15 @@ impl TokenHandler {
             let mut key_id_array = [0u8; 32];
             key_id_array.copy_from_slice(&key_bytes);
             return Ok(PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: key_id_array,
             });
         }
 
-        Ok(PublicKey::new(key_bytes))
+        let key_array: [u8; 2592] = key_bytes.as_slice().try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid public key length: expected 2592 bytes"))?;
+        Ok(PublicKey::new(key_array))
     }
 
     /// Resolve a wallet_id for SOV balance lookups/transfers.

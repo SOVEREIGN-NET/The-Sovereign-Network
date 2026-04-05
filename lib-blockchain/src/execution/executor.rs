@@ -360,8 +360,8 @@ impl BlockExecutor {
         })?;
         let balance = mutator.get_token_balance(&token_id, recipient)?;
         let recipient_pk = lib_crypto::PublicKey {
-            dilithium_pk: Vec::new(),
-            kyber_pk: Vec::new(),
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: recipient.0,
         };
         contract.total_supply = new_supply;
@@ -2201,8 +2201,8 @@ impl BlockExecutor {
                     TxApplyError::Internal(format!("TokenCreation mint failed: {e}"))
                 })?;
                 let treasury_pk = lib_crypto::PublicKey {
-                    dilithium_pk: vec![],
-                    kyber_pk: vec![],
+                    dilithium_pk: [0u8; 2592],
+                    kyber_pk: [0u8; 1568],
                     key_id: payload.treasury_recipient,
                 };
                 token.mint(&treasury_pk, treasury_allocation).map_err(|e| {

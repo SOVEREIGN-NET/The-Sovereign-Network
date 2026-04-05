@@ -183,6 +183,9 @@ impl ZhtpRequestHandler for BlockchainHandler {
             }
             // New incremental sync endpoints
             (ZhtpMethod::Get, "/api/v1/blockchain/tip") => self.handle_get_chain_tip(request).await,
+            (ZhtpMethod::Get, path) if path.starts_with("/api/v1/blockchain/quorum-proof/") => {
+                self.handle_get_quorum_proof(request).await
+            }
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/blockchain/blocks/") => {
                 self.handle_get_block_range(request).await
             }
@@ -554,7 +557,7 @@ fn estimate_signed_tx_size(raw_tx: &[u8]) -> usize {
                     _ => (2420usize, 1312usize), // Default to Dilithium2
                 };
                 tx.signature.signature = vec![0u8; expected_sig];
-                tx.signature.public_key.dilithium_pk = vec![0u8; expected_pk];
+                tx.signature.public_key.dilithium_pk = [0u8; 2592];
             }
             bincode::serialize(&tx)
                 .map(|b| b.len())
@@ -1414,17 +1417,15 @@ impl BlockchainHandler {
         let output = lib_blockchain::TransactionOutput {
             commitment: lib_blockchain::Hash::from_slice(&req_data.amount.to_le_bytes()),
             note: lib_blockchain::Hash::from_slice(&recipient_pubkey),
-            recipient: lib_blockchain::integration::crypto_integration::PublicKey::new(
-                recipient_pubkey.clone(),
-            ),
+            recipient: lib_blockchain::integration::crypto_integration::PublicKey::new([0u8; 2592]),
         };
 
         // Use the provided signature (client must sign with their private key)
         let signature = lib_crypto::Signature {
             signature: signature_bytes, //  Use actual provided signature
             public_key: lib_crypto::PublicKey {
-                dilithium_pk: sender_pubkey.clone(),
-                kyber_pk: Vec::new(),
+                dilithium_pk: sender_pubkey.as_slice().try_into().unwrap_or([0u8; 2592]),
+                kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
             algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
@@ -2595,6 +2596,58 @@ impl BlockchainHandler {
             "application/octet-stream".to_string(),
             None,
         ))
+    }
+
+    /// Get BFT quorum proof for a block height.
+    ///
+    /// Used by catch-up sync to verify BFT finality from the peer's proof
+    /// instead of relying on the `bft_active_height` guard.
+    /// Returns 404 if no proof is stored (pre-upgrade blocks).
+    async fn handle_get_quorum_proof(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        // Parse height from URI: /api/v1/blockchain/quorum-proof/{height}
+        let parts: Vec<&str> = request.uri.split('/').collect();
+        if parts.len() < 6 {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Invalid format. Use: /api/v1/blockchain/quorum-proof/{height}".to_string(),
+            ));
+        }
+        let height: u64 = parts[5]
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Invalid height"))?;
+
+        let blockchain_arc = self
+            .get_blockchain()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get blockchain: {}", e))?;
+        let blockchain = blockchain_arc.read().await;
+
+        if let Some(ref store) = blockchain.store {
+            match store.get_quorum_proof(height) {
+                Ok(Some(proof)) => {
+                    let serialized = bincode::serialize(&proof)
+                        .map_err(|e| anyhow::anyhow!("Failed to serialize proof: {}", e))?;
+                    Ok(ZhtpResponse::success_with_content_type(
+                        serialized,
+                        "application/octet-stream".to_string(),
+                        None,
+                    ))
+                }
+                Ok(None) => Ok(ZhtpResponse::error(
+                    ZhtpStatus::NotFound,
+                    format!("No quorum proof for height {}", height),
+                )),
+                Err(e) => Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("Failed to retrieve proof: {}", e),
+                )),
+            }
+        } else {
+            Ok(ZhtpResponse::error(
+                ZhtpStatus::InternalServerError,
+                "No storage backend configured".to_string(),
+            ))
+        }
     }
 
     /// Get edge node statistics and sync status

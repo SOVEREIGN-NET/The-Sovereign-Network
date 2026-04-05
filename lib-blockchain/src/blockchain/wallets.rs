@@ -192,7 +192,9 @@ impl Blockchain {
             if wallet.wallet_type != "Primary" {
                 continue;
             }
-            let pk = PublicKey::new(wallet.public_key.clone());
+            let pk = PublicKey::new(
+                wallet.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
+            );
             if &pk.key_id == signer_key_id {
                 return Self::wallet_id_bytes(wallet_id);
             }
@@ -222,7 +224,9 @@ impl Blockchain {
                 continue;
             }
             if let Some(wallet_id_bytes) = Self::wallet_id_bytes(wallet_id) {
-                let pk = PublicKey::new(wallet.public_key.clone());
+                let pk = PublicKey::new(
+                wallet.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
+            );
                 key_to_wallet.insert(pk.key_id, wallet_id_bytes);
             }
         }
@@ -265,7 +269,9 @@ impl Blockchain {
             if wallet.public_key.is_empty() {
                 continue;
             }
-            let pk = PublicKey::new(wallet.public_key.clone());
+            let pk = PublicKey::new(
+                wallet.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
+            );
             if &pk.key_id == key_id {
                 return Some(wallet.public_key.clone());
             }
@@ -275,7 +281,9 @@ impl Blockchain {
             if identity.public_key.is_empty() {
                 continue;
             }
-            let pk = PublicKey::new(identity.public_key.clone());
+            let pk = PublicKey::new(
+                identity.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
+            );
             if &pk.key_id == key_id {
                 return Some(identity.public_key.clone());
             }
@@ -449,7 +457,9 @@ impl Blockchain {
             vec![],
             Signature {
                 signature: wallet_data.public_key.clone(),
-                public_key: PublicKey::new(wallet_data.public_key.clone()),
+                public_key: PublicKey::new(
+                    wallet_data.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
+                ),
                 algorithm: SignatureAlgorithm::Dilithium2,
                 timestamp: wallet_data.created_at,
             },
@@ -502,7 +512,9 @@ impl Blockchain {
                 format!("funding_commitment_{}_{}", wallet_id, amount).as_bytes(),
             ),
             note: crate::types::hash::blake3_hash(format!("funding_note_{}", wallet_id).as_bytes()),
-            recipient: PublicKey::new(recipient_identity.to_vec()),
+            recipient: PublicKey::new(
+                recipient_identity.try_into().unwrap_or([0u8; 2592])
+            ),
         };
         let utxo_hash = crate::types::hash::blake3_hash(
             format!("funding_utxo:{}:{}", wallet_id, amount).as_bytes(),

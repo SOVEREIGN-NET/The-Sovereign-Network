@@ -112,7 +112,7 @@ impl TokenContract {
     /// Create SOV native token
     pub fn new_sov_native() -> Self {
         use super::constants::*;
-        let creator = PublicKey::new(vec![0u8; 1312]); // Mock creator for SOV
+        let creator = PublicKey::new([0u8; 2592]); // Mock creator for SOV
         Self::new(
             crate::contracts::utils::generate_lib_token_id(),
             SOV_TOKEN_NAME.to_string(),
@@ -133,7 +133,7 @@ impl TokenContract {
     /// # Arguments
     /// * `kernel_authority` - The public key of the Treasury Kernel (only entity that can mint)
     pub fn new_sov_with_kernel_authority(kernel_authority: PublicKey) -> Self {
-        let creator = PublicKey::new(vec![0u8; 1312]); // Mock creator for SOV
+        let creator = PublicKey::new([0u8; 2592]); // Mock creator for SOV
         let mut token = Self::new(
             crate::contracts::utils::generate_lib_token_id(),
             "SOV Token".to_string(),

@@ -287,8 +287,8 @@ impl WalletHandler {
                                 key_id.copy_from_slice(bytes);
                                 let wallet_key =
                                     lib_blockchain::integration::crypto_integration::PublicKey {
-                                        dilithium_pk: vec![],
-                                        kyber_pk: vec![],
+                                        dilithium_pk: [0u8; 2592],
+                                        kyber_pk: [0u8; 1568],
                                         key_id,
                                     };
                                 token.balances.get(&wallet_key).copied()
@@ -432,20 +432,20 @@ impl WalletHandler {
                                 key_id.copy_from_slice(&bytes);
                                 let wallet_key =
                                     lib_blockchain::integration::crypto_integration::PublicKey {
-                                        dilithium_pk: vec![],
-                                        kyber_pk: vec![],
+                                        dilithium_pk: [0u8; 2592],
+                                        kyber_pk: [0u8; 1568],
                                         key_id,
                                     };
                                 token.balance_of(&wallet_key)
                             } else {
                                 token.balance_of(&lib_blockchain::integration::crypto_integration::PublicKey::new(
-                                    wallet_data.public_key.clone()
+                                    wallet_data.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
                                 ))
                             }
                         } else {
                             token.balance_of(
                                 &lib_blockchain::integration::crypto_integration::PublicKey::new(
-                                    wallet_data.public_key.clone(),
+                                    wallet_data.public_key.as_slice().try_into().unwrap_or([0u8; 2592]),
                                 ),
                             )
                         };
@@ -937,8 +937,9 @@ impl WalletHandler {
             return Some(id);
         }
         Some(
-            lib_blockchain::integration::crypto_integration::PublicKey::new(public_key.to_vec())
-                .key_id,
+            lib_blockchain::integration::crypto_integration::PublicKey::new(
+                public_key.try_into().unwrap_or([0u8; 2592])
+            ).key_id,
         )
     }
 

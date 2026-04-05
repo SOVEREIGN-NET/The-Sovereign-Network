@@ -1029,7 +1029,9 @@ pub async fn handle_migrate_identity(
         hex::decode(&req.signature).map_err(|_| anyhow::anyhow!("Invalid signature hex"))?;
 
     // Convert to lib_crypto::PublicKey (computes key_id = Blake3(dilithium_pk))
-    let new_public_key = lib_crypto::PublicKey::new(new_public_key_bytes.clone());
+    let new_public_key_bytes: [u8; 2592] = new_public_key_bytes.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid public key size: expected 2592 bytes (Dilithium5)"))?;
+    let new_public_key = lib_crypto::PublicKey::new(new_public_key_bytes);
     let new_did = format!("did:zhtp:{}", hex::encode(new_public_key.key_id));
 
     // SECURITY: Verify signature using NEW public key (proves control of seed-derived key)
@@ -1150,8 +1152,12 @@ pub async fn handle_migrate_identity(
                             short_key_max_len =
                                 Some(short_key_max_len.map(|v| v.max(key_len)).unwrap_or(key_len));
                         } else if let Some(token) = token_opt {
-                            let old_pk = lib_crypto::PublicKey::new(wallet_data.public_key.clone());
-                            let new_pk = lib_crypto::PublicKey::new(new_public_key_bytes.clone());
+                            let old_pk_bytes: [u8; 2592] = wallet_data.public_key.as_slice().try_into()
+                                .unwrap_or([0u8; 2592]);
+                            let new_pk_bytes: [u8; 2592] = new_public_key_bytes.as_slice().try_into()
+                                .unwrap_or([0u8; 2592]);
+                            let old_pk = lib_crypto::PublicKey::new(old_pk_bytes);
+                            let new_pk = lib_crypto::PublicKey::new(new_pk_bytes);
                             if old_pk != new_pk {
                                 movable_balance_total =
                                     movable_balance_total.saturating_add(token.balance_of(&old_pk));
@@ -1374,7 +1380,7 @@ pub async fn handle_migrate_identity(
                 let identity_tx = lib_blockchain::transaction::IdentityTransactionData {
                     did: new_did.clone(),
                     display_name: display_name.clone(),
-                    public_key: new_public_key_bytes.clone(),
+                    public_key: new_public_key_bytes.to_vec(),
                     ownership_proof: vec![], // system-style migration registration
                     identity_type: "human".to_string(),
                     did_document_hash: lib_blockchain::Hash::zero(),
@@ -1411,8 +1417,8 @@ pub async fn handle_migrate_identity(
                     }
                 };
                 let wallet_addr = lib_crypto::PublicKey {
-                    dilithium_pk: vec![],
-                    kyber_pk: vec![],
+                    dilithium_pk: [0u8; 2592],
+                    kyber_pk: [0u8; 1568],
                     key_id: wallet_id_bytes,
                 };
 
@@ -1458,7 +1464,9 @@ pub async fn handle_migrate_identity(
                         }
                     } else {
                         if let Some(token) = blockchain.token_contracts.get(&sov_token_id) {
-                            let old_pk = lib_crypto::PublicKey::new(old_public_key.clone());
+                            let old_pk_bytes: [u8; 2592] = old_public_key.as_slice().try_into()
+                                .unwrap_or([0u8; 2592]);
+                            let old_pk = lib_crypto::PublicKey::new(old_pk_bytes);
                             if old_pk.key_id != wallet_addr.key_id {
                                 let old_balance = token.balance_of(&old_pk);
                                 if old_balance > 0 {
@@ -1488,7 +1496,7 @@ pub async fn handle_migrate_identity(
 
                     let mut updated = existing.clone();
                     updated.owner_identity_id = Some(new_identity_id_chain.clone());
-                    updated.public_key = new_public_key_bytes.clone();
+                    updated.public_key = new_public_key_bytes.to_vec();
 
                     // Ensure consensus-level chain_id matches the running chain configuration.
                     let mut tx = lib_blockchain::transaction::Transaction::new_wallet_update_with_chain_id(
@@ -1759,12 +1767,21 @@ async fn load_migration_authority_keypair() -> anyhow::Result<lib_crypto::KeyPai
         ));
     }
 
-    let public_key = lib_crypto::PublicKey::new(ks.dilithium_pk.clone());
+    let dilithium_pk: [u8; 2592] = ks.dilithium_pk.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid dilithium_pk size: expected 2592 bytes"))?;
+    let dilithium_sk: [u8; 4864] = ks.dilithium_sk.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid dilithium_sk size: expected 4864 bytes"))?;
+    let kyber_sk: [u8; 3168] = ks.kyber_sk.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid kyber_sk size: expected 3168 bytes"))?;
+    let master_seed: [u8; 64] = ks.master_seed.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid master_seed size: expected 64 bytes"))?;
+    
+    let public_key = lib_crypto::PublicKey::new(dilithium_pk);
     let private_key = lib_crypto::PrivateKey {
-        dilithium_sk: ks.dilithium_sk,
-        dilithium_pk: ks.dilithium_pk,
-        kyber_sk: ks.kyber_sk,
-        master_seed: ks.master_seed,
+        dilithium_sk,
+        dilithium_pk,
+        kyber_sk,
+        master_seed,
     };
 
     Ok(lib_crypto::KeyPair {
@@ -1792,7 +1809,7 @@ fn build_signed_sov_mint_tx(
         token_mint_data,
         lib_blockchain::integration::crypto_integration::Signature {
             signature: Vec::new(),
-            public_key: lib_blockchain::integration::crypto_integration::PublicKey::new(Vec::new()),
+            public_key: lib_blockchain::integration::crypto_integration::PublicKey::new([0u8; 2592]),
             algorithm:
                 lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
             timestamp: std::time::SystemTime::now()

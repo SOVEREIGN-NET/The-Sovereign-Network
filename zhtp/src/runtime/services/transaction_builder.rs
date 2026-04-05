@@ -76,7 +76,7 @@ impl TransactionBuilder {
             note: lib_blockchain::types::hash::blake3_hash(
                 &format!("note_{}", hex::encode(economics_tx.tx_id)).as_bytes(),
             ),
-            recipient: PublicKey::new(economics_tx.to.to_vec()),
+            recipient: PublicKey::new([0u8; 2592]),
         }];
 
         // Map economics transaction type to blockchain transaction type
@@ -136,7 +136,7 @@ impl TransactionBuilder {
         // Create the transaction for signing (without signature)
         let temp_signature = Signature {
             signature: Vec::new(),
-            public_key: PublicKey::new(system_keypair.public_key.dilithium_pk.to_vec()),
+            public_key: PublicKey::new(system_keypair.public_key.dilithium_pk),
             algorithm: SignatureAlgorithm::Dilithium2,
             timestamp: economics_tx.timestamp,
         };
@@ -170,7 +170,7 @@ impl TransactionBuilder {
         // Create blockchain signature structure
         Ok(Signature {
             signature: crypto_signature.signature,
-            public_key: PublicKey::new(system_keypair.public_key.dilithium_pk.to_vec()),
+            public_key: PublicKey::new(system_keypair.public_key.dilithium_pk),
             algorithm: SignatureAlgorithm::Dilithium2,
             timestamp: economics_tx.timestamp,
         })

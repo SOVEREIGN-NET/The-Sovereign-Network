@@ -151,8 +151,8 @@ fn build_local_node(local_node_id: lib_identity::NodeId) -> DhtNode {
         peer: DhtPeerIdentity {
             node_id: local_node_id.clone(),
             public_key: lib_crypto::PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
             did: format!("did:zhtp:{}", hex::encode(local_node_id.as_bytes())),

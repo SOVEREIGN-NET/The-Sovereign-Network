@@ -194,7 +194,7 @@ impl CryptoHandler {
         let response = SignMessageResponse {
             signature: hex::encode(&signature.signature),
             public_key: hex::encode(&public_key.as_bytes()),
-            algorithm: "Dilithium2".to_string(),
+            algorithm: "Dilithium5".to_string(),
             message_hash: hex::encode(message_hash.as_slice()),
         };
 
@@ -237,7 +237,7 @@ impl CryptoHandler {
 
         let response = VerifySignatureResponse {
             valid,
-            algorithm: "Dilithium2".to_string(),
+            algorithm: "Dilithium5".to_string(),
             message_hash: hex::encode(message_hash.as_slice()),
         };
 
@@ -258,7 +258,7 @@ impl CryptoHandler {
         let response = GenerateKeypairResponse {
             public_key: hex::encode(&keypair.public_key.dilithium_pk),
             private_key: hex::encode(&keypair.private_key.dilithium_sk),
-            algorithm: "Dilithium2".to_string(),
+            algorithm: "Dilithium5".to_string(),
             warning: "NEVER share the private key! Store it securely. This key cannot be recovered if lost.".to_string(),
         };
 

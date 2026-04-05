@@ -473,8 +473,8 @@ impl TreasuryKernel {
         // Fallback: construct minimal PublicKey with just key_id
         // This works because token contract uses key_id for equality checks
         Ok(PublicKey {
-            dilithium_pk: Vec::new(),
-            kyber_pk: Vec::new(),
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: *key_id,
         })
     }
@@ -486,7 +486,11 @@ mod tests {
 
     fn test_governance() -> PublicKey {
         PublicKey {
-            dilithium_pk: vec![99u8],
+            dilithium_pk: {
+                let mut pk = [0u8; 2592];
+                pk[0] = 99u8;
+                pk
+            },
             kyber_pk: vec![99u8],
             key_id: [99u8; 32],
         }

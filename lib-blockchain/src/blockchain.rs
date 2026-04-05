@@ -441,7 +441,7 @@ pub struct Blockchain {
 /// ### 1. `consensus_key` — Consensus / Vote-Signing Key
 /// Used exclusively for signing BFT consensus messages: block proposals, pre-votes,
 /// pre-commits, and view-change messages.
-/// - **Algorithm**: Post-quantum Dilithium2 (lattice-based).
+/// - **Algorithm**: Post-quantum Dilithium5 (NIST FIPS 204, ML-DSA level 5).
 /// - **Exposure**: Hot — must be online during every consensus round.
 /// - **Compromise impact**: Attacker can equivocate (double-sign) on behalf of this
 ///   validator, triggering slashing of the staked SOV.
@@ -457,7 +457,7 @@ pub struct Blockchain {
 /// ### 3. `rewards_key` — Rewards / Fee-Collection Key
 /// Identifies the wallet address to which block rewards and fee distributions are sent.
 /// This is the public key of the validator's rewards wallet (see `WalletTransactionData`).
-/// - **Algorithm**: Dilithium2 or Ed25519 depending on wallet type.
+/// - **Algorithm**: Dilithium5 or Ed25519 depending on wallet type.
 /// - **Exposure**: Can be kept cold — only needed when claiming accumulated rewards.
 /// - **Compromise impact**: Attacker can redirect future reward payments; historical
 ///   rewards already on-chain are unaffected.
@@ -476,10 +476,12 @@ pub struct ValidatorInfo {
     pub stake: u64,
     /// Storage provided (in bytes)
     pub storage_provided: u64,
-    /// Post-quantum Dilithium2 public key used exclusively for signing BFT consensus
+    /// Post-quantum Dilithium5 public key used exclusively for signing BFT consensus
     /// messages (proposals, pre-votes, pre-commits).  MUST differ from `networking_key`
     /// and `rewards_key`.
-    pub consensus_key: Vec<u8>,
+    /// Fixed size [u8; 2592] for Dilithium5 public key.
+    #[serde(with = "serde_arrays")]
+    pub consensus_key: [u8; 2592],
     /// Ed25519 / X25519 public key used for P2P transport identity (QUIC TLS, DHT node
     /// ID).  MUST differ from `consensus_key` and `rewards_key`.
     pub networking_key: Vec<u8>,
@@ -933,11 +935,19 @@ impl Blockchain {
                                         "inactive"
                                     }
                                 };
+                                // Convert consensus_key from Vec<u8> to [u8; 2592]
+                                let consensus_key: [u8; 2592] = match vd.consensus_key.as_slice().try_into() {
+                                    Ok(k) => k,
+                                    Err(_) => {
+                                        warn!("Skipping validator {}: consensus_key must be 2592 bytes (Dilithium5)", vd.identity_id);
+                                        continue;
+                                    }
+                                };
                                 let vi = ValidatorInfo {
                                     identity_id: vd.identity_id.clone(),
                                     stake: vd.stake,
                                     storage_provided: vd.storage_provided,
-                                    consensus_key: vd.consensus_key.clone(),
+                                    consensus_key,
                                     networking_key: vd.networking_key.clone(),
                                     rewards_key: vd.rewards_key.clone(),
                                     network_address: vd.network_address.clone(),
@@ -2458,23 +2468,23 @@ impl Blockchain {
             }
 
             let compensation_pk = PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: data.compensation_key_id,
             };
             let operational_pk = PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: data.operational_key_id,
             };
             let performance_pk = PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: data.performance_key_id,
             };
             let strategic_pk = PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: data.strategic_key_id,
             };
 
@@ -2539,8 +2549,8 @@ impl Blockchain {
             };
 
             let employee_pk = PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: data.employee_key_id,
             };
             let caller_pk = tx.signature.public_key.clone();
@@ -2627,8 +2637,8 @@ impl Blockchain {
             })?;
 
             let comp_caller = PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: comp_key_id,
             };
             let ctx = ExecutionContext::new(
@@ -6574,8 +6584,8 @@ impl Blockchain {
             anyhow::anyhow!("SOV token contract not found after ensure_sov_token_contract")
         })?;
         let recipient = crate::integration::crypto_integration::PublicKey {
-            dilithium_pk: vec![],
-            kyber_pk: vec![],
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: recipient_key_id,
         };
         token

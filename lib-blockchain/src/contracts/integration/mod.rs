@@ -261,7 +261,7 @@ impl ContractTransactionBuilder {
             fee: self.fee,
             signature: crate::integration::crypto_integration::Signature {
                 signature: Vec::new(),
-                public_key: crate::integration::crypto_integration::PublicKey::new(Vec::new()),
+                public_key: crate::integration::crypto_integration::PublicKey::new([0u8; 2592]),
                 algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
                 timestamp: 0,
             }, // Temporary placeholder

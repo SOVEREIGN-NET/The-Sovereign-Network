@@ -40,8 +40,8 @@ impl Default for GlobalStakingGuardrails {
             min_threshold: 10_000_00000000,     // 10,000 SOV (8 decimals)
             max_threshold: 10_000_000_00000000, // 10,000,000 SOV (8 decimals)
             governance_addr: PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
         }
@@ -467,8 +467,8 @@ impl SovDaoStaking {
 impl Default for SovDaoStaking {
     fn default() -> Self {
         Self::new(PublicKey {
-            dilithium_pk: vec![],
-            kyber_pk: vec![],
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: [0u8; 32],
         })
     }
@@ -507,7 +507,9 @@ fn derive_token_address(dao: &PendingDao, current_height: u64) -> PublicKey {
         h.update(b"dao_token_dilithium");
         h.update(&key_id);
         let bytes: [u8; 32] = h.finalize().into();
-        bytes.to_vec()
+        let mut full_pk = [0u8; 2592];
+        full_pk[..32].copy_from_slice(&bytes);
+        full_pk
     };
 
     let kyber_pk = {
@@ -515,7 +517,9 @@ fn derive_token_address(dao: &PendingDao, current_height: u64) -> PublicKey {
         h.update(b"dao_token_kyber");
         h.update(&key_id);
         let bytes: [u8; 32] = h.finalize().into();
-        bytes.to_vec()
+        let mut full_pk = [0u8; 1568];
+        full_pk[..32].copy_from_slice(&bytes);
+        full_pk
     };
 
     PublicKey {
@@ -539,7 +543,9 @@ fn derive_treasury_address(dao: &PendingDao, current_height: u64) -> PublicKey {
         h.update(b"dao_treasury_dilithium");
         h.update(&key_id);
         let bytes: [u8; 32] = h.finalize().into();
-        bytes.to_vec()
+        let mut full_pk = [0u8; 2592];
+        full_pk[..32].copy_from_slice(&bytes);
+        full_pk
     };
 
     let kyber_pk = {
@@ -547,7 +553,9 @@ fn derive_treasury_address(dao: &PendingDao, current_height: u64) -> PublicKey {
         h.update(b"dao_treasury_kyber");
         h.update(&key_id);
         let bytes: [u8; 32] = h.finalize().into();
-        bytes.to_vec()
+        let mut full_pk = [0u8; 1568];
+        full_pk[..32].copy_from_slice(&bytes);
+        full_pk
     };
 
     PublicKey {

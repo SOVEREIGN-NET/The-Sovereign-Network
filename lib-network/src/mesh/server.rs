@@ -867,7 +867,10 @@ impl ZhtpMeshServer {
 
         // Create temporary PublicKey from node_id for Bluetooth initialization
         // Note: In production, the main zhtp application provides the real PublicKey
-        let temp_public_key = lib_crypto::PublicKey::new(node_id.as_bytes().to_vec());
+        let node_bytes = node_id.as_bytes();
+        let mut dilithium_pk = [0u8; 2592];
+        dilithium_pk[..32].copy_from_slice(node_bytes);
+        let temp_public_key = lib_crypto::PublicKey::new(dilithium_pk);
 
         // Initialize Bluetooth LE mesh protocol
         let bluetooth_protocol = BluetoothMeshProtocol::new(*node_id.as_bytes(), temp_public_key)?;
@@ -1484,11 +1487,7 @@ impl ZhtpMeshServer {
                     coverage_radius_km: 0.1, // WiFi has short range but high bandwidth
                     max_throughput_mbps: wifi_info.bandwidth_estimate_mbps,
                     cost_per_mb_tokens: 5, // P2P mesh relay cost
-                    operator: lib_crypto::PublicKey::new(vec![
-                        rand::random(),
-                        rand::random(),
-                        rand::random(),
-                    ]), // Random operator key
+                    operator: lib_crypto::PublicKey::new([0u8; 2592]), // Placeholder operator key
                     ubi_share_percentage: 25.0,
                 },
             );
@@ -1556,7 +1555,10 @@ impl ZhtpMeshServer {
 
             // Set node ID in handler
             let node = self.mesh_node.read().await;
-            let node_id = PublicKey::new(node.node_id.as_bytes().to_vec());
+            let node_bytes = node.node_id.as_bytes();
+            let mut dilithium_pk = [0u8; 2592];
+            dilithium_pk[..32].copy_from_slice(node_bytes);
+            let node_id = PublicKey::new(dilithium_pk);
             handler_guard.set_node_id(node_id);
 
             // Wire identity store-and-forward
@@ -2313,7 +2315,7 @@ fn create_default_mesh_identity() -> lib_identity::ZhtpIdentity {
         id: identity_id.clone(),
         identity_type: IdentityType::Device, // Mesh server is a device/service
         did: mesh_did,
-        public_key: PublicKey::new(vec![1, 2, 3, 4, 5]), // Placeholder public key
+        public_key: PublicKey::new([0u8; 2592]), // Placeholder public key
         private_key: None,
         node_id: mesh_node_id,
         device_node_ids,

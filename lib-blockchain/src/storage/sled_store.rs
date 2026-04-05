@@ -42,6 +42,7 @@ const TREE_BONDING_CURVES: &str = "bonding_curves"; // Bonding curve tokens
 const TREE_BONDING_CURVE_SYMBOLS: &str = "bonding_curve_symbols"; // Index: symbol → token_id
 const TREE_CBE_ACCOUNTS: &str = "cbe_accounts"; // Canonical CBE account states (#1926)
 const TREE_PENDING_TRANSACTIONS: &str = "pending_transactions"; // Non-consensus restart recovery
+const TREE_QUORUM_PROOFS: &str = "quorum_proofs"; // BFT quorum proofs by height
 const TREE_META: &str = "meta";
 
 /// Sled-based implementation of BlockchainStore
@@ -67,6 +68,7 @@ pub struct SledStore {
     bonding_curve_symbols: Tree, // Index: symbol → token_id
     cbe_accounts: Tree,          // Canonical CBE account states: key_id → BondingCurveAccountState
     pending_transactions: Tree,  // Non-consensus mempool recovery state
+    quorum_proofs: Tree,         // BFT quorum proofs by height
     meta: Tree,
 
     // Transaction state
@@ -196,6 +198,9 @@ impl SledStore {
         let pending_transactions = db
             .open_tree(TREE_PENDING_TRANSACTIONS)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let quorum_proofs = db
+            .open_tree(TREE_QUORUM_PROOFS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
         let meta = db
             .open_tree(TREE_META)
             .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -232,6 +237,7 @@ impl SledStore {
             bonding_curve_symbols,
             cbe_accounts,
             pending_transactions,
+            quorum_proofs,
             meta,
             tx_active: AtomicBool::new(false),
             tx_height: AtomicU64::new(0),
@@ -419,6 +425,7 @@ impl SledStore {
             Err(e) => Err(StorageError::Database(e.to_string())),
         }
     }
+
 }
 
 impl BlockchainStore for SledStore {
@@ -1551,6 +1558,34 @@ impl BlockchainStore for SledStore {
         }
 
         Ok(())
+    }
+
+    fn put_quorum_proof(
+        &self,
+        height: u64,
+        proof: &lib_types::consensus::BftQuorumProof,
+    ) -> StorageResult<()> {
+        let key = height.to_be_bytes();
+        let value = Self::serialize(proof)?;
+        self.quorum_proofs
+            .insert(key, value)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    fn get_quorum_proof(
+        &self,
+        height: u64,
+    ) -> StorageResult<Option<lib_types::consensus::BftQuorumProof>> {
+        let key = height.to_be_bytes();
+        match self.quorum_proofs.get(key) {
+            Ok(Some(bytes)) => {
+                let proof: lib_types::consensus::BftQuorumProof = Self::deserialize(&bytes)?;
+                Ok(Some(proof))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
     }
 }
 

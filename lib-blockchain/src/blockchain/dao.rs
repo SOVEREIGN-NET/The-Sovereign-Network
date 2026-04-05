@@ -299,13 +299,13 @@ impl Blockchain {
             .and_then(Self::parse_hex_32)?;
         let class = Self::parse_dao_class(&class_str)?;
         let token_addr = crate::integration::crypto_integration::PublicKey {
-            dilithium_pk: Vec::new(),
-            kyber_pk: Vec::new(),
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: token_key_id,
         };
         let treasury = crate::integration::crypto_integration::PublicKey {
-            dilithium_pk: Vec::new(),
-            kyber_pk: Vec::new(),
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: treasury_key_id,
         };
         let dao_id = crate::contracts::dao_registry::derive_dao_id(&token_addr, class, &treasury);
@@ -469,9 +469,9 @@ impl Blockchain {
             }
             _ => {
                 let treasury_wallet = self.get_dao_treasury_wallet()?;
-                crate::integration::crypto_integration::PublicKey::new(
-                    treasury_wallet.public_key.clone(),
-                )
+                let pk_bytes: [u8; 2592] = treasury_wallet.public_key.as_slice().try_into()
+                    .map_err(|_| anyhow::anyhow!("Treasury wallet public key must be 2592 bytes (Dilithium5)"))?;
+                crate::integration::crypto_integration::PublicKey::new(pk_bytes)
             }
         };
 
@@ -488,9 +488,9 @@ impl Blockchain {
 
     pub fn get_dao_treasury_utxos(&self) -> Result<Vec<(Hash, TransactionOutput)>> {
         let treasury_wallet = self.get_dao_treasury_wallet()?;
-        let treasury_pubkey = crate::integration::crypto_integration::PublicKey::new(
-            treasury_wallet.public_key.clone(),
-        );
+        let pk_bytes: [u8; 2592] = treasury_wallet.public_key.as_slice().try_into()
+            .map_err(|_| anyhow::anyhow!("Treasury wallet public key must be 2592 bytes (Dilithium5)"))?;
+        let treasury_pubkey = crate::integration::crypto_integration::PublicKey::new(pk_bytes);
 
         let mut utxos = Vec::new();
         for (utxo_id, output) in &self.utxo_set {
@@ -512,7 +512,7 @@ impl Blockchain {
             commitment: crate::types::hash::blake3_hash(&total_fees.to_le_bytes()),
             note: Hash::default(),
             recipient: crate::integration::crypto_integration::PublicKey::new(
-                treasury_wallet.public_key.clone(),
+                treasury_wallet.public_key.as_slice().try_into().unwrap_or([0u8; 2592]),
             ),
         };
 
@@ -522,7 +522,7 @@ impl Blockchain {
             0,
             crate::integration::crypto_integration::Signature {
                 signature: vec![],
-                public_key: crate::integration::crypto_integration::PublicKey::new(vec![]),
+                public_key: crate::integration::crypto_integration::PublicKey::new([0u8; 2592]),
                 algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
                 timestamp: crate::utils::time::current_timestamp(),
             },
@@ -694,8 +694,10 @@ impl Blockchain {
         let executor_pubkey = self
             .identity_registry
             .get(&executor_identity)
-            .map(|id| crate::integration::crypto_integration::PublicKey::new(id.public_key.clone()))
-            .unwrap_or_else(|| crate::integration::crypto_integration::PublicKey::new(vec![]));
+            .map(|id| crate::integration::crypto_integration::PublicKey::new(
+                id.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
+            ))
+            .unwrap_or_else(|| crate::integration::crypto_integration::PublicKey::new([0u8; 2592]));
         let sig_bytes = crate::types::hash::blake3_hash(
             &[
                 proposal_id.as_bytes(),

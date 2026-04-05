@@ -411,8 +411,8 @@ impl lib_consensus::validators::ValidatorInfo for BlockchainValidatorAdapter {
         self.0.storage_provided
     }
 
-    fn consensus_key(&self) -> Vec<u8> {
-        self.0.consensus_key.clone()
+    fn consensus_key(&self) -> [u8; 2592] {
+        self.0.consensus_key
     }
 
     fn networking_key(&self) -> Vec<u8> {
@@ -820,31 +820,40 @@ async fn catchup_sync_from_peer(
         for block in blocks {
             let height = block.height();
 
-            let mut bc = blockchain_arc.write().await;
-
-            // CRITICAL: Check the BFT active height guard UNDER the write lock.
+            // BFT finality gate: blocks at or above bft_active_height require a
+            // quorum proof to be applied via catch-up.  This replaces the old
+            // blanket height guard that caused deadlocks when a node missed a BFT
+            // callback — the guard blocked catch-up at the exact height BFT was
+            // stuck on, and BFT couldn't commit because the rest of the network
+            // had already moved on.
             //
-            // bft_active_height = current_round.height = blockchain_height + 1
-            // (the height BFT is proposing/voting on).
+            // With quorum proofs, the guard becomes identity-based: a block with
+            // 2f+1 valid commit signatures IS the BFT-committed block regardless
+            // of what the local consensus engine is working on.
             //
-            // Catch-up MUST NOT apply blocks AT OR ABOVE bft_active_height.
-            // BFT is the sole authority for the current height. A peer's block at
-            // bft_active_height may have a different hash (different timestamp or
-            // proposer) even with identical transactions — applying it races with
-            // BFT commit and causes a divergence halt. See Apr 3 2026 postmortem.
-            // Previous code used `>` (not `>=`), allowing catch-up at the exact BFT
-            // height; that was the root cause of the recurring height-1299 divergence.
-            //
-            // In bootstrap mode the guard is 0, allowing catch-up to proceed freely.
+            // Fallback: blocks without a proof (pre-upgrade, or peer doesn't have
+            // one) are still blocked by the height guard for safety.
             let bft_height = bft_active_height.load(std::sync::atomic::Ordering::Acquire);
-            if bft_height > 0 && height >= bft_height {
-                debug!(
-                    "Catch-up: skipping block {} (BFT active at height {})",
-                    height, bft_height
-                );
-                drop(bc);
-                break;
-            }
+            let verified_proof: Option<lib_types::consensus::BftQuorumProof> =
+                if bft_height > 0 && height >= bft_height {
+                    // Block is in the BFT-active zone.  Fetch + verify a quorum
+                    // proof from the peer BEFORE acquiring the write lock.
+                    match fetch_and_verify_quorum_proof(&mut client, height, &blockchain_arc).await
+                    {
+                        Some(proof) => Some(proof),
+                        None => {
+                            debug!(
+                                "Catch-up: skipping block {} (BFT active at {}, no valid proof)",
+                                height, bft_height
+                            );
+                            break;
+                        }
+                    }
+                } else {
+                    None
+                };
+
+            let mut bc = blockchain_arc.write().await;
 
             // Skip blocks strictly below our tip. Allow height == bc.height only
             // for genesis (height 0): a fresh sled needs the canonical block 0 applied.
@@ -856,6 +865,12 @@ async fn catchup_sync_from_peer(
                 Ok(()) => {
                     applied_in_page += 1;
                     total_applied += 1;
+                    // Persist the verified quorum proof alongside the block.
+                    if let Some(ref proof) = verified_proof {
+                        if let Some(ref store) = bc.store {
+                            let _ = store.put_quorum_proof(height, proof);
+                        }
+                    }
                 }
                 Err(e) => {
                     warn!(
@@ -887,6 +902,69 @@ async fn catchup_sync_from_peer(
     }
 
     Ok(total_applied)
+}
+
+/// Fetch a BFT quorum proof from a peer and verify it against the local
+/// validator registry.  Returns `Some(proof)` if the proof is valid, `None`
+/// if the peer doesn't have one or it fails verification.
+///
+/// Called from `catchup_sync_from_peer` when a block is at or above
+/// `bft_active_height`.  The proof replaces the old blanket height guard
+/// with cryptographic finality verification.
+async fn fetch_and_verify_quorum_proof(
+    client: &mut lib_network::client::ZhtpClient,
+    height: u64,
+    blockchain_arc: &Arc<tokio::sync::RwLock<lib_blockchain::Blockchain>>,
+) -> Option<lib_types::consensus::BftQuorumProof> {
+    use lib_blockchain::block::verification::verify_quorum_proof;
+
+    let proof_url = format!("/api/v1/blockchain/quorum-proof/{}", height);
+    let resp = client.get(&proof_url).await.ok()?;
+    if !resp.status.is_success() {
+        tracing::debug!("Catch-up: no quorum proof for height {} from peer", height);
+        return None;
+    }
+
+    let proof: lib_types::consensus::BftQuorumProof =
+        bincode::deserialize(&resp.body).ok().or_else(|| {
+            tracing::debug!("Catch-up: quorum proof deserialize failed for height {}", height);
+            None
+        })?;
+
+    // Build validator_id → consensus_key map from local registry.
+    let bc = blockchain_arc.read().await;
+    let validator_keys: std::collections::HashMap<[u8; 32], [u8; 2592]> = bc
+        .get_all_validators()
+        .iter()
+        .filter_map(|(id_str, info)| {
+            let bytes = hex::decode(id_str).ok()?;
+            if bytes.len() != 32 {
+                return None;
+            }
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&bytes);
+            Some((arr, info.consensus_key))
+        })
+        .collect();
+    drop(bc);
+
+    match verify_quorum_proof(&proof, &validator_keys) {
+        Ok(()) => {
+            tracing::info!(
+                "✅ Catch-up: block {} has valid quorum proof ({} attestations)",
+                height,
+                proof.attestations.len()
+            );
+            Some(proof)
+        }
+        Err(e) => {
+            tracing::warn!(
+                "Catch-up: block {} quorum proof INVALID: {}",
+                height, e
+            );
+            None
+        }
+    }
 }
 
 /// Adapter that provides blockchain data to the consensus engine for block production
@@ -1150,6 +1228,40 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
         }
     }
 
+    async fn commit_finalized_block_with_proof(
+        &self,
+        proposal: &lib_consensus::types::ConsensusProposal,
+        quorum_proof: lib_types::consensus::BftQuorumProof,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Commit the block itself (all existing validation + persistence).
+        self.commit_finalized_block(proposal).await?;
+
+        // Persist the quorum proof in a separate sled tree so catch-up sync
+        // can verify BFT finality from the proof alone, without relying on
+        // the bft_active_height guard.
+        let slot = self.blockchain_slot.read().await;
+        if let Some(bc_arc) = slot.as_ref() {
+            let bc = bc_arc.read().await;
+            if let Some(ref store) = bc.store {
+                if let Err(e) = store.put_quorum_proof(proposal.height, &quorum_proof) {
+                    tracing::warn!(
+                        "Failed to persist quorum proof for height {}: {} (non-fatal)",
+                        proposal.height,
+                        e,
+                    );
+                } else {
+                    tracing::info!(
+                        "📜 Persisted BFT quorum proof for height {} ({} attestations)",
+                        proposal.height,
+                        quorum_proof.attestations.len(),
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     async fn get_active_validator_count(
         &self,
     ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
@@ -1347,7 +1459,8 @@ impl std::fmt::Debug for ConsensusComponent {
 }
 
 /// Decode bootstrap consensus key from hex string (accepts 0x prefix or plain hex).
-pub fn decode_bootstrap_consensus_key(consensus_key_hex: &str) -> Option<Vec<u8>> {
+/// Returns fixed-size [u8; 2592] for Dilithium5 public key.
+pub fn decode_bootstrap_consensus_key(consensus_key_hex: &str) -> Option<[u8; 2592]> {
     let trimmed = consensus_key_hex.trim();
     if trimmed.is_empty() {
         return None;
@@ -1358,7 +1471,12 @@ pub fn decode_bootstrap_consensus_key(consensus_key_hex: &str) -> Option<Vec<u8>
         .or_else(|| trimmed.strip_prefix("0X"))
         .unwrap_or(trimmed);
 
-    hex::decode(normalized).ok().filter(|k| !k.is_empty())
+    let bytes = hex::decode(normalized).ok()?;
+    if bytes.len() != 2592 {
+        return None;
+    }
+    
+    Some(bytes.as_slice().try_into().ok()?)
 }
 
 impl ConsensusComponent {
@@ -1581,12 +1699,20 @@ async fn load_local_validator_from_keystore() -> Result<(IdentityId, lib_crypto:
     }
 
     // Consensus identity uses Dilithium public key bytes for signature verification.
-    let public_key = lib_crypto::PublicKey::new(ks.dilithium_pk.clone());
+    let dilithium_pk: [u8; 2592] = ks.dilithium_pk.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid dilithium_pk length, expected 2592 bytes"))?;
+    let dilithium_sk: [u8; 4864] = ks.dilithium_sk.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid dilithium_sk length, expected 4864 bytes"))?;
+    let kyber_sk: [u8; 3168] = ks.kyber_sk.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid kyber_sk length, expected 3168 bytes"))?;
+    let master_seed: [u8; 64] = ks.master_seed.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid master_seed length, expected 64 bytes"))?;
+    let public_key = lib_crypto::PublicKey::new(dilithium_pk);
     let private_key = lib_crypto::PrivateKey {
-        dilithium_sk: ks.dilithium_sk,
-        dilithium_pk: ks.dilithium_pk,
-        kyber_sk: ks.kyber_sk,
-        master_seed: ks.master_seed,
+        dilithium_sk,
+        dilithium_pk,
+        kyber_sk,
+        master_seed,
     };
 
     Ok((

@@ -140,14 +140,15 @@ pub fn extract_hash_from_did(did: &str) -> CliResult<String> {
 /// Validate Dilithium public key format
 /// Accepts both Dilithium2 (1312 bytes) and Dilithium5 (2592 bytes)
 pub fn validate_dilithium_public_key(key: &[u8]) -> CliResult<()> {
-    const DILITHIUM2_PK_BYTES: usize = 1312;
-    const DILITHIUM5_PK_BYTES: usize = 2592;
+    use lib_crypto::post_quantum::constants::{
+        DILITHIUM2_PUBLICKEY_BYTES, DILITHIUM5_PUBLICKEY_BYTES,
+    };
 
-    if key.len() != DILITHIUM2_PK_BYTES && key.len() != DILITHIUM5_PK_BYTES {
+    if key.len() != DILITHIUM2_PUBLICKEY_BYTES && key.len() != DILITHIUM5_PUBLICKEY_BYTES {
         return Err(CliError::IdentityError(format!(
             "Invalid Dilithium public key size: expected {} (D2) or {} (D5) bytes, got {}",
-            DILITHIUM2_PK_BYTES,
-            DILITHIUM5_PK_BYTES,
+            DILITHIUM2_PUBLICKEY_BYTES,
+            DILITHIUM5_PUBLICKEY_BYTES,
             key.len()
         )));
     }
@@ -157,12 +158,12 @@ pub fn validate_dilithium_public_key(key: &[u8]) -> CliResult<()> {
 /// Validate Kyber public key format
 /// Only Kyber1024 (1568 bytes) is supported by ZHTP
 pub fn validate_kyber_public_key(key: &[u8]) -> CliResult<()> {
-    const KYBER1024_PK_BYTES: usize = 1568;
+    use lib_crypto::post_quantum::constants::KYBER1024_PUBLICKEY_BYTES;
 
-    if key.len() != KYBER1024_PK_BYTES {
+    if key.len() != KYBER1024_PUBLICKEY_BYTES {
         return Err(CliError::IdentityError(format!(
             "Invalid Kyber public key size: expected {} bytes (Kyber1024), got {}",
-            KYBER1024_PK_BYTES,
+            KYBER1024_PUBLICKEY_BYTES,
             key.len()
         )));
     }

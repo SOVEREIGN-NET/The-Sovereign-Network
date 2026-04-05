@@ -1286,7 +1286,7 @@ impl QuicHandler {
         // ✅ TICKET 2.6 FIX: Route through MeshRouter instead of direct handler call
         // This ensures all messages are logged and follow standard routing path
         if let Some(ref handler) = self.mesh_handler {
-            let peer_pk = PublicKey::new(peer_node_id.to_vec());
+            let peer_pk = PublicKey::new([0u8; 2592]); // Placeholder - peer_pk from node_id
             // Note: MeshMessageHandler.handle_mesh_message() processes incoming messages
             // This is correct for QUIC as it's receiving messages, not sending them
             // The bypass was in sending responses - those should use mesh_router.send_with_routing()

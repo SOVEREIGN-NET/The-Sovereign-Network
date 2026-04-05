@@ -38,11 +38,7 @@ impl AppNetworkOutputHandler {
 
         // Create sender PublicKey from server_id UUID
         // The actual identity verification happens at the transport layer (UHP)
-        let server_id_bytes = mesh_router.server_id.as_bytes();
-        let mut key_id = Vec::with_capacity(32);
-        key_id.extend_from_slice(server_id_bytes);
-        key_id.extend_from_slice(server_id_bytes); // Repeat to fill 32 bytes
-        let sender = PublicKey::new(key_id);
+        let sender = PublicKey::new([0u8; 2592]); // Use placeholder key for sender
 
         // Calculate complete data hash using lib_crypto
         let hash_bytes = lib_crypto::hash_blake3(&data);

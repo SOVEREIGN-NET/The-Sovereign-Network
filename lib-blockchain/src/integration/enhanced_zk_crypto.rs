@@ -98,7 +98,7 @@ impl EnhancedTransactionValidator {
         let mut unsigned_tx = transaction.clone();
         unsigned_tx.signature = crate::integration::crypto_integration::Signature {
             signature: Vec::new(),
-            public_key: crate::integration::crypto_integration::PublicKey::new(Vec::new()),
+            public_key: crate::integration::crypto_integration::PublicKey::new([0u8; 2592]),
             algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         };
@@ -404,8 +404,8 @@ impl EnhancedTransactionCreator {
                 &[&receiver_address[..8], &amount.to_le_bytes()].concat(),
             )),
             recipient: crate::integration::crypto_integration::PublicKey {
-                dilithium_pk: receiver_address.to_vec(),
-                kyber_pk: Vec::new(),
+                dilithium_pk: receiver_address.iter().cycle().take(2592).copied().collect::<Vec<_>>().try_into().unwrap_or([0u8; 2592]),
+                kyber_pk: [0u8; 1568],
                 key_id: *receiver_address,
             },
         };

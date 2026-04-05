@@ -740,8 +740,8 @@ impl UnifiedDiscoveryService {
         node_id: Uuid,
         mesh_port: u16,
         public_key: PublicKey,
-        dilithium_sk: Vec<u8>,
-        dilithium_pk: Vec<u8>,
+        dilithium_sk: [u8; 4864],
+        dilithium_pk: [u8; 2592],
         tls_spki_sha256: [u8; 32],
     ) -> Self {
         let mut service = Self::new(node_id, mesh_port, public_key);

@@ -34,8 +34,8 @@ use lib_blockchain::{
 // Test Constants
 // ============================================================================
 
-/// $269K USD graduation threshold
-const GRADUATION_THRESHOLD_USD: u128 = 269_000;
+/// USD graduation threshold — must match lib_blockchain::contracts::bonding_curve::types::GRADUATION_THRESHOLD_USD
+const GRADUATION_THRESHOLD_USD: u128 = 2_745_966;
 
 /// SOV/USD price scale (8 decimals)
 const PRICE_SCALE: u128 = 100_000_000;
