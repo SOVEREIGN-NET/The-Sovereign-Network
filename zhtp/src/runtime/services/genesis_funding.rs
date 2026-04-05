@@ -176,7 +176,7 @@ impl GenesisFundingService {
             );
 
             // Create wallet funding UTXO (still uses 32-byte identity hash for recipient)
-            let identity_hash = user_identity_id.as_ref().unwrap().0.to_vec();
+            let _identity_hash = user_identity_id.as_ref().unwrap().0.to_vec();
             let wallet_output = TransactionOutput {
                 commitment: lib_blockchain::types::hash::blake3_hash(
                     format!(

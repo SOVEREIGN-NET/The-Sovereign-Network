@@ -4,11 +4,9 @@
 
 use crate::hashing::hash_blake3;
 use crate::traits::ZeroizingKey;
-use crate::types::Hash;
 use crate::types::Signature;
 use crate::verification::verify_signature;
 use anyhow::Result;
-use serde::Deserialize;
 use std::sync::atomic::{compiler_fence, Ordering};
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};

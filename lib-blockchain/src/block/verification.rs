@@ -163,13 +163,7 @@ pub fn verify_quorum_proof(
         })?;
 
         // Key in attestation must match registered key
-        let registered_key_array: [u8; 2592] = match registered_key.as_slice().try_into() {
-            Ok(arr) => arr,
-            Err(_) => return Err(format!(
-                "invalid registered key length for validator {}",
-                hex::encode(&att.validator_id[..8]),
-            )),
-        };
+        // Note: registered_key from HashMap is already [u8; 2592]
         if att.public_key.as_slice() != registered_key.as_slice() {
             return Err(format!(
                 "public key mismatch for validator {}",
