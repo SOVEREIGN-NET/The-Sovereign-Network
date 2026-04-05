@@ -31,7 +31,8 @@ impl BootstrapService {
         // Step 1: Get peer's chain tip info
         #[derive(Deserialize)]
         struct ChainTipInfo {
-            chain_id: u8,
+            #[serde(default)]
+            chain_id: Option<u8>,
             height: u64,
             #[allow(dead_code)]
             head_hash: String,
@@ -61,19 +62,28 @@ impl BootstrapService {
         let peer_tip: ChainTipInfo =
             serde_json::from_slice(&tip_response.body).context("Failed to parse chain tip JSON")?;
 
-        // Validate peer is on the same chain/network
+        // Validate peer is on the same chain/network (if peer reports chain_id)
         let local_chain_id = crate::config::environment::detect_environment().chain_id();
-        if peer_tip.chain_id != local_chain_id {
-            return Err(anyhow!(
-                "Peer {} is on different chain: peer_chain_id={} != local_chain_id={}",
-                peer_label,
-                peer_tip.chain_id,
-                local_chain_id
-            ));
+        match peer_tip.chain_id {
+            Some(peer_chain_id) if peer_chain_id != local_chain_id => {
+                return Err(anyhow!(
+                    "Peer {} is on different chain: peer_chain_id={} != local_chain_id={}",
+                    peer_label,
+                    peer_chain_id,
+                    local_chain_id
+                ));
+            }
+            None => {
+                info!(
+                    "Peer {} does not report chain_id (older version) — proceeding with genesis hash validation",
+                    peer_label
+                );
+            }
+            _ => {} // chain_id matches
         }
 
         info!(
-            "Peer chain tip: height={}, chain_id={}, identities={}, validators={}",
+            "Peer chain tip: height={}, chain_id={:?}, identities={}, validators={}",
             peer_tip.height, peer_tip.chain_id, peer_tip.identity_count, peer_tip.validator_count
         );
 
