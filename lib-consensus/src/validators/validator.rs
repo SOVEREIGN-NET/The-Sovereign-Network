@@ -517,7 +517,7 @@ mod tests {
             IdentityId::from(Hash([1u8; 32])),
             2000 * 1_000_000, // 2000 SOV
             0,
-            vec![1, 2, 3], // consensus_key
+            [1u8; 2592], // consensus_key (Dilithium5)
             vec![4, 5, 6], // networking_key
             vec![7, 8, 9], // rewards_key
             10,            // commission_rate

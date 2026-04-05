@@ -1454,7 +1454,7 @@ async fn test_hardening_vote_validation_rejects_placeholder_registered_key() {
             validator_id.clone(),
             10_000_000_000,
             100 * 1024 * 1024 * 1024,
-            vec![0x11; 32], // Placeholder-sized key
+            [0x11; 2592], // Placeholder Dilithium5 key
             vec![0x22; 32],
             vec![0x33; 32],
             5,

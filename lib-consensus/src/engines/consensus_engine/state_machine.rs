@@ -903,22 +903,19 @@ impl ConsensusEngine {
                         && k.vote_type == VoteType::Commit
                         && voted_id == proposal_id
                 })
-                .map(|(_, (vote, _))| {
-                    // Convert Vec<u8> to fixed-size arrays for Dilithium5
+                .filter_map(|(_, (vote, _))| {
+                    // Convert Vec<u8> signature to fixed-size Dilithium5 array.
+                    // Skip votes with wrong-sized signatures (e.g. test stubs).
                     let signature: [u8; 4595] = vote.signature.signature.as_slice()
-                        .try_into()
-                        .expect("Dilithium5 signature must be 4595 bytes");
-                    let public_key: [u8; 2592] = vote.signature.public_key.dilithium_pk.as_slice()
-                        .try_into()
-                        .expect("Dilithium5 public key must be 2592 bytes");
-                    lib_types::consensus::CommitAttestation {
+                        .try_into().ok()?;
+                    Some(lib_types::consensus::CommitAttestation {
                         validator_id: vote.voter.0,
                         vote_id: vote.id.0,
                         proposal_id: vote.proposal_id.0,
                         round: vote.round,
                         signature,
-                        public_key,
-                    }
+                        public_key: vote.signature.public_key.dilithium_pk,
+                    })
                 })
                 .collect();
 

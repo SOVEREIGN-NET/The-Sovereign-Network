@@ -113,7 +113,7 @@ impl ConsensusEngine {
     ) -> ConsensusResult<bool> {
         // Reject unsigned votes. Membership-only acceptance is unsafe because a spoofed
         // sender could vote on behalf of validators registered with placeholder keys.
-        if vote.signature.public_key.dilithium_pk.is_empty() {
+        if vote.signature.public_key.dilithium_pk == [0u8; 2592] {
             tracing::warn!(
                 "Vote rejected: empty consensus key for validator {} at height {} round {}",
                 vote.voter,
@@ -148,7 +148,7 @@ impl ConsensusEngine {
             }
         };
 
-        if validator.consensus_key.is_empty() || validator.consensus_key.len() <= 32 {
+        if validator.consensus_key == [0u8; 2592] {
             tracing::warn!(
                 "Vote rejected: validator {} has non-verifiable registered consensus key (len={})",
                 vote.voter,
@@ -392,7 +392,7 @@ impl ConsensusEngine {
         &self,
         proposal: &ConsensusProposal,
     ) -> ConsensusResult<()> {
-        if proposal.signature.public_key.dilithium_pk.is_empty() {
+        if proposal.signature.public_key.dilithium_pk == [0u8; 2592] {
             return Err(ConsensusError::ProofVerificationFailed(format!(
                 "Proposal signature rejected: empty consensus key from proposer {} at H={} R={}",
                 proposal.proposer, proposal.height, proposal.round,
@@ -418,7 +418,7 @@ impl ConsensusEngine {
                 ))
             })?;
 
-        if validator.consensus_key.is_empty() || validator.consensus_key.len() <= 32 {
+        if validator.consensus_key == [0u8; 2592] {
             return Err(ConsensusError::ProofVerificationFailed(format!(
                 "Proposal signature rejected: proposer {} has non-verifiable consensus key (len={})",
                 proposal.proposer,
