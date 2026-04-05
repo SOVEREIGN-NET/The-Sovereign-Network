@@ -491,7 +491,7 @@ mod tests {
                 pk[0] = 99u8;
                 pk
             },
-            kyber_pk: vec![99u8],
+            kyber_pk: [99u8; 1568],
             key_id: [99u8; 32],
         }
     }

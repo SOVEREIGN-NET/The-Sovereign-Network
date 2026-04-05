@@ -14,7 +14,7 @@ use lib_blockchain::execution::{BlockApplyError, BlockExecutor, ExecutorConfig};
 use lib_blockchain::protocol::{fee_model, ProtocolParams};
 use lib_blockchain::storage::{BlockchainStore, SledStore};
 use lib_blockchain::sync::ChainSync;
-use lib_blockchain::types::{Difficulty, Hash};
+use lib_blockchain::types::Hash;
 
 // =============================================================================
 // Test Helpers
@@ -43,18 +43,14 @@ fn create_genesis_block(fee_model_version: u16) -> Block {
 
     let header = BlockHeader {
         version: 1,
-        previous_block_hash: Hash::default(),
-        merkle_root: Hash::default(),
-        state_root: Hash::default(),
+        previous_hash: Hash::default().into(),
+        data_helix_root: Hash::default().into(),
+        state_root: Hash::default().into(),
         timestamp: 1000,
-        difficulty: Difficulty::minimum(),
-        nonce: 0,
-        cumulative_difficulty: Difficulty::minimum(),
         height: 0,
+        verification_helix_root: [0u8; 32],
+        bft_quorum_root: [0u8; 32],
         block_hash,
-        transaction_count: 0,
-        block_size: 0,
-        fee_model_version,
     };
     Block::new(header, vec![])
 }
@@ -67,18 +63,14 @@ fn create_block_at_height(height: u64, prev_hash: Hash, fee_model_version: u16) 
 
     let header = BlockHeader {
         version: 1,
-        previous_block_hash: prev_hash,
-        merkle_root: Hash::default(),
-        state_root: Hash::default(),
+        previous_hash: prev_hash.into(),
+        data_helix_root: Hash::default().into(),
+        state_root: Hash::default().into(),
         timestamp: 1000 + height * 600,
-        difficulty: Difficulty::minimum(),
-        nonce: 0,
-        cumulative_difficulty: Difficulty::minimum(),
         height,
+        verification_helix_root: [0u8; 32],
+        bft_quorum_root: [0u8; 32],
         block_hash,
-        transaction_count: 0,
-        block_size: 0,
-        fee_model_version,
     };
     Block::new(header, vec![])
 }

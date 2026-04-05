@@ -12,7 +12,7 @@ fn test_transaction_creation() -> Result<()> {
     let output = TransactionOutput::new(
         Hash::from_hex("1111111111111111111111111111111111111111111111111111111111111111")?,
         Hash::from_hex("2222222222222222222222222222222222222222222222222222222222222222")?,
-        crypto_integration::PublicKey::new(vec![1, 2, 3, 4]),
+        crypto_integration::PublicKey::new([0u8; 2592]),
     );
 
     let transaction = Transaction::new(
@@ -21,7 +21,7 @@ fn test_transaction_creation() -> Result<()> {
         100, // fee
         crypto_integration::Signature {
             signature: vec![1, 2, 3],
-            public_key: crypto_integration::PublicKey::new(vec![4, 5, 6]),
+            public_key: crypto_integration::PublicKey::new([0u8; 2592]),
             algorithm: crypto_integration::SignatureAlgorithm::Dilithium5,
             timestamp: 12345,
         },
@@ -57,7 +57,7 @@ fn test_identity_transaction_creation() -> Result<()> {
         vec![], // No outputs for simplicity
         crypto_integration::Signature {
             signature: vec![9, 10, 11],
-            public_key: crypto_integration::PublicKey::new(vec![12, 13, 14]),
+            public_key: crypto_integration::PublicKey::new([0u8; 2592]),
             algorithm: crypto_integration::SignatureAlgorithm::Dilithium5,
             timestamp: 12345,
         },
@@ -107,7 +107,7 @@ fn test_identity_update_transaction() -> Result<()> {
         50,     // Update fee
         crypto_integration::Signature {
             signature: vec![13, 14, 15],
-            public_key: crypto_integration::PublicKey::new(vec![16, 17, 18]),
+            public_key: crypto_integration::PublicKey::new([0u8; 2592]),
             algorithm: crypto_integration::SignatureAlgorithm::Dilithium5,
             timestamp: 12345,
         },
@@ -134,7 +134,7 @@ fn test_identity_revocation_transaction() -> Result<()> {
         25,     // Revocation fee
         crypto_integration::Signature {
             signature: vec![19, 20, 21],
-            public_key: crypto_integration::PublicKey::new(vec![22, 23, 24]),
+            public_key: crypto_integration::PublicKey::new([0u8; 2592]),
             algorithm: crypto_integration::SignatureAlgorithm::Dilithium5,
             timestamp: 12345,
         },
@@ -165,7 +165,7 @@ fn test_transaction_hashing() -> Result<()> {
         100,
         crypto_integration::Signature {
             signature: vec![1, 2, 3],
-            public_key: crypto_integration::PublicKey::new(vec![4, 5, 6]),
+            public_key: crypto_integration::PublicKey::new([0u8; 2592]),
             algorithm: crypto_integration::SignatureAlgorithm::Dilithium5,
             timestamp: 12345,
         },
@@ -193,7 +193,7 @@ fn test_transaction_validation() -> Result<()> {
     let output = TransactionOutput::new(
         Hash::from_hex("1111111111111111111111111111111111111111111111111111111111111111")?,
         Hash::from_hex("2222222222222222222222222222222222222222222222222222222222222222")?,
-        crypto_integration::PublicKey::new(vec![1, 2, 3, 4]),
+        crypto_integration::PublicKey::new([0u8; 2592]),
     );
 
     let input = TransactionInput::new(
@@ -209,7 +209,7 @@ fn test_transaction_validation() -> Result<()> {
         100,
         crypto_integration::Signature {
             signature: vec![1, 2, 3, 4, 5], // Non-empty signature
-            public_key: crypto_integration::PublicKey::new(vec![6, 7, 8, 9]),
+            public_key: crypto_integration::PublicKey::new([0u8; 2592]),
             algorithm: crypto_integration::SignatureAlgorithm::Dilithium5,
             timestamp: 12345,
         },
@@ -248,7 +248,7 @@ fn test_transaction_input_output() -> Result<()> {
     );
 
     // Test TransactionOutput
-    let recipient_key = crypto_integration::PublicKey::new(vec![1, 2, 3, 4]);
+    let recipient_key = crypto_integration::PublicKey::new([0u8; 2592]);
     let output = TransactionOutput::new(
         Hash::from_hex("3333333333333333333333333333333333333333333333333333333333333333")?,
         Hash::from_hex("4444444444444444444444444444444444444444444444444444444444444444")?,
@@ -257,7 +257,7 @@ fn test_transaction_input_output() -> Result<()> {
 
     assert!(output.is_to_recipient(&recipient_key));
 
-    let other_key = crypto_integration::PublicKey::new(vec![5, 6, 7, 8]);
+    let other_key = crypto_integration::PublicKey::new([0u8; 2592]);
     assert!(!output.is_to_recipient(&other_key));
 
     Ok(())
@@ -289,7 +289,7 @@ fn test_transaction_builder() -> Result<()> {
     let output = TransactionOutput::new(
         Hash::from_hex("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")?,
         Hash::from_hex("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd")?,
-        crypto_integration::PublicKey::new(vec![1, 2, 3, 4]),
+        crypto_integration::PublicKey::new([0u8; 2592]),
     );
 
     // Test builder fluent interface
@@ -355,7 +355,7 @@ fn test_transaction_serialization() -> Result<()> {
         100,
         crypto_integration::Signature {
             signature: vec![1, 2, 3],
-            public_key: crypto_integration::PublicKey::new(vec![4, 5, 6]),
+            public_key: crypto_integration::PublicKey::new([0u8; 2592]),
             algorithm: crypto_integration::SignatureAlgorithm::Dilithium5,
             timestamp: 12345,
         },

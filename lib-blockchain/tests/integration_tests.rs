@@ -203,7 +203,7 @@ fn test_identity_operation_verification() -> Result<()> {
     // Test different operation types
     let transfer_result = identity_integration::verify_identity_for_operation(
         &did,
-        &PublicKey::new(vec![1, 2, 3]),
+        &crypto_integration::PublicKey::new([0u8; 2592]),
         "transfer",
     );
     assert!(transfer_result.is_ok());
@@ -211,14 +211,14 @@ fn test_identity_operation_verification() -> Result<()> {
 
     let contract_result = identity_integration::verify_identity_for_operation(
         &did,
-        &PublicKey::new(vec![1, 2, 3]),
+        &crypto_integration::PublicKey::new([0u8; 2592]),
         "smart_contract",
     );
     assert!(contract_result.is_ok());
 
     let identity_mgmt_result = identity_integration::verify_identity_for_operation(
         &did,
-        &PublicKey::new(vec![1, 2, 3]),
+        &crypto_integration::PublicKey::new([0u8; 2592]),
         "identity_management",
     );
     assert!(identity_mgmt_result.is_ok());
@@ -273,11 +273,7 @@ async fn test_blockchain_state_restart_equivalence() -> Result<()> {
         latest.hash(),
         Hash::default(),
         latest.timestamp() + 10,
-        mining_config.difficulty,
         blockchain.height + 1,
-        0,
-        0,
-        mining_config.difficulty,
     );
 
     let block = Block::new(header, Vec::new());
@@ -309,7 +305,7 @@ fn test_zk_identity_proof_integration() -> Result<()> {
         100,
         crypto_integration::Signature {
             signature: vec![1, 2, 3],
-            public_key: crypto_integration::PublicKey::new(vec![4, 5, 6]),
+            public_key: crypto_integration::PublicKey::new([0u8; 2592]),
             algorithm: crypto_integration::SignatureAlgorithm::Dilithium5,
             timestamp: 12345,
         },
@@ -359,11 +355,7 @@ fn test_network_serialization_integration() -> Result<()> {
         Hash::default(),
         Hash::default(),
         12345,
-        Difficulty::minimum(),
         1,
-        0,
-        0,
-        Difficulty::minimum(),
     );
     let block = Block::new(header, Vec::new());
 
@@ -380,7 +372,7 @@ fn test_network_serialization_integration() -> Result<()> {
         100,
         crypto_integration::Signature {
             signature: vec![1, 2, 3],
-            public_key: crypto_integration::PublicKey::new(vec![4, 5, 6]),
+            public_key: crypto_integration::PublicKey::new([0u8; 2592]),
             algorithm: crypto_integration::SignatureAlgorithm::Dilithium5,
             timestamp: 12345,
         },
@@ -490,7 +482,12 @@ fn test_full_integration_workflow() -> Result<()> {
     let output = TransactionOutput::new(
         Hash::from_hex("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")?,
         Hash::from_hex("1111111111111111111111111111111111111111111111111111111111111111")?,
-        crypto_integration::PublicKey::new(identity_data.public_key.clone()),
+        {
+            let mut pk = [0u8; 2592];
+            let bytes = identity_data.public_key.clone();
+            pk[0..bytes.len().min(2592)].copy_from_slice(&bytes[..bytes.len().min(2592)]);
+            crypto_integration::PublicKey::new(pk)
+        },
     );
 
     let transaction = Transaction::new(
@@ -499,7 +496,12 @@ fn test_full_integration_workflow() -> Result<()> {
         50,
         crypto_integration::Signature {
             signature: identity_data.ownership_proof.clone(),
-            public_key: crypto_integration::PublicKey::new(identity_data.public_key.clone()),
+            public_key: {
+                let mut pk = [0u8; 2592];
+                let bytes = identity_data.public_key.clone();
+                pk[0..bytes.len().min(2592)].copy_from_slice(&bytes[..bytes.len().min(2592)]);
+                crypto_integration::PublicKey::new(pk)
+            },
             algorithm: crypto_integration::SignatureAlgorithm::Dilithium5,
             timestamp: 12345,
         },

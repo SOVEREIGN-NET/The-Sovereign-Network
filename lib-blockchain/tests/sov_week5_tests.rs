@@ -21,24 +21,16 @@ const BLOCKS_PER_MONTH: u64 = 43200; // ~30 days at 5-second blocks
 
 /// Create test PublicKey with unique key_id
 fn test_key(id: u8) -> PublicKey {
-    let mut key_id = [0u8; 32];
-    key_id[0] = id;
-    PublicKey {
-        key_id,
-        dilithium_pk: vec![id],
-        kyber_pk: vec![id],
-    }
+    let mut dilithium_pk = [0u8; 2592];
+    dilithium_pk[0] = id;
+    PublicKey::new(dilithium_pk)
 }
 
 /// Create test citizen with unique key_id for scale testing
 fn test_citizen(index: u32) -> PublicKey {
-    let mut key_id = [0u8; 32];
-    key_id[0..4].copy_from_slice(&index.to_le_bytes());
-    PublicKey {
-        key_id,
-        dilithium_pk: vec![(index % 256) as u8],
-        kyber_pk: vec![(index % 256) as u8],
-    }
+    let mut dilithium_pk = [0u8; 2592];
+    dilithium_pk[0..4].copy_from_slice(&index.to_le_bytes());
+    PublicKey::new(dilithium_pk)
 }
 
 /// Create funded UBI distributor for testing

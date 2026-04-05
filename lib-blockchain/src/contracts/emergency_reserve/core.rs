@@ -430,7 +430,7 @@ mod tests {
     use lib_crypto::KeyPair;
 
     fn create_test_public_key(id: u8) -> PublicKey {
-        PublicKey::new(vec![id; 1312])
+        PublicKey::new([id; 2592])
     }
 
     fn create_test_contract_id(id: u8) -> [u8; 32] {
@@ -503,7 +503,7 @@ mod tests {
 
     #[test]
     fn test_init_rejects_zero_fee_collector() {
-        let zero_fee_collector = PublicKey::new(vec![0u8; 1312]);
+        let zero_fee_collector = PublicKey::new([0u8; 2592]);
         let signer = create_test_public_key(10);
         let contract_id = create_test_contract_id(100);
 
@@ -614,7 +614,7 @@ mod tests {
         // Create an invalid signature (random bytes)
         let invalid_sig = Signature {
             signature: vec![0u8; 64],
-            public_key: PublicKey::new(vec![0u8; 1312]),
+            public_key: PublicKey::new([0u8; 2592]),
             algorithm: lib_crypto::types::signatures::SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         };
@@ -645,7 +645,7 @@ mod tests {
         let recipient = create_test_public_key(200);
         let invalid_sig = Signature {
             signature: vec![0u8; 64],
-            public_key: PublicKey::new(vec![0u8; 1312]),
+            public_key: PublicKey::new([0u8; 2592]),
             algorithm: lib_crypto::types::signatures::SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         };
@@ -682,7 +682,7 @@ mod tests {
         let recipient = create_test_public_key(200);
         let invalid_sig = Signature {
             signature: vec![0u8; 64],
-            public_key: PublicKey::new(vec![0u8; 1312]),
+            public_key: PublicKey::new([0u8; 2592]),
             algorithm: lib_crypto::types::signatures::SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         };
@@ -717,7 +717,7 @@ mod tests {
         let recipient = create_test_public_key(200);
         let invalid_sig = Signature {
             signature: vec![0u8; 64],
-            public_key: PublicKey::new(vec![0u8; 1312]),
+            public_key: PublicKey::new([0u8; 2592]),
             algorithm: lib_crypto::types::signatures::SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         };
@@ -836,7 +836,7 @@ mod tests {
             5,
             &[Signature {
                 signature: vec![0u8; 64],
-                public_key: PublicKey::new(vec![0u8; 1312]),
+                public_key: PublicKey::new([0u8; 2592]),
                 algorithm: lib_crypto::types::signatures::SignatureAlgorithm::Dilithium5,
                 timestamp: 0,
             }], // Invalid

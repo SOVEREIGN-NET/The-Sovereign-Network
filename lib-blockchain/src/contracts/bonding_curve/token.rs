@@ -661,12 +661,12 @@ impl BondingCurveToken {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::bonding_curve::PiecewiseLinearCurve;
+    use crate::contracts::bonding_curve::{PiecewiseLinearCurve, GRADUATION_THRESHOLD_USD};
 
     fn test_pubkey(id: u8) -> PublicKey {
         PublicKey {
-            dilithium_pk: vec![],
-            kyber_pk: vec![],
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: [id; 32],
         }
     }

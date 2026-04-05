@@ -761,7 +761,7 @@ mod tests {
     use super::*;
 
     fn create_test_public_key(id: u8) -> PublicKey {
-        PublicKey::new(vec![id; 1312])
+        PublicKey::new([id; 2592])
     }
 
     fn create_test_token_id(id: u8) -> [u8; 32] {
@@ -836,7 +836,7 @@ mod tests {
     #[test]
     fn test_init_pool_zero_governance_addr() {
         let token_id = create_test_token_id(1);
-        let governance = PublicKey::new(vec![0; 1312]);
+        let governance = PublicKey::new([0u8; 2592]);
         let treasury = create_test_public_key(2);
 
         let result =
@@ -849,7 +849,7 @@ mod tests {
     fn test_init_pool_zero_treasury_addr() {
         let token_id = create_test_token_id(1);
         let governance = create_test_public_key(1);
-        let treasury = PublicKey::new(vec![0; 1312]);
+        let treasury = PublicKey::new([0u8; 2592]);
 
         let result =
             SovSwapPool::init_pool(token_id, DAOType::NP, 10_000, 10_000, governance, treasury);

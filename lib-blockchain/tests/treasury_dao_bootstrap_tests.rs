@@ -23,8 +23,8 @@ fn expected_treasury_id_hex() -> String {
 /// This mirrors the private `wallet_key_for_sov` method used by fee crediting.
 fn wallet_key_for_sov(wallet_id: &[u8; 32]) -> PublicKey {
     PublicKey {
-        dilithium_pk: vec![],
-        kyber_pk: vec![],
+        dilithium_pk: [0u8; 2592],
+        kyber_pk: [0u8; 1568],
         key_id: *wallet_id,
     }
 }

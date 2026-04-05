@@ -476,7 +476,7 @@ mod tests {
     use super::*;
 
     fn create_test_public_key(id: u8) -> PublicKey {
-        PublicKey::new(vec![id; 32])
+        PublicKey::new([id; 2592])
     }
 
     // ========================================================================
@@ -531,7 +531,7 @@ mod tests {
     #[test]
     fn test_init_rejects_zero_cbe_address() {
         let mut registry = EntityRegistry::new();
-        let zero = PublicKey::new(vec![0u8; 32]);
+        let zero = PublicKey::new([0u8; 2592]);
         let nonprofit = create_test_public_key(2);
 
         let result = registry.init(zero, nonprofit);
@@ -543,7 +543,7 @@ mod tests {
     fn test_init_rejects_zero_nonprofit_address() {
         let mut registry = EntityRegistry::new();
         let cbe = create_test_public_key(1);
-        let zero = PublicKey::new(vec![0u8; 32]);
+        let zero = PublicKey::new([0u8; 2592]);
 
         let result = registry.init(cbe, zero);
 

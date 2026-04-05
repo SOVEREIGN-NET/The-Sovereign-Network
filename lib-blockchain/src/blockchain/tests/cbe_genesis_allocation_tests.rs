@@ -158,8 +158,8 @@ fn test_cbe_vesting_schedules_created() {
     let blockchain = Blockchain::new().expect("Failed to create blockchain");
 
     let operational_addr = PublicKey {
-        dilithium_pk: vec![],
-        kyber_pk: vec![],
+        dilithium_pk: [0u8; 2592],
+        kyber_pk: [0u8; 1568],
         key_id: [0x02; 32],
     };
     let operational_schedules = blockchain.cbe_token.get_vesting_schedules(&operational_addr);
@@ -171,8 +171,8 @@ fn test_cbe_vesting_schedules_created() {
     );
 
     let performance_addr = PublicKey {
-        dilithium_pk: vec![],
-        kyber_pk: vec![],
+        dilithium_pk: [0u8; 2592],
+        kyber_pk: [0u8; 1568],
         key_id: [0x03; 32],
     };
     let performance_schedules = blockchain.cbe_token.get_vesting_schedules(&performance_addr);
@@ -184,8 +184,8 @@ fn test_cbe_vesting_schedules_created() {
     );
 
     let strategic_addr = PublicKey {
-        dilithium_pk: vec![],
-        kyber_pk: vec![],
+        dilithium_pk: [0u8; 2592],
+        kyber_pk: [0u8; 1568],
         key_id: [0x04; 32],
     };
     let strategic_schedules = blockchain.cbe_token.get_vesting_schedules(&strategic_addr);
@@ -199,8 +199,8 @@ fn test_cbe_compensation_no_vesting() {
     let blockchain = Blockchain::new().expect("Failed to create blockchain");
 
     let compensation_addr = PublicKey {
-        dilithium_pk: vec![],
-        kyber_pk: vec![],
+        dilithium_pk: [0u8; 2592],
+        kyber_pk: [0u8; 1568],
         key_id: [0x01; 32],
     };
     let compensation_schedules = blockchain.cbe_token.get_vesting_schedules(&compensation_addr);
@@ -248,8 +248,8 @@ fn test_cbe_minting_disabled() {
     let blockchain = Blockchain::new().expect("Failed to create blockchain");
 
     let test_addr = PublicKey {
-        dilithium_pk: vec![],
-        kyber_pk: vec![],
+        dilithium_pk: [0u8; 2592],
+        kyber_pk: [0u8; 1568],
         key_id: [0x99; 32],
     };
 
@@ -277,8 +277,8 @@ fn test_cbe_token_persists_through_save_load() {
     let supply_before = blockchain.cbe_token.total_supply();
 
     let comp_addr = PublicKey {
-        dilithium_pk: vec![],
-        kyber_pk: vec![],
+        dilithium_pk: [0u8; 2592],
+        kyber_pk: [0u8; 1568],
         key_id: [0x01; 32],
     };
     let comp_balance_before = blockchain.cbe_token.balance_of(&comp_addr);

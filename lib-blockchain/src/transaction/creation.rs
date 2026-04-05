@@ -340,7 +340,7 @@ impl TransactionBuilder {
             Ok(signature_bytes) => {
                 let signature = Signature {
                     signature: signature_bytes,
-                    public_key: PublicKey::new(private_key.dilithium_pk.clone()),
+                    public_key: PublicKey::new(private_key.dilithium_pk),
                     algorithm: if private_key.dilithium_sk.len() == DILITHIUM2_SECRETKEY_BYTES {
                         SignatureAlgorithm::Dilithium2
                     } else {

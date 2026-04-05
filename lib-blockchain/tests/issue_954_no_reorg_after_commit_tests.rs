@@ -37,7 +37,7 @@ fn register_n_validators(blockchain: &mut Blockchain, n: usize) {
             identity_id: id.clone(),
             stake: 1_000_000_000,
             storage_provided: 100 * 1024 * 1024 * 1024,
-            consensus_key: vec![(i + 1) as u8; 32],
+            consensus_key: [(i + 1) as u8; 2592],
             networking_key: vec![(i + 65) as u8; 32],
             rewards_key: vec![(i + 129) as u8; 32],
             network_address: format!("127.0.0.1:{}", 9000 + i),
@@ -65,18 +65,17 @@ fn build_next_block(parent: &Block, extra_nonce: u64) -> Block {
     let mining_config = get_mining_config_from_env();
     let height = parent.header.height + 1;
     let timestamp = parent.timestamp() + 10 + extra_nonce;
-    let mut header = BlockHeader::new(
-        1,
-        parent.hash(),
-        Hash::default(), // empty merkle root (no transactions)
+    let header = BlockHeader {
+        version: 1,
+        previous_hash: parent.hash().into(),
+        data_helix_root: Hash::default().into(),
         timestamp,
-        mining_config.difficulty,
         height,
-        0, // tx_count
-        0, // tx_size
-        mining_config.difficulty,
-    );
-    header.set_nonce(0);
+        verification_helix_root: [0u8; 32],
+        state_root: Hash::default().into(),
+        bft_quorum_root: [0u8; 32],
+        block_hash: Hash::default(),
+    };
     Block::new(header, vec![])
 }
 

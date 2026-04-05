@@ -673,11 +673,7 @@ async fn test_conflicting_block_hash_rejection() {
         genesis_hash,
         lib_blockchain::types::Hash::default(),
         2000,                              // timestamp
-        Difficulty::from_bits(0x20ffffff), // dev/testnet difficulty
         height,
-        0, // transaction_count
-        0, // block_size
-        Difficulty::from_bits(0x20ffffff),
     );
 
     let header2 = BlockHeader::new(
@@ -685,11 +681,7 @@ async fn test_conflicting_block_hash_rejection() {
         genesis_hash,
         lib_blockchain::types::Hash::default(),
         3000, // different timestamp
-        Difficulty::from_bits(0x20ffffff),
         height, // same height
-        0,
-        0,
-        Difficulty::from_bits(0x20ffffff),
     );
 
     let block1 = Block::new(header1, vec![]);

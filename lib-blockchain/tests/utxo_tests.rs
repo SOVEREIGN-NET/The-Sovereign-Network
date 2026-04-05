@@ -50,13 +50,13 @@ async fn test_utxo_creation_and_tracking() -> Result<()> {
     let output1 = TransactionOutput::new(
         Hash::from_hex("1111111111111111111111111111111111111111111111111111111111111111")?,
         Hash::from_hex("2222222222222222222222222222222222222222222222222222222222222222")?,
-        PublicKey::new(vec![1, 2, 3, 4]),
+        PublicKey::new([0u8; 2592]),
     );
 
     let output2 = TransactionOutput::new(
         Hash::from_hex("3333333333333333333333333333333333333333333333333333333333333333")?,
         Hash::from_hex("4444444444444444444444444444444444444444444444444444444444444444")?,
-        PublicKey::new(vec![5, 6, 7, 8]),
+        PublicKey::new([0u8; 2592]),
     );
 
     let identity_data = IdentityTransactionData {
@@ -80,7 +80,7 @@ async fn test_utxo_creation_and_tracking() -> Result<()> {
         vec![output1, output2],
         Signature {
             signature: vec![1, 2, 3],
-            public_key: PublicKey::new(vec![4, 5, 6]),
+            public_key: PublicKey::new([0u8; 2592]),
             algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 12345,
         },
@@ -139,12 +139,12 @@ async fn test_nullifier_tracking() -> Result<()> {
         vec![TransactionOutput::new(
             Hash::from_hex("1111111111111111111111111111111111111111111111111111111111111111")?,
             Hash::from_hex("2222222222222222222222222222222222222222222222222222222222222222")?,
-            PublicKey::new(vec![7, 8, 9]),
+            PublicKey::new([0u8; 2592]),
         )], // Need at least one output for Transfer transactions
         5000, // Increased fee to meet minimum requirement
         Signature {
             signature: vec![1, 2, 3],
-            public_key: PublicKey::new(vec![4, 5, 6]),
+            public_key: PublicKey::new([0u8; 2592]),
             algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 12345,
         },
@@ -189,12 +189,12 @@ async fn test_double_spend_prevention() -> Result<()> {
         vec![TransactionOutput::new(
             Hash::from_hex("3333333333333333333333333333333333333333333333333333333333333333")?,
             Hash::from_hex("4444444444444444444444444444444444444444444444444444444444444444")?,
-            PublicKey::new(vec![7, 8, 9]),
+            PublicKey::new([0u8; 2592]),
         )], // Need at least one output for Transfer transactions
         5000, // Increased fee
         Signature {
             signature: vec![1, 2, 3],
-            public_key: PublicKey::new(vec![4, 5, 6]),
+            public_key: PublicKey::new([0u8; 2592]),
             algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 12345,
         },
@@ -221,12 +221,12 @@ async fn test_double_spend_prevention() -> Result<()> {
         vec![TransactionOutput::new(
             Hash::from_hex("5555555555555555555555555555555555555555555555555555555555555555")?,
             Hash::from_hex("6666666666666666666666666666666666666666666666666666666666666666")?,
-            PublicKey::new(vec![10, 11, 12]),
+            PublicKey::new([0u8; 2592]),
         )], // Need at least one output for Transfer transactions
         5000, // Increased fee
         Signature {
             signature: vec![7, 8, 9],
-            public_key: PublicKey::new(vec![10, 11, 12]),
+            public_key: PublicKey::new([0u8; 2592]),
             algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 12346,
         },
@@ -255,7 +255,7 @@ async fn test_utxo_spending() -> Result<()> {
     let output = TransactionOutput::new(
         Hash::from_hex("1111111111111111111111111111111111111111111111111111111111111111")?,
         Hash::from_hex("2222222222222222222222222222222222222222222222222222222222222222")?,
-        PublicKey::new(vec![1, 2, 3, 4]),
+        PublicKey::new([0u8; 2592]),
     );
 
     let identity_data = IdentityTransactionData {
@@ -279,7 +279,7 @@ async fn test_utxo_spending() -> Result<()> {
         vec![output],
         Signature {
             signature: vec![1, 2, 3],
-            public_key: PublicKey::new(vec![4, 5, 6]),
+            public_key: PublicKey::new([0u8; 2592]),
             algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 12345,
         },
@@ -308,7 +308,7 @@ async fn test_utxo_spending() -> Result<()> {
     let new_output = TransactionOutput::new(
         Hash::from_hex("4444444444444444444444444444444444444444444444444444444444444444")?,
         Hash::from_hex("5555555555555555555555555555555555555555555555555555555555555555")?,
-        PublicKey::new(vec![7, 8, 9, 10]),
+        PublicKey::new([0u8; 2592]),
     );
 
     let spending_tx = Transaction::new(
@@ -317,7 +317,7 @@ async fn test_utxo_spending() -> Result<()> {
         5000, // Increased fee
         Signature {
             signature: vec![11, 12, 13],
-            public_key: PublicKey::new(vec![14, 15, 16]),
+            public_key: PublicKey::new([0u8; 2592]),
             algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 12346,
         },
@@ -347,7 +347,7 @@ async fn test_utxo_set_consistency() -> Result<()> {
         let output = TransactionOutput::new(
             Hash::from_hex(&format!("{:064x}", i))?,
             Hash::from_hex(&format!("{:064x}", i + 1000))?,
-            PublicKey::new(vec![(i as u8), (i as u8) + 1, (i as u8) + 2]),
+            PublicKey::new([0u8; 2592]),
         );
 
         let identity_data = IdentityTransactionData {
@@ -369,7 +369,7 @@ async fn test_utxo_set_consistency() -> Result<()> {
             vec![output],
             Signature {
                 signature: vec![(i as u8), (i as u8) + 1, (i as u8) + 2],
-                public_key: PublicKey::new(vec![(i as u8) + 3, (i as u8) + 4]),
+                public_key: PublicKey::new([0u8; 2592]),
                 algorithm: SignatureAlgorithm::Dilithium5,
                 timestamp: 12345 + i as u64,
             },
@@ -428,12 +428,12 @@ async fn test_large_nullifier_set() -> Result<()> {
         vec![TransactionOutput::new(
             Hash::from_hex("7777777777777777777777777777777777777777777777777777777777777777")?,
             Hash::from_hex("8888888888888888888888888888888888888888888888888888888888888888")?,
-            PublicKey::new(vec![13, 14, 15]),
+            PublicKey::new([0u8; 2592]),
         )], // Need at least one output for Transfer transactions
         5000, // Increased fee for large transaction
         Signature {
             signature: vec![1, 2, 3, 4, 5],
-            public_key: PublicKey::new(vec![6, 7, 8, 9]),
+            public_key: PublicKey::new([0u8; 2592]),
             algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 12345,
         },
@@ -465,7 +465,7 @@ async fn test_mixed_transaction_block() -> Result<()> {
     let creation_output = TransactionOutput::new(
         Hash::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")?,
         Hash::from_hex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")?,
-        PublicKey::new(vec![1, 2, 3]),
+        PublicKey::new([0u8; 2592]),
     );
 
     let identity_data = IdentityTransactionData {
@@ -489,7 +489,7 @@ async fn test_mixed_transaction_block() -> Result<()> {
         vec![creation_output],
         Signature {
             signature: vec![1, 2, 3],
-            public_key: PublicKey::new(vec![4, 5, 6]),
+            public_key: PublicKey::new([0u8; 2592]),
             algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 12345,
         },
@@ -507,7 +507,7 @@ async fn test_mixed_transaction_block() -> Result<()> {
     let spending_output = TransactionOutput::new(
         Hash::from_hex("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")?,
         Hash::from_hex("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")?,
-        PublicKey::new(vec![7, 8, 9]),
+        PublicKey::new([0u8; 2592]),
     );
 
     let spending_tx = Transaction::new(
@@ -516,7 +516,7 @@ async fn test_mixed_transaction_block() -> Result<()> {
         5000, // Increased fee
         Signature {
             signature: vec![10, 11, 12],
-            public_key: PublicKey::new(vec![13, 14, 15]),
+            public_key: PublicKey::new([0u8; 2592]),
             algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 12346,
         },

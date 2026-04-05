@@ -217,7 +217,7 @@ mod tests {
     use super::*;
 
     fn create_test_public_key(id: u8) -> PublicKey {
-        PublicKey::new(vec![id; 1312])
+        PublicKey::new([id; 2592])
     }
 
     // ============================================================================
@@ -247,7 +247,7 @@ mod tests {
 
     #[test]
     fn test_init_rejects_zero_fee_collector() {
-        let zero_addr = PublicKey::new(vec![0u8; 1312]);
+        let zero_addr = PublicKey::new([0u8; 2592]);
 
         let result = SovDaoTreasury::init(SectorDao::Energy, zero_addr, None);
 

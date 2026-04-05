@@ -276,7 +276,7 @@ mod tests {
     use super::*;
 
     fn create_test_public_key(id: u8) -> PublicKey {
-        PublicKey::new(vec![id; 1312])
+        PublicKey::new([id; 2592])
     }
 
     // ============================================================================
@@ -354,7 +354,7 @@ mod tests {
 
     #[test]
     fn test_registry_rejects_zero_admin() {
-        let zero_admin = PublicKey::new(vec![0u8; 1312]);
+        let zero_admin = PublicKey::new([0u8; 2592]);
         let fee_collector = create_test_public_key(2);
 
         let mut sector_map = HashMap::new();
@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn test_registry_rejects_zero_fee_collector() {
         let admin = create_test_public_key(1);
-        let zero_fee_collector = PublicKey::new(vec![0u8; 1312]);
+        let zero_fee_collector = PublicKey::new([0u8; 2592]);
 
         let mut sector_map = HashMap::new();
         sector_map.insert("healthcare".to_string(), create_test_public_key(10));

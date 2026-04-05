@@ -1643,7 +1643,7 @@ mod tests {
             100,
             crate::integration::crypto_integration::Signature {
                 signature: vec![1, 2, 3],
-                public_key: crate::integration::crypto_integration::PublicKey::new(vec![4, 5, 6]),
+                public_key: crate::integration::crypto_integration::PublicKey::new([0u8; 2592]),
                 algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
                 timestamp: 12345,
             },
@@ -1694,7 +1694,7 @@ mod tests {
         let test_output = crate::transaction::TransactionOutput::new(
             crate::types::Hash::from([2u8; 32]),
             crate::types::Hash::from([3u8; 32]),
-            crate::integration::crypto_integration::PublicKey::new(vec![4, 5, 6]),
+            crate::integration::crypto_integration::PublicKey::new([0u8; 2592]),
         );
         utxo_set.insert(test_hash, test_output);
 

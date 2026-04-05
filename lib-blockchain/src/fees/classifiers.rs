@@ -313,18 +313,18 @@ mod tests {
                 TransactionOutput::new(
                     Hash::new([3u8; 32]),
                     Hash::new([4u8; 32]),
-                    PublicKey::new(vec![5u8; 32]),
+                    PublicKey::new([5u8; 2592]),
                 ),
                 TransactionOutput::new(
                     Hash::new([6u8; 32]),
                     Hash::new([7u8; 32]),
-                    PublicKey::new(vec![8u8; 32]),
+                    PublicKey::new([8u8; 2592]),
                 ),
             ],
             1000, // fee
             Signature {
                 signature: vec![0u8; 64],
-                public_key: PublicKey::new(vec![0u8; 32]),
+                public_key: PublicKey::new([0u8; 2592]),
                 algorithm: SignatureAlgorithm::Dilithium2,
                 timestamp: 0,
             },
@@ -339,7 +339,7 @@ mod tests {
             0,      // Fee must be 0 for token transfers
             Signature {
                 signature: vec![0u8; 64],
-                public_key: PublicKey::new(vec![0u8; 32]),
+                public_key: PublicKey::new([0u8; 2592]),
                 algorithm: SignatureAlgorithm::Dilithium2,
                 timestamp: 0,
             },
@@ -364,12 +364,12 @@ mod tests {
             vec![TransactionOutput::new(
                 Hash::new([1u8; 32]),
                 Hash::new([2u8; 32]),
-                PublicKey::new(vec![0u8; 32]),
+                PublicKey::new([0u8; 2592]),
             )],
             0, // Coinbase has no fee
             Signature {
                 signature: vec![],
-                public_key: PublicKey::new(vec![]),
+                public_key: PublicKey::new([0u8; 2592]),
                 algorithm: SignatureAlgorithm::Dilithium2,
                 timestamp: 0,
             },
@@ -416,8 +416,8 @@ mod tests {
         assert_eq!(fee_input.state_writes, 2); // sender + receiver
 
         // Check no ZK proof bytes (balance model)
-        // witness = sig (64) + pubkey (32) = 96
-        assert_eq!(fee_input.witness_bytes, 96);
+        // witness = sig (64 bytes placeholder) + pubkey (2592 bytes Dilithium5) = 2656
+        assert_eq!(fee_input.witness_bytes, 2656);
     }
 
     #[test]

@@ -18,7 +18,7 @@ fn create_test_cbe_token(reserve_micro_usd: u128) -> BondingCurveToken {
         threshold: crate::contracts::bonding_curve::Threshold::ReserveAmount(1_000_000u128),
         sell_enabled: true,
         amm_pool_id: None,
-        creator: PublicKey::new(vec![1u8; 32]),
+        creator: PublicKey::new([1u8; 2592]),
         creator_did: None,
         deployed_at_block: 1,
         deployed_at_timestamp: 1,

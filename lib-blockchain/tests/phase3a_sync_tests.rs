@@ -14,7 +14,7 @@ use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, Sign
 use lib_blockchain::storage::{Address, BlockchainStore, SledStore, TokenId};
 use lib_blockchain::sync::{ChainSync, SyncError};
 use lib_blockchain::transaction::{TokenTransferData, Transaction, TransactionPayload};
-use lib_blockchain::types::{Difficulty, Hash, TransactionType};
+use lib_blockchain::types::{Hash, TransactionType};
 
 // =============================================================================
 // Test Helpers
@@ -25,7 +25,7 @@ fn create_test_store(dir: &TempDir) -> Arc<dyn BlockchainStore> {
 }
 
 fn create_dummy_public_key() -> PublicKey {
-    PublicKey::new(vec![0u8; 32])
+    PublicKey::new([0u8; 2592])
 }
 
 fn create_dummy_signature() -> Signature {
@@ -44,18 +44,18 @@ fn create_genesis_block() -> Block {
 
     let header = BlockHeader {
         version: 1,
-        previous_block_hash: Hash::default(),
-        merkle_root: Hash::default(),
-        state_root: Hash::default(),
+        previous_hash: Hash::default().into(),
+        data_helix_root: Hash::default().into(),
+        state_root: Hash::default().into(),
         timestamp: 1000,
-        difficulty: Difficulty::minimum(),
-        nonce: 0,
-        cumulative_difficulty: Difficulty::minimum(),
+        verification_helix_root: [0u8; 32],
+        bft_quorum_root: [0u8; 32],
+
         height: 0,
         block_hash,
-        transaction_count: 0,
-        block_size: 0,
-        fee_model_version: 2, // Phase 2+ uses v2
+
+
+
     };
     Block::new(header, vec![])
 }
@@ -67,18 +67,14 @@ fn create_block_at_height(height: u64, prev_hash: Hash) -> Block {
 
     let header = BlockHeader {
         version: 1,
-        previous_block_hash: prev_hash,
-        merkle_root: Hash::default(),
-        state_root: Hash::default(),
+        previous_hash: prev_hash.into(),
+        data_helix_root: Hash::default().into(),
+        state_root: Hash::default().into(),
         timestamp: 1000 + height * 600,
-        difficulty: Difficulty::minimum(),
-        nonce: 0,
-        cumulative_difficulty: Difficulty::minimum(),
         height,
+        verification_helix_root: [0u8; 32],
+        bft_quorum_root: [0u8; 32],
         block_hash,
-        transaction_count: 0,
-        block_size: 0,
-        fee_model_version: 2, // Phase 2+ uses v2
     };
     Block::new(header, vec![])
 }
@@ -92,18 +88,14 @@ fn create_block_with_txs(height: u64, prev_hash: Hash, txs: Vec<Transaction>) ->
 
     let header = BlockHeader {
         version: 1,
-        previous_block_hash: prev_hash,
-        merkle_root: Hash::default(),
-        state_root: Hash::default(),
+        previous_hash: prev_hash.into(),
+        data_helix_root: Hash::default().into(),
+        state_root: Hash::default().into(),
         timestamp: 1000 + height * 600,
-        difficulty: Difficulty::minimum(),
-        nonce: 0,
-        cumulative_difficulty: Difficulty::minimum(),
         height,
+        verification_helix_root: [0u8; 32],
+        bft_quorum_root: [0u8; 32],
         block_hash,
-        transaction_count: txs.len() as u32,
-        block_size: 0,
-        fee_model_version: 2, // Phase 2+ uses v2
     };
     Block::new(header, txs)
 }

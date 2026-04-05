@@ -49,7 +49,9 @@ const SOV_ATOMIC_UNITS: u128 = 1_000_000_000_000_000_000;
 // ============================================================================
 
 fn test_pubkey(id: u8) -> PublicKey {
-    PublicKey::new(vec![id; 32])
+    let mut pk = [0u8; 2592];
+    pk[0] = id;
+    PublicKey::new(pk)
 }
 
 fn governance() -> PublicKey {

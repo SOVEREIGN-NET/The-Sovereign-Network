@@ -44,7 +44,7 @@ mod sov_week10_integration_tests {
                 (index_bytes[i % 4].wrapping_add(i as u8)).wrapping_mul(KEY_PATTERN_MULTIPLIER);
         }
 
-        PublicKey::new(key_bytes)
+        PublicKey::new([42u8; 2592])
     }
 
     /// Create a test transaction with specified type and fee
@@ -88,18 +88,14 @@ mod sov_week10_integration_tests {
 
         let header = BlockHeader {
             version: 1,
-            previous_block_hash: Hash::default(),
-            merkle_root: Hash::default(),
-            state_root: Hash::default(),
+            previous_hash: Hash::default().into(),
+            data_helix_root: Hash::default().into(),
+            state_root: Hash::default().into(),
             timestamp: 1000 + (height as u64),
-            difficulty: Difficulty::minimum(),
-            nonce: 0,
-            cumulative_difficulty: Difficulty::minimum(),
             height,
+            verification_helix_root: [0u8; 32],
+            bft_quorum_root: [0u8; 32],
             block_hash: Hash::default(),
-            transaction_count: transactions.len() as u32,
-            block_size: 1024,
-            fee_model_version: 2, // Phase 2+ uses v2
         };
 
         Block {
@@ -150,8 +146,8 @@ mod sov_week10_integration_tests {
             "Block should contain 1000 transactions"
         );
         assert_eq!(
-            block.header.transaction_count, 1000,
-            "Header should reflect 1000 transactions"
+            block.transactions.len(), 1000,
+            "Block should reflect 1000 transactions"
         );
         assert_eq!(block.height(), 100, "Block height should be 100");
 

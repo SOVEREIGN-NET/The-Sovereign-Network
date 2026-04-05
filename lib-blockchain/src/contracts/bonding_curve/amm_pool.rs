@@ -297,7 +297,7 @@ mod tests {
     };
 
     fn test_pubkey(id: u8) -> PublicKey {
-        PublicKey::new(vec![id; 32])
+        PublicKey::new([id; 2592])
     }
 
     /// Issue #1849: Test POL pool creation for graduated token.

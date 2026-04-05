@@ -1987,8 +1987,8 @@ mod tests {
 
         // Initialize system first (creates and persists SOV)
         let governance = PublicKey {
-            dilithium_pk: vec![1],
-            kyber_pk: vec![1],
+            dilithium_pk: [1u8; 2592],
+            kyber_pk: [1u8; 1568],
             key_id: [1u8; 32],
         };
         let config = SystemConfig {

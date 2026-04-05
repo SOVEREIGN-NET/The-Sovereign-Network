@@ -556,7 +556,7 @@ mod tests {
             fee: 0,
             signature: Signature {
                 signature: vec![0u8; 64],
-                public_key: PublicKey::new(vec![1u8; 32]),
+                public_key: PublicKey::new([1u8; 2592]),
                 algorithm: SignatureAlgorithm::Dilithium5,
                 timestamp: 0,
             },

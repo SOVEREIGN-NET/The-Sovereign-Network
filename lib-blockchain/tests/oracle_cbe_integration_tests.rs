@@ -30,7 +30,7 @@ fn create_test_cbe_token(token_id: [u8; 32], reserve_micro_usd: u128) -> Bonding
         threshold: Threshold::ReserveAmount(2_745_966u128), // $2,745,966 USD
         sell_enabled: true,
         amm_pool_id: None,
-        creator: PublicKey::new(vec![1u8; 32]),
+        creator: PublicKey::new([1u8; 2592]),
         creator_did: None,
         deployed_at_block: 1,
         deployed_at_timestamp: 1,

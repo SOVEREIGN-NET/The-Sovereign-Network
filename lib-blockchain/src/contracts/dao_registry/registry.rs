@@ -695,7 +695,7 @@ mod tests {
     use super::*;
 
     fn test_public_key(id: u8) -> PublicKey {
-        PublicKey::new(vec![id; 1312])
+        PublicKey::new([id; 2592])
     }
 
     // ============================================================================
@@ -1005,7 +1005,7 @@ mod tests {
     fn test_treasury_cannot_be_zero() {
         let mut registry = DAORegistry::new();
         let token = test_public_key(1);
-        let zero_treasury = PublicKey::new(vec![0u8; 1312]);
+        let zero_treasury = PublicKey::new([0u8; 2592]);
         let owner = test_public_key(3);
 
         let result =
@@ -1020,7 +1020,7 @@ mod tests {
     #[test]
     fn test_token_address_cannot_be_zero() {
         let mut registry = DAORegistry::new();
-        let zero_token = PublicKey::new(vec![0u8; 1312]);
+        let zero_token = PublicKey::new([0u8; 2592]);
         let treasury = test_public_key(2);
         let owner = test_public_key(3);
 
@@ -1036,7 +1036,7 @@ mod tests {
         let mut registry = DAORegistry::new();
         let token = test_public_key(1);
         let treasury = test_public_key(2);
-        let zero_owner = PublicKey::new(vec![0u8; 1312]);
+        let zero_owner = PublicKey::new([0u8; 2592]);
 
         let result =
             registry.register_dao(token, DAOType::NP, treasury, [1u8; 32], zero_owner, 100);
@@ -1079,8 +1079,14 @@ mod tests {
     fn test_length_prefix_collision_prevention() {
         // CRITICAL: Test with DIFFERENT length keys to verify length-prefixing works
         // Without length-prefixes, ("ab", "c") would collide with ("a", "bc")
-        let short_token = PublicKey::new(vec![0x01, 0x02, 0x03, 0x04]); // 4 bytes
-        let long_token = PublicKey::new(vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]); // 8 bytes
+        let short_bytes = [0x01, 0x02, 0x03, 0x04];
+        let long_bytes = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        let mut short_dilithium = [0u8; 2592];
+        let mut long_dilithium = [0u8; 2592];
+        short_dilithium[..4].copy_from_slice(&short_bytes);
+        long_dilithium[..8].copy_from_slice(&long_bytes);
+        let short_token = PublicKey::new(short_dilithium);
+        let long_token = PublicKey::new(long_dilithium);
         let treasury = test_public_key(2);
 
         let id_short = derive_dao_id(&short_token, DAOType::NP, &treasury);

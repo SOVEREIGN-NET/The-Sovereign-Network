@@ -18,7 +18,7 @@ use lib_blockchain::storage::{Address, BlockchainStore, SledStore};
 use lib_blockchain::transaction::{
     Transaction, TransactionInput, TransactionOutput, TransactionPayload,
 };
-use lib_blockchain::types::{Difficulty, Hash, TransactionType};
+use lib_blockchain::types::{Hash, TransactionType};
 use lib_proofs::types::ZkProof;
 
 // =============================================================================
@@ -42,11 +42,11 @@ fn create_executor_with_fee_sink(
 }
 
 fn create_dummy_public_key() -> PublicKey {
-    PublicKey::new(vec![0u8; 32])
+    PublicKey::new([0u8; 2592])
 }
 
 fn create_recipient_pk(seed: u8) -> PublicKey {
-    let mut key_data = vec![0u8; 32];
+    let mut key_data = [0u8; 2592];
     key_data[0] = seed;
     PublicKey::new(key_data)
 }
@@ -87,7 +87,10 @@ fn create_coinbase_with_fees(
 
     // Add fee sink output if there are fees
     if fees > 0 {
-        let fee_sink_pk = PublicKey::new(fee_sink_address.as_bytes().to_vec());
+        let mut fee_sink_bytes = [0u8; 2592];
+        let addr_bytes = fee_sink_address.as_bytes();
+        fee_sink_bytes[..addr_bytes.len().min(2592)].copy_from_slice(&addr_bytes[..addr_bytes.len().min(2592)]);
+        let fee_sink_pk = PublicKey::new(fee_sink_bytes);
         outputs.push(TransactionOutput {
             commitment: Hash::default(),
             note: Hash::default(),
@@ -116,18 +119,14 @@ fn create_genesis_with_coinbase(coinbase: Transaction) -> Block {
 
     let header = BlockHeader {
         version: 1,
-        previous_block_hash: Hash::default(),
-        merkle_root: Hash::default(),
-        state_root: Hash::default(),
+        previous_hash: Hash::default().into(),
+        data_helix_root: Hash::default().into(),
+        state_root: Hash::default().into(),
         timestamp: 1000,
-        difficulty: Difficulty::minimum(),
-        nonce: 0,
-        cumulative_difficulty: Difficulty::minimum(),
         height: 0,
+        verification_helix_root: [0u8; 32],
+        bft_quorum_root: [0u8; 32],
         block_hash,
-        transaction_count: 1,
-        block_size: 0,
-        fee_model_version: 2,
     };
     Block::new(header, vec![coinbase])
 }
@@ -139,18 +138,14 @@ fn create_empty_genesis() -> Block {
 
     let header = BlockHeader {
         version: 1,
-        previous_block_hash: Hash::default(),
-        merkle_root: Hash::default(),
-        state_root: Hash::default(),
+        previous_hash: Hash::default().into(),
+        data_helix_root: Hash::default().into(),
+        state_root: Hash::default().into(),
         timestamp: 1000,
-        difficulty: Difficulty::minimum(),
-        nonce: 0,
-        cumulative_difficulty: Difficulty::minimum(),
         height: 0,
+        verification_helix_root: [0u8; 32],
+        bft_quorum_root: [0u8; 32],
         block_hash,
-        transaction_count: 0,
-        block_size: 0,
-        fee_model_version: 2,
     };
     Block::new(header, vec![])
 }
@@ -204,18 +199,14 @@ fn create_block_with_txs(
 
     let header = BlockHeader {
         version: 1,
-        previous_block_hash: prev_hash,
-        merkle_root: Hash::default(),
-        state_root: Hash::default(),
+        previous_hash: prev_hash.into(),
+        data_helix_root: Hash::default().into(),
+        state_root: Hash::default().into(),
         timestamp: 1000 + height * 600,
-        difficulty: Difficulty::minimum(),
-        nonce: 0,
-        cumulative_difficulty: Difficulty::minimum(),
         height,
+        verification_helix_root: [0u8; 32],
+        bft_quorum_root: [0u8; 32],
         block_hash,
-        transaction_count: transactions.len() as u32,
-        block_size: 0,
-        fee_model_version: 2,
     };
     Block::new(header, transactions)
 }
