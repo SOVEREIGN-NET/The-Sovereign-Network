@@ -220,3 +220,7 @@ pub fn verify_quorum_proof(
         ))
     }
 }
+
+#[cfg(test)]
+#[path = "verification_tests.rs"]
+mod tests;
