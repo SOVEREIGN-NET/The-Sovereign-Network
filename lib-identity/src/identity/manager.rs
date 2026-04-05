@@ -57,22 +57,28 @@ impl IdentityManager {
     /// 6. Provides welcome bonus
     ///
     /// This is the primary method for creating new citizens.
+    /// Create a new citizen identity with quantum-resistant keys and full citizenship benefits.
+    ///
+    /// # Migration Note
+    /// 
+    /// This method now uses real Dilithium5 key generation via `lib_crypto::KeyPair::generate()`.
+    /// The old fake hash-based key generation has been removed.
+    ///
+    /// For new code, consider using `create_user_identity_with_wallet()` which provides
+    /// a simpler API and the same security guarantees.
     pub async fn create_citizen_identity(
         &mut self,
         display_name: String,
         recovery_options: Vec<String>,
         economic_model: &mut EconomicModel,
     ) -> Result<CitizenshipResult> {
-        // Generate quantum-resistant key pair
-        let (private_key_bytes, public_key) = self.generate_pq_keypair().await?;
+        // Generate real CRYSTALS-Dilithium5 quantum-resistant key pair
+        let keypair = lib_crypto::KeyPair::generate()
+            .map_err(|e| anyhow::anyhow!("Failed to generate keypair: {}", e))?;
 
-        // Wrap in PrivateKey struct
-        let private_key = lib_crypto::PrivateKey {
-            dilithium_sk: private_key_bytes.clone(),
-            dilithium_pk: public_key.clone(),
-            kyber_sk: vec![],    // Not used in current implementation
-            master_seed: vec![], // Derived separately
-        };
+        // Use the generated keypair directly
+        let private_key = keypair.private_key;
+        let public_key = keypair.public_key.dilithium_pk;
 
         // Generate identity seed
         let mut seed = [0u8; 32];
@@ -82,9 +88,9 @@ impl IdentityManager {
         // Create identity ID from public key
         let id = Hash::from_bytes(&blake3::hash(&public_key).as_bytes()[..32]);
 
-        // Generate ownership proof
+        // Generate ownership proof (convert fixed arrays to slices for the proof function)
         let ownership_proof = self
-            .generate_ownership_proof(&private_key_bytes, &public_key)
+            .generate_ownership_proof(&private_key.dilithium_sk, &public_key)
             .await?;
 
         // Generate master seed for HD wallet derivation (64 bytes)
@@ -127,7 +133,7 @@ impl IdentityManager {
         let mut identity = ZhtpIdentity::from_legacy_fields(
             id.clone(),
             IdentityType::Human,
-            public_key.clone(),
+            public_key.to_vec(), // Convert fixed array to Vec for API compatibility
             private_key.clone(),
             "primary".to_string(), // Default device name for new citizens
             ownership_proof,
@@ -141,8 +147,12 @@ impl IdentityManager {
         identity.dao_voting_power = 10; // Verified citizens get full voting power
 
         // Store private data (recovery data only, no seed field per identity architecture)
-        let private_data =
-            PrivateIdentityData::new(private_key_bytes, public_key.clone(), recovery_options);
+        // Convert fixed arrays to Vec for storage (PrivateIdentityData uses Vec<u8> for flexibility)
+        let private_data = PrivateIdentityData::new(
+            private_key.dilithium_sk.to_vec(),
+            public_key.to_vec(),
+            recovery_options,
+        );
 
         // Register for DAO governance
         let dao_registration =
@@ -832,28 +842,17 @@ impl IdentityManager {
         let signature_bytes =
             lib_crypto::hash_blake3(&[signature_seed.as_slice(), &message_to_sign].concat());
 
-        // Generate corresponding public key components
-        let dilithium_pk = lib_crypto::hash_blake3(
-            &[
-                identity.public_key.as_bytes().as_slice(),
-                b"dilithium".as_slice(),
-            ]
-            .concat(),
-        )
-        .to_vec();
-
-        let kyber_pk = lib_crypto::hash_blake3(
-            &[
-                identity.public_key.as_bytes().as_slice(),
-                b"kyber".as_slice(),
-            ]
-            .concat(),
-        )
-        .to_vec();
-
+        // FIXME: This function creates fake signatures using hashing instead of real Dilithium signing.
+        // It needs to be rewritten to use the actual Dilithium private key for signing.
+        // For now, we create properly-sized zero arrays to satisfy type requirements.
+        
         // Create key ID from identity
         let mut key_id = [0u8; 32];
         key_id.copy_from_slice(&identity_id.0);
+
+        // FIXME: These should be real Dilithium5 keys from the identity's keypair
+        let dilithium_pk = [0u8; 2592];
+        let kyber_pk = [0u8; 1568];
 
         Ok(PostQuantumSignature {
             signature: signature_bytes.to_vec(),
@@ -862,7 +861,7 @@ impl IdentityManager {
                 kyber_pk,
                 key_id,
             },
-            algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
+            algorithm: lib_crypto::SignatureAlgorithm::Dilithium5, // Updated to match consensus
             timestamp,
         })
     }
@@ -894,22 +893,29 @@ impl IdentityManager {
         let (identity_id, private_key_bytes, public_key, _seed) =
             recovery_manager.restore_from_phrase(&phrase_words).await?;
 
+        // Convert Vec<u8> to fixed-size arrays for PrivateKey
+        // FIXME: The recovery phrase system should return fixed arrays directly
+        let dilithium_sk: [u8; 4864] = private_key_bytes.as_slice().try_into()
+            .map_err(|_| anyhow!("Invalid private key size: expected 4864 bytes for Dilithium5"))?;
+        let dilithium_pk: [u8; 2592] = public_key.as_slice().try_into()
+            .map_err(|_| anyhow!("Invalid public key size: expected 2592 bytes for Dilithium5"))?;
+
         // Wrap in PrivateKey struct
         let private_key = lib_crypto::PrivateKey {
-            dilithium_sk: private_key_bytes.clone(),
-            dilithium_pk: public_key.clone(),
-            kyber_sk: vec![],    // Not used in current implementation
-            master_seed: vec![], // Derived separately
+            dilithium_sk,
+            dilithium_pk,
+            kyber_sk: [0u8; 3168],    // Not used in current implementation
+            master_seed: [0u8; 64],   // Derived separately
         };
 
         // Create identity structure
         let mut identity = ZhtpIdentity::from_legacy_fields(
             identity_id.clone(),
             IdentityType::Human,
-            public_key.clone(),
+            public_key, // Pass the Vec<u8> for API compatibility
             private_key.clone(),
             "primary".to_string(), // Default device name for imported identity
-            self.generate_ownership_proof(&private_key_bytes, &public_key)
+            self.generate_ownership_proof(&dilithium_sk, &dilithium_pk)
                 .await?,
             crate::wallets::WalletManager::new(identity_id.clone()),
         )?;
@@ -923,8 +929,8 @@ impl IdentityManager {
 
         // Create private data (recovery data only, no seed field per identity architecture)
         let private_data = PrivateIdentityData::new(
-            private_key_bytes,
-            public_key,
+            dilithium_sk.to_vec(),
+            dilithium_pk.to_vec(),
             vec![], // No additional recovery options for imported identities
         );
 
@@ -1121,43 +1127,6 @@ impl IdentityManager {
             identity.reputation = std::cmp::min(1000, identity.reputation + reputation_boost);
         }
         Ok(())
-    }
-
-    async fn generate_pq_keypair(&self) -> Result<(Vec<u8>, Vec<u8>)> {
-        // Generate actual CRYSTALS-Dilithium quantum-resistant key pair
-        // This uses proper post-quantum cryptography that resists quantum computer attacks
-
-        // Generate high-entropy seed for key generation
-        let mut seed = [0u8; 64];
-        use rand::RngCore;
-        rand::rngs::OsRng.fill_bytes(&mut seed);
-
-        // Generate private key using CRYSTALS-Dilithium approach
-        let mut private_key = vec![0u8; 64]; // Dilithium private key size
-        rand::rngs::OsRng.fill_bytes(&mut private_key);
-
-        // Derive deterministic private key from seed
-        let deterministic_private = lib_crypto::hash_blake3(
-            &[&seed, b"dilithium_private_key_generation".as_slice()].concat(),
-        );
-        private_key[..32].copy_from_slice(deterministic_private.as_slice());
-
-        // Generate corresponding public key
-        let public_key_seed = lib_crypto::hash_blake3(
-            &[&private_key, b"dilithium_public_key_generation".as_slice()].concat(),
-        );
-
-        // Create public key using proper quantum-resistant methods
-        let public_key = lib_crypto::hash_blake3(
-            &[
-                public_key_seed.as_slice(),
-                b"lib_quantum_resistant_public_key",
-            ]
-            .concat(),
-        )
-        .to_vec();
-
-        Ok((private_key, public_key))
     }
 
     async fn generate_ownership_proof(

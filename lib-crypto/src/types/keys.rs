@@ -4,10 +4,11 @@
 
 use crate::hashing::hash_blake3;
 use crate::traits::ZeroizingKey;
+use crate::types::Hash;
 use crate::types::Signature;
 use crate::verification::verify_signature;
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::sync::atomic::{compiler_fence, Ordering};
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -22,14 +23,61 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 /// - Memory barriers prevent reordering
 /// - Zeroization on drop for sensitive data protection
 #[repr(C)]
-#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+#[derive(Debug, Clone, Hash)]
 pub struct PublicKey {
-    /// CRYSTALS-Dilithium public key for post-quantum signatures
-    pub dilithium_pk: Vec<u8>,
-    /// CRYSTALS-Kyber public key for post-quantum key encapsulation
-    pub kyber_pk: Vec<u8>,
+    /// CRYSTALS-Dilithium5 public key for post-quantum signatures (2592 bytes).
+    pub dilithium_pk: [u8; 2592],
+    /// CRYSTALS-Kyber1024 public key for post-quantum key encapsulation (1568 bytes).
+    pub kyber_pk: [u8; 1568],
     /// Key identifier for fast lookups
     pub key_id: [u8; 32],
+}
+
+// Manual serde implementation for large fixed arrays
+impl serde::Serialize for PublicKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("PublicKey", 3)?;
+        state.serialize_field("dilithium_pk", &self.dilithium_pk.as_slice())?;
+        state.serialize_field("kyber_pk", &self.kyber_pk.as_slice())?;
+        state.serialize_field("key_id", &self.key_id)?;
+        state.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for PublicKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct PublicKeyHelper {
+            dilithium_pk: Vec<u8>,
+            kyber_pk: Vec<u8>,
+            key_id: [u8; 32],
+        }
+
+        let helper = PublicKeyHelper::deserialize(deserializer)?;
+        
+        let dilithium_pk: [u8; 2592] = helper.dilithium_pk.try_into()
+            .map_err(|v: Vec<u8>| serde::de::Error::custom(
+                format!("dilithium_pk must be 2592 bytes, got {}", v.len())
+            ))?;
+        
+        let kyber_pk: [u8; 1568] = helper.kyber_pk.try_into()
+            .map_err(|v: Vec<u8>| serde::de::Error::custom(
+                format!("kyber_pk must be 1568 bytes, got {}", v.len())
+            ))?;
+
+        Ok(PublicKey {
+            dilithium_pk,
+            kyber_pk,
+            key_id: helper.key_id,
+        })
+    }
 }
 
 // CRITICAL FIX C5: Constant-time equality to prevent timing attacks on cryptographic keys
@@ -87,7 +135,7 @@ impl Drop for PublicKey {
 /// # Rationale for Public Key Zeroization
 ///
 /// While public keys are not secret, they are wiped on drop for defense-in-depth:
-/// - **Post-Quantum Keys are Large**: Dilithium (1312B) + Kyber (1568B) = 2.8KB per key
+/// - **Post-Quantum Keys are Large**: Dilithium5 (2592B) + Kyber1024 (1568B) = 4.16KB per key
 /// - **Metadata Protection**: Public keys may reveal network topology or identity patterns
 /// - **Memory Analysis Resistance**: Prevents key fingerprinting in memory dumps
 /// - **Compliance**: Meets audit-grade cryptographic hygiene standards
@@ -96,52 +144,57 @@ impl Drop for PublicKey {
 impl ZeroizingKey for PublicKey {}
 
 impl PublicKey {
-    /// Create a new public key from raw bytes (assumes Dilithium)
-    pub fn new(dilithium_pk: Vec<u8>) -> Self {
+    /// Create a new public key from Dilithium5 public key bytes.
+    pub fn new(dilithium_pk: [u8; 2592]) -> Self {
         let key_id = hash_blake3(&dilithium_pk);
         PublicKey {
             dilithium_pk,
-            kyber_pk: Vec::new(),
-            // ed25519_pk removed - pure PQC only
+            kyber_pk: [0u8; 1568], // Empty Kyber key (all zeros)
             key_id,
         }
     }
 
-    /// Create a public key from Kyber public key bytes only
-    pub fn from_kyber_public_key(kyber_pk: Vec<u8>) -> Self {
-        let key_id = hash_blake3(&kyber_pk);
+    /// Create a new public key from Dilithium5 and Kyber1024 public key bytes.
+    pub fn new_with_kyber(dilithium_pk: [u8; 2592], kyber_pk: [u8; 1568]) -> Self {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&dilithium_pk);
+        hasher.update(&kyber_pk);
+        let key_id: [u8; 32] = hasher.finalize().into();
         PublicKey {
-            dilithium_pk: Vec::new(),
+            dilithium_pk,
             kyber_pk,
             key_id,
         }
     }
 
-    /// Get the size of this public key in bytes (pure PQC only)
-    pub fn size(&self) -> usize {
-        self.dilithium_pk.len() + self.kyber_pk.len() + 32 // key_id
+    /// Create a public key from Kyber1024 public key bytes only.
+    pub fn from_kyber_public_key(kyber_pk: [u8; 1568]) -> Self {
+        let key_id = hash_blake3(&kyber_pk);
+        PublicKey {
+            dilithium_pk: [0u8; 2592], // Empty Dilithium key (all zeros)
+            kyber_pk,
+            key_id,
+        }
     }
 
-    /// Convert public key to bytes for signature verification (pure PQC only)
+    /// Get the size of this public key in bytes (pure PQC only).
+    pub const fn size() -> usize {
+        2592 + 1568 + 32 // dilithium_pk + kyber_pk + key_id
+    }
+
+    /// Get the Dilithium5 public key bytes.
+    pub fn dilithium_bytes(&self) -> &[u8; 2592] {
+        &self.dilithium_pk
+    }
+
+    /// Convert public key to bytes for signature verification (pure PQC only).
     pub fn as_bytes(&self) -> Vec<u8> {
         // Always use CRYSTALS-Dilithium public key for pure post-quantum security
-        if !self.dilithium_pk.is_empty() {
-            return self.dilithium_pk.clone();
-        }
-
-        // Fallback to key_id only if Dilithium key not available
-        self.key_id.to_vec()
+        self.dilithium_pk.to_vec()
     }
 
-    /// Verify a signature against this public key using pure post-quantum cryptography
+    /// Verify a signature against this public key using pure post-quantum cryptography.
     pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<bool> {
-        // Always use CRYSTALS-Dilithium verification - no fallbacks
-        if self.dilithium_pk.is_empty() {
-            return Err(anyhow::anyhow!(
-                "No Dilithium public key available for pure PQC verification"
-            ));
-        }
-
         // Pure post-quantum signature verification
         verify_signature(message, &signature.signature, &self.dilithium_pk)
     }
@@ -150,15 +203,14 @@ impl PublicKey {
 /// Pure post-quantum private key (zeroized on drop for security)
 #[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
 pub struct PrivateKey {
-    /// CRYSTALS-Dilithium secret key
-    pub dilithium_sk: Vec<u8>,
-    /// CRYSTALS-Dilithium public key (stored with private key for signing convenience)
-    /// This allows the public key to be retrieved when only PrivateKey is available
-    pub dilithium_pk: Vec<u8>,
-    /// CRYSTALS-Kyber secret key
-    pub kyber_sk: Vec<u8>,
-    /// Master seed for key derivation
-    pub master_seed: Vec<u8>,
+    /// CRYSTALS-Dilithium5 secret key (4864 bytes)
+    pub dilithium_sk: [u8; 4864],
+    /// CRYSTALS-Dilithium5 public key (2592 bytes) - stored with private key for signing convenience
+    pub dilithium_pk: [u8; 2592],
+    /// CRYSTALS-Kyber1024 secret key (3168 bytes)
+    pub kyber_sk: [u8; 3168],
+    /// Master seed for key derivation (64 bytes)
+    pub master_seed: [u8; 64],
 }
 
 /// SECURITY ENFORCEMENT: PrivateKey implements ZeroizingKey

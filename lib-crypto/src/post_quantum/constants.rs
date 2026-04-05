@@ -20,6 +20,7 @@ pub const DILITHIUM2_SECRETKEY_BYTES: usize = 2560;
 
 /// CRYSTALS-Dilithium5 constants (highest security level)
 pub const DILITHIUM5_PUBLICKEY_BYTES: usize = 2592;
+pub const DILITHIUM5_SIGNATURE_BYTES: usize = 4595;
 /// pqcrypto-dilithium format (random keygen)
 pub const DILITHIUM5_SECRETKEY_BYTES_PQCRYPTO: usize = 4896;
 /// crystals-dilithium format (seed-derived keys)
@@ -27,8 +28,8 @@ pub const DILITHIUM5_SECRETKEY_BYTES_CRYSTALS: usize = 4864;
 /// Legacy alias for backward compatibility (defaults to pqcrypto format)
 pub const DILITHIUM5_SECRETKEY_BYTES: usize = DILITHIUM5_SECRETKEY_BYTES_PQCRYPTO;
 
-// Re-export for backward compatibility
-pub use DILITHIUM2_PUBLICKEY_BYTES as DILITHIUM_PUBLIC_KEY_SIZE;
-pub use DILITHIUM2_SECRETKEY_BYTES as DILITHIUM_PRIVATE_KEY_SIZE;
+// Re-export canonical consensus-level sizes.
+pub use DILITHIUM5_PUBLICKEY_BYTES as DILITHIUM_PUBLIC_KEY_SIZE;
+pub use DILITHIUM5_SECRETKEY_BYTES as DILITHIUM_PRIVATE_KEY_SIZE;
 pub use KYBER1024_PUBLICKEY_BYTES as KYBER_PUBLIC_KEY_SIZE;
 pub use KYBER1024_SECRETKEY_BYTES as KYBER_PRIVATE_KEY_SIZE;

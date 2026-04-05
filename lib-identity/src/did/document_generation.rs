@@ -541,6 +541,8 @@ pub fn validate_did_update(
 
     // Verify signature against DID root key
     let root_pk_bytes = did_root_public_key_bytes(document)?;
+    let root_pk_bytes: [u8; 2592] = root_pk_bytes.as_slice().try_into()
+        .map_err(|_| "Invalid root public key size: expected 2592 bytes for Dilithium5".to_string())?;
     let root_pk = PublicKey::new(root_pk_bytes);
     if update.signature.public_key.dilithium_pk != root_pk.dilithium_pk {
         return Err("Update signature public key does not match DID root".to_string());

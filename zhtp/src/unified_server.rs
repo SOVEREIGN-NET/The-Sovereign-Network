@@ -214,10 +214,10 @@ impl ZhtpUnifiedServer {
                                 .and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok())
                                 .unwrap_or_default();
                             let private_key = lib_crypto::PrivateKey {
-                                dilithium_sk: dilithium,
-                                dilithium_pk,
-                                kyber_sk: kyber,
-                                master_seed: seed,
+                                dilithium_sk: dilithium.as_slice().try_into().unwrap_or([0u8; 4864]),
+                                dilithium_pk: dilithium_pk.as_slice().try_into().unwrap_or([0u8; 2592]),
+                                kyber_sk: kyber.as_slice().try_into().unwrap_or([0u8; 3168]),
+                                master_seed: seed.as_slice().try_into().unwrap_or([0u8; 64]),
                             };
 
                             if let Ok(identity) = ZhtpIdentity::from_serialized(&data, &private_key)

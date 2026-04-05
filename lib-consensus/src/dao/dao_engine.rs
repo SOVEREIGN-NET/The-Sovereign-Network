@@ -780,14 +780,20 @@ impl DaoEngine {
 
         let signature_hash = hash_blake3(&vote_data);
 
+        // Create fixed-size arrays from hash (for test/placeholder purposes)
+        let mut dilithium_pk = [0u8; 2592];
+        let mut kyber_pk = [0u8; 1568];
+        dilithium_pk[..32].copy_from_slice(&signature_hash[..32]);
+        kyber_pk[..32].copy_from_slice(&signature_hash[..32]);
+
         Ok(lib_crypto::Signature {
             signature: signature_hash.to_vec(),
             public_key: lib_crypto::PublicKey {
-                dilithium_pk: signature_hash[..32].to_vec(),
-                kyber_pk: signature_hash[..32].to_vec(),
+                dilithium_pk,
+                kyber_pk,
                 key_id: signature_hash[..32].try_into().unwrap(),
             },
-            algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
+            algorithm: lib_crypto::SignatureAlgorithm::Dilithium5,
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()

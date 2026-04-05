@@ -174,7 +174,7 @@ impl SmartContract {
     pub fn size(&self) -> usize {
         32 + // contract_id
         4 + self.bytecode.len() + // bytecode with length prefix
-        self.creator.size() + // creator public key
+        lib_crypto::PublicKey::size() + // creator public key
         8 + // creation_height
         bincode::serialized_size(&self.contract_type).unwrap_or(0) as usize + // contract_type
         bincode::serialized_size(&self.permissions).unwrap_or(0) as usize // permissions

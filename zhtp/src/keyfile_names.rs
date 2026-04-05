@@ -15,13 +15,48 @@ use serde::{Deserialize, Serialize};
 ///
 /// This struct defines the JSON format used to persist private keys to disk.
 /// It is shared across zhtp, zhtp-cli, and other components to ensure consistency.
+/// Uses hex-encoded strings for JSON serialization of large fixed arrays.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeystorePrivateKey {
-    pub dilithium_sk: Vec<u8>,
-    #[serde(default)]
-    pub dilithium_pk: Vec<u8>, // Optional for backward compatibility with old keystores
-    pub kyber_sk: Vec<u8>,
-    pub master_seed: Vec<u8>,
+    /// Dilithium secret key bytes (hex-encoded for JSON)
+    #[serde(with = "serialize_bytes")]
+    pub dilithium_sk: [u8; 4864],
+    /// Dilithium public key bytes (optional, hex-encoded)
+    #[serde(default = "default_dilithium_pk", with = "serialize_bytes")]
+    pub dilithium_pk: [u8; 2592],
+    /// Kyber secret key bytes (hex-encoded)
+    #[serde(with = "serialize_bytes")]
+    pub kyber_sk: [u8; 3168],
+    /// Master seed bytes (hex-encoded)
+    #[serde(with = "serialize_bytes")]
+    pub master_seed: [u8; 64],
+}
+
+fn default_dilithium_pk() -> [u8; 2592] {
+    [0u8; 2592]
+}
+
+/// Custom serialization module for fixed-size byte arrays using hex encoding
+mod serialize_bytes {
+    use serde::{self, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S, const N: usize>(bytes: &[u8; N], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&hex::encode(bytes))
+    }
+
+    pub fn deserialize<'de, D, const N: usize>(deserializer: D) -> Result<[u8; N], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
+        let len = bytes.len();
+        bytes.try_into()
+            .map_err(|_| serde::de::Error::custom(format!("expected {} bytes, got {}", N, len)))
+    }
 }
 
 /// Node identity file (node's DID and identity metadata)

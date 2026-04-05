@@ -145,8 +145,8 @@ impl KernelState {
                                 // or extend CitizenRegistry to store full PublicKeys for each citizen.
                                 // See PR#1019 review comments for discussion.
                                 let recipient = PublicKey {
-                                    dilithium_pk: vec![], // Empty - not needed for balance tracking
-                                    kyber_pk: vec![],     // Empty - not needed for balance tracking
+                                    dilithium_pk: [0u8; 2592], // Empty - not needed for balance tracking
+                                    kyber_pk: [0u8; 1568],     // Empty - not needed for balance tracking
                                     key_id: claim.citizen_id,
                                 };
 

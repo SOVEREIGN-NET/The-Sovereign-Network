@@ -195,7 +195,7 @@ impl std::fmt::Display for EntityRegistryError {
 impl EntityRegistry {
     /// Internal helper to create a zero/placeholder public key.
     fn zero_public_key() -> PublicKey {
-        PublicKey::new(vec![0u8; 32])
+        PublicKey::new([0u8; 2592])
     }
 
     /// Create a new uninitialized EntityRegistry

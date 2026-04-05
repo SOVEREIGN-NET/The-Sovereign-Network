@@ -1282,7 +1282,7 @@ impl BlockchainStorageManager {
             id: system_id.clone(),
             identity_type: IdentityType::Agent, // Use Agent instead of System
             did: system_did,
-            public_key: PublicKey::new(vec![0u8; 32]), // System public key
+            public_key: PublicKey::new([0u8; 2592]), // System public key
             private_key: None,
             node_id: system_node_id,
             device_node_ids,

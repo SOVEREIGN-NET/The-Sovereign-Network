@@ -4,6 +4,7 @@
 
 pub mod core;
 pub mod creation;
+pub mod verification;
 
 // Explicit re-exports from block core module
 pub use core::{

@@ -279,7 +279,7 @@ impl LongRangeRoutingManager {
                 name: name.to_string(),
                 satellite_count: count,
                 coverage_areas: self.generate_global_coverage_areas(altitude_km).await,
-                operator: PublicKey::new(vec![rand::random(), rand::random(), rand::random()]),
+                operator: PublicKey::new([0u8; 2592]),
                 cost_per_mb: 1, // Very low cost for satellite routing
             };
 
@@ -305,7 +305,7 @@ impl LongRangeRoutingManager {
                 },
                 uplink_capacity_mbps: 1000 + rand::random::<u32>() % 9000, // 1-10 Gbps
                 utilization_percent: rand::random::<f32>() * 50.0,         // 0-50% utilization
-                operator: PublicKey::new(vec![rand::random(), rand::random(), rand::random()]),
+                operator: PublicKey::new([0u8; 2592]),
             };
             uplinks.push(uplink);
         }
@@ -382,7 +382,7 @@ impl LongRangeRoutingManager {
                     altitude_m: Some(100.0),
                 },
                 bandwidth_mbps,
-                operator: PublicKey::new(vec![rand::random(), rand::random(), rand::random()]),
+                operator: PublicKey::new([0u8; 2592]),
                 protocols: vec!["TCP".to_string(), "UDP".to_string(), "QUIC".to_string()],
             };
 
@@ -450,7 +450,7 @@ impl LongRangeRoutingManager {
                         altitude_m: Some(50.0), // 50m above sea level
                     },
                     range_km: 500.0 + rand::random::<f64>() * 500.0, // 500-1000km range
-                    operator: PublicKey::new(vec![rand::random(), rand::random(), rand::random()]),
+                    operator: PublicKey::new([0u8; 2592]),
                 };
 
                 // Calculate distance from previous station
@@ -748,8 +748,7 @@ impl LongRangeRoutingManager {
                     .iter()
                     .map(|global_hop| {
                         // Generate a temporary PublicKey for relay identification
-                        let relay_pub_key =
-                            PublicKey::new(vec![rand::random(), rand::random(), rand::random()]);
+                        let relay_pub_key = PublicKey::new([0u8; 2592]);
                         let unified_peer = UnifiedPeerId::from_public_key_legacy(relay_pub_key);
                         RouteHop {
                             peer_id: unified_peer,

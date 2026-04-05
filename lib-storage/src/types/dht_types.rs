@@ -216,8 +216,8 @@ pub fn placeholder_peer_identity(node_id: NodeId) -> DhtPeerIdentity {
     DhtPeerIdentity {
         node_id,
         public_key: lib_crypto::PublicKey {
-            dilithium_pk: vec![],
-            kyber_pk: vec![],
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: [0u8; 32],
         },
         did: String::from("did:zhtp:placeholder"),

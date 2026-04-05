@@ -201,24 +201,23 @@ pub fn verify_signature(message: &[u8], signature: &[u8], public_key: &[u8]) -> 
 /// Returns Err if the public key length does not match any known Dilithium size.
 pub fn validate_consensus_vote_signature_scheme(public_key: &[u8]) -> anyhow::Result<()> {
     match public_key.len() {
-        0 | DILITHIUM2_PUBLICKEY_BYTES | DILITHIUM5_PUBLICKEY_BYTES => Ok(()),
+        0 | DILITHIUM5_PUBLICKEY_BYTES => Ok(()),
         n => Err(anyhow::anyhow!(
-            "consensus vote signature must use Dilithium2 or Dilithium5 (pk_len={}); \
-             expected 0 (unsigned), {} (Dilithium2), or {} (Dilithium5) bytes",
+            "consensus vote signature must use Dilithium5 (pk_len={}); \
+             expected 0 (unsigned) or {} (Dilithium5) bytes",
             n,
-            DILITHIUM2_PUBLICKEY_BYTES,
             DILITHIUM5_PUBLICKEY_BYTES
         )),
     }
 }
 
-/// Verify a consensus vote signature, enforcing the Dilithium2-only rule.
+/// Verify a consensus vote signature, enforcing the Dilithium5 scheme.
 ///
 /// This function is a thin wrapper around [`verify_signature`] that first
 /// validates the public key length using
 /// [`validate_consensus_vote_signature_scheme`]. It should be used by
 /// consensus vote verification code paths (e.g. in `lib-consensus`) to
-/// ensure that only Dilithium2 keys are accepted for votes and commits.
+/// ensure that only Dilithium5 keys are accepted for votes and commits.
 pub fn verify_consensus_vote_signature(
     message: &[u8],
     signature: &[u8],
@@ -236,9 +235,12 @@ mod consensus_verification_tests {
     use super::validate_consensus_vote_signature_scheme;
 
     #[test]
-    fn test_dilithium2_public_key_accepted_for_consensus() {
+    fn test_dilithium2_public_key_rejected_for_consensus() {
         let dilithium2_pk = vec![0u8; 1312];
-        assert!(validate_consensus_vote_signature_scheme(&dilithium2_pk).is_ok());
+        assert!(
+            validate_consensus_vote_signature_scheme(&dilithium2_pk).is_err(),
+            "Dilithium2 must be rejected — only Dilithium5 is permitted"
+        );
     }
 
     #[test]

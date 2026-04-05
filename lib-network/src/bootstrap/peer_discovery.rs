@@ -457,8 +457,8 @@ async fn build_bootstrap_peer_info(
         .parse()
         .map_err(|e| anyhow!("Invalid bootstrap address '{}': {}", address, e))?;
     let synthetic_pubkey = PublicKey {
-        dilithium_pk: Vec::new(),
-        kyber_pk: Vec::new(),
+        dilithium_pk: [0u8; 2592],
+        kyber_pk: [0u8; 1568],
         key_id: lib_crypto::hash_blake3(normalized_address.as_bytes()),
     };
 

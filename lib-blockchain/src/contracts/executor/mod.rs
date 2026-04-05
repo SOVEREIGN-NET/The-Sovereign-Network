@@ -140,8 +140,8 @@ impl ExecutionContext {
         Self {
             caller,
             contract: PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             }, // Zero address for user calls
             call_origin: CallOrigin::User,
@@ -1502,9 +1502,11 @@ impl<S: ContractStorage> ContractExecutor<S> {
         ]);
 
         // Create contract address PublicKey (stable for this contract type)
+        let dilithium_pk: [u8; 2592] = contract_id.iter().cycle().take(2592).copied().collect::<Vec<_>>().try_into().unwrap();
+        let kyber_pk: [u8; 1568] = contract_id.iter().cycle().take(1568).copied().collect::<Vec<_>>().try_into().unwrap();
         let contract_address = PublicKey {
-            dilithium_pk: contract_id.to_vec(),
-            kyber_pk: contract_id.to_vec(),
+            dilithium_pk,
+            kyber_pk,
             key_id: contract_id,
         };
 
@@ -1682,9 +1684,11 @@ impl<S: ContractStorage> ContractExecutor<S> {
         ]);
 
         // Create contract address PublicKey (stable for this contract type)
+        let dilithium_pk: [u8; 2592] = contract_id.iter().cycle().take(2592).copied().collect::<Vec<_>>().try_into().unwrap();
+        let kyber_pk: [u8; 1568] = contract_id.iter().cycle().take(1568).copied().collect::<Vec<_>>().try_into().unwrap();
         let contract_address = PublicKey {
-            dilithium_pk: contract_id.to_vec(),
-            kyber_pk: contract_id.to_vec(),
+            dilithium_pk,
+            kyber_pk,
             key_id: contract_id,
         };
 
