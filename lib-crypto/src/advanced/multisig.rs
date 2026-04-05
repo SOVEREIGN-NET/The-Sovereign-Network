@@ -72,7 +72,7 @@ impl MultiSig {
             let temp_keypair = KeyPair {
                 public_key: participant_key.clone(),
                 private_key: PrivateKey {
-                    dilithium_sk: [0u8; 4864],
+                    dilithium_sk: [0u8; 4896],
                     dilithium_pk: participant_key.dilithium_pk,
                     kyber_sk: [0u8; 3168],
                     master_seed: [0u8; 64],

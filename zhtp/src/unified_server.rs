@@ -213,11 +213,21 @@ impl ZhtpUnifiedServer {
                                 .get("dilithium_pk")
                                 .and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok())
                                 .unwrap_or_default();
+                            // Validate key lengths and fail explicitly on corruption
+                            let dilithium_sk: [u8; 4896] = dilithium.as_slice().try_into()
+                                .map_err(|_| anyhow::anyhow!("Invalid dilithium_sk length: expected 4896 bytes, got {}", dilithium.len()))?;
+                            let dilithium_pk: [u8; 2592] = dilithium_pk.as_slice().try_into()
+                                .map_err(|_| anyhow::anyhow!("Invalid dilithium_pk length: expected 2592 bytes, got {}", dilithium_pk.len()))?;
+                            let kyber_sk: [u8; 3168] = kyber.as_slice().try_into()
+                                .map_err(|_| anyhow::anyhow!("Invalid kyber_sk length: expected 3168 bytes, got {}", kyber.len()))?;
+                            let master_seed: [u8; 64] = seed.as_slice().try_into()
+                                .map_err(|_| anyhow::anyhow!("Invalid master_seed length: expected 64 bytes, got {}", seed.len()))?;
+                            
                             let private_key = lib_crypto::PrivateKey {
-                                dilithium_sk: dilithium.as_slice().try_into().unwrap_or([0u8; 4864]),
-                                dilithium_pk: dilithium_pk.as_slice().try_into().unwrap_or([0u8; 2592]),
-                                kyber_sk: kyber.as_slice().try_into().unwrap_or([0u8; 3168]),
-                                master_seed: seed.as_slice().try_into().unwrap_or([0u8; 64]),
+                                dilithium_sk,
+                                dilithium_pk,
+                                kyber_sk,
+                                master_seed,
                             };
 
                             if let Ok(identity) = ZhtpIdentity::from_serialized(&data, &private_key)

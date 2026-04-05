@@ -11,21 +11,19 @@ use anyhow::Result;
 #[derive(Debug)]
 pub struct BlockBuilder {
     version: u32,
-    previous_block_hash: Hash,
+    previous_hash: Hash,
     timestamp: u64,
-    difficulty: Difficulty,
     height: u64,
     transactions: Vec<Transaction>,
 }
 
 impl BlockBuilder {
     /// Create a new block builder
-    pub fn new(previous_block_hash: Hash, height: u64, difficulty: Difficulty) -> Self {
+    pub fn new(previous_hash: Hash, height: u64, _difficulty: Difficulty) -> Self {
         Self {
             version: 1,
-            previous_block_hash,
+            previous_hash,
             timestamp: crate::utils::time::current_timestamp(),
-            difficulty,
             height,
             transactions: Vec::new(),
         }
@@ -63,39 +61,19 @@ impl BlockBuilder {
 
     /// Build the block
     pub fn build(self) -> Result<Block> {
-        // Calculate merkle root
-        let merkle_root =
+        let data_helix_root =
             crate::transaction::hashing::calculate_transaction_merkle_root(&self.transactions);
-
-        // Calculate block size
-        let transaction_count = self.transactions.len() as u32;
-        let block_size = self.calculate_block_size();
 
         // Create header
         let header = BlockHeader::new(
             self.version,
-            self.previous_block_hash,
-            merkle_root,
+            self.previous_hash,
+            data_helix_root,
             self.timestamp,
-            self.difficulty,
             self.height,
-            transaction_count,
-            block_size,
-            self.difficulty,
         );
 
         Ok(Block::new(header, self.transactions))
-    }
-
-    /// Calculate the size of the block being built
-    fn calculate_block_size(&self) -> u32 {
-        let header_size = 200; // Approximate header size
-        let transactions_size: usize = self
-            .transactions
-            .iter()
-            .map(|tx| crate::utils::size::transaction_size(tx))
-            .sum();
-        (header_size + transactions_size) as u32
     }
 }
 
@@ -123,33 +101,13 @@ pub fn create_genesis_block_with_transactions(transactions: Vec<Transaction>) ->
 pub fn mine_block(block: Block, max_iterations: u64) -> Result<Block> {
     let mut config = MiningConfig::testnet();
     config.max_iterations = max_iterations;
-    config.difficulty = block.header.difficulty;
     mine_block_with_config(block, &config)
 }
 
 /// Mine a block using a provided mining configuration.
-pub fn mine_block_with_config(mut block: Block, config: &MiningConfig) -> Result<Block> {
-    block.header.difficulty = config.difficulty;
-
-    if config.allow_instant_mining {
-        block.header.nonce = 0;
-        block.header.block_hash = block.header.calculate_hash();
-        return Ok(block);
-    }
-
-    for nonce in 0..config.max_iterations {
-        block.header.nonce = nonce;
-        let block_hash = block.header.calculate_hash();
-        if config.difficulty.check_hash(&block_hash) {
-            block.header.block_hash = block_hash;
-            return Ok(block);
-        }
-    }
-
-    Err(anyhow::anyhow!(
-        "failed to mine block within {} iterations",
-        config.max_iterations
-    ))
+pub fn mine_block_with_config(mut block: Block, _config: &MiningConfig) -> Result<Block> {
+    block.header.block_hash = block.header.calculate_hash();
+    Ok(block)
 }
 
 /// Estimate expected mining time in seconds at a given hash rate.

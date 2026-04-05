@@ -7,7 +7,7 @@
 //!
 //! 1. **Structural** - Format, sizes, counts
 //! 2. **Contextual** - Height, previous hash, timestamp
-//! 3. **Semantic** - Merkle root, difficulty (not full consensus)
+//! 3. **Semantic** - data helix root and contextual linkage
 
 use crate::block::Block;
 use crate::fees::{classify_transaction, FeeParamsV2};
@@ -85,14 +85,6 @@ fn validate_block_header(block: &Block) -> BlockValidateResult<()> {
         return Err(BlockValidateError::InvalidVersion(header.version));
     }
 
-    // Transaction count must match
-    if header.transaction_count as usize != block.transactions.len() {
-        return Err(BlockValidateError::TransactionCountMismatch {
-            header_count: header.transaction_count as usize,
-            actual_count: block.transactions.len(),
-        });
-    }
-
     Ok(())
 }
 
@@ -120,7 +112,7 @@ pub fn validate_block_context(
         validate_previous_hash(block, store)?;
     } else {
         // Genesis block must have zero previous hash
-        if block.header.previous_block_hash != Hash::default() {
+        if block.header.previous_hash != [0u8; 32] {
             return Err(BlockValidateError::InvalidGenesisHash);
         }
     }
@@ -149,8 +141,8 @@ fn validate_previous_hash(block: &Block, store: &dyn BlockchainStore) -> BlockVa
         .map_err(|e| BlockValidateError::StorageError(e.to_string()))?
         .ok_or(BlockValidateError::PreviousBlockNotFound(prev_height))?;
 
-    let expected_hash = prev_block.header.block_hash;
-    let actual_hash = block.header.previous_block_hash;
+    let expected_hash = prev_block.hash();
+    let actual_hash = Hash::new(block.header.previous_hash);
 
     if expected_hash != actual_hash {
         return Err(BlockValidateError::InvalidPreviousHash {
@@ -314,12 +306,12 @@ mod tests {
             vec![TransactionOutput::new(
                 Hash::new([3u8; 32]),
                 Hash::new([4u8; 32]),
-                PublicKey::new(vec![5u8; 32]),
+                PublicKey::new([5u8; 2592]),
             )],
             1000,
             Signature {
                 signature: vec![0u8; 64],
-                public_key: PublicKey::new(vec![0u8; 32]),
+                public_key: PublicKey::new([0u8; 2592]),
                 algorithm: SignatureAlgorithm::Dilithium5,
                 timestamp: 0,
             },
@@ -333,16 +325,12 @@ mod tests {
                 version: 1,
                 height: 0,
                 timestamp: 0,
-                previous_block_hash: Hash::default(),
-                merkle_root: Hash::default(),
-                state_root: Hash::default(),
-                difficulty: Difficulty::minimum(),
-                nonce: 0,
-                cumulative_difficulty: Difficulty::minimum(),
+                previous_hash: Hash::default().into(),
+                data_helix_root: Hash::default().into(),
+                verification_helix_root: [0u8; 32],
+                state_root: Hash::default().into(),
+                bft_quorum_root: [0u8; 32],
                 block_hash: Hash::default(),
-                transaction_count: txs.len() as u32,
-                block_size: 0,
-                fee_model_version: 2, // Phase 2+ uses v2
             },
             transactions: txs,
         }

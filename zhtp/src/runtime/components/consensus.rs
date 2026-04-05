@@ -838,7 +838,12 @@ async fn catchup_sync_from_peer(
                 if bft_height > 0 && height >= bft_height {
                     // Block is in the BFT-active zone.  Fetch + verify a quorum
                     // proof from the peer BEFORE acquiring the write lock.
-                    match fetch_and_verify_quorum_proof(&mut client, height, &blockchain_arc).await
+                    match fetch_and_verify_quorum_proof(
+                        &mut client,
+                        &block,
+                        &blockchain_arc,
+                    )
+                    .await
                     {
                         Some(proof) => Some(proof),
                         None => {
@@ -911,12 +916,23 @@ async fn catchup_sync_from_peer(
 /// Called from `catchup_sync_from_peer` when a block is at or above
 /// `bft_active_height`.  The proof replaces the old blanket height guard
 /// with cryptographic finality verification.
+///
+/// # Security
+/// This function verifies that:
+/// 1. All attestations in the proof are for the same proposal_id
+/// 2. The signatures are valid and from known validators
+/// 3. The quorum threshold is met
+///
 async fn fetch_and_verify_quorum_proof(
     client: &mut lib_network::client::ZhtpClient,
-    height: u64,
+    block: &lib_blockchain::Block,
     blockchain_arc: &Arc<tokio::sync::RwLock<lib_blockchain::Blockchain>>,
 ) -> Option<lib_types::consensus::BftQuorumProof> {
-    use lib_blockchain::block::verification::verify_quorum_proof;
+    use lib_blockchain::block::verification::{
+        extract_consistent_proposal_id, verify_quorum_proof, verify_quorum_root_binding,
+    };
+
+    let height = block.height();
 
     let proof_url = format!("/api/v1/blockchain/quorum-proof/{}", height);
     let resp = client.get(&proof_url).await.ok()?;
@@ -930,6 +946,19 @@ async fn fetch_and_verify_quorum_proof(
             tracing::debug!("Catch-up: quorum proof deserialize failed for height {}", height);
             None
         })?;
+
+    // SECURITY: Verify all attestations agree on the same proposal_id.
+    // This prevents proofs with mixed attestations for different proposals.
+    let proposal_id = match extract_consistent_proposal_id(&proof) {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::warn!(
+                "Catch-up: block {} quorum proof has inconsistent proposal_ids: {}",
+                height, e
+            );
+            return None;
+        }
+    };
 
     // Build validator_id → consensus_key map from local registry.
     let bc = blockchain_arc.read().await;
@@ -948,12 +977,24 @@ async fn fetch_and_verify_quorum_proof(
         .collect();
     drop(bc);
 
-    match verify_quorum_proof(&proof, &validator_keys) {
+    if proof.height != height {
+        tracing::warn!(
+            "Catch-up: block {} quorum proof height mismatch: proof says {}",
+            height,
+            proof.height
+        );
+        return None;
+    }
+
+    match verify_quorum_proof(&proof, &validator_keys)
+        .and_then(|()| verify_quorum_root_binding(&proof, &block.header.bft_quorum_root))
+    {
         Ok(()) => {
             tracing::info!(
-                "✅ Catch-up: block {} has valid quorum proof ({} attestations)",
+                "✅ Catch-up: block {} has valid quorum proof/root binding ({} attestations, proposal {})",
                 height,
-                proof.attestations.len()
+                proof.attestations.len(),
+                hex::encode(&proposal_id[..8])
             );
             Some(proof)
         }
@@ -1090,7 +1131,7 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
             .into());
         }
 
-        if committed_block.header.previous_block_hash.as_array() != proposal.previous_hash.0 {
+        if committed_block.header.previous_hash != proposal.previous_hash.0 {
             return Err(anyhow::anyhow!(
                 "Finalized block artifact previous_hash mismatch at height {}",
                 proposal.height
@@ -1233,8 +1274,47 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
         proposal: &lib_consensus::types::ConsensusProposal,
         quorum_proof: lib_types::consensus::BftQuorumProof,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Commit the block itself (all existing validation + persistence).
-        self.commit_finalized_block(proposal).await?;
+        let quorum_root = lib_types::consensus::compute_bft_quorum_root(&quorum_proof);
+
+        let slot = self.blockchain_slot.read().await;
+        let blockchain_arc = match slot.as_ref() {
+            Some(bc) => bc.clone(),
+            None => return Err("Blockchain not yet available for commit".into()),
+        };
+        drop(slot);
+
+        let mut blockchain = blockchain_arc.write().await;
+
+        let mut committed_block: lib_blockchain::Block = bincode::deserialize(&proposal.block_data)
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to deserialize finalized block artifact: {}", e)
+            })?;
+        committed_block.header.set_bft_quorum_root(quorum_root);
+
+        if blockchain.height > proposal.height {
+            if let Some(existing_block) = blockchain.get_block(proposal.height) {
+                if existing_block.hash() == committed_block.hash() {
+                    if let Some(ref store) = blockchain.store {
+                        let _ = store.put_quorum_proof(proposal.height, &quorum_proof);
+                    }
+                    return Ok(());
+                }
+            }
+        }
+
+        blockchain.add_block(committed_block.clone()).await?;
+
+        let block_hash = lib_blockchain::types::Hash::new(committed_block.hash().as_array());
+        let proposer_id = proposal.proposer.to_string();
+        let prev_hash = lib_blockchain::types::Hash::new(proposal.previous_hash.0);
+        blockchain.store_consensus_checkpoint(
+            proposal.height,
+            block_hash,
+            proposer_id,
+            prev_hash,
+            0,
+        );
+        drop(blockchain);
 
         // Persist the quorum proof in a separate sled tree so catch-up sync
         // can verify BFT finality from the proof alone, without relying on
@@ -1251,7 +1331,7 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
                     );
                 } else {
                     tracing::info!(
-                        "📜 Persisted BFT quorum proof for height {} ({} attestations)",
+                        "📜 Persisted BFT quorum proof/root for height {} ({} attestations)",
                         proposal.height,
                         quorum_proof.attestations.len(),
                     );
@@ -1701,8 +1781,8 @@ async fn load_local_validator_from_keystore() -> Result<(IdentityId, lib_crypto:
     // Consensus identity uses Dilithium public key bytes for signature verification.
     let dilithium_pk: [u8; 2592] = ks.dilithium_pk.as_slice().try_into()
         .map_err(|_| anyhow::anyhow!("Invalid dilithium_pk length, expected 2592 bytes"))?;
-    let dilithium_sk: [u8; 4864] = ks.dilithium_sk.as_slice().try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid dilithium_sk length, expected 4864 bytes"))?;
+    let dilithium_sk: [u8; 4896] = ks.dilithium_sk.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid dilithium_sk length, expected 4896 bytes"))?;
     let kyber_sk: [u8; 3168] = ks.kyber_sk.as_slice().try_into()
         .map_err(|_| anyhow::anyhow!("Invalid kyber_sk length, expected 3168 bytes"))?;
     let master_seed: [u8; 64] = ks.master_seed.as_slice().try_into()

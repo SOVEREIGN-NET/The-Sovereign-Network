@@ -55,7 +55,7 @@ use lib_identity::IdentityId;
 use crate::{
     mempool::Mempool,
     transaction::IdentityTransactionData,
-    types::{Difficulty, Hash as BlockchainHash},
+    types::Hash as BlockchainHash,
     utils::time::current_timestamp,
     Block, BlockHeader, Blockchain, Transaction, TransactionOutput, TransactionType,
 };
@@ -841,11 +841,7 @@ impl BlockchainConsensusCoordinator {
             previous_hash,
             merkle_root,
             timestamp,
-            Difficulty::maximum(),
             height,
-            transactions.len() as u32,
-            0, // block_size - will be calculated
-            Difficulty::maximum(),
         );
 
         let block = Block::new(header, transactions);
@@ -1281,11 +1277,7 @@ impl BlockchainConsensusCoordinator {
             previous_hash,
             merkle_root,
             timestamp,
-            Difficulty::maximum(),
             height,
-            transactions.len() as u32,
-            0, // block_size - will be calculated
-            Difficulty::maximum(),
         );
 
         let block = Block::new(header, transactions);

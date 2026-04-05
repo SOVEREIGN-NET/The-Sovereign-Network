@@ -121,13 +121,14 @@ fn build_wallet_migration_tx(wallet_data: &WalletTransactionData) -> Option<Tran
 
     let mut normalized_wallet = wallet_data.clone();
     normalized_wallet.wallet_type = normalized_type.to_string();
+    let dilithium_pk: [u8; 2592] = normalized_wallet.public_key.clone().try_into().ok()?;
 
     Some(Transaction::new_wallet_registration(
         normalized_wallet.clone(),
         vec![],
         Signature {
             signature: normalized_wallet.public_key.clone(),
-            public_key: PublicKey::new(normalized_wallet.public_key.clone()),
+            public_key: PublicKey::new(dilithium_pk),
             algorithm: SignatureAlgorithm::Dilithium2,
             timestamp: normalized_wallet.created_at,
         },

@@ -552,7 +552,7 @@ fn estimate_signed_tx_size(raw_tx: &[u8]) -> usize {
             let pk_len = tx.signature.public_key.dilithium_pk.len();
             if sig_len == 0 || pk_len == 0 {
                 // Fill signature/public key with expected sizes for fee estimation.
-                let (expected_sig, expected_pk) = match tx.signature.algorithm {
+                let (expected_sig, _expected_pk) = match tx.signature.algorithm {
                     lib_crypto::types::SignatureAlgorithm::Dilithium5 => (4627usize, 2592usize),
                     _ => (2420usize, 1312usize), // Default to Dilithium2
                 };
@@ -873,11 +873,11 @@ impl BlockchainHandler {
                 status: "block_found".to_string(),
                 height: block.header.height,
                 hash: block.header.block_hash.to_string(),
-                previous_hash: block.header.previous_block_hash.to_string(),
+                previous_hash: hex::encode(block.header.previous_hash),
                 timestamp: block.header.timestamp,
                 transaction_count: block.transactions.len(),
-                merkle_root: block.header.merkle_root.to_string(),
-                nonce: block.header.nonce,
+                merkle_root: hex::encode(block.header.data_helix_root),
+                nonce: 0,
             }
         } else {
             BlockResponse {
@@ -928,11 +928,11 @@ impl BlockchainHandler {
                 .map(|block| BlockSummary {
                     height: block.header.height,
                     hash: block.header.block_hash.to_string(),
-                    previous_hash: block.header.previous_block_hash.to_string(),
+                    previous_hash: hex::encode(block.header.previous_hash),
                     timestamp: block.header.timestamp,
                     transaction_count: block.transactions.len(),
-                    merkle_root: block.header.merkle_root.to_string(),
-                    nonce: block.header.nonce,
+                    merkle_root: hex::encode(block.header.data_helix_root),
+                    nonce: 0,
                 })
                 .collect()
         };
@@ -1150,11 +1150,11 @@ impl BlockchainHandler {
             Some(serde_json::json!({
                 "height": block.header.height,
                 "hash": block.header.block_hash.to_string(),
-                "previous_hash": block.header.previous_block_hash.to_string(),
+                "previous_hash": hex::encode(block.header.previous_hash),
                 "timestamp": block.header.timestamp,
                 "transaction_count": block.transactions.len(),
-                "merkle_root": block.header.merkle_root.to_string(),
-                "nonce": block.header.nonce,
+                "merkle_root": hex::encode(block.header.data_helix_root),
+                "nonce": 0,
             }))
         };
 
@@ -1275,11 +1275,11 @@ impl BlockchainHandler {
                     status: "block_found".to_string(),
                     height: block.header.height,
                     hash: block.header.block_hash.to_string(),
-                    previous_hash: block.header.previous_block_hash.to_string(),
+                    previous_hash: hex::encode(block.header.previous_hash),
                     timestamp: block.header.timestamp,
                     transaction_count: block.transactions.len(),
-                    merkle_root: block.header.merkle_root.to_string(),
-                    nonce: block.header.nonce,
+                    merkle_root: hex::encode(block.header.data_helix_root),
+                    nonce: 0,
                 };
 
                 let json_response = serde_json::to_vec(&response_data)?;
@@ -1324,11 +1324,11 @@ impl BlockchainHandler {
                     status: "block_found".to_string(),
                     height: block.header.height,
                     hash: block.header.block_hash.to_string(),
-                    previous_hash: block.header.previous_block_hash.to_string(),
+                    previous_hash: hex::encode(block.header.previous_hash),
                     timestamp: block.header.timestamp,
                     transaction_count: block.transactions.len(),
-                    merkle_root: block.header.merkle_root.to_string(),
-                    nonce: block.header.nonce,
+                    merkle_root: hex::encode(block.header.data_helix_root),
+                    nonce: 0,
                 };
 
                 let json_response = serde_json::to_vec(&response_data)?;
@@ -1398,9 +1398,36 @@ impl BlockchainHandler {
         );
         drop(blockchain); // Release read lock before creating transaction
 
-        // Parse sender and recipient pubkeys
-        let sender_pubkey = req_data.from.as_bytes().to_vec();
-        let recipient_pubkey = req_data.to.as_bytes().to_vec();
+        // Parse sender and recipient pubkeys from hex strings
+        let sender_pubkey_bytes = hex::decode(&req_data.from)
+            .context("Invalid sender public key: must be hex-encoded Dilithium5 public key (2592 bytes)")?;
+        let recipient_pubkey_bytes = hex::decode(&req_data.to)
+            .context("Invalid recipient public key: must be hex-encoded Dilithium5 public key (2592 bytes)")?;
+
+        // Validate key lengths
+        if sender_pubkey_bytes.len() != 2592 {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                format!(
+                    "Invalid sender public key length: expected 2592 bytes, got {}",
+                    sender_pubkey_bytes.len()
+                ),
+            ));
+        }
+        if recipient_pubkey_bytes.len() != 2592 {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                format!(
+                    "Invalid recipient public key length: expected 2592 bytes, got {}",
+                    recipient_pubkey_bytes.len()
+                ),
+            ));
+        }
+
+        let sender_pubkey: [u8; 2592] = sender_pubkey_bytes.as_slice().try_into()
+            .expect("Length checked above");
+        let recipient_pubkey: [u8; 2592] = recipient_pubkey_bytes.as_slice().try_into()
+            .expect("Length checked above");
 
         // Parse the provided signature (hex string)
         let signature_bytes = hex::decode(&req_data.signature).context("Invalid signature hex")?;
@@ -1417,16 +1444,16 @@ impl BlockchainHandler {
         let output = lib_blockchain::TransactionOutput {
             commitment: lib_blockchain::Hash::from_slice(&req_data.amount.to_le_bytes()),
             note: lib_blockchain::Hash::from_slice(&recipient_pubkey),
-            recipient: lib_blockchain::integration::crypto_integration::PublicKey::new([0u8; 2592]),
+            recipient: lib_blockchain::integration::crypto_integration::PublicKey::new(recipient_pubkey),
         };
 
         // Use the provided signature (client must sign with their private key)
         let signature = lib_crypto::Signature {
-            signature: signature_bytes, //  Use actual provided signature
+            signature: signature_bytes,
             public_key: lib_crypto::PublicKey {
-                dilithium_pk: sender_pubkey.as_slice().try_into().unwrap_or([0u8; 2592]),
+                dilithium_pk: sender_pubkey,
                 kyber_pk: [0u8; 1568],
-                key_id: [0u8; 32],
+                key_id: lib_crypto::hash_blake3(&sender_pubkey),
             },
             algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
             timestamp: std::time::SystemTime::now()
@@ -2499,7 +2526,7 @@ impl BlockchainHandler {
         let genesis_hash = blockchain
             .blocks
             .first()
-            .map(|b| hex::encode(b.header.merkle_root.as_bytes()))
+            .map(|b| hex::encode(b.header.data_helix_root))
             .unwrap_or_else(|| "none".to_string());
 
         let tip_info = ChainTipInfo {

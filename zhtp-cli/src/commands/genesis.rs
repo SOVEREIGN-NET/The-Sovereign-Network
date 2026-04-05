@@ -2,8 +2,10 @@
 
 use anyhow::{Context, Result};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::argument_parsing::{GenesisArgs, GenesisCommand, ZhtpCli};
+use lib_blockchain::storage::SledStore;
 
 pub async fn handle_genesis_command(args: GenesisArgs, _cli: &ZhtpCli) -> Result<()> {
     match args.command {
@@ -55,9 +57,16 @@ fn cmd_export_state(dat_file: Option<PathBuf>, output: PathBuf) -> Result<()> {
         PathBuf::from(home).join(".zhtp/data/testnet/blockchain.dat")
     });
 
-    println!("Loading blockchain from: {}", dat_path.display());
-    let bc = lib_blockchain::Blockchain::load_from_file(&dat_path)
-        .with_context(|| format!("Failed to load {}", dat_path.display()))?;
+    let store_path = resolve_blockchain_store_path(&dat_path)?;
+    println!("Loading blockchain from: {}", store_path.display());
+
+    let store = Arc::new(SledStore::open(&store_path)?);
+    let bc = lib_blockchain::Blockchain::load_from_store(store)
+        .with_context(|| format!("Failed to load blockchain store {}", store_path.display()))?
+        .context(format!(
+            "No blockchain data found in store {}",
+            store_path.display()
+        ))?;
 
     println!(
         "Loaded blockchain: height={}, wallets={}, identities={}, web4={}",
@@ -84,6 +93,32 @@ fn cmd_export_state(dat_file: Option<PathBuf>, output: PathBuf) -> Result<()> {
         snapshot.sov_balances.len(),
     );
     Ok(())
+}
+
+fn resolve_blockchain_store_path(path: &std::path::Path) -> Result<PathBuf> {
+    if path.is_dir() {
+        return Ok(path.to_path_buf());
+    }
+
+    let mut candidates = Vec::new();
+    if path.extension().and_then(|ext| ext.to_str()) == Some("dat") {
+        candidates.push(path.with_extension(""));
+        if let Some(parent) = path.parent() {
+            candidates.push(parent.join("blockchain"));
+            candidates.push(parent.to_path_buf());
+        }
+    }
+
+    for candidate in candidates {
+        if candidate.is_dir() {
+            return Ok(candidate);
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "Could not resolve a Sled blockchain store from {}",
+        path.display()
+    ))
 }
 
 /// Merge a state snapshot into genesis.toml, producing a migration-ready genesis config.

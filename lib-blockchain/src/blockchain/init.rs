@@ -792,8 +792,8 @@ impl Blockchain {
         let updated_merkle_root = crate::transaction::hashing::calculate_transaction_merkle_root(
             &genesis_block.transactions,
         );
-        genesis_block.header.merkle_root = updated_merkle_root;
-        genesis_block.header.transaction_count = genesis_block.transactions.len() as u32;
+        genesis_block.header.data_helix_root = updated_merkle_root.as_array();
+        genesis_block.header.block_hash = genesis_block.header.calculate_hash();
 
         let genesis_tx_id = crate::types::hash::blake3_hash(b"genesis_funding_transaction");
         for (index, output) in genesis_outputs.iter().enumerate() {

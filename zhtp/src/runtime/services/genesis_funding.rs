@@ -176,7 +176,7 @@ impl GenesisFundingService {
             );
 
             // Create wallet funding UTXO (still uses 32-byte identity hash for recipient)
-            let identity_hash = user_identity_id.as_ref().unwrap().0.to_vec();
+            let _identity_hash = user_identity_id.as_ref().unwrap().0.to_vec();
             let wallet_output = TransactionOutput {
                 commitment: lib_blockchain::types::hash::blake3_hash(
                     format!(
@@ -285,8 +285,8 @@ impl GenesisFundingService {
             lib_blockchain::transaction::hashing::calculate_transaction_merkle_root(
                 &genesis_block.transactions,
             );
-        genesis_block.header.merkle_root = updated_merkle_root;
-        genesis_block.header.transaction_count = genesis_block.transactions.len() as u32;
+        genesis_block.header.data_helix_root = updated_merkle_root.as_array();
+        genesis_block.header.block_hash = genesis_block.header.calculate_hash();
         info!(
             "Genesis block merkle root updated: {}",
             hex::encode(updated_merkle_root.as_bytes())

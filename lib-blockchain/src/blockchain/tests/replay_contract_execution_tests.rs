@@ -5,7 +5,7 @@ use crate::types::ContractCall;
 use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
 fn test_pubkey(seed: u8) -> PublicKey {
-    PublicKey::new(vec![seed; 32])
+    PublicKey::new([seed; 2592])
 }
 
 fn test_signature(pubkey: &PublicKey) -> Signature {
@@ -238,18 +238,14 @@ fn token_creation_self_treasury_rejected_in_legacy_flow() {
     let block = Block {
         header: BlockHeader {
             version: 1,
-            previous_block_hash: Hash::default(),
-            merkle_root: Hash::default(),
+            previous_hash: Hash::default().into(),
+            data_helix_root: Hash::default().into(),
             timestamp: 1_700_000_100,
-            difficulty: Difficulty::minimum(),
-            nonce: 0,
             height: 12,
+            verification_helix_root: [0u8; 32],
+            state_root: Hash::default().into(),
+            bft_quorum_root: [0u8; 32],
             block_hash: Hash::default(),
-            cumulative_difficulty: Difficulty::minimum(),
-            transaction_count: 1,
-            block_size: 0,
-            state_root: Hash::default(),
-            fee_model_version: 2,
         },
         transactions: vec![tx],
     };
@@ -267,18 +263,14 @@ fn dao_registry_index_incremental_matches_rebuild() {
     let block1 = Block {
         header: BlockHeader {
             version: 1,
-            previous_block_hash: Hash::default(),
-            merkle_root: Hash::default(),
+            previous_hash: Hash::default().into(),
+            data_helix_root: Hash::default().into(),
             timestamp: 1_700_000_010,
-            difficulty: Difficulty::minimum(),
-            nonce: 0,
             height: 10,
+            verification_helix_root: [0u8; 32],
+            state_root: Hash::default().into(),
+            bft_quorum_root: [0u8; 32],
             block_hash: Hash::default(),
-            cumulative_difficulty: Difficulty::minimum(),
-            transaction_count: 1,
-            block_size: 0,
-            state_root: Hash::default(),
-            fee_model_version: 2,
         },
         transactions: vec![dao_registry_tx(
             Blockchain::DAO_REGISTRY_REGISTER_EXEC,
@@ -289,18 +281,14 @@ fn dao_registry_index_incremental_matches_rebuild() {
     let block2 = Block {
         header: BlockHeader {
             version: 1,
-            previous_block_hash: Hash::default(),
-            merkle_root: Hash::default(),
+            previous_hash: Hash::default().into(),
+            data_helix_root: Hash::default().into(),
             timestamp: 1_700_000_020,
-            difficulty: Difficulty::minimum(),
-            nonce: 0,
             height: 11,
+            verification_helix_root: [0u8; 32],
+            state_root: Hash::default().into(),
+            bft_quorum_root: [0u8; 32],
             block_hash: Hash::default(),
-            cumulative_difficulty: Difficulty::minimum(),
-            transaction_count: 1,
-            block_size: 0,
-            state_root: Hash::default(),
-            fee_model_version: 2,
         },
         transactions: vec![dao_registry_tx(
             Blockchain::DAO_FACTORY_CREATE_EXEC,

@@ -262,18 +262,14 @@ impl OracleTestHarness {
     fn create_block_at_timestamp(&self, timestamp: u64) -> Block {
         let header = BlockHeader {
             version: 1,
-            previous_block_hash: Hash::default(),
-            merkle_root: Hash::default(),
+            previous_hash: Hash::default().into(),
+            data_helix_root: Hash::default().into(),
             timestamp,
-            nonce: 0,
-            difficulty: Difficulty::from_bits(1),
             height: self.current_height,
+            verification_helix_root: [0u8; 32],
+            state_root: Hash::default().into(),
+            bft_quorum_root: [0u8; 32],
             block_hash: Hash::default(),
-            transaction_count: 0,
-            block_size: 0,
-            cumulative_difficulty: Difficulty::from_bits(0),
-            fee_model_version: 1,
-            state_root: Hash::default(),
         };
 
         Block {

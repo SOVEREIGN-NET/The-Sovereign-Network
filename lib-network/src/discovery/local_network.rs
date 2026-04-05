@@ -138,7 +138,7 @@ impl NodeAnnouncement {
     /// Sets the `dilithium_pk`, `tls_spki_sha256`, `expires_at`, and `record_sig` fields.
     pub fn sign(
         &mut self,
-        dilithium_sk: &[u8; 4864],
+        dilithium_sk: &[u8; 4896],
         dilithium_pk: [u8; 2592],
         tls_spki_sha256: [u8; 32],
     ) -> anyhow::Result<()> {
@@ -223,7 +223,8 @@ impl NodeAnnouncement {
 #[derive(Clone)]
 pub struct DiscoverySigningContext {
     /// Dilithium secret key for signing announcements
-    pub dilithium_sk: [u8; 4864],
+    /// Uses 4896 bytes for pqcrypto-dilithium compatibility
+    pub dilithium_sk: [u8; 4896],
     /// Dilithium public key (included in announcements)
     pub dilithium_pk: [u8; 2592],
     /// SHA256 hash of this node's TLS certificate SPKI
