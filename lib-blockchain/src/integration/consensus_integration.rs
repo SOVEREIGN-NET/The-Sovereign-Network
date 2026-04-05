@@ -1940,7 +1940,7 @@ pub async fn initialize_consensus_integration(
         consensus_type,
         min_stake: 1000 * 1_000_000,           // 1000 SOV minimum stake
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB minimum storage
-        max_validators: 100,
+        max_validators: 21,
         block_time: 10, // 10 second blocks
         epoch_length_blocks: 100,
         propose_timeout: 3000,
@@ -1976,7 +1976,7 @@ pub async fn initialize_consensus_integration_with_difficulty_config(
         consensus_type,
         min_stake: 1000 * 1_000_000,           // 1000 SOV minimum stake
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB minimum storage
-        max_validators: 100,
+        max_validators: 21,
         block_time: 10, // 10 second blocks
         epoch_length_blocks: 100,
         propose_timeout: 3000,
