@@ -15,16 +15,14 @@
 //!
 //! | Field | Purpose |
 //! |-------|---------|
-//! | `version` | Protocol version; changes indicate hard-fork boundaries |
-//! | `previous_block_hash` | Links this block to its parent; enforces chain continuity |
-//! | `merkle_root` | Commits to the complete, ordered set of transactions |
+//! | `version` | Protocol version metadata; not part of the canonical header hash |
+//! | `previous_hash` | Links this block to its parent; enforces chain continuity |
+//! | `data_helix_root` | Commits to the complete, ordered set of transactions |
+//! | `verification_helix_root` | Commits to verification artifacts (zero until Sprint 6) |
 //! | `state_root` | Commits to the complete world state after executing this block |
+//! | `bft_quorum_root` | Commits to the finalized quorum attestations |
 //! | `timestamp` | Wall-clock time of block production (consensus-validated range) |
-//! | `difficulty` | Proof-of-work target that this block must satisfy (legacy) |
-//! | `nonce` | Mining nonce found via proof-of-work (legacy) |
 //! | `height` | Canonical position of this block in the chain |
-//! | `transaction_count` | Number of transactions; must match `transactions` length |
-//! | `block_size` | Serialized byte size of the full block |
 //!
 //! ## Informational Fields (NOT included in block hash)
 //!
@@ -34,29 +32,20 @@
 //! | Field | Purpose |
 //! |-------|---------|
 //! | `block_hash` | Cached result of `calculate_hash()`; not an input to itself |
-//! | `cumulative_difficulty` | Running sum of all difficulty values up to this block |
-//! | `fee_model_version` | Determines fee schedule rules applied at this block height |
+//! | `version` | Protocol version metadata and upgrade signalling |
 //!
 //! ## State Root Commitment
 //!
 //! The `state_root` is a single 32-byte BLAKE3 hash that cryptographically commits
 //! to the **complete world state** after executing all transactions in the block.
 //! The world state is UTXO-based (see [`crate::blockchain::STATE_MODEL`]) and
-//! consists of four components:
+//! consists of four components plus the canonical bonding-curve placeholders:
 //!
 //! 1. **UTXO set** — all unspent transaction outputs after this block
 //! 2. **Identity registry** — all on-chain DID records after this block
 //! 3. **Wallet registry** — all on-chain wallet descriptors after this block
 //! 4. **Contract state** — execution state of all deployed smart contracts after this block
-//!
-//! ## Compile-Time Verification
-//!
-//! The constant [`BFT_REQUIRED_HEADER_FIELDS`] enumerates every consensus-critical field
-//! name. It serves as a checklist: if you add a new consensus-critical field to
-//! `BlockHeader` you MUST also add its name to `BFT_REQUIRED_HEADER_FIELDS` and include
-//! it in [`BlockHeader::calculate_hash`]. The `verify_hash_covers_required_fields` test
-//! confirms that the number of bytes fed into the hash function equals the total size
-//! of all consensus-critical fields.
+//! 5. **Bonding curve state placeholders** — five zero-filled `u128` values until Sprint 4
 
 use crate::transaction::Transaction;
 use crate::types::{Difficulty, Hash};
@@ -241,31 +230,6 @@ mod genesis_snapshot_tests {
     }
 }
 
-/// Names of every consensus-critical field in [`BlockHeader`].
-///
-/// These are the fields that are hashed by [`BlockHeader::calculate_hash`] and therefore
-/// determine the canonical block hash. Any new consensus-critical field MUST be added
-/// here and included in `calculate_hash`.
-///
-/// Informational fields (`block_hash`, `cumulative_difficulty`, `fee_model_version`) are
-/// intentionally excluded because they do not participate in hash computation.
-pub const BFT_REQUIRED_HEADER_FIELDS: &[&str] = &[
-    "version",
-    "previous_block_hash",
-    "merkle_root",
-    "timestamp",
-    "difficulty", // Legacy PoW fields retained for backward compatibility; not validated in BFT consensus
-    "nonce", // Legacy PoW fields retained for backward compatibility; not validated in BFT consensus
-    "height",
-    "transaction_count",
-    "block_size",
-];
-
-/// Number of consensus-critical fields in [`BlockHeader`].
-///
-/// This constant is checked at compile time (via a `const` expression in the test module)
-/// to ensure it stays in sync with [`BFT_REQUIRED_HEADER_FIELDS`].
-pub const BFT_REQUIRED_HEADER_FIELD_COUNT: usize = BFT_REQUIRED_HEADER_FIELDS.len();
 /// Assert that the `state_root` of a committed block is non-zero.
 ///
 /// Call this after executing every block that has been finalized by BFT consensus.
@@ -306,133 +270,45 @@ pub struct Block {
 /// consensus-critical (hashed) vs informational (not hashed).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockHeader {
-    // -------------------------------------------------------------------------
-    // CONSENSUS-CRITICAL FIELDS — included in calculate_hash()
-    // -------------------------------------------------------------------------
     /// Protocol version.
     ///
-    /// **Consensus-critical.** Changes signal protocol upgrades or hard-fork
-    /// boundaries. All nodes must agree on the version rules for a given height.
+    /// Informational metadata. The canonical Sprint 2 block hash no longer
+    /// commits to version bytes.
+    #[serde(default = "default_block_version")]
     pub version: u32,
 
     /// Hash of the parent block.
-    ///
-    /// **Consensus-critical.** Cryptographically links this block to its
-    /// predecessor, forming the immutable chain. The genesis block uses
-    /// `Hash::default()` (all zeros) as its previous hash.
-    pub previous_block_hash: Hash,
+    #[serde(alias = "previous_block_hash")]
+    pub previous_hash: [u8; 32],
 
-    /// Merkle root of the transaction set.
-    ///
-    /// **Consensus-critical.** A single 32-byte commitment to the complete,
-    /// ordered list of transactions in this block. Verifying the Merkle root
-    /// proves that no transaction has been added, removed, or reordered.
-    ///
-    /// # Commitment scheme
-    ///
-    /// Computed by [`crate::transaction::hashing::calculate_transaction_merkle_root`]
-    /// using a standard binary Merkle tree with BLAKE3. Odd nodes are duplicated before
-    /// hashing parents. Transaction leaf hashes use zeroed signatures.
-    pub merkle_root: Hash,
+    /// Root of the ordered block data helix (currently the transaction Merkle root).
+    #[serde(alias = "merkle_root")]
+    pub data_helix_root: [u8; 32],
 
     /// UNIX timestamp (seconds since epoch) of block production.
-    ///
-    /// **Consensus-critical.** Used for difficulty adjustment and to enforce
-    /// the temporal ordering invariant (`timestamp > previous.timestamp`).
-    /// Nodes reject blocks whose timestamp is more than 2 hours in the future.
     pub timestamp: u64,
 
-    /// Legacy proof-of-work difficulty target.
-    ///
-    /// Retained in-memory for compatibility helpers only. BFT serialization
-    /// drops this field and restores `Difficulty::default()` on decode.
-    ///
-    /// IMPORTANT: Must stay `#[serde(skip)]`. Existing Sled data was written
-    /// without this field in the binary layout; changing to `#[serde(default)]`
-    /// would shift field offsets and break deserialization on upgrade.
-    #[serde(skip, default)]
-    pub difficulty: Difficulty,
-
-    /// Legacy proof-of-work nonce.
-    ///
-    /// Retained in-memory for compatibility helpers only. BFT serialization
-    /// drops this field and restores `0` on decode.
-    ///
-    /// IMPORTANT: Must stay `#[serde(skip)]` — same reason as `difficulty`.
-    #[serde(skip, default)]
-    pub nonce: u64,
-
     /// Zero-based block height in the canonical chain.
-    ///
-    /// **Consensus-critical.** The genesis block has height 0. Every subsequent
-    /// block has `height = parent.height + 1`.
     pub height: u64,
 
-    // -------------------------------------------------------------------------
-    // INFORMATIONAL FIELDS — NOT included in calculate_hash()
-    // -------------------------------------------------------------------------
-    /// Cached block hash (result of `calculate_hash()`).
-    ///
-    /// **Informational.** This field stores the pre-computed hash for fast
-    /// lookups. It is NOT an input to `calculate_hash()` (that would be
-    /// circular). Always recalculate via `calculate_hash()` when verifying.
-    pub block_hash: Hash,
-
-    /// Number of transactions committed in this block.
-    ///
-    /// **Consensus-critical.** Must equal `transactions.len()` exactly.
-    /// Validated in `Block::has_valid_header()`.
-    pub transaction_count: u32,
-
-    /// Serialized byte size of the complete block.
-    ///
-    /// **Consensus-critical.** Used to enforce `MAX_BLOCK_SIZE` limits.
-    pub block_size: u32,
-
-    /// Legacy cumulative proof-of-work difficulty.
-    ///
-    /// Retained in-memory for compatibility helpers only. BFT serialization
-    /// drops this field and restores `Difficulty::default()` on decode.
-    ///
-    /// IMPORTANT: Must stay `#[serde(skip)]` — same reason as `difficulty`.
-    #[serde(skip, default)]
-    pub cumulative_difficulty: Difficulty,
-
-    /// Fee model version active at this block height (Phase 3B).
-    ///
-    /// **Informational / soft-consensus.** Determines which fee schedule rules
-    /// apply when processing transactions in this block:
-    /// - Version 1: Legacy fee model (before activation height)
-    /// - Version 2: Fee Model v2 (at and after activation height)
-    ///
-    /// Not included in the block hash but enforced by consensus rules: a block
-    /// MUST use the correct fee model version for its height.
-    #[serde(default = "default_fee_model_version")]
-    pub fee_model_version: u16,
+    /// Root of the verification helix. Zero until Sprint 6.
+    #[serde(default)]
+    pub verification_helix_root: [u8; 32],
 
     /// Cryptographic commitment to the full world state after this block.
-    ///
-    /// The `state_root` is a BLAKE3 hash over the Merkle roots of all four
-    /// state components (see module-level documentation):
-    ///
-    /// 1. UTXO set root
-    /// 2. Identity registry root
-    /// 3. Wallet registry root
-    /// 4. Contract state root
-    ///
-    /// **Invariant**: For every *committed* block (finalized by BFT), `state_root`
-    /// MUST be non-zero.  A zero `state_root` (`Hash::default()`) is only valid
-    /// for the genesis block before state initialization, or for blocks that are
-    /// still in-flight (not yet executed).
-    ///
-    /// Use [`assert_state_root_set`] to enforce this invariant at commit time.
     #[serde(default)]
-    pub state_root: Hash,
+    pub state_root: [u8; 32],
+
+    /// BLAKE3 root over the finalized BFT quorum attestations.
+    #[serde(default)]
+    pub bft_quorum_root: [u8; 32],
+
+    /// Cached block hash (result of `calculate_hash()`).
+    pub block_hash: Hash,
 }
 
-/// Default fee model version for backwards compatibility
-fn default_fee_model_version() -> u16 {
-    1 // Legacy default for deserializing old blocks
+fn default_block_version() -> u32 {
+    1
 }
 
 impl Block {
@@ -461,7 +337,7 @@ impl Block {
 
     /// Get the previous block hash
     pub fn previous_hash(&self) -> Hash {
-        self.header.previous_block_hash
+        Hash::new(self.header.previous_hash)
     }
 
     /// Get the timestamp
@@ -469,9 +345,9 @@ impl Block {
         self.header.timestamp
     }
 
-    /// Get the difficulty
+    /// Legacy PoW difficulty is retired. Returns the minimum sentinel.
     pub fn difficulty(&self) -> Difficulty {
-        self.header.difficulty
+        Difficulty::minimum()
     }
 
     /// Get the number of transactions
@@ -486,7 +362,7 @@ impl Block {
 
     /// Check if this is the genesis block
     pub fn is_genesis(&self) -> bool {
-        self.header.height == 0 && self.header.previous_block_hash == Hash::default()
+        self.header.height == 0 && self.header.previous_hash == [0u8; 32]
     }
 
     /// Get total transaction fees in the block
@@ -529,23 +405,22 @@ impl Block {
     pub fn verify_merkle_root(&self) -> bool {
         let calculated_root =
             crate::transaction::hashing::calculate_transaction_merkle_root(&self.transactions);
-        let matches = calculated_root == self.header.merkle_root;
+        let matches = calculated_root.as_array() == self.header.data_helix_root;
         if !matches {
             tracing::warn!(
                 "Merkle root mismatch at height {}: calculated={}, stored={}transactions_count={}",
                 self.height(),
                 hex::encode(calculated_root.as_bytes()),
-                hex::encode(self.header.merkle_root.as_bytes()),
+                hex::encode(self.header.data_helix_root),
                 self.transactions.len()
             );
         }
         matches
     }
 
-    /// Verify the block meets the difficulty target
+    /// Legacy PoW validation is retired in Sprint 2.
     pub fn meets_difficulty_target(&self) -> bool {
-        let block_hash = self.hash();
-        self.header.difficulty.meets_target(&block_hash)
+        true
     }
 
     /// Get all transaction IDs in the block
@@ -570,10 +445,7 @@ impl Block {
 
     /// Check if block header is valid
     pub fn has_valid_header(&self) -> bool {
-        // Basic header validation
-        self.header.version > 0
-            && self.header.timestamp > 0
-            && self.header.transaction_count == self.transactions.len() as u32
+        self.header.version > 0 && self.header.timestamp > 0
     }
 
     /// Calculate merkle root of transactions
@@ -586,32 +458,23 @@ impl BlockHeader {
     /// Create a new block header
     pub fn new(
         version: u32,
-        previous_block_hash: Hash,
-        merkle_root: Hash,
+        previous_hash: Hash,
+        data_helix_root: Hash,
         timestamp: u64,
-        difficulty: Difficulty,
         height: u64,
-        transaction_count: u32,
-        block_size: u32,
-        cumulative_difficulty: Difficulty,
     ) -> Self {
         let mut header = Self {
             version,
-            previous_block_hash,
-            merkle_root,
+            previous_hash: previous_hash.as_array(),
+            data_helix_root: data_helix_root.as_array(),
             timestamp,
-            difficulty,
-            nonce: 0,
             height,
+            verification_helix_root: [0u8; 32],
+            state_root: [0u8; 32],
+            bft_quorum_root: [0u8; 32],
             block_hash: Hash::default(),
-            transaction_count,
-            block_size,
-            cumulative_difficulty,
-            fee_model_version: 2, // Protocol v2 active from genesis (fee_model_active_from_height_v2 = 0)
-            state_root: Hash::default(), // Set via set_state_root() after execution
         };
 
-        // Calculate and set the block hash
         header.block_hash = header.calculate_hash();
         header
     }
@@ -629,9 +492,19 @@ impl BlockHeader {
     /// indicate a failed or incomplete state transition.
     pub fn set_state_root(&mut self, state_root: Hash) {
         assert_state_root_set(self.height, &state_root);
-        self.state_root = state_root;
-        // Recompute the block hash after updating the state root so that
-        // block_hash always reflects the finalized header contents.
+        self.state_root = state_root.as_array();
+        self.block_hash = self.calculate_hash();
+    }
+
+    /// Update the verification helix root and recompute the cached block hash.
+    pub fn set_verification_helix_root(&mut self, root: [u8; 32]) {
+        self.verification_helix_root = root;
+        self.block_hash = self.calculate_hash();
+    }
+
+    /// Update the BFT quorum root and recompute the cached block hash.
+    pub fn set_bft_quorum_root(&mut self, root: [u8; 32]) {
+        self.bft_quorum_root = root;
         self.block_hash = self.calculate_hash();
     }
 
@@ -639,15 +512,13 @@ impl BlockHeader {
     pub fn calculate_hash(&self) -> Hash {
         let mut hasher = blake3::Hasher::new();
 
-        hasher.update(&self.version.to_le_bytes());
-        hasher.update(self.previous_block_hash.as_bytes());
-        hasher.update(self.merkle_root.as_bytes());
-        hasher.update(&self.timestamp.to_le_bytes());
-        hasher.update(&self.difficulty.bits().to_le_bytes());
-        hasher.update(&self.nonce.to_le_bytes());
         hasher.update(&self.height.to_le_bytes());
-        hasher.update(&self.transaction_count.to_le_bytes());
-        hasher.update(&self.block_size.to_le_bytes());
+        hasher.update(&self.timestamp.to_le_bytes());
+        hasher.update(&self.previous_hash);
+        hasher.update(&self.data_helix_root);
+        hasher.update(&self.verification_helix_root);
+        hasher.update(&self.state_root);
+        hasher.update(&self.bft_quorum_root);
 
         Hash::from_slice(hasher.finalize().as_bytes())
     }
@@ -657,20 +528,14 @@ impl BlockHeader {
         self.block_hash
     }
 
-    /// Set the nonce and recalculate hash
-    pub fn set_nonce(&mut self, nonce: u64) {
-        self.nonce = nonce;
-        self.block_hash = self.calculate_hash();
-    }
-
-    /// Check if the block hash meets the difficulty target
+    /// Legacy PoW verification is retired in Sprint 2.
     pub fn meets_difficulty_target(&self) -> bool {
-        self.difficulty.check_hash(&self.block_hash)
+        true
     }
 
-    /// Get the target value for this difficulty
+    /// Legacy PoW target access is retired in Sprint 2.
     pub fn target(&self) -> [u8; 32] {
-        self.difficulty.target()
+        [0u8; 32]
     }
 
     /// Check if this header represents a valid proof-of-work
@@ -720,19 +585,12 @@ pub fn create_genesis_block() -> Block {
     // via GenesisConfig::build_block0() which reads the timestamp from genesis.toml
     // (currently "2025-11-01T00:00:00Z" = 1761955200).
     let genesis_timestamp = 1730419200u64;
-    // Genesis blocks should use easy consensus difficulty like other system transaction blocks
-    let genesis_difficulty = Difficulty::from_bits(0x1fffffff);
-
     let header = BlockHeader::new(
         1,               // version
-        Hash::default(), // previous_block_hash (none for genesis)
-        Hash::default(), // merkle_root (will be calculated)
+        Hash::default(), // previous_hash (none for genesis)
+        Hash::default(), // data_helix_root (will be calculated)
         genesis_timestamp,
-        genesis_difficulty,
         0,                  // height
-        0,                  // transaction_count
-        0,                  // block_size
-        genesis_difficulty, // cumulative_difficulty
     );
 
     let genesis_block = Block::new(header, Vec::new());
@@ -782,24 +640,6 @@ pub const MAX_TRANSACTIONS_PER_BLOCK: usize = 10_000;
 pub const MIN_BLOCK_TIME: u64 = 1; // 1 second minimum between blocks
 pub const MAX_BLOCK_TIME: u64 = 7200; // 2 hours maximum future timestamp
 
-// ---------------------------------------------------------------------------
-// Compile-time assertions: block header hash coverage
-// ---------------------------------------------------------------------------
-
-/// Compile-time check: [`BFT_REQUIRED_HEADER_FIELDS`] must list exactly
-/// [`BFT_REQUIRED_HEADER_FIELD_COUNT`] entries.
-///
-/// If you add or remove a consensus-critical field you MUST update BOTH the
-/// constant array AND this assertion, and you MUST update
-/// [`BlockHeader::calculate_hash`] accordingly.
-const _ASSERT_FIELD_COUNT: () = {
-    assert!(
-        BFT_REQUIRED_HEADER_FIELD_COUNT == 9,
-        "BFT_REQUIRED_HEADER_FIELDS length does not match expected count of 9. \
-         Update BFT_REQUIRED_HEADER_FIELDS and BlockHeader::calculate_hash together."
-    );
-};
-
 #[cfg(test)]
 mod header_hash_tests {
     use super::*;
@@ -818,11 +658,7 @@ mod header_hash_tests {
             Hash::default(),
             Hash::default(),
             1_000_000,
-            Difficulty::from_bits(0x1fffffff),
             0,
-            0,
-            0,
-            Difficulty::from_bits(0x1fffffff),
         );
 
         // version
@@ -835,24 +671,24 @@ mod header_hash_tests {
             "version must affect hash"
         );
 
-        // previous_block_hash
+        // previous_hash
         let mut h = base.clone();
-        h.previous_block_hash = Hash::from_slice(&[1u8; 32]);
+        h.previous_hash = [1u8; 32];
         h.block_hash = h.calculate_hash();
         assert_ne!(
             base.calculate_hash(),
             h.calculate_hash(),
-            "previous_block_hash must affect hash"
+            "previous_hash must affect hash"
         );
 
-        // merkle_root
+        // data_helix_root
         let mut h = base.clone();
-        h.merkle_root = Hash::from_slice(&[2u8; 32]);
+        h.data_helix_root = [2u8; 32];
         h.block_hash = h.calculate_hash();
         assert_ne!(
             base.calculate_hash(),
             h.calculate_hash(),
-            "merkle_root must affect hash"
+            "data_helix_root must affect hash"
         );
 
         // timestamp
@@ -865,24 +701,24 @@ mod header_hash_tests {
             "timestamp must affect hash"
         );
 
-        // difficulty
+        // verification_helix_root
         let mut h = base.clone();
-        h.difficulty = Difficulty::from_bits(0x1ffffffe);
+        h.verification_helix_root = [3u8; 32];
         h.block_hash = h.calculate_hash();
         assert_ne!(
             base.calculate_hash(),
             h.calculate_hash(),
-            "difficulty must affect hash"
+            "verification_helix_root must affect hash"
         );
 
-        // nonce
+        // state_root
         let mut h = base.clone();
-        h.nonce = 42;
+        h.state_root = [4u8; 32];
         h.block_hash = h.calculate_hash();
         assert_ne!(
             base.calculate_hash(),
             h.calculate_hash(),
-            "nonce must affect hash"
+            "state_root must affect hash"
         );
 
         // height
@@ -895,41 +731,14 @@ mod header_hash_tests {
             "height must affect hash"
         );
 
-        // transaction_count
+        // bft_quorum_root
         let mut h = base.clone();
-        h.transaction_count = 5;
+        h.bft_quorum_root = [5u8; 32];
         h.block_hash = h.calculate_hash();
         assert_ne!(
             base.calculate_hash(),
             h.calculate_hash(),
-            "transaction_count must affect hash"
-        );
-
-        // block_size
-        let mut h = base.clone();
-        h.block_size = 1024;
-        h.block_hash = h.calculate_hash();
-        assert_ne!(
-            base.calculate_hash(),
-            h.calculate_hash(),
-            "block_size must affect hash"
-        );
-
-        // Informational fields must NOT change the hash
-        let mut h = base.clone();
-        h.cumulative_difficulty = Difficulty::from_bits(0x1ffffffe);
-        assert_eq!(
-            base.calculate_hash(),
-            h.calculate_hash(),
-            "cumulative_difficulty is informational and must NOT affect hash"
-        );
-
-        let mut h = base.clone();
-        h.fee_model_version = 2;
-        assert_eq!(
-            base.calculate_hash(),
-            h.calculate_hash(),
-            "fee_model_version is informational and must NOT affect hash"
+            "bft_quorum_root must affect hash"
         );
 
         // block_hash itself must NOT affect hash calculation (it is the output, not an input)
@@ -942,15 +751,6 @@ mod header_hash_tests {
         );
     }
 
-    /// Verify that the number of entries in BFT_REQUIRED_HEADER_FIELDS is correct.
-    #[test]
-    fn bft_required_header_fields_count() {
-        assert_eq!(
-            BFT_REQUIRED_HEADER_FIELDS.len(),
-            BFT_REQUIRED_HEADER_FIELD_COUNT,
-            "BFT_REQUIRED_HEADER_FIELD_COUNT is out of sync with BFT_REQUIRED_HEADER_FIELDS"
-        );
-    }
 }
 
 #[cfg(test)]
@@ -966,15 +766,11 @@ mod state_root_tests {
             Hash::default(),
             Hash::default(),
             1_000_000,
-            Difficulty::from_bits(0x1fffffff),
             0,
-            0,
-            0,
-            Difficulty::from_bits(0x1fffffff),
         );
         assert_eq!(
             header.state_root,
-            Hash::default(),
+            [0u8; 32],
             "Newly created BlockHeader must have zero state_root until set_state_root() is called"
         );
     }
@@ -987,15 +783,11 @@ mod state_root_tests {
             Hash::default(),
             Hash::default(),
             1_000_000,
-            Difficulty::from_bits(0x1fffffff),
             1, // height > 0 so genesis exemption does not apply
-            0,
-            0,
-            Difficulty::from_bits(0x1fffffff),
         );
         let expected = Hash::from_slice(&[0xab; 32]);
         header.set_state_root(expected);
-        assert_eq!(header.state_root, expected);
+        assert_eq!(header.state_root, expected.as_array());
     }
 
     /// Verify that assert_state_root_set panics in debug mode for the zero hash.

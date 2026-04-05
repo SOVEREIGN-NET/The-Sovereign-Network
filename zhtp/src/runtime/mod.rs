@@ -1027,12 +1027,7 @@ impl RuntimeOrchestrator {
                 crate::config::Environment::Development
             ) {
                 blockchain.difficulty = lib_blockchain::types::Difficulty::from_bits(0x1fffffff);
-                // Also update genesis block difficulty to match
-                if let Some(genesis) = blockchain.blocks.get_mut(0) {
-                    genesis.header.difficulty =
-                        lib_blockchain::types::Difficulty::from_bits(0x1fffffff);
-                }
-                info!(" Development mode: Set blockchain difficulty to 0x1fffffff (easy mining)");
+                info!(" Development mode: Set blockchain mining profile difficulty to 0x1fffffff");
             }
 
             let genesis_validators = if !self.config.network_config.bootstrap_validators.is_empty()

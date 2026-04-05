@@ -565,7 +565,7 @@ impl BlockExecutor {
     /// Checks:
     /// - Height is expected next height
     /// - Previous hash matches (except genesis)
-    /// - Fee model version is correct for height
+    /// - Header structure and previous-hash continuity are correct
     fn validate_header(&self, block: &Block) -> BlockApplyResult<()> {
         let expected_height = self.get_expected_height()?;
         let block_height = block.header.height;
@@ -587,10 +587,6 @@ impl BlockExecutor {
             self.validate_previous_hash(block, block_height)?;
         }
 
-        // Fee model version must be correct for this height
-        self.fee_model
-            .validate_version(block_height, block.header.fee_model_version)?;
-
         Ok(())
     }
 
@@ -599,7 +595,7 @@ impl BlockExecutor {
     /// Checks:
     /// - Block payload size within limits
     /// - Transaction count within limits
-    /// - Transaction count matches header
+    /// - Transaction count within limits
     ///
     /// Note: Detailed per-tx resource accounting is done by BlockAccumulator
     /// in apply_block_inner, which can reject the block mid-execution.
@@ -622,14 +618,6 @@ impl BlockExecutor {
             )));
         }
 
-        // Transaction count must match header
-        if block.header.transaction_count != tx_count {
-            return Err(BlockApplyError::ValidationFailed(format!(
-                "Transaction count mismatch: header says {} but block has {}",
-                block.header.transaction_count, tx_count
-            )));
-        }
-
         Ok(())
     }
 
@@ -639,7 +627,7 @@ impl BlockExecutor {
     fn apply_block_inner(&self, block: &Block) -> BlockApplyResult<ApplyOutcome> {
         let block_height = block.header.height;
         let block_timestamp = block.header.timestamp;
-        let block_hash = BlockHash::new(block.header.block_hash.as_array());
+        let block_hash = BlockHash::new(block.hash().as_array());
 
         let mutator = StateMutator::new(self.store.as_ref());
         let mut summary = StateChangesSummary::default();
@@ -902,7 +890,7 @@ impl BlockExecutor {
                 ))
             })?;
 
-        let actual_hash = BlockHash::new(block.header.previous_block_hash.as_array());
+        let actual_hash = BlockHash::new(block.header.previous_hash);
 
         if expected_hash != actual_hash {
             return Err(BlockApplyError::InvalidPreviousHash {
@@ -2576,18 +2564,14 @@ mod tests {
 
         let header = BlockHeader {
             version: 1,
-            previous_block_hash: Hash::default(),
-            merkle_root: Hash::default(),
-            state_root: Hash::default(),
+            previous_hash: Hash::default().into(),
+            data_helix_root: Hash::default().into(),
             timestamp: 1000,
-            difficulty: Difficulty::minimum(),
-            nonce: 0,
-            cumulative_difficulty: Difficulty::minimum(),
             height: 0,
+            verification_helix_root: [0u8; 32],
+            state_root: Hash::default().into(),
+            bft_quorum_root: [0u8; 32],
             block_hash,
-            transaction_count: 0,
-            block_size: 0,
-            fee_model_version: 2, // Phase 2+ uses v2
         };
         Block::new(header, vec![])
     }
@@ -2599,18 +2583,14 @@ mod tests {
 
         let header = BlockHeader {
             version: 1,
-            previous_block_hash: prev_hash,
-            merkle_root: Hash::default(),
-            state_root: Hash::default(),
+            previous_hash: prev_hash.into(),
+            data_helix_root: Hash::default().into(),
             timestamp: 1000 + height,
-            difficulty: Difficulty::minimum(),
-            nonce: 0,
-            cumulative_difficulty: Difficulty::minimum(),
             height,
+            verification_helix_root: [0u8; 32],
+            state_root: Hash::default().into(),
+            bft_quorum_root: [0u8; 32],
             block_hash,
-            transaction_count: 0,
-            block_size: 0,
-            fee_model_version: 2, // Phase 2+ uses v2
         };
         Block::new(header, vec![])
     }
@@ -2711,7 +2691,7 @@ mod tests {
     use lib_proofs::types::ZkProof;
 
     fn create_dummy_public_key() -> PublicKey {
-        PublicKey::new(vec![0u8; 32])
+        PublicKey::new([0u8; 2592])
     }
 
     fn create_dummy_signature() -> Signature {
@@ -2788,18 +2768,14 @@ mod tests {
 
         let header = BlockHeader {
             version: 1,
-            previous_block_hash: Hash::default(),
-            merkle_root: Hash::default(),
-            state_root: Hash::default(),
+            previous_hash: Hash::default().into(),
+            data_helix_root: Hash::default().into(),
             timestamp: 1000,
-            difficulty: Difficulty::default(),
-            nonce: 0,
             height: 0,
+            verification_helix_root: [0u8; 32],
+            state_root: Hash::default().into(),
+            bft_quorum_root: [0u8; 32],
             block_hash,
-            transaction_count: 1,
-            block_size: 0,
-            cumulative_difficulty: Difficulty::default(),
-            fee_model_version: 2, // Phase 2+ uses v2
         };
         Block::new(header, vec![coinbase])
     }
@@ -2812,18 +2788,14 @@ mod tests {
 
         let header = BlockHeader {
             version: 1,
-            previous_block_hash: prev_hash,
-            merkle_root: Hash::default(),
-            state_root: Hash::default(),
+            previous_hash: prev_hash.into(),
+            data_helix_root: Hash::default().into(),
             timestamp: 1000 + height,
-            difficulty: Difficulty::default(),
-            nonce: 0,
             height,
+            verification_helix_root: [0u8; 32],
+            state_root: Hash::default().into(),
+            bft_quorum_root: [0u8; 32],
             block_hash,
-            transaction_count: txs.len() as u32,
-            block_size: 0,
-            cumulative_difficulty: Difficulty::default(),
-            fee_model_version: 2, // Phase 2+ uses v2
         };
         Block::new(header, txs)
     }
@@ -3050,18 +3022,14 @@ mod tests {
 
         let header = BlockHeader {
             version: 1,
-            previous_block_hash: genesis.header.block_hash,
-            merkle_root: Hash::default(),
-            state_root: Hash::default(),
+            previous_hash: genesis.header.block_hash.into(),
+            data_helix_root: Hash::default().into(),
             timestamp: 1001,
-            difficulty: Difficulty::minimum(),
-            nonce: 0,
-            cumulative_difficulty: Difficulty::minimum(),
             height: 1,
+            verification_helix_root: [0u8; 32],
+            state_root: Hash::default().into(),
+            bft_quorum_root: [0u8; 32],
             block_hash,
-            transaction_count: 2,
-            block_size: 0,
-            fee_model_version: 2,
         };
         let block1 = Block::new(header, vec![tx1, tx2]);
 
@@ -3321,18 +3289,14 @@ mod tests {
 
         let header = BlockHeader {
             version: 1,
-            previous_block_hash: genesis.header.block_hash,
-            merkle_root: Hash::default(),
-            state_root: Hash::default(),
+            previous_hash: genesis.header.block_hash.into(),
+            data_helix_root: Hash::default().into(),
             timestamp: 1001,
-            difficulty: Difficulty::minimum(),
-            nonce: 0,
-            cumulative_difficulty: Difficulty::minimum(),
             height: 1,
+            verification_helix_root: [0u8; 32],
+            state_root: Hash::default().into(),
+            bft_quorum_root: [0u8; 32],
             block_hash,
-            transaction_count: 1,
-            block_size: 0,
-            fee_model_version: 2,
         };
 
         let block = Block::new(header, vec![tx]);
@@ -3369,18 +3333,14 @@ mod tests {
 
         let header = BlockHeader {
             version: 1,
-            previous_block_hash: deploy_block.header.block_hash,
-            merkle_root: Hash::default(),
-            state_root: Hash::default(),
+            previous_hash: deploy_block.header.block_hash.into(),
+            data_helix_root: Hash::default().into(),
             timestamp: 1001,
-            difficulty: Difficulty::minimum(),
-            nonce: 0,
-            cumulative_difficulty: Difficulty::minimum(),
             height: 2,
+            verification_helix_root: [0u8; 32],
+            state_root: Hash::default().into(),
+            bft_quorum_root: [0u8; 32],
             block_hash,
-            transaction_count: 1,
-            block_size: 0,
-            fee_model_version: 2,
         };
 
         let block = Block::new(header, vec![tx]);

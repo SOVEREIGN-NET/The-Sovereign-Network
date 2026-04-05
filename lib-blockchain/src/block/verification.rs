@@ -4,7 +4,7 @@
 //! the commit vote signatures in a [`BftQuorumProof`] against a known
 //! set of validator consensus keys.
 
-use lib_types::consensus::BftQuorumProof;
+use lib_types::consensus::{compute_bft_quorum_root, BftQuorumProof};
 use std::collections::{HashMap, HashSet};
 
 /// Extract the proposal_id that a proof attests to.
@@ -86,6 +86,23 @@ pub fn verify_quorum_proof_for_proposal(
 
     // Delegate to base verification for signature and quorum checks
     verify_quorum_proof(proof, validator_keys)
+}
+
+/// Verify that a quorum proof matches the block header root committed by the
+/// finalized block.
+pub fn verify_quorum_root_binding(
+    proof: &BftQuorumProof,
+    expected_bft_quorum_root: &[u8; 32],
+) -> Result<(), String> {
+    let actual_root = compute_bft_quorum_root(proof);
+    if &actual_root != expected_bft_quorum_root {
+        return Err(format!(
+            "bft_quorum_root mismatch: proof root {} does not match block header root {}",
+            hex::encode(&actual_root[..8]),
+            hex::encode(&expected_bft_quorum_root[..8]),
+        ));
+    }
+    Ok(())
 }
 
 /// Verify a BFT quorum proof against a known validator key set.

@@ -873,11 +873,11 @@ impl BlockchainHandler {
                 status: "block_found".to_string(),
                 height: block.header.height,
                 hash: block.header.block_hash.to_string(),
-                previous_hash: block.header.previous_block_hash.to_string(),
+                previous_hash: hex::encode(block.header.previous_hash),
                 timestamp: block.header.timestamp,
                 transaction_count: block.transactions.len(),
-                merkle_root: block.header.merkle_root.to_string(),
-                nonce: block.header.nonce,
+                merkle_root: hex::encode(block.header.data_helix_root),
+                nonce: 0,
             }
         } else {
             BlockResponse {
@@ -928,11 +928,11 @@ impl BlockchainHandler {
                 .map(|block| BlockSummary {
                     height: block.header.height,
                     hash: block.header.block_hash.to_string(),
-                    previous_hash: block.header.previous_block_hash.to_string(),
+                    previous_hash: hex::encode(block.header.previous_hash),
                     timestamp: block.header.timestamp,
                     transaction_count: block.transactions.len(),
-                    merkle_root: block.header.merkle_root.to_string(),
-                    nonce: block.header.nonce,
+                    merkle_root: hex::encode(block.header.data_helix_root),
+                    nonce: 0,
                 })
                 .collect()
         };
@@ -1150,11 +1150,11 @@ impl BlockchainHandler {
             Some(serde_json::json!({
                 "height": block.header.height,
                 "hash": block.header.block_hash.to_string(),
-                "previous_hash": block.header.previous_block_hash.to_string(),
+                "previous_hash": hex::encode(block.header.previous_hash),
                 "timestamp": block.header.timestamp,
                 "transaction_count": block.transactions.len(),
-                "merkle_root": block.header.merkle_root.to_string(),
-                "nonce": block.header.nonce,
+                "merkle_root": hex::encode(block.header.data_helix_root),
+                "nonce": 0,
             }))
         };
 
@@ -1275,11 +1275,11 @@ impl BlockchainHandler {
                     status: "block_found".to_string(),
                     height: block.header.height,
                     hash: block.header.block_hash.to_string(),
-                    previous_hash: block.header.previous_block_hash.to_string(),
+                    previous_hash: hex::encode(block.header.previous_hash),
                     timestamp: block.header.timestamp,
                     transaction_count: block.transactions.len(),
-                    merkle_root: block.header.merkle_root.to_string(),
-                    nonce: block.header.nonce,
+                    merkle_root: hex::encode(block.header.data_helix_root),
+                    nonce: 0,
                 };
 
                 let json_response = serde_json::to_vec(&response_data)?;
@@ -1324,11 +1324,11 @@ impl BlockchainHandler {
                     status: "block_found".to_string(),
                     height: block.header.height,
                     hash: block.header.block_hash.to_string(),
-                    previous_hash: block.header.previous_block_hash.to_string(),
+                    previous_hash: hex::encode(block.header.previous_hash),
                     timestamp: block.header.timestamp,
                     transaction_count: block.transactions.len(),
-                    merkle_root: block.header.merkle_root.to_string(),
-                    nonce: block.header.nonce,
+                    merkle_root: hex::encode(block.header.data_helix_root),
+                    nonce: 0,
                 };
 
                 let json_response = serde_json::to_vec(&response_data)?;
@@ -2526,7 +2526,7 @@ impl BlockchainHandler {
         let genesis_hash = blockchain
             .blocks
             .first()
-            .map(|b| hex::encode(b.header.merkle_root.as_bytes()))
+            .map(|b| hex::encode(b.header.data_helix_root))
             .unwrap_or_else(|| "none".to_string());
 
         let tip_info = ChainTipInfo {

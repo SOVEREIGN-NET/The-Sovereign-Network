@@ -69,7 +69,7 @@ impl BootstrapService {
         let local_genesis = local_blockchain
             .blocks
             .first()
-            .map(|b| hex::encode(b.header.merkle_root.as_bytes()))
+            .map(|b| hex::encode(b.header.data_helix_root))
             .unwrap_or_else(|| "none".to_string());
 
         info!("Chain comparison:");

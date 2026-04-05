@@ -36,22 +36,32 @@ impl StateRootComputation {
         let prefix = format!("state:{}:", block_height);
         let mut entries = self.storage.scan_prefix(prefix.as_bytes())?;
 
-        if entries.is_empty() {
-            // Empty state has a specific root
-            return Ok(Self::empty_root());
-        }
-
         // Sort entries by key for deterministic ordering
         entries.sort_by(|a, b| a.0.cmp(&b.0));
 
         // Build leaf hashes: hash(key || value)
-        let mut leaf_hashes = Vec::with_capacity(entries.len());
+        let mut leaf_hashes = Vec::with_capacity(entries.len() + 5);
         for (key, value) in entries {
             let mut hasher = blake3::Hasher::new();
             hasher.update(&key);
             hasher.update(&value);
             let hash = hasher.finalize();
             leaf_hashes.push(hash.as_bytes().to_vec());
+        }
+
+        // Sprint 2: commit the canonical bonding-curve state slots even before
+        // the economic split logic ships. They remain zero-filled until Sprint 4.
+        for field in [
+            "circulating_cbe_supply",
+            "locked_reserve_sov",
+            "liquid_reserve_sov",
+            "sovereign_treasury_sov",
+            "sovrn_total_supply",
+        ] {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(field.as_bytes());
+            hasher.update(&0u128.to_le_bytes());
+            leaf_hashes.push(hasher.finalize().as_bytes().to_vec());
         }
 
         // Build Merkle tree bottom-up
