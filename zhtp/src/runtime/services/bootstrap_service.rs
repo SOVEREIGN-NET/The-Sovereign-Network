@@ -31,12 +31,15 @@ impl BootstrapService {
         // Step 1: Get peer's chain tip info
         #[derive(Deserialize)]
         struct ChainTipInfo {
+            chain_id: u8,
             height: u64,
             #[allow(dead_code)]
             head_hash: String,
-            genesis_hash: String,
+            #[allow(dead_code)]
+            total_work: String,
             validator_count: usize,
             identity_count: usize,
+            genesis_hash: String,
         }
 
         let tip_response = timeout(Duration::from_secs(10), async {
@@ -58,9 +61,20 @@ impl BootstrapService {
         let peer_tip: ChainTipInfo =
             serde_json::from_slice(&tip_response.body).context("Failed to parse chain tip JSON")?;
 
+        // Validate peer is on the same chain/network
+        let local_chain_id = crate::config::environment::detect_environment().chain_id();
+        if peer_tip.chain_id != local_chain_id {
+            return Err(anyhow!(
+                "Peer {} is on different chain: peer_chain_id={} != local_chain_id={}",
+                peer_label,
+                peer_tip.chain_id,
+                local_chain_id
+            ));
+        }
+
         info!(
-            "Peer chain tip: height={}, identities={}, validators={}",
-            peer_tip.height, peer_tip.identity_count, peer_tip.validator_count
+            "Peer chain tip: height={}, chain_id={}, identities={}, validators={}",
+            peer_tip.height, peer_tip.chain_id, peer_tip.identity_count, peer_tip.validator_count
         );
 
         // Step 2: Compare with local chain
