@@ -42,6 +42,9 @@ pub use random::{generate_nonce, SecureRng};
 // Re-export seed functionality
 pub use seed::generate_identity_seed;
 
+// Re-export encoding utilities for consensus key handling
+pub use utils::{dilithium5_pk_from_bytes, dilithium5_pk_from_hex};
+
 // Re-export keypair functionality
 pub use keypair::operations::encrypt_with_public_key;
 pub use keypair::{

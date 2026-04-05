@@ -7,7 +7,6 @@ use lib_proofs::ZeroKnowledgeProof;
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::HashMap;
 
-use crate::constants::{SOV_ATOMIC_UNITS, SOV_WELCOME_BONUS_SOV};
 use crate::credentials::IdentityAttestation;
 use crate::credentials::ZkCredential;
 use crate::types::{
@@ -484,8 +483,19 @@ impl ZhtpIdentity {
         // Convert Vec<u8> to fixed-size arrays for lib-crypto types
         let dilithium_pk: [u8; 2592] = rsk.public_key.as_slice().try_into()
             .map_err(|_| anyhow!("Invalid Dilithium public key size: expected 2592 bytes"))?;
-        let dilithium_sk: [u8; 4864] = rsk.secret_key.as_slice().try_into()
-            .map_err(|_| anyhow!("Invalid Dilithium secret key size: expected 4864 bytes"))?;
+        // Support both 4864-byte (crystals) and 4896-byte (pqcrypto) formats
+        let dilithium_sk: [u8; 4896] = match rsk.secret_key.len() {
+            4896 => rsk.secret_key.as_slice().try_into().unwrap(),
+            4864 => {
+                let mut arr = [0u8; 4896];
+                arr[..4864].copy_from_slice(&rsk.secret_key);
+                arr
+            }
+            _ => return Err(anyhow!(
+                "Invalid Dilithium secret key size: expected 4864 or 4896 bytes, got {}",
+                rsk.secret_key.len()
+            )),
+        };
         let kyber_pk: [u8; 1568] = kyber_pk_vec.as_slice().try_into()
             .map_err(|_| anyhow!("Invalid Kyber public key size: expected 1568 bytes"))?;
         let kyber_sk: [u8; 3168] = kyber_sk_vec.as_slice().try_into()
@@ -501,7 +511,7 @@ impl ZhtpIdentity {
             key_id,
         };
         let private_key = PrivateKey {
-            dilithium_sk,
+            dilithium_sk: dilithium_sk,
             dilithium_pk,
             kyber_sk,
             master_seed: seed, // Root Secret (RS), 64 bytes

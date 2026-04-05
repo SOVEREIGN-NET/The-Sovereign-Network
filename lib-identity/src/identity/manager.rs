@@ -806,7 +806,8 @@ impl IdentityManager {
         identity_id: &IdentityId,
         data: &[u8],
     ) -> Result<PostQuantumSignature> {
-        let identity = self
+        // Verify identity exists (not used directly but validates existence)
+        let _identity = self
             .identities
             .get(identity_id)
             .ok_or_else(|| anyhow!("Identity not found"))?;
@@ -895,8 +896,19 @@ impl IdentityManager {
 
         // Convert Vec<u8> to fixed-size arrays for PrivateKey
         // FIXME: The recovery phrase system should return fixed arrays directly
-        let dilithium_sk: [u8; 4864] = private_key_bytes.as_slice().try_into()
-            .map_err(|_| anyhow!("Invalid private key size: expected 4864 bytes for Dilithium5"))?;
+        // Support both 4864-byte (crystals) and 4896-byte (pqcrypto) formats
+        let dilithium_sk: [u8; 4896] = match private_key_bytes.len() {
+            4896 => private_key_bytes.as_slice().try_into().unwrap(),
+            4864 => {
+                let mut arr = [0u8; 4896];
+                arr[..4864].copy_from_slice(&private_key_bytes);
+                arr
+            }
+            _ => return Err(anyhow!(
+                "Invalid private key size: expected 4864 or 4896 bytes for Dilithium5, got {}",
+                private_key_bytes.len()
+            )),
+        };
         let dilithium_pk: [u8; 2592] = public_key.as_slice().try_into()
             .map_err(|_| anyhow!("Invalid public key size: expected 2592 bytes for Dilithium5"))?;
 

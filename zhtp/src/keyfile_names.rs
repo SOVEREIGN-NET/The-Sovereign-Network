@@ -19,8 +19,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeystorePrivateKey {
     /// Dilithium secret key bytes (hex-encoded for JSON)
+    /// Uses 4896 bytes for pqcrypto-dilithium compatibility
     #[serde(with = "serialize_bytes")]
-    pub dilithium_sk: [u8; 4864],
+    pub dilithium_sk: [u8; 4896],
     /// Dilithium public key bytes (optional, hex-encoded)
     #[serde(default = "default_dilithium_pk", with = "serialize_bytes")]
     pub dilithium_pk: [u8; 2592],

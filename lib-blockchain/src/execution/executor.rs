@@ -402,7 +402,7 @@ impl BlockExecutor {
     pub fn new_catchup_sync(
         store: Arc<dyn BlockchainStore>,
         fee_model: FeeModelV2,
-        limits: BlockLimits,
+        _limits: BlockLimits,
     ) -> Self {
         Self {
             store,
