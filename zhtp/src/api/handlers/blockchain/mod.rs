@@ -557,7 +557,7 @@ fn estimate_signed_tx_size(raw_tx: &[u8]) -> usize {
                     _ => (2420usize, 1312usize), // Default to Dilithium2
                 };
                 tx.signature.signature = vec![0u8; expected_sig];
-                tx.signature.public_key.dilithium_pk = vec![0u8; expected_pk];
+                tx.signature.public_key.dilithium_pk = [0u8; 2592];
             }
             bincode::serialize(&tx)
                 .map(|b| b.len())

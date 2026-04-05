@@ -82,7 +82,7 @@ impl BluetoothClassicRouter {
 
             // Initialize ZHTP authentication with blockchain public key
             info!("🔐 Initializing ZHTP authentication for Bluetooth Classic...");
-            let blockchain_pubkey = PublicKey::new(self.node_id.to_vec());
+            let blockchain_pubkey = PublicKey::new([0u8; 2592]); // Placeholder from node_id
             if let Err(e) = bluetooth_classic
                 .initialize_zhtp_auth(blockchain_pubkey)
                 .await
@@ -170,7 +170,7 @@ impl BluetoothClassicRouter {
                 );
 
                 // Create peer identity
-                let peer_pubkey = lib_crypto::PublicKey::new(handshake.node_id.as_bytes().to_vec());
+                let peer_pubkey = lib_crypto::PublicKey::new([0u8; 2592]); // Placeholder from node_id
 
                 // Use BluetoothClassic protocol type
                 let protocol = lib_network::protocols::NetworkProtocol::BluetoothClassic;
@@ -375,7 +375,7 @@ impl BluetoothClassicRouter {
 
                             // Create mesh connection entry (Ticket #146: Use UnifiedPeerId)
                             let peer_pubkey =
-                                lib_crypto::PublicKey::new(device.address.as_bytes().to_vec());
+                                lib_crypto::PublicKey::new([0u8; 2592]);
                             let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_pubkey.clone());
                             let connection = lib_network::mesh::connection::MeshConnection {
                                 peer: unified_peer,

@@ -189,7 +189,7 @@ fn load_from_keystore(
         wallet_data.wallet_name.clone(),
         None, // No alias
         Some(user_identity.id.clone()),
-        user_identity.public_key.dilithium_pk.clone(), // Use actual public key from restored identity
+        user_identity.public_key.dilithium_pk.to_vec(), // Use actual public key from restored identity
     );
 
     // Override the auto-generated wallet_id with the saved one
@@ -292,10 +292,10 @@ fn save_to_keystore(
     })?;
 
     let user_keystore_key = KeystorePrivateKey {
-        dilithium_sk: user_private_key.dilithium_sk.to_vec(),
-        dilithium_pk: user_private_key.dilithium_pk.to_vec(),
-        kyber_sk: user_private_key.kyber_sk.to_vec(),
-        master_seed: user_private_key.master_seed.to_vec(),
+        dilithium_sk: user_private_key.dilithium_sk,
+        dilithium_pk: user_private_key.dilithium_pk,
+        kyber_sk: user_private_key.kyber_sk,
+        master_seed: user_private_key.master_seed,
     };
 
     let user_private_key_json = serde_json::to_string_pretty(&user_keystore_key)
@@ -318,10 +318,10 @@ fn save_to_keystore(
     })?;
 
     let node_keystore_key = KeystorePrivateKey {
-        dilithium_sk: node_private_key.dilithium_sk.to_vec(),
-        dilithium_pk: node_private_key.dilithium_pk.to_vec(),
-        kyber_sk: node_private_key.kyber_sk.to_vec(),
-        master_seed: node_private_key.master_seed.to_vec(),
+        dilithium_sk: node_private_key.dilithium_sk,
+        dilithium_pk: node_private_key.dilithium_pk,
+        kyber_sk: node_private_key.kyber_sk,
+        master_seed: node_private_key.master_seed,
     };
 
     let node_private_key_json = serde_json::to_string_pretty(&node_keystore_key)
@@ -460,10 +460,10 @@ pub async fn persist_node_identity_to_keystore(
         .ok_or_else(|| anyhow!("Node identity missing private key (cannot persist)"))?;
 
     let key_payload = KeystorePrivateKey {
-        dilithium_sk: private_key.dilithium_sk.to_vec(),
-        dilithium_pk: private_key.dilithium_pk.to_vec(),
-        kyber_sk: private_key.kyber_sk.to_vec(),
-        master_seed: private_key.master_seed.to_vec(),
+        dilithium_sk: private_key.dilithium_sk,
+        dilithium_pk: private_key.dilithium_pk,
+        kyber_sk: private_key.kyber_sk,
+        master_seed: private_key.master_seed,
     };
 
     let identity_json = serde_json::to_string_pretty(identity)

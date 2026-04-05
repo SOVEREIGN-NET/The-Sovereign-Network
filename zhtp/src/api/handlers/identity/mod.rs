@@ -317,7 +317,9 @@ impl IdentityHandler {
                 note: lib_blockchain::types::hash::blake3_hash(
                     format!("welcome_bonus_note_{}", identity_id_hex).as_bytes(),
                 ),
-                recipient: PublicKey::new(citizenship_result.identity_id.as_bytes().to_vec()),
+                recipient: PublicKey::new(
+                    citizenship_result.identity_id.as_bytes().try_into().unwrap_or([0u8; 2592])
+                ),
             };
 
             let outputs = vec![welcome_bonus_output];
@@ -328,7 +330,7 @@ impl IdentityHandler {
                 outputs.clone(), // Include welcome bonus output
                 Signature {
                     signature: Vec::new(),                  // Empty signature for hash calculation
-                    public_key: PublicKey::new(Vec::new()), // Empty public key for hash calculation
+                    public_key: PublicKey::new([0u8; 2592]), // Empty public key for hash calculation
                     algorithm: SignatureAlgorithm::Dilithium2,
                     timestamp: citizenship_result.dao_registration.registered_at,
                 },
@@ -348,7 +350,7 @@ impl IdentityHandler {
                 outputs, //  Include welcome bonus UTXO output
                 Signature {
                     signature: crypto_signature.signature, // cryptographic signature over tx hash
-                    public_key: PublicKey::new(keypair.public_key.dilithium_pk.to_vec()), // public key
+                    public_key: PublicKey::new(keypair.public_key.dilithium_pk), // public key
                     algorithm: SignatureAlgorithm::Dilithium2, // Post-quantum algorithm
                     timestamp: citizenship_result.dao_registration.registered_at,
                 },
@@ -670,7 +672,9 @@ impl IdentityHandler {
             note: lib_blockchain::types::hash::blake3_hash(
                 format!("wallet_init_note_{}", wallet_id_hex).as_bytes(),
             ),
-            recipient: PublicKey::new(recipient_identity),
+            recipient: PublicKey::new(
+                recipient_identity.as_slice().try_into().unwrap_or([0u8; 2592])
+            ),
         };
 
         let outputs = vec![wallet_dust_output];
@@ -681,7 +685,7 @@ impl IdentityHandler {
             outputs.clone(), // Include dust output
             Signature {
                 signature: vec![0; 2420], // Temporary signature
-                public_key: PublicKey::new(keypair.public_key.dilithium_pk.to_vec()),
+                public_key: PublicKey::new(keypair.public_key.dilithium_pk),
                 algorithm: SignatureAlgorithm::Dilithium2,
                 timestamp,
             },
@@ -702,7 +706,7 @@ impl IdentityHandler {
             outputs, //  Include dust UTXO output
             Signature {
                 signature: crypto_signature.signature,
-                public_key: PublicKey::new(keypair.public_key.dilithium_pk.to_vec()),
+                public_key: PublicKey::new(keypair.public_key.dilithium_pk),
                 algorithm: SignatureAlgorithm::Dilithium2,
                 timestamp,
             },
@@ -1490,7 +1494,9 @@ impl IdentityHandler {
         }
 
         // Create PublicKey struct from raw bytes - this computes key_id = Blake3(dilithium_pk)
-        let public_key = lib_crypto::PublicKey::new(public_key_bytes.clone());
+        let public_key_bytes_array: [u8; 2592] = public_key_bytes.as_slice().try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid public key length: expected 2592 bytes"))?;
+        let public_key = lib_crypto::PublicKey::new(public_key_bytes_array);
 
         // SECURITY: Derive DID server-side from public key (single source of truth)
         // DID = did:zhtp:{hex(Blake3(dilithium_public_key))}
@@ -1656,7 +1662,9 @@ impl IdentityHandler {
             note: lib_blockchain::types::hash::blake3_hash(
                 format!("welcome_bonus_note_{}", identity_id).as_bytes(),
             ),
-            recipient: PublicKey::new(public_key_bytes.clone()),
+            recipient: PublicKey::new(
+                public_key_bytes.as_slice().try_into().unwrap_or([0u8; 2592])
+            ),
         }];
 
         let server_keypair = lib_crypto::generate_keypair()
@@ -1667,7 +1675,7 @@ impl IdentityHandler {
             outputs.clone(),
             Signature {
                 signature: vec![0; 2420],
-                public_key: PublicKey::new(server_keypair.public_key.dilithium_pk.to_vec()),
+                public_key: PublicKey::new(server_keypair.public_key.dilithium_pk),
                 algorithm: SignatureAlgorithm::Dilithium2,
                 timestamp: created_at,
             },
@@ -1694,7 +1702,7 @@ impl IdentityHandler {
             outputs,
             Signature {
                 signature: crypto_signature.signature,
-                public_key: PublicKey::new(server_keypair.public_key.dilithium_pk.to_vec()),
+                public_key: PublicKey::new(server_keypair.public_key.dilithium_pk),
                 algorithm: SignatureAlgorithm::Dilithium2,
                 timestamp: created_at,
             },

@@ -2890,7 +2890,7 @@ impl RuntimeOrchestrator {
             return Ok(());
         }
 
-        let consensus_key = ks.dilithium_pk.clone();
+        let consensus_key = ks.dilithium_pk.to_vec();
         let networking_key =
             lib_crypto::hash_blake3(&[ks.dilithium_pk.as_slice(), b"networking"].concat()).to_vec();
         let rewards_key =
@@ -4793,7 +4793,7 @@ pub(super) fn seed_validators_from_bootstrap_config(
             key[..32].copy_from_slice(hash.as_bytes());
             // Fill rest with derived data to avoid all-zeros
             for i in 1..(2592/32) {
-                let chunk_hash = blake3::hash(&[hash.as_bytes(), &[i as u8]].concat());
+                let chunk_hash = blake3::hash(&[hash.as_bytes(), &[i as u8][..]].concat());
                 key[i*32..(i+1)*32].copy_from_slice(chunk_hash.as_bytes());
             }
             key

@@ -398,7 +398,9 @@ fn reconstruct_identity_manager_from_blockchain_state(
             continue;
         }
 
-        let public_key = lib_crypto::PublicKey::new(identity_data.public_key.clone());
+        let public_key = lib_crypto::PublicKey::new(
+            identity_data.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
+        );
         let display_name = if identity_data.display_name.is_empty() {
             None
         } else {

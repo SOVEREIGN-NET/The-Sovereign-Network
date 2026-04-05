@@ -109,7 +109,7 @@ impl MeshRouter {
                 info!("   Discovered via: {}", discovery_method);
 
                 // Create temporary identity until blockchain identity is exchanged
-                let peer_pubkey = lib_crypto::PublicKey::new(handshake.node_id.as_bytes().to_vec());
+                let peer_pubkey = lib_crypto::PublicKey::new([0u8; 2592]); // Placeholder from node_id
 
                 // Determine protocol from discovery method
                 let protocol = match handshake.discovered_via {

@@ -48,8 +48,8 @@ impl DhtNetworkTransport for MeshDhtNetworkTransport {
         // and verify the signature. QUIC+UHP provides transport-layer auth.
         let msg = ZhtpMeshMessage::DhtStore {
             requester: lib_crypto::PublicKey {
-                dilithium_pk: Vec::new(),
-                kyber_pk: Vec::new(),
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: self.local_node_key_id,
             },
             request_id: rand::random(),
