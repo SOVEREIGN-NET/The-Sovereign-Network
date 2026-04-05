@@ -32,10 +32,26 @@ pub fn verify_quorum_proof(
 ) -> Result<(), String> {
     use lib_types::consensus::threshold::has_supermajority;
 
-    let n = proof.total_validators as u64;
-    if n == 0 {
-        return Err("total_validators is zero".to_string());
+    // SECURITY: Use local validator set size as source of truth.
+    // Do NOT trust peer-controlled proof.total_validators for quorum threshold.
+    // A malicious peer could underreport committee size to accept forged proofs.
+    // Example: local set has 7 validators (threshold 5), peer claims 4 (threshold 3).
+    let local_validator_count = validator_keys.len() as u64;
+    if local_validator_count == 0 {
+        return Err("local validator set is empty".to_string());
     }
+
+    // Sanity check: proof's claimed total should match local set size.
+    // A mismatch indicates the peer is on a different fork or lying.
+    if proof.total_validators as u64 != local_validator_count {
+        return Err(format!(
+            "validator set size mismatch: proof claims {} validators, local set has {}. \
+             Peer may be on different fork or proof is forged",
+            proof.total_validators, local_validator_count
+        ));
+    }
+
+    let n = local_validator_count;
 
     if !has_supermajority(proof.attestations.len() as u64, n) {
         return Err(format!(
