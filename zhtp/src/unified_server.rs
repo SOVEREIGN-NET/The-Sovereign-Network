@@ -56,6 +56,7 @@ use crate::api::handlers::{
     BlockchainHandler, CbeHandler, DaoHandler, DhtHandler, DnsHandler, IdentityHandler,
     MobileAuthHandler, ProtocolHandler, StorageHandler, TokenHandler, WalletHandler, Web4Handler,
 };
+use crate::config::environment::detect_environment;
 use crate::session_manager::SessionManager;
 
 // Re-export for backward compatibility with code that imports from crate::unified_server::*
@@ -801,9 +802,11 @@ impl ZhtpUnifiedServer {
         info!("📝 Registering API handlers on ZHTP router (QUIC is the only entry point)...");
 
         // Blockchain operations
+        let environment = detect_environment();
         let blockchain_handler: Arc<dyn ZhtpRequestHandler> =
-            Arc::new(BlockchainHandler::new(blockchain.clone()));
-        zhtp_router.register_handler("/api/v1/blockchain".to_string(), blockchain_handler);
+            Arc::new(BlockchainHandler::new(blockchain.clone(), environment));
+        zhtp_router.register_handler("/api/v1/blockchain".to_string(), blockchain_handler.clone());
+        zhtp_router.register_handler("/api/v1/chain".to_string(), blockchain_handler);
 
         // Identity and wallet management
         // Note: Using lib_identity::economics::EconomicModel as expected by IdentityHandler
