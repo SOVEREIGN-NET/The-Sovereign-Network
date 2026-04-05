@@ -552,7 +552,7 @@ fn estimate_signed_tx_size(raw_tx: &[u8]) -> usize {
             let pk_len = tx.signature.public_key.dilithium_pk.len();
             if sig_len == 0 || pk_len == 0 {
                 // Fill signature/public key with expected sizes for fee estimation.
-                let (expected_sig, expected_pk) = match tx.signature.algorithm {
+                let (expected_sig, _expected_pk) = match tx.signature.algorithm {
                     lib_crypto::types::SignatureAlgorithm::Dilithium5 => (4627usize, 2592usize),
                     _ => (2420usize, 1312usize), // Default to Dilithium2
                 };

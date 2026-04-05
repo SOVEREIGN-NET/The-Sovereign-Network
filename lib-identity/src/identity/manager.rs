@@ -806,7 +806,8 @@ impl IdentityManager {
         identity_id: &IdentityId,
         data: &[u8],
     ) -> Result<PostQuantumSignature> {
-        let identity = self
+        // Verify identity exists (not used directly but validates existence)
+        let _identity = self
             .identities
             .get(identity_id)
             .ok_or_else(|| anyhow!("Identity not found"))?;

@@ -7,7 +7,6 @@ use lib_proofs::ZeroKnowledgeProof;
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::HashMap;
 
-use crate::constants::{SOV_ATOMIC_UNITS, SOV_WELCOME_BONUS_SOV};
 use crate::credentials::IdentityAttestation;
 use crate::credentials::ZkCredential;
 use crate::types::{
