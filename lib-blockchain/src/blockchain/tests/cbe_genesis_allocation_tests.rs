@@ -26,8 +26,8 @@ fn test_cbe_compensation_pool_allocation() {
     let blockchain = Blockchain::new().expect("Failed to create blockchain");
 
     let compensation_addr = PublicKey {
-        dilithium_pk: vec![],
-        kyber_pk: vec![],
+        dilithium_pk: [0u8; 2592],
+        kyber_pk: [0u8; 1568],
         key_id: [0x01; 32],
     };
 
@@ -42,8 +42,8 @@ fn test_cbe_operational_treasury_allocation() {
     let blockchain = Blockchain::new().expect("Failed to create blockchain");
 
     let operational_addr = PublicKey {
-        dilithium_pk: vec![],
-        kyber_pk: vec![],
+        dilithium_pk: [0u8; 2592],
+        kyber_pk: [0u8; 1568],
         key_id: [0x02; 32],
     };
 
@@ -58,8 +58,8 @@ fn test_cbe_performance_incentives_allocation() {
     let blockchain = Blockchain::new().expect("Failed to create blockchain");
 
     let performance_addr = PublicKey {
-        dilithium_pk: vec![],
-        kyber_pk: vec![],
+        dilithium_pk: [0u8; 2592],
+        kyber_pk: [0u8; 1568],
         key_id: [0x03; 32],
     };
 
@@ -74,8 +74,8 @@ fn test_cbe_strategic_reserves_allocation() {
     let blockchain = Blockchain::new().expect("Failed to create blockchain");
 
     let strategic_addr = PublicKey {
-        dilithium_pk: vec![],
-        kyber_pk: vec![],
+        dilithium_pk: [0u8; 2592],
+        kyber_pk: [0u8; 1568],
         key_id: [0x04; 32],
     };
 
