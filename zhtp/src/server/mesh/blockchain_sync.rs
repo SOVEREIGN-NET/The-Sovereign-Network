@@ -60,7 +60,6 @@ impl MeshRouter {
                         let sender_pubkey = if let Some(identity_mgr) = identity_manager.as_ref() {
                             let mgr = identity_mgr.read().await;
                             if let Some(identity) = mgr.list_identities().first() {
-                                let pubkey_bytes = identity.public_key.as_bytes();
                                 let key_id = identity.public_key.key_id;
                                 lib_crypto::PublicKey {
                                     key_id,
@@ -147,7 +146,6 @@ impl MeshRouter {
                         let sender_pubkey = if let Some(identity_mgr) = identity_manager.as_ref() {
                             let mgr = identity_mgr.read().await;
                             if let Some(identity) = mgr.list_identities().first() {
-                                let pubkey_bytes = identity.public_key.as_bytes();
                                 let key_id = identity.public_key.key_id;
                                 lib_crypto::PublicKey {
                                     key_id,

@@ -911,12 +911,24 @@ async fn catchup_sync_from_peer(
 /// Called from `catchup_sync_from_peer` when a block is at or above
 /// `bft_active_height`.  The proof replaces the old blanket height guard
 /// with cryptographic finality verification.
+///
+/// # Security
+/// This function verifies that:
+/// 1. All attestations in the proof are for the same proposal_id
+/// 2. The signatures are valid and from known validators
+/// 3. The quorum threshold is met
+///
+/// # TODO
+/// Once blocks store their proposal_id, this function should also verify
+/// that the proof's proposal_id matches the block's proposal_id to prevent
+/// replay attacks where a valid proof for one proposal is applied to a
+/// different block at the same height.
 async fn fetch_and_verify_quorum_proof(
     client: &mut lib_network::client::ZhtpClient,
     height: u64,
     blockchain_arc: &Arc<tokio::sync::RwLock<lib_blockchain::Blockchain>>,
 ) -> Option<lib_types::consensus::BftQuorumProof> {
-    use lib_blockchain::block::verification::verify_quorum_proof;
+    use lib_blockchain::block::verification::{extract_consistent_proposal_id, verify_quorum_proof};
 
     let proof_url = format!("/api/v1/blockchain/quorum-proof/{}", height);
     let resp = client.get(&proof_url).await.ok()?;
@@ -930,6 +942,19 @@ async fn fetch_and_verify_quorum_proof(
             tracing::debug!("Catch-up: quorum proof deserialize failed for height {}", height);
             None
         })?;
+
+    // SECURITY: Verify all attestations agree on the same proposal_id.
+    // This prevents proofs with mixed attestations for different proposals.
+    let proposal_id = match extract_consistent_proposal_id(&proof) {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::warn!(
+                "Catch-up: block {} quorum proof has inconsistent proposal_ids: {}",
+                height, e
+            );
+            return None;
+        }
+    };
 
     // Build validator_id → consensus_key map from local registry.
     let bc = blockchain_arc.read().await;
@@ -951,9 +976,10 @@ async fn fetch_and_verify_quorum_proof(
     match verify_quorum_proof(&proof, &validator_keys) {
         Ok(()) => {
             tracing::info!(
-                "✅ Catch-up: block {} has valid quorum proof ({} attestations)",
+                "✅ Catch-up: block {} has valid quorum proof ({} attestations, proposal {})",
                 height,
-                proof.attestations.len()
+                proof.attestations.len(),
+                hex::encode(&proposal_id[..8])
             );
             Some(proof)
         }
@@ -1701,8 +1727,8 @@ async fn load_local_validator_from_keystore() -> Result<(IdentityId, lib_crypto:
     // Consensus identity uses Dilithium public key bytes for signature verification.
     let dilithium_pk: [u8; 2592] = ks.dilithium_pk.as_slice().try_into()
         .map_err(|_| anyhow::anyhow!("Invalid dilithium_pk length, expected 2592 bytes"))?;
-    let dilithium_sk: [u8; 4864] = ks.dilithium_sk.as_slice().try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid dilithium_sk length, expected 4864 bytes"))?;
+    let dilithium_sk: [u8; 4896] = ks.dilithium_sk.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid dilithium_sk length, expected 4896 bytes"))?;
     let kyber_sk: [u8; 3168] = ks.kyber_sk.as_slice().try_into()
         .map_err(|_| anyhow::anyhow!("Invalid kyber_sk length, expected 3168 bytes"))?;
     let master_seed: [u8; 64] = ks.master_seed.as_slice().try_into()

@@ -1425,7 +1425,7 @@ async fn test_hardening_vote_validation_rejects_empty_vote_public_key() {
         engine.current_round.height,
         engine.current_round.round,
     );
-    vote.signature.public_key.dilithium_pk.clear();
+    vote.signature.public_key.dilithium_pk = [0u8; 2592];
 
     let is_valid = engine
         .validate_remote_vote(&vote)
@@ -1454,7 +1454,7 @@ async fn test_hardening_vote_validation_rejects_placeholder_registered_key() {
             validator_id.clone(),
             10_000_000_000,
             100 * 1024 * 1024 * 1024,
-            vec![0x11; 32], // Placeholder-sized key
+            [0x11; 2592], // Placeholder Dilithium5 key
             vec![0x22; 32],
             vec![0x33; 32],
             5,

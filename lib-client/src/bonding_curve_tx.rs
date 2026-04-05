@@ -69,8 +69,8 @@ pub fn build_bonding_curve_deploy_tx(
         Signature {
             signature: vec![],
             public_key: PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
             algorithm: SignatureAlgorithm::Dilithium5,
@@ -132,8 +132,8 @@ pub fn build_bonding_curve_buy_tx(
         Signature {
             signature: vec![],
             public_key: PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
             algorithm: SignatureAlgorithm::Dilithium5,
@@ -194,8 +194,8 @@ pub fn build_bonding_curve_sell_tx(
         Signature {
             signature: vec![],
             public_key: PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
             algorithm: SignatureAlgorithm::Dilithium5,
@@ -258,8 +258,8 @@ pub fn build_bonding_curve_graduate_tx(
         Signature {
             signature: vec![],
             public_key: PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
             algorithm: SignatureAlgorithm::Dilithium5,
@@ -345,8 +345,8 @@ pub fn build_swap_tx(
         signature: Signature {
             signature: vec![],
             public_key: PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
             algorithm: SignatureAlgorithm::Dilithium5,
@@ -424,8 +424,8 @@ pub fn build_add_liquidity_tx(
         signature: Signature {
             signature: vec![],
             public_key: PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
             algorithm: SignatureAlgorithm::Dilithium5,
@@ -495,8 +495,8 @@ pub fn build_remove_liquidity_tx(
         signature: Signature {
             signature: vec![],
             public_key: PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
             algorithm: SignatureAlgorithm::Dilithium5,

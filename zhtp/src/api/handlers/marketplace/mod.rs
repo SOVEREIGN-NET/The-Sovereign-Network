@@ -602,7 +602,7 @@ impl MarketplaceHandler {
         use lib_crypto::PrivateKey;
 
         let private_key = PrivateKey {
-            dilithium_sk: identity_private_key_bytes.as_slice().try_into().unwrap_or([0u8; 4864]),
+            dilithium_sk: identity_private_key_bytes.as_slice().try_into().unwrap_or([0u8; 4896]),
             dilithium_pk: wallet_pubkey.as_slice().try_into().unwrap_or([0u8; 2592]),
             kyber_sk: [0u8; 3168],
             master_seed: identity_seed.as_slice().try_into().unwrap_or([0u8; 64]),

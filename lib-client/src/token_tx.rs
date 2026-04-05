@@ -40,9 +40,11 @@ pub fn create_public_key(dilithium_pk: Vec<u8>) -> PublicKey {
     let key_id = crypto::Blake3::hash(&dilithium_pk);
     let mut key_id_arr = [0u8; 32];
     key_id_arr.copy_from_slice(&key_id[..32]);
+    let dilithium_pk_arr: [u8; 2592] = dilithium_pk.try_into()
+        .expect("dilithium_pk must be 2592 bytes");
     PublicKey {
-        dilithium_pk,
-        kyber_pk: vec![],
+        dilithium_pk: dilithium_pk_arr,
+        kyber_pk: [0u8; 1568],
         key_id: key_id_arr,
     }
 }
@@ -289,8 +291,8 @@ pub fn build_contract_transaction(
         signature: Signature {
             signature: vec![],
             public_key: PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
             algorithm: SignatureAlgorithm::Dilithium5,
@@ -533,12 +535,13 @@ pub fn calculate_min_fee_for_tx_hex(tx_hex: &str) -> Result<u64, String> {
     let sig_len = tx.signature.signature.len();
     let pk_len = tx.signature.public_key.dilithium_pk.len();
     if sig_len == 0 || pk_len == 0 {
-        let (expected_sig, expected_pk) = match tx.signature.algorithm {
+        let (expected_sig, _expected_pk) = match tx.signature.algorithm {
             SignatureAlgorithm::Dilithium2 => (2420usize, 1312usize),
             _ => (4595usize, 2592usize), // Dilithium5 (identity default)
         };
         tx.signature.signature = vec![0u8; expected_sig];
-        tx.signature.public_key.dilithium_pk = vec![0u8; expected_pk];
+        // Fixed arrays already initialized to zeros, just verify length is correct
+        assert_eq!(tx.signature.public_key.dilithium_pk.len(), 2592, "dilithium_pk must be 2592 bytes");
     }
 
     let tx_bytes = bincode::serialize(&tx).map_err(|e| format!("Failed to serialize tx: {}", e))?;

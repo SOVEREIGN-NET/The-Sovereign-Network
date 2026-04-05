@@ -410,12 +410,12 @@ mod tests {
             vec![TransactionOutput::new(
                 Hash::new([3u8; 32]),
                 Hash::new([4u8; 32]),
-                PublicKey::new(vec![5u8; 32]),
+                PublicKey::new([5u8; 2592]),
             )],
             fee,
             Signature {
                 signature: vec![0u8; 64],
-                public_key: PublicKey::new(vec![0u8; 32]),
+                public_key: PublicKey::new([0u8; 2592]),
                 algorithm: SignatureAlgorithm::Dilithium5,
                 timestamp: 0,
             },
@@ -430,7 +430,7 @@ mod tests {
             fee,
             Signature {
                 signature: vec![0u8; 64],
-                public_key: PublicKey::new(vec![0u8; 32]),
+                public_key: PublicKey::new([0u8; 2592]),
                 algorithm: SignatureAlgorithm::Dilithium5,
                 timestamp: 0,
             },
@@ -455,12 +455,12 @@ mod tests {
             vec![TransactionOutput::new(
                 Hash::new([1u8; 32]),
                 Hash::new([2u8; 32]),
-                PublicKey::new(vec![0u8; 32]),
+                PublicKey::new([0u8; 2592]),
             )],
             fee,
             Signature {
                 signature: vec![],
-                public_key: PublicKey::new(vec![]),
+                public_key: PublicKey::new([0u8; 2592]),
                 algorithm: SignatureAlgorithm::Dilithium5,
                 timestamp: 0,
             },
