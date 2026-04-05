@@ -2515,6 +2515,7 @@ impl BlockchainHandler {
             validator_count: usize,
             identity_count: usize,
             genesis_hash: String,
+            chain_id: String,
         }
 
         let head_hash = blockchain
@@ -2529,6 +2530,11 @@ impl BlockchainHandler {
             .map(|b| hex::encode(b.header.data_helix_root))
             .unwrap_or_else(|| "none".to_string());
 
+        // chain_id uniquely identifies this chain instance for clients.
+        // Using the genesis hash prefix ensures it changes on every reset
+        // without requiring a separate config field.
+        let chain_id = format!("sovn-{}", &genesis_hash[..16]);
+
         let tip_info = ChainTipInfo {
             height: blockchain.height,
             head_hash,
@@ -2536,6 +2542,7 @@ impl BlockchainHandler {
             validator_count: blockchain.validator_registry.len(),
             identity_count: blockchain.identity_registry.len(),
             genesis_hash,
+            chain_id,
         };
 
         let json_response = serde_json::to_vec(&tip_info)?;

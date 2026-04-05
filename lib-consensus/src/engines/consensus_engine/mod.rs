@@ -279,11 +279,12 @@ pub const VIEW_CHANGE_CONDITIONS: &str =
 /// Minimum number of validators required for BFT consensus mode.
 ///
 /// Below this threshold, the system operates in bootstrap/single-node mode.
-/// This is a compile-time constant enforcing the BFT minimum: n >= 4 ensures
-/// that f = floor((n-1)/3) >= 1, i.e. at least one Byzantine fault can be tolerated.
+/// This is a compile-time constant enforcing the BFT minimum: n >= 3 allows
+/// BFT consensus (2f+1 quorum). At n=3, f=0 — no Byzantine fault tolerance,
+/// but the protocol still requires unanimity (3 of 3 commits).
 ///
 /// Invariant: Must equal `crate::types::MIN_BFT_VALIDATORS`.
-pub const BFT_MIN_VALIDATORS: usize = 4;
+pub const BFT_MIN_VALIDATORS: usize = 3;
 
 // Compile-time assertion: BFT_MIN_VALIDATORS must equal crate::types::MIN_BFT_VALIDATORS.
 // If this fails, the constant above is out of sync with the types module.

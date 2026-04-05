@@ -247,7 +247,9 @@ impl FeeDistributionResult {
 ///
 /// With fewer validators, the network operates in bootstrap mode where
 /// a single validator can mine blocks directly.
-pub const MIN_BFT_VALIDATORS: usize = 4;
+/// At n=3, f=0 (no Byzantine fault tolerance), but consensus still requires
+/// 2f+1=3 commits (unanimity). Suitable for testnet operation.
+pub const MIN_BFT_VALIDATORS: usize = 3;
 
 // =============================================================================
 // TESTS
