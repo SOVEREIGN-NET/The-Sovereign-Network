@@ -3137,4 +3137,32 @@ mod tests {
 
         assert_eq!(value["token_creation_fee"], 1_000);
     }
+
+    #[test]
+    fn handler_claims_chain_info_endpoint() {
+        // Verify the handler claims to handle the new /api/v1/chain/info endpoint
+        use crate::config::Environment;
+        
+        let handler = BlockchainHandler::new(
+            Arc::new(RwLock::new(Blockchain::new())),
+            Environment::Development,
+        );
+        
+        let chain_info_request = ZhtpRequest {
+            method: ZhtpMethod::Get,
+            uri: "/api/v1/chain/info".to_string(),
+            headers: std::collections::HashMap::new(),
+            body: Vec::new(),
+            peer_addr: None,
+            timestamp: 0,
+        };
+        
+        assert!(
+            handler.can_handle(&chain_info_request),
+            "handler must claim /api/v1/chain/info endpoint"
+        );
+        
+        // Verify chain_id is sourced from environment
+        assert_eq!(handler.chain_id(), Environment::Development.chain_id());
+    }
 }
