@@ -7,6 +7,87 @@
 use lib_types::consensus::BftQuorumProof;
 use std::collections::{HashMap, HashSet};
 
+/// Extract the proposal_id that a proof attests to.
+///
+/// Verifies that all attestations in the proof agree on the same proposal_id,
+/// and returns that proposal_id. This ensures the proof is internally consistent.
+///
+/// # Errors
+/// Returns an error if attestations have conflicting proposal_ids.
+pub fn extract_consistent_proposal_id(proof: &BftQuorumProof) -> Result<[u8; 32], String> {
+    if proof.attestations.is_empty() {
+        return Err("proof has no attestations".to_string());
+    }
+
+    let expected_proposal_id = proof.proposal_id;
+
+    // Verify all attestations are for the same proposal_id
+    for (i, att) in proof.attestations.iter().enumerate() {
+        if att.proposal_id != expected_proposal_id {
+            return Err(format!(
+                "attestation {} has mismatched proposal_id: expected {}, got {}. \
+                 Proof contains attestations for different proposals.",
+                i,
+                hex::encode(&expected_proposal_id[..8]),
+                hex::encode(&att.proposal_id[..8]),
+            ));
+        }
+    }
+
+    Ok(expected_proposal_id)
+}
+
+/// Verify a BFT quorum proof is bound to a specific proposal.
+///
+/// This prevents replay attacks where a valid proof for one proposal is
+/// applied to a different block at the same height.
+///
+/// # Arguments
+/// * `proof` — The quorum proof to verify.
+/// * `expected_proposal_id` — The proposal ID that the proof must attest to.
+///   This binds the proof to a specific block content.
+/// * `validator_keys` — Mapping of validator IDs to consensus keys.
+///
+/// # Security
+/// This function verifies that:
+/// 1. All attestations in the proof are for the same proposal_id
+/// 2. The proof's proposal_id matches the expected_proposal_id
+/// 3. The signatures are valid and from known validators
+/// 4. The quorum threshold is met based on local validator set size
+pub fn verify_quorum_proof_for_proposal(
+    proof: &BftQuorumProof,
+    expected_proposal_id: &[u8; 32],
+    validator_keys: &HashMap<[u8; 32], [u8; 2592]>,
+) -> Result<(), String> {
+    // SECURITY: Verify proof is bound to the expected proposal.
+    // This prevents replay attacks where a valid proof for proposal A
+    // is applied to a different block B at the same height.
+    if proof.proposal_id.as_slice() != expected_proposal_id.as_slice() {
+        return Err(format!(
+            "proposal ID mismatch: proof attests to {}, expected {}. \
+             This may be a replay attack with a proof for a different block.",
+            hex::encode(&proof.proposal_id[..8]),
+            hex::encode(&expected_proposal_id[..8]),
+        ));
+    }
+
+    // Verify all attestations are for the same proposal_id
+    for (i, att) in proof.attestations.iter().enumerate() {
+        if att.proposal_id.as_slice() != expected_proposal_id.as_slice() {
+            return Err(format!(
+                "attestation {} has mismatched proposal_id: expected {}, got {}. \
+                 Proof contains attestations for different proposals.",
+                i,
+                hex::encode(&expected_proposal_id[..8]),
+                hex::encode(&att.proposal_id[..8]),
+            ));
+        }
+    }
+
+    // Delegate to base verification for signature and quorum checks
+    verify_quorum_proof(proof, validator_keys)
+}
+
 /// Verify a BFT quorum proof against a known validator key set.
 ///
 /// # Arguments
