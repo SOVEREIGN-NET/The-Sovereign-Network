@@ -1,7 +1,7 @@
 use super::*;
 use crate::block::{Block, BlockHeader};
 use crate::storage::SledStore;
-use crate::types::{Difficulty, Hash};
+use crate::types::Hash;
 
 fn make_header(height: u64, prev_hash: Hash) -> BlockHeader {
     let mut hash_bytes = [0u8; 32];
