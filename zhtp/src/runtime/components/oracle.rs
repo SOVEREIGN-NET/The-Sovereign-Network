@@ -175,13 +175,13 @@ impl OracleComponent {
             // Build key lookup: oracle_signing_pubkeys (from bootstrap) takes priority,
             // then validator_registry consensus keys as fallback.
             let oracle_pubkeys = bc.oracle_state.oracle_signing_pubkeys.clone();
-            let key_map: Vec<([u8; 32], Vec<u8>)> = bc
+            let key_map: Vec<([u8; 32], [u8; 2592])> = bc
                 .validator_registry
                 .values()
                 .filter(|v| !v.consensus_key.is_empty())
                 .map(|v| {
                     let kid = lib_blockchain::blake3_hash(&v.consensus_key).as_array();
-                    (kid, v.consensus_key.clone())
+                    (kid, v.consensus_key)
                 })
                 .collect();
 
@@ -199,7 +199,7 @@ impl OracleComponent {
                     key_map
                         .iter()
                         .find(|(kid, _)| *kid == key_id)
-                        .map(|(_, pk)| pk.clone())
+                        .map(|(_, pk)| pk.to_vec())
                 },
             );
 
@@ -505,13 +505,13 @@ impl OracleComponent {
                         let mut bc = blockchain.write().await;
                         let epoch2 = bc.oracle_state.epoch_id(bc.last_committed_timestamp());
                         let oracle_pubkeys2 = bc.oracle_state.oracle_signing_pubkeys.clone();
-                        let key_map: Vec<([u8; 32], Vec<u8>)> = bc
+                        let key_map: Vec<([u8; 32], [u8; 2592])> = bc
                             .validator_registry
                             .values()
                             .filter(|v| !v.consensus_key.is_empty())
                             .map(|v| {
                                 let kid = lib_blockchain::blake3_hash(&v.consensus_key).as_array();
-                                (kid, v.consensus_key.clone())
+                                (kid, v.consensus_key)
                             })
                             .collect();
 
@@ -527,7 +527,7 @@ impl OracleComponent {
                                 key_map
                                     .iter()
                                     .find(|(kid, _)| *kid == key_id)
-                                    .map(|(_, pk)| pk.clone())
+                                    .map(|(_, pk)| pk.to_vec())
                             },
                         ) {
                             Ok(r) => info!("🔮 Oracle: self-attestation local result: {:?}", r),

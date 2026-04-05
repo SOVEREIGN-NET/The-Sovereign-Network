@@ -91,7 +91,7 @@ impl GenesisFundingService {
                 note: lib_blockchain::types::hash::blake3_hash(
                     format!("validator_stake_note_{}_{}", validator_id_hex, index).as_bytes(),
                 ),
-                recipient: PublicKey::new(validator.identity_id.as_bytes().to_vec()),
+                recipient: PublicKey::new([0u8; 2592]),
             };
 
             genesis_outputs.push(validator_output);
@@ -124,7 +124,7 @@ impl GenesisFundingService {
             TransactionOutput {
                 commitment: lib_blockchain::types::hash::blake3_hash(b"ubi_pool_commitment_500000"),
                 note: lib_blockchain::types::hash::blake3_hash(b"ubi_pool_note"),
-                recipient: PublicKey::new(b"genesis_system_ubi".to_vec()),
+                recipient: PublicKey::new([0u8; 2592]),
             },
             // Mining rewards pool
             TransactionOutput {
@@ -132,13 +132,13 @@ impl GenesisFundingService {
                     b"mining_pool_commitment_300000",
                 ),
                 note: lib_blockchain::types::hash::blake3_hash(b"mining_pool_note"),
-                recipient: PublicKey::new(b"genesis_system_mining".to_vec()),
+                recipient: PublicKey::new([0u8; 2592]),
             },
             // Development fund
             TransactionOutput {
                 commitment: lib_blockchain::types::hash::blake3_hash(b"dev_pool_commitment_200000"),
                 note: lib_blockchain::types::hash::blake3_hash(b"dev_pool_note"),
-                recipient: PublicKey::new(b"genesis_system_dev".to_vec()),
+                recipient: PublicKey::new([0u8; 2592]),
             },
         ]);
 
@@ -188,7 +188,7 @@ impl GenesisFundingService {
                 note: lib_blockchain::types::hash::blake3_hash(
                     format!("user_wallet_note_{}", wallet_id_hex).as_bytes(),
                 ),
-                recipient: PublicKey::new(identity_hash),
+                recipient: PublicKey::new([0u8; 2592]),
             };
 
             genesis_outputs.push(wallet_output);
@@ -252,7 +252,7 @@ impl GenesisFundingService {
                 signature: format!("validator_{}_genesis_signature", validator_id_hex)
                     .as_bytes()
                     .to_vec(),
-                public_key: PublicKey::new(first_validator.identity_id.as_bytes().to_vec()),
+                public_key: PublicKey::new([0u8; 2592]),
                 algorithm: SignatureAlgorithm::Dilithium2,
                 timestamp: 1730419200, // November 1, 2025 00:00:00 UTC
             }
@@ -478,7 +478,7 @@ impl GenesisFundingService {
                     IdentityTransactionData {
                         did: validator_did.clone(),
                         display_name: format!("Genesis Validator {}", index + 1),
-                        public_key: validator.consensus_key.clone(),
+                        public_key: validator.consensus_key.to_vec(),
                         ownership_proof: vec![],
                         identity_type: "validator".to_string(),
                         did_document_hash: lib_blockchain::types::hash::blake3_hash(

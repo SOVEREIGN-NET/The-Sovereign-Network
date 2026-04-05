@@ -17,10 +17,13 @@ use serde::{Deserialize, Serialize};
 /// It is shared across zhtp, zhtp-cli, and other components to ensure consistency.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeystorePrivateKey {
+    #[serde(with = "serde_bytes")]
     pub dilithium_sk: Vec<u8>,
-    #[serde(default)]
+    #[serde(default, with = "serde_bytes")]
     pub dilithium_pk: Vec<u8>, // Optional for backward compatibility with old keystores
+    #[serde(with = "serde_bytes")]
     pub kyber_sk: Vec<u8>,
+    #[serde(with = "serde_bytes")]
     pub master_seed: Vec<u8>,
 }
 

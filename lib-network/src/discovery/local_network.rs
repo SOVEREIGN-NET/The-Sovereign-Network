@@ -138,14 +138,14 @@ impl NodeAnnouncement {
     /// Sets the `dilithium_pk`, `tls_spki_sha256`, `expires_at`, and `record_sig` fields.
     pub fn sign(
         &mut self,
-        dilithium_sk: &[u8],
-        dilithium_pk: Vec<u8>,
+        dilithium_sk: &[u8; 4864],
+        dilithium_pk: [u8; 2592],
         tls_spki_sha256: [u8; 32],
     ) -> anyhow::Result<()> {
         use lib_crypto::post_quantum::dilithium::dilithium_sign;
 
         // Set the fields that will be signed
-        self.dilithium_pk = Some(dilithium_pk);
+        self.dilithium_pk = Some(dilithium_pk.to_vec());
         self.tls_spki_sha256 = Some(tls_spki_sha256);
         self.expires_at = Some(
             std::time::SystemTime::now()
@@ -223,9 +223,9 @@ impl NodeAnnouncement {
 #[derive(Clone)]
 pub struct DiscoverySigningContext {
     /// Dilithium secret key for signing announcements
-    pub dilithium_sk: Vec<u8>,
+    pub dilithium_sk: [u8; 4864],
     /// Dilithium public key (included in announcements)
-    pub dilithium_pk: Vec<u8>,
+    pub dilithium_pk: [u8; 2592],
     /// SHA256 hash of this node's TLS certificate SPKI
     pub tls_spki_sha256: [u8; 32],
 }
@@ -420,7 +420,7 @@ async fn broadcast_announcements(
         if let Some(ref ctx) = signing_ctx {
             if let Err(e) = announcement.sign(
                 &ctx.dilithium_sk,
-                ctx.dilithium_pk.clone(),
+                ctx.dilithium_pk,
                 ctx.tls_spki_sha256,
             ) {
                 warn!("Failed to sign announcement: {}", e);
@@ -689,8 +689,8 @@ pub fn create_signing_context(
         .map_err(|e| anyhow::anyhow!("Failed to extract TLS SPKI hash: {}", e))?;
 
     Ok(DiscoverySigningContext {
-        dilithium_sk: dilithium_sk.to_vec(),
-        dilithium_pk: dilithium_pk.to_vec(),
+        dilithium_sk,
+        dilithium_pk,
         tls_spki_sha256,
     })
 }

@@ -1417,17 +1417,15 @@ impl BlockchainHandler {
         let output = lib_blockchain::TransactionOutput {
             commitment: lib_blockchain::Hash::from_slice(&req_data.amount.to_le_bytes()),
             note: lib_blockchain::Hash::from_slice(&recipient_pubkey),
-            recipient: lib_blockchain::integration::crypto_integration::PublicKey::new(
-                recipient_pubkey.clone(),
-            ),
+            recipient: lib_blockchain::integration::crypto_integration::PublicKey::new([0u8; 2592]),
         };
 
         // Use the provided signature (client must sign with their private key)
         let signature = lib_crypto::Signature {
             signature: signature_bytes, //  Use actual provided signature
             public_key: lib_crypto::PublicKey {
-                dilithium_pk: sender_pubkey.clone(),
-                kyber_pk: Vec::new(),
+                dilithium_pk: sender_pubkey.as_slice().try_into().unwrap_or([0u8; 2592]),
+                kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
             algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,

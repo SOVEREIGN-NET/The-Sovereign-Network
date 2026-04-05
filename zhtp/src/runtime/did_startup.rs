@@ -127,10 +127,14 @@ fn load_from_keystore(
         .map_err(|e| KeystoreError::Corrupt(user_private_key_file.clone(), e.to_string()))?;
 
     let user_private_key = PrivateKey {
-        dilithium_sk: user_keystore_key.dilithium_sk.clone(),
-        dilithium_pk: user_keystore_key.dilithium_pk.clone(),
-        kyber_sk: user_keystore_key.kyber_sk.clone(),
-        master_seed: user_keystore_key.master_seed.clone(),
+        dilithium_sk: user_keystore_key.dilithium_sk.as_slice().try_into()
+            .map_err(|_| KeystoreError::Corrupt(user_private_key_file.clone(), "Invalid dilithium_sk length".to_string()))?,
+        dilithium_pk: user_keystore_key.dilithium_pk.as_slice().try_into()
+            .map_err(|_| KeystoreError::Corrupt(user_private_key_file.clone(), "Invalid dilithium_pk length".to_string()))?,
+        kyber_sk: user_keystore_key.kyber_sk.as_slice().try_into()
+            .map_err(|_| KeystoreError::Corrupt(user_private_key_file.clone(), "Invalid kyber_sk length".to_string()))?,
+        master_seed: user_keystore_key.master_seed.as_slice().try_into()
+            .map_err(|_| KeystoreError::Corrupt(user_private_key_file.clone(), "Invalid master_seed length".to_string()))?,
     };
 
     let mut user_identity =
@@ -148,10 +152,14 @@ fn load_from_keystore(
         .map_err(|e| KeystoreError::Corrupt(node_private_key_file.clone(), e.to_string()))?;
 
     let node_private_key = PrivateKey {
-        dilithium_sk: node_keystore_key.dilithium_sk.clone(),
-        dilithium_pk: node_keystore_key.dilithium_pk.clone(),
-        kyber_sk: node_keystore_key.kyber_sk.clone(),
-        master_seed: node_keystore_key.master_seed.clone(),
+        dilithium_sk: node_keystore_key.dilithium_sk.as_slice().try_into()
+            .map_err(|_| KeystoreError::Corrupt(node_private_key_file.clone(), "Invalid dilithium_sk length".to_string()))?,
+        dilithium_pk: node_keystore_key.dilithium_pk.as_slice().try_into()
+            .map_err(|_| KeystoreError::Corrupt(node_private_key_file.clone(), "Invalid dilithium_pk length".to_string()))?,
+        kyber_sk: node_keystore_key.kyber_sk.as_slice().try_into()
+            .map_err(|_| KeystoreError::Corrupt(node_private_key_file.clone(), "Invalid kyber_sk length".to_string()))?,
+        master_seed: node_keystore_key.master_seed.as_slice().try_into()
+            .map_err(|_| KeystoreError::Corrupt(node_private_key_file.clone(), "Invalid master_seed length".to_string()))?,
     };
 
     let node_identity = ZhtpIdentity::from_serialized(&node_identity_data, &node_private_key)
@@ -210,15 +218,15 @@ fn load_from_keystore(
 
     // Reconstruct PrivateIdentityData for user (recovery data only, no seed field)
     let user_private_data = lib_identity::identity::PrivateIdentityData::new(
-        user_keystore_key.dilithium_sk,
-        user_identity.public_key.dilithium_pk.clone(),
+        user_private_key.dilithium_sk.to_vec(),
+        user_identity.public_key.dilithium_pk.to_vec(),
         vec![], // Recovery phrases not stored for security
     );
 
     // Reconstruct PrivateIdentityData for node (recovery data only, no seed field)
     let node_private_data = lib_identity::identity::PrivateIdentityData::new(
-        node_keystore_key.dilithium_sk,
-        node_identity.public_key.dilithium_pk.clone(),
+        node_private_key.dilithium_sk.to_vec(),
+        node_identity.public_key.dilithium_pk.to_vec(),
         vec![],
     );
 
@@ -284,10 +292,10 @@ fn save_to_keystore(
     })?;
 
     let user_keystore_key = KeystorePrivateKey {
-        dilithium_sk: user_private_key.dilithium_sk.clone(),
-        dilithium_pk: user_private_key.dilithium_pk.clone(),
-        kyber_sk: user_private_key.kyber_sk.clone(),
-        master_seed: user_private_key.master_seed.clone(),
+        dilithium_sk: user_private_key.dilithium_sk.to_vec(),
+        dilithium_pk: user_private_key.dilithium_pk.to_vec(),
+        kyber_sk: user_private_key.kyber_sk.to_vec(),
+        master_seed: user_private_key.master_seed.to_vec(),
     };
 
     let user_private_key_json = serde_json::to_string_pretty(&user_keystore_key)
@@ -310,10 +318,10 @@ fn save_to_keystore(
     })?;
 
     let node_keystore_key = KeystorePrivateKey {
-        dilithium_sk: node_private_key.dilithium_sk.clone(),
-        dilithium_pk: node_private_key.dilithium_pk.clone(),
-        kyber_sk: node_private_key.kyber_sk.clone(),
-        master_seed: node_private_key.master_seed.clone(),
+        dilithium_sk: node_private_key.dilithium_sk.to_vec(),
+        dilithium_pk: node_private_key.dilithium_pk.to_vec(),
+        kyber_sk: node_private_key.kyber_sk.to_vec(),
+        master_seed: node_private_key.master_seed.to_vec(),
     };
 
     let node_private_key_json = serde_json::to_string_pretty(&node_keystore_key)
@@ -412,10 +420,14 @@ pub async fn load_node_identity_from_keystore(
         .map_err(|e| anyhow!("Failed to parse node private key: {}", e))?;
 
     let private_key = PrivateKey {
-        dilithium_sk: keystore_key.dilithium_sk,
-        dilithium_pk: keystore_key.dilithium_pk,
-        kyber_sk: keystore_key.kyber_sk,
-        master_seed: keystore_key.master_seed,
+        dilithium_sk: keystore_key.dilithium_sk.as_slice().try_into()
+            .map_err(|_| anyhow!("Invalid dilithium_sk length"))?,
+        dilithium_pk: keystore_key.dilithium_pk.as_slice().try_into()
+            .map_err(|_| anyhow!("Invalid dilithium_pk length"))?,
+        kyber_sk: keystore_key.kyber_sk.as_slice().try_into()
+            .map_err(|_| anyhow!("Invalid kyber_sk length"))?,
+        master_seed: keystore_key.master_seed.as_slice().try_into()
+            .map_err(|_| anyhow!("Invalid master_seed length"))?,
     };
 
     let identity = ZhtpIdentity::from_serialized(&identity_data, &private_key)
@@ -448,10 +460,10 @@ pub async fn persist_node_identity_to_keystore(
         .ok_or_else(|| anyhow!("Node identity missing private key (cannot persist)"))?;
 
     let key_payload = KeystorePrivateKey {
-        dilithium_sk: private_key.dilithium_sk.clone(),
-        dilithium_pk: private_key.dilithium_pk.clone(),
-        kyber_sk: private_key.kyber_sk.clone(),
-        master_seed: private_key.master_seed.clone(),
+        dilithium_sk: private_key.dilithium_sk.to_vec(),
+        dilithium_pk: private_key.dilithium_pk.to_vec(),
+        kyber_sk: private_key.kyber_sk.to_vec(),
+        master_seed: private_key.master_seed.to_vec(),
     };
 
     let identity_json = serde_json::to_string_pretty(identity)
@@ -1811,8 +1823,8 @@ async fn create_user_identity_with_wallet(
         .ok_or_else(|| anyhow!("Identity missing private key"))?;
 
     let private_data = lib_identity::identity::PrivateIdentityData::new(
-        private_key.dilithium_sk.clone(),
-        identity.public_key.dilithium_pk.clone(),
+        private_key.dilithium_sk.to_vec(),
+        identity.public_key.dilithium_pk.to_vec(),
         vec![seed_phrase.clone()],
     );
 
@@ -1847,8 +1859,8 @@ async fn create_node_device_identity(
         .ok_or_else(|| anyhow!("Identity missing private key"))?;
 
     let private_data = lib_identity::identity::PrivateIdentityData::new(
-        private_key.dilithium_sk.clone(),
-        identity.public_key.dilithium_pk.clone(),
+        private_key.dilithium_sk.to_vec(),
+        identity.public_key.dilithium_pk.to_vec(),
         vec![],
     );
 

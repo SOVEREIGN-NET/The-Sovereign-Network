@@ -23,7 +23,7 @@ pub async fn build_sov_mint_tx(
         token_mint_data,
         Signature {
             signature: Vec::new(),
-            public_key: PublicKey::new(Vec::new()),
+            public_key: PublicKey::new([0u8; 2592]),
             algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: current_timestamp(),
         },
@@ -69,12 +69,20 @@ pub(crate) async fn load_validator_keypair_from_keystore() -> Result<lib_crypto:
     let keystore_key: KeystorePrivateKey = serde_json::from_str(&key_json)
         .map_err(|e| anyhow::anyhow!("Invalid keystore key JSON {:?}: {}", key_path, e))?;
 
-    let public_key = lib_crypto::PublicKey::new(keystore_key.dilithium_pk.clone());
+    let dilithium_pk: [u8; 2592] = keystore_key.dilithium_pk.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid dilithium_pk length, expected 2592 bytes"))?;
+    let dilithium_sk: [u8; 4864] = keystore_key.dilithium_sk.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid dilithium_sk length, expected 4864 bytes"))?;
+    let kyber_sk: [u8; 3168] = keystore_key.kyber_sk.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid kyber_sk length, expected 3168 bytes"))?;
+    let master_seed: [u8; 64] = keystore_key.master_seed.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid master_seed length, expected 64 bytes"))?;
+    let public_key = lib_crypto::PublicKey::new(dilithium_pk);
     let private_key = lib_crypto::PrivateKey {
-        dilithium_sk: keystore_key.dilithium_sk,
-        dilithium_pk: keystore_key.dilithium_pk,
-        kyber_sk: keystore_key.kyber_sk,
-        master_seed: keystore_key.master_seed,
+        dilithium_sk,
+        dilithium_pk,
+        kyber_sk,
+        master_seed,
     };
 
     Ok(lib_crypto::KeyPair {

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::api::handlers::constants::{SOV_WELCOME_BONUS, SOV_WELCOME_BONUS_SOV};
 use crate::runtime::node_runtime::NodeRole;
@@ -914,7 +914,14 @@ async fn bootstrap_identities_from_dht(
             match pk_bytes {
                 Some(bytes) => {
                     let pk_bytes_for_migration = bytes.clone();
-                    let public_key = lib_crypto::PublicKey::new(bytes);
+                    let pk_array: [u8; 2592] = match bytes.as_slice().try_into() {
+                        Ok(arr) => arr,
+                        Err(_) => {
+                            warn!("Invalid public key length for identity {}, expected 2592 bytes", id_preview);
+                            continue;
+                        }
+                    };
+                    let public_key = lib_crypto::PublicKey::new(pk_array);
                     // Parse identity type
                     let identity_type = match identity_type_str {
                         Some("Device") => lib_identity::IdentityType::Device,

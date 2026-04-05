@@ -1084,7 +1084,7 @@ impl RuntimeOrchestrator {
                     stake: 1_000,
                     storage_provided: 0,
                     commission_rate: 500,
-                    consensus_key: wallet.node_private_data.quantum_keypair.public_key.clone(),
+                    consensus_key: wallet.node_private_data.quantum_keypair.public_key.as_slice().try_into().unwrap_or([0u8; 2592]),
                     network_address: std::env::var("ZHTP_VALIDATOR_ENDPOINT").unwrap_or_default(),
                 }]
             };
@@ -2352,9 +2352,7 @@ impl RuntimeOrchestrator {
                                                 format!("welcome_bonus_note_{}", wallet_id_hex)
                                                     .as_bytes(),
                                             ),
-                                            recipient: lib_crypto::PublicKey::new(
-                                                identity.id.0.to_vec(),
-                                            ),
+                                            recipient: lib_crypto::PublicKey::new([0u8; 2592]),
                                         };
                                     let utxo_hash = lib_blockchain::types::hash::blake3_hash(
                                         format!("welcome_bonus_utxo:{}", wallet_id_hex).as_bytes(),
@@ -2540,7 +2538,7 @@ impl RuntimeOrchestrator {
                                                     note: lib_blockchain::types::hash::blake3_hash(
                                                         format!("welcome_bonus_note_{}", wallet_id_hex).as_bytes()
                                                     ),
-                                                    recipient: lib_crypto::PublicKey::new(user_identity.id.0.to_vec()),
+                                                    recipient: lib_crypto::PublicKey::new([0u8; 2592]),
                                                 };
                                                 let utxo_hash =
                                                     lib_blockchain::types::hash::blake3_hash(
@@ -2606,9 +2604,7 @@ impl RuntimeOrchestrator {
                                                     format!("welcome_bonus_note_{}", wallet_id_hex)
                                                         .as_bytes(),
                                                 ),
-                                                recipient: lib_crypto::PublicKey::new(
-                                                    user_identity.id.0.to_vec(),
-                                                ),
+                                                recipient: lib_crypto::PublicKey::new([0u8; 2592]),
                                             };
                                         let utxo_hash = lib_blockchain::types::hash::blake3_hash(
                                             format!("welcome_bonus_utxo:{}", wallet_id_hex)
@@ -2703,7 +2699,7 @@ impl RuntimeOrchestrator {
                                                     note: lib_blockchain::types::hash::blake3_hash(
                                                         format!("welcome_bonus_note_{}", wallet_id_hex).as_bytes()
                                                     ),
-                                                    recipient: lib_crypto::PublicKey::new(user_identity.id.0.to_vec()),
+                                                    recipient: lib_crypto::PublicKey::new([0u8; 2592]),
                                                 };
                                                 let utxo_hash =
                                                     lib_blockchain::types::hash::blake3_hash(
@@ -2815,21 +2811,11 @@ impl RuntimeOrchestrator {
             .values()
             .filter(|v| v.status == "active")
             .filter_map(|v| {
-                if v.consensus_key.is_empty() {
+                if v.consensus_key == [0u8; 2592] {
                     return None;
                 }
-                let key_len = v.consensus_key.len();
-                if key_len == DILITHIUM2_PK_LEN || key_len == DILITHIUM5_PK_LEN {
-                    let key_id = lib_blockchain::blake3_hash(&v.consensus_key).as_array();
-                    Some((key_id, v.consensus_key.clone()))
-                } else {
-                    warn!(
-                        "Skipping validator with invalid consensus_key length \
-                         (len={}, expected {} or {}) when bootstrapping oracle committee",
-                        key_len, DILITHIUM2_PK_LEN, DILITHIUM5_PK_LEN
-                    );
-                    None
-                }
+                let key_id = lib_blockchain::blake3_hash(&v.consensus_key).as_array();
+                Some((key_id, v.consensus_key.to_vec()))
             })
             .collect();
 

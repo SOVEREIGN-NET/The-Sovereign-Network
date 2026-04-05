@@ -337,7 +337,7 @@ async fn handle_add_guardian(
         .unwrap_or_default();
 
     // Add guardian
-    let guardian_public_key = PublicKey::new(req.guardian_public_key);
+    let guardian_public_key = PublicKey::new(req.guardian_public_key.as_slice().try_into().unwrap_or([0u8; 2592]));
     let guardian_did_clone = req.guardian_did.clone();
     let guardian_id = guardian_config
         .add_guardian(req.guardian_did, guardian_public_key, req.guardian_name)

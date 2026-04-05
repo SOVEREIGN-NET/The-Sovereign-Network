@@ -28,7 +28,7 @@ use std::collections::{HashMap, HashSet};
 ///    threshold.
 pub fn verify_quorum_proof(
     proof: &BftQuorumProof,
-    validator_keys: &HashMap<[u8; 32], Vec<u8>>,
+    validator_keys: &HashMap<[u8; 32], [u8; 2592]>,
 ) -> Result<(), String> {
     use lib_types::consensus::threshold::has_supermajority;
 
@@ -66,6 +66,13 @@ pub fn verify_quorum_proof(
         })?;
 
         // Key in attestation must match registered key
+        let registered_key_array: [u8; 2592] = match registered_key.as_slice().try_into() {
+            Ok(arr) => arr,
+            Err(_) => return Err(format!(
+                "invalid registered key length for validator {}",
+                hex::encode(&att.validator_id[..8]),
+            )),
+        };
         if att.public_key.as_slice() != registered_key.as_slice() {
             return Err(format!(
                 "public key mismatch for validator {}",
@@ -77,7 +84,11 @@ pub fn verify_quorum_proof(
         let envelope =
             BftQuorumProof::reconstruct_vote_envelope(att, proof.height);
 
-        let public_key = lib_crypto::PublicKey::new(att.public_key);
+        let att_public_key_array: [u8; 2592] = match att.public_key.as_slice().try_into() {
+            Ok(arr) => arr,
+            Err(_) => return Err("invalid attestation public key length, expected 2592 bytes".to_string()),
+        };
+        let public_key = lib_crypto::PublicKey::new(att_public_key_array);
         let signature = lib_crypto::PostQuantumSignature {
             signature: att.signature.to_vec(),
             public_key: public_key.clone(),

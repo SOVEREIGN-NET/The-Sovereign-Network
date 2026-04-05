@@ -933,7 +933,7 @@ async fn fetch_and_verify_quorum_proof(
 
     // Build validator_id → consensus_key map from local registry.
     let bc = blockchain_arc.read().await;
-    let validator_keys: std::collections::HashMap<[u8; 32], Vec<u8>> = bc
+    let validator_keys: std::collections::HashMap<[u8; 32], [u8; 2592]> = bc
         .get_all_validators()
         .iter()
         .filter_map(|(id_str, info)| {
@@ -943,7 +943,7 @@ async fn fetch_and_verify_quorum_proof(
             }
             let mut arr = [0u8; 32];
             arr.copy_from_slice(&bytes);
-            Some((arr, info.consensus_key.clone()))
+            Some((arr, info.consensus_key))
         })
         .collect();
     drop(bc);
@@ -1699,12 +1699,20 @@ async fn load_local_validator_from_keystore() -> Result<(IdentityId, lib_crypto:
     }
 
     // Consensus identity uses Dilithium public key bytes for signature verification.
-    let public_key = lib_crypto::PublicKey::new(ks.dilithium_pk.clone());
+    let dilithium_pk: [u8; 2592] = ks.dilithium_pk.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid dilithium_pk length, expected 2592 bytes"))?;
+    let dilithium_sk: [u8; 4864] = ks.dilithium_sk.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid dilithium_sk length, expected 4864 bytes"))?;
+    let kyber_sk: [u8; 3168] = ks.kyber_sk.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid kyber_sk length, expected 3168 bytes"))?;
+    let master_seed: [u8; 64] = ks.master_seed.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid master_seed length, expected 64 bytes"))?;
+    let public_key = lib_crypto::PublicKey::new(dilithium_pk);
     let private_key = lib_crypto::PrivateKey {
-        dilithium_sk: ks.dilithium_sk,
-        dilithium_pk: ks.dilithium_pk,
-        kyber_sk: ks.kyber_sk,
-        master_seed: ks.master_seed,
+        dilithium_sk,
+        dilithium_pk,
+        kyber_sk,
+        master_seed,
     };
 
     Ok((

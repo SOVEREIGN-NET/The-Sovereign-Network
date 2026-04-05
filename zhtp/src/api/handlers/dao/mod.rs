@@ -403,8 +403,8 @@ impl DaoHandler {
     /// `HashMap` key within `DAORegistry`, where equality is determined by `key_id`.
     fn public_key_from_key_id(key_id: [u8; 32]) -> PublicKey {
         PublicKey {
-            dilithium_pk: Vec::new(),
-            kyber_pk: Vec::new(),
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id,
         }
     }
@@ -2906,8 +2906,8 @@ impl DaoHandler {
 
         let approval = Approval {
             public_key: lib_blockchain::integration::crypto_integration::PublicKey {
-                dilithium_pk: pk_bytes,
-                kyber_pk: Vec::new(),
+                dilithium_pk: pk_bytes.as_slice().try_into().unwrap_or([0u8; 2592]),
+                kyber_pk: [0u8; 1568],
                 key_id,
             },
             algorithm,
