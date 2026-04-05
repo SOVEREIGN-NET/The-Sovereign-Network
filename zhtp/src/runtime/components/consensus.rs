@@ -1728,7 +1728,7 @@ async fn load_local_validator_from_keystore() -> Result<(IdentityId, lib_crypto:
     let dilithium_pk: [u8; 2592] = ks.dilithium_pk.as_slice().try_into()
         .map_err(|_| anyhow::anyhow!("Invalid dilithium_pk length, expected 2592 bytes"))?;
     let dilithium_sk: [u8; 4896] = ks.dilithium_sk.as_slice().try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid dilithium_sk length, expected 4864 bytes"))?;
+        .map_err(|_| anyhow::anyhow!("Invalid dilithium_sk length, expected 4896 bytes"))?;
     let kyber_sk: [u8; 3168] = ks.kyber_sk.as_slice().try_into()
         .map_err(|_| anyhow::anyhow!("Invalid kyber_sk length, expected 3168 bytes"))?;
     let master_seed: [u8; 64] = ks.master_seed.as_slice().try_into()

@@ -9,7 +9,8 @@
 /// Panics on malformed input — genesis config errors must fail at startup.
 ///
 /// # Arguments
-/// * `hex_str` - Hex string without 0x prefix, exactly 5184 hex characters (2592 bytes × 2)
+/// * `hex_str` - Hex string, exactly 5184 hex characters (2592 bytes × 2).
+///   An optional "0x" prefix is accepted and stripped if present.
 ///
 /// # Panics
 /// Panics if the hex string is malformed or not exactly 2592 bytes after decoding.

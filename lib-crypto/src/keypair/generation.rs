@@ -93,10 +93,10 @@ impl KeyPair {
         let kyber_pk_array: [u8; 1568] = kyber_keys.public.try_into()
             .map_err(|_| anyhow::anyhow!("Kyber1024 public key must be 1568 bytes"))?;
         
-        // Handle both pqcrypto (4896 bytes) and crystals-dilithium (4864 bytes) formats
+        // pqcrypto-dilithium produces 4896-byte secret keys
         let dilithium_sk_vec = dilithium_sk.as_bytes();
         let dilithium_sk_array: [u8; 4896] = dilithium_sk_vec.try_into()
-            .map_err(|_| anyhow::anyhow!("Dilithium5 secret key must be 4864 or 4896 bytes"))?;
+            .map_err(|_| anyhow::anyhow!("Dilithium5 secret key must be 4896 bytes"))?;
         
         let kyber_sk_array: [u8; 3168] = kyber_keys.secret.try_into()
             .map_err(|_| anyhow::anyhow!("Kyber1024 secret key must be 3168 bytes"))?;

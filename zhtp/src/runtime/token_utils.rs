@@ -69,23 +69,12 @@ pub(crate) async fn load_validator_keypair_from_keystore() -> Result<lib_crypto:
     let keystore_key: KeystorePrivateKey = serde_json::from_str(&key_json)
         .map_err(|e| anyhow::anyhow!("Invalid keystore key JSON {:?}: {}", key_path, e))?;
 
+    // Note: KeystorePrivateKey uses fixed arrays, so length checks are technically
+    // redundant but kept for defense-in-depth in case deserialization changes.
     let dilithium_pk: [u8; 2592] = keystore_key.dilithium_pk.as_slice().try_into()
         .map_err(|_| anyhow::anyhow!("Invalid dilithium_pk length, expected 2592 bytes"))?;
-    
-    // Support both 4864-byte (crystals) and 4896-byte (pqcrypto) formats
-    let dilithium_sk: [u8; 4896] = match keystore_key.dilithium_sk.len() {
-        4896 => keystore_key.dilithium_sk.as_slice().try_into().unwrap(),
-        4864 => {
-            let mut arr = [0u8; 4896];
-            arr[..4864].copy_from_slice(&keystore_key.dilithium_sk);
-            arr
-        }
-        _ => return Err(anyhow::anyhow!(
-            "Invalid dilithium_sk length, expected 4864 or 4896 bytes, got {}",
-            keystore_key.dilithium_sk.len()
-        )),
-    };
-    
+    let dilithium_sk: [u8; 4896] = keystore_key.dilithium_sk.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid dilithium_sk length, expected 4896 bytes"))?;
     let kyber_sk: [u8; 3168] = keystore_key.kyber_sk.as_slice().try_into()
         .map_err(|_| anyhow::anyhow!("Invalid kyber_sk length, expected 3168 bytes"))?;
     let master_seed: [u8; 64] = keystore_key.master_seed.as_slice().try_into()

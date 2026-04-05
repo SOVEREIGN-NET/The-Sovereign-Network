@@ -1769,21 +1769,8 @@ async fn load_migration_authority_keypair() -> anyhow::Result<lib_crypto::KeyPai
 
     let dilithium_pk: [u8; 2592] = ks.dilithium_pk.as_slice().try_into()
         .map_err(|_| anyhow::anyhow!("Invalid dilithium_pk size: expected 2592 bytes"))?;
-    
-    // Support both 4864-byte (crystals) and 4896-byte (pqcrypto) formats
-    let dilithium_sk: [u8; 4896] = match ks.dilithium_sk.len() {
-        4896 => ks.dilithium_sk.as_slice().try_into().unwrap(),
-        4864 => {
-            let mut arr = [0u8; 4896];
-            arr[..4864].copy_from_slice(&ks.dilithium_sk);
-            arr
-        }
-        _ => return Err(anyhow::anyhow!(
-            "Invalid dilithium_sk size: expected 4864 or 4896 bytes, got {}",
-            ks.dilithium_sk.len()
-        )),
-    };
-    
+    let dilithium_sk: [u8; 4896] = ks.dilithium_sk.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid dilithium_sk size: expected 4896 bytes"))?;
     let kyber_sk: [u8; 3168] = ks.kyber_sk.as_slice().try_into()
         .map_err(|_| anyhow::anyhow!("Invalid kyber_sk size: expected 3168 bytes"))?;
     let master_seed: [u8; 64] = ks.master_seed.as_slice().try_into()
