@@ -207,22 +207,17 @@ impl Blockchain {
 
     fn make_minimal_test_block(transactions: Vec<Transaction>) -> Block {
         use crate::block::BlockHeader;
-        let count = transactions.len() as u32;
         Block {
             header: BlockHeader {
                 version: 1,
-                previous_block_hash: Hash::default(),
-                merkle_root: Hash::default(),
+                previous_hash: Hash::default().into(),
+                data_helix_root: Hash::default().into(),
                 timestamp: 0,
-                difficulty: Difficulty::default(),
-                nonce: 0,
                 height: 1,
+                verification_helix_root: [0u8; 32],
+                state_root: [0u8; 32],
+                bft_quorum_root: [0u8; 32],
                 block_hash: Hash::default(),
-                transaction_count: count,
-                block_size: 0,
-                cumulative_difficulty: Difficulty::default(),
-                fee_model_version: 1,
-                state_root: Hash::default(),
             },
             transactions,
         }

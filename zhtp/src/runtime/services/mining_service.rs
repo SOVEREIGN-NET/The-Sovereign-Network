@@ -176,7 +176,7 @@ impl MiningService {
         );
         let new_block =
             lib_blockchain::block::creation::mine_block_with_config(block, &mining_config)?;
-        info!("✓ Block mined with nonce: {}", new_block.header.nonce);
+        info!("✓ Block hash finalized: {}", new_block.header.block_hash);
 
         // Add the block to the blockchain WITH proof generation
         match blockchain.add_block_with_proof(new_block.clone()).await {

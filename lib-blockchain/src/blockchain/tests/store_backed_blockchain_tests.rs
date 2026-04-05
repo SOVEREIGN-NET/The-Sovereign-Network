@@ -8,18 +8,14 @@ fn make_header(height: u64, prev_hash: Hash) -> BlockHeader {
     hash_bytes[0..8].copy_from_slice(&height.to_be_bytes());
     BlockHeader {
         version: 1,
-        previous_block_hash: prev_hash,
-        merkle_root: Hash::default(),
-        state_root: Hash::default(),
+        previous_hash: prev_hash.into(),
+        data_helix_root: Hash::default().into(),
         timestamp: 1_700_000_000 + height,
-        difficulty: Difficulty::minimum(),
-        nonce: 0,
-        cumulative_difficulty: Difficulty::minimum(),
         height,
+        verification_helix_root: [0u8; 32],
+        state_root: Hash::default().into(),
+        bft_quorum_root: [0u8; 32],
         block_hash: Hash::new(hash_bytes),
-        transaction_count: 0,
-        block_size: 0,
-        fee_model_version: 2,
     }
 }
 

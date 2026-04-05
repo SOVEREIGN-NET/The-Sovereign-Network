@@ -288,7 +288,7 @@ pub mod testing {
             fee: 1000,
             signature: Signature {
                 signature: vec![1, 2, 3, 4], // Dummy signature
-                public_key: PublicKey::new(vec![5, 6, 7, 8]),
+                public_key: PublicKey::new([5u8; 2592]),
                 algorithm: SignatureAlgorithm::Dilithium5,
                 timestamp: time::current_timestamp(),
             },
@@ -301,14 +301,10 @@ pub mod testing {
     pub fn create_dummy_block(height: u64) -> Block {
         let header = crate::block::BlockHeader::new(
             1,                   // version
-            hash::random_hash(), // previous_block_hash
-            hash::random_hash(), // merkle_root
+            hash::random_hash(), // previous_hash
+            hash::random_hash(), // data_helix_root
             time::current_timestamp(),
-            Difficulty::minimum(),
             height,
-            0, // transaction_count
-            0, // block_size
-            Difficulty::minimum(),
         );
 
         Block::new(header, vec![])

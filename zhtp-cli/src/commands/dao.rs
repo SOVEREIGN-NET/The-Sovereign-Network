@@ -227,8 +227,8 @@ fn public_key_from_key_id(key_id: [u8; 32]) -> PublicKey {
     // This key-id-only placeholder is used strictly for deterministic DAO ID derivation.
     // It must never be used for signature verification.
     PublicKey {
-        dilithium_pk: Vec::new(),
-        kyber_pk: Vec::new(),
+        dilithium_pk: [0u8; 2592],
+        kyber_pk: [0u8; 1568],
         key_id,
     }
 }

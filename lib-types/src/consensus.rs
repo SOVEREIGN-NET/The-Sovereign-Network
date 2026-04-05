@@ -554,3 +554,18 @@ impl BftQuorumProof {
         data
     }
 }
+
+/// Compute the canonical BFT quorum root committed into the block header.
+///
+/// The root binds a finalized block to the full quorum proof while keeping the
+/// proof itself off-chain for sync and audit. The block header commits only to
+/// the 32-byte root; peers exchange the full `BftQuorumProof` separately.
+pub fn compute_bft_quorum_root(proof: &BftQuorumProof) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    for att in &proof.attestations {
+        hasher.update(&att.validator_id);
+        hasher.update(&att.signature);
+        hasher.update(&att.proposal_id);
+    }
+    hasher.finalize().into()
+}
