@@ -362,8 +362,6 @@ impl GenesisConfig {
             CBE_STRATEGIC_RESERVES, CBE_SYMBOL,
         };
         use crate::integration::crypto_integration::PublicKey;
-        use crate::types::Difficulty;
-
         info!(
             "Building genesis block from config (chain_id={})",
             self.chain.chain_id
@@ -389,17 +387,12 @@ impl GenesisConfig {
         let genesis_timestamp = self.genesis_timestamp()?;
 
         // ── block 0 header ──────────────────────────────────────────────────
-        let genesis_difficulty = Difficulty::from_bits(0x1fffffff);
         let header = BlockHeader::new(
             1,
             crate::types::Hash::default(),
             crate::types::Hash::default(),
             genesis_timestamp,
-            genesis_difficulty,
             0,
-            0,
-            0,
-            genesis_difficulty,
         );
         let genesis_block = crate::block::Block::new(header, Vec::new());
 

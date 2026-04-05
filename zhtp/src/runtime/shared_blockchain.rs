@@ -5,7 +5,7 @@
 
 use crate::runtime::dht_indexing::index_block_in_dht;
 use anyhow::Result;
-use lib_blockchain::{Block, BlockHeader, Blockchain, Difficulty, Hash, Transaction};
+use lib_blockchain::{Block, BlockHeader, Blockchain, Hash, Transaction};
 use std::sync::Arc;
 use tokio::sync::{
     mpsc::{self, UnboundedSender},
@@ -187,13 +187,9 @@ impl SharedBlockchainService {
                                 .last()
                                 .map(|b| b.hash())
                                 .unwrap_or_default(), // previous hash
-                            Hash::default(), // merkle root (simplified)
+                            Hash::default(), // data helix root (simplified)
                             timestamp,
-                            Difficulty::default(), // difficulty (simplified)
                             blockchain.height + 1, // height
-                            transactions.len() as u32, // transaction count
-                            1024,                  // block size (simplified)
-                            Difficulty::default(), // cumulative difficulty (simplified)
                         );
 
                         // Create a new block

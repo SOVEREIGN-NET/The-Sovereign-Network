@@ -75,13 +75,17 @@ fn parse_public_key(address: &str) -> CliResult<lib_crypto::PublicKey> {
         let mut key_id = [0u8; 32];
         key_id.copy_from_slice(&bytes);
         return Ok(lib_crypto::PublicKey {
-            dilithium_pk: vec![],
-            kyber_pk: vec![],
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id,
         });
     }
 
-    Ok(lib_crypto::PublicKey::new(bytes))
+    let dilithium_pk: [u8; 2592] = bytes
+        .try_into()
+        .map_err(|_| CliError::ConfigError("Address must be 32-byte key ID or 2592-byte Dilithium public key".to_string()))?;
+
+    Ok(lib_crypto::PublicKey::new(dilithium_pk))
 }
 
 #[allow(dead_code)]

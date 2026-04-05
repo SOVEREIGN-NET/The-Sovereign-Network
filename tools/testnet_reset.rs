@@ -22,7 +22,7 @@ use lib_blockchain::{
         Transaction, TokenMintData,
         core::{IdentityTransactionData, WalletTransactionData},
     },
-    types::{Difficulty, Hash},
+    types::Difficulty,
 };
 use lib_crypto::types::{PublicKey, Signature, SignatureAlgorithm};
 use std::path::PathBuf;
@@ -37,7 +37,7 @@ const TARGET_BLOCK_TIME: u64 = 10; // seconds
 
 fn system_signature() -> Signature {
     // Construct a placeholder Dilithium public key and derive the key_id as blake3(dilithium_pk)
-    let dilithium_pk = vec![0u8; 1312];
+    let dilithium_pk = [0u8; 2592];
     let key_id_hash = blake3::hash(&dilithium_pk);
     let key_id: [u8; 32] = *key_id_hash.as_bytes();
 
@@ -45,7 +45,7 @@ fn system_signature() -> Signature {
         signature: vec![0xAA; 64],
         public_key: PublicKey {
             dilithium_pk,
-            kyber_pk: vec![],
+            kyber_pk: [0u8; 1568],
             key_id,
         },
         algorithm: SignatureAlgorithm::Dilithium2,

@@ -192,11 +192,11 @@ impl EdgeNodeState {
                 ));
             }
 
-            // Check previous_block_hash matches our latest header
-            if header.previous_block_hash != latest.block_hash {
+            // Check previous_hash matches our latest header
+            if header.previous_hash != latest.block_hash.as_array() {
                 return Err(anyhow!(
                     "Chain discontinuity: previous_hash {:?} != latest_hash {:?}",
-                    hex::encode(&header.previous_block_hash.as_bytes()[..8]),
+                    hex::encode(&header.previous_hash[..8]),
                     hex::encode(&latest.block_hash.as_bytes()[..8])
                 ));
             }
@@ -256,10 +256,11 @@ impl EdgeNodeState {
             .get_header_by_height(block_height)
             .ok_or_else(|| anyhow!("Header not found for block {}", block_height))?;
 
-        // 3. Verify Merkle proof against header's merkle_root
-        let computed_root = self.verify_merkle_proof(tx_hash, merkle_proof, &header.merkle_root)?;
+        // 3. Verify Merkle proof against header's data_helix_root
+        let expected_root = Hash::new(header.data_helix_root);
+        let computed_root = self.verify_merkle_proof(tx_hash, merkle_proof, &expected_root)?;
 
-        if computed_root != header.merkle_root {
+        if computed_root != expected_root {
             return Err(anyhow!("Merkle proof verification failed"));
         }
 
@@ -390,11 +391,12 @@ impl EdgeNodeState {
 
         // Verify transactions match the merkle root in header
         let computed_merkle_root = self.compute_merkle_root_from_transactions(transactions);
-        if computed_merkle_root != header.merkle_root {
+        let header_root = Hash::new(header.data_helix_root);
+        if computed_merkle_root != header_root {
             return Err(anyhow!(
                 "Transaction merkle root mismatch: computed {:?} != header {:?}",
                 hex::encode(&computed_merkle_root.as_bytes()[..8]),
-                hex::encode(&header.merkle_root.as_bytes()[..8])
+                hex::encode(&header.data_helix_root[..8])
             ));
         }
 
@@ -485,7 +487,7 @@ impl EdgeNodeState {
             // 1. New header's previous_hash doesn't match our latest
             // 2. Heights are not sequential
             if new_header.height == latest.height + 1 {
-                if new_header.previous_block_hash != latest.block_hash {
+                if new_header.previous_hash != latest.block_hash.as_array() {
                     warn!(
                         "⚠️  REORG DETECTED: New header {} doesn't link to our chain",
                         new_header.height
@@ -587,7 +589,6 @@ pub struct EdgeNodeCheckpoint {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Difficulty;
 
     #[test]
     fn test_edge_node_creation() {
@@ -611,7 +612,7 @@ mod tests {
         for i in 1..=4 {
             let mut header = create_dummy_header(i);
             if let Some(prev) = edge_node.get_latest_header() {
-                header.previous_block_hash = prev.block_hash;
+                header.previous_hash = prev.block_hash.as_array();
                 // Ensure timestamp is after previous
                 header.timestamp = prev.timestamp + 10;
                 header.block_hash = header.calculate_hash();
@@ -681,7 +682,7 @@ mod tests {
         for i in 0..=1000 {
             let mut header = create_dummy_header(i);
             if let Some(prev) = edge_node.get_latest_header() {
-                header.previous_block_hash = prev.block_hash;
+                header.previous_hash = prev.block_hash.as_array();
                 header.timestamp = prev.timestamp + 10;
             }
             header.block_hash = header.calculate_hash();
@@ -731,18 +732,14 @@ mod tests {
     fn create_dummy_header(height: u64) -> BlockHeader {
         let mut header = BlockHeader {
             version: 1,
-            previous_block_hash: Hash::zero(),
-            merkle_root: Hash::zero(),
-            state_root: Hash::default(),
+            previous_hash: Hash::zero().into(),
+            data_helix_root: Hash::zero().into(),
             timestamp: 1700000000 + height * 10,
-            difficulty: Difficulty::minimum(),
-            nonce: 0,
-            cumulative_difficulty: Difficulty::minimum(),
             height,
+            verification_helix_root: [0u8; 32],
+            state_root: Hash::default().into(),
+            bft_quorum_root: [0u8; 32],
             block_hash: Hash::zero(),
-            transaction_count: 0,
-            block_size: 0,
-            fee_model_version: 2, // Phase 2+ uses v2
         };
         // Calculate and set the correct block hash
         header.block_hash = header.calculate_hash();

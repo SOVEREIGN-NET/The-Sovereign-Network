@@ -1403,11 +1403,7 @@ impl Blockchain {
 
         // Get previous state root
         let previous_state_root = if block.height() > 0 {
-            let prev_block = &self.blocks[block.height() as usize - 1];
-            let merkle_bytes = prev_block.header.merkle_root.as_bytes();
-            let mut root = [0u8; 32];
-            root.copy_from_slice(merkle_bytes);
-            root
+            self.blocks[block.height() as usize - 1].header.state_root
         } else {
             [0u8; 32] // Genesis block
         };
@@ -1545,31 +1541,6 @@ impl Blockchain {
                     "Height mismatch: block={}, expected={}",
                     block.height(),
                     prev.height() + 1
-                );
-                return Ok(false);
-            }
-        }
-
-        // Verify proof of work using mining profile from environment
-        // This ensures validation uses the same difficulty as mining
-        let mining_config = crate::types::mining::get_mining_config_from_env();
-        let expected_difficulty = mining_config.difficulty.bits();
-
-        // Check if block uses production difficulty (requires full PoW verification)
-        // or development/testnet difficulty (simplified validation)
-        if block.difficulty().bits() < 0x20000000 {
-            // Production difficulty - verify full PoW
-            if !block.header.meets_difficulty_target() {
-                warn!("Block does not meet difficulty target");
-                return Ok(false);
-            }
-        } else {
-            // Development/testnet difficulty - verify it matches the expected profile difficulty
-            if block.difficulty().bits() != expected_difficulty {
-                warn!(
-                    "Difficulty mismatch: block has 0x{:x}, expected 0x{:x} from mining profile",
-                    block.difficulty().bits(),
-                    expected_difficulty
                 );
                 return Ok(false);
             }
@@ -2772,10 +2743,7 @@ impl Blockchain {
 
             // Get previous state root (using merkle root as state representation)
             let previous_state_root = if i > 0 {
-                let merkle_bytes = self.blocks[i - 1].header.merkle_root.as_bytes();
-                let mut root = [0u8; 32];
-                root.copy_from_slice(merkle_bytes);
-                root
+                self.blocks[i - 1].header.state_root
             } else {
                 [0u8; 32] // Genesis block
             };
@@ -4452,7 +4420,7 @@ impl Blockchain {
                 i,
                 block.height(),
                 block.transactions.len(),
-                hex::encode(block.header.merkle_root.as_bytes())
+                hex::encode(block.header.data_helix_root)
             );
         }
 
@@ -4614,7 +4582,7 @@ impl Blockchain {
                 }
             } else {
                 let prev_block = &import.blocks[i - 1];
-                if block.header.previous_block_hash != prev_block.header.block_hash {
+                if block.header.previous_hash != prev_block.hash().as_array() {
                     return Err(anyhow::anyhow!(
                         "Block chain integrity broken at block {}",
                         i
@@ -4709,11 +4677,10 @@ impl Blockchain {
                 );
 
                 // Check if this is a genesis replacement (different genesis blocks)
-                // IMPORTANT: Use merkle_root comparison to match ChainEvaluator logic
-                // Different validators in genesis = different merkle roots = different networks
+                // Different genesis data helix roots imply different networks.
                 let is_genesis_replacement = if !self.blocks.is_empty() && !import.blocks.is_empty()
                 {
-                    self.blocks[0].header.merkle_root != import.blocks[0].header.merkle_root
+                    self.blocks[0].header.data_helix_root != import.blocks[0].header.data_helix_root
                 } else {
                     false
                 };
@@ -4721,12 +4688,12 @@ impl Blockchain {
                 if is_genesis_replacement {
                     info!("🔀 Genesis mismatch detected - performing full consolidation merge");
                     info!(
-                        "   Old genesis merkle: {}",
-                        hex::encode(self.blocks[0].header.merkle_root.as_bytes())
+                        "   Old genesis data helix: {}",
+                        hex::encode(self.blocks[0].header.data_helix_root)
                     );
                     info!(
-                        "   New genesis merkle: {}",
-                        hex::encode(import.blocks[0].header.merkle_root.as_bytes())
+                        "   New genesis data helix: {}",
+                        hex::encode(import.blocks[0].header.data_helix_root)
                     );
 
                     // Perform intelligent merge: adopt imported chain but preserve unique local data
@@ -4919,12 +4886,11 @@ impl Blockchain {
 
     /// Create chain summary for local blockchain
     async fn create_local_chain_summary_async(&self) -> lib_consensus::ChainSummary {
-        // Use merkle root as genesis hash - this reflects the actual transaction content
-        // Different validators in genesis will have different merkle roots
+        // Use the data helix root as the genesis content commitment.
         let genesis_hash = self
             .blocks
             .first()
-            .map(|b| b.header.merkle_root.to_string())
+            .map(|b| hex::encode(b.header.data_helix_root))
             .unwrap_or_else(|| "none".to_string());
 
         let genesis_timestamp = self.blocks.first().map(|b| b.header.timestamp).unwrap_or(0);
@@ -5656,11 +5622,10 @@ impl Blockchain {
         token_contracts: &HashMap<[u8; 32], crate::contracts::TokenContract>,
         web4_contracts: &HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
     ) -> lib_consensus::ChainSummary {
-        // Use merkle root as genesis hash - this reflects the actual transaction content
-        // Different validators in genesis will have different merkle roots
+        // Use the data helix root as the genesis content commitment.
         let genesis_hash = blocks
             .first()
-            .map(|b| b.header.merkle_root.to_string())
+            .map(|b| hex::encode(b.header.data_helix_root))
             .unwrap_or_else(|| "none".to_string());
 
         let genesis_timestamp = blocks.first().map(|b| b.header.timestamp).unwrap_or(0);
@@ -5758,18 +5723,12 @@ impl Blockchain {
 
     /// Calculate total work for imported blocks
     fn calculate_imported_total_work(&self, blocks: &[Block]) -> u128 {
-        blocks
-            .iter()
-            .map(|block| block.header.difficulty.work())
-            .fold(0u128, |acc, work| acc.saturating_add(work))
+        blocks.len() as u128
     }
 
     /// Calculate total work for current blockchain
     fn calculate_total_work(&self) -> u128 {
-        self.blocks
-            .iter()
-            .map(|block| block.header.difficulty.work())
-            .fold(0u128, |acc, work| acc.saturating_add(work))
+        self.blocks.len() as u128
     }
 
     /// Store a consensus checkpoint record.
@@ -6055,7 +6014,7 @@ impl Blockchain {
                     i
                 ));
             }
-            if new_blocks[i].header.previous_block_hash != new_blocks[i - 1].header.block_hash {
+            if new_blocks[i].header.previous_hash != new_blocks[i - 1].hash().as_array() {
                 return Err(anyhow::anyhow!(
                     "Block chain linkage broken at position {}",
                     i
