@@ -298,7 +298,7 @@ struct ChainInfoResponse {
 
 #[derive(Serialize)]
 struct ChainTipInfo {
-    chain_id: u8,
+    chain_id: String,
     height: u64,
     head_hash: String,
     total_work: String,
@@ -2585,14 +2585,13 @@ impl BlockchainHandler {
         let chain_id = format!("sovn-{}", &genesis_hash[..16]);
 
         let tip_info = ChainTipInfo {
-            chain_id: self.chain_id(),
+            chain_id,
             height: blockchain.height,
             head_hash,
             total_work: blockchain.total_work.to_string(),
             validator_count: blockchain.validator_registry.len(),
             identity_count: blockchain.identity_registry.len(),
             genesis_hash,
-            chain_id,
         };
 
         let json_response = serde_json::to_vec(&tip_info)?;
