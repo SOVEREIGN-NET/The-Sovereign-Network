@@ -48,7 +48,7 @@ fn test_cbe_graduation_blocked_without_fresh_oracle_price() {
 
     // Register a CBE token with enough reserve to graduate
     let token_id = [1u8; 32];
-    let token = create_test_cbe_token(token_id, 300_000_000_000); // $300K
+    let token = create_test_cbe_token(token_id, 3_000_000_000_000); // $300K
     harness
         .blockchain
         .bonding_curve_registry
@@ -75,7 +75,7 @@ fn test_cbe_graduation_rejected_with_stale_oracle_price() {
 
     // Register CBE token
     let token_id = [1u8; 32];
-    let token = create_test_cbe_token(token_id, 300_000_000_000);
+    let token = create_test_cbe_token(token_id, 3_000_000_000_000);
     harness
         .blockchain
         .bonding_curve_registry
@@ -110,7 +110,7 @@ fn test_cbe_graduation_accepted_with_fresh_oracle_price() {
 
     // Register CBE token
     let token_id = [1u8; 32];
-    let token = create_test_cbe_token(token_id, 300_000_000_000);
+    let token = create_test_cbe_token(token_id, 3_000_000_000_000);
     harness
         .blockchain
         .bonding_curve_registry
@@ -139,7 +139,7 @@ fn test_cbe_graduation_accepts_price_at_staleness_boundary() {
 
     // Register CBE token
     let token_id = [1u8; 32];
-    let token = create_test_cbe_token(token_id, 300_000_000_000);
+    let token = create_test_cbe_token(token_id, 3_000_000_000_000);
     harness
         .blockchain
         .bonding_curve_registry

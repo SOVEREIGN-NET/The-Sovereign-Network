@@ -260,12 +260,35 @@ fn test_identity_commitment_creation() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_blockchain_state_restart_equivalence() -> Result<()> {
+#[test]
+fn test_blockchain_state_restart_equivalence() {
+    // Spawn on a thread with 16 MiB stack: the async future state machine
+    // includes Blockchain (~70+ fields) and BlockchainStorageManager which
+    // together exceed the default 2 MiB test-thread stack in debug builds.
+    std::thread::Builder::new()
+        .name("state-restart-equiv".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    test_blockchain_state_restart_equivalence_inner()
+                        .await
+                        .expect("test_blockchain_state_restart_equivalence failed");
+                });
+        })
+        .expect("failed to spawn test thread")
+        .join()
+        .expect("test thread panicked");
+}
+
+async fn test_blockchain_state_restart_equivalence_inner() -> Result<()> {
     let config = BlockchainStorageConfig::default();
     let mut blockchain = Blockchain::new_with_storage(config.clone()).await?;
 
-    let mining_config = lib_blockchain::types::mining::get_mining_config_from_env();
+    let _mining_config = lib_blockchain::types::mining::get_mining_config_from_env();
     let latest = blockchain.latest_block().unwrap();
 
     let header = BlockHeader::new(

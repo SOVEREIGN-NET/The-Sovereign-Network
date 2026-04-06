@@ -267,14 +267,18 @@ fn test_token_transfer_state_sync() {
     // Define addresses and token
     let alice: [u8; 32] = [1u8; 32];
     let bob: [u8; 32] = [2u8; 32];
-    let token_id: [u8; 32] = [0u8; 32]; // Native token
+    let token_id: [u8; 32] = [0u8; 32]; // Native token (maps to canonical SOV)
+
+    // The executor maps [0u8; 32] to the canonical SOV token ID for balance operations.
+    // We must seed the balance under the canonical ID so debit_token can find it.
+    let canonical_sov_id = lib_blockchain::contracts::utils::generate_lib_token_id();
 
     // === STORE 1: Build chain with token transfer ===
 
     // Set up initial balance for Alice in store1 before genesis
     store1.begin_block(0).unwrap();
     store1
-        .set_token_balance(&TokenId::new(token_id), &Address::new(alice), 1_000_000)
+        .set_token_balance(&TokenId::new(canonical_sov_id), &Address::new(alice), 1_000_000)
         .unwrap();
     let genesis = create_genesis_block();
     store1.append_block(&genesis).unwrap();
@@ -287,12 +291,12 @@ fn test_token_transfer_state_sync() {
     let executor1 = BlockExecutor::from_config(Arc::clone(&store1), ExecutorConfig::default());
     executor1.apply_block(&block1).unwrap();
 
-    // Verify balances in store1
+    // Verify balances in store1 (using canonical SOV ID, which the executor uses)
     let alice_balance_1 = store1
-        .get_token_balance(&TokenId::new(token_id), &Address::new(alice))
+        .get_token_balance(&TokenId::new(canonical_sov_id), &Address::new(alice))
         .unwrap();
     let bob_balance_1 = store1
-        .get_token_balance(&TokenId::new(token_id), &Address::new(bob))
+        .get_token_balance(&TokenId::new(canonical_sov_id), &Address::new(bob))
         .unwrap();
     assert_eq!(
         alice_balance_1, 999_900,
@@ -310,7 +314,7 @@ fn test_token_transfer_state_sync() {
     // Note: We manually set up genesis + balance, then apply block 1 via executor
     store2.begin_block(0).unwrap();
     store2
-        .set_token_balance(&TokenId::new(token_id), &Address::new(alice), 1_000_000)
+        .set_token_balance(&TokenId::new(canonical_sov_id), &Address::new(alice), 1_000_000)
         .unwrap();
     // Append the exported genesis block to store2
     store2.append_block(&exported[0]).unwrap();
@@ -330,10 +334,10 @@ fn test_token_transfer_state_sync() {
 
     // Verify balances match after re-execution
     let alice_balance_2 = store2
-        .get_token_balance(&TokenId::new(token_id), &Address::new(alice))
+        .get_token_balance(&TokenId::new(canonical_sov_id), &Address::new(alice))
         .unwrap();
     let bob_balance_2 = store2
-        .get_token_balance(&TokenId::new(token_id), &Address::new(bob))
+        .get_token_balance(&TokenId::new(canonical_sov_id), &Address::new(bob))
         .unwrap();
     assert_eq!(
         alice_balance_2, alice_balance_1,

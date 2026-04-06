@@ -3019,6 +3019,21 @@ mod tests {
         tx1.fee = 0; // legacy txs are fee-free
         let mut tx2 = create_legacy_tx(TransactionType::WalletRegistration);
         tx2.fee = 0;
+        tx2.payload = crate::transaction::TransactionPayload::Wallet(
+            crate::transaction::WalletTransactionData {
+                wallet_id: Hash::new([0xBB; 32]),
+                wallet_type: "Primary".to_string(),
+                wallet_name: "test-wallet".to_string(),
+                alias: None,
+                public_key: vec![0u8; 32],
+                owner_identity_id: None,
+                seed_commitment: Hash::default(),
+                created_at: 0,
+                registration_fee: 0,
+                capabilities: 0,
+                initial_balance: 0,
+            },
+        );
 
         let header = BlockHeader {
             version: 1,
@@ -3854,6 +3869,14 @@ mod tests {
         // Block 0: seed the sender with SOV so pre-validation passes.
         store.begin_block(0).unwrap();
         {
+            // Seed the SOV token ledger so debit_token succeeds.
+            let sov_token_id =
+                crate::storage::TokenId::new(crate::contracts::utils::generate_lib_token_id());
+            let addr = crate::storage::Address::new([0x11; 32]);
+            store
+                .set_token_balance(&sov_token_id, &addr, 10_000 * SCALE)
+                .unwrap();
+
             let seed = StateMutator::new(store.as_ref());
             seed.put_cbe_account_state(
                 &[0x11; 32],
@@ -3992,6 +4015,14 @@ mod tests {
         // Easiest: seed economic state with reserve = GRAD_THRESHOLD - 1.
         store.begin_block(0).unwrap();
         {
+            // Seed the SOV token ledger so debit_token succeeds.
+            let sov_token_id =
+                crate::storage::TokenId::new(crate::contracts::utils::generate_lib_token_id());
+            let addr = crate::storage::Address::new([0x33; 32]);
+            store
+                .set_token_balance(&sov_token_id, &addr, 100_000 * SCALE)
+                .unwrap();
+
             let seed = StateMutator::new(store.as_ref());
             seed.put_cbe_account_state(
                 &[0x33; 32],
@@ -4063,6 +4094,14 @@ mod tests {
         // Block 0: seed SOV so we can buy first.
         store.begin_block(0).unwrap();
         {
+            // Seed the SOV token ledger so debit_token succeeds.
+            let sov_token_id =
+                crate::storage::TokenId::new(crate::contracts::utils::generate_lib_token_id());
+            let addr = crate::storage::Address::new([0x44; 32]);
+            store
+                .set_token_balance(&sov_token_id, &addr, 10_000 * SCALE)
+                .unwrap();
+
             let seed = StateMutator::new(store.as_ref());
             seed.put_cbe_account_state(
                 &[0x44; 32],
@@ -4240,6 +4279,14 @@ mod tests {
         // Block 0: seed and buy some CBE.
         store.begin_block(0).unwrap();
         {
+            // Seed the SOV token ledger so debit_token succeeds.
+            let sov_token_id =
+                crate::storage::TokenId::new(crate::contracts::utils::generate_lib_token_id());
+            let addr = crate::storage::Address::new([0x66; 32]);
+            store
+                .set_token_balance(&sov_token_id, &addr, 10_000 * SCALE)
+                .unwrap();
+
             let seed = StateMutator::new(store.as_ref());
             seed.put_cbe_account_state(
                 &[0x66; 32],
@@ -4390,6 +4437,14 @@ mod tests {
         // Block 0: seed sender SOV balance (writes go into the batch; readable only after commit).
         store.begin_block(0).unwrap();
         {
+            // Seed the SOV token ledger so debit_token succeeds.
+            let sov_token_id =
+                crate::storage::TokenId::new(crate::contracts::utils::generate_lib_token_id());
+            let addr = crate::storage::Address::new(signer.public_key.key_id);
+            store
+                .set_token_balance(&sov_token_id, &addr, 10_000)
+                .unwrap();
+
             let seed = StateMutator::new(store.as_ref());
             seed.put_cbe_account_state(
                 &signer.public_key.key_id,

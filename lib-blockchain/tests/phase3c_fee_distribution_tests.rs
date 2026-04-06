@@ -85,12 +85,15 @@ fn create_coinbase_with_fees(
         recipient: reward_recipient.clone(),
     }];
 
-    // Add fee sink output if there are fees
+    // Add fee sink output if there are fees.
+    // The executor identifies the fee sink by key_id (Address), so we must
+    // construct a PublicKey whose key_id matches the fee sink address.
     if fees > 0 {
-        let mut fee_sink_bytes = [0u8; 2592];
-        let addr_bytes = fee_sink_address.as_bytes();
-        fee_sink_bytes[..addr_bytes.len().min(2592)].copy_from_slice(&addr_bytes[..addr_bytes.len().min(2592)]);
-        let fee_sink_pk = PublicKey::new(fee_sink_bytes);
+        let fee_sink_pk = PublicKey {
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
+            key_id: *fee_sink_address.as_bytes(),
+        };
         outputs.push(TransactionOutput {
             commitment: Hash::default(),
             note: Hash::default(),

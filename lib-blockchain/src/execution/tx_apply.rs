@@ -90,14 +90,9 @@ impl<'a> StateMutator<'a> {
         for (index, (output, &amount)) in outputs.iter().zip(amounts.iter()).enumerate() {
             let outpoint = OutPoint::new(TxHash::new(tx_hash_bytes), index as u32);
 
-            // Convert recipient public key to address bytes
-            // IMPORTANT: Must not silently fall back to zero address on conversion failure
-            let owner_bytes: [u8; 32] = output.recipient.as_bytes().try_into().map_err(|_| {
-                TxApplyError::Internal(format!(
-                    "Failed to convert recipient public key to address at output index {}",
-                    index
-                ))
-            })?;
+            // Derive address from recipient public key's 32-byte key_id
+            // (blake3 hash of the dilithium public key bytes).
+            let owner_bytes: [u8; 32] = output.recipient.key_id;
 
             let utxo = Utxo {
                 amount,
@@ -635,14 +630,9 @@ pub fn apply_native_transfer(
             amount_per_output
         };
 
-        // Convert recipient public key to address bytes
-        // IMPORTANT: Must not silently fall back to zero address on conversion failure
-        let owner_bytes: [u8; 32] = output.recipient.as_bytes().try_into().map_err(|_| {
-            TxApplyError::Internal(format!(
-                "Failed to convert recipient public key to address at output index {}",
-                index
-            ))
-        })?;
+        // Derive address from recipient public key's 32-byte key_id
+        // (blake3 hash of the dilithium public key bytes).
+        let owner_bytes: [u8; 32] = output.recipient.key_id;
 
         let utxo = Utxo {
             amount,
@@ -753,11 +743,8 @@ pub fn apply_coinbase(
 
     // First pass: validate structure and find fee sink output
     for (_index, output) in tx.outputs.iter().enumerate() {
-        // Convert recipient public key to address bytes
-        // Note: In first pass we can use unwrap_or for checking fee sink,
-        // but the second pass (below) will properly error on conversion failure
-        let addr_bytes: [u8; 32] = output.recipient.as_bytes().try_into().unwrap_or([0u8; 32]);
-        let output_address = Address::new(addr_bytes);
+        // Convert recipient public key to address via key_id (blake3 hash of dilithium key)
+        let output_address = Address::new(output.recipient.key_id);
 
         if &output_address == fee_sink_address {
             fee_sink_output_found = true;
@@ -796,14 +783,9 @@ pub fn apply_coinbase(
     for (index, output) in tx.outputs.iter().enumerate() {
         let outpoint = OutPoint::new(TxHash::new(tx_hash.as_array()), index as u32);
 
-        // Convert recipient public key to address bytes
-        // IMPORTANT: Must not silently fall back to zero address on conversion failure
-        let addr_bytes: [u8; 32] = output.recipient.as_bytes().try_into().map_err(|_| {
-            TxApplyError::Internal(format!(
-                "Failed to convert recipient public key to address at coinbase output index {}",
-                index
-            ))
-        })?;
+        // Derive address from recipient public key's 32-byte key_id
+        // (blake3 hash of the dilithium public key bytes).
+        let addr_bytes: [u8; 32] = output.recipient.key_id;
         let output_address = Address::new(addr_bytes);
 
         // Determine amount based on output type

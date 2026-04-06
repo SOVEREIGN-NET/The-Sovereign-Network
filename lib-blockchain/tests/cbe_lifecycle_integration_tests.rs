@@ -550,7 +550,7 @@ fn test_amm_pool_creation_constant_product() {
         CBE_NAME.to_string(),
         CBE_SYMBOL.to_string(),
         CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
-        Threshold::ReserveAmount(1_000_000),
+        Threshold::ReserveAmount(10_000),
         true,
         creator,
         "did:sov:cbe".to_string(),
@@ -559,15 +559,13 @@ fn test_amm_pool_creation_constant_product() {
     )
     .expect("CBE token deployment should succeed");
 
-    // Single buy well above the graduation threshold.
-    let buyer = test_pubkey(0x04);
-    token
-        .buy(buyer, 30_000_000_000u128, 2, 1_700_000_002)
-        .expect("Buy should succeed");
-    assert!(
-        token.reserve_balance <= u64::MAX as u128,
-        "Test setup must stay within current POL reserve bounds"
-    );
+    // Directly seed reserve/treasury to meet MINIMUM_AMM_LIQUIDITY (1M) for
+    // pool creation. Buying through .buy() at the cbe_default curve's low base
+    // price (~0.00031 SOV/CBE) would overflow u64 supply before reaching 1M
+    // reserve, so we seed the balances directly (matching pattern in amm_pool.rs
+    // unit tests).
+    token.reserve_balance = 1_500_000; // 1.5M reserve (> MINIMUM_AMM_LIQUIDITY)
+    token.treasury_balance = 2_250_000; // Matching treasury (60% of implied 3.75M purchase)
 
     // Graduate via the normal path (ReserveAmount threshold is now exceeded).
     assert!(

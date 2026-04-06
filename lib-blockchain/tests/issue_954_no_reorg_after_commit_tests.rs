@@ -62,10 +62,10 @@ fn register_n_validators(blockchain: &mut Blockchain, n: usize) {
 /// different values produce blocks with different hashes — letting us build
 /// two genuinely distinct blocks at the same height.
 fn build_next_block(parent: &Block, extra_nonce: u64) -> Block {
-    let mining_config = get_mining_config_from_env();
+    let _mining_config = get_mining_config_from_env();
     let height = parent.header.height + 1;
     let timestamp = parent.timestamp() + 10 + extra_nonce;
-    let header = BlockHeader {
+    let mut header = BlockHeader {
         version: 1,
         previous_hash: parent.hash().into(),
         data_helix_root: Hash::default().into(),
@@ -76,6 +76,7 @@ fn build_next_block(parent: &Block, extra_nonce: u64) -> Block {
         bft_quorum_root: [0u8; 32],
         block_hash: Hash::default(),
     };
+    header.block_hash = header.calculate_hash();
     Block::new(header, vec![])
 }
 
