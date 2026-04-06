@@ -132,7 +132,7 @@ mod tests {
                 kyber_pk: [seed.wrapping_add(1); 1568],
                 key_id: [seed; 32],
             },
-            algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
+            algorithm: crate::integration::crypto_integration::SignatureAlgorithm::DEFAULT,
             timestamp: 1,
         }
     }

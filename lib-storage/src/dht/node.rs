@@ -95,7 +95,7 @@ impl DhtNodeManager {
             peer: local_peer,
             addresses,
             public_key: PostQuantumSignature {
-                algorithm: lib_crypto::SignatureAlgorithm::Dilithium5,
+                algorithm: lib_crypto::SignatureAlgorithm::DEFAULT,
                 signature: vec![],
                 public_key: PublicKey {
                     dilithium_pk: [0u8; 2592],
@@ -368,11 +368,11 @@ mod tests {
             peer: test_peer.clone(),
             addresses: vec!["127.0.0.1:33443".to_string()],
             public_key: PostQuantumSignature {
-                algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
+                algorithm: lib_crypto::SignatureAlgorithm::DEFAULT,
                 signature: vec![],
                 public_key: PublicKey {
-                    dilithium_pk: vec![],
-                    kyber_pk: vec![],
+                    dilithium_pk: [0u8; 2592],
+                    kyber_pk: [0u8; 1568],
                     key_id: [0u8; 32],
                 },
                 timestamp: 0,

@@ -944,7 +944,7 @@ impl TransactionValidator {
 
         // Verify signature algorithm is supported
         match transaction.signature.algorithm {
-            SignatureAlgorithm::Dilithium2 | SignatureAlgorithm::Dilithium5 => {
+            SignatureAlgorithm::Dilithium5 => {
                 // Supported algorithms
             }
             _ => {
@@ -2859,7 +2859,7 @@ mod tests {
         Signature {
             signature: vec![0u8; 64], // placeholder signature bytes
             public_key: public_key.clone(),
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: 0,
         }
     }
@@ -2931,7 +2931,7 @@ mod tests {
             signature: Signature {
                 signature: vec![],
                 public_key: signer.clone(),
-                algorithm: SignatureAlgorithm::Dilithium5,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: 0,
             },
             memo: vec![],
@@ -3587,7 +3587,7 @@ mod tests {
             signature: Signature {
                 signature: vec![],
                 public_key: sender_key.clone(),
-                algorithm: SignatureAlgorithm::Dilithium5,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: 0,
             },
             memo: vec![],
@@ -3755,7 +3755,7 @@ mod tests {
             signature: Signature {
                 signature: vec![],
                 public_key: signer.public_key.clone(),
-                algorithm: SignatureAlgorithm::Dilithium5,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: 0,
             },
             memo: payload.to_vec(),

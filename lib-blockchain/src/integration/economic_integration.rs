@@ -530,7 +530,7 @@ impl EconomicTransactionProcessor {
         let temp_signature = Signature {
             signature: Vec::new(),
             public_key: PublicKey::new(keypair.public_key.dilithium_pk),
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: economy_tx.timestamp,
         };
 
@@ -555,7 +555,7 @@ impl EconomicTransactionProcessor {
         Ok(Signature {
             signature: crypto_signature.signature,
             public_key: PublicKey::new(keypair.public_key.dilithium_pk),
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: economy_tx.timestamp,
         })
     }

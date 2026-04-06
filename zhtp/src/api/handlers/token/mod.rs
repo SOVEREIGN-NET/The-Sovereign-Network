@@ -930,13 +930,14 @@ mod tests {
             let mut key_id_array = [0u8; 32];
             key_id_array.copy_from_slice(&key_bytes);
             return Ok(PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: key_id_array,
             });
         }
 
-        Ok(PublicKey::new(key_bytes))
+        let arr: [u8; 2592] = key_bytes.try_into().map_err(|_| anyhow::anyhow!("key must be 2592 bytes"))?;
+        Ok(PublicKey::new(arr))
     }
 
     #[test]

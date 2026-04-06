@@ -4,7 +4,7 @@
 //! Uses post-quantum signatures (Dilithium) for challenge-response authentication.
 
 use anyhow::{anyhow, Result};
-use lib_crypto::post_quantum::dilithium::{dilithium2_keypair, dilithium_sign, dilithium_verify};
+use lib_crypto::post_quantum::dilithium::{dilithium5_keypair, dilithium_sign, dilithium_verify};
 use lib_crypto::{generate_nonce, hash_blake3, PublicKey};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -86,10 +86,10 @@ impl ZhtpAuthManager {
     pub fn new(node_blockchain_pubkey: PublicKey) -> Result<Self> {
         info!(" Initializing ZHTP authentication manager with post-quantum security");
 
-        // Generate Dilithium2 keypair for this node
-        let dilithium_keypair = dilithium2_keypair();
+        // Generate Dilithium5 keypair for this node
+        let dilithium_keypair = dilithium5_keypair();
 
-        info!(" Generated Dilithium2 keypair (post-quantum secure)");
+        info!(" Generated Dilithium5 keypair (post-quantum secure)");
         debug!("   Public key length: {} bytes", dilithium_keypair.0.len());
 
         Ok(Self {
@@ -138,12 +138,12 @@ impl ZhtpAuthManager {
         Ok(challenge)
     }
 
-    /// Sign arbitrary message with Dilithium2 (for PeerAnnouncement, etc.)
+    /// Sign arbitrary message with Dilithium5 (for PeerAnnouncement, etc.)
     pub fn sign_message(&self, message: &[u8]) -> Result<Vec<u8>> {
         dilithium_sign(message, &self.node_dilithium_keypair.1)
     }
 
-    /// Get this node's Dilithium2 public key
+    /// Get this node's Dilithium5 public key
     pub fn get_dilithium_pubkey(&self) -> &[u8] {
         &self.node_dilithium_keypair.0
     }
@@ -167,11 +167,11 @@ impl ZhtpAuthManager {
         ]
         .concat();
 
-        // Sign with Dilithium2
+        // Sign with Dilithium5
         let signature = dilithium_sign(&message, &self.node_dilithium_keypair.1)?;
 
         debug!(
-            " Signed challenge with Dilithium2 (signature: {} bytes)",
+            " Signed challenge with Dilithium5 (signature: {} bytes)",
             signature.len()
         );
 
@@ -232,7 +232,7 @@ impl ZhtpAuthManager {
         ]
         .concat();
 
-        // Verify Dilithium2 signature
+        // Verify Dilithium5 signature
         let signature_valid =
             dilithium_verify(&message, &response.signature, &response.responder_pubkey)?;
 
@@ -330,8 +330,8 @@ mod tests {
     #[tokio::test]
     async fn test_zhtp_authentication_flow() {
         // Create two auth managers (Node A and Node B)
-        let node_a_pubkey = PublicKey::new(vec![1u8; 32]);
-        let node_b_pubkey = PublicKey::new(vec![2u8; 32]);
+        let node_a_pubkey = PublicKey::new([1u8; 2592]);
+        let node_b_pubkey = PublicKey::new([2u8; 2592]);
 
         let node_a = ZhtpAuthManager::new(node_a_pubkey).unwrap();
         let node_b = ZhtpAuthManager::new(node_b_pubkey).unwrap();

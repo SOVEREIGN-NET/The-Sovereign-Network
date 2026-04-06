@@ -331,7 +331,7 @@ impl IdentityHandler {
                 Signature {
                     signature: Vec::new(),                  // Empty signature for hash calculation
                     public_key: PublicKey::new([0u8; 2592]), // Empty public key for hash calculation
-                    algorithm: SignatureAlgorithm::Dilithium2,
+                    algorithm: SignatureAlgorithm::DEFAULT,
                     timestamp: citizenship_result.dao_registration.registered_at,
                 },
                 Vec::new(), // Empty data for initial hash
@@ -351,7 +351,7 @@ impl IdentityHandler {
                 Signature {
                     signature: crypto_signature.signature, // cryptographic signature over tx hash
                     public_key: PublicKey::new(keypair.public_key.dilithium_pk), // public key
-                    algorithm: SignatureAlgorithm::Dilithium2, // Post-quantum algorithm
+                    algorithm: SignatureAlgorithm::DEFAULT, // Post-quantum algorithm
                     timestamp: citizenship_result.dao_registration.registered_at,
                 },
                 Vec::new(), // No additional data needed
@@ -686,7 +686,7 @@ impl IdentityHandler {
             Signature {
                 signature: vec![0; 2420], // Temporary signature
                 public_key: PublicKey::new(keypair.public_key.dilithium_pk),
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp,
             },
             Vec::new(), // Empty data
@@ -707,7 +707,7 @@ impl IdentityHandler {
             Signature {
                 signature: crypto_signature.signature,
                 public_key: PublicKey::new(keypair.public_key.dilithium_pk),
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp,
             },
             Vec::new(), // Empty data
@@ -1676,7 +1676,7 @@ impl IdentityHandler {
             Signature {
                 signature: vec![0; 2420],
                 public_key: PublicKey::new(server_keypair.public_key.dilithium_pk),
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: created_at,
             },
             Vec::new(),
@@ -1703,7 +1703,7 @@ impl IdentityHandler {
             Signature {
                 signature: crypto_signature.signature,
                 public_key: PublicKey::new(server_keypair.public_key.dilithium_pk),
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: created_at,
             },
             Vec::new(),

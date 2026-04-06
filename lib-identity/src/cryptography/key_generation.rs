@@ -3,7 +3,7 @@
 // IMPLEMENTATIONS using lib-crypto
 
 use anyhow::Result;
-use lib_crypto::post_quantum::{dilithium2_keypair, dilithium5_keypair};
+use lib_crypto::post_quantum::dilithium5_keypair;
 use lib_crypto::KeyPair as CryptoKeyPair;
 use serde::{Deserialize, Serialize};
 
@@ -46,14 +46,8 @@ pub fn generate_pq_keypair(params: Option<KeyGenParams>) -> Result<PostQuantumKe
 
     // Determine public key and derive key_id from the actual key material
     let (public_key, private_key, algorithm, key_id) = match params.security_level {
-        2 => {
-            // Use Dilithium2 for level 2 security
-            let (pk, sk) = dilithium2_keypair();
-            let kid = generate_key_id_from_public_key(&pk);
-            (pk, sk, "CRYSTALS-Dilithium2".to_string(), kid)
-        }
-        5 => {
-            // Use Dilithium5 for level 5 security (highest)
+        2 | 5 => {
+            // Use Dilithium5 for all explicit security levels
             let (pk, sk) = dilithium5_keypair();
             let kid = generate_key_id_from_public_key(&pk);
             (pk, sk, "CRYSTALS-Dilithium5".to_string(), kid)
@@ -89,9 +83,7 @@ pub fn generate_key_id_from_public_key(public_key: &[u8]) -> String {
 
 /// Validate post-quantum keypair using lib-crypto operations
 pub fn validate_keypair(keypair: &PostQuantumKeypair) -> Result<bool, String> {
-    use lib_crypto::post_quantum::{
-        dilithium2_sign, dilithium2_verify, dilithium5_sign, dilithium5_verify,
-    };
+    use lib_crypto::post_quantum::{dilithium5_sign, dilithium5_verify};
 
     // Validate that keys are not empty
     if keypair.public_key.is_empty() || keypair.private_key.is_empty() {
@@ -102,13 +94,8 @@ pub fn validate_keypair(keypair: &PostQuantumKeypair) -> Result<bool, String> {
     let test_message = b"ZHTP-Identity-KeyPair-Validation-Test";
 
     let signature_result = match keypair.security_level {
-        2 => {
-            // Use Dilithium2 operations
-            dilithium2_sign(test_message, &keypair.private_key)
-                .map_err(|e| format!("Dilithium2 signing failed: {}", e))
-        }
-        5 => {
-            // Use Dilithium5 operations
+        2 | 5 => {
+            // Use Dilithium5 for all security levels
             dilithium5_sign(test_message, &keypair.private_key)
                 .map_err(|e| format!("Dilithium5 signing failed: {}", e))
         }
@@ -120,9 +107,7 @@ pub fn validate_keypair(keypair: &PostQuantumKeypair) -> Result<bool, String> {
     let signature = signature_result?;
 
     let verification_result = match keypair.security_level {
-        2 => dilithium2_verify(test_message, &signature, &keypair.public_key)
-            .map_err(|e| format!("Dilithium2 verification failed: {}", e)),
-        5 => dilithium5_verify(test_message, &signature, &keypair.public_key)
+        2 | 5 => dilithium5_verify(test_message, &signature, &keypair.public_key)
             .map_err(|e| format!("Dilithium5 verification failed: {}", e)),
         _ => {
             return Err("Unsupported security level for verification".to_string());

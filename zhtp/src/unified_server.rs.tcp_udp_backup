@@ -838,7 +838,7 @@ impl ZhtpUnifiedServer {
         
         info!("ZHTP Unified Server online");
         info!("Protocols: BLE + BT Classic + WiFi Direct + LoRaWAN + ZHTP Relay");
-        info!(" ZHTP relay: Encrypted DHT queries with Dilithium2 + Kyber1024 + ChaCha20");
+        info!(" ZHTP relay: Encrypted DHT queries with Dilithium5 + Kyber1024 + ChaCha20");
         
         // Verify network isolation is working
         info!(" Verifying network isolation...");
@@ -1255,7 +1255,7 @@ impl ZhtpUnifiedServer {
         };
         drop(mgr); // Release lock
         
-        // Sign with auth manager's Dilithium2 key instead of identity manager
+        // Sign with auth manager's Dilithium5 key instead of identity manager
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -1417,7 +1417,7 @@ impl ZhtpUnifiedServer {
         // Use first identity - identities is Vec<ZhtpIdentity>
         let identity = &identities[0];
         
-        // Create PublicKey from identity's public_key field (Dilithium2 public key)
+        // Create PublicKey from identity's public_key field (Dilithium5 public key)
         let blockchain_pubkey = lib_crypto::PublicKey::new(identity.public_key.clone());
         
         info!(" Using identity {} for WiFi Direct authentication", hex::encode(&identity.id.0[..8]));

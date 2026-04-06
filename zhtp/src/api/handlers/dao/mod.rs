@@ -953,7 +953,7 @@ impl DaoHandler {
             Signature {
                 signature: Vec::new(),
                 public_key: proposer_identity.public_key.clone(),
-                algorithm: SignatureAlgorithm::Dilithium5,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: now,
             },
             format!("dao:proposal:{}", request_data.title).into_bytes(),
@@ -1051,7 +1051,7 @@ impl DaoHandler {
             Signature {
                 signature: Vec::new(),
                 public_key: identity.public_key.clone(),
-                algorithm: SignatureAlgorithm::Dilithium5,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: now,
             },
             format!("dao:delegate:{}", execution_type).into_bytes(),
@@ -1461,7 +1461,7 @@ impl DaoHandler {
             Signature {
                 signature: Vec::new(),
                 public_key: voter_identity.public_key.clone(),
-                algorithm: SignatureAlgorithm::Dilithium5,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: now,
             },
             b"dao:vote".to_vec(),
@@ -2548,7 +2548,7 @@ impl DaoHandler {
             Signature {
                 signature: Vec::new(),
                 public_key: identity.public_key.clone(),
-                algorithm: SignatureAlgorithm::Dilithium5,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: now,
             },
             memo.to_vec(),
@@ -2872,7 +2872,7 @@ impl DaoHandler {
             .map_err(|e| anyhow::anyhow!("Invalid signature_hex: {}", e))?;
 
         let algorithm =
-            lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5;
+            lib_blockchain::integration::crypto_integration::SignatureAlgorithm::DEFAULT;
 
         let mut store = PENDING_PROPOSALS.write().await;
         let proposal = store
@@ -3231,8 +3231,8 @@ mod tests {
 
     fn test_public_key(seed: u8) -> PublicKey {
         PublicKey {
-            dilithium_pk: vec![seed; 32],
-            kyber_pk: vec![seed.wrapping_add(1); 32],
+            dilithium_pk: [seed; 2592],
+            kyber_pk: [seed.wrapping_add(1); 1568],
             key_id: [seed; 32],
         }
     }
@@ -3264,7 +3264,7 @@ mod tests {
             Signature {
                 signature: Vec::new(),
                 public_key: test_public_key(signer_seed),
-                algorithm: SignatureAlgorithm::Dilithium5,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: now,
             },
             b"test:dao:registry".to_vec(),
@@ -3361,7 +3361,11 @@ mod tests {
                 identity_id: did.to_string(),
                 stake: 10_000,
                 storage_provided: 0,
-                consensus_key: key_id.to_vec(),
+                consensus_key: {
+                    let mut arr = [0u8; 2592];
+                    arr[..32].copy_from_slice(&key_id);
+                    arr
+                },
                 networking_key: Vec::new(),
                 rewards_key: Vec::new(),
                 network_address: "127.0.0.1:0".to_string(),

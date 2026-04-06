@@ -184,7 +184,7 @@ mod tests {
     #[test]
     fn test_add_guardian() {
         let mut config = GuardianConfig::default();
-        let pubkey = PublicKey::new(vec![1, 2, 3, 4]);
+        let pubkey = PublicKey::new([1u8; 2592]);
 
         let result = config.add_guardian("did:zhtp:alice".to_string(), pubkey, "Alice".to_string());
 
@@ -195,9 +195,9 @@ mod tests {
     #[test]
     fn test_max_guardians_limit() {
         let mut config = GuardianConfig::new(2, 2);
-        let pubkey1 = PublicKey::new(vec![1, 2, 3, 4]);
-        let pubkey2 = PublicKey::new(vec![5, 6, 7, 8]);
-        let pubkey3 = PublicKey::new(vec![9, 10, 11, 12]);
+        let pubkey1 = PublicKey::new([1u8; 2592]);
+        let pubkey2 = PublicKey::new([2u8; 2592]);
+        let pubkey3 = PublicKey::new([3u8; 2592]);
 
         assert!(config
             .add_guardian("did:zhtp:alice".to_string(), pubkey1, "Alice".to_string())
@@ -213,8 +213,8 @@ mod tests {
     #[test]
     fn test_duplicate_guardian_did() {
         let mut config = GuardianConfig::default();
-        let pubkey1 = PublicKey::new(vec![1, 2, 3, 4]);
-        let pubkey2 = PublicKey::new(vec![5, 6, 7, 8]);
+        let pubkey1 = PublicKey::new([1u8; 2592]);
+        let pubkey2 = PublicKey::new([2u8; 2592]);
 
         assert!(config
             .add_guardian("did:zhtp:alice".to_string(), pubkey1, "Alice".to_string())
@@ -227,7 +227,7 @@ mod tests {
     #[test]
     fn test_remove_guardian() {
         let mut config = GuardianConfig::default();
-        let pubkey = PublicKey::new(vec![1, 2, 3, 4]);
+        let pubkey = PublicKey::new([1u8; 2592]);
 
         let guardian_id = config
             .add_guardian("did:zhtp:alice".to_string(), pubkey, "Alice".to_string())
@@ -240,7 +240,7 @@ mod tests {
     #[test]
     fn test_threshold_validation() {
         let mut config = GuardianConfig::new(2, 5);
-        let pubkey = PublicKey::new(vec![1, 2, 3, 4]);
+        let pubkey = PublicKey::new([1u8; 2592]);
 
         // No guardians, threshold not met
         assert!(config.validate_threshold().is_err());
@@ -262,7 +262,7 @@ mod tests {
     #[test]
     fn test_set_threshold() {
         let mut config = GuardianConfig::new(2, 5);
-        let pubkey = PublicKey::new(vec![1, 2, 3, 4]);
+        let pubkey = PublicKey::new([1u8; 2592]);
 
         config
             .add_guardian(

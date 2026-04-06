@@ -22,7 +22,7 @@ fn test_transaction_creation() -> Result<()> {
         crypto_integration::Signature {
             signature: vec![1, 2, 3],
             public_key: crypto_integration::PublicKey::new([0u8; 2592]),
-            algorithm: crypto_integration::SignatureAlgorithm::Dilithium5,
+            algorithm: crypto_integration::SignatureAlgorithm::DEFAULT,
             timestamp: 12345,
         },
         "test transaction".as_bytes().to_vec(),
@@ -58,7 +58,7 @@ fn test_identity_transaction_creation() -> Result<()> {
         crypto_integration::Signature {
             signature: vec![9, 10, 11],
             public_key: crypto_integration::PublicKey::new([0u8; 2592]),
-            algorithm: crypto_integration::SignatureAlgorithm::Dilithium5,
+            algorithm: crypto_integration::SignatureAlgorithm::DEFAULT,
             timestamp: 12345,
         },
         "identity registration".as_bytes().to_vec(),
@@ -108,7 +108,7 @@ fn test_identity_update_transaction() -> Result<()> {
         crypto_integration::Signature {
             signature: vec![13, 14, 15],
             public_key: crypto_integration::PublicKey::new([0u8; 2592]),
-            algorithm: crypto_integration::SignatureAlgorithm::Dilithium5,
+            algorithm: crypto_integration::SignatureAlgorithm::DEFAULT,
             timestamp: 12345,
         },
         "identity update".as_bytes().to_vec(),
@@ -135,7 +135,7 @@ fn test_identity_revocation_transaction() -> Result<()> {
         crypto_integration::Signature {
             signature: vec![19, 20, 21],
             public_key: crypto_integration::PublicKey::new([0u8; 2592]),
-            algorithm: crypto_integration::SignatureAlgorithm::Dilithium5,
+            algorithm: crypto_integration::SignatureAlgorithm::DEFAULT,
             timestamp: 12345,
         },
         "identity revocation".as_bytes().to_vec(),
@@ -166,7 +166,7 @@ fn test_transaction_hashing() -> Result<()> {
         crypto_integration::Signature {
             signature: vec![1, 2, 3],
             public_key: crypto_integration::PublicKey::new([0u8; 2592]),
-            algorithm: crypto_integration::SignatureAlgorithm::Dilithium5,
+            algorithm: crypto_integration::SignatureAlgorithm::DEFAULT,
             timestamp: 12345,
         },
         "hash test".as_bytes().to_vec(),
@@ -210,7 +210,7 @@ fn test_transaction_validation() -> Result<()> {
         crypto_integration::Signature {
             signature: vec![1, 2, 3, 4, 5], // Non-empty signature
             public_key: crypto_integration::PublicKey::new([0u8; 2592]),
-            algorithm: crypto_integration::SignatureAlgorithm::Dilithium5,
+            algorithm: crypto_integration::SignatureAlgorithm::DEFAULT,
             timestamp: 12345,
         },
         "validation test".as_bytes().to_vec(),
@@ -356,7 +356,7 @@ fn test_transaction_serialization() -> Result<()> {
         crypto_integration::Signature {
             signature: vec![1, 2, 3],
             public_key: crypto_integration::PublicKey::new([0u8; 2592]),
-            algorithm: crypto_integration::SignatureAlgorithm::Dilithium5,
+            algorithm: crypto_integration::SignatureAlgorithm::DEFAULT,
             timestamp: 12345,
         },
         "serialization test".as_bytes().to_vec(),

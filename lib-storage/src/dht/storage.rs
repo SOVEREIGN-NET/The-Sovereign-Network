@@ -2875,7 +2875,7 @@ mod tests {
             ),
             addresses: vec!["127.0.0.1:8080".to_string()],
             public_key: lib_crypto::PostQuantumSignature {
-                algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
+                algorithm: lib_crypto::SignatureAlgorithm::DEFAULT,
                 signature: vec![],
                 public_key: lib_crypto::PublicKey {
                     dilithium_pk: vec![1, 2, 3],
@@ -2949,7 +2949,7 @@ mod tests {
             ),
             addresses: vec!["127.0.0.1:8081".to_string()],
             public_key: lib_crypto::PostQuantumSignature {
-                algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
+                algorithm: lib_crypto::SignatureAlgorithm::DEFAULT,
                 signature: vec![],
                 public_key: lib_crypto::PublicKey {
                     dilithium_pk: vec![1, 2, 3],
@@ -3016,7 +3016,7 @@ mod tests {
             ),
             addresses: vec!["127.0.0.1:8082".to_string()],
             public_key: lib_crypto::PostQuantumSignature {
-                algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
+                algorithm: lib_crypto::SignatureAlgorithm::DEFAULT,
                 signature: vec![],
                 public_key: lib_crypto::PublicKey {
                     dilithium_pk: vec![1, 2, 3],

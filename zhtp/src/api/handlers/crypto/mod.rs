@@ -95,7 +95,7 @@ struct SignMessageRequest {
 #[derive(Serialize)]
 struct SignMessageResponse {
     signature: String,  // Hex encoded
-    public_key: String, // Hex encoded (1312-byte Dilithium2 key)
+    public_key: String, // Hex encoded (1312-byte Dilithium5 key)
     algorithm: String,
     message_hash: String,
 }
@@ -117,8 +117,8 @@ struct VerifySignatureResponse {
 
 #[derive(Serialize)]
 struct GenerateKeypairResponse {
-    public_key: String,  // Hex encoded Dilithium2 public key
-    private_key: String, // Hex encoded Dilithium2 private key (SENSITIVE!)
+    public_key: String,  // Hex encoded Dilithium5 public key
+    private_key: String, // Hex encoded Dilithium5 private key (SENSITIVE!)
     algorithm: String,
     warning: String,
 }
@@ -249,7 +249,7 @@ impl CryptoHandler {
         ))
     }
 
-    /// Generate a new Dilithium2 keypair
+    /// Generate a new Dilithium5 keypair
     async fn handle_generate_keypair(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
         // Generate new keypair
         let keypair =

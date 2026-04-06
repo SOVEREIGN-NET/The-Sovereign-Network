@@ -129,7 +129,7 @@ fn build_wallet_migration_tx(wallet_data: &WalletTransactionData) -> Option<Tran
         Signature {
             signature: normalized_wallet.public_key.clone(),
             public_key: PublicKey::new(dilithium_pk),
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: normalized_wallet.created_at,
         },
         format!(

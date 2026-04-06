@@ -529,7 +529,7 @@ pub struct WalletPrivateData {
 /// Validators must supply three cryptographically independent keys.  See
 /// [`ValidatorInfo`](crate::blockchain::ValidatorInfo) for the full rationale.
 ///
-/// - `consensus_key`: Signs BFT votes/proposals (Dilithium2, hot).
+/// - `consensus_key`: Signs BFT votes/proposals (Dilithium5, hot).
 /// - `networking_key`: P2P / QUIC transport identity (Ed25519/X25519, hot).
 /// - `rewards_key`: Rewards wallet public key for fee/block-reward collection (cold-capable).
 ///
@@ -543,7 +543,7 @@ pub struct ValidatorTransactionData {
     pub stake: u64,
     /// Storage provided in bytes
     pub storage_provided: u64,
-    /// Post-quantum Dilithium2 public key used exclusively for signing BFT consensus
+    /// Post-quantum Dilithium5 public key used exclusively for signing BFT consensus
     /// messages (proposals, pre-votes, pre-commits).
     pub consensus_key: Vec<u8>,
     /// Ed25519 / X25519 public key used for P2P transport identity (QUIC TLS, DHT

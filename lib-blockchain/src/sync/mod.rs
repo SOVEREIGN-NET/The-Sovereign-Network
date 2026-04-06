@@ -586,7 +586,7 @@ mod tests {
             signature: Signature {
                 signature: vec![0u8; 64],
                 public_key: PublicKey::new([1u8; 2592]),
-                algorithm: SignatureAlgorithm::Dilithium5,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: 0,
             },
             memo: vec![],

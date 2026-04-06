@@ -523,7 +523,7 @@ mod tests {
     #[tokio::test]
     async fn test_mock_broadcaster_is_reachable() {
         let mock = MockMessageBroadcaster::new(5);
-        let validator_pubkey = PublicKey::new(vec![0u8; 32]);
+        let validator_pubkey = PublicKey::new([0u8; 2592]);
 
         let reachable = mock
             .is_validator_reachable(&validator_pubkey)

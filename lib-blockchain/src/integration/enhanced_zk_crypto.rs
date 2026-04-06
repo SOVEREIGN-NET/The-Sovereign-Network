@@ -99,7 +99,7 @@ impl EnhancedTransactionValidator {
         unsigned_tx.signature = crate::integration::crypto_integration::Signature {
             signature: Vec::new(),
             public_key: crate::integration::crypto_integration::PublicKey::new([0u8; 2592]),
-            algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
+            algorithm: crate::integration::crypto_integration::SignatureAlgorithm::DEFAULT,
             timestamp: 0,
         };
 
@@ -437,7 +437,7 @@ impl EnhancedTransactionCreator {
             signature: crate::integration::crypto_integration::Signature {
                 signature: Vec::new(),
                 public_key: sender_keypair.public_key.clone(),
-                algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
+                algorithm: crate::integration::crypto_integration::SignatureAlgorithm::DEFAULT,
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()

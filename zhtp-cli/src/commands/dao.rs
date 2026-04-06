@@ -289,7 +289,7 @@ fn build_signed_dao_registry_tx(
         Signature {
             signature: Vec::new(),
             public_key: signer_pubkey.clone(),
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: now,
         },
         format!("dao:{execution_type}").into_bytes(),

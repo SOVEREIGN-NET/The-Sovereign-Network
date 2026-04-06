@@ -51,9 +51,8 @@ mod key_rotation_policy_tests {
 use crate::types::{PrivateKey, PublicKey};
 use anyhow::Result;
 use blake3::Hasher as Blake3Hasher;
+use crystals_dilithium::dilithium5::Keypair as DilithiumKeypair;
 use pqc_kyber;
-use pqcrypto_dilithium::dilithium5;
-use pqcrypto_traits::sign::{PublicKey as SignPublicKey, SecretKey as SignSecretKey};
 use rand::rngs::OsRng;
 use rand::RngCore;
 
@@ -75,7 +74,9 @@ impl KeyPair {
         rng.fill_bytes(&mut master_seed);
 
         // Generate CRYSTALS-Dilithium5 key pair (NIST post-quantum standard, highest security)
-        let (dilithium_pk, dilithium_sk) = dilithium5::keypair();
+        let dilithium_kp = DilithiumKeypair::generate(None);
+        let dilithium_pk_bytes = dilithium_kp.public.to_bytes();
+        let dilithium_sk_bytes = dilithium_kp.secret.to_bytes(); // 4864 bytes
 
         // Generate CRYSTALS-Kyber key pair (NIST post-quantum standard)
         let kyber_keys = pqc_kyber::keypair(&mut rng)
@@ -83,21 +84,20 @@ impl KeyPair {
 
         // Calculate unique key ID from post-quantum public keys only
         let mut hasher = Blake3Hasher::new();
-        hasher.update(dilithium_pk.as_bytes());
+        hasher.update(&dilithium_pk_bytes);
         hasher.update(&kyber_keys.public);
         let key_id: [u8; 32] = hasher.finalize().into();
 
         // Convert to fixed-size arrays
-        let dilithium_pk_array: [u8; 2592] = dilithium_pk.as_bytes().try_into()
+        let dilithium_pk_array: [u8; 2592] = dilithium_pk_bytes.try_into()
             .map_err(|_| anyhow::anyhow!("Dilithium5 public key must be 2592 bytes"))?;
         let kyber_pk_array: [u8; 1568] = kyber_keys.public.try_into()
             .map_err(|_| anyhow::anyhow!("Kyber1024 public key must be 1568 bytes"))?;
-        
-        // pqcrypto-dilithium produces 4896-byte secret keys
-        let dilithium_sk_vec = dilithium_sk.as_bytes();
-        let dilithium_sk_array: [u8; 4896] = dilithium_sk_vec.try_into()
-            .map_err(|_| anyhow::anyhow!("Dilithium5 secret key must be 4896 bytes"))?;
-        
+
+        // crystals-dilithium produces 4864-byte secret keys; zero-pad to [u8; 4896] for storage compat
+        let mut dilithium_sk_array = [0u8; 4896];
+        dilithium_sk_array[..dilithium_sk_bytes.len()].copy_from_slice(&dilithium_sk_bytes);
+
         let kyber_sk_array: [u8; 3168] = kyber_keys.secret.try_into()
             .map_err(|_| anyhow::anyhow!("Kyber1024 secret key must be 3168 bytes"))?;
         

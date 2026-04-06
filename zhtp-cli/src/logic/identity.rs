@@ -137,17 +137,13 @@ pub fn extract_hash_from_did(did: &str) -> CliResult<String> {
     Ok(parts[3].to_string())
 }
 
-/// Validate Dilithium public key format
-/// Accepts both Dilithium2 (1312 bytes) and Dilithium5 (2592 bytes)
+/// Validate Dilithium5 public key format (2592 bytes)
 pub fn validate_dilithium_public_key(key: &[u8]) -> CliResult<()> {
-    use lib_crypto::post_quantum::constants::{
-        DILITHIUM2_PUBLICKEY_BYTES, DILITHIUM5_PUBLICKEY_BYTES,
-    };
+    use lib_crypto::post_quantum::constants::DILITHIUM5_PUBLICKEY_BYTES;
 
-    if key.len() != DILITHIUM2_PUBLICKEY_BYTES && key.len() != DILITHIUM5_PUBLICKEY_BYTES {
+    if key.len() != DILITHIUM5_PUBLICKEY_BYTES {
         return Err(CliError::IdentityError(format!(
-            "Invalid Dilithium public key size: expected {} (D2) or {} (D5) bytes, got {}",
-            DILITHIUM2_PUBLICKEY_BYTES,
+            "Invalid Dilithium5 public key size: expected {} bytes, got {}",
             DILITHIUM5_PUBLICKEY_BYTES,
             key.len()
         )));
@@ -266,7 +262,7 @@ mod tests {
 
     #[test]
     fn test_validate_dilithium_key_correct_size_d2() {
-        let key = vec![0u8; 1312]; // Dilithium2 public key
+        let key = vec![0u8; 1312]; // Dilithium5 public key
         assert!(validate_dilithium_public_key(&key).is_ok());
     }
 

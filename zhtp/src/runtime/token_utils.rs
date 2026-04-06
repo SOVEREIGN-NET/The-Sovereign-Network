@@ -24,7 +24,7 @@ pub async fn build_sov_mint_tx(
         Signature {
             signature: Vec::new(),
             public_key: PublicKey::new([0u8; 2592]),
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: current_timestamp(),
         },
         memo,

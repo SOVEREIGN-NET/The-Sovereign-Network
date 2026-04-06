@@ -195,7 +195,7 @@ impl TransactionBuilder {
             signature: Signature {
                 signature: Vec::new(),
                 public_key: PublicKey::new([0u8; 2592]),
-                algorithm: SignatureAlgorithm::Dilithium5,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: 0,
             }, // Will be set below
             memo: self.memo,
@@ -315,14 +315,11 @@ impl TransactionBuilder {
         tx_for_signing.signature = Signature {
             signature: Vec::new(),
             public_key: PublicKey::new([0u8; 2592]),
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: 0,
         };
 
         let tx_hash = crate::transaction::hashing::hash_transaction(&tx_for_signing);
-
-        // Key size constants (from pqcrypto_dilithium)
-        const DILITHIUM2_SECRETKEY_BYTES: usize = 2560;
 
         // Use the public key stored alongside the private key
         // The public key must be stored with the private key since Dilithium
@@ -341,11 +338,7 @@ impl TransactionBuilder {
                 let signature = Signature {
                     signature: signature_bytes,
                     public_key: PublicKey::new(private_key.dilithium_pk),
-                    algorithm: if private_key.dilithium_sk.len() == DILITHIUM2_SECRETKEY_BYTES {
-                        SignatureAlgorithm::Dilithium2
-                    } else {
-                        SignatureAlgorithm::Dilithium5
-                    },
+                    algorithm: SignatureAlgorithm::DEFAULT,
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
@@ -488,7 +481,7 @@ pub mod utils {
     ) -> u64 {
         // Post-quantum witness overhead (signature + pubkey)
         // Dilithium5: 4627 byte sig + 2592 byte pk = 7219 bytes total
-        // Dilithium2: 2420 byte sig + 1312 byte pk = 3732 bytes total
+        // Dilithium5: 2420 byte sig + 1312 byte pk = 3732 bytes total
         // This constant assumes Dilithium5 as it's the highest-security variant.
         const PQ_WITNESS_SIZE: usize = 7219;
 
@@ -498,7 +491,7 @@ pub mod utils {
         // - Classical signatures (Ed25519): ~64 bytes signature + 32 bytes pubkey = ~96 bytes
         //   plus metadata (algorithm, timestamp) and message overhead = ~150-200 bytes.
         // - A 500-byte cap comfortably covers classical crypto plus extensions without
-        //   overcharging, while being well below both Dilithium2 (~3.7KB) and Dilithium5
+        //   overcharging, while being well below both Dilithium5 (~3.7KB) and Dilithium5
         //   (~7.2KB) witness sizes.
         // - For PQ transactions: Capping at 500 bytes means users pay only a bounded
         //   premium (~5x classical) rather than 36-72x, encouraging PQ adoption.
@@ -532,13 +525,13 @@ pub mod utils {
         //
         // This means:
         // - Small transactions (< 7219 bytes) have all bytes counted as witness
-        // - Dilithium2 transactions (~3732 byte witness) are treated as all-witness
+        // - Dilithium5 transactions (~3732 byte witness) are treated as all-witness
         // - Classical crypto transactions (~200 bytes) are treated as all-witness
         // - BUT: witness is capped at WITNESS_CAP (500 bytes) for fee purposes
         //
         // Result: All transactions < 7219 bytes pay roughly the same base fee
         // (BASE_FEE + ~5 SOV for capped witness), which simplifies economics and
-        // avoids penalizing Dilithium2 or classical signatures.
+        // avoids penalizing Dilithium5 or classical signatures.
         let payload_bytes = transaction_size.saturating_sub(PQ_WITNESS_SIZE);
         let witness_bytes = transaction_size.saturating_sub(payload_bytes);
 

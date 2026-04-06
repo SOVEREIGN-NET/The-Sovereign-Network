@@ -33,7 +33,7 @@ fn create_dummy_signature() -> Signature {
     Signature {
         signature: vec![0u8; 64],
         public_key: create_dummy_public_key(),
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: 0,
     }
 }

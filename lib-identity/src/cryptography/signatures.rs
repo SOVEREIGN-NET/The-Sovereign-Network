@@ -3,9 +3,7 @@
 // IMPLEMENTATIONS using lib-crypto
 
 use anyhow::Result;
-use lib_crypto::post_quantum::{
-    dilithium2_sign, dilithium2_verify, dilithium5_sign, dilithium5_verify,
-};
+use lib_crypto::post_quantum::{dilithium5_sign, dilithium5_verify};
 use serde::{Deserialize, Serialize};
 
 // Re-export for backward compatibility (deprecated)
@@ -106,9 +104,7 @@ pub fn sign_with_identity(
 
     // Generate signature using lib-crypto implementations
     let signature = match keypair.security_level {
-        2 => dilithium2_sign(&signing_input, &keypair.private_key)
-            .map_err(|e| format!("Dilithium2 signing failed: {}", e))?,
-        5 => dilithium5_sign(&signing_input, &keypair.private_key)
+        2 | 5 => dilithium5_sign(&signing_input, &keypair.private_key)
             .map_err(|e| format!("Dilithium5 signing failed: {}", e))?,
         _ => return Err("Unsupported security level (supported: 2, 5)".to_string()),
     };
@@ -153,9 +149,7 @@ pub fn verify_signature(
 
     // Verify signature using lib-crypto implementations
     match signature.security_level {
-        2 => dilithium2_verify(&signing_input, &signature.signature, public_key)
-            .map_err(|e| format!("Dilithium2 verification failed: {}", e)),
-        5 => dilithium5_verify(&signing_input, &signature.signature, public_key)
+        2 | 5 => dilithium5_verify(&signing_input, &signature.signature, public_key)
             .map_err(|e| format!("Dilithium5 verification failed: {}", e)),
         _ => Err("Unsupported security level (supported: 2, 5)".to_string()),
     }

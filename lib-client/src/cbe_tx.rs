@@ -13,7 +13,7 @@ fn empty_sig(signer_pk: PublicKey) -> Signature {
     Signature {
         signature: vec![],
         public_key: signer_pk,
-        algorithm: SignatureAlgorithm::Dilithium5,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: 0,
     }
 }
@@ -71,7 +71,7 @@ pub fn build_init_cbe_token_tx(
     tx.signature = Signature {
         signature: sig_bytes,
         public_key: signer_pk,
-        algorithm: SignatureAlgorithm::Dilithium5,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: now,
     };
 
@@ -131,7 +131,7 @@ pub fn build_create_employment_contract_tx(
     tx.signature = Signature {
         signature: sig_bytes,
         public_key: signer_pk,
-        algorithm: SignatureAlgorithm::Dilithium5,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: now,
     };
 
@@ -169,7 +169,7 @@ pub fn build_process_payroll_tx(
     tx.signature = Signature {
         signature: sig_bytes,
         public_key: signer_pk,
-        algorithm: SignatureAlgorithm::Dilithium5,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: now,
     };
 

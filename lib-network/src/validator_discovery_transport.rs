@@ -531,7 +531,7 @@ mod tests {
 
         let announcement = ValidatorAnnouncement {
             identity_id: Hash::from_bytes(&[1u8; 32]),
-            consensus_key: PublicKey::new(vec![1, 2, 3]),
+            consensus_key: PublicKey::new([1u8; 2592]),
             stake: 1_000_000,
             storage_provided: 10_000_000_000,
             commission_rate: 500,

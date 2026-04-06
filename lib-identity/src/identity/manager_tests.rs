@@ -305,7 +305,7 @@ mod tests {
         assert!(!signature.signature.is_empty());
         assert!(!signature.public_key.dilithium_pk.is_empty());
         assert!(!signature.public_key.kyber_pk.is_empty());
-        assert_eq!(signature.algorithm, lib_crypto::SignatureAlgorithm::Dilithium2);
+        assert_eq!(signature.algorithm, lib_crypto::SignatureAlgorithm::DEFAULT);
         assert!(signature.timestamp > 0);
     }
 

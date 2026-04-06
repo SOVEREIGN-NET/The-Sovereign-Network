@@ -468,7 +468,7 @@ mod tests {
         Ok(Signature {
             signature: signature_obj.signature,
             public_key: keypair.public_key.clone(),
-            algorithm: lib_crypto::types::signatures::SignatureAlgorithm::Dilithium5,
+            algorithm: lib_crypto::types::signatures::SignatureAlgorithm::DEFAULT,
             timestamp: 0,
         })
     }
@@ -615,7 +615,7 @@ mod tests {
         let invalid_sig = Signature {
             signature: vec![0u8; 64],
             public_key: PublicKey::new([0u8; 2592]),
-            algorithm: lib_crypto::types::signatures::SignatureAlgorithm::Dilithium5,
+            algorithm: lib_crypto::types::signatures::SignatureAlgorithm::DEFAULT,
             timestamp: 0,
         };
 
@@ -646,7 +646,7 @@ mod tests {
         let invalid_sig = Signature {
             signature: vec![0u8; 64],
             public_key: PublicKey::new([0u8; 2592]),
-            algorithm: lib_crypto::types::signatures::SignatureAlgorithm::Dilithium5,
+            algorithm: lib_crypto::types::signatures::SignatureAlgorithm::DEFAULT,
             timestamp: 0,
         };
 
@@ -683,7 +683,7 @@ mod tests {
         let invalid_sig = Signature {
             signature: vec![0u8; 64],
             public_key: PublicKey::new([0u8; 2592]),
-            algorithm: lib_crypto::types::signatures::SignatureAlgorithm::Dilithium5,
+            algorithm: lib_crypto::types::signatures::SignatureAlgorithm::DEFAULT,
             timestamp: 0,
         };
 
@@ -718,7 +718,7 @@ mod tests {
         let invalid_sig = Signature {
             signature: vec![0u8; 64],
             public_key: PublicKey::new([0u8; 2592]),
-            algorithm: lib_crypto::types::signatures::SignatureAlgorithm::Dilithium5,
+            algorithm: lib_crypto::types::signatures::SignatureAlgorithm::DEFAULT,
             timestamp: 0,
         };
 
@@ -837,7 +837,7 @@ mod tests {
             &[Signature {
                 signature: vec![0u8; 64],
                 public_key: PublicKey::new([0u8; 2592]),
-                algorithm: lib_crypto::types::signatures::SignatureAlgorithm::Dilithium5,
+                algorithm: lib_crypto::types::signatures::SignatureAlgorithm::DEFAULT,
                 timestamp: 0,
             }], // Invalid
         );

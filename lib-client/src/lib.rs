@@ -313,7 +313,7 @@ pub extern "C" fn zhtp_client_identity_get_public_key(handle: *const IdentityHan
 ///
 /// Accepts either:
 /// - 32 bytes: returned as-is (already a wallet_id / key_id)
-/// - ≥1000 bytes: Dilithium2 (1312) or Dilithium5 (2592) public key — computes blake3(pk)
+/// - ≥1000 bytes: Dilithium5 (1312) or Dilithium5 (2592) public key — computes blake3(pk)
 ///
 /// Returns empty buffer on invalid input. Caller must free with `zhtp_client_buffer_free`.
 #[no_mangle]

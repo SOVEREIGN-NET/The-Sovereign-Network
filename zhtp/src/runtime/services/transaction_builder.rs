@@ -137,7 +137,7 @@ impl TransactionBuilder {
         let temp_signature = Signature {
             signature: Vec::new(),
             public_key: PublicKey::new(system_keypair.public_key.dilithium_pk),
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: economics_tx.timestamp,
         };
 
@@ -171,7 +171,7 @@ impl TransactionBuilder {
         Ok(Signature {
             signature: crypto_signature.signature,
             public_key: PublicKey::new(system_keypair.public_key.dilithium_pk),
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: economics_tx.timestamp,
         })
     }

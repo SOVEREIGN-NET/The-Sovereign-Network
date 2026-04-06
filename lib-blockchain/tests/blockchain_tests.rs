@@ -32,7 +32,7 @@ fn create_test_transaction(memo: &str) -> Result<Transaction> {
         crypto_integration::Signature {
             signature: vec![1, 2, 3, 4, 5], // Non-empty signature
             public_key: crypto_integration::PublicKey::new([0u8; 2592]),
-            algorithm: crypto_integration::SignatureAlgorithm::Dilithium5,
+            algorithm: crypto_integration::SignatureAlgorithm::DEFAULT,
             timestamp: 12345,
         },
         memo.as_bytes().to_vec(),
@@ -47,7 +47,7 @@ fn create_test_validator(id: &str, stake: u64) -> ValidatorInfo {
         identity_id: id.to_string(),
         stake,
         storage_provided: 1000000u64,
-        // consensus_key: BFT vote-signing key (Dilithium2, hot)
+        // consensus_key: BFT vote-signing key (Dilithium5, hot)
         consensus_key: [1u8; 2592],
         // networking_key: P2P transport identity key (Ed25519/X25519, hot)
         networking_key: vec![2u8; 32],
@@ -472,7 +472,7 @@ async fn test_identity_confirmations() -> Result<()> {
                         pk[0..identity_data.public_key.len().min(2592)].copy_from_slice(&identity_data.public_key[..identity_data.public_key.len().min(2592)]);
                         PublicKey::new(pk)
                     },
-                    algorithm: SignatureAlgorithm::Dilithium2,
+                    algorithm: SignatureAlgorithm::DEFAULT,
                     timestamp: identity_data.created_at,
                 },
                 format!("Identity registration for {}", identity_data.did).into_bytes(),

@@ -73,7 +73,7 @@ const MIN_PORT: u16 = 1024;
 /// Maximum valid port number
 const MAX_PORT: u16 = 65535;
 
-/// Expected Dilithium public key size (Dilithium2)
+/// Expected Dilithium public key size (Dilithium5)
 const DILITHIUM_PK_SIZE: usize = 1312;
 
 /// Expected Kyber public key size (Kyber1024)
@@ -455,7 +455,7 @@ impl Default for ReputationTracker {
 ///
 /// # Security
 /// Validates that public keys have correct sizes for post-quantum algorithms:
-/// - Dilithium2: 1312 bytes
+/// - Dilithium5: 1312 bytes
 /// - Kyber1024: 1568 bytes
 ///
 /// This prevents malformed keys from being accepted before cryptographic verification.
@@ -950,8 +950,8 @@ mod tests {
         );
         // Create a test public key
         let test_pub_key = PublicKey {
-            dilithium_pk: vec![1u8; 1312],
-            kyber_pk: vec![2u8; 800],
+            dilithium_pk: [1u8; 2592],
+            kyber_pk: [2u8; 1568],
             key_id: [3u8; 32],
         };
         result2.public_key = Some(test_pub_key);
@@ -993,8 +993,16 @@ mod tests {
     #[test]
     fn test_validate_public_key_valid() {
         let valid_key = PublicKey {
-            dilithium_pk: (0..1312).map(|i| (i % 256) as u8).collect(),
-            kyber_pk: (0..1568).map(|i| (i % 256) as u8).collect(), // Kyber1024
+            dilithium_pk: {
+                let mut arr = [0u8; 2592];
+                for (i, b) in arr.iter_mut().enumerate() { *b = (i % 256) as u8; }
+                arr
+            },
+            kyber_pk: {
+                let mut arr = [0u8; 1568];
+                for (i, b) in arr.iter_mut().enumerate() { *b = (i % 256) as u8; }
+                arr
+            },
             key_id: [42u8; 32],
         };
 
@@ -1004,8 +1012,8 @@ mod tests {
     #[test]
     fn test_validate_public_key_invalid_dilithium_size() {
         let invalid_key = PublicKey {
-            dilithium_pk: vec![1u8; 1000], // Wrong size
-            kyber_pk: vec![2u8; 1568],     // Kyber1024
+            dilithium_pk: [1u8; 2592], // Size is now fixed by the type system
+            kyber_pk: [2u8; 1568],     // Kyber1024
             key_id: [3u8; 32],
         };
 
@@ -1017,8 +1025,8 @@ mod tests {
     #[test]
     fn test_validate_public_key_invalid_kyber_size() {
         let invalid_key = PublicKey {
-            dilithium_pk: vec![1u8; 1312],
-            kyber_pk: vec![2u8; 800], // Wrong size (not 1568)
+            dilithium_pk: [1u8; 2592],
+            kyber_pk: [2u8; 1568], // Size is now fixed by the type system
             key_id: [3u8; 32],
         };
 
@@ -1030,9 +1038,9 @@ mod tests {
     #[test]
     fn test_validate_public_key_zero_key_id() {
         let invalid_key = PublicKey {
-            dilithium_pk: vec![1u8; 1312],
-            kyber_pk: vec![2u8; 1568], // Kyber1024
-            key_id: [0u8; 32],         // All zeros
+            dilithium_pk: [1u8; 2592],
+            kyber_pk: [2u8; 1568], // Kyber1024
+            key_id: [0u8; 32],     // All zeros
         };
 
         let result = validate_public_key(&invalid_key);
@@ -1043,8 +1051,8 @@ mod tests {
     #[test]
     fn test_validate_public_key_no_entropy() {
         let invalid_key = PublicKey {
-            dilithium_pk: vec![42u8; 1312], // All same value
-            kyber_pk: vec![2u8; 1568],      // Kyber1024
+            dilithium_pk: [42u8; 2592], // All same value
+            kyber_pk: [2u8; 1568],      // Kyber1024
             key_id: [3u8; 32],
         };
 

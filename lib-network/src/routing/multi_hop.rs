@@ -993,8 +993,8 @@ mod tests {
     #[tokio::test]
     async fn test_path_caching() {
         let router = MultiHopRouter::new();
-        let source = PublicKey::new(vec![1, 2, 3]);
-        let destination = PublicKey::new(vec![4, 5, 6]);
+        let source = PublicKey::new([1u8; 2592]);
+        let destination = PublicKey::new([4u8; 2592]);
         let path = vec![source.clone(), destination.clone()];
 
         router

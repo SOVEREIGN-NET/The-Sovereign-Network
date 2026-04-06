@@ -289,7 +289,7 @@ pub mod testing {
             signature: Signature {
                 signature: vec![1, 2, 3, 4], // Dummy signature
                 public_key: PublicKey::new([5u8; 2592]),
-                algorithm: SignatureAlgorithm::Dilithium5,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: time::current_timestamp(),
             },
             memo: b"test transaction".to_vec(),
