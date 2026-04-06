@@ -2846,7 +2846,7 @@ mod tests {
     /// Helper: create a test PublicKey with deterministic content
     fn test_public_key(id: u8) -> PublicKey {
         // Dilithium5 public keys are 2592 bytes
-        let mut key_bytes = vec![id; 2592];
+        let mut key_bytes = [id; 2592];
         // Make it somewhat realistic by varying the first few bytes
         key_bytes[0] = id;
         key_bytes[1] = id.wrapping_add(1);
@@ -3022,7 +3022,7 @@ mod tests {
             IdentityTransactionData::new(
                 did.to_string(),
                 "Council Member".to_string(),
-                signer.dilithium_pk.clone(),
+                signer.dilithium_pk.to_vec(),
                 vec![1, 2, 3],
                 "human".to_string(),
                 Hash::from([9u8; 32]),
@@ -3351,7 +3351,7 @@ mod tests {
     fn test_init_entity_registry_rejects_zero_treasury_keys() {
         let blockchain = crate::blockchain::Blockchain::default();
         let signer = test_public_key(41);
-        let zero_pk = PublicKey::new(vec![0u8; 2592]);
+        let zero_pk = PublicKey::new([0u8; 2592]);
         let tx = create_init_entity_registry_transaction_for_test(
             &signer,
             zero_pk.clone(),
@@ -3391,7 +3391,7 @@ mod tests {
     fn test_init_entity_registry_rejects_missing_dilithium_key_material() {
         let blockchain = crate::blockchain::Blockchain::default();
         let signer = test_public_key(58);
-        let kyber_only = PublicKey::from_kyber_public_key(vec![0xAB; 1568]);
+        let kyber_only = PublicKey::from_kyber_public_key([0xAB; 1568]);
         let tx = create_init_entity_registry_transaction_for_test(
             &signer,
             kyber_only,
@@ -4175,8 +4175,8 @@ mod tests {
         use crate::transaction::threshold_approval::ApprovalDomain;
 
         // Initialize registry with a known CBE treasury public key
-        let cbe_pk = PublicKey::new(vec![0xCBu8; 2592]);
-        let nonprofit_pk = PublicKey::new(vec![0x11u8; 2592]);
+        let cbe_pk = PublicKey::new([0xCBu8; 2592]);
+        let nonprofit_pk = PublicKey::new([0x11u8; 2592]);
 
         let mut registry = EntityRegistry::new();
         registry.init(cbe_pk.clone(), nonprofit_pk).unwrap();
@@ -4207,8 +4207,8 @@ mod tests {
         use crate::transaction::threshold_approval::ApprovalDomain;
 
         // Initialize registry with a known CBE treasury public key
-        let cbe_pk = PublicKey::new(vec![0xCBu8; 2592]);
-        let nonprofit_pk = PublicKey::new(vec![0x11u8; 2592]);
+        let cbe_pk = PublicKey::new([0xCBu8; 2592]);
+        let nonprofit_pk = PublicKey::new([0x11u8; 2592]);
         let cbe_key_id = cbe_pk.key_id;
 
         let mut registry = EntityRegistry::new();

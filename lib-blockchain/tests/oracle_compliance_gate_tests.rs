@@ -228,7 +228,7 @@ fn test_committee_membership_verification() {
                     .consensus_keypair
                     .public_key
                     .dilithium_pk
-                    .clone(),
+                    .to_vec(),
             )
         },
     );

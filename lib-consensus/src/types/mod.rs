@@ -561,7 +561,7 @@ pub trait BlockCommitCallback: Send + Sync {
     ///
     /// Returns the count of validators currently registered and active.
     /// Used by the mining loop to determine whether to use BFT consensus
-    /// (4+ validators) or bootstrap mode (< 4 validators).
+    /// (3+ validators) or bootstrap mode (< 3 validators).
     async fn get_active_validator_count(
         &self,
     ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>>;

@@ -36,7 +36,7 @@ fn create_test_cbe_token(reserve_micro_usd: u128) -> BondingCurveToken {
         ),
         sell_enabled: true,
         amm_pool_id: None,
-        creator: PublicKey::new(vec![1u8; 32]),
+        creator: PublicKey::new([1u8; 2592]),
         creator_did: None,
         deployed_at_block: 1,
         deployed_at_timestamp: 1,
@@ -57,7 +57,7 @@ fn test_validate_cbe_graduation_oracle_gate_uses_latest_fresh_price() {
     let mut blockchain = create_test_blockchain_legacy();
 
     // Register a CBE token
-    let token = create_test_cbe_token(300_000_000_000); // $300K
+    let token = create_test_cbe_token(3_000_000_000_000); // $300K
     let token_id = token.token_id;
     blockchain.bonding_curve_registry.register(token).unwrap();
 
@@ -96,7 +96,7 @@ fn test_cbe_graduation_rejects_missing_price() {
     let mut blockchain = create_test_blockchain_legacy();
 
     // Register a CBE token
-    let token = create_test_cbe_token(300_000_000_000); // $300K
+    let token = create_test_cbe_token(3_000_000_000_000); // $300K
     let token_id = token.token_id;
     blockchain.bonding_curve_registry.register(token).unwrap();
 
@@ -118,7 +118,7 @@ fn test_cbe_graduation_accepts_fresh_price() {
     let mut blockchain = create_test_blockchain_legacy();
 
     // Register a CBE token with $300K reserve (above $269K threshold)
-    let token = create_test_cbe_token(300_000_000_000);
+    let token = create_test_cbe_token(3_000_000_000_000);
     let token_id = token.token_id;
     blockchain.bonding_curve_registry.register(token).unwrap();
 
@@ -177,7 +177,7 @@ fn test_cbe_graduation_skips_non_cbe_tokens() {
     let mut blockchain = create_test_blockchain_legacy();
 
     // Register a non-CBE token
-    let mut token = create_test_cbe_token(300_000_000_000);
+    let mut token = create_test_cbe_token(3_000_000_000_000);
     token.symbol = "OTHER".to_string(); // Not CBE
     let token_id = token.token_id;
     blockchain.bonding_curve_registry.register(token).unwrap();
@@ -193,7 +193,7 @@ fn test_cbe_graduation_skips_already_graduated() {
     let mut blockchain = create_test_blockchain_legacy();
 
     // Register an already-graduated CBE token
-    let mut token = create_test_cbe_token(300_000_000_000);
+    let mut token = create_test_cbe_token(3_000_000_000_000);
     token.phase = Phase::Graduated;
     let token_id = token.token_id;
     blockchain.bonding_curve_registry.register(token).unwrap();

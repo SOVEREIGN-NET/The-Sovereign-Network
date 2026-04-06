@@ -1045,8 +1045,8 @@ mod tests {
 
     fn create_test_public_key(id: u8) -> PublicKey {
         PublicKey {
-            dilithium_pk: vec![id],
-            kyber_pk: vec![id],
+            dilithium_pk: [id; 2592],
+            kyber_pk: [id; 1568],
             key_id: [id; 32],
         }
     }
@@ -1229,7 +1229,7 @@ mod tests {
     #[test]
     fn test_init_rejects_zero_address() {
         let mut router = FeeRouter::new();
-        let zero = PublicKey::new(vec![0u8; 32]);
+        let zero = PublicKey::new([0u8; 2592]);
 
         let result = router.init(
             &zero, // Zero address!

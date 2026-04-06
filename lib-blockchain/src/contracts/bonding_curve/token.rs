@@ -661,12 +661,12 @@ impl BondingCurveToken {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::bonding_curve::PiecewiseLinearCurve;
+    use crate::contracts::bonding_curve::{PiecewiseLinearCurve, GRADUATION_THRESHOLD_USD};
 
     fn test_pubkey(id: u8) -> PublicKey {
         PublicKey {
-            dilithium_pk: vec![],
-            kyber_pk: vec![],
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: [id; 32],
         }
     }
@@ -718,7 +718,7 @@ mod tests {
             "Test Token".to_string(),
             "TEST".to_string(),
             CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
-            Threshold::ReserveAmount(1_000_000_000), // $10M reserve required
+            Threshold::ReserveAmount(400_000), // 400K reserve required (small for test)
             true,
             test_pubkey(1),
             String::new(),
@@ -728,19 +728,20 @@ mod tests {
         .unwrap();
 
         // Issue #1844: With 40% split, need 2.5x total purchases to reach reserve threshold
-        // Not enough reserve (100M purchase → 40M reserve)
+        // Use small amounts to stay within u64 supply range for PiecewiseLinearCurve
+        // Not enough reserve (400K purchase → 160K reserve)
         let _ = token
-            .buy(test_pubkey(2), 100_000_000, 101, 1_600_000_001)
+            .buy(test_pubkey(2), 400_000, 101, 1_600_000_001)
             .unwrap();
         assert!(!token.can_graduate(1_600_000_001, 101));
 
-        // Add more to reach threshold (need 2.5B total purchases for 1B reserve)
+        // Add more to reach threshold (need 1M total purchases for 400K reserve)
         let _ = token
-            .buy(test_pubkey(3), 2_400_000_000, 102, 1_600_000_002)
+            .buy(test_pubkey(3), 600_000, 102, 1_600_000_002)
             .unwrap();
         assert!(token.can_graduate(1_600_000_002, 102));
         assert_eq!(
-            token.reserve_balance, 1_000_000_000,
+            token.reserve_balance, 400_000,
             "Reserve should be exactly at threshold"
         );
 
@@ -973,12 +974,14 @@ mod tests {
     /// Issue #1845: Test sell with excessive amount fails
     #[test]
     fn test_sell_excessive_amount_fails() {
+        // Use small amounts to stay within u64 supply range for PiecewiseLinearCurve.
+        // Max safe buy amount is ~578,000 to keep supply < u64::MAX.
         let mut token = BondingCurveToken::deploy(
             [14u8; 32],
             "Excessive Sell Token".to_string(),
             "ESELL".to_string(),
             CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
-            Threshold::ReserveAmount(10_000_000_000),
+            Threshold::ReserveAmount(100_000), // 100K threshold (low for test)
             true,
             test_pubkey(1),
             String::new(),
@@ -989,13 +992,14 @@ mod tests {
 
         let buyer = test_pubkey(2);
 
-        // Buy some tokens
+        // Buy some tokens with small amount (100K keeps supply well within u64 range)
         let (tokens_bought, _) = token
-            .buy(buyer.clone(), 1_000_000_000, 101, 1_600_000_100)
+            .buy(buyer.clone(), 100_000, 101, 1_600_000_100)
             .unwrap();
 
-        // Try to sell more than bought (also exceeds reserve, so fails)
-        let result = token.sell(buyer, tokens_bought + 1_000_000_000, 102, 1_600_000_200);
+        // Try to sell more than bought - this should fail with InsufficientReserve
+        // because the reserve can't cover the payout for selling more tokens than exist
+        let result = token.sell(buyer, tokens_bought + 1_000_000, 102, 1_600_000_200);
         assert!(result.is_err(), "Selling more than owned should fail");
         assert!(
             matches!(result, Err(CurveError::InsufficientReserve)),
@@ -1355,12 +1359,16 @@ mod tests {
     /// Issue #1846: Test non-USD threshold still works.
     #[test]
     fn test_non_usd_threshold_unchanged() {
+        // Use small amounts to stay within u64 supply range for PiecewiseLinearCurve.
+        // Max safe buy amount is ~578,000 to keep supply < u64::MAX.
+        let threshold_reserve = 200_000u128; // 200K reserve required
+        
         let mut token = BondingCurveToken::deploy(
             [25u8; 32],
             "Non-USD Token".to_string(),
             "NONUSD".to_string(),
             CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
-            Threshold::ReserveAmount(5_000_000_000), // 5000 SOV
+            Threshold::ReserveAmount(threshold_reserve),
             true,
             test_pubkey(1),
             String::new(),
@@ -1371,19 +1379,23 @@ mod tests {
 
         let buyer = test_pubkey(2);
 
-        // Buy enough to reach threshold (need 12,500 SOV at 40% split)
+        // With 40/60 split: reserve gets 40% of purchase.
+        // First buy: 300K purchase -> 120K reserve (below 200K threshold)
         token
-            .buy(buyer.clone(), 10_000_000_000, 101, 1_600_000_100)
+            .buy(buyer.clone(), 300_000, 101, 1_600_000_100)
             .unwrap();
         assert!(
             !token.can_graduate(1_600_000_100, 101),
-            "Should not graduate yet"
+            "Should not graduate yet (reserve = {})",
+            token.reserve_balance
         );
 
-        token.buy(buyer, 3_000_000_000, 102, 1_600_000_200).unwrap();
+        // Second buy: 200K purchase -> 80K more reserve = 200K total (at threshold)
+        token.buy(buyer, 200_000, 102, 1_600_000_200).unwrap();
         assert!(
             token.can_graduate(1_600_000_200, 102),
-            "Should graduate at reserve threshold"
+            "Should graduate at reserve threshold (reserve = {})",
+            token.reserve_balance
         );
 
         // Oracle check should delegate to standard can_graduate for non-USD thresholds

@@ -2,10 +2,11 @@ use anyhow::Result;
 use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use lib_blockchain::types::mining::get_mining_config_from_env;
 use lib_blockchain::types::transaction_type::TransactionType;
+use lib_blockchain::types::Hash;
 use lib_blockchain::{Block, BlockHeader, Blockchain, Transaction};
 
 fn test_public_key(id: u8) -> PublicKey {
-    PublicKey::new(vec![id; 2592])
+    PublicKey::new([id; 2592])
 }
 
 fn test_signature(signer: &PublicKey) -> Signature {
@@ -29,17 +30,17 @@ fn create_block(blockchain: &Blockchain, transactions: Vec<Transaction>) -> Bloc
         lib_blockchain::transaction::hashing::calculate_transaction_merkle_root(&transactions)
     };
 
-    let header = BlockHeader::new(
-        1,
-        blockchain.latest_block().unwrap().hash(),
-        merkle_root,
-        blockchain.latest_block().unwrap().timestamp() + 10,
-        mining_config.difficulty,
-        blockchain.height + 1,
-        transactions.len() as u32,
-        transactions.iter().map(|tx| tx.size()).sum::<usize>() as u32,
-        mining_config.difficulty,
-    );
+    let header = BlockHeader {
+        version: 1,
+        previous_hash: blockchain.latest_block().unwrap().hash().into(),
+        data_helix_root: merkle_root.as_array(),
+        timestamp: blockchain.latest_block().unwrap().timestamp() + 10,
+        height: blockchain.height + 1,
+        verification_helix_root: [0u8; 32],
+        state_root: Hash::default().into(),
+        bft_quorum_root: [0u8; 32],
+        block_hash: Hash::default(),
+    };
 
     Block::new(header, transactions)
 }

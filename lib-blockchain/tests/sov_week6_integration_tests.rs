@@ -26,13 +26,9 @@ const BLOCKS_PER_MONTH: u64 = 43200; // ~30 days at 5-second blocks
 
 /// Create test PublicKey with specific ID
 fn test_key(id: u8) -> PublicKey {
-    let mut key_id = [0u8; 32];
-    key_id[0] = id;
-    PublicKey {
-        key_id,
-        dilithium_pk: vec![id],
-        kyber_pk: vec![id],
-    }
+    let mut dilithium_pk = [0u8; 2592];
+    dilithium_pk[0] = id;
+    PublicKey::new(dilithium_pk)
 }
 
 /// Initialize FeeRouter with test pool addresses

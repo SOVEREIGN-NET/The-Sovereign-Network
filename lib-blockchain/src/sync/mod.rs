@@ -229,11 +229,38 @@ impl ChainSync {
             });
         }
 
+        // Track last committed block hash for chain continuity validation.
+        // The executor uses trusted replay (skip_prev_hash_validation=true),
+        // so ChainSync must enforce previous_hash continuity itself.
+        let mut prev_block_hash: Option<[u8; 32]> = if expected_start > 0 {
+            self.store
+                .get_block_hash_by_height(expected_start - 1)?
+                .map(|bh| *bh.as_bytes())
+        } else {
+            None
+        };
+
         let mut imported_count = 0;
         let mut last_height = None;
 
         for block in blocks {
             let height = block.header.height;
+
+            // Validate previous_hash chain continuity (non-genesis blocks)
+            if height > 0 {
+                if let Some(expected_prev) = prev_block_hash {
+                    if block.header.previous_hash != expected_prev {
+                        use lib_types::primitives::BlockHash;
+                        return Err(SyncError::BlockApplyFailed {
+                            height,
+                            error: BlockApplyError::InvalidPreviousHash {
+                                expected: BlockHash::new(expected_prev),
+                                actual: BlockHash::new(block.header.previous_hash),
+                            },
+                        });
+                    }
+                }
+            }
 
             // Apply block through executor
             // This handles: prechecks, begin_block, apply txs, append_block, commit_block
@@ -241,6 +268,8 @@ impl ChainSync {
             executor
                 .apply_block(&block)
                 .map_err(|e| SyncError::BlockApplyFailed { height, error: e })?;
+
+            prev_block_hash = Some(block.header.block_hash.as_array());
 
             imported_count += 1;
             last_height = Some(height);
@@ -556,7 +585,7 @@ mod tests {
             fee: 0,
             signature: Signature {
                 signature: vec![0u8; 64],
-                public_key: PublicKey::new(vec![1u8; 32]),
+                public_key: PublicKey::new([1u8; 2592]),
                 algorithm: SignatureAlgorithm::Dilithium5,
                 timestamp: 0,
             },

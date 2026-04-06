@@ -9,7 +9,7 @@ fn add_validator(bc: &mut Blockchain, did: &str) {
         identity_id: did.to_string(),
         stake: 1_000_000,
         storage_provided: 0,
-        consensus_key: vec![1u8; 32],
+        consensus_key: [1u8; 2592],
         networking_key: vec![2u8; 32],
         rewards_key: vec![3u8; 32],
         network_address: "127.0.0.1:9334".to_string(),

@@ -669,20 +669,21 @@ pub fn derive_dao_id(token_addr: &PublicKey, class: DAOType, treasury: &PublicKe
     let mut data = Vec::new();
 
     // Domain separation (versioned for future migrations V2, V3, etc.)
-    data.extend_from_slice(b"SOV_DAO_REGISTRY_V1");
+    data.extend_from_slice(b"SOV_DAO_REGISTRY_V2");
 
-    // Length-prefixed token_addr (u16 big-endian length)
-    let token_bytes = token_addr.as_bytes();
-    data.extend_from_slice(&(token_bytes.len() as u16).to_be_bytes());
-    data.extend_from_slice(&token_bytes);
+    // Token identity via key_id (32 bytes, fixed-length — no length prefix needed).
+    // key_id is the canonical identifier for a key: for real keys it equals
+    // blake3(dilithium_pk), and for event-reconstructed keys it is the only
+    // meaningful field available.  Using key_id instead of as_bytes()
+    // (which returns only dilithium_pk) ensures that dao_id derivation is
+    // correct regardless of whether the full cryptographic material is present.
+    data.extend_from_slice(&token_addr.key_id);
 
     // Fixed 2-byte class encoding ("np" or "fp")
     data.extend_from_slice(class.as_str().as_bytes());
 
-    // Length-prefixed treasury (u16 big-endian length)
-    let treasury_bytes = treasury.as_bytes();
-    data.extend_from_slice(&(treasury_bytes.len() as u16).to_be_bytes());
-    data.extend_from_slice(&treasury_bytes);
+    // Treasury identity via key_id (32 bytes, fixed-length)
+    data.extend_from_slice(&treasury.key_id);
 
     // BLAKE3 produces full 32-byte output deterministically
     // No randomness, no truncation, no state dependence
@@ -695,7 +696,7 @@ mod tests {
     use super::*;
 
     fn test_public_key(id: u8) -> PublicKey {
-        PublicKey::new(vec![id; 1312])
+        PublicKey::new([id; 2592])
     }
 
     // ============================================================================
@@ -771,25 +772,21 @@ mod tests {
 
     #[test]
     fn test_dao_id_golden() {
-        // Golden test: Known input produces expected hash (V1 format)
+        // Golden test: Known input produces expected hash (V2 format, key_id based)
         let token = test_public_key(1);
         let treasury = test_public_key(2);
 
         let dao_id = derive_dao_id(&token, DAOType::NP, &treasury);
 
-        // Reconstruct expected hash
+        // Reconstruct expected hash using V2 format: domain | token.key_id | class | treasury.key_id
         let mut expected_input = Vec::new();
-        expected_input.extend_from_slice(b"SOV_DAO_REGISTRY_V1");
+        expected_input.extend_from_slice(b"SOV_DAO_REGISTRY_V2");
 
-        let token_bytes = token.as_bytes();
-        expected_input.extend_from_slice(&(token_bytes.len() as u16).to_be_bytes());
-        expected_input.extend_from_slice(&token_bytes);
+        expected_input.extend_from_slice(&token.key_id);
 
         expected_input.extend_from_slice(b"np");
 
-        let treasury_bytes = treasury.as_bytes();
-        expected_input.extend_from_slice(&(treasury_bytes.len() as u16).to_be_bytes());
-        expected_input.extend_from_slice(&treasury_bytes);
+        expected_input.extend_from_slice(&treasury.key_id);
 
         use crate::integration::crypto_integration::hash_data;
         let expected = hash_data(&expected_input);
@@ -1005,7 +1002,7 @@ mod tests {
     fn test_treasury_cannot_be_zero() {
         let mut registry = DAORegistry::new();
         let token = test_public_key(1);
-        let zero_treasury = PublicKey::new(vec![0u8; 1312]);
+        let zero_treasury = PublicKey::new([0u8; 2592]);
         let owner = test_public_key(3);
 
         let result =
@@ -1020,7 +1017,7 @@ mod tests {
     #[test]
     fn test_token_address_cannot_be_zero() {
         let mut registry = DAORegistry::new();
-        let zero_token = PublicKey::new(vec![0u8; 1312]);
+        let zero_token = PublicKey::new([0u8; 2592]);
         let treasury = test_public_key(2);
         let owner = test_public_key(3);
 
@@ -1036,7 +1033,7 @@ mod tests {
         let mut registry = DAORegistry::new();
         let token = test_public_key(1);
         let treasury = test_public_key(2);
-        let zero_owner = PublicKey::new(vec![0u8; 1312]);
+        let zero_owner = PublicKey::new([0u8; 2592]);
 
         let result =
             registry.register_dao(token, DAOType::NP, treasury, [1u8; 32], zero_owner, 100);
@@ -1079,8 +1076,14 @@ mod tests {
     fn test_length_prefix_collision_prevention() {
         // CRITICAL: Test with DIFFERENT length keys to verify length-prefixing works
         // Without length-prefixes, ("ab", "c") would collide with ("a", "bc")
-        let short_token = PublicKey::new(vec![0x01, 0x02, 0x03, 0x04]); // 4 bytes
-        let long_token = PublicKey::new(vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]); // 8 bytes
+        let short_bytes = [0x01, 0x02, 0x03, 0x04];
+        let long_bytes = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        let mut short_dilithium = [0u8; 2592];
+        let mut long_dilithium = [0u8; 2592];
+        short_dilithium[..4].copy_from_slice(&short_bytes);
+        long_dilithium[..8].copy_from_slice(&long_bytes);
+        let short_token = PublicKey::new(short_dilithium);
+        let long_token = PublicKey::new(long_dilithium);
         let treasury = test_public_key(2);
 
         let id_short = derive_dao_id(&short_token, DAOType::NP, &treasury);

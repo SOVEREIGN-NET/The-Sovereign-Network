@@ -8,11 +8,11 @@ use lib_blockchain::storage::{BlockchainStore, SledStore};
 use lib_blockchain::transaction::{
     TokenMintData, TokenTransferData, Transaction, WalletTransactionData,
 };
-use lib_blockchain::types::{Difficulty, Hash};
+use lib_blockchain::types::Hash;
 use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
 fn test_pubkey(id: u8) -> PublicKey {
-    PublicKey::new(vec![id; 32])
+    PublicKey::new([0u8; 2592])
 }
 
 fn test_signature(pubkey: &PublicKey) -> Signature {
@@ -31,7 +31,7 @@ fn wallet_registration_tx(wallet_id: [u8; 32], owner_pubkey: &PublicKey) -> Tran
             wallet_type: "Primary".to_string(),
             wallet_name: format!("Wallet-{}", hex::encode(&wallet_id[..4])),
             alias: None,
-            public_key: owner_pubkey.dilithium_pk.clone(),
+            public_key: owner_pubkey.dilithium_pk.to_vec(),
             owner_identity_id: None,
             seed_commitment: Hash::zero(),
             created_at: 1_700_000_000,
@@ -81,28 +81,22 @@ fn token_mint_tx(signer: &PublicKey, token_id: [u8; 32], to: [u8; 32], amount: u
 fn block(height: u64, txs: Vec<Transaction>) -> Block {
     let header = BlockHeader {
         version: 1,
-        height,
+        previous_hash: Hash::zero().into(),
+        data_helix_root: Hash::zero().into(),
         timestamp: 1_700_000_000 + height,
-        previous_block_hash: Hash::zero(),
-        merkle_root: Hash::zero(),
-        state_root: Hash::default(),
+        height,
+        verification_helix_root: [0u8; 32],
+        state_root: Hash::default().into(),
+        bft_quorum_root: [0u8; 32],
         block_hash: Hash::zero(),
-        nonce: 0,
-        difficulty: Difficulty::from_bits(0),
-        cumulative_difficulty: Difficulty::from_bits(0),
-        transaction_count: txs.len() as u32,
-        block_size: 0,
-        fee_model_version: 2,
     };
     Block::new(header, txs)
 }
 
 fn wallet_key(wallet_id: &[u8; 32]) -> PublicKey {
-    PublicKey {
-        dilithium_pk: Vec::new(),
-        kyber_pk: Vec::new(),
-        key_id: *wallet_id,
-    }
+    let mut dilithium_pk = [0u8; 2592];
+    dilithium_pk[0..32].copy_from_slice(wallet_id);
+    PublicKey::new(dilithium_pk)
 }
 
 fn funded_recipient_count(token: &lib_blockchain::contracts::TokenContract) -> usize {

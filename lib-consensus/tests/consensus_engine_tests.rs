@@ -375,16 +375,16 @@ async fn test_consensus_round_initialization() -> Result<()> {
 #[tokio::test]
 async fn test_maximum_validator_limit() -> Result<()> {
     let mut config = create_test_config();
-    // MIN_VALIDATORS = 4 is the lowest value max_validators can be set to
+    // MIN_VALIDATORS = 3 is the lowest value max_validators can be set to
     // (the ValidatorManager constructor clamps max_validators to at least MIN_VALIDATORS).
     // Set exactly at the minimum to test the upper-bound enforcement with the
     // smallest possible active set.
-    config.max_validators = 4;
+    config.max_validators = 3;
 
     let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
-    // Register up to the limit (4 validators = MIN_VALIDATORS)
-    for i in 1..=4 {
+    // Register up to the limit (3 validators = MIN_VALIDATORS)
+    for i in 1..=3 {
         let identity = create_test_identity(&format!("validator_{}", i));
         let (consensus_key, networking_key, rewards_key) = validator_keys(i as u8);
         let result = consensus_engine

@@ -293,8 +293,8 @@ mod tests {
 
     fn test_public_key(id: u8) -> PublicKey {
         PublicKey {
-            dilithium_pk: vec![id; 32],
-            kyber_pk: vec![id; 32],
+            dilithium_pk: [id; 2592],
+            kyber_pk: [id; 1568],
             key_id: [id; 32],
         }
     }

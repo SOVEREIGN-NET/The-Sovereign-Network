@@ -128,8 +128,8 @@ mod tests {
         Signature {
             signature: vec![seed; 64],
             public_key: crate::integration::crypto_integration::PublicKey {
-                dilithium_pk: vec![seed; 32],
-                kyber_pk: vec![seed.wrapping_add(1); 32],
+                dilithium_pk: [seed; 2592],
+                kyber_pk: [seed.wrapping_add(1); 1568],
                 key_id: [seed; 32],
             },
             algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,

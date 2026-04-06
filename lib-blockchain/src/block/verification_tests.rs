@@ -342,9 +342,7 @@ mod tests {
         assert!(has_supermajority(4, 5));   // 4/5 = 80%
         
         assert!(!has_supermajority(4, 7));  // 4/7 = 57%
-        assert!(!has_supermajority(5, 7));  // 5/7 = 71.4% (needs > 66.67%, so 5 is enough)
-        // Actually 5/7 = 71.4% which is > 66.67%, so this should pass
-        assert!(has_supermajority(5, 7));
+        assert!(has_supermajority(5, 7));   // 5/7 = 71.4% (needs > 66.67%, so 5 is enough)
         
         assert!(!has_supermajority(6, 10)); // 6/10 = 60%
         assert!(has_supermajority(7, 10));  // 7/10 = 70%

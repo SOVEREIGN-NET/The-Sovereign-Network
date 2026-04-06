@@ -22,6 +22,7 @@ use lib_blockchain::transaction::{
 use lib_blockchain::types::Hash;
 use lib_blockchain::types::{transaction_type::TransactionType, ContractType};
 use lib_blockchain::Blockchain;
+use crate::config::Environment;
 
 /// Clean blockchain handler implementation
 ///
@@ -29,12 +30,14 @@ use lib_blockchain::Blockchain;
 /// Instead, it fetches the current shared blockchain on every request
 /// to ensure it always sees the latest state (including transactions
 /// added via mesh protocol).
-pub struct BlockchainHandler {}
+pub struct BlockchainHandler {
+    environment: Environment,
+}
 
 impl BlockchainHandler {
-    pub fn new(_blockchain: Arc<RwLock<Blockchain>>) -> Self {
+    pub fn new(_blockchain: Arc<RwLock<Blockchain>>, environment: Environment) -> Self {
         // We ignore the passed blockchain reference and always fetch from global provider
-        Self {}
+        Self { environment }
     }
 
     /// Get the current shared blockchain instance
@@ -117,6 +120,10 @@ impl BlockchainHandler {
             size: tx.size(),
         }
     }
+
+    fn chain_id(&self) -> u8 {
+        self.environment.chain_id()
+    }
 }
 
 #[async_trait::async_trait]
@@ -141,6 +148,7 @@ impl ZhtpRequestHandler for BlockchainHandler {
             (ZhtpMethod::Get, "/api/v1/blockchain/status") => {
                 self.handle_blockchain_status(request).await
             }
+            (ZhtpMethod::Get, "/api/v1/chain/info") => self.handle_chain_info(request).await,
             (ZhtpMethod::Get, "/api/v1/blockchain/latest") => {
                 self.handle_latest_block(request).await
             }
@@ -255,7 +263,7 @@ impl ZhtpRequestHandler for BlockchainHandler {
     }
 
     fn can_handle(&self, request: &ZhtpRequest) -> bool {
-        request.uri.starts_with("/api/v1/blockchain/")
+        request.uri.starts_with("/api/v1/blockchain/") || request.uri.starts_with("/api/v1/chain/")
     }
 
     fn priority(&self) -> u32 {
@@ -267,12 +275,36 @@ impl ZhtpRequestHandler for BlockchainHandler {
 #[derive(Serialize)]
 struct BlockchainStatusResponse {
     status: String,
+    chain_id: u8,
     height: u64,
     latest_block_hash: String,
     total_transactions: u64,
     pending_transactions: usize,
     network_hash_rate: String,
     difficulty: u64,
+}
+
+#[derive(Serialize)]
+struct ChainInfoResponse {
+    status: String,
+    chain_id: u8,
+    network: String,
+    height: u64,
+    head_hash: String,
+    genesis_hash: String,
+    validator_count: usize,
+    identity_count: usize,
+}
+
+#[derive(Serialize)]
+struct ChainTipInfo {
+    chain_id: u8,
+    height: u64,
+    head_hash: String,
+    total_work: String,
+    validator_count: usize,
+    identity_count: usize,
+    genesis_hash: String,
 }
 
 #[derive(Serialize)]
@@ -821,6 +853,7 @@ impl BlockchainHandler {
 
         let response_data = BlockchainStatusResponse {
             status: "active".to_string(),
+            chain_id: self.chain_id(),
             height: blockchain.get_height(),
             latest_block_hash: blockchain
                 .latest_block()
@@ -860,6 +893,33 @@ impl BlockchainHandler {
             "application/json".to_string(),
             None,
         ))
+    }
+
+    /// Get chain identity and tip metadata for client chain detection.
+    async fn handle_chain_info(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        let response_data = ChainInfoResponse {
+            status: "active".to_string(),
+            chain_id: self.chain_id(),
+            network: self.environment.to_string().to_ascii_lowercase(),
+            height: blockchain.height,
+            head_hash: blockchain
+                .blocks
+                .last()
+                .map(|b| hex::encode(b.header.block_hash.as_bytes()))
+                .unwrap_or_else(|| "none".to_string()),
+            genesis_hash: blockchain
+                .blocks
+                .first()
+                .map(|b| hex::encode(b.header.data_helix_root))
+                .unwrap_or_else(|| "none".to_string()),
+            validator_count: blockchain.validator_registry.len(),
+            identity_count: blockchain.identity_registry.len(),
+        };
+
+        Ok(ZhtpResponse::json(&response_data, None)?)
     }
 
     /// Handle latest block request
@@ -2507,16 +2567,6 @@ impl BlockchainHandler {
             .map_err(|e| anyhow::anyhow!("Failed to get blockchain: {}", e))?;
         let blockchain = blockchain_arc.read().await;
 
-        #[derive(Serialize)]
-        struct ChainTipInfo {
-            height: u64,
-            head_hash: String,
-            total_work: String,
-            validator_count: usize,
-            identity_count: usize,
-            genesis_hash: String,
-        }
-
         let head_hash = blockchain
             .blocks
             .last()
@@ -2529,13 +2579,20 @@ impl BlockchainHandler {
             .map(|b| hex::encode(b.header.data_helix_root))
             .unwrap_or_else(|| "none".to_string());
 
+        // chain_id uniquely identifies this chain instance for clients.
+        // Using the genesis hash prefix ensures it changes on every reset
+        // without requiring a separate config field.
+        let chain_id = format!("sovn-{}", &genesis_hash[..16]);
+
         let tip_info = ChainTipInfo {
+            chain_id: self.chain_id(),
             height: blockchain.height,
             head_hash,
             total_work: blockchain.total_work.to_string(),
             validator_count: blockchain.validator_registry.len(),
             identity_count: blockchain.identity_registry.len(),
             genesis_hash,
+            chain_id,
         };
 
         let json_response = serde_json::to_vec(&tip_info)?;
@@ -3085,5 +3142,33 @@ mod tests {
         let value = serde_json::to_value(response).unwrap();
 
         assert_eq!(value["token_creation_fee"], 1_000);
+    }
+
+    #[test]
+    fn handler_claims_chain_info_endpoint() {
+        // Verify the handler claims to handle the new /api/v1/chain/info endpoint
+        use crate::config::Environment;
+        
+        let handler = BlockchainHandler::new(
+            Arc::new(RwLock::new(Blockchain::new())),
+            Environment::Development,
+        );
+        
+        let chain_info_request = ZhtpRequest {
+            method: ZhtpMethod::Get,
+            uri: "/api/v1/chain/info".to_string(),
+            headers: std::collections::HashMap::new(),
+            body: Vec::new(),
+            peer_addr: None,
+            timestamp: 0,
+        };
+        
+        assert!(
+            handler.can_handle(&chain_info_request),
+            "handler must claim /api/v1/chain/info endpoint"
+        );
+        
+        // Verify chain_id is sourced from environment
+        assert_eq!(handler.chain_id(), Environment::Development.chain_id());
     }
 }

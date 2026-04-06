@@ -17,8 +17,8 @@ impl ConsensusEngine {
     /// - Receiver closure causes graceful shutdown
     ///
     /// Mode Awareness:
-    /// - BFT Mode (>= 4 validators): Full consensus participation
-    /// - Bootstrap Mode (< 4 validators): Passive monitoring, no proposals
+    /// - BFT Mode (>= 3 validators): Full consensus participation
+    /// - Bootstrap Mode (< 3 validators): Passive monitoring, no proposals
     pub async fn run_consensus_loop(&mut self) -> ConsensusResult<()> {
         let mut message_rx = self.message_rx.take().ok_or_else(|| {
             ConsensusError::ValidatorError("Message receiver not set".to_string())
@@ -53,7 +53,7 @@ impl ConsensusEngine {
         ));
 
         // Track the last time our blockchain height advanced, so we can trigger
-        // a catch-up sync even in bootstrap mode (< 4 validators) where the
+        // a catch-up sync even in bootstrap mode (< 3 validators) where the
         // HeartbeatTracker has no entries and the stall detector never fires.
         let mut last_height_seen: u64 = self.current_round.height;
         let mut last_height_advance_secs: u64 = std::time::SystemTime::now()
@@ -111,7 +111,7 @@ impl ConsensusEngine {
         loop {
             // Publish the height BFT is actively working on so catch-up sync
             // doesn't race with block commits at the same height.
-            // Only publish in BFT mode (>= 4 validators). In bootstrap mode,
+            // Only publish in BFT mode (>= 3 validators). In bootstrap mode,
             // catch-up sync must be unrestricted to fill the gap.
             if let Some(ref bft_height) = self.bft_active_height {
                 if self.is_bft_mode_active() {
