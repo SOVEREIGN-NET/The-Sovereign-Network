@@ -81,7 +81,7 @@ async fn test_utxo_creation_and_tracking() -> Result<()> {
         Signature {
             signature: vec![1, 2, 3],
             public_key: PublicKey::new([0u8; 2592]),
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: 12345,
         },
         "UTXO creation test".as_bytes().to_vec(),
@@ -145,7 +145,7 @@ async fn test_nullifier_tracking() -> Result<()> {
         Signature {
             signature: vec![1, 2, 3],
             public_key: PublicKey::new([0u8; 2592]),
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: 12345,
         },
         "Nullifier test".as_bytes().to_vec(),
@@ -195,7 +195,7 @@ async fn test_double_spend_prevention() -> Result<()> {
         Signature {
             signature: vec![1, 2, 3],
             public_key: PublicKey::new([0u8; 2592]),
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: 12345,
         },
         "First transaction".as_bytes().to_vec(),
@@ -227,7 +227,7 @@ async fn test_double_spend_prevention() -> Result<()> {
         Signature {
             signature: vec![7, 8, 9],
             public_key: PublicKey::new([0u8; 2592]),
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: 12346,
         },
         "Double spend attempt".as_bytes().to_vec(),
@@ -280,7 +280,7 @@ async fn test_utxo_spending() -> Result<()> {
         Signature {
             signature: vec![1, 2, 3],
             public_key: PublicKey::new([0u8; 2592]),
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: 12345,
         },
         "UTXO creation".as_bytes().to_vec(),
@@ -318,7 +318,7 @@ async fn test_utxo_spending() -> Result<()> {
         Signature {
             signature: vec![11, 12, 13],
             public_key: PublicKey::new([0u8; 2592]),
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: 12346,
         },
         "UTXO spending".as_bytes().to_vec(),
@@ -370,7 +370,7 @@ async fn test_utxo_set_consistency() -> Result<()> {
             Signature {
                 signature: vec![(i as u8), (i as u8) + 1, (i as u8) + 2],
                 public_key: PublicKey::new([0u8; 2592]),
-                algorithm: SignatureAlgorithm::Dilithium5,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: 12345 + i as u64,
             },
             format!("Transaction {}", i).as_bytes().to_vec(),
@@ -434,7 +434,7 @@ async fn test_large_nullifier_set() -> Result<()> {
         Signature {
             signature: vec![1, 2, 3, 4, 5],
             public_key: PublicKey::new([0u8; 2592]),
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: 12345,
         },
         "Large nullifier test".as_bytes().to_vec(),
@@ -490,7 +490,7 @@ async fn test_mixed_transaction_block() -> Result<()> {
         Signature {
             signature: vec![1, 2, 3],
             public_key: PublicKey::new([0u8; 2592]),
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: 12345,
         },
         "Creation".as_bytes().to_vec(),
@@ -517,7 +517,7 @@ async fn test_mixed_transaction_block() -> Result<()> {
         Signature {
             signature: vec![10, 11, 12],
             public_key: PublicKey::new([0u8; 2592]),
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: 12346,
         },
         "Spending".as_bytes().to_vec(),

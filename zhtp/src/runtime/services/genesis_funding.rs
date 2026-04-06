@@ -151,7 +151,7 @@ impl GenesisFundingService {
                 wallet_id_hex, SOV_WELCOME_BONUS_SOV
             );
 
-            // CRITICAL: Get the FULL Dilithium2 public key from the identity's private data
+            // CRITICAL: Get the FULL Dilithium5 public key from the identity's private data
             // This is required for signature verification (1312 bytes, not 32-byte hash)
             let identity_dilithium_pubkey = if let Some(user_id) = user_identity_id.as_ref() {
                 // Find the matching private data for this identity
@@ -159,7 +159,7 @@ impl GenesisFundingService {
                     .iter()
                     .find(|(id, _)| id.0 == user_id.0)
                 {
-                    // Extract the full Dilithium2 public key (1312 bytes)
+                    // Extract the full Dilithium5 public key (1312 bytes)
                     genesis_private.1.quantum_keypair.public_key.clone()
                 } else {
                     error!(" CRITICAL: No private key found for user identity during genesis!");
@@ -171,7 +171,7 @@ impl GenesisFundingService {
             };
 
             info!(
-                "   - Dilithium2 public key size: {} bytes",
+                "   - Dilithium5 public key size: {} bytes",
                 identity_dilithium_pubkey.len()
             );
 
@@ -194,13 +194,13 @@ impl GenesisFundingService {
             genesis_outputs.push(wallet_output);
 
             // Register wallet in blockchain's wallet_registry with initial balance
-            // CRITICAL: Store the FULL Dilithium2 public key for signature verification
+            // CRITICAL: Store the FULL Dilithium5 public key for signature verification
             let wallet_data = WalletTransactionData {
                 wallet_id: lib_blockchain::Hash::from_slice(&wallet_id.0),
                 wallet_type: "Primary".to_string(),
                 wallet_name: "Primary Wallet".to_string(),
                 alias: None,
-                public_key: identity_dilithium_pubkey.clone(), // Full 1312-byte Dilithium2 public key
+                public_key: identity_dilithium_pubkey.clone(), // Full 1312-byte Dilithium5 public key
                 owner_identity_id: user_identity_id
                     .as_ref()
                     .map(|id| lib_blockchain::Hash::from_slice(&id.0)),
@@ -240,7 +240,7 @@ impl GenesisFundingService {
                 hex::encode(&user_identity_id.as_ref().unwrap().0)
             );
             info!(
-                "   - Dilithium2 Public Key (first 16 bytes): {}",
+                "   - Dilithium5 Public Key (first 16 bytes): {}",
                 hex::encode(&identity_dilithium_pubkey[..16])
             );
         }
@@ -253,7 +253,7 @@ impl GenesisFundingService {
                     .as_bytes()
                     .to_vec(),
                 public_key: PublicKey::new([0u8; 2592]),
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: 1730419200, // November 1, 2025 00:00:00 UTC
             }
         } else {
@@ -363,7 +363,7 @@ impl GenesisFundingService {
             let user_did = format!("did:zhtp:{}", hex::encode(&user_id.0));
             info!(" Registering USER identity on blockchain: {}", user_did);
 
-            // Get the full Dilithium2 public key from private data
+            // Get the full Dilithium5 public key from private data
             let user_dilithium_pubkey = if let Some(user_private) = genesis_private_data
                 .iter()
                 .find(|(id, _)| id.0 == user_id.0)

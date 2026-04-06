@@ -13,7 +13,7 @@ fn test_signature(signer: &PublicKey) -> Signature {
     Signature {
         signature: vec![0u8; 64],
         public_key: signer.clone(),
-        algorithm: SignatureAlgorithm::Dilithium5,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: 0,
     }
 }

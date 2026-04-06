@@ -22,7 +22,7 @@ fn build_approval_set(
             .into_iter()
             .map(|(dilithium_pk, signature)| Approval {
                 public_key: crate::token_tx::create_public_key(dilithium_pk),
-                algorithm: SignatureAlgorithm::Dilithium5,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 signature,
             })
             .collect(),
@@ -169,8 +169,8 @@ mod tests {
             .expect("init payload")
             .clone();
         assert_eq!(data.initialized_at_height, 42);
-        assert_eq!(data.cbe_treasury.dilithium_pk, vec![0x11; 2592]);
-        assert_eq!(data.nonprofit_treasury.dilithium_pk, vec![0x22; 2592]);
+        assert_eq!(data.cbe_treasury.dilithium_pk, [0x11u8; 2592]);
+        assert_eq!(data.nonprofit_treasury.dilithium_pk, [0x22u8; 2592]);
     }
 
     #[test]

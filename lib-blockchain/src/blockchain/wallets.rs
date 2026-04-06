@@ -460,7 +460,7 @@ impl Blockchain {
                 public_key: PublicKey::new(
                     wallet_data.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
                 ),
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: wallet_data.created_at,
             },
             format!("Wallet registration for {}", wallet_data.wallet_name).into_bytes(),

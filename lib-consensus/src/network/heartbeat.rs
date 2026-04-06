@@ -443,7 +443,7 @@ impl HeartbeatTracker {
                     kyber_pk: [0u8; 1568],
                     key_id: [0u8; 32],
                 },
-                algorithm: SignatureAlgorithm::Dilithium5,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp,
             },
         }
@@ -603,7 +603,7 @@ mod tests {
                 kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp,
         }
     }

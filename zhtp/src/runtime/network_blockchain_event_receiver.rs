@@ -133,11 +133,7 @@ mod tests {
             lib_blockchain::Hash::zero(),
             lib_blockchain::Hash::zero(),
             0, // timestamp
-            lib_blockchain::Difficulty::default(),
             height,
-            0, // transaction_count
-            0, // block_size
-            lib_blockchain::Difficulty::default(),
         );
         let block = lib_blockchain::Block::new(header, vec![]);
         bincode::serialize(&block).expect("Failed to serialize test block")

@@ -16,7 +16,7 @@ fn test_signature(seed: u8) -> Signature {
     Signature {
         signature: vec![seed; 64],
         public_key: test_public_key(seed),
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: 1,
     }
 }

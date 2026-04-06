@@ -73,7 +73,7 @@ pub fn build_bonding_curve_deploy_tx(
                 kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: 0,
         },
         b"ZHTP_BONDING_CURVE_DEPLOY".to_vec(),
@@ -88,7 +88,7 @@ pub fn build_bonding_curve_deploy_tx(
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: public_key.clone(),
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -136,7 +136,7 @@ pub fn build_bonding_curve_buy_tx(
                 kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: 0,
         },
         b"ZHTP_BONDING_CURVE_BUY".to_vec(),
@@ -150,7 +150,7 @@ pub fn build_bonding_curve_buy_tx(
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: public_key.clone(),
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -198,7 +198,7 @@ pub fn build_bonding_curve_sell_tx(
                 kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: 0,
         },
         b"ZHTP_BONDING_CURVE_SELL".to_vec(),
@@ -212,7 +212,7 @@ pub fn build_bonding_curve_sell_tx(
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: public_key.clone(),
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -262,7 +262,7 @@ pub fn build_bonding_curve_graduate_tx(
                 kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: 0,
         },
         b"ZHTP_BONDING_CURVE_GRADUATE".to_vec(),
@@ -276,7 +276,7 @@ pub fn build_bonding_curve_graduate_tx(
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: public_key.clone(),
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -349,7 +349,7 @@ pub fn build_swap_tx(
                 kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: 0,
         },
         memo,
@@ -363,7 +363,7 @@ pub fn build_swap_tx(
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: public_key.clone(),
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -428,7 +428,7 @@ pub fn build_add_liquidity_tx(
                 kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: 0,
         },
         memo,
@@ -442,7 +442,7 @@ pub fn build_add_liquidity_tx(
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: public_key.clone(),
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -499,7 +499,7 @@ pub fn build_remove_liquidity_tx(
                 kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: 0,
         },
         memo,
@@ -513,7 +513,7 @@ pub fn build_remove_liquidity_tx(
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: public_key.clone(),
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()

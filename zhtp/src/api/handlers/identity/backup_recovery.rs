@@ -1507,7 +1507,7 @@ pub async fn handle_migrate_identity(
                         lib_blockchain::integration::crypto_integration::Signature {
                             signature: Vec::new(),
                             public_key: migration_authority_kp.public_key.clone(),
-                            algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
+                            algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::DEFAULT,
                             timestamp: created_at,
                         },
                         format!("WALLET_UPDATE_V1:migrate:{}:{}:{}", old_did, new_did, wallet_id_str).into_bytes(),
@@ -1811,7 +1811,7 @@ fn build_signed_sov_mint_tx(
             signature: Vec::new(),
             public_key: lib_blockchain::integration::crypto_integration::PublicKey::new([0u8; 2592]),
             algorithm:
-                lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
+                lib_blockchain::integration::crypto_integration::SignatureAlgorithm::DEFAULT,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
@@ -1854,8 +1854,7 @@ mod tests {
         device_id: &str,
         display_name: &str,
     ) -> (IdentityManager, lib_crypto::Hash, String) {
-        let old_pk_bytes = vec![old_pk_byte; 2592];
-        let public_key = lib_crypto::PublicKey::new(old_pk_bytes);
+        let public_key = lib_crypto::PublicKey::new([old_pk_byte; 2592]);
         let did = format!("did:zhtp:{}", hex::encode(public_key.key_id));
         let identity_id = lib_crypto::Hash::from_bytes(&public_key.key_id);
         let identity = lib_identity::ZhtpIdentity::new_external(
@@ -1970,7 +1969,8 @@ mod tests {
         let kp = crystals_dilithium::dilithium5::Keypair::generate(Some(&seed));
         let new_pk_bytes = kp.public.to_bytes().to_vec();
         let expected_new_did = {
-            let pk = lib_crypto::PublicKey::new(new_pk_bytes.clone());
+            let pk_arr: [u8; 2592] = new_pk_bytes.clone().try_into().expect("dilithium5 pk must be 2592 bytes");
+            let pk = lib_crypto::PublicKey::new(pk_arr);
             format!("did:zhtp:{}", hex::encode(pk.key_id))
         };
 
@@ -2192,11 +2192,13 @@ mod tests {
             format!("did:zhtp:{}", hex::encode(pk.key_id))
         };
         // Use distinct byte patterns for each key role to satisfy the key separation invariant.
-        let consensus_key = validator_kp.public_key.dilithium_pk.clone();
-        let mut networking_key = validator_kp.public_key.dilithium_pk.clone();
-        networking_key.iter_mut().for_each(|b| *b ^= 0xFF); // distinct from consensus_key
-        let mut rewards_key = validator_kp.public_key.dilithium_pk.clone();
-        rewards_key.iter_mut().for_each(|b| *b = b.wrapping_add(1)); // distinct from others
+        let consensus_key = validator_kp.public_key.dilithium_pk;
+        let mut networking_key_arr = validator_kp.public_key.dilithium_pk;
+        networking_key_arr.iter_mut().for_each(|b| *b ^= 0xFF); // distinct from consensus_key
+        let networking_key = networking_key_arr.to_vec();
+        let mut rewards_key_arr = validator_kp.public_key.dilithium_pk;
+        rewards_key_arr.iter_mut().for_each(|b| *b = b.wrapping_add(1)); // distinct from others
+        let rewards_key = rewards_key_arr.to_vec();
         bc.validator_registry.insert(
             validator_did.clone(),
             lib_blockchain::ValidatorInfo {
@@ -2280,7 +2282,8 @@ mod tests {
 
         // Verify wallet ownership moved to the new identity, and old identity is empty.
         let new_identity_id_1 = {
-            let pk = lib_crypto::PublicKey::new(new_identity_1.public_key.clone());
+            let pk_arr: [u8; 2592] = new_identity_1.public_key.clone().try_into().expect("pk must be 2592 bytes");
+            let pk = lib_crypto::PublicKey::new(pk_arr);
             lib_crypto::Hash::from_bytes(&pk.key_id)
         };
 

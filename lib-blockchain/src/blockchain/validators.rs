@@ -91,7 +91,7 @@ impl Blockchain {
             Signature {
                 signature: validator_info.consensus_key.to_vec(),
                 public_key: PublicKey::new(validator_info.consensus_key),
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: validator_info.registered_at,
             },
             format!(
@@ -178,7 +178,7 @@ impl Blockchain {
             Signature {
                 signature: updated_info.consensus_key.to_vec(),
                 public_key: PublicKey::new(updated_info.consensus_key),
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: updated_info.last_activity,
             },
             format!("Validator update for {}", identity_id).into_bytes(),
@@ -209,7 +209,7 @@ impl Blockchain {
             Signature {
                 signature: validator_info.consensus_key.to_vec(),
                 public_key: PublicKey::new(validator_info.consensus_key),
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: validator_info.last_activity,
             },
             format!("Validator unregistration for {}", identity_id).into_bytes(),

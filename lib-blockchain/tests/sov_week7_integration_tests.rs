@@ -28,7 +28,7 @@ fn create_test_signature() -> Signature {
     Signature {
         signature: vec![0x01, 0x02, 0x03, 0x04],
         public_key: PublicKey::new([0x01; 2592]),
-        algorithm: SignatureAlgorithm::Dilithium5,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: 1000,
     }
 }

@@ -17,7 +17,7 @@ impl Blockchain {
                 public_key: PublicKey::new(
                     identity_data.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
                 ),
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: identity_data.created_at,
             },
             format!("Identity registration for {}", identity_data.did).into_bytes(),
@@ -104,7 +104,7 @@ impl Blockchain {
                 public_key: PublicKey::new(
                     updated_data.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
                 ),
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: updated_data.created_at,
             },
             format!("Identity update for {}", did).into_bytes(),
@@ -157,7 +157,7 @@ impl Blockchain {
             Signature {
                 signature: authorizing_signature,
                 public_key: PublicKey::new([0u8; 2592]),
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: crate::utils::time::current_timestamp(),
             },
             format!("Identity revocation for {}", did).into_bytes(),
@@ -539,7 +539,7 @@ impl Blockchain {
                 public_key: PublicKey::new(
                     public_key.as_slice().try_into().unwrap_or([0u8; 2592])
                 ),
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: identity_data.created_at,
             },
             b"Auto-registration for wallet identity".to_vec(),

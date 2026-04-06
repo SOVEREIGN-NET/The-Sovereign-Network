@@ -21,12 +21,19 @@ pub struct Signature {
 /// Supported signature algorithms (pure post-quantum only)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SignatureAlgorithm {
-    /// CRYSTALS-Dilithium Level 2 (post-quantum)
-    Dilithium2,
     /// CRYSTALS-Dilithium Level 5 (post-quantum, highest security)
+    /// Serde alias allows deserializing legacy "Dilithium2" data as Dilithium5.
+    #[serde(alias = "Dilithium2")]
     Dilithium5,
     /// Ring signature for anonymity (post-quantum)
     RingSignature,
+}
+
+impl SignatureAlgorithm {
+    /// The default signature algorithm for all new signatures and transactions.
+    /// Single source of truth — every callsite should use this instead of
+    /// hardcoding a variant.
+    pub const DEFAULT: Self = Self::Dilithium5;
 }
 
 /// Type alias for compatibility with other modules
@@ -43,12 +50,12 @@ impl Signature {
     /// * `public_key` - The public key that created this signature
     ///
     /// # Note
-    /// Assumes Dilithium2 algorithm. For other algorithms, use `from_bytes_with_algorithm`.
+    /// Uses [`SignatureAlgorithm::DEFAULT`]. For other algorithms, use `from_bytes_with_algorithm`.
     pub fn from_bytes_with_key(signature_bytes: &[u8], public_key: PublicKey) -> Self {
         Signature {
             signature: signature_bytes.to_vec(),
             public_key,
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -93,7 +100,7 @@ impl Default for Signature {
                 kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: 0,
         }
     }

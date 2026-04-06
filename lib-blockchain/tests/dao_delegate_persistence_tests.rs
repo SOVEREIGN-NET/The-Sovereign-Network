@@ -21,7 +21,7 @@ fn test_signature(pubkey: &PublicKey, timestamp: u64) -> Signature {
     Signature {
         signature: vec![0u8; 64],
         public_key: pubkey.clone(),
-        algorithm: SignatureAlgorithm::Dilithium5,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp,
     }
 }

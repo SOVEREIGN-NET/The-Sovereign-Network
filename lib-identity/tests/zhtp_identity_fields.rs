@@ -241,10 +241,10 @@ fn test_deserialization_requires_rederive() {
 
     // SAFE PATH: Using from_serialized helper (enforces re-derivation)
     let private_key = PrivateKey {
-        dilithium_sk: vec![1u8; 2560],
-        dilithium_pk: vec![2u8; 1312], // Test placeholder
-        kyber_sk: vec![],
-        master_seed: vec![],
+        dilithium_sk: [1u8; 4896],
+        dilithium_pk: [2u8; 2592],
+        kyber_sk: [0u8; 3168],
+        master_seed: [0u8; 64],
     };
 
     let deserialized = ZhtpIdentity::from_serialized(&json, &private_key)
@@ -284,15 +284,15 @@ fn test_deterministic_derivation_golden_vector() {
 
     // Test vector 1: All zeros (simple case for validation)
     let public_key_zeros = PublicKey {
-        dilithium_pk: vec![0u8; 1312], // Real Dilithium2 PK size
-        kyber_pk: vec![],
+        dilithium_pk: [0u8; 2592], // Real Dilithium5 PK size
+        kyber_pk: [0u8; 1568],
         key_id: [0u8; 32],
     };
     let private_key_zeros = PrivateKey {
-        dilithium_sk: vec![0u8; 2560], // Real Dilithium2 SK size
-        dilithium_pk: vec![0u8; 1312], // Matches public_key_zeros.dilithium_pk
-        kyber_sk: vec![],
-        master_seed: vec![],
+        dilithium_sk: [0u8; 4896], // Real Dilithium5 SK size
+        dilithium_pk: [0u8; 2592], // Matches public_key_zeros.dilithium_pk
+        kyber_sk: [0u8; 3168],
+        master_seed: [0u8; 64],
     };
 
     // Expected outputs for all-zero keys (computed per spec, not via derive functions)
@@ -386,15 +386,15 @@ fn test_deterministic_derivation_golden_vector() {
 
     // Test vector 2: Non-zero pattern (validates different inputs produce different outputs)
     let public_key_pattern = PublicKey {
-        dilithium_pk: vec![0xAB; 1312], // Pattern: 0xAB repeated
-        kyber_pk: vec![],
+        dilithium_pk: [0xABu8; 2592], // Pattern: 0xAB repeated
+        kyber_pk: [0u8; 1568],
         key_id: [0xCD; 32],
     };
     let private_key_pattern = PrivateKey {
-        dilithium_sk: vec![0xEF; 2560], // Pattern: 0xEF repeated
-        dilithium_pk: vec![0xAB; 1312], // Matches public_key_pattern.dilithium_pk
-        kyber_sk: vec![],
-        master_seed: vec![],
+        dilithium_sk: [0xEFu8; 4896], // Pattern: 0xEF repeated
+        dilithium_pk: [0xABu8; 2592], // Matches public_key_pattern.dilithium_pk
+        kyber_sk: [0u8; 3168],
+        master_seed: [0u8; 64],
     };
 
     let identity_pattern = ZhtpIdentity::new(
@@ -472,15 +472,15 @@ fn test_deterministic_derivation_golden_vector() {
 #[test]
 fn test_dao_voting_power_rules() {
     let public_key = PublicKey {
-        dilithium_pk: vec![42u8; 1312],
-        kyber_pk: vec![],
+        dilithium_pk: [42u8; 2592],
+        kyber_pk: [0u8; 1568],
         key_id: [42u8; 32],
     };
     let private_key = PrivateKey {
-        dilithium_sk: vec![1u8; 2560],
-        dilithium_pk: vec![42u8; 1312], // Matches public_key.dilithium_pk
-        kyber_sk: vec![],
-        master_seed: vec![],
+        dilithium_sk: [1u8; 4896],
+        dilithium_pk: [42u8; 2592], // Matches public_key.dilithium_pk
+        kyber_sk: [0u8; 3168],
+        master_seed: [0u8; 64],
     };
     let ownership_proof = ZeroKnowledgeProof {
         proof_system: "test".to_string(),

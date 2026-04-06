@@ -183,7 +183,7 @@ pub struct ErrorResponse {
 
 /// DHT API Handler implementation
 pub struct DhtHandler {
-    /// DHT client instance (has blockchain-verified identity + Dilithium2 signing)
+    /// DHT client instance (has blockchain-verified identity + Dilithium5 signing)
     dht_client: Arc<RwLock<Option<Arc<RwLock<DhtIntegrationAdapter>>>>>,
     /// Handler statistics
     stats: Arc<RwLock<DhtHandlerStats>>,

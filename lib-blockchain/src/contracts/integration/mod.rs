@@ -262,7 +262,7 @@ impl ContractTransactionBuilder {
             signature: crate::integration::crypto_integration::Signature {
                 signature: Vec::new(),
                 public_key: crate::integration::crypto_integration::PublicKey::new([0u8; 2592]),
-                algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
+                algorithm: crate::integration::crypto_integration::SignatureAlgorithm::DEFAULT,
                 timestamp: 0,
             }, // Temporary placeholder
             memo: memo.clone(),

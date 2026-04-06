@@ -1325,8 +1325,8 @@ mod tests {
 
     #[test]
     fn test_envelope_creation() {
-        let origin = PublicKey::new(vec![1, 2, 3]);
-        let dest = PublicKey::new(vec![4, 5, 6]);
+        let origin = PublicKey::new([1u8; 2592]);
+        let dest = PublicKey::new([4u8; 2592]);
 
         let msg = ZhtpMeshMessage::HealthReport {
             reporter: origin.clone(),
@@ -1350,8 +1350,8 @@ mod tests {
     fn test_zhtp_request_single_serialization() {
         use lib_protocols::types::{ZhtpHeaders, ZhtpMethod};
 
-        let origin = PublicKey::new(vec![1, 2, 3]);
-        let dest = PublicKey::new(vec![4, 5, 6]);
+        let origin = PublicKey::new([1u8; 2592]);
+        let dest = PublicKey::new([4u8; 2592]);
 
         let request = ProtocolZhtpRequest {
             method: ZhtpMethod::Get,
@@ -1397,9 +1397,9 @@ mod tests {
 
     #[test]
     fn test_hop_increment() {
-        let origin = PublicKey::new(vec![1, 2, 3]);
-        let dest = PublicKey::new(vec![4, 5, 6]);
-        let relay = PublicKey::new(vec![7, 8, 9]);
+        let origin = PublicKey::new([1u8; 2592]);
+        let dest = PublicKey::new([4u8; 2592]);
+        let relay = PublicKey::new([7u8; 2592]);
 
         let msg = ZhtpMeshMessage::HealthReport {
             reporter: origin.clone(),
@@ -1422,8 +1422,8 @@ mod tests {
     fn test_zhtp_response_single_serialization() {
         use lib_protocols::types::{ZhtpHeaders, ZhtpStatus};
 
-        let origin = PublicKey::new(vec![1, 2, 3]);
-        let dest = PublicKey::new(vec![4, 5, 6]);
+        let origin = PublicKey::new([1u8; 2592]);
+        let dest = PublicKey::new([4u8; 2592]);
 
         let response = ProtocolZhtpResponse {
             version: "ZHTP/1.0".to_string(),
@@ -1495,8 +1495,8 @@ mod tests {
             auth_proof: Some(auth_proof),
         };
 
-        let sender = PublicKey::new(vec![10u8; 2592]); // Dilithium5 public key size
-        let receiver = PublicKey::new(vec![20u8; 2592]);
+        let sender = PublicKey::new([10u8; 2592]); // Dilithium5 public key size
+        let receiver = PublicKey::new([20u8; 2592]);
 
         let mut envelope = MeshMessageEnvelope::from_zhtp_request(
             99,
@@ -1589,8 +1589,8 @@ mod tests {
             auth_proof: Some(auth_proof),
         };
 
-        let sender = PublicKey::new(vec![1u8; 2592]);
-        let receiver = PublicKey::new(vec![2u8; 2592]);
+        let sender = PublicKey::new([1u8; 2592]);
+        let receiver = PublicKey::new([2u8; 2592]);
 
         // OLD APPROACH: Double serialization - serialize full request into payload
         let full_request_serialized = bincode::serialize(&request).unwrap();
@@ -1641,8 +1641,8 @@ mod tests {
 
     #[test]
     fn test_identity_envelope_serialization() {
-        let origin = PublicKey::new(vec![1, 2, 3]);
-        let dest = PublicKey::new(vec![4, 5, 6]);
+        let origin = PublicKey::new([1u8; 2592]);
+        let dest = PublicKey::new([4u8; 2592]);
 
         let identity_envelope = IdentityEnvelope {
             message_id: 1,
@@ -1677,8 +1677,8 @@ mod tests {
 
     #[test]
     fn test_identity_delivery_ack_serialization() {
-        let origin = PublicKey::new(vec![7, 8, 9]);
-        let dest = PublicKey::new(vec![10, 11, 12]);
+        let origin = PublicKey::new([7u8; 2592]);
+        let dest = PublicKey::new([10u8; 2592]);
 
         let ack = IdentityDeliveryAck {
             recipient_did: "did:zhtp:recipient".to_string(),
@@ -1708,8 +1708,8 @@ mod tests {
 
     #[test]
     fn test_oracle_attestation_serialization() {
-        let origin = PublicKey::new(vec![9, 9, 9]);
-        let dest = PublicKey::new(vec![8, 8, 8]);
+        let origin = PublicKey::new([9u8; 2592]);
+        let dest = PublicKey::new([8u8; 2592]);
         let payload = vec![1u8, 2, 3, 5, 8, 13];
 
         let msg = ZhtpMeshMessage::OracleAttestation {

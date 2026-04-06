@@ -1379,7 +1379,7 @@ mod tests {
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
 
         let router = MeshMessageRouter::new(peer_registry, long_range_relays);
-        let destination_key = PublicKey::new(vec![1, 2, 3]);
+        let destination_key = PublicKey::new([1u8; 2592]);
         // Ticket #146: Use UnifiedPeerId for routing
         let destination =
             crate::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(destination_key);

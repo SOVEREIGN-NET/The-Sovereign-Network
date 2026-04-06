@@ -200,7 +200,7 @@ pub fn verify_quorum_proof(
         let signature = lib_crypto::PostQuantumSignature {
             signature: att.signature.to_vec(),
             public_key: public_key.clone(),
-            algorithm: lib_crypto::SignatureAlgorithm::Dilithium5,
+            algorithm: lib_crypto::SignatureAlgorithm::DEFAULT,
             timestamp: 0,
         };
 

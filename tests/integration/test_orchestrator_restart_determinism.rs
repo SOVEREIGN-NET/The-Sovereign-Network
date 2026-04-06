@@ -33,10 +33,10 @@ fn write_identity_bundle(
 
     to_writer_pretty(File::create(&identity_path)?, identity)?;
     let key_disk = PrivateKeyDisk {
-        dilithium_sk: private_key.dilithium_sk.clone(),
-        dilithium_pk: private_key.dilithium_pk.clone(),
-        kyber_sk: private_key.kyber_sk.clone(),
-        master_seed: private_key.master_seed.clone(),
+        dilithium_sk: private_key.dilithium_sk.to_vec(),
+        dilithium_pk: private_key.dilithium_pk.to_vec(),
+        kyber_sk: private_key.kyber_sk.to_vec(),
+        master_seed: private_key.master_seed.to_vec(),
     };
     to_writer_pretty(File::create(&key_path)?, &key_disk)?;
 
@@ -48,10 +48,10 @@ fn reload_identity(identity_path: &PathBuf, key_path: &PathBuf) -> Result<ZhtpId
     let key_data = read_to_string(key_path)?;
     let key_disk: PrivateKeyDisk = from_str(&key_data)?;
     let private_key = PrivateKey {
-        dilithium_sk: key_disk.dilithium_sk,
-        dilithium_pk: key_disk.dilithium_pk,
-        kyber_sk: key_disk.kyber_sk,
-        master_seed: key_disk.master_seed,
+        dilithium_sk: key_disk.dilithium_sk.try_into().map_err(|_| anyhow::anyhow!("dilithium_sk wrong length"))?,
+        dilithium_pk: key_disk.dilithium_pk.try_into().map_err(|_| anyhow::anyhow!("dilithium_pk wrong length"))?,
+        kyber_sk: key_disk.kyber_sk.try_into().map_err(|_| anyhow::anyhow!("kyber_sk wrong length"))?,
+        master_seed: key_disk.master_seed.try_into().map_err(|_| anyhow::anyhow!("master_seed wrong length"))?,
     };
     let restored = ZhtpIdentity::from_serialized(&identity_data, &private_key)?;
     Ok(restored)
@@ -139,10 +139,10 @@ async fn test_identity_seed_persistence_across_restarts() -> Result<()> {
     let _restored = reload_identity(&identity_path, &key_path)?;
     let restored_key_disk: PrivateKeyDisk = from_str(&read_to_string(&key_path)?)?;
     let restored_key = PrivateKey {
-        dilithium_sk: restored_key_disk.dilithium_sk,
-        dilithium_pk: restored_key_disk.dilithium_pk,
-        kyber_sk: restored_key_disk.kyber_sk,
-        master_seed: restored_key_disk.master_seed,
+        dilithium_sk: restored_key_disk.dilithium_sk.try_into().expect("dilithium_sk wrong length"),
+        dilithium_pk: restored_key_disk.dilithium_pk.try_into().expect("dilithium_pk wrong length"),
+        kyber_sk: restored_key_disk.kyber_sk.try_into().expect("kyber_sk wrong length"),
+        master_seed: restored_key_disk.master_seed.try_into().expect("master_seed wrong length"),
     };
 
     assert_eq!(

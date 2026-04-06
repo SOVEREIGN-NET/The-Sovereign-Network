@@ -842,7 +842,7 @@ mod tests {
         let coordinator = DiscoveryCoordinator::new(config);
         coordinator.start_event_listener().await;
 
-        let pubkey = PublicKey::new(vec![1, 2, 3, 4]);
+        let pubkey = PublicKey::new([1u8; 2592]);
 
         let peer1 = DiscoveredPeer {
             public_key: Some(pubkey.clone()),

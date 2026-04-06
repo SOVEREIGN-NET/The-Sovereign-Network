@@ -1896,7 +1896,7 @@ mod tests {
             Signature {
                 signature: vec![0x55; 32],
                 public_key: PublicKey::new([0x22; 2592]),
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: 1_700_000_000,
             },
             b"pending wallet".to_vec(),

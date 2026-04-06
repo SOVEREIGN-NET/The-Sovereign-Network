@@ -862,7 +862,7 @@ impl IdentityManager {
                 kyber_pk,
                 key_id,
             },
-            algorithm: lib_crypto::SignatureAlgorithm::Dilithium5, // Updated to match consensus
+            algorithm: lib_crypto::SignatureAlgorithm::DEFAULT, // Updated to match consensus
             timestamp,
         })
     }

@@ -11,7 +11,7 @@
 ZHTP lib-network enables:
 - ** ISP Replacement**: Direct peer-to-peer mesh networking without ISP dependency
 - ** Earn While You Connect**: Users get paid tokens for participating in the mesh network
-- ** Post-Quantum Security**: Cryptographically secure with Dilithium2 and Kyber encryption
+- ** Post-Quantum Security**: Cryptographically secure with Dilithium5 and Kyber encryption
 - **📱 Universal Access**: Works on phones, laptops, IoT devices via Bluetooth, WiFi, LoRaWAN, Satellite
 - **🏠 Local-First**: Local mesh networking with global reach through relays
 
@@ -52,7 +52,7 @@ ZHTP lib-network enables:
 - **TCP/UDP**: Internet bridging for hybrid connectivity
 
 ###  Advanced Security
-- **Post-Quantum Cryptography**: Dilithium2 signatures, Kyber encryption
+- **Post-Quantum Cryptography**: Dilithium5 signatures, Kyber encryption
 - **Wallet-Based Authentication**: No centralized identity required
 - **Zero-Knowledge Proofs**: Privacy-preserving verification
 - **Emergency Controls**: Owner/admin access controls with audit logs
@@ -235,7 +235,7 @@ cargo test --features allow-net-tests
 - **Routing Wallet**: Receives automatic routing rewards
 
 ### Cryptographic Protection
-- **Dilithium2 Signatures**: Post-quantum digital signatures for all operations
+- **Dilithium5 Signatures**: Post-quantum digital signatures for all operations
 - **Kyber Encryption**: Post-quantum key exchange for secure communication
 
 ## Handshake

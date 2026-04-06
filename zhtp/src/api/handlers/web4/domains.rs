@@ -253,7 +253,7 @@ impl Web4Handler {
             "   Public key length: {} bytes",
             core::mem::size_of_val(&owner_identity.public_key.dilithium_pk)
         );
-        info!("   Expected public key length: 1312 (Dilithium2)");
+        info!("   Expected public key length: 2592 (Dilithium5)");
 
         // Verify signature using owner's public key
         let is_valid = lib_crypto::verify_signature(
@@ -1244,7 +1244,7 @@ impl Web4Handler {
     // This function previously created improper "system transactions" with:
     // - Empty inputs (bypasses UTXO validation)
     // - Zero fees (no economic cost = spam risk)
-    // - Mock signatures (hash pretending to be Dilithium2 signature)
+    // - Mock signatures (hash pretending to be Dilithium5 signature)
     // - chain_id=0x03 (explicit validation bypass flag)
     //
     // This was architecturally wrong for user-initiated actions. System transactions
@@ -1257,7 +1257,7 @@ impl Web4Handler {
     // UTXO-based payment transaction above, with:
     // - Real UTXO inputs (proves ownership)
     // - Real fees (economic spam protection)
-    // - Real Dilithium2 signatures (cryptographic proof)
+    // - Real Dilithium5 signatures (cryptographic proof)
     // - Full on-chain validation (security)
     // ============================================================================
 
@@ -1919,7 +1919,7 @@ mod tests {
             BcSignature {
                 signature: vec![],
                 public_key: signer.clone(),
-                algorithm: BcSignatureAlgorithm::Dilithium5,
+                algorithm: BcSignatureAlgorithm::DEFAULT,
                 timestamp: 0,
             },
             Vec::new(),
@@ -1990,7 +1990,7 @@ mod tests {
                 owner_wallet_id,
                 "Primary",
                 Some(owner_identity_hash),
-                owner_wallet_pk.clone(),
+                owner_wallet_pk.to_vec(),
             ),
         );
         blockchain.wallet_registry.insert(
@@ -2002,8 +2002,8 @@ mod tests {
         // Ensure owner has enough SOV for the pre-validation balance check.
         let mut sov = TokenContract::new_sov_native();
         let owner_wallet_key = BcPublicKey {
-            dilithium_pk: vec![],
-            kyber_pk: vec![],
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: owner_wallet_id,
         };
         sov.mint(&owner_wallet_key, 100).unwrap();

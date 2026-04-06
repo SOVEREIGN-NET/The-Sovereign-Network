@@ -271,7 +271,7 @@ impl BlockchainConsensusCoordinator {
         let mut consensus_engine = self.consensus_engine.write().await;
 
         // Register with the consensus engine — three-key separation is required:
-        //   consensus_key : BFT vote-signing (Dilithium2, hot)
+        //   consensus_key : BFT vote-signing (Dilithium5, hot)
         //   networking_key: P2P transport identity (Ed25519/X25519, hot)
         //   rewards_key   : Reward wallet public key (cold-capable)
         consensus_engine
@@ -959,7 +959,7 @@ impl BlockchainConsensusCoordinator {
             signature: lib_crypto::Signature {
                 signature: vec![0u8; 64], // Would be properly signed in production
                 public_key: lib_crypto::PublicKey::new([0u8; 2592]),
-                algorithm: lib_crypto::SignatureAlgorithm::Dilithium5,
+                algorithm: lib_crypto::SignatureAlgorithm::DEFAULT,
                 timestamp: current_timestamp(),
             },
             consensus_proof: ConsensusProof {
@@ -1102,7 +1102,7 @@ impl BlockchainConsensusCoordinator {
                         system_keypair.public_key.dilithium_pk,
                     ),
                     algorithm:
-                        crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
+                        crate::integration::crypto_integration::SignatureAlgorithm::DEFAULT,
                     timestamp: current_timestamp(),
                 },
                 format!(
@@ -1182,7 +1182,7 @@ impl BlockchainConsensusCoordinator {
                         system_keypair.public_key.dilithium_pk,
                     ),
                     algorithm:
-                        crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
+                        crate::integration::crypto_integration::SignatureAlgorithm::DEFAULT,
                     timestamp: current_timestamp(),
                 },
                 format!("WELFARE_FUNDING:service:{}:amount:{}", service_name, amount).into_bytes(),
@@ -1498,7 +1498,7 @@ impl BlockchainConsensusCoordinator {
         let empty_signature = crate::integration::crypto_integration::Signature {
             signature: Vec::new(),
             public_key: crate::integration::crypto_integration::PublicKey::new([0u8; 2592]),
-            algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
+            algorithm: crate::integration::crypto_integration::SignatureAlgorithm::DEFAULT,
             timestamp: current_timestamp(),
         };
 
@@ -1528,7 +1528,7 @@ impl BlockchainConsensusCoordinator {
             public_key: crate::integration::crypto_integration::PublicKey::new(
                 consensus_keypair.public_key.dilithium_pk,
             ),
-            algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
+            algorithm: crate::integration::crypto_integration::SignatureAlgorithm::DEFAULT,
             timestamp: current_timestamp(),
         };
 
@@ -1566,7 +1566,7 @@ impl BlockchainConsensusCoordinator {
                     signature: hash_blake3(b"system_reward").to_vec(),
                     public_key: crate::integration::crypto_integration::PublicKey::new([0u8; 2592]),
                     algorithm:
-                        crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
+                        crate::integration::crypto_integration::SignatureAlgorithm::DEFAULT,
                     timestamp: current_timestamp(),
                 };
 
@@ -1681,9 +1681,9 @@ impl BlockchainConsensusCoordinator {
     ///
     /// # BFT-I Consensus Signature Scheme (Issue #1009)
     ///
-    /// This function MUST use Dilithium2 (CONSENSUS_SIGNATURE_SCHEME) exclusively.
+    /// This function MUST use Dilithium5 (CONSENSUS_SIGNATURE_SCHEME) exclusively.
     /// Dilithium5 and other schemes are prohibited for consensus votes.
-    /// The signing key is the Dilithium2 key bound to the validator at registration.
+    /// The signing key is the Dilithium5 key bound to the validator at registration.
     async fn create_vote_signature(
         &self,
         proposal_id: &Hash,
@@ -1709,19 +1709,15 @@ impl BlockchainConsensusCoordinator {
             private_key: validator_keypair.private_key,
         };
 
-        // BFT-I: Only Dilithium2 (CONSENSUS_SIGNATURE_SCHEME) is permitted here.
-        // Dilithium5 and other schemes are prohibited for consensus votes.
-        //
-        // Enforce this invariant by validating the key sizes against the expected
-        // Dilithium2 public/private key lengths before signing.
-        const DILITHIUM2_PUBLIC_KEY_LEN: usize = 1312;
-        const DILITHIUM2_PRIVATE_KEY_LEN: usize = 2528;
+        // BFT-I: Only Dilithium5 (CONSENSUS_SIGNATURE_SCHEME) is permitted here.
+        // All consensus votes MUST use Dilithium5.
+        const DILITHIUM5_PUBLIC_KEY_LEN: usize = 2592;
 
-        if keypair.public_key.dilithium_pk.len() != DILITHIUM2_PUBLIC_KEY_LEN
-            || keypair.private_key.dilithium_sk.len() != DILITHIUM2_PRIVATE_KEY_LEN
-        {
+        if keypair.public_key.dilithium_pk.len() != DILITHIUM5_PUBLIC_KEY_LEN {
             return Err(anyhow!(
-                "Invalid consensus keypair: expected Dilithium2 key sizes (CONSENSUS_SIGNATURE_SCHEME) for votes"
+                "Invalid consensus keypair: expected Dilithium5 public key ({} bytes), got {}",
+                DILITHIUM5_PUBLIC_KEY_LEN,
+                keypair.public_key.dilithium_pk.len()
             ));
         }
 
@@ -2027,7 +2023,7 @@ pub fn create_dao_proposal_transaction(
         crate::integration::crypto_integration::Signature {
             signature: vec![], // Will be filled after signing
             public_key: proposer_keypair.public_key.clone(),
-            algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
+            algorithm: crate::integration::crypto_integration::SignatureAlgorithm::DEFAULT,
             timestamp: current_timestamp(),
         },
         memo.into_bytes(),
@@ -2070,7 +2066,7 @@ pub fn create_dao_vote_transaction(
         crate::integration::crypto_integration::Signature {
             signature: vec![], // Will be filled after signing
             public_key: voter_keypair.public_key.clone(),
-            algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
+            algorithm: crate::integration::crypto_integration::SignatureAlgorithm::DEFAULT,
             timestamp: current_timestamp(),
         },
         memo.into_bytes(),

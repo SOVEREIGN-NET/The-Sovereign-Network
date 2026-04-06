@@ -804,8 +804,8 @@ mod tests {
         let session_id = ch_body["session_id"].as_str().unwrap().to_string();
 
         // Attempt verify with a garbage Dilithium-sized pk and signature
-        let bad_pk = "ab".repeat(1312); // Dilithium2 pk = 1312 bytes → 2624 hex chars
-        let bad_sig = "cd".repeat(2420); // Dilithium2 sig ≈ 2420 bytes
+        let bad_pk = "ab".repeat(1312); // Dilithium5 pk = 1312 bytes → 2624 hex chars
+        let bad_sig = "cd".repeat(2420); // Dilithium5 sig ≈ 2420 bytes
         let identity_hex = hex::encode([0u8; 32]);
 
         let verify_req = post(

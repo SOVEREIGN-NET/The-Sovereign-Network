@@ -33,7 +33,7 @@ use lib_identity::IdentityId;
 ///
 /// ### `rewards_key` — Rewards / Fee-Collection Key
 /// Identifies the wallet that receives block rewards and protocol fee distributions.
-/// - **Algorithm**: Dilithium2 or Ed25519 depending on wallet type.
+/// - **Algorithm**: Dilithium5 or Ed25519 depending on wallet type.
 /// - **Exposure**: Can be kept cold — only needed when claiming accumulated rewards.
 /// - **Compromise impact**: Attacker can redirect future rewards; past on-chain
 ///   balances already credited are unaffected.

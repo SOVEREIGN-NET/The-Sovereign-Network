@@ -380,9 +380,9 @@ impl MeshRouter {
         use tracing::info;
         info!("Initializing ZHTP relay protocol with post-quantum encryption...");
 
-        // Generate Dilithium2 keypair for signing relay messages
+        // Generate Dilithium5 keypair for signing relay messages
         let (dilithium_pubkey, dilithium_privkey) =
-            lib_crypto::post_quantum::dilithium::dilithium2_keypair();
+            lib_crypto::post_quantum::dilithium::dilithium5_keypair();
 
         // Create node capabilities for relay protocol
         let capabilities = lib_network::protocols::zhtp_auth::NodeCapabilities {
@@ -399,7 +399,7 @@ impl MeshRouter {
 
         *self.relay_protocol.write().await = Some(relay);
 
-        info!("✅ ZHTP relay protocol initialized (Dilithium2 + Kyber1024 + ChaCha20)");
+        info!("✅ ZHTP relay protocol initialized (Dilithium5 + Kyber1024 + ChaCha20)");
         Ok(())
     }
 

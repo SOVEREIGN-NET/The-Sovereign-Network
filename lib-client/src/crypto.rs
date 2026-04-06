@@ -27,36 +27,33 @@ use crate::error::{ClientError, Result};
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use super::*;
-    use pqcrypto_dilithium::dilithium5;
+    use crystals_dilithium::dilithium5::{
+        Keypair as DilithiumKeypair, PublicKey as CrystalsPublicKey,
+        SecretKey as CrystalsSecretKey, SIGNBYTES,
+    };
     use pqcrypto_kyber::kyber1024;
     use pqcrypto_traits::kem::{
         Ciphertext, PublicKey as KemPublicKey, SecretKey as KemSecretKey, SharedSecret,
     };
-    use pqcrypto_traits::sign::{
-        DetachedSignature, PublicKey as SignPublicKey, SecretKey as SignSecretKey,
-    };
-    // crystals-dilithium for deterministic key generation from seed
-    use crystals_dilithium::dilithium5::Keypair as DilithiumKeypair;
 
-    /// Dilithium5 post-quantum digital signatures
+    /// Dilithium5 post-quantum digital signatures (crystals-dilithium only)
     pub struct Dilithium5;
 
     impl Dilithium5 {
         pub const PUBLIC_KEY_SIZE: usize = 2592;
-        pub const SECRET_KEY_SIZE: usize = 4896; // pqcrypto-dilithium (random)
-        pub const SECRET_KEY_SIZE_SEEDED: usize = 4864; // crystals-dilithium (from seed)
+        pub const SECRET_KEY_SIZE: usize = 4864;
+        pub const SECRET_KEY_STORAGE_SIZE: usize = 4896; // zero-padded for keystore compat
         pub const SIGNATURE_SIZE: usize = 4595;
 
         pub fn generate_keypair() -> Result<(Vec<u8>, Vec<u8>)> {
-            let (pk, sk) = dilithium5::keypair();
-            Ok((pk.as_bytes().to_vec(), sk.as_bytes().to_vec()))
+            let keypair = DilithiumKeypair::generate(None);
+            Ok((
+                keypair.public.to_bytes().to_vec(),
+                keypair.secret.to_bytes().to_vec(),
+            ))
         }
 
         pub fn generate_keypair_from_seed(seed: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
-            // Use crystals-dilithium for deterministic generation from seed.
-            // This ensures the same seed always produces the same Dilithium5 keypair (for recovery).
-            // Kyber1024 is an operational KEM key — it is intentionally NOT derived from the seed
-            // and is not part of the DID. See Kyber1024::generate_keypair_from_seed for details.
             if seed.len() != 32 {
                 return Err(ClientError::CryptoError(format!(
                     "Invalid Dilithium5 seed length: expected 32 bytes, got {}",
@@ -71,49 +68,29 @@ mod native {
         }
 
         pub fn sign(message: &[u8], secret_key: &[u8]) -> Result<Vec<u8>> {
-            // Auto-detect key format based on size:
-            // - 4864 bytes: crystals-dilithium (from seed)
-            // - 4896 bytes: pqcrypto-dilithium (random keygen)
-            if secret_key.len() == 4864 {
-                // Use crystals-dilithium for keys generated from seed
-                use crystals_dilithium::dilithium5::SecretKey;
-                let sk = SecretKey::from_bytes(secret_key);
-                let signature = sk.sign(message);
-                Ok(signature.to_vec())
-            } else if secret_key.len() == 4896 {
-                // Use pqcrypto-dilithium for randomly generated keys
-                let sk = dilithium5::SecretKey::from_bytes(secret_key).map_err(|_| {
-                    ClientError::CryptoError("Invalid Dilithium5 secret key".into())
-                })?;
-                let sig = dilithium5::detached_sign(message, &sk);
-                Ok(sig.as_bytes().to_vec())
-            } else {
-                Err(ClientError::CryptoError(format!(
-                    "Invalid Dilithium5 secret key size: {} (expected 4864 or 4896)",
-                    secret_key.len()
-                )))
-            }
+            let sk_bytes = match secret_key.len() {
+                4864 => secret_key,
+                4896 => &secret_key[..4864], // zero-padded storage format
+                n => {
+                    return Err(ClientError::CryptoError(format!(
+                        "Invalid Dilithium5 secret key size: {} (expected 4864 or 4896)",
+                        n
+                    )));
+                }
+            };
+            let sk = CrystalsSecretKey::from_bytes(sk_bytes);
+            let signature = sk.sign(message);
+            Ok(signature.to_vec())
         }
 
         pub fn verify(message: &[u8], signature: &[u8], public_key: &[u8]) -> Result<bool> {
-            // Try crystals-dilithium first (both crates use same NIST standard)
-            use crystals_dilithium::dilithium5::PublicKey as CrystalsPublicKey;
-            let crystals_pk = CrystalsPublicKey::from_bytes(public_key);
-            if crystals_pk.verify(message, signature) {
-                return Ok(true);
+            if signature.len() != SIGNBYTES {
+                return Ok(false);
             }
-
-            // Try pqcrypto-dilithium
-            let pk = dilithium5::PublicKey::from_bytes(public_key)
-                .map_err(|_| ClientError::CryptoError("Invalid Dilithium5 public key".into()))?;
-
-            let sig = dilithium5::DetachedSignature::from_bytes(signature)
-                .map_err(|_| ClientError::CryptoError("Invalid Dilithium5 signature".into()))?;
-
-            match dilithium5::verify_detached_signature(&sig, message, &pk) {
-                Ok(()) => Ok(true),
-                Err(_) => Ok(false),
-            }
+            let pk = CrystalsPublicKey::from_bytes(public_key);
+            let mut sig_arr = [0u8; SIGNBYTES];
+            sig_arr.copy_from_slice(signature);
+            Ok(pk.verify(message, &sig_arr))
         }
     }
 

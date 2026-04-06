@@ -63,7 +63,7 @@ mod sov_week10_integration_tests {
             signature: Signature {
                 signature: format!("sig_{}", index).as_bytes().to_vec(),
                 public_key: create_test_public_key(index),
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: 0,
             },
             memo: format!("test_tx_{}", index).as_bytes().to_vec(),

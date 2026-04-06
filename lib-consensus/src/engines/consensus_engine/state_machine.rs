@@ -2166,7 +2166,7 @@ mod state_machine_tests {
                     kyber_pk: [0u8; 1568],
                     key_id: [0u8; 32],
                 },
-                algorithm: lib_crypto::SignatureAlgorithm::Dilithium5,
+                algorithm: lib_crypto::SignatureAlgorithm::DEFAULT,
                 timestamp: 0,
             },
             consensus_proof: crate::types::ConsensusProof {

@@ -340,7 +340,7 @@ mod tests {
             message_hash: [0u8; 32],
             stamp_hash: [0u8; 32],
             signature: vec![1],
-            signature_algorithm: lib_crypto::types::SignatureAlgorithm::Dilithium5,
+            signature_algorithm: lib_crypto::types::SignatureAlgorithm::DEFAULT,
         });
         let result = queue.enqueue(env);
         assert!(result.is_err());

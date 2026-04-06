@@ -61,8 +61,8 @@ fn register_identity(
 ) -> String {
     let (identity_id, did) = make_did(id_byte);
     let public_key = PublicKey {
-        dilithium_pk: vec![],
-        kyber_pk: vec![],
+        dilithium_pk: [0u8; 2592],
+        kyber_pk: [0u8; 1568],
         key_id: ed25519_pk,
     };
     manager

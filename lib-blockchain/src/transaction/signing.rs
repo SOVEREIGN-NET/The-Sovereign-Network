@@ -73,7 +73,7 @@ pub fn verify_transaction_signature(
     tx_for_verification.signature = lib_crypto::Signature {
         signature: Vec::new(),
         public_key: lib_crypto::PublicKey::new([0u8; 2592]),
-        algorithm: lib_crypto::SignatureAlgorithm::Dilithium5,
+        algorithm: lib_crypto::SignatureAlgorithm::DEFAULT,
         timestamp: 0,
     };
 

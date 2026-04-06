@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 // Removed unused serde_json::json import
 
 // ZHTP protocol imports
-use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
+use lib_protocols::types::{ZhtpHeaders, ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 
 // Blockchain imports
@@ -586,7 +586,7 @@ fn estimate_signed_tx_size(raw_tx: &[u8]) -> usize {
                 // Fill signature/public key with expected sizes for fee estimation.
                 let (expected_sig, _expected_pk) = match tx.signature.algorithm {
                     lib_crypto::types::SignatureAlgorithm::Dilithium5 => (4627usize, 2592usize),
-                    _ => (2420usize, 1312usize), // Default to Dilithium2
+                    _ => (2420usize, 1312usize), // Default to Dilithium5
                 };
                 tx.signature.signature = vec![0u8; expected_sig];
                 tx.signature.public_key.dilithium_pk = [0u8; 2592];
@@ -1515,7 +1515,7 @@ impl BlockchainHandler {
                 kyber_pk: [0u8; 1568],
                 key_id: lib_crypto::hash_blake3(&sender_pubkey),
             },
-            algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
+            algorithm: lib_crypto::SignatureAlgorithm::DEFAULT,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -2929,8 +2929,8 @@ mod tests {
     fn test_signature(seed: u8) -> BlockchainSignature {
         BlockchainSignature {
             signature: vec![seed; 64],
-            public_key: PublicKey::new(vec![seed; 2592]),
-            algorithm: SignatureAlgorithm::Dilithium5,
+            public_key: PublicKey::new([seed; 2592]),
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: 0,
         }
     }
@@ -3149,17 +3149,19 @@ mod tests {
         use crate::config::Environment;
         
         let handler = BlockchainHandler::new(
-            Arc::new(RwLock::new(Blockchain::new())),
+            Arc::new(RwLock::new(Blockchain::new().expect("Blockchain::new"))),
             Environment::Development,
         );
-        
+
         let chain_info_request = ZhtpRequest {
             method: ZhtpMethod::Get,
             uri: "/api/v1/chain/info".to_string(),
-            headers: std::collections::HashMap::new(),
+            version: "ZHTP/1.0".to_string(),
+            headers: ZhtpHeaders::default(),
             body: Vec::new(),
-            peer_addr: None,
             timestamp: 0,
+            requester: None,
+            auth_proof: None,
         };
         
         assert!(

@@ -49,12 +49,11 @@ getrandom = "0.2"
 # UniFFI (for mobile bindings)
 uniffi = { version = "0.25", optional = true }
 
-# Native: C-based PQC (faster but not WASM-compatible)
+# Native: PQC implementations
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-pqcrypto-dilithium = "0.5"
 pqcrypto-kyber = "0.8"
-pqcrypto-traits = "0.3"
-crystals-dilithium = "1.0"  # For deterministic keypair generation from seed
+pqcrypto-traits = "0.3"  # Required for pqcrypto-kyber trait methods
+crystals-dilithium = "1.0"
 
 # Android JNI bindings
 [target.'cfg(target_os = "android")'.dependencies]

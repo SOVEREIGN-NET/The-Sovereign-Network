@@ -281,10 +281,10 @@ mod tests {
 
     #[test]
     fn test_constant_time_equality_single_byte_difference() {
-        let mut dilithium2 = [0xAAu8; 2592];
+        let mut test_pk = [0xAAu8; 2592];
 
         // Change single byte in the middle
-        dilithium2[1296] = 0xAB;
+        test_pk[1296] = 0xAB;
 
         let key1 = PublicKey {
             dilithium_pk: [0xAAu8; 2592],
@@ -293,7 +293,7 @@ mod tests {
         };
 
         let key2 = PublicKey {
-            dilithium_pk: dilithium2,
+            dilithium_pk: test_pk,
             kyber_pk: [0xBBu8; 1568],
             key_id: [0xCCu8; 32],
         };
