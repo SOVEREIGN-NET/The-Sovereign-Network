@@ -197,22 +197,24 @@ impl ZhtpUnifiedServer {
                 let private_key_path = keystore_dir.join(NODE_PRIVATE_KEY_FILENAME);
                 if let Ok(key_data) = std::fs::read_to_string(&private_key_path) {
                     if let Ok(key_store) = serde_json::from_str::<serde_json::Value>(&key_data) {
+                        // Helper: parse a field as either a hex string or a JSON array of bytes
+                        let parse_bytes = |v: &serde_json::Value| -> Option<Vec<u8>> {
+                            if let Some(s) = v.as_str() {
+                                hex::decode(s).ok()
+                            } else {
+                                serde_json::from_value::<Vec<u8>>(v.clone()).ok()
+                            }
+                        };
                         // Extract private key components
                         if let (Some(dilithium), Some(kyber), Some(seed)) = (
-                            key_store
-                                .get("dilithium_sk")
-                                .and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
-                            key_store
-                                .get("kyber_sk")
-                                .and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
-                            key_store
-                                .get("master_seed")
-                                .and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
+                            key_store.get("dilithium_sk").and_then(parse_bytes),
+                            key_store.get("kyber_sk").and_then(parse_bytes),
+                            key_store.get("master_seed").and_then(parse_bytes),
                         ) {
                             // Get dilithium_pk if present, otherwise use empty (backward compat)
                             let dilithium_pk = key_store
                                 .get("dilithium_pk")
-                                .and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok())
+                                .and_then(parse_bytes)
                                 .unwrap_or_default();
                             // Validate key lengths and fail explicitly on corruption
                             let dilithium_sk: [u8; 4896] = dilithium.as_slice().try_into()

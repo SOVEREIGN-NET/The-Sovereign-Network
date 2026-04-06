@@ -1988,9 +1988,9 @@ impl Component for ConsensusComponent {
         config.development_mode = is_development;
         if config.development_mode {
             info!("🔧 Development mode enabled — single-validator consensus allowed for local testing");
-            info!("   Testnet and Mainnet require minimum 4 validators for BFT");
+            info!("   Testnet and Mainnet require minimum {} validators for BFT", lib_consensus::engines::consensus_engine::BFT_MIN_VALIDATORS);
         } else {
-            info!("🛡️ BFT-only mode: Full consensus validation required (minimum 4 validators)");
+            info!("🛡️ BFT-only mode: Full consensus validation required (minimum {} validators)", lib_consensus::engines::consensus_engine::BFT_MIN_VALIDATORS);
         }
 
         // Create broadcaster — requires the mesh router set by Protocols component.
@@ -2080,8 +2080,9 @@ impl Component for ConsensusComponent {
             // A node that cannot form a BFT quorum must not start participating in consensus.
             if !is_development && !validator_manager.has_sufficient_validators() {
                 return Err(anyhow::anyhow!(
-                    "BFT startup requires at least 4 active validators in canonical state \
+                    "BFT startup requires at least {} active validators in canonical state \
                      (environment: {}). Start with Development environment for single-node testing.",
+                    lib_consensus::engines::consensus_engine::BFT_MIN_VALIDATORS,
                     self.environment
                 ));
             }

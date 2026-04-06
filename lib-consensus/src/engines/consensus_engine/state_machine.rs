@@ -1246,34 +1246,13 @@ impl ConsensusEngine {
     }
 
     pub(super) async fn on_proposal(&mut self, proposal: ConsensusProposal) -> ConsensusResult<()> {
-        // BFT SAFETY: Reject any proposal that would create a fork.
-        //
-        // In BFT consensus, forks are invalid by definition. Once a block is committed
-        // at height H, no other block is valid at that height. Any proposal targeting
-        // an already-committed height with a different block hash is a fork attempt
-        // and must be rejected immediately, before any other processing.
-        //
-        // This is a hard gate: fork proposals are never stored, never voted on,
-        // and never forwarded to peers.
-        if let Err(e) = self.validate_no_fork_proposal(proposal.height, &proposal.id) {
-            // Stale or out-of-order proposal — discard and continue.
-            // This is expected when a lagging node (e.g. late joiner) proposes for a height
-            // that the local node has already committed past.  It is NOT a Byzantine fault:
-            // the consensus engine already committed that height and the proposal is simply
-            // irrelevant.  Crashing here would take down the consensus loop unnecessarily.
-            tracing::warn!(
-                "FORK REJECTED: Proposal {:?} from proposer {} at height {} \
-                 rejected as invalid fork: {} — discarding (not crashing)",
-                proposal.id,
-                proposal.proposer,
-                proposal.height,
-                e,
-            );
-            return Ok(());
-        }
-
         // Proposal round-skip: if this proposal is for a higher round at our height,
-        // jump to that round so we can accept the proposal and vote on it.
+        // jump to that round BEFORE running any other checks.
+        //
+        // This MUST happen before the fork check so that `valid_proposal` (which is
+        // round-scoped) is cleared for the new round.  Otherwise a higher-round
+        // proposal from the correct proposer gets falsely rejected as a "fork" because
+        // the old round's `valid_proposal` is still set.
         //
         // **Commit-step inclusion**: The round-skip is allowed even when the local node
         // is in the Commit step.  The Commit step is a timer-driven holding pattern
@@ -1303,6 +1282,37 @@ impl ConsensusEngine {
                 self.current_round.proposer = Some(proposer);
             }
             self.snapshot_validator_set(self.current_round.height);
+        }
+
+        // BFT SAFETY: Reject any proposal that would create a fork.
+        //
+        // In BFT consensus, forks are invalid by definition. Once a block is committed
+        // at height H, no other block is valid at that height. Any proposal targeting
+        // an already-committed height with a different block hash is a fork attempt
+        // and must be rejected immediately, before any other processing.
+        //
+        // Same-round fork: if `valid_proposal` is already set for the current round
+        // and a conflicting proposal arrives for the SAME round, it is a fork.
+        // Different-round proposals are handled above by the round-skip (which clears
+        // `valid_proposal`), so they never reach this check with a stale lock.
+        //
+        // This is a hard gate: fork proposals are never stored, never voted on,
+        // and never forwarded to peers.
+        if let Err(e) = self.validate_no_fork_proposal(proposal.height, &proposal.id) {
+            // Stale or out-of-order proposal — discard and continue.
+            // This is expected when a lagging node (e.g. late joiner) proposes for a height
+            // that the local node has already committed past.  It is NOT a Byzantine fault:
+            // the consensus engine already committed that height and the proposal is simply
+            // irrelevant.  Crashing here would take down the consensus loop unnecessarily.
+            tracing::warn!(
+                "FORK REJECTED: Proposal {:?} from proposer {} at height {} \
+                 rejected as invalid fork: {} — discarding (not crashing)",
+                proposal.id,
+                proposal.proposer,
+                proposal.height,
+                e,
+            );
+            return Ok(());
         }
 
         if !self.is_proposal_relevant(&proposal) {

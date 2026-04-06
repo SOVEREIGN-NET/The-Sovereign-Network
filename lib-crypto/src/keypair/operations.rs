@@ -94,7 +94,30 @@ impl KeyPair {
         let sk_len = self.private_key.dilithium_sk.len();
 
         if sk_len == DILITHIUM5_SECRETKEY_BYTES {
-            // Dilithium5 (NIST Level 5 - highest security) - pqcrypto format
+            // Detect zero-padded crystals-dilithium key (4864 crystals bytes + 32 zero bytes).
+            // Keys generated via new_unified()/RootSigningKeypair use crystals-dilithium which
+            // produces 4864-byte SKs; these are zero-padded to fit [u8; 4896]. Using pqcrypto
+            // to sign with such a padded key produces signatures that fail verification against
+            // the crystals-derived public key. Detect by checking if trailing 32 bytes are zero.
+            let is_crystals_padded = self.private_key.dilithium_sk[DILITHIUM5_SECRETKEY_BYTES_CRYSTALS..]
+                .iter()
+                .all(|&b| b == 0);
+            if is_crystals_padded {
+                use crystals_dilithium::dilithium5::SecretKey;
+                let sk = SecretKey::from_bytes(&self.private_key.dilithium_sk[..DILITHIUM5_SECRETKEY_BYTES_CRYSTALS]);
+                let signature = sk.sign(message);
+                return Ok(Signature {
+                    signature: signature.to_vec(),
+                    public_key: self.public_key.clone(),
+                    algorithm: SignatureAlgorithm::Dilithium5,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                });
+            }
+
+            // Genuine pqcrypto-dilithium key (4896 bytes, no trailing zeros)
             let dilithium_sk = dilithium5::SecretKey::from_bytes(&self.private_key.dilithium_sk)
                 .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 secret key"))?;
             let signature = dilithium5::sign(message, &dilithium_sk);

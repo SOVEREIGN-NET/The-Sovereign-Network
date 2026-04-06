@@ -414,21 +414,21 @@ impl ValidatorManager {
         if self.development_mode {
             //  TESTING MODE: Allow single validator for development/testing
             if active_count >= 1 {
-                if active_count < 4 {
-                    tracing::warn!(" TESTING MODE: {} validator(s) active (production requires minimum 4 for BFT)", active_count);
+                if active_count < crate::engines::consensus_engine::BFT_MIN_VALIDATORS {
+                    tracing::warn!(" TESTING MODE: {} validator(s) active (production requires minimum {} for BFT)", active_count, crate::engines::consensus_engine::BFT_MIN_VALIDATORS);
                 }
                 return true;
             }
             return false;
         }
 
-        // Production mode: Require minimum 4 validators for Byzantine Fault Tolerance
-        // BFT needs at least 3f+1 validators where f is the number of Byzantine failures
-        // With 4 validators, we can tolerate 1 Byzantine failure: f=1, 3(1)+1=4
-        if active_count < 4 {
+        // Production mode: Require minimum BFT_MIN_VALIDATORS for consensus
+        // At n=3 (testnet), f=0 — unanimity required.
+        if active_count < crate::engines::consensus_engine::BFT_MIN_VALIDATORS {
             tracing::warn!(
-                " INSUFFICIENT VALIDATORS: {} active (minimum 4 required for BFT)",
-                active_count
+                " INSUFFICIENT VALIDATORS: {} active (minimum {} required for BFT)",
+                active_count,
+                crate::engines::consensus_engine::BFT_MIN_VALIDATORS
             );
             return false;
         }
