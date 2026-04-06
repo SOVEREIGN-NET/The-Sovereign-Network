@@ -794,7 +794,7 @@ impl DaoEngine {
                 kyber_pk,
                 key_id: signature_hash[..32].try_into().unwrap(),
             },
-            algorithm: lib_crypto::SignatureAlgorithm::Dilithium5,
+            algorithm: lib_crypto::SignatureAlgorithm::DEFAULT,
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()

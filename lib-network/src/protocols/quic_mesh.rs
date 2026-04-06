@@ -2352,7 +2352,7 @@ mod tests {
             QuicMeshProtocol::new(identity, bind_addr).expect("Failed to create protocol");
 
         let message = ZhtpMeshMessage::PeerAnnouncement {
-            sender: PublicKey::new(vec![0u8; 32]),
+            sender: PublicKey::new([0u8; 2592]),
             timestamp: 42,
             signature: vec![],
         };

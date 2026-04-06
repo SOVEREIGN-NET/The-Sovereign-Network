@@ -626,7 +626,7 @@ async fn handle_approve_recovery(
     let signature = PostQuantumSignature {
         signature: req.signature,
         public_key: guardian.public_key.clone(),
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: chrono::Utc::now().timestamp() as u64,
     };
 

@@ -43,7 +43,7 @@ pub struct NodeAnnouncement {
     pub announced_at: u64,
 
     // === TLS Certificate Pinning Fields (Issue #739) ===
-    /// Dilithium public key for verifying record signature (1312 bytes for Dilithium2)
+    /// Dilithium public key for verifying record signature (1312 bytes for Dilithium5)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dilithium_pk: Option<Vec<u8>>,
 

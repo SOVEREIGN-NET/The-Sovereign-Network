@@ -48,7 +48,7 @@ fn system_signature() -> Signature {
             kyber_pk: [0u8; 1568],
             key_id,
         },
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: 0,
     }
 }

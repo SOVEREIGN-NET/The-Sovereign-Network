@@ -596,7 +596,7 @@ mod tests {
             peer,
             addresses: vec![format!("127.0.0.1:{}", port)],
             public_key: lib_crypto::PostQuantumSignature {
-                algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
+                algorithm: lib_crypto::SignatureAlgorithm::DEFAULT,
                 signature: vec![],
                 public_key: lib_crypto::PublicKey {
                     dilithium_pk: vec![1, 2, 3],

@@ -343,7 +343,7 @@ impl IdentityVerifier {
     /// Verify cryptographic aspects of identity
     ///
     /// This verifies:
-    /// - Dilithium public key format (1312 bytes for Dilithium2, 2592 bytes for Dilithium5)
+    /// - Dilithium public key format (1312 bytes for Dilithium5, 2592 bytes for Dilithium5)
     /// - Challenge response: identity must sign the challenge with its Dilithium key
     /// - Quantum resistance: verifies the key is a valid post-quantum algorithm (Dilithium)
     async fn verify_cryptographic_identity(
@@ -353,12 +353,12 @@ impl IdentityVerifier {
         // Generate challenge for signature verification
         let challenge = self.generate_verification_challenge().await?;
 
-        // Verify public key format (must be valid Dilithium2 or Dilithium5)
+        // Verify public key format (must be valid Dilithium5 or Dilithium5)
         let pub_key_bytes = identity.public_key.as_bytes();
-        let is_dilithium2 = pub_key_bytes.len() == 1312; // Dilithium2 public key
+        let is_dilithium_legacy_size = pub_key_bytes.len() == 1312; // Dilithium5 public key
         let is_dilithium5 = pub_key_bytes.len() == 2592; // Dilithium5 public key
 
-        if !is_dilithium2 && !is_dilithium5 {
+        if !is_dilithium_legacy_size && !is_dilithium5 {
             return Ok(CryptoVerificationResult {
                 signature_valid: false,
                 key_format_valid: false,
@@ -367,7 +367,7 @@ impl IdentityVerifier {
             });
         }
 
-        let key_format_valid = is_dilithium2 || is_dilithium5;
+        let key_format_valid = is_dilithium_legacy_size || is_dilithium5;
         let quantum_resistant = key_format_valid; // Dilithium is post-quantum resistant
 
         // Note: In production, the identity holder would provide a signature
@@ -747,18 +747,18 @@ mod tests {
     use lib_proofs::ZeroKnowledgeProof;
 
     fn create_test_identity() -> ZhtpIdentity {
-        // Use realistic Dilithium2 key sizes for testing
-        // Dilithium2: PK = 1312 bytes, SK = 2560 bytes
+        // Use realistic Dilithium5 key sizes for testing
+        // Dilithium5: PK = 2592 bytes, SK = 4896 bytes
         let public_key = lib_crypto::PublicKey {
-            dilithium_pk: vec![42u8; 1312], // Real Dilithium2 public key size
-            kyber_pk: vec![],
+            dilithium_pk: [42u8; 2592], // Real Dilithium5 public key size
+            kyber_pk: [0u8; 1568],
             key_id: [42u8; 32],
         };
         let private_key = lib_crypto::PrivateKey {
-            dilithium_sk: vec![1u8; 2560], // Real Dilithium2 secret key size
-            dilithium_pk: vec![],
-            kyber_sk: vec![],
-            master_seed: vec![],
+            dilithium_sk: [1u8; 4896], // Real Dilithium5 secret key size
+            dilithium_pk: [0u8; 2592],
+            kyber_sk: [0u8; 3168],
+            master_seed: [0u8; 64],
         };
         let ownership_proof = ZeroKnowledgeProof {
             proof_system: "Test".to_string(),

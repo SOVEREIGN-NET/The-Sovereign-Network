@@ -247,7 +247,7 @@ fn detect_sig_scheme(sig: &crate::integration::crypto_integration::Signature) ->
 
     match sig.algorithm {
         // Dilithium variants are post-quantum
-        SignatureAlgorithm::Dilithium2 | SignatureAlgorithm::Dilithium5 => {
+        SignatureAlgorithm::Dilithium5 => {
             SigScheme::Dilithium5 // Treat all Dilithium variants as Dilithium5 for fee purposes
         }
         SignatureAlgorithm::RingSignature => {
@@ -266,7 +266,7 @@ fn estimate_signature_size(sig: &crate::integration::crypto_integration::Signatu
     // Otherwise estimate based on algorithm (all are post-quantum)
     use crate::integration::crypto_integration::SignatureAlgorithm;
     match sig.algorithm {
-        SignatureAlgorithm::Dilithium2 | SignatureAlgorithm::Dilithium5 => {
+        SignatureAlgorithm::Dilithium5 => {
             sizes::DILITHIUM5_SIG_SIZE
         }
         SignatureAlgorithm::RingSignature => {
@@ -286,7 +286,7 @@ fn estimate_pubkey_size(sig: &crate::integration::crypto_integration::Signature)
     // Otherwise estimate based on algorithm (all are post-quantum)
     use crate::integration::crypto_integration::SignatureAlgorithm;
     match sig.algorithm {
-        SignatureAlgorithm::Dilithium2 | SignatureAlgorithm::Dilithium5 => {
+        SignatureAlgorithm::Dilithium5 => {
             sizes::DILITHIUM5_PUBKEY_SIZE
         }
         SignatureAlgorithm::RingSignature => sizes::DILITHIUM5_PUBKEY_SIZE,
@@ -325,7 +325,7 @@ mod tests {
             Signature {
                 signature: vec![0u8; 64],
                 public_key: PublicKey::new([0u8; 2592]),
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: 0,
             },
             b"test memo".to_vec(),
@@ -340,7 +340,7 @@ mod tests {
             Signature {
                 signature: vec![0u8; 64],
                 public_key: PublicKey::new([0u8; 2592]),
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: 0,
             },
             vec![],
@@ -370,7 +370,7 @@ mod tests {
             Signature {
                 signature: vec![],
                 public_key: PublicKey::new([0u8; 2592]),
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: 0,
             },
             vec![],
@@ -457,7 +457,7 @@ mod tests {
     #[test]
     fn test_dilithium_signature_detection() {
         let mut tx = create_test_transfer();
-        tx.signature.algorithm = SignatureAlgorithm::Dilithium5;
+        tx.signature.algorithm = SignatureAlgorithm::DEFAULT;
 
         let fee_input = classify_transfer(&tx);
         assert_eq!(fee_input.sig_scheme, SigScheme::Dilithium5);

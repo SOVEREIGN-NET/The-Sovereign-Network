@@ -1961,7 +1961,7 @@ mod tests {
         let handler =
             MeshMessageHandler::new(peer_registry.clone(), long_range_relays, revenue_pools);
 
-        let reporter = PublicKey::new(vec![1, 2, 3]);
+        let reporter = PublicKey::new([1u8; 2592]);
         // Ticket #146: Use UnifiedPeerId for HashMap key
         let unified_peer =
             crate::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(reporter.clone());
@@ -2154,7 +2154,7 @@ mod tests {
         handler
             .handle_mesh_message(
                 ZhtpMeshMessage::IdentityEnvelope(envelope.clone()),
-                PublicKey::new(vec![9]),
+                PublicKey::new([9u8; 2592]),
             )
             .await
             .unwrap();
@@ -2198,7 +2198,7 @@ mod tests {
         handler
             .handle_mesh_message(
                 ZhtpMeshMessage::IdentityEnvelope(envelope.clone()),
-                PublicKey::new(vec![9]),
+                PublicKey::new([9u8; 2592]),
             )
             .await
             .unwrap();
@@ -2219,7 +2219,7 @@ mod tests {
         handler
             .handle_mesh_message(
                 ZhtpMeshMessage::IdentityDeliveryAck(ack),
-                PublicKey::new(vec![9]),
+                PublicKey::new([9u8; 2592]),
             )
             .await
             .unwrap();

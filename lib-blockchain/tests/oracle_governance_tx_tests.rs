@@ -20,7 +20,7 @@ fn make_signature(timestamp: u64) -> Signature {
     Signature {
         signature: vec![1u8; 64],
         public_key: PublicKey::new(vec![7u8; 32]),
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp,
     }
 }

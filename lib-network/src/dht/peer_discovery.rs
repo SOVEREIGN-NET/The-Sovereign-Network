@@ -33,7 +33,7 @@ pub struct ZhtpPeerInfo {
     /// Blockchain identity public key
     pub blockchain_pubkey: PublicKey,
     
-    /// Dilithium2 post-quantum signature public key
+    /// Dilithium5 post-quantum signature public key
     pub dilithium_pubkey: Vec<u8>,
     
     /// Decentralized identifier (did:zhtp:...)
@@ -76,7 +76,7 @@ impl ZhtpPeerInfo {
         
         let data_hash = hash_blake3(&serialized);
         
-        // Verify Dilithium2 signature
+        // Verify Dilithium5 signature
         match dilithium_verify(&data_hash, &self.signature, &self.dilithium_pubkey) {
             Ok(valid) => Ok(valid),
             Err(e) => {

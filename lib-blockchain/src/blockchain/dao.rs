@@ -523,7 +523,7 @@ impl Blockchain {
             crate::integration::crypto_integration::Signature {
                 signature: vec![],
                 public_key: crate::integration::crypto_integration::PublicKey::new([0u8; 2592]),
-                algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
+                algorithm: crate::integration::crypto_integration::SignatureAlgorithm::DEFAULT,
                 timestamp: crate::utils::time::current_timestamp(),
             },
             format!(
@@ -716,7 +716,7 @@ impl Blockchain {
             crate::integration::crypto_integration::Signature {
                 signature: sig_bytes,
                 public_key: executor_pubkey,
-                algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
+                algorithm: crate::integration::crypto_integration::SignatureAlgorithm::DEFAULT,
                 timestamp: now,
             },
             memo_text.into_bytes(),

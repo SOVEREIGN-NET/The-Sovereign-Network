@@ -70,7 +70,7 @@ fn test_legacy_bonding_curve_path_rejected() {
     let fake_signature = Signature {
         signature: vec![0u8; 64],
         public_key: fake_public_key,
-        algorithm: SignatureAlgorithm::Dilithium5,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: 1000,
     };
 

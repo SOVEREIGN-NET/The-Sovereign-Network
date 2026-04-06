@@ -4,7 +4,7 @@
 //! This replaces JavaScript-based DHT operations with native Rust binary packets.
 
 use anyhow::{anyhow, Result};
-use lib_crypto::post_quantum::dilithium::{dilithium2_keypair, dilithium_sign, dilithium_verify};
+use lib_crypto::post_quantum::dilithium::{dilithium5_keypair, dilithium_sign, dilithium_verify};
 use lib_crypto::{Hash, PostQuantumSignature, PublicKey, SignatureAlgorithm};
 use lib_identity::ZhtpIdentity;
 use serde::{Deserialize, Serialize};
@@ -181,7 +181,7 @@ pub struct ZhtpRelayQuery {
     pub requester_pubkey: Vec<u8>,
     /// Encrypted query payload (encrypted with Kyber shared secret)
     pub encrypted_payload: ZhtpEncryptedMessage,
-    /// Dilithium2 signature of (request_id + domain + path + timestamp)
+    /// Dilithium5 signature of (request_id + domain + path + timestamp)
     pub signature: Vec<u8>,
     /// Timestamp
     pub timestamp: u64,
@@ -202,7 +202,7 @@ pub struct ZhtpRelayResponse {
     pub responder_pubkey: Vec<u8>,
     /// Encrypted content (encrypted with Kyber shared secret)
     pub encrypted_content: ZhtpEncryptedMessage,
-    /// Dilithium2 signature of (request_id + content_hash + timestamp)
+    /// Dilithium5 signature of (request_id + content_hash + timestamp)
     pub signature: Vec<u8>,
     /// Timestamp
     pub timestamp: u64,
@@ -267,7 +267,7 @@ pub enum CachePreference {
 pub struct ZhtpPeerRegister {
     /// Blockchain public key
     pub blockchain_pubkey: PublicKey,
-    /// Dilithium2 public key for signatures
+    /// Dilithium5 public key for signatures
     pub dilithium_pubkey: Vec<u8>,
     /// Node capabilities
     pub capabilities: NodeCapabilities,
@@ -333,7 +333,7 @@ pub struct ZhtpPeerInfo {
     pub node_id: [u8; 32],
     /// Blockchain public key
     pub blockchain_pubkey: PublicKey,
-    /// Dilithium2 public key
+    /// Dilithium5 public key
     pub dilithium_pubkey: Vec<u8>,
     /// Node capabilities
     pub capabilities: NodeCapabilities,
@@ -705,7 +705,7 @@ impl DhtProtocolHandler {
         // Payload data
         signing_data.extend_from_slice(&bincode::serialize(payload)?);
 
-        // Generate Dilithium2 signature
+        // Generate Dilithium5 signature
         let signature_bytes = dilithium_sign(&signing_data, private_key)
             .map_err(|e| anyhow!("Failed to sign DHT packet: {}", e))?;
 
@@ -717,7 +717,7 @@ impl DhtProtocolHandler {
         Ok(PostQuantumSignature {
             signature: signature_bytes,
             public_key: PublicKey::new(public_key.try_into().unwrap_or([0u8; 2592])),
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp,
         })
     }
@@ -745,7 +745,7 @@ impl DhtProtocolHandler {
 
         // Verify based on algorithm
         match signature.algorithm {
-            SignatureAlgorithm::Dilithium2 => {
+            SignatureAlgorithm::Dilithium5 => {
                 // For verification, we need access to the correct public key format
                 // This is a simplified approach - in production we'd need proper key management
                 if signature.public_key.dilithium_pk.is_empty() {
@@ -795,7 +795,7 @@ impl DhtProtocolHandler {
 
         // Generate cryptographic signature using identity's public key
         // For production, we would need proper key management
-        let (temp_pk, temp_sk) = dilithium2_keypair();
+        let (temp_pk, temp_sk) = dilithium5_keypair();
         let signature = Self::sign_packet(&header, &response_payload, &temp_sk, &temp_pk)?;
 
         Ok(DhtPacket {
@@ -959,7 +959,7 @@ impl DhtProtocolHandler {
 
         // Generate cryptographic signature using temporary keys
         // For production, we would use the identity's actual signing keys
-        let (temp_pk, temp_sk) = dilithium2_keypair();
+        let (temp_pk, temp_sk) = dilithium5_keypair();
         let signature = Self::sign_packet(&header, &payload, &temp_sk, &temp_pk)?;
 
         Ok(DhtPacket {

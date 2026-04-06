@@ -396,8 +396,8 @@ mod tests {
         let mut manager = SocialRecoveryManager::new();
         let mut config = GuardianConfig::new(2, 5);
 
-        let pubkey1 = PublicKey::new(vec![1, 2, 3, 4]);
-        let pubkey2 = PublicKey::new(vec![5, 6, 7, 8]);
+        let pubkey1 = PublicKey::new([1u8; 2592]);
+        let pubkey2 = PublicKey::new([2u8; 2592]);
 
         config
             .add_guardian("did:zhtp:alice".to_string(), pubkey1, "Alice".to_string())
@@ -421,8 +421,8 @@ mod tests {
         let mut manager = SocialRecoveryManager::new();
         let mut config = GuardianConfig::new(2, 5);
 
-        let pubkey1 = PublicKey::new(vec![1, 2, 3, 4]);
-        let pubkey2 = PublicKey::new(vec![5, 6, 7, 8]);
+        let pubkey1 = PublicKey::new([1u8; 2592]);
+        let pubkey2 = PublicKey::new([2u8; 2592]);
 
         config
             .add_guardian("did:zhtp:alice".to_string(), pubkey1, "Alice".to_string())

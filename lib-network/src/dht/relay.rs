@@ -1,7 +1,7 @@
 //! ZHTP Relay Protocol Implementation
 //!
 //! Secure DHT content relay through authenticated mesh peers.
-//! Combines Dilithium2 signatures with Kyber-encrypted channels.
+//! Combines Dilithium5 signatures with Kyber-encrypted channels.
 
 use anyhow::{Result, anyhow};
 use lib_crypto::post_quantum::dilithium::{dilithium_sign, dilithium_verify};
@@ -86,7 +86,7 @@ impl ZhtpRelayProtocol {
             &timestamp.to_le_bytes(),
         ].concat();
         
-        // Sign with Dilithium2
+        // Sign with Dilithium5
         let signature = dilithium_sign(&signature_message, &self.dilithium_secret_key)?;
         
         debug!(" Relay query created and signed (request_id: {})", &request_id[..16]);
@@ -171,7 +171,7 @@ impl ZhtpRelayProtocol {
         }
         signature_message.extend_from_slice(&timestamp.to_le_bytes());
         
-        // Sign with Dilithium2
+        // Sign with Dilithium5
         let signature = dilithium_sign(&signature_message, &self.dilithium_secret_key)?;
         
         debug!(" Relay response created and signed");
@@ -262,14 +262,14 @@ impl Default for ZhtpQueryOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_crypto::post_quantum::dilithium::dilithium2_keypair;
+    use lib_crypto::post_quantum::dilithium::dilithium5_keypair;
     
     #[tokio::test]
     #[ignore] // Ignore network-dependent test
     async fn test_zhtp_relay_flow() -> Result<()> {
         // Create two relay protocol handlers (Node A and Node B)
-        let (node_a_pubkey, node_a_secret) = dilithium2_keypair();
-        let (node_b_pubkey, node_b_secret) = dilithium2_keypair();
+        let (node_a_pubkey, node_a_secret) = dilithium5_keypair();
+        let (node_b_pubkey, node_b_secret) = dilithium5_keypair();
         
         let node_a_caps = NodeCapabilities {
             has_dht: true,

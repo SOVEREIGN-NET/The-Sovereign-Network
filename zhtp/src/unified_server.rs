@@ -1547,7 +1547,7 @@ impl ZhtpUnifiedServer {
         info!("🔒 ZHTP Unified Server ONLINE (QUIC-ONLY architecture)");
         info!("   Entry point: QUIC (required and primary)");
         info!("   Discovery: BLE, BT Classic, WiFi Direct, LoRaWAN");
-        info!("   Relay: Encrypted DHT with Dilithium2 + Kyber1024 + ChaCha20");
+        info!("   Relay: Encrypted DHT with Dilithium5 + Kyber1024 + ChaCha20");
 
         // Verify network isolation is working
         info!(" Verifying network isolation...");
@@ -1773,7 +1773,7 @@ impl ZhtpUnifiedServer {
         // Use first identity - identities is Vec<ZhtpIdentity>
         let identity = &identities[0];
 
-        // Create PublicKey from identity's public_key field (Dilithium2 public key)
+        // Create PublicKey from identity's public_key field (Dilithium5 public key)
         let blockchain_pubkey = identity.public_key.clone();
 
         info!(

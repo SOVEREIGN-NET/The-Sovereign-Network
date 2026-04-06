@@ -123,11 +123,17 @@ mod tests {
     use lib_crypto::types::PrivateKey;
 
     fn create_test_private_key() -> PrivateKey {
+        let mut sk = [0u8; 4896];
+        sk[..8].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        let mut kyber = [0u8; 3168];
+        kyber[..8].copy_from_slice(&[9, 10, 11, 12, 13, 14, 15, 16]);
+        let mut seed = [0u8; 64];
+        seed[..8].copy_from_slice(&[25, 26, 27, 28, 29, 30, 31, 32]);
         PrivateKey {
-            dilithium_sk: vec![1, 2, 3, 4, 5, 6, 7, 8],
-            dilithium_pk: vec![],
-            kyber_sk: vec![9, 10, 11, 12, 13, 14, 15, 16],
-            master_seed: vec![25, 26, 27, 28, 29, 30, 31, 32],
+            dilithium_sk: sk,
+            dilithium_pk: [0u8; 2592],
+            kyber_sk: kyber,
+            master_seed: seed,
         }
     }
 

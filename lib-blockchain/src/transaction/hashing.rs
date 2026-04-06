@@ -24,7 +24,7 @@ pub fn hash_transaction(transaction: &Transaction) -> Hash {
             kyber_pk: [0u8; 1568],
             key_id: [0u8; 32], // All zeros - must match client's zeroed signature
         },
-        algorithm: SignatureAlgorithm::Dilithium5,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: 0,
     };
 
@@ -302,7 +302,7 @@ pub mod utils {
         tx_content.signature = Signature {
             signature: Vec::new(),
             public_key: PublicKey::new([0u8; 2592]),
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: 0,
         };
 

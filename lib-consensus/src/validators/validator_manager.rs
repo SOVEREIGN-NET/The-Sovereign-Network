@@ -105,7 +105,7 @@ impl ValidatorManager {
     ///
     /// | Key | Role | Exposure |
     /// |-----|------|----------|
-    /// | `consensus_key` | BFT vote signing (Dilithium2) | Hot |
+    /// | `consensus_key` | BFT vote signing (Dilithium5) | Hot |
     /// | `networking_key` | P2P transport identity (Ed25519/X25519) | Hot |
     /// | `rewards_key` | Reward wallet public key | Cold-capable |
     pub fn register_validator(

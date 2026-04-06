@@ -389,7 +389,7 @@ mod tests {
 
     fn create_test_peer(_did_suffix: &str, _bootstrap: bool) -> UnifiedPeerId {
         // Create a test peer with known DID
-        let pk = PublicKey::new(vec![0u8; 32]);
+        let pk = PublicKey::new([0u8; 2592]);
         let peer = UnifiedPeerId::from_public_key_legacy(pk);
         // Note: In real code, you'd set the DID properly
         peer

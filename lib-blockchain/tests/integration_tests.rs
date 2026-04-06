@@ -329,7 +329,7 @@ fn test_zk_identity_proof_integration() -> Result<()> {
         crypto_integration::Signature {
             signature: vec![1, 2, 3],
             public_key: crypto_integration::PublicKey::new([0u8; 2592]),
-            algorithm: crypto_integration::SignatureAlgorithm::Dilithium5,
+            algorithm: crypto_integration::SignatureAlgorithm::DEFAULT,
             timestamp: 12345,
         },
         "ZK identity proof test".as_bytes().to_vec(),
@@ -396,7 +396,7 @@ fn test_network_serialization_integration() -> Result<()> {
         crypto_integration::Signature {
             signature: vec![1, 2, 3],
             public_key: crypto_integration::PublicKey::new([0u8; 2592]),
-            algorithm: crypto_integration::SignatureAlgorithm::Dilithium5,
+            algorithm: crypto_integration::SignatureAlgorithm::DEFAULT,
             timestamp: 12345,
         },
         "network test".as_bytes().to_vec(),
@@ -525,7 +525,7 @@ fn test_full_integration_workflow() -> Result<()> {
                 pk[0..bytes.len().min(2592)].copy_from_slice(&bytes[..bytes.len().min(2592)]);
                 crypto_integration::PublicKey::new(pk)
             },
-            algorithm: crypto_integration::SignatureAlgorithm::Dilithium5,
+            algorithm: crypto_integration::SignatureAlgorithm::DEFAULT,
             timestamp: 12345,
         },
         "Full integration test".as_bytes().to_vec(),

@@ -316,7 +316,7 @@ mod tests {
         };
         let approval = Approval {
             public_key: pk,
-            algorithm: SignatureAlgorithm::Dilithium5,
+            algorithm: SignatureAlgorithm::DEFAULT,
             signature: vec![0u8; 4595],
         };
         let set = ThresholdApprovalSet {
@@ -380,7 +380,7 @@ mod tests {
             domain: ApprovalDomain::OracleCommittee,
             approvals: vec![Approval {
                 public_key: signer.public_key,
-                algorithm: SignatureAlgorithm::Dilithium5,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 signature: vec![0u8; pk_len],
             }],
         };

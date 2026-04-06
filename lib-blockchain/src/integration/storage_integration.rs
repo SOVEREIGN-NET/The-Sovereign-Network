@@ -1723,7 +1723,7 @@ mod tests {
             crate::integration::crypto_integration::Signature {
                 signature: vec![1, 2, 3],
                 public_key: crate::integration::crypto_integration::PublicKey::new([0u8; 2592]),
-                algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
+                algorithm: crate::integration::crypto_integration::SignatureAlgorithm::DEFAULT,
                 timestamp: 12345,
             },
             "test transaction".as_bytes().to_vec(),

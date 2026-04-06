@@ -28,7 +28,7 @@ fn create_test_signature(pubkey: &PublicKey) -> Signature {
     Signature {
         signature: vec![0u8; 64],
         public_key: pubkey.clone(),
-        algorithm: SignatureAlgorithm::Dilithium5,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

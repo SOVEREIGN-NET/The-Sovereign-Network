@@ -41,7 +41,7 @@ fn create_test_signature(nonce: u64) -> PostQuantumSignature {
             kyber_pk: vec![1u8; 32],
             key_id: [1u8; 32],
         },
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: nonce,
     }
 }
@@ -256,11 +256,11 @@ fn test_fix_1_signature_verification_implementation() {
     let invalid_sig = PostQuantumSignature {
         signature: vec![],
         public_key: PublicKey {
-            dilithium_pk: vec![],
-            kyber_pk: vec![],
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: [0u8; 32],
         },
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: 0,
     };
 
@@ -269,14 +269,14 @@ fn test_fix_1_signature_verification_implementation() {
     assert!(invalid_sig.signature.is_empty());
 
     // Fix needed: Actual cryptographic verification
-    // - Dilithium2 signatures are deterministic
+    // - Dilithium5 signatures are deterministic
     // - Public key length must be exactly 1312 bytes
     // - Signature length must be exactly 2420 bytes
 
     println!("FIX #1: Signature verification needs real crypto validation");
     println!("  Current: Only checks buffer non-empty");
     println!("  Needed: Use lib_crypto PostQuantumSignature::verify()");
-    println!("  Dilithium2: pub_key=1312B, signature=2420B");
+    println!("  Dilithium5: pub_key=2592B, signature=4595B");
 }
 
 #[test]

@@ -57,7 +57,7 @@ pub const MAX_CHALLENGES_PER_IP_PER_MIN: u32 = 3;
 /// QR payload scheme prefix
 pub const QR_SCHEME: &str = "zhtp://auth";
 
-/// Minimum Dilithium public-key size accepted (Dilithium2 = 1312 bytes)
+/// Minimum Dilithium public-key size accepted (Dilithium5 = 1312 bytes)
 pub const MIN_DILITHIUM_PK_BYTES: usize = 1312;
 
 // ---------------------------------------------------------------------------

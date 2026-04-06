@@ -173,7 +173,11 @@ mod tests {
     use super::*;
 
     fn make_key(id: &[u8]) -> PublicKey {
-        PublicKey::new(id.to_vec())
+        let mut arr = [0u8; 2592];
+        for (i, b) in id.iter().enumerate() {
+            if i < arr.len() { arr[i] = *b; }
+        }
+        PublicKey::new(arr)
     }
 
     // ---- assert_consensus_sender_is_validator ----

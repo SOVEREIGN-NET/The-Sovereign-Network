@@ -272,10 +272,10 @@ pub fn build_migrate_identity_request(
             identity.public_key.len()
         )));
     }
-    if identity.private_key.len() != Dilithium5::SECRET_KEY_SIZE_SEEDED {
+    if identity.private_key.len() != Dilithium5::SECRET_KEY_SIZE {
         return Err(ClientError::CryptoError(format!(
             "Invalid Dilithium5 secret key size for migration: expected seeded {} (crystals), got {}",
-            Dilithium5::SECRET_KEY_SIZE_SEEDED,
+            Dilithium5::SECRET_KEY_SIZE,
             identity.private_key.len()
         )));
     }
@@ -732,7 +732,7 @@ mod tests {
         // Seeded keys use crystals-dilithium (4864 bytes)
         assert_eq!(
             identity.private_key.len(),
-            Dilithium5::SECRET_KEY_SIZE_SEEDED
+            Dilithium5::SECRET_KEY_SIZE
         );
         assert_eq!(identity.kyber_public_key.len(), Kyber1024::PUBLIC_KEY_SIZE);
         assert_eq!(identity.kyber_secret_key.len(), Kyber1024::SECRET_KEY_SIZE);

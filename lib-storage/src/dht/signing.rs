@@ -303,7 +303,7 @@ mod tests {
             peer,
             addresses: vec!["127.0.0.1:1234".to_string()],
             public_key: PostQuantumSignature {
-                algorithm: SignatureAlgorithm::Dilithium2,
+                algorithm: SignatureAlgorithm::DEFAULT,
                 signature: vec![],
                 public_key: identity.public_key.clone(),
                 timestamp: 0,

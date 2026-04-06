@@ -1112,7 +1112,7 @@ impl RuntimeOrchestrator {
                 &self.config.environment,
                 primary_wallet_info,
                 Some(wallet.user_identity.id.clone()), // Pass user identity ID
-                genesis_private_data, // Pass private data for Dilithium2 public key extraction
+                genesis_private_data, // Pass private data for Dilithium5 public key extraction
             )
             .await?;
 
@@ -2803,7 +2803,6 @@ impl RuntimeOrchestrator {
             return Ok(()); // already populated — nothing to do
         }
 
-        const DILITHIUM2_PK_LEN: usize = 1312;
         const DILITHIUM5_PK_LEN: usize = 2592;
 
         let mut committee_members_with_pubkeys: Vec<([u8; 32], Vec<u8>)> = blockchain
@@ -5562,13 +5561,13 @@ mod oracle_startup_tests {
 
         // Replicate the bootstrap logic from seed_blockchain_validator_registry.
         // Type system now enforces 2592-byte keys, no length check needed.
-        let mut committee_members: Vec<([u8; 32], [u8; 2592])> = bc
+        let mut committee_members: Vec<([u8; 32], Vec<u8>)> = bc
             .validator_registry
             .values()
             .filter(|v| v.status == "active")
             .map(|v| {
                 let kid = lib_blockchain::blake3_hash(&v.consensus_key).as_array();
-                (kid, v.consensus_key)
+                (kid, v.consensus_key.to_vec())
             })
             .collect();
         committee_members.sort_by(|(a, _), (b, _)| a.cmp(b));

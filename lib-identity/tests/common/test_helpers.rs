@@ -9,11 +9,11 @@ use lib_identity::identity::ZhtpIdentity;
 use lib_identity::types::IdentityType;
 use lib_proofs::ZeroKnowledgeProof;
 
-/// Create a standard test identity with realistic Dilithium2 key sizes.
+/// Create a standard test identity with realistic Dilithium5 key sizes.
 /// This is the single source of truth for creating mock identities in lib-identity tests.
 ///
 /// Uses:
-/// - Dilithium2: PK = 1312 bytes, SK = 2560 bytes
+/// - Dilithium5: PK = 1312 bytes, SK = 2560 bytes
 /// - Deterministic values for repeatability
 /// - Human identity type with verified citizenship
 /// - Reputation set to 1000 for testing
@@ -27,15 +27,15 @@ pub fn create_test_identity() -> ZhtpIdentity {
 /// Create a test identity with custom device name and verification status.
 pub fn create_test_identity_with_device(device: &str, citizenship_verified: bool) -> ZhtpIdentity {
     let public_key = PublicKey {
-        dilithium_pk: vec![42u8; 1312],
-        kyber_pk: vec![],
+        dilithium_pk: [42u8; 2592],
+        kyber_pk: [0u8; 1568],
         key_id: [42u8; 32],
     };
     let private_key = PrivateKey {
-        dilithium_sk: vec![1u8; 2560],
-        dilithium_pk: vec![42u8; 1312],
-        kyber_sk: vec![],
-        master_seed: vec![],
+        dilithium_sk: [1u8; 4896],
+        dilithium_pk: [42u8; 2592],
+        kyber_sk: [0u8; 3168],
+        master_seed: [0u8; 64],
     };
     let ownership_proof = ZeroKnowledgeProof {
         proof_system: "test".to_string(),

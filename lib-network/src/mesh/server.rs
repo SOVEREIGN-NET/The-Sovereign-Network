@@ -1737,7 +1737,7 @@ impl ZhtpMeshServer {
         let signature = Signature {
             signature: credentials.signature.clone(),
             public_key: credentials.wallet_key.clone(),
-            algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
+            algorithm: lib_crypto::SignatureAlgorithm::DEFAULT,
             timestamp: credentials.timestamp,
         };
 
