@@ -1970,7 +1970,12 @@ impl RuntimeOrchestrator {
                     network_info.as_ref(),
                 )?;
 
-                if synced_blockchain.is_none() && !local_is_bootstrap_leader {
+                // Validator nodes must NOT wait here — they need to participate in
+                // consensus to vote on block 1, so they can't wait for block 1 to exist
+                // first. The genesis config is embedded and deterministic, so all nodes
+                // independently produce the same genesis block and then converge via BFT.
+                let is_validator_node = self.config.consensus_config.validator_enabled;
+                if synced_blockchain.is_none() && !local_is_bootstrap_leader && !is_validator_node {
                     let retry_peers: Vec<_> = network_info
                         .as_ref()
                         .map(|ni| ni.bootstrap_peers.clone())
