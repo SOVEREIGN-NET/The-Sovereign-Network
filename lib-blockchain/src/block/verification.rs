@@ -159,9 +159,8 @@ pub fn verify_quorum_proof(
         ));
     }
 
+    // Phase 1: Validate attestation semantics (cheap checks first)
     let mut seen = HashSet::new();
-    let mut valid_count = 0u64;
-
     for att in &proof.attestations {
         // Reject duplicates
         if !seen.insert(att.validator_id) {
@@ -180,17 +179,18 @@ pub fn verify_quorum_proof(
         })?;
 
         // Key in attestation must match registered key
-        // Note: registered_key from HashMap is already [u8; 2592]
         if att.public_key.as_slice() != registered_key.as_slice() {
             return Err(format!(
                 "public key mismatch for validator {}",
                 hex::encode(&att.validator_id[..8]),
             ));
         }
+    }
 
-        // Reconstruct the vote signing envelope and verify
-        let envelope =
-            BftQuorumProof::reconstruct_vote_envelope(att, proof.height);
+    // Phase 2: Verify signatures (expensive crypto operations)
+    let mut valid_count = 0u64;
+    for att in &proof.attestations {
+        let envelope = BftQuorumProof::reconstruct_vote_envelope(att, proof.height);
 
         let att_public_key_array: [u8; 2592] = match att.public_key.as_slice().try_into() {
             Ok(arr) => arr,

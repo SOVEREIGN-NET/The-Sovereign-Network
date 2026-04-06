@@ -1895,7 +1895,7 @@ mod tests {
             vec![],
             Signature {
                 signature: vec![0x55; 32],
-                public_key: PublicKey::new(vec![0x22; 32]),
+                public_key: PublicKey::new([0x22; 2592]),
                 algorithm: SignatureAlgorithm::Dilithium2,
                 timestamp: 1_700_000_000,
             },

@@ -1822,7 +1822,7 @@ mod tests {
         let state = OracleState::default();
         let seen = BTreeSet::new();
         let result = state.validate_attestation(&attestation, 5, &seen, |_id| {
-            Some(keypair.public_key.dilithium_pk.clone())
+            Some(keypair.public_key.dilithium_pk.to_vec())
         });
         assert!(matches!(
             result,
@@ -1868,13 +1868,13 @@ mod tests {
 
         let resolver = |id: [u8; 32]| -> Option<Vec<u8>> {
             if id == k1.public_key.key_id {
-                Some(k1.public_key.dilithium_pk.clone())
+                Some(k1.public_key.dilithium_pk.to_vec())
             } else if id == k2.public_key.key_id {
-                Some(k2.public_key.dilithium_pk.clone())
+                Some(k2.public_key.dilithium_pk.to_vec())
             } else if id == k3.public_key.key_id {
-                Some(k3.public_key.dilithium_pk.clone())
+                Some(k3.public_key.dilithium_pk.to_vec())
             } else if id == k4.public_key.key_id {
-                Some(k4.public_key.dilithium_pk.clone())
+                Some(k4.public_key.dilithium_pk.to_vec())
             } else {
                 None
             }
@@ -1931,7 +1931,7 @@ mod tests {
 
         let resolver = |id: [u8; 32]| -> Option<Vec<u8>> {
             if id == keypair.public_key.key_id {
-                Some(keypair.public_key.dilithium_pk.clone())
+                Some(keypair.public_key.dilithium_pk.to_vec())
             } else {
                 Some(vec![0u8; 32])
             }
@@ -1995,11 +1995,11 @@ mod tests {
 
         let resolver = |id: [u8; 32]| -> Option<Vec<u8>> {
             if id == k1.public_key.key_id {
-                Some(k1.public_key.dilithium_pk.clone())
+                Some(k1.public_key.dilithium_pk.to_vec())
             } else if id == k2.public_key.key_id {
-                Some(k2.public_key.dilithium_pk.clone())
+                Some(k2.public_key.dilithium_pk.to_vec())
             } else if id == k3.public_key.key_id {
-                Some(k3.public_key.dilithium_pk.clone())
+                Some(k3.public_key.dilithium_pk.to_vec())
             } else {
                 None
             }
@@ -2045,11 +2045,11 @@ mod tests {
 
         let resolver = |id: [u8; 32]| -> Option<Vec<u8>> {
             if id == k1.public_key.key_id {
-                Some(k1.public_key.dilithium_pk.clone())
+                Some(k1.public_key.dilithium_pk.to_vec())
             } else if id == k2.public_key.key_id {
-                Some(k2.public_key.dilithium_pk.clone())
+                Some(k2.public_key.dilithium_pk.to_vec())
             } else if id == k3.public_key.key_id {
-                Some(k3.public_key.dilithium_pk.clone())
+                Some(k3.public_key.dilithium_pk.to_vec())
             } else {
                 None
             }

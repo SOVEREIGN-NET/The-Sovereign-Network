@@ -145,17 +145,17 @@ mod tests {
     fn test_block_serialization() -> Result<()> {
         let _keypair = KeyPair::generate()?;
 
-        let header = BlockHeader::new(
-            1,                     // version
-            Hash::default(),       // previous_block_hash
-            Hash::default(),       // merkle_root
-            1000,                  // timestamp
-            Difficulty::minimum(), // difficulty
-            0,                     // height
-            0,                     // transaction_count
-            0,                     // block_size
-            Difficulty::minimum(), // cumulative_difficulty
-        );
+        let header = BlockHeader {
+            version: 1,
+            previous_hash: Hash::default().into(),
+            data_helix_root: Hash::default().into(),
+            timestamp: 1000,
+            height: 0,
+            verification_helix_root: [0u8; 32],
+            state_root: Hash::default().into(),
+            bft_quorum_root: [0u8; 32],
+            block_hash: Hash::default(),
+        };
 
         let block = Block::new(header, Vec::new());
 
@@ -198,17 +198,17 @@ mod tests {
     fn test_network_message() -> Result<()> {
         let _keypair = KeyPair::generate()?;
 
-        let header = BlockHeader::new(
-            1,                     // version
-            Hash::default(),       // previous_block_hash
-            Hash::default(),       // merkle_root
-            1000,                  // timestamp
-            Difficulty::minimum(), // difficulty
-            1,                     // height
-            0,                     // transaction_count
-            0,                     // block_size
-            Difficulty::minimum(), // cumulative_difficulty
-        );
+        let header = BlockHeader {
+            version: 1,
+            previous_hash: Hash::default().into(),
+            data_helix_root: Hash::default().into(),
+            timestamp: 1000,
+            height: 1,
+            verification_helix_root: [0u8; 32],
+            state_root: Hash::default().into(),
+            bft_quorum_root: [0u8; 32],
+            block_hash: Hash::default(),
+        };
 
         let block = Block::new(header, Vec::new());
         let message = NetworkMessage::NewBlock(block);

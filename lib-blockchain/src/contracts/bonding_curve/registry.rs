@@ -210,8 +210,8 @@ mod tests {
             Threshold::ReserveAmount(1000),
             true,
             PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: [id; 32],
             },
             String::new(),

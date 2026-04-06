@@ -1099,7 +1099,7 @@ impl BlockchainConsensusCoordinator {
                 crate::integration::crypto_integration::Signature {
                     signature: vec![0u8; 64], // System signature
                     public_key: crate::integration::crypto_integration::PublicKey::new(
-                        system_keypair.public_key.dilithium_pk.clone(),
+                        system_keypair.public_key.dilithium_pk,
                     ),
                     algorithm:
                         crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
@@ -1179,7 +1179,7 @@ impl BlockchainConsensusCoordinator {
                 crate::integration::crypto_integration::Signature {
                     signature: vec![0u8; 64], // System signature
                     public_key: crate::integration::crypto_integration::PublicKey::new(
-                        system_keypair.public_key.dilithium_pk.clone(),
+                        system_keypair.public_key.dilithium_pk,
                     ),
                     algorithm:
                         crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
@@ -1526,7 +1526,7 @@ impl BlockchainConsensusCoordinator {
         transaction.signature = crate::integration::crypto_integration::Signature {
             signature: signature_result.signature.clone(),
             public_key: crate::integration::crypto_integration::PublicKey::new(
-                consensus_keypair.public_key.dilithium_pk.clone(),
+                consensus_keypair.public_key.dilithium_pk,
             ),
             algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
             timestamp: current_timestamp(),
@@ -1940,7 +1940,7 @@ pub async fn initialize_consensus_integration(
         consensus_type,
         min_stake: 1000 * 1_000_000,           // 1000 SOV minimum stake
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB minimum storage
-        max_validators: 100,
+        max_validators: 21,
         block_time: 10, // 10 second blocks
         epoch_length_blocks: 100,
         propose_timeout: 3000,
@@ -1976,7 +1976,7 @@ pub async fn initialize_consensus_integration_with_difficulty_config(
         consensus_type,
         min_stake: 1000 * 1_000_000,           // 1000 SOV minimum stake
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB minimum storage
-        max_validators: 100,
+        max_validators: 21,
         block_time: 10, // 10 second blocks
         epoch_length_blocks: 100,
         propose_timeout: 3000,

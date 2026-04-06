@@ -5,7 +5,7 @@ use anyhow::Result;
 use lib_blockchain::block::{Block, BlockHeader};
 use lib_blockchain::storage::{BlockchainStore, SledStore};
 use lib_blockchain::transaction::{DaoExecutionData, Transaction, TransactionPayload};
-use lib_blockchain::types::{Difficulty, Hash, TransactionType};
+use lib_blockchain::types::{Hash, TransactionType};
 use lib_crypto::types::keys::PublicKey;
 use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 use serde_json::json;
@@ -14,7 +14,7 @@ const EXEC_REGISTER: &str = "dao_delegate_register_v1";
 const EXEC_REVOKE: &str = "dao_delegate_revoke_v1";
 
 fn test_pubkey(id: u8) -> PublicKey {
-    PublicKey::new(vec![id; 32])
+    PublicKey::new([id; 2592])
 }
 
 fn test_signature(pubkey: &PublicKey, timestamp: u64) -> Signature {
@@ -63,26 +63,23 @@ fn dao_execution_tx(
 fn block(height: u64, txs: Vec<Transaction>) -> Block {
     let mut block_hash_bytes = [0u8; 32];
     block_hash_bytes[..8].copy_from_slice(&height.to_be_bytes());
+    let previous_hash: [u8; 32] = if height == 0 {
+        Hash::zero().into()
+    } else {
+        let mut prev = [0u8; 32];
+        prev[..8].copy_from_slice(&(height - 1).to_be_bytes());
+        prev
+    };
     let header = BlockHeader {
         version: 1,
-        height,
+        previous_hash,
+        data_helix_root: Hash::zero().into(),
         timestamp: 1_700_100_000 + height,
-        previous_block_hash: if height == 0 {
-            Hash::zero()
-        } else {
-            let mut prev = [0u8; 32];
-            prev[..8].copy_from_slice(&(height - 1).to_be_bytes());
-            Hash::new(prev)
-        },
-        merkle_root: Hash::zero(),
-        state_root: Hash::default(),
+        height,
+        verification_helix_root: [0u8; 32],
+        state_root: Hash::default().into(),
+        bft_quorum_root: [0u8; 32],
         block_hash: Hash::new(block_hash_bytes),
-        nonce: 0,
-        difficulty: Difficulty::from_bits(0),
-        cumulative_difficulty: Difficulty::from_bits(0),
-        transaction_count: txs.len() as u32,
-        block_size: 0,
-        fee_model_version: 2,
     };
     Block::new(header, txs)
 }

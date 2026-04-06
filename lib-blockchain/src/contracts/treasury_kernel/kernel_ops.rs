@@ -353,40 +353,40 @@ mod tests {
 
     fn test_governance() -> PublicKey {
         PublicKey {
-            dilithium_pk: vec![99u8],
-            kyber_pk: vec![99u8],
+            dilithium_pk: [99u8; 2592],
+            kyber_pk: [99u8; 1568],
             key_id: [99u8; 32],
         }
     }
 
     fn test_kernel_address() -> PublicKey {
         PublicKey {
-            dilithium_pk: vec![88u8],
-            kyber_pk: vec![88u8],
+            dilithium_pk: [88u8; 2592],
+            kyber_pk: [88u8; 1568],
             key_id: [88u8; 32],
         }
     }
 
     fn test_user() -> PublicKey {
         PublicKey {
-            dilithium_pk: vec![1u8],
-            kyber_pk: vec![1u8],
+            dilithium_pk: [1u8; 2592],
+            kyber_pk: [1u8; 1568],
             key_id: [1u8; 32],
         }
     }
 
     fn test_recipient() -> PublicKey {
         PublicKey {
-            dilithium_pk: vec![2u8],
-            kyber_pk: vec![2u8],
+            dilithium_pk: [2u8; 2592],
+            kyber_pk: [2u8; 1568],
             key_id: [2u8; 32],
         }
     }
 
     fn unauthorized_caller() -> PublicKey {
         PublicKey {
-            dilithium_pk: vec![77u8],
-            kyber_pk: vec![77u8],
+            dilithium_pk: [77u8; 2592],
+            kyber_pk: [77u8; 1568],
             key_id: [77u8; 32],
         }
     }
@@ -806,8 +806,8 @@ mod tests {
         // Balance is stored under the minimal PublicKey resolved from key_id.
         // In production, key resolution would map key_id to a full PublicKey.
         let recipient = PublicKey {
-            dilithium_pk: Vec::new(),
-            kyber_pk: Vec::new(),
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: [1u8; 32],
         };
         assert_eq!(token.balance_of(&recipient), 500);
@@ -893,8 +893,8 @@ mod tests {
 
         // Pre-fund the minimal key that burn will resolve
         let from = PublicKey {
-            dilithium_pk: Vec::new(),
-            kyber_pk: Vec::new(),
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: [1u8; 32],
         };
         token.mint_kernel_only(&kernel_addr, &from, 1000).unwrap();
@@ -924,8 +924,8 @@ mod tests {
 
         // Pre-fund the minimal key that burn will resolve
         let from = PublicKey {
-            dilithium_pk: Vec::new(),
-            kyber_pk: Vec::new(),
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: [1u8; 32],
         };
         token.mint_kernel_only(&kernel_addr, &from, 1000).unwrap();

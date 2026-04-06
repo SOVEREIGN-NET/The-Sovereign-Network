@@ -10,7 +10,7 @@ use lib_blockchain::transaction::{
     Transaction, TransactionInput, TransactionOutput, TransactionPayload,
 };
 use lib_blockchain::types::TransactionType;
-use lib_blockchain::types::{Difficulty, Hash};
+use lib_blockchain::types::Hash;
 use lib_blockchain::Blockchain;
 use lib_crypto::types::keys::PublicKey;
 use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
@@ -18,7 +18,8 @@ use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 /// Create a test public key with a specific ID byte
 /// Uses PublicKey::new() to ensure consistent key_id computation
 fn create_test_pubkey(id: u8) -> PublicKey {
-    let dilithium_pk = vec![id; 32];
+    let mut dilithium_pk = [0u8; 2592];
+    dilithium_pk[0] = id;
     PublicKey::new(dilithium_pk)
 }
 
@@ -63,21 +64,17 @@ fn create_transfer_tx(sender: &PublicKey, fee: u64, nullifier_id: u8) -> Transac
 fn create_test_block(height: u64, transactions: Vec<Transaction>) -> Block {
     let header = BlockHeader {
         version: 1,
-        height,
+        previous_hash: Hash::zero().into(),
+        data_helix_root: Hash::zero().into(),
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs(),
-        previous_block_hash: Hash::zero(),
-        merkle_root: Hash::zero(),
-        state_root: Hash::default(),
+        height,
+        verification_helix_root: [0u8; 32],
+        state_root: Hash::default().into(),
+        bft_quorum_root: [0u8; 32],
         block_hash: Hash::zero(),
-        nonce: 0,
-        difficulty: Difficulty::minimum(),
-        cumulative_difficulty: Difficulty::minimum(),
-        transaction_count: transactions.len() as u32,
-        block_size: 0,
-        fee_model_version: 2, // Phase 2+ uses v2
     };
     Block::new(header, transactions)
 }

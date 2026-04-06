@@ -64,11 +64,7 @@ fn test_legacy_bonding_curve_path_rejected() {
     let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
 
     // Create a minimal PublicKey
-    let fake_public_key = PublicKey {
-        dilithium_pk: vec![0u8; 32],
-        kyber_pk: vec![0u8; 32],
-        key_id: [0u8; 32],
-    };
+    let fake_public_key = PublicKey::new([0u8; 2592]);
 
     // Create a minimal BondingCurveDeploy transaction
     let fake_signature = Signature {
@@ -93,18 +89,14 @@ fn test_legacy_bonding_curve_path_rejected() {
     let block = Block {
         header: lib_blockchain::block::BlockHeader {
             version: 1,
-            previous_block_hash: [0u8; 32].into(),
-            merkle_root: [0u8; 32].into(),
+            previous_hash: [0u8; 32],
+            data_helix_root: [0u8; 32],
             timestamp: 1000,
-            difficulty: Default::default(),
-            nonce: 0,
             height: 1,
-            transaction_count: 1,
-            block_size: 0,
-            cumulative_difficulty: Default::default(),
-            fee_model_version: 1,
+            verification_helix_root: [0u8; 32],
+            bft_quorum_root: [0u8; 32],
             block_hash: [0u8; 32].into(),
-            state_root: [0u8; 32].into(),
+            state_root: [0u8; 32],
         },
         transactions: vec![bc_deploy_tx],
     };

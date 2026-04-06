@@ -489,7 +489,7 @@ mod tests {
     use super::*;
 
     fn create_test_public_key(id: u8) -> PublicKey {
-        PublicKey::new(vec![id; 1312])
+        PublicKey::new([id; 2592])
     }
 
     // ============================================================================
@@ -608,7 +608,7 @@ mod tests {
 
     #[test]
     fn test_init_rejects_zero_treasury_address() {
-        let zero_addr = PublicKey::new(vec![0u8; 1312]);
+        let zero_addr = PublicKey::new([0u8; 2592]);
         let staking = create_test_public_key(2);
         let caller = create_test_public_key(3);
 
@@ -634,7 +634,7 @@ mod tests {
     #[test]
     fn test_init_rejects_zero_staking_address() {
         let treasury = create_test_public_key(1);
-        let zero_addr = PublicKey::new(vec![0u8; 1312]);
+        let zero_addr = PublicKey::new([0u8; 2592]);
         let caller = create_test_public_key(3);
 
         let result = DAOToken::init_dao_token(
@@ -1216,7 +1216,7 @@ mod tests {
 
         let treasury = create_test_public_key(1);
         let staking = create_test_public_key(2);
-        let zero_caller = PublicKey::new(vec![0u8; 1312]);
+        let zero_caller = PublicKey::new([0u8; 2592]);
 
         let result = DAOToken::init_dao_token(
             DAOType::FP,

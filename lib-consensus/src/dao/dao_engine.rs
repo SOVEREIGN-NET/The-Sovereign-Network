@@ -514,10 +514,11 @@ impl DaoEngine {
                     // Governance may adjust max_validators only within the range
                     // [MIN_VALIDATORS, MAX_VALIDATORS_HARD_CAP].
                     //
-                    // - The lower bound (MIN_VALIDATORS = 4) protects BFT safety:
+                    // - The lower bound (MIN_VALIDATORS = 3) protects the
+                    //   genesis/bootstrap validator floor:
                     //   setting max below the minimum required by the protocol is
                     //   nonsensical and would prevent the network from operating.
-                    // - The upper bound (MAX_VALIDATORS_HARD_CAP = 256) prevents
+                    // - The upper bound (MAX_VALIDATORS_HARD_CAP = 21) prevents
                     //   governance from enabling O(n²) consensus message floods.
                     if (*value as usize) < MIN_VALIDATORS {
                         return Err(anyhow::anyhow!(

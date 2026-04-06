@@ -31,7 +31,7 @@ fn create_test_transaction(memo: &str) -> Result<Transaction> {
         vec![], // Identity registration doesn't need outputs
         crypto_integration::Signature {
             signature: vec![1, 2, 3, 4, 5], // Non-empty signature
-            public_key: crypto_integration::PublicKey::new(vec![6, 7, 8, 9]),
+            public_key: crypto_integration::PublicKey::new([0u8; 2592]),
             algorithm: crypto_integration::SignatureAlgorithm::Dilithium5,
             timestamp: 12345,
         },
@@ -48,7 +48,7 @@ fn create_test_validator(id: &str, stake: u64) -> ValidatorInfo {
         stake,
         storage_provided: 1000000u64,
         // consensus_key: BFT vote-signing key (Dilithium2, hot)
-        consensus_key: vec![1u8; 32],
+        consensus_key: [1u8; 2592],
         // networking_key: P2P transport identity key (Ed25519/X25519, hot)
         networking_key: vec![2u8; 32],
         // rewards_key: Rewards wallet public key (cold-capable)
@@ -95,17 +95,17 @@ fn create_mined_block(blockchain: &Blockchain, transactions: Vec<Transaction>) -
         crate::transaction::hashing::calculate_transaction_merkle_root(&transactions)
     };
 
-    let header = BlockHeader::new(
-        1,
-        blockchain.latest_block().unwrap().hash(),
-        merkle_root,
-        blockchain.latest_block().unwrap().timestamp() + 10,
-        mining_config.difficulty,
-        blockchain.height + 1,
-        transactions.len() as u32,
-        transactions.iter().map(|tx| tx.size()).sum::<usize>() as u32,
-        mining_config.difficulty,
-    );
+    let header = BlockHeader {
+        version: 1,
+        previous_hash: blockchain.latest_block().unwrap().hash().into(),
+        data_helix_root: merkle_root.as_array(),
+        timestamp: blockchain.latest_block().unwrap().timestamp() + 10,
+        height: blockchain.height + 1,
+        verification_helix_root: [0u8; 32],
+        state_root: Hash::default().into(),
+        bft_quorum_root: [0u8; 32],
+        block_hash: Hash::default(),
+    };
 
     Ok(Block::new(header, transactions))
 }
@@ -333,17 +333,17 @@ async fn test_block_verification() -> Result<()> {
     let mining_config = get_mining_config_from_env();
 
     // Create a valid block
-    let valid_header = BlockHeader::new(
-        1,
-        blockchain.latest_block().unwrap().hash(),
-        Hash::default(),
-        blockchain.latest_block().unwrap().timestamp() + 10,
-        mining_config.difficulty,
-        1,
-        0,
-        0,
-        mining_config.difficulty,
-    );
+    let valid_header = BlockHeader {
+        version: 1,
+        previous_hash: blockchain.latest_block().unwrap().hash().into(),
+        data_helix_root: Hash::default().into(),
+        timestamp: blockchain.latest_block().unwrap().timestamp() + 10,
+        height: 1,
+        verification_helix_root: [0u8; 32],
+        state_root: Hash::default().into(),
+        bft_quorum_root: [0u8; 32],
+        block_hash: Hash::default(),
+    };
 
     let valid_block = Block::new(valid_header, Vec::new());
 
@@ -351,17 +351,17 @@ async fn test_block_verification() -> Result<()> {
     assert!(blockchain.verify_block(&valid_block, blockchain.latest_block())?);
 
     // Create an invalid block (wrong previous hash)
-    let invalid_header = BlockHeader::new(
-        1,
-        Hash::from_hex("1111111111111111111111111111111111111111111111111111111111111111")?, // Wrong previous hash
-        Hash::default(),
-        blockchain.latest_block().unwrap().timestamp() + 10,
-        mining_config.difficulty,
-        1,
-        0,
-        0,
-        mining_config.difficulty,
-    );
+    let invalid_header = BlockHeader {
+        version: 1,
+        previous_hash: Hash::from_hex("1111111111111111111111111111111111111111111111111111111111111111")?.into(), // Wrong previous hash
+        data_helix_root: Hash::default().into(),
+        timestamp: blockchain.latest_block().unwrap().timestamp() + 10,
+        height: 1,
+        verification_helix_root: [0u8; 32],
+        state_root: Hash::default().into(),
+        bft_quorum_root: [0u8; 32],
+        block_hash: Hash::default(),
+    };
 
     let invalid_block = Block::new(invalid_header, Vec::new());
 
@@ -467,7 +467,11 @@ async fn test_identity_confirmations() -> Result<()> {
                 vec![], // Fee outputs handled separately
                 Signature {
                     signature: identity_data.ownership_proof.clone(),
-                    public_key: PublicKey::new(identity_data.public_key.clone()),
+                    public_key: {
+                        let mut pk = [0u8; 2592];
+                        pk[0..identity_data.public_key.len().min(2592)].copy_from_slice(&identity_data.public_key[..identity_data.public_key.len().min(2592)]);
+                        PublicKey::new(pk)
+                    },
                     algorithm: SignatureAlgorithm::Dilithium2,
                     timestamp: identity_data.created_at,
                 },

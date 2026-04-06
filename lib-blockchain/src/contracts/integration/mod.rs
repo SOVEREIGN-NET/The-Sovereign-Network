@@ -433,7 +433,7 @@ mod tests {
         let output = TransactionOutput::new(
             [1u8; 32].into(),
             [2u8; 32].into(),
-            PublicKey::new(vec![0u8; 32]),
+            PublicKey::new([0u8; 2592]),
         );
 
         let contract_utxo = ContractUTXO::new(
@@ -475,7 +475,7 @@ mod tests {
         let output = TransactionOutput::new(
             [3u8; 32].into(),
             [4u8; 32].into(),
-            PublicKey::new(vec![0u8; 32]),
+            PublicKey::new([0u8; 2592]),
         );
 
         builder.add_input(input);

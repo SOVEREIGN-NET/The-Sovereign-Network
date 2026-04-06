@@ -489,7 +489,7 @@ mod tests {
         let mut registry = create_test_registry();
 
         // Create kernel authority using PublicKey::new to derive key_id from dilithium_pk
-        let kernel_authority = PublicKey::new(vec![99u8; 32]);
+        let kernel_authority = PublicKey::new([99u8; 2592]);
 
         // Create SOV token with kernel authority
         let mut token = TokenContract::new_sov_with_kernel_authority(kernel_authority.clone());
@@ -501,8 +501,8 @@ mod tests {
 
         // Verify citizen has no balance initially
         let citizen_pubkey = PublicKey {
-            dilithium_pk: vec![],
-            kyber_pk: vec![],
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: citizen_id,
         };
         assert_eq!(token.balance_of(&citizen_pubkey), 0);
@@ -551,15 +551,15 @@ mod tests {
 
         // Create kernel authority
         let kernel_authority = PublicKey {
-            dilithium_pk: vec![99u8; 32],
-            kyber_pk: vec![99u8; 32],
+            dilithium_pk: [99u8; 2592],
+            kyber_pk: [99u8; 1568],
             key_id: [99u8; 32],
         };
 
         // Create different authority (wrong key)
         let wrong_authority = PublicKey {
-            dilithium_pk: vec![88u8; 32],
-            kyber_pk: vec![88u8; 32],
+            dilithium_pk: [88u8; 2592],
+            kyber_pk: [88u8; 1568],
             key_id: [88u8; 32],
         };
 
@@ -589,8 +589,8 @@ mod tests {
 
         // Verify no tokens were minted
         let citizen_pubkey = PublicKey {
-            dilithium_pk: vec![],
-            kyber_pk: vec![],
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: citizen_id,
         };
         assert_eq!(
@@ -607,7 +607,7 @@ mod tests {
     fn test_ubi_events_and_dedup_persist_across_state_recovery() {
         let mut state = KernelState::new();
         let mut registry = create_test_registry();
-        let kernel_authority = PublicKey::new(vec![99u8; 32]);
+        let kernel_authority = PublicKey::new([99u8; 2592]);
         let mut token = TokenContract::new_sov_with_kernel_authority(kernel_authority.clone());
 
         let citizen_id = [1u8; 32];

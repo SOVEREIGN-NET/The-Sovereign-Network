@@ -9,7 +9,7 @@ use lib_blockchain::{
 };
 
 /// Create a mock validator info with given consensus_key and stake
-fn create_validator_info(consensus_key: Vec<u8>, stake: u64) -> (ValidatorInfo, [u8; 32]) {
+fn create_validator_info(consensus_key: [u8; 2592], stake: u64) -> (ValidatorInfo, [u8; 32]) {
     let key_id = blake3_hash(&consensus_key).as_array();
     let info = ValidatorInfo {
         identity_id: hex::encode(key_id),
@@ -37,7 +37,7 @@ fn create_validator_info(consensus_key: Vec<u8>, stake: u64) -> (ValidatorInfo, 
 fn slashing_reduces_stake_by_one_percent() {
     let mut blockchain = Blockchain::default();
 
-    let consensus_key = vec![1u8; 32];
+    let consensus_key = [1u8; 2592];
     let (validator, key_id) = create_validator_info(consensus_key, 1_000_000);
 
     blockchain
@@ -67,7 +67,7 @@ fn slashing_reduces_stake_by_one_percent() {
 fn custom_slash_fraction() {
     let mut blockchain = Blockchain::default();
 
-    let consensus_key = vec![2u8; 32];
+    let consensus_key = [2u8; 2592];
     let (validator, key_id) = create_validator_info(consensus_key, 1_000_000);
 
     blockchain
@@ -94,7 +94,7 @@ fn custom_slash_fraction() {
 fn slashing_records_event() {
     let mut blockchain = Blockchain::default();
 
-    let consensus_key = vec![3u8; 32];
+    let consensus_key = [3u8; 2592];
     let (validator, key_id) = create_validator_info(consensus_key, 500_000);
 
     blockchain
@@ -119,7 +119,7 @@ fn slashing_records_event() {
 fn slashing_bans_validator() {
     let mut blockchain = Blockchain::default();
 
-    let consensus_key = vec![4u8; 32];
+    let consensus_key = [4u8; 2592];
     let (validator, key_id) = create_validator_info(consensus_key, 100_000);
 
     blockchain
@@ -140,7 +140,7 @@ fn slashing_bans_validator() {
 fn slashing_removes_from_committee() {
     let mut blockchain = Blockchain::default();
 
-    let consensus_key = vec![5u8; 32];
+    let consensus_key = [5u8; 2592];
     let (validator, key_id) = create_validator_info(consensus_key, 100_000);
 
     blockchain
@@ -174,7 +174,7 @@ fn slashing_removes_from_committee() {
 fn slashing_events_survive_restart() {
     let mut blockchain = Blockchain::default();
 
-    let consensus_key = vec![6u8; 32];
+    let consensus_key = [6u8; 2592];
     let (validator, key_id) = create_validator_info(consensus_key, 100_000);
 
     blockchain
@@ -224,7 +224,7 @@ fn slashing_config_default_one_percent() {
 fn slashing_zero_stake() {
     let mut blockchain = Blockchain::default();
 
-    let consensus_key = vec![7u8; 32];
+    let consensus_key = [7u8; 2592];
     let (validator, key_id) = create_validator_info(consensus_key, 0);
 
     blockchain
@@ -247,8 +247,8 @@ fn slashing_zero_stake() {
 fn multiple_slashes_recorded() {
     let mut blockchain = Blockchain::default();
 
-    let consensus_key1 = vec![8u8; 32];
-    let consensus_key2 = vec![9u8; 32];
+    let consensus_key1 = [8u8; 2592];
+    let consensus_key2 = [9u8; 2592];
 
     let (validator1, key_id1) = create_validator_info(consensus_key1, 100_000);
     let (validator2, key_id2) = create_validator_info(consensus_key2, 200_000);

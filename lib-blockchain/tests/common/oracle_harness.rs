@@ -217,7 +217,7 @@ impl OracleTestHarness {
             self.validators
                 .iter()
                 .find(|v| v.key_id == key_id)
-                .map(|v| v.consensus_keypair.public_key.dilithium_pk.clone())
+                .map(|v| v.consensus_keypair.public_key.dilithium_pk.to_vec())
         };
 
         // Process the attestation

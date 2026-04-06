@@ -15,7 +15,7 @@ use lib_crypto::types::keys::PublicKey;
 fn create_test_pubkey(id: u8) -> PublicKey {
     // PublicKey::new() computes key_id as hash_blake3(&dilithium_pk)
     // This ensures consistency between key creation and lookup
-    PublicKey::new(vec![id; 32])
+    PublicKey::new([0u8; 2592])
 }
 
 /// Setup a blockchain with treasury wallet and SOV token
@@ -31,7 +31,7 @@ fn setup_blockchain_with_treasury() -> (Blockchain, PublicKey) {
         wallet_type: "multisig".to_string(),
         wallet_name: "dao_treasury".to_string(),
         alias: Some("DAO Treasury".to_string()),
-        public_key: treasury_pubkey.dilithium_pk.clone(),
+        public_key: treasury_pubkey.dilithium_pk.to_vec(),
         owner_identity_id: None,
         seed_commitment: Hash::new([0u8; 32]),
         created_at: 0,
@@ -123,7 +123,7 @@ fn test_treasury_balance_returns_zero_without_token_contract() {
         wallet_type: "multisig".to_string(),
         wallet_name: "dao_treasury".to_string(),
         alias: Some("DAO Treasury".to_string()),
-        public_key: treasury_pubkey.dilithium_pk.clone(),
+        public_key: treasury_pubkey.dilithium_pk.to_vec(),
         owner_identity_id: None,
         seed_commitment: Hash::new([0u8; 32]),
         created_at: 0,

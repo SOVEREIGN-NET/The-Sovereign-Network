@@ -25,7 +25,11 @@ use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
 /// Create a test public key with deterministic key_id from an id byte.
 fn test_pubkey(id: u8) -> PublicKey {
-    PublicKey::new(vec![id; 32])
+    let mut dilithium_pk = [0u8; 2592];
+    let mut kyber_pk = [0u8; 1568];
+    dilithium_pk[0] = id;
+    kyber_pk[0] = id;
+    PublicKey::new(dilithium_pk)
 }
 
 /// Create a test signature with the given public key.
@@ -44,16 +48,12 @@ fn test_block(height: u64, transactions: Vec<Transaction>) -> Block {
         version: 1,
         height,
         timestamp: 1_700_000_000 + height,
-        previous_block_hash: Hash::zero(),
-        merkle_root: Hash::zero(),
-        state_root: Hash::default(),
+        previous_hash: Hash::zero().into(),
+        data_helix_root: Hash::zero().into(),
+        verification_helix_root: Hash::zero().into(),
+        state_root: [0u8; 32],
+        bft_quorum_root: [0u8; 32],
         block_hash: Hash::zero(),
-        nonce: 0,
-        difficulty: Difficulty::minimum(),
-        cumulative_difficulty: Difficulty::minimum(),
-        transaction_count: transactions.len() as u32,
-        block_size: 0,
-        fee_model_version: 2,
     };
     Block::new(header, transactions)
 }
@@ -78,7 +78,7 @@ fn wallet_registration_tx(
             wallet_type: "Primary".to_string(),
             wallet_name: format!("Wallet-{}", hex::encode(&wallet_id[..4])),
             alias: None,
-            public_key: owner_pubkey.dilithium_pk.clone(),
+            public_key: owner_pubkey.dilithium_pk.to_vec(),
             owner_identity_id: None,
             seed_commitment: Hash::zero(),
             created_at: 1_700_000_000,
@@ -194,7 +194,7 @@ fn register_wallet(
             wallet_type: "Primary".to_string(),
             wallet_name: format!("Wallet-{}", hex::encode(&wallet_id[..4])),
             alias: None,
-            public_key: owner.dilithium_pk.clone(),
+            public_key: owner.dilithium_pk.to_vec(),
             owner_identity_id: None,
             seed_commitment: Hash::zero(),
             created_at: 1_700_000_000,
@@ -214,7 +214,7 @@ fn register_identity(blockchain: &mut Blockchain, identity_id: &str, pubkey: &Pu
         IdentityTransactionData {
             did: identity_id.to_string(),
             display_name: format!("Test-{}", &identity_id[..8.min(identity_id.len())]),
-            public_key: pubkey.dilithium_pk.clone(),
+            public_key: pubkey.dilithium_pk.to_vec(),
             ownership_proof: vec![],
             identity_type: "human".to_string(),
             did_document_hash: Hash::zero(),
@@ -232,11 +232,9 @@ fn register_identity(blockchain: &mut Blockchain, identity_id: &str, pubkey: &Pu
 
 /// Synthetic PublicKey keyed by wallet_id for SOV balance lookups.
 fn wallet_key(wallet_id: &[u8; 32]) -> PublicKey {
-    PublicKey {
-        dilithium_pk: Vec::new(),
-        kyber_pk: Vec::new(),
-        key_id: *wallet_id,
-    }
+    let mut pk = PublicKey::new([0u8; 2592]);
+    pk.key_id = *wallet_id;
+    pk
 }
 
 /// Insert the native SOV token contract into the blockchain (replaces private ensure_sov_token_contract).

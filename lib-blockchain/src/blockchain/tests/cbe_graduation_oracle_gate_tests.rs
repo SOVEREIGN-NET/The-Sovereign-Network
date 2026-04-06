@@ -18,7 +18,7 @@ fn create_test_cbe_token(reserve_micro_usd: u128) -> BondingCurveToken {
         threshold: crate::contracts::bonding_curve::Threshold::ReserveAmount(1_000_000u128),
         sell_enabled: true,
         amm_pool_id: None,
-        creator: PublicKey::new(vec![1u8; 32]),
+        creator: PublicKey::new([1u8; 2592]),
         creator_did: None,
         deployed_at_block: 1,
         deployed_at_timestamp: 1,
@@ -77,7 +77,9 @@ fn cbe_graduation_rejects_stale_finalized_price() {
 #[test]
 fn cbe_graduation_accepts_fresh_finalized_price() {
     let mut blockchain = Blockchain::default();
-    let token = create_test_cbe_token(300_000_000_000);
+    // GRADUATION_THRESHOLD_USD = 2_745_966 USD
+    // At $1/SOV with 8 decimals: 2_745_966 * 10^8 = 274_596_600_000_000
+    let token = create_test_cbe_token(274_596_600_000_000);
     blockchain.bonding_curve_registry.register(token).unwrap();
 
     blockchain
@@ -125,7 +127,9 @@ fn cbe_graduation_rejects_reserve_below_threshold() {
 #[test]
 fn cbe_graduation_accepts_reserve_at_threshold_boundary() {
     let mut blockchain = Blockchain::default();
-    let token = create_test_cbe_token(269_000_000_000);
+    // GRADUATION_THRESHOLD_USD = 2_745_966 USD
+    // At $1/SOV with 8 decimals: 2_745_966 * 10^8 = 274_596_600_000_000
+    let token = create_test_cbe_token(274_596_600_000_000);
     blockchain.bonding_curve_registry.register(token).unwrap();
 
     blockchain

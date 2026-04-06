@@ -10,11 +10,9 @@ use lib_blockchain::integration::crypto_integration::PublicKey;
 
 /// Helper to create a test public key
 fn test_public_key(id: u8) -> PublicKey {
-    PublicKey {
-        dilithium_pk: vec![id],
-        kyber_pk: vec![id],
-        key_id: [id; 32],
-    }
+    let mut dilithium_pk = [0u8; 2592];
+    dilithium_pk[0] = id;
+    PublicKey::new(dilithium_pk)
 }
 
 /// Test 1: Call depth is initialized to 0 and max is set to DEFAULT_MAX_CALL_DEPTH

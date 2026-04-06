@@ -271,32 +271,32 @@ mod tests {
 
     fn test_governance() -> PublicKey {
         PublicKey {
-            dilithium_pk: vec![99u8],
-            kyber_pk: vec![99u8],
+            dilithium_pk: [99u8; 2592],
+            kyber_pk: [99u8; 1568],
             key_id: [99u8; 32],
         }
     }
 
     fn test_kernel_address() -> PublicKey {
         PublicKey {
-            dilithium_pk: vec![88u8],
-            kyber_pk: vec![88u8],
+            dilithium_pk: [88u8; 2592],
+            kyber_pk: [88u8; 1568],
             key_id: [88u8; 32],
         }
     }
 
     fn test_unauthorized() -> PublicKey {
         PublicKey {
-            dilithium_pk: vec![77u8],
-            kyber_pk: vec![77u8],
+            dilithium_pk: [77u8; 2592],
+            kyber_pk: [77u8; 1568],
             key_id: [77u8; 32],
         }
     }
 
     fn test_user() -> PublicKey {
         PublicKey {
-            dilithium_pk: vec![1u8],
-            kyber_pk: vec![1u8],
+            dilithium_pk: [1u8; 2592],
+            kyber_pk: [1u8; 1568],
             key_id: [1u8; 32],
         }
     }

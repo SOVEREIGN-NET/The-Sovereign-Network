@@ -702,8 +702,8 @@ impl UbiDistributor {
     pub fn test_new_with_zero_authority() -> Self {
         Self::new(
             PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
                 key_id: [0u8; 32],
             },
             1000,
@@ -723,8 +723,8 @@ mod tests {
 
     fn test_public_key(id: u8) -> PublicKey {
         PublicKey {
-            dilithium_pk: vec![id],
-            kyber_pk: vec![id],
+            dilithium_pk: [id; 2592],
+            kyber_pk: [id; 1568],
             key_id: [id; 32],
         }
     }

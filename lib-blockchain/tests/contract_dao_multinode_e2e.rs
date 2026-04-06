@@ -9,7 +9,7 @@ use lib_blockchain::{Block, BlockHeader, Blockchain, TransactionType};
 use lib_crypto::{PublicKey, Signature, SignatureAlgorithm};
 
 fn test_public_key(seed: u8) -> PublicKey {
-    PublicKey::new(vec![seed; 1312])
+    PublicKey::new([seed; 2592])
 }
 
 fn test_signature(seed: u8) -> Signature {
@@ -139,18 +139,18 @@ fn mk_dao_lifecycle_txs(proposal_id: Hash) -> Vec<Transaction> {
 
 fn build_block_with_transactions(parent: &Block, txs: Vec<Transaction>, extra_nonce: u64) -> Block {
     let mining_config = get_mining_config_from_env();
-    let mut header = BlockHeader::new(
-        1,
-        parent.hash(),
-        lib_blockchain::transaction::hashing::calculate_transaction_merkle_root(&txs),
-        parent.timestamp() + 10 + extra_nonce,
-        mining_config.difficulty,
-        parent.height() + 1,
-        txs.len() as u32,
-        0,
-        mining_config.difficulty,
-    );
-    header.set_nonce(0);
+    let merkle_root = lib_blockchain::transaction::hashing::calculate_transaction_merkle_root(&txs);
+    let header = BlockHeader {
+        version: 1,
+        previous_hash: parent.hash().into(),
+        data_helix_root: merkle_root.as_array(),
+        timestamp: parent.timestamp() + 10 + extra_nonce,
+        height: parent.height() + 1,
+        verification_helix_root: [0u8; 32],
+        state_root: Hash::default().into(),
+        bft_quorum_root: [0u8; 32],
+        block_hash: Hash::default(),
+    };
     Block::new(header, txs)
 }
 

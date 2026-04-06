@@ -604,7 +604,7 @@ mod tests {
     use crate::contracts::executor::ExecutionContext;
 
     fn create_test_public_key(id: u8) -> PublicKey {
-        PublicKey::new(vec![id; 32])
+        PublicKey::new([id; 2592])
     }
 
     fn create_test_execution_context(contract: PublicKey, caller: PublicKey) -> ExecutionContext {

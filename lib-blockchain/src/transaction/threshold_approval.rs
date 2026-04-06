@@ -310,8 +310,8 @@ mod tests {
         use crate::integration::crypto_integration::{PublicKey, SignatureAlgorithm};
 
         let pk = PublicKey {
-            dilithium_pk: vec![1u8; 1312],
-            kyber_pk: vec![],
+            dilithium_pk: [1u8; 2592],
+            kyber_pk: [0u8; 1568],
             key_id: [1u8; 32],
         };
         let approval = Approval {

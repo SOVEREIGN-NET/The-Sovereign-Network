@@ -661,14 +661,14 @@ mod header_hash_tests {
             0,
         );
 
-        // version
+        // version is NOT included in the canonical hash (metadata only)
         let mut h = base.clone();
         h.version = 2;
         h.block_hash = h.calculate_hash();
-        assert_ne!(
+        assert_eq!(
             base.calculate_hash(),
             h.calculate_hash(),
-            "version must affect hash"
+            "version is metadata and should NOT affect hash"
         );
 
         // previous_hash

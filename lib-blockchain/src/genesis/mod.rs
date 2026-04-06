@@ -796,8 +796,8 @@ mod tests {
     fn test_genesis_timestamp() {
         let config = GenesisConfig::from_embedded().expect("parse");
         let ts = config.genesis_timestamp().expect("timestamp");
-        // 2025-11-01T00:00:00Z = 1761955200
-        assert_eq!(ts, 1_761_955_200);
+        // 2026-04-05T00:00:00Z = 1775347200
+        assert_eq!(ts, 1_775_347_200);
     }
 
     #[test]

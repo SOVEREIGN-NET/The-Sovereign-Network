@@ -27,11 +27,7 @@ use lib_blockchain::types::{transaction_type::TransactionType, Hash};
 fn create_test_signature() -> Signature {
     Signature {
         signature: vec![0x01, 0x02, 0x03, 0x04],
-        public_key: PublicKey {
-            dilithium_pk: vec![0x01],
-            kyber_pk: vec![0x02],
-            key_id: [0u8; 32],
-        },
+        public_key: PublicKey::new([0x01; 2592]),
         algorithm: SignatureAlgorithm::Dilithium5,
         timestamp: 1000,
     }
@@ -39,13 +35,9 @@ fn create_test_signature() -> Signature {
 
 /// Create a test public key with specific bytes
 fn create_test_public_key(id: u8) -> PublicKey {
-    let mut key_id = [0u8; 32];
-    key_id[0] = id;
-    PublicKey {
-        dilithium_pk: vec![id],
-        kyber_pk: vec![id],
-        key_id,
-    }
+    let mut dilithium_pk = [0u8; 2592];
+    dilithium_pk[0] = id;
+    PublicKey::new(dilithium_pk)
 }
 
 /// Create a test transaction input

@@ -8,7 +8,7 @@
 chain_id     = 1
 name         = "Sovereign Network Testnet"
 # genesis_time is parsed by GenesisConfig::genesis_timestamp(); Unix value = 1761955200
-genesis_time = "2025-11-01T00:00:00Z"
+genesis_time = "2026-04-05T00:00:00Z"
 
 [sov]
 # SOV is minted exclusively via UBI — no initial allocation at genesis

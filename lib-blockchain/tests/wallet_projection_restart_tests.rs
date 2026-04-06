@@ -5,11 +5,11 @@ use lib_blockchain::block::{Block, BlockHeader};
 use lib_blockchain::integration::crypto_integration::PublicKey;
 use lib_blockchain::storage::{BlockchainStore, SledStore, WalletProjectionRecord};
 use lib_blockchain::transaction::{Transaction, TransactionPayload, WalletTransactionData};
-use lib_blockchain::types::{Difficulty, Hash, TransactionType};
+use lib_blockchain::types::{Hash, TransactionType};
 use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
 fn test_pubkey(id: u8) -> PublicKey {
-    PublicKey::new(vec![id; 32])
+    PublicKey::new([0u8; 2592])
 }
 
 fn test_signature(pubkey: &PublicKey) -> Signature {
@@ -27,7 +27,7 @@ fn wallet_data(wallet_id: [u8; 32], owner_pubkey: &PublicKey, name: &str) -> Wal
         wallet_type: "Primary".to_string(),
         wallet_name: name.to_string(),
         alias: None,
-        public_key: owner_pubkey.dilithium_pk.clone(),
+        public_key: owner_pubkey.dilithium_pk.to_vec(),
         owner_identity_id: None,
         seed_commitment: Hash::zero(),
         created_at: 1_700_000_000,
@@ -58,18 +58,14 @@ fn wallet_tx(
 fn block(height: u64, txs: Vec<Transaction>) -> Block {
     let header = BlockHeader {
         version: 1,
-        height,
+        previous_hash: Hash::zero().into(),
+        data_helix_root: Hash::zero().into(),
         timestamp: 1_700_000_000 + height,
-        previous_block_hash: Hash::zero(),
-        merkle_root: Hash::zero(),
-        state_root: Hash::default(),
+        height,
+        verification_helix_root: [0u8; 32],
+        state_root: Hash::default().into(),
+        bft_quorum_root: [0u8; 32],
         block_hash: Hash::zero(),
-        nonce: 0,
-        difficulty: Difficulty::from_bits(0),
-        cumulative_difficulty: Difficulty::from_bits(0),
-        transaction_count: txs.len() as u32,
-        block_size: 0,
-        fee_model_version: 2,
     };
     Block::new(header, txs)
 }

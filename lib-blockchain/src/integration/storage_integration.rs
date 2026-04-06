@@ -1571,17 +1571,55 @@ mod tests {
     use super::*;
     use crate::blockchain::Blockchain;
 
-    #[tokio::test]
-    async fn test_blockchain_storage_manager_creation() -> Result<()> {
-        let config = BlockchainStorageConfig::default();
-        let manager = BlockchainStorageManager::new(config).await;
-
-        assert!(manager.is_ok());
-        Ok(())
+    /// Run an async test body on a thread with 16 MiB stack.
+    ///
+    /// Several storage integration tests construct `Blockchain` and
+    /// `BlockchainStorageManager` whose compiled async-future state machines
+    /// exceed the default 2 MiB test-thread stack in debug builds.
+    fn run_with_large_stack<F>(name: &str, f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        std::thread::Builder::new()
+            .name(name.into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(f)
+            .expect("failed to spawn test thread")
+            .join()
+            .expect("test thread panicked");
     }
 
-    #[tokio::test]
-    async fn test_blockchain_state_storage_and_retrieval() -> Result<()> {
+    #[test]
+    fn test_blockchain_storage_manager_creation() {
+        run_with_large_stack("storage-mgr-creation", || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    let config = BlockchainStorageConfig::default();
+                    let manager = BlockchainStorageManager::new(config).await;
+                    assert!(manager.is_ok());
+                });
+        });
+    }
+
+    #[test]
+    fn test_blockchain_state_storage_and_retrieval() {
+        run_with_large_stack("state-storage-retrieval", || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    test_blockchain_state_storage_and_retrieval_inner()
+                        .await
+                        .expect("test failed");
+                });
+        });
+    }
+
+    async fn test_blockchain_state_storage_and_retrieval_inner() -> Result<()> {
         let mut config = BlockchainStorageConfig::default();
         config.enable_encryption = false; // Disable encryption for test to avoid key mismatch
         config.enable_compression = false; // Disable compression for simpler test
@@ -1607,14 +1645,41 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_block_storage_and_retrieval() -> Result<()> {
+    // This test needs a large stack because the async future state machine
+    // includes several large types (Blockchain ~70+ fields, ZhtpIdentity
+    // with 4 KiB post-quantum keys, Block, serialization buffers, etc.)
+    // that together exceed the default 2 MiB test-thread stack in debug
+    // (unoptimized) builds.  We spawn the tokio runtime on a thread with
+    // an explicit 16 MiB stack so the root future can be polled safely.
+    #[test]
+    fn test_block_storage_and_retrieval() {
+        std::thread::Builder::new()
+            .name("block-storage-test".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to build tokio runtime")
+                    .block_on(async {
+                        test_block_storage_and_retrieval_inner()
+                            .await
+                            .expect("test_block_storage_and_retrieval failed");
+                    });
+            })
+            .expect("failed to spawn test thread")
+            .join()
+            .expect("test thread panicked");
+    }
+
+    async fn test_block_storage_and_retrieval_inner() -> Result<()> {
         let mut config = BlockchainStorageConfig::default();
         config.enable_encryption = false; // Disable encryption for test to avoid key mismatch
         let mut manager = BlockchainStorageManager::new(config).await?;
 
         let blockchain = Blockchain::new()?;
         let genesis_block = blockchain.blocks[0].clone();
+        drop(blockchain); // Free the massive Blockchain struct early
 
         // Store block
         let store_result = manager.store_block(&genesis_block).await?;
@@ -1631,35 +1696,47 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_transaction_storage() -> Result<()> {
+    /// Helper: wrap an async test body in a large-stack thread + tokio runtime.
+    macro_rules! large_stack_test {
+        ($name:ident, $body:expr) => {
+            #[test]
+            fn $name() {
+                run_with_large_stack(stringify!($name), || {
+                    tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap()
+                        .block_on(async { ($body).await.expect(concat!(stringify!($name), " failed")) });
+                });
+            }
+        };
+    }
+
+    large_stack_test!(test_transaction_storage, async {
         let config = BlockchainStorageConfig::default();
         let mut manager = BlockchainStorageManager::new(config).await?;
 
-        // Create a test transaction
         let transaction = crate::transaction::Transaction::new(
             vec![],
             vec![],
             100,
             crate::integration::crypto_integration::Signature {
                 signature: vec![1, 2, 3],
-                public_key: crate::integration::crypto_integration::PublicKey::new(vec![4, 5, 6]),
+                public_key: crate::integration::crypto_integration::PublicKey::new([0u8; 2592]),
                 algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
                 timestamp: 12345,
             },
             "test transaction".as_bytes().to_vec(),
         );
 
-        // Store transaction
         let store_result = manager.store_transaction(&transaction).await?;
         assert!(store_result.success);
         assert!(store_result.content_hash.is_some());
 
-        Ok(())
-    }
+        Ok::<(), anyhow::Error>(())
+    });
 
-    #[tokio::test]
-    async fn test_identity_data_storage() -> Result<()> {
+    large_stack_test!(test_identity_data_storage, async {
         let config = BlockchainStorageConfig::default();
         let mut manager = BlockchainStorageManager::new(config).await?;
 
@@ -1674,18 +1751,16 @@ mod tests {
             100,
         );
 
-        // Store identity data
         let store_result = manager
             .store_identity_data("did:zhtp:test", &identity_data)
             .await?;
         assert!(store_result.success);
         assert!(store_result.content_hash.is_some());
 
-        Ok(())
-    }
+        Ok::<(), anyhow::Error>(())
+    });
 
-    #[tokio::test]
-    async fn test_utxo_set_storage() -> Result<()> {
+    large_stack_test!(test_utxo_set_storage, async {
         let config = BlockchainStorageConfig::default();
         let mut manager = BlockchainStorageManager::new(config).await?;
 
@@ -1694,77 +1769,66 @@ mod tests {
         let test_output = crate::transaction::TransactionOutput::new(
             crate::types::Hash::from([2u8; 32]),
             crate::types::Hash::from([3u8; 32]),
-            crate::integration::crypto_integration::PublicKey::new(vec![4, 5, 6]),
+            crate::integration::crypto_integration::PublicKey::new([0u8; 2592]),
         );
         utxo_set.insert(test_hash, test_output);
 
-        // Store UTXO set
         let store_result = manager.store_utxo_set(&utxo_set).await?;
         assert!(store_result.success);
         assert!(store_result.content_hash.is_some());
 
-        Ok(())
-    }
+        Ok::<(), anyhow::Error>(())
+    });
 
-    #[tokio::test]
-    async fn test_mempool_storage() -> Result<()> {
+    large_stack_test!(test_mempool_storage, async {
         let config = BlockchainStorageConfig::default();
         let mut manager = BlockchainStorageManager::new(config).await?;
 
         let mempool = crate::mempool::Mempool::default();
 
-        // Store mempool
         let store_result = manager.store_mempool(&mempool).await?;
         assert!(store_result.success);
         assert!(store_result.content_hash.is_some());
 
-        Ok(())
-    }
+        Ok::<(), anyhow::Error>(())
+    });
 
-    #[tokio::test]
-    async fn test_blockchain_backup() -> Result<()> {
+    large_stack_test!(test_blockchain_backup, async {
         let config = BlockchainStorageConfig::default();
         let mut manager = BlockchainStorageManager::new(config).await?;
 
         let blockchain = Blockchain::new()?;
 
-        // Backup blockchain
         let backup_results = manager.backup_blockchain(&blockchain).await?;
         assert!(!backup_results.is_empty());
 
-        // Check that at least the blockchain state was backed up successfully
         let successful_backups = backup_results.iter().filter(|r| r.success).count();
         assert!(successful_backups > 0);
 
-        Ok(())
-    }
+        Ok::<(), anyhow::Error>(())
+    });
 
-    #[tokio::test]
-    async fn test_storage_statistics() -> Result<()> {
+    large_stack_test!(test_storage_statistics, async {
         let config = BlockchainStorageConfig::default();
         let mut manager = BlockchainStorageManager::new(config).await?;
 
         let stats = manager.get_storage_statistics().await?;
 
-        // Basic validation that stats structure is correct
-        // DHT is not initialized in this test, so total_nodes should be 0
         assert_eq!(stats.dht_stats.total_nodes, 0);
         assert_eq!(stats.storage_stats.total_content_count, 0);
 
-        Ok(())
-    }
+        Ok::<(), anyhow::Error>(())
+    });
 
-    #[tokio::test]
-    async fn test_storage_maintenance() -> Result<()> {
+    large_stack_test!(test_storage_maintenance, async {
         let config = BlockchainStorageConfig::default();
         let mut manager = BlockchainStorageManager::new(config).await?;
 
-        // Perform maintenance (should not fail)
         let maintenance_result = manager.perform_maintenance().await;
         assert!(maintenance_result.is_ok());
 
-        Ok(())
-    }
+        Ok::<(), anyhow::Error>(())
+    });
 
     // Legacy compatibility tests
     #[test]
