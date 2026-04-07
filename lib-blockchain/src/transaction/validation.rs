@@ -1690,22 +1690,14 @@ impl<'a> StatefulTransactionValidator<'a> {
                 if is_sov {
                     let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
                     let wallet_id_hex = hex::encode(data.from);
-                    let wallet_found = blockchain.wallet_registry.contains_key(&wallet_id_hex);
-
-                    if !wallet_found {
-                        // Wallet not found under the new key_id. Check for a legacy wallet
-                        // registered before the key_id fix (uses dilithium_pk as public_key).
-                        // If one exists, the migration runs at block processing time.
-                        let sig_dilithium = transaction.signature.public_key.dilithium_pk.as_slice();
-                        let legacy_found = blockchain.wallet_registry.values().any(|w| {
-                            w.public_key.len() == 2592 && w.public_key.as_slice() == sig_dilithium
-                        });
-                        if !legacy_found {
-                            return Err(ValidationError::InvalidTransaction);
-                        }
-                        // Legacy wallet found — migration happens at block commit time.
-                    }
+                    // Wallet must exist in the registry
+                    let _wallet = blockchain
+                        .wallet_registry
+                        .get(&wallet_id_hex)
+                        .ok_or(ValidationError::InvalidTransaction)?;
                     // The wallet_id IS the owner's key_id: signer must be the wallet owner.
+                    // This replaces the broken PublicKey::new() comparison which only covers
+                    // dilithium and fails for HD-derived wallets or full keypair identities.
                     if data.from != transaction.signature.public_key.key_id {
                         return Err(ValidationError::InvalidTransaction);
                     }
