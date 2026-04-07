@@ -153,20 +153,85 @@ impl Blockchain {
                         let from_wallet_id = hex::encode(transfer.from);
                         let to_wallet_id = hex::encode(transfer.to);
 
-                        let from_wallet =
-                            self.wallet_registry.get(&from_wallet_id).ok_or_else(|| {
-                                anyhow::anyhow!("TokenTransfer SOV sender wallet not found")
-                            })?;
+                        // Wallet lookup with transparent legacy migration.
+                        // Pre-fix wallets were registered under an HD-derived wallet_id; the new
+                        // wallet_id = blake3(dilithium_pk || kyber_pk) == signer's key_id.
+                        // When the sender's key_id is not in the registry, scan for a wallet whose
+                        // dilithium_pk matches the sender and migrate it in place — no user action
+                        // required.
+                        if !self.wallet_registry.contains_key(&from_wallet_id) {
+                            let sender_dilithium = sender_pk.dilithium_pk.to_vec();
+                            let legacy_key = self
+                                .wallet_registry
+                                .iter()
+                                .find(|(_, w)| {
+                                    w.public_key.len() == 2592
+                                        && w.public_key == sender_dilithium
+                                })
+                                .map(|(k, _)| k.clone());
+
+                            if let Some(old_key) = legacy_key {
+                                if let Some(mut old_wallet) =
+                                    self.wallet_registry.remove(&old_key)
+                                {
+                                    let old_wallet_id_bytes: [u8; 32] = old_wallet
+                                        .wallet_id
+                                        .as_bytes()
+                                        .try_into()
+                                        .unwrap_or([0u8; 32]);
+                                    old_wallet.wallet_id = Hash::new(transfer.from);
+                                    self.wallet_registry
+                                        .insert(from_wallet_id.clone(), old_wallet);
+
+                                    // Migrate SOV balance: move from old wallet address to new
+                                    // without changing total_supply (purely a re-keying).
+                                    let old_sov_addr =
+                                        Self::wallet_key_for_sov(&old_wallet_id_bytes);
+                                    let new_sov_addr = Self::wallet_key_for_sov(&transfer.from);
+                                    if let Some(token) =
+                                        self.token_contracts.get_mut(&token_id)
+                                    {
+                                        let old_bal = token.balance_of(&old_sov_addr);
+                                        if old_bal > 0 {
+                                            token.balances.insert(old_sov_addr.clone(), 0);
+                                            let cur_new = token.balance_of(&new_sov_addr);
+                                            token.balances.insert(
+                                                new_sov_addr,
+                                                cur_new.saturating_add(old_bal),
+                                            );
+                                        }
+                                    }
+                                    info!(
+                                        "🔄 Migrated SOV wallet {} → {} (transparent key_id migration)",
+                                        old_key, from_wallet_id
+                                    );
+                                }
+                            } else {
+                                return Err(anyhow::anyhow!(
+                                    "TokenTransfer SOV sender wallet not found"
+                                ));
+                            }
+                        }
+
                         if !self.wallet_registry.contains_key(&to_wallet_id) {
                             return Err(anyhow::anyhow!(
                                 "TokenTransfer SOV recipient wallet not found"
                             ));
                         }
 
-                        let from_wallet_pk = PublicKey::new(
-                            from_wallet.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
-                        );
-                        if from_wallet_pk.key_id != sender_pk.key_id {
+                        // Ownership check: compare dilithium_pk bytes directly.
+                        // PublicKey::new() computed key_id = blake3(dilithium_pk) only, ignoring
+                        // kyber — broken for kyber-enabled keys. Compare raw bytes instead.
+                        let from_wallet = self
+                            .wallet_registry
+                            .get(&from_wallet_id)
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("TokenTransfer SOV sender wallet not found")
+                            })?;
+                        let sender_dilithium = sender_pk.dilithium_pk.as_slice();
+                        if from_wallet.public_key.len() != 2592
+                            || from_wallet.public_key.as_slice() != sender_dilithium
+                        {
                             return Err(anyhow::anyhow!(
                                 "TokenTransfer SOV sender does not own wallet"
                             ));
