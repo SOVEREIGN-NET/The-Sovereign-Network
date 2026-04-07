@@ -664,20 +664,59 @@ async fn create_identity_direct(
 
     drop(manager_read);
 
+    // Extract the client's dilithium_pk and kyber_pk from the registration request.
+    // The app sends a ZhtpIdentity JSON with public_key.dilithium_pk and public_key.kyber_pk
+    // as byte arrays. Use these to compute the client's key_id = blake3(dilithium_pk || kyber_pk),
+    // which becomes the primary wallet_id. This ensures wallet_id == signer's key_id, allowing
+    // the transfer validation check (data.from == signature.public_key.key_id) to pass.
+    let extract_bytes_array = |json: &serde_json::Value, field: &str| -> Option<Vec<u8>> {
+        json.get("public_key")
+            .and_then(|pk| pk.get(field))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_u64().map(|b| b as u8))
+                    .collect::<Vec<u8>>()
+            })
+    };
+
+    let client_dilithium_pk = extract_bytes_array(request_data, "dilithium_pk")
+        .filter(|v| v.len() == 2592);
+    let client_kyber_pk = extract_bytes_array(request_data, "kyber_pk")
+        .filter(|v| v.len() == 1568);
+
+    let (effective_wallet_id_hex, effective_wallet_pubkey_hex) =
+        if let (Some(ref dil_pk), Some(ref kyb_pk)) = (&client_dilithium_pk, &client_kyber_pk) {
+            let kyber_is_zeros = kyb_pk.iter().all(|&b| b == 0);
+            let key_id: [u8; 32] = if kyber_is_zeros {
+                lib_crypto::hashing::hash_blake3(dil_pk)
+            } else {
+                lib_crypto::hashing::hash_blake3_multiple(&[dil_pk.as_slice(), kyb_pk.as_slice()])
+            };
+            (hex::encode(key_id), hex::encode(dil_pk))
+        } else {
+            // Fallback to HD wallet_id if client public key is not provided/valid
+            info!("⚠️ Client public key not found in registration request — using HD wallet_id");
+            (
+                hex::encode(&identity_result.primary_wallet_id.0),
+                hex::encode(&primary_pubkey),
+            )
+        };
+
     // Build identity JSON
     let identity_id_hex = hex::encode(&identity_result.identity_id.0);
     let identity_json = serde_json::json!({
         "identity_id": identity_id_hex,
         "citizenship_result": {
             "identity_id": identity_id_hex,
-            "primary_wallet_id": hex::encode(&identity_result.primary_wallet_id.0),
+            "primary_wallet_id": effective_wallet_id_hex,
             "ubi_wallet_id": hex::encode(&identity_result.ubi_wallet_id.0),
             "savings_wallet_id": hex::encode(&identity_result.savings_wallet_id.0),
             "privacy_credentials": {
                 "public_key": hex::encode(&public_key.as_bytes()),
                 "ownership_proof": hex::encode(&ownership_proof_bytes)
             },
-            "primary_wallet_pubkey": hex::encode(&primary_pubkey),
+            "primary_wallet_pubkey": effective_wallet_pubkey_hex,
             "ubi_wallet_pubkey": hex::encode(&ubi_pubkey),
             "savings_wallet_pubkey": hex::encode(&savings_pubkey),
             "created_at": identity_result.privacy_credentials.created_at
@@ -703,13 +742,15 @@ async fn create_identity_direct(
         }
     }
 
-    // Return the full response structure expected by browser
+    // Return the full response structure expected by browser.
+    // primary_wallet_id is the client's key_id (blake3(dilithium_pk || kyber_pk)) if the
+    // client's public key was extracted from the request; otherwise the HD wallet_id fallback.
     Ok(serde_json::json!({
         "success": true,
         "identity_id": identity_result.identity_id,
         "citizenship_result": {
             "identity_id": identity_result.identity_id,
-            "primary_wallet_id": identity_result.primary_wallet_id,
+            "primary_wallet_id": effective_wallet_id_hex,
             "ubi_wallet_id": identity_result.ubi_wallet_id,
             "savings_wallet_id": identity_result.savings_wallet_id,
             "dao_registration": identity_result.dao_registration,

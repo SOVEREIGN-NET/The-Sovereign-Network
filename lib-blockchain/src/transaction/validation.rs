@@ -923,11 +923,15 @@ impl TransactionValidator {
         // signature verifies) while setting key_id to an arbitrary pool address,
         // which would give them access to that pool's token balance.
         let pk = &transaction.signature.public_key;
-        let expected_key_id = if pk.kyber_pk.is_empty() {
-            // PublicKey::new() path: key_id = blake3(dilithium_pk)
+        // [u8; 1568].is_empty() is always false (fixed-size array), so we check for all-zero
+        // bytes to distinguish dilithium-only identities (validators, genesis wallets) from
+        // full keypair identities (app users with both dilithium + kyber keys).
+        let kyber_is_zeros = pk.kyber_pk.iter().all(|&b| b == 0);
+        let expected_key_id = if kyber_is_zeros {
+            // Dilithium-only identity: key_id = blake3(dilithium_pk)
             lib_crypto::hashing::hash_blake3(&public_key_bytes)
         } else {
-            // KeyPair::generate() path: key_id = blake3(dilithium_pk || kyber_pk)
+            // Full keypair identity: key_id = blake3(dilithium_pk || kyber_pk)
             lib_crypto::hashing::hash_blake3_multiple(&[
                 public_key_bytes.as_slice(),
                 pk.kyber_pk.as_slice(),
@@ -1686,14 +1690,15 @@ impl<'a> StatefulTransactionValidator<'a> {
                 if is_sov {
                     let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
                     let wallet_id_hex = hex::encode(data.from);
-                    let wallet = blockchain
+                    // Wallet must exist in the registry
+                    let _wallet = blockchain
                         .wallet_registry
                         .get(&wallet_id_hex)
                         .ok_or(ValidationError::InvalidTransaction)?;
-                    let wallet_pk = lib_crypto::PublicKey::new(
-                        wallet.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
-                    );
-                    if wallet_pk.key_id != transaction.signature.public_key.key_id {
+                    // The wallet_id IS the owner's key_id: signer must be the wallet owner.
+                    // This replaces the broken PublicKey::new() comparison which only covers
+                    // dilithium and fails for HD-derived wallets or full keypair identities.
+                    if data.from != transaction.signature.public_key.key_id {
                         return Err(ValidationError::InvalidTransaction);
                     }
                 } else if data.from != transaction.signature.public_key.key_id {
