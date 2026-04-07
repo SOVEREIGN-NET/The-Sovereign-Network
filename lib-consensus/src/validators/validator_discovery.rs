@@ -167,28 +167,37 @@ pub struct ValidatorDiscoveryProtocol {
     /// Cache TTL in seconds
     cache_ttl: u64,
 
-    /// Optional transport for gossip/network discovery
-    transport: Option<Arc<dyn ValidatorDiscoveryTransport>>,
 }
 
 impl ValidatorDiscoveryProtocol {
-    /// Create a new validator discovery protocol instance
-    pub fn new(cache_ttl: u64) -> Self {
+    /// Create a new validator discovery protocol from known blockchain validators.
+    ///
+    /// This is the primary constructor. Every node has a validator set loaded from
+    /// the blockchain at startup — that set must be provided here so that
+    /// `discover_validators()` returns recipients immediately. Constructing with
+    /// an empty cache and expecting TOFU or gossip to fill it creates a
+    /// chicken-and-egg deadlock: no one can discover peers → no one sends
+    /// messages → TOFU never triggers.
+    pub fn from_validators(
+        cache_ttl: u64,
+        validators: Vec<ValidatorAnnouncement>,
+    ) -> Self {
+        let cache: HashMap<Hash, ValidatorAnnouncement> = validators
+            .into_iter()
+            .map(|v| (v.identity_id.clone(), v))
+            .collect();
+
+        info!(
+            "ValidatorDiscoveryProtocol initialized with {} validators from blockchain",
+            cache.len()
+        );
+
         Self {
-            validator_cache: Arc::new(RwLock::new(HashMap::new())),
+            validator_cache: Arc::new(RwLock::new(cache)),
             cache_ttl,
-            transport: None,
         }
     }
 
-    /// Create a new discovery protocol with a transport implementation
-    pub fn with_transport(cache_ttl: u64, transport: Arc<dyn ValidatorDiscoveryTransport>) -> Self {
-        Self {
-            validator_cache: Arc::new(RwLock::new(HashMap::new())),
-            cache_ttl,
-            transport: Some(transport),
-        }
-    }
 
     /// Announce this validator to the consensus network
     pub async fn announce_validator(&self, announcement: ValidatorAnnouncement) -> Result<()> {
@@ -208,11 +217,19 @@ impl ValidatorDiscoveryProtocol {
             announcement.identity_id
         );
 
-        if let Some(transport) = &self.transport {
-            transport.publish_announcement(announcement).await?;
-        }
-
         Ok(())
+    }
+
+    /// Register a validator in the cache without signature verification.
+    ///
+    /// Used by TOFU (trust-on-first-use) during bootstrap: the first message
+    /// from an unknown validator registers their declared key. Subsequent
+    /// messages are verified against that key.
+    pub async fn register_trusted(&self, announcement: ValidatorAnnouncement) {
+        let id = announcement.identity_id.clone();
+        let mut cache = self.validator_cache.write().await;
+        cache.insert(id.clone(), announcement);
+        debug!("Trusted validator {} registered in discovery cache", id);
     }
 
     /// Discover a specific validator by identity for consensus operations
@@ -237,16 +254,6 @@ impl ValidatorDiscoveryProtocol {
             }
         }
 
-        drop(cache);
-
-        if let Some(transport) = &self.transport {
-            if let Some(remote) = transport.fetch_validator(identity_id).await? {
-                if self.ingest_announcement(remote.clone()).await? {
-                    return Ok(Some(remote));
-                }
-            }
-        }
-
         debug!("Validator {} not found in consensus cache", identity_id);
         Ok(None)
     }
@@ -268,15 +275,6 @@ impl ValidatorDiscoveryProtocol {
             .cloned()
             .collect();
         drop(cache);
-
-        if let Some(transport) = &self.transport {
-            let remote = transport.fetch_validators(filter.clone()).await?;
-            for announcement in remote {
-                if self.ingest_announcement(announcement.clone()).await? {
-                    results.push(announcement);
-                }
-            }
-        }
 
         // Sort by stake (descending) - higher stake validators get priority
         results.sort_by(|a, b| b.stake.cmp(&a.stake));
@@ -384,69 +382,6 @@ impl ValidatorDiscoveryProtocol {
         }
     }
 
-    /// Populate validator cache from blockchain data (called by ConsensusComponent)
-    pub async fn populate_from_blockchain(
-        &self,
-        validators: Vec<ValidatorAnnouncement>,
-    ) -> Result<()> {
-        info!(
-            "Populating consensus validator cache from blockchain: {} validators",
-            validators.len()
-        );
-
-        let mut cache = self.validator_cache.write().await;
-        cache.clear();
-
-        for validator in validators {
-            if self.validate_announcement(&validator).await.is_err() {
-                continue;
-            }
-            cache.insert(validator.identity_id.clone(), validator);
-        }
-
-        info!(
-            "Consensus validator cache populated with {} entries",
-            cache.len()
-        );
-        Ok(())
-    }
-
-    /// Add a trusted validator to the discovery cache without signature verification.
-    ///
-    /// Used for blockchain-sourced or genesis validators whose data is already
-    /// authenticated by chain consensus. Skips `validate_announcement()` which
-    /// would otherwise reject entries without valid self-signed announcements.
-    pub async fn populate_trusted(
-        &self,
-        validator_id: Hash,
-        consensus_key: lib_crypto::PublicKey,
-        endpoints: Vec<ValidatorEndpoint>,
-        stake: u64,
-    ) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-
-        let announcement = ValidatorAnnouncement {
-            identity_id: validator_id.clone(),
-            consensus_key,
-            stake,
-            storage_provided: 0,
-            commission_rate: 0,
-            endpoints,
-            status: ValidatorStatus::Active,
-            last_updated: now,
-            signature: Vec::new(), // No self-signature needed for trusted entries
-        };
-
-        let mut cache = self.validator_cache.write().await;
-        cache.insert(validator_id.clone(), announcement);
-        debug!(
-            "Trusted validator {} added to discovery cache",
-            validator_id
-        );
-    }
 
     /// Select the best endpoint for a validator, respecting priority
     ///
@@ -680,7 +615,7 @@ mod tests {
 
     #[test]
     fn test_validator_discovery_filter() {
-        let protocol = ValidatorDiscoveryProtocol::new(3600);
+        let protocol = ValidatorDiscoveryProtocol::from_validators(3600, vec![]);
 
         let validator = create_signed_announcement(
             Hash::from_bytes(&[0u8; 32]),
@@ -721,7 +656,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_endpoint_priority_selection() {
-        let protocol = ValidatorDiscoveryProtocol::new(3600);
+        let protocol = ValidatorDiscoveryProtocol::from_validators(3600, vec![]);
 
         let validator = create_signed_announcement(
             Hash::from_bytes(&[1u8; 32]),
@@ -756,7 +691,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_endpoint_selection_with_tie_breaker() {
-        let protocol = ValidatorDiscoveryProtocol::new(3600);
+        let protocol = ValidatorDiscoveryProtocol::from_validators(3600, vec![]);
 
         let validator = create_signed_announcement(
             Hash::from_bytes(&[2u8; 32]),
@@ -789,7 +724,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_validator_route() {
-        let protocol = ValidatorDiscoveryProtocol::new(3600);
+        let protocol = ValidatorDiscoveryProtocol::from_validators(3600, vec![]);
 
         let validator = create_signed_announcement(
             Hash::from_bytes(&[3u8; 32]),
@@ -816,7 +751,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_endpoint_selection_no_endpoints() {
-        let protocol = ValidatorDiscoveryProtocol::new(3600);
+        let protocol = ValidatorDiscoveryProtocol::from_validators(3600, vec![]);
 
         let validator = create_signed_announcement(
             Hash::from_bytes(&[4u8; 32]),
@@ -836,7 +771,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_endpoint_selection_missing_validator() {
-        let protocol = ValidatorDiscoveryProtocol::new(3600);
+        let protocol = ValidatorDiscoveryProtocol::from_validators(3600, vec![]);
 
         let ep = protocol
             .select_validator_endpoint(&Hash::from_bytes(&[255u8; 32]))

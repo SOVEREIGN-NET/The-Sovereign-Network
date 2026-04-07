@@ -13,7 +13,8 @@ use crate::server::mesh::core::MeshRouter;
 use lib_blockchain::Blockchain;
 use lib_consensus::types::{MessageBroadcaster as ConsensusMessageBroadcaster, ValidatorMessage};
 use lib_consensus::validators::{
-    ValidatorDiscoveryProtocol, ValidatorNetworkTransport, ValidatorProtocol,
+    ValidatorAnnouncement, ValidatorDiscoveryProtocol, ValidatorEndpoint,
+    ValidatorNetworkTransport, ValidatorProtocol, ValidatorStatus,
 };
 use lib_consensus::{
     ConsensusConfig, ConsensusEngine, ConsensusEvent, NoOpBroadcaster, ValidatorManager,
@@ -2107,8 +2108,61 @@ impl Component for ConsensusComponent {
         // Outgoing (via ValidatorProtocol.broadcast_*):
         //   ValidatorProtocol → sign → QuicValidatorTransport → QUIC mesh
         if let Ok(mesh_router) = get_global_mesh_router().await {
-            // Create discovery protocol for signature verification lookups
-            let discovery = Arc::new(ValidatorDiscoveryProtocol::new(3600));
+            // Build discovery cache from blockchain validators.
+            //
+            // ValidatorDiscoveryProtocol must know about all active validators at
+            // construction time. Without this, broadcast_message() calls
+            // discover_validators(), gets an empty list, and silently drops every
+            // consensus message — heartbeats, votes, proposals never leave the node.
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+
+            let discovery_entries: Vec<ValidatorAnnouncement> = active_validators
+                .iter()
+                .map(|v| {
+                    let identity_hash = {
+                        let hex_str = v
+                            .identity_id
+                            .strip_prefix("did:zhtp:")
+                            .unwrap_or(&v.identity_id);
+                        let mut h = [0u8; 32];
+                        if let Ok(bytes) = hex::decode(hex_str) {
+                            let len = bytes.len().min(32);
+                            h[..len].copy_from_slice(&bytes[..len]);
+                        }
+                        lib_crypto::Hash(h)
+                    };
+
+                    let endpoints = if v.network_address.is_empty() {
+                        vec![]
+                    } else {
+                        vec![ValidatorEndpoint {
+                            protocol: "quic".to_string(),
+                            address: v.network_address.clone(),
+                            priority: 10,
+                        }]
+                    };
+
+                    ValidatorAnnouncement {
+                        identity_id: identity_hash,
+                        consensus_key: lib_crypto::PublicKey::new(v.consensus_key),
+                        stake: v.stake,
+                        storage_provided: 0,
+                        commission_rate: v.commission_rate as u16,
+                        endpoints,
+                        status: ValidatorStatus::Active,
+                        last_updated: now,
+                        signature: Vec::new(),
+                    }
+                })
+                .collect();
+
+            let discovery = Arc::new(ValidatorDiscoveryProtocol::from_validators(
+                3600,
+                discovery_entries,
+            ));
 
             // Enable TOFU in non-Mainnet environments so bootstrap validators can accept
             // each other's signed messages before formal on-chain announcements have been
