@@ -625,8 +625,18 @@ pub fn export_keystore_base64(identity: &Identity) -> Result<String> {
 fn create_zhtp_identity_json(identity: &Identity) -> Result<String> {
     use crate::crypto::Blake3;
 
-    // Compute key_id = Blake3(dilithium_public_key)
-    let key_id = Blake3::hash(&identity.public_key);
+    // Compute key_id = Blake3(dilithium_pk || kyber_pk) to match node's key_id binding check.
+    // Validators and dilithium-only identities use Blake3(dilithium_pk) — that is handled
+    // server-side by checking for all-zero kyber_pk. App identities always have a kyber key.
+    let key_id = if identity.kyber_public_key.is_empty()
+        || identity.kyber_public_key.iter().all(|&b| b == 0)
+    {
+        Blake3::hash(&identity.public_key)
+    } else {
+        let mut input = identity.public_key.clone();
+        input.extend_from_slice(&identity.kyber_public_key);
+        Blake3::hash(&input)
+    };
 
     // Extract identity ID from DID (format: "did:zhtp:{id_hex}")
     let id_hex = identity
