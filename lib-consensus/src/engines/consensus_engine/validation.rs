@@ -562,6 +562,7 @@ impl ConsensusEngine {
     pub(super) fn validate_no_fork_proposal(
         &self,
         proposal_height: u64,
+        proposal_round: u32,
         proposal_id: &Hash,
     ) -> ConsensusResult<()> {
         // If the proposal is for a height strictly below the current round height,
@@ -586,18 +587,26 @@ impl ConsensusEngine {
         // This can happen if consensus committed a block in a prior round but the
         // engine has not yet advanced to the next height. Any conflicting proposal
         // at the same height is a fork and MUST be rejected.
-        if proposal_height == self.current_round.height {
-            // Check if we already have an agreed-upon block at this height (valid_proposal
-            // represents the agreed-upon value in the current round).
-            // A non-nil valid_proposal that differs from the incoming proposal signals a fork.
+        // Same-round fork check: if this proposal is for the current round and a
+        // conflicting proposal was already agreed upon in this round, reject it.
+        //
+        // This check is scoped to SAME-ROUND proposals only. A proposal for a different
+        // round is not a fork — each round has its own designated proposer and legitimately
+        // produces a different block. When round-skips are blocked at PreCommit/Commit step
+        // (liveness fix), different-round proposals arrive while valid_proposal is still set
+        // from the local node's current round; treating those as forks causes deadlock.
+        if proposal_height == self.current_round.height
+            && proposal_round == self.current_round.round
+        {
+            // Two different proposals for the same (height, round) — genuine Byzantine fork.
             if let Some(committed_id) = &self.current_round.valid_proposal {
                 if committed_id != proposal_id {
                     return Err(ConsensusError::ByzantineFault(format!(
                         "BFT FORK REJECTED: proposal {:?} conflicts with already-agreed \
-                         proposal {:?} at height {}. In BFT consensus, once 2/3+1 validators \
-                         have pre-committed a block, no other block is valid at that height. \
-                         This conflicting proposal is an invalid fork attempt.",
-                        proposal_id, committed_id, proposal_height,
+                         proposal {:?} at height {} round {}. In BFT consensus, once 2/3+1 \
+                         validators have prevoted a block in a round, a conflicting proposal \
+                         for the same round is an invalid fork attempt.",
+                        proposal_id, committed_id, proposal_height, proposal_round,
                     )));
                 }
             }
