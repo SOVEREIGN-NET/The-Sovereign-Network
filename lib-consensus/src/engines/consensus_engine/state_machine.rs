@@ -817,12 +817,13 @@ impl ConsensusEngine {
     ///
     /// This ensures Byzantine fault tolerance - no single node can inject blocks.
     #[allow(deprecated)]
-    async fn process_committed_block(&mut self, proposal_id: &Hash) -> ConsensusResult<()> {
+    async fn process_committed_block(&mut self, proposal_id: &Hash, commit_round: u32) -> ConsensusResult<()> {
         // SAFETY: Verify commit quorum before processing (Issue #939)
-        // This is a defense-in-depth check - callers must already verify commit votes
+        // commit_round is the round in which the commit quorum was reached — it may differ
+        // from self.current_round.round if the local node advanced via a round-skip.
         let commit_count = self.count_commits_for(
             self.current_round.height,
-            self.current_round.round,
+            commit_round,
             proposal_id,
         );
         let total_validators = self.validator_manager.get_active_validators().len() as u64;
@@ -893,13 +894,16 @@ impl ConsensusEngine {
         self.validate_committed_block(&proposal).await?;
 
         // Build the BFT quorum proof from the commit votes in the vote pool.
+        // Collect across ALL rounds: validators may cast commit votes in different rounds
+        // (due to timing skew) but they all agree on the same proposal_id, which is what
+        // matters for safety. Round-scoped filtering was the root cause of commit quorum
+        // never being reached when validators entered the Commit step at different times.
         let quorum_proof = {
             let attestations: Vec<lib_types::consensus::CommitAttestation> = self
                 .vote_pool
                 .iter()
                 .filter(|(k, (_, voted_id))| {
                     k.height == self.current_round.height
-                        && k.round == self.current_round.round
                         && k.vote_type == VoteType::Commit
                         && voted_id == proposal_id
                 })
@@ -1254,12 +1258,15 @@ impl ConsensusEngine {
         // proposal from the correct proposer gets falsely rejected as a "fork" because
         // the old round's `valid_proposal` is still set.
         //
-        // **Commit-step inclusion**: The round-skip is allowed even when the local node
-        // is in the Commit step.  The Commit step is a timer-driven holding pattern
-        // (no block data is produced here); it is safe to abandon it and jump to the
-        // proposer's round so we can vote on the real proposal.  The stale Commit timer
-        // is automatically ignored by the TimerToken machinery when it fires.
+        // **LIVENESS FIX**: Do NOT skip rounds from PreCommit or Commit step.
+        // Once a node has accumulated prevote quorum and entered precommit, it must
+        // stay in the current round long enough for commit votes to accumulate from
+        // 2/3 validators. Skipping from PreCommit/Commit clears locked_proposal and
+        // scatters validators across different rounds, making it impossible for any
+        // single proposal_id to reach supermajority. Only skip from Propose/PreVote
+        // where no vote commitment has been made yet.
         if proposal.height == self.current_round.height && proposal.round > self.current_round.round
+            && self.current_round.step < ConsensusStep::PreCommit
         {
             tracing::info!(
                 "⏩ Round skip H={}: R={} → R={} (proposal from proposer {})",
@@ -1298,7 +1305,7 @@ impl ConsensusEngine {
         //
         // This is a hard gate: fork proposals are never stored, never voted on,
         // and never forwarded to peers.
-        if let Err(e) = self.validate_no_fork_proposal(proposal.height, &proposal.id) {
+        if let Err(e) = self.validate_no_fork_proposal(proposal.height, proposal.round, &proposal.id) {
             // Stale or out-of-order proposal — discard and continue.
             // This is expected when a lagging node (e.g. late joiner) proposes for a height
             // that the local node has already committed past.  It is NOT a Byzantine fault:
@@ -2086,25 +2093,42 @@ impl ConsensusEngine {
                 round
             );
 
-            // Finalize regardless of current step (CE-L1)
-            if self.current_round.height == height && self.current_round.round == round {
+            // Finalize regardless of current step (CE-L1) and regardless of current round.
+            // The round check was a liveness bug: when validators advance rounds via round-skip
+            // before commit votes accumulate, `current_round.round != round` and the commit
+            // was silently dropped even though 2/3+ validators had committed for this proposal.
+            // A commit quorum for the current HEIGHT is sufficient — the specific proposal_id
+            // guarantees we're committing the right block, and process_committed_block is
+            // idempotent if the block was already applied.
+            if self.current_round.height == height {
                 // Transition to Commit step if not already there
                 if self.current_round.step < ConsensusStep::Commit {
                     self.current_round.step = ConsensusStep::Commit;
                     tracing::info!(
-                        "Fast-tracked to Commit step via commit quorum at height {} round {}",
+                        "Fast-tracked to Commit step via commit quorum at height {} round {} (local round {})",
                         height,
-                        round
+                        round,
+                        self.current_round.round
                     );
                 }
 
-                // Process the committed block (finalization) directly
-                // Note: This is safe even if we've already finalized once,
-                // process_committed_block is idempotent.
-                self.process_committed_block(proposal_id).await?;
+                if self.current_round.round != round {
+                    tracing::info!(
+                        "Committing block at height {} from round {} (local round advanced to {} via round-skip — liveness fix)",
+                        height,
+                        round,
+                        self.current_round.round
+                    );
+                }
+
+                // Process the committed block (finalization) directly.
+                // Pass `round` (the round where commit quorum was reached) so that
+                // vote counting uses the correct round even if current_round.round
+                // has already advanced via a round-skip.
+                self.process_committed_block(proposal_id, round).await?;
             } else {
                 tracing::debug!(
-                    "Commit quorum observed for past round (H={} R={}) while at H={} R={}",
+                    "Commit quorum observed for past height (H={} R={}) while at H={} R={} — ignoring",
                     height,
                     round,
                     self.current_round.height,
