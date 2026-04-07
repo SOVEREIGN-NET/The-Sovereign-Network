@@ -262,9 +262,9 @@ impl ConsensusEngine {
         // 5. Round check.
         //
         // Stale rounds (vote.round < current) are rejected outright.
-        // Higher rounds (vote.round > current) are allowed through so that
-        // on_prevote / on_precommit can perform a Tendermint round-skip and bring
-        // all nodes to the same round without waiting for an entire timer cycle.
+        // Higher rounds (vote.round > current) are allowed through so future-round
+        // votes can still be observed and stored, but they do not advance local round
+        // state. Round changes are driven by timeout, not by unilateral peer messages.
         if vote.round < self.current_round.round {
             tracing::debug!(
                 "Vote rejected: stale round {} < our round {}",
@@ -592,9 +592,9 @@ impl ConsensusEngine {
         //
         // This check is scoped to SAME-ROUND proposals only. A proposal for a different
         // round is not a fork — each round has its own designated proposer and legitimately
-        // produces a different block. When round-skips are blocked at PreCommit/Commit step
-        // (liveness fix), different-round proposals arrive while valid_proposal is still set
-        // from the local node's current round; treating those as forks causes deadlock.
+        // produces a different block. Different-round proposals may arrive while
+        // `valid_proposal` is still set from the local node's current round; treating those
+        // as same-round forks would deadlock timeout-driven round progression.
         if proposal_height == self.current_round.height
             && proposal_round == self.current_round.round
         {

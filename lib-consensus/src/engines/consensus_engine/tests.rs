@@ -2621,6 +2621,95 @@ async fn test_proposal_admission_valid_proposal_accepted() {
 }
 
 #[tokio::test]
+async fn test_future_round_proposal_does_not_advance_local_round() {
+    let (mut engine, validators) = setup_bft_engine(1, 0).await;
+    let expected = engine.compute_proposer_for_round(1, 2).unwrap();
+    let (proposer_id, proposer_kp) = validators
+        .iter()
+        .find(|(id, _)| *id == expected)
+        .expect("future-round proposer must exist");
+
+    let proposal = make_signed_proposal(
+        &engine,
+        proposer_id,
+        proposer_kp,
+        1,
+        2,
+        Hash([0u8; 32]),
+        b"future-round-block".to_vec(),
+    );
+
+    engine
+        .on_proposal(proposal.clone())
+        .await
+        .expect("future-round proposal should be processed");
+
+    assert_eq!(engine.current_round.round, 0, "proposal must not advance local round");
+    assert!(
+        engine.pending_proposals.iter().any(|p| p.id == proposal.id),
+        "future-round proposal should still be tracked"
+    );
+}
+
+#[tokio::test]
+async fn test_future_round_prevote_does_not_advance_local_round() {
+    let (mut engine, validators) = setup_bft_engine(5, 1).await;
+    engine.current_round.step = ConsensusStep::PreVote;
+
+    let proposal_id = Hash::from_bytes(&[7u8; 32]);
+    let vote = make_signed_vote(
+        &engine,
+        &validators[1].1,
+        validators[1].0.clone(),
+        proposal_id.clone(),
+        VoteType::PreVote,
+        5,
+        3,
+    );
+
+    engine
+        .on_prevote(vote)
+        .await
+        .expect("future-round prevote should be processed");
+
+    assert_eq!(engine.current_round.round, 1, "prevote must not advance local round");
+    assert_eq!(
+        engine.count_prevotes_for(5, 3, &proposal_id),
+        1,
+        "future-round prevote should still be stored"
+    );
+}
+
+#[tokio::test]
+async fn test_future_round_precommit_does_not_advance_local_round() {
+    let (mut engine, validators) = setup_bft_engine(5, 1).await;
+    engine.current_round.step = ConsensusStep::PreCommit;
+
+    let proposal_id = Hash::from_bytes(&[8u8; 32]);
+    let vote = make_signed_vote(
+        &engine,
+        &validators[1].1,
+        validators[1].0.clone(),
+        proposal_id.clone(),
+        VoteType::PreCommit,
+        5,
+        3,
+    );
+
+    engine
+        .on_precommit(vote)
+        .await
+        .expect("future-round precommit should be processed");
+
+    assert_eq!(engine.current_round.round, 1, "precommit must not advance local round");
+    assert_eq!(
+        engine.count_precommits_for(5, 3, &proposal_id),
+        1,
+        "future-round precommit should still be stored"
+    );
+}
+
+#[tokio::test]
 async fn test_proposal_admission_wrong_protocol_version_rejected() {
     let (engine, validators) = setup_bft_engine(1, 0).await;
     let expected = engine.compute_proposer_for_round(1, 0).unwrap();
