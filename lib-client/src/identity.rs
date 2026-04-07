@@ -532,7 +532,13 @@ pub fn serialize_identity(identity: &Identity) -> Result<String> {
 
 /// Deserialize identity from JSON
 pub fn deserialize_identity(json: &str) -> Result<Identity> {
-    serde_json::from_str(json).map_err(|e| ClientError::SerializationError(e.to_string()))
+    let mut identity: Identity =
+        serde_json::from_str(json).map_err(|e| ClientError::SerializationError(e.to_string()))?;
+    // Normalize 4864-byte crystals-dilithium keys to 4896-byte padded storage format
+    if identity.private_key.len() == 4864 {
+        identity.private_key.resize(4896, 0u8);
+    }
+    Ok(identity)
 }
 
 /// Serialize only public identity to JSON
@@ -706,8 +712,17 @@ fn create_zhtp_identity_json(identity: &Identity) -> Result<String> {
 
 /// Create KeystorePrivateKey JSON format expected by the CLI
 fn create_keystore_private_key_json(identity: &Identity) -> Result<String> {
+    // Pad dilithium_sk from 4864 (crystals-dilithium raw) to 4896 bytes (pqcrypto storage compat)
+    let dilithium_sk_padded: Vec<u8> = if identity.private_key.len() == 4864 {
+        let mut padded = identity.private_key.clone();
+        padded.resize(4896, 0u8);
+        padded
+    } else {
+        identity.private_key.clone()
+    };
+
     let keystore_key = serde_json::json!({
-        "dilithium_sk": identity.private_key,
+        "dilithium_sk": dilithium_sk_padded,
         "dilithium_pk": identity.public_key,
         "kyber_sk": identity.kyber_secret_key,
         // NOTE: Legacy field name retained for compatibility with older tooling.
