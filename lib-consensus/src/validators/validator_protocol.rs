@@ -946,7 +946,20 @@ impl ValidatorProtocol {
                 // Security is maintained by validate_committed_block() in the consensus engine.
                 // Register the declared public key and accept the message.
                 self.discovery
-                    .populate_trusted(signer.clone(), signature.public_key.clone(), vec![], 0)
+                    .register_trusted(super::ValidatorAnnouncement {
+                        identity_id: signer.clone(),
+                        consensus_key: signature.public_key.clone(),
+                        stake: 0,
+                        storage_provided: 0,
+                        commission_rate: 0,
+                        endpoints: vec![],
+                        status: super::ValidatorStatus::Active,
+                        last_updated: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                        signature: Vec::new(),
+                    })
                     .await;
                 info!(
                     "🔑 Bootstrap TOFU: registered key from new validator {}",
@@ -1223,7 +1236,7 @@ mod tests {
         KeyPair,
         IdentityId,
     )> {
-        let discovery = Arc::new(ValidatorDiscoveryProtocol::new(3600));
+        let discovery = Arc::new(ValidatorDiscoveryProtocol::from_validators(3600, vec![]));
         let mut protocol = ValidatorProtocol::new(discovery.clone(), None);
 
         let kp = KeyPair::generate()?;
@@ -1260,7 +1273,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_validator_protocol_creation() {
-        let discovery = Arc::new(ValidatorDiscoveryProtocol::new(3600));
+        let discovery = Arc::new(ValidatorDiscoveryProtocol::from_validators(3600, vec![]));
         let protocol = ValidatorProtocol::new(discovery, None);
 
         assert!(protocol.validator_identity.is_none());
@@ -1270,7 +1283,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_message_id_generation() {
-        let discovery = Arc::new(ValidatorDiscoveryProtocol::new(3600));
+        let discovery = Arc::new(ValidatorDiscoveryProtocol::from_validators(3600, vec![]));
         let protocol = ValidatorProtocol::new(discovery, None);
 
         let id1 = protocol.generate_message_id();
@@ -1332,7 +1345,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_broadcast_uses_network_transport() -> Result<()> {
-        let discovery = Arc::new(ValidatorDiscoveryProtocol::new(3600));
+        let discovery = Arc::new(ValidatorDiscoveryProtocol::from_validators(3600, vec![]));
         let mut protocol = ValidatorProtocol::new(discovery.clone(), None);
 
         let kp = KeyPair::generate()?;
