@@ -267,8 +267,9 @@ impl TransactionValidator {
                 if transaction.outputs.is_empty() {
                     return Err(ValidationError::InvalidOutputs);
                 }
-                // Validate sender authorization: signer must match 'from' address
-                self.validate_token_transfer_sender_authorization(transaction)?;
+                // Sender authorization is validated in the stateful phase
+                // (StatefulTransactionValidator) which has wallet registry access
+                // to resolve legacy HD-derived wallet_ids that differ from key_id.
             }
             TransactionType::GovernanceConfigUpdate => {
                 // Governance config updates - validate governance_config_data exists
@@ -770,34 +771,6 @@ impl TransactionValidator {
         Ok(())
     }
 
-    /// Validate that the signer of a TokenTransfer matches the 'from' address
-    ///
-    /// This prevents unauthorized transfers where someone signs a transaction
-    /// but the 'from' address in the transfer data is different.
-    fn validate_token_transfer_sender_authorization(
-        &self,
-        transaction: &Transaction,
-    ) -> ValidationResult {
-        // Extract TokenTransferData from memo
-        let transfer_data = transaction
-            .token_transfer_data()
-            .ok_or_else(|| ValidationError::InvalidMemo)?;
-
-        // Get the signer's public key (from signature)
-        let signer_key_id = transaction.signature.public_key.key_id;
-
-        // The 'from' field in TokenTransferData should match the signer's key_id
-        if signer_key_id != transfer_data.from {
-            tracing::warn!(
-                "TokenTransfer sender authorization failed: signer {:?} != from {:?}",
-                hex::encode(&signer_key_id[..8]),
-                hex::encode(&transfer_data.from[..8])
-            );
-            return Err(ValidationError::InvalidSignature);
-        }
-
-        Ok(())
-    }
 
     /// Validate contract transaction
     fn validate_contract_transaction(&self, transaction: &Transaction) -> ValidationResult {
