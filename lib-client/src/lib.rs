@@ -349,6 +349,32 @@ pub unsafe extern "C" fn zhtp_client_derive_wallet_id(
     buf
 }
 
+/// Get the primary wallet ID for an identity.
+/// Returns key_id = blake3(dilithium_pk || kyber_pk) as 32 bytes.
+/// This is the value to use as `from_wallet_id` in SOV transfers.
+/// Caller must free with `zhtp_client_free_buffer`.
+#[no_mangle]
+pub extern "C" fn zhtp_client_identity_get_wallet_id(handle: *const IdentityHandle) -> ByteBuffer {
+    if handle.is_null() {
+        return ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
+    }
+    let identity = unsafe { &(*handle).inner };
+    let pk = token_tx::create_public_key_with_kyber(
+        identity.public_key.clone(),
+        identity.kyber_public_key.clone(),
+    );
+    let mut boxed = Box::new(pk.key_id);
+    let buf = ByteBuffer {
+        data: boxed.as_mut_ptr(),
+        len: 32,
+    };
+    std::mem::forget(boxed);
+    buf
+}
+
 /// Get node ID from identity
 #[no_mangle]
 pub extern "C" fn zhtp_client_identity_get_node_id(handle: *const IdentityHandle) -> ByteBuffer {
