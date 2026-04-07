@@ -76,8 +76,7 @@
 //! 3. **Height**: vote.height == local.height (stale past-height votes are discarded;
 //!    future-height votes trigger catch-up sync and are discarded)
 //! 4. **Round**: vote.round >= local.round (stale rounds are rejected; higher rounds are
-//!    accepted to enable Tendermint round-skip — `on_prevote`/`on_precommit` advance to
-//!    the peer's round so all nodes converge without waiting for timer cycles)
+//!    admitted for accounting and quorum checks, but do not mutate local round state)
 //! 5. **Vote type**: Only PreVote, PreCommit, and Commit are valid in BFT; Against is
 //!    rejected unconditionally. All three accepted types are stored regardless of the
 //!    local step — quorum safety is enforced by `maybe_finalize()` and `vote_pool`

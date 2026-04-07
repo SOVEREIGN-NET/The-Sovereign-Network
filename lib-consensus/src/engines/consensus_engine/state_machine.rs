@@ -819,8 +819,7 @@ impl ConsensusEngine {
     #[allow(deprecated)]
     async fn process_committed_block(&mut self, proposal_id: &Hash, commit_round: u32) -> ConsensusResult<()> {
         // SAFETY: Verify commit quorum before processing (Issue #939)
-        // commit_round is the round in which the commit quorum was reached — it may differ
-        // from self.current_round.round if the local node advanced via a round-skip.
+        // commit_round is the round in which the commit quorum was reached.
         let commit_count = self.count_commits_for(
             self.current_round.height,
             commit_round,
@@ -1250,47 +1249,6 @@ impl ConsensusEngine {
     }
 
     pub(super) async fn on_proposal(&mut self, proposal: ConsensusProposal) -> ConsensusResult<()> {
-        // Proposal round-skip: if this proposal is for a higher round at our height,
-        // jump to that round BEFORE running any other checks.
-        //
-        // This MUST happen before the fork check so that `valid_proposal` (which is
-        // round-scoped) is cleared for the new round.  Otherwise a higher-round
-        // proposal from the correct proposer gets falsely rejected as a "fork" because
-        // the old round's `valid_proposal` is still set.
-        //
-        // **LIVENESS FIX**: Do NOT skip rounds from PreCommit or Commit step.
-        // Once a node has accumulated prevote quorum and entered precommit, it must
-        // stay in the current round long enough for commit votes to accumulate from
-        // 2/3 validators. Skipping from PreCommit/Commit clears locked_proposal and
-        // scatters validators across different rounds, making it impossible for any
-        // single proposal_id to reach supermajority. Only skip from Propose/PreVote
-        // where no vote commitment has been made yet.
-        if proposal.height == self.current_round.height && proposal.round > self.current_round.round
-            && self.current_round.step < ConsensusStep::PreCommit
-        {
-            tracing::info!(
-                "⏩ Round skip H={}: R={} → R={} (proposal from proposer {})",
-                proposal.height,
-                self.current_round.round,
-                proposal.round,
-                proposal.proposer,
-            );
-            self.current_round.round = proposal.round;
-            self.current_round.step = ConsensusStep::Propose;
-            self.current_round.proposals.clear();
-            self.current_round.votes.clear();
-            self.current_round.timed_out = false;
-            self.current_round.locked_proposal = None;
-            self.current_round.valid_proposal = None;
-            // Update proposer from the frozen snapshot (round changed, not height).
-            if let Some(proposer) = self
-                .compute_proposer_for_round(self.current_round.height, self.current_round.round)
-            {
-                self.current_round.proposer = Some(proposer);
-            }
-            self.snapshot_validator_set(self.current_round.height);
-        }
-
         // BFT SAFETY: Reject any proposal that would create a fork.
         //
         // In BFT consensus, forks are invalid by definition. Once a block is committed
@@ -1300,8 +1258,8 @@ impl ConsensusEngine {
         //
         // Same-round fork: if `valid_proposal` is already set for the current round
         // and a conflicting proposal arrives for the SAME round, it is a fork.
-        // Different-round proposals are handled above by the round-skip (which clears
-        // `valid_proposal`), so they never reach this check with a stale lock.
+        // Proposals for different rounds are handled independently and do not mutate
+        // local round state until timeout advances the round.
         //
         // This is a hard gate: fork proposals are never stored, never voted on,
         // and never forwarded to peers.
@@ -1409,31 +1367,6 @@ impl ConsensusEngine {
     }
 
     pub(super) async fn on_prevote(&mut self, vote: ConsensusVote) -> ConsensusResult<()> {
-        // Tendermint round-skip: if a valid vote arrives for a higher round at the
-        // same height, advance immediately to that round.  Without this, nodes whose
-        // local round timers drift apart never agree on the same round and can never
-        // form quorum — they keep proposing for different rounds indefinitely.
-        if vote.height == self.current_round.height && vote.round > self.current_round.round {
-            tracing::info!(
-                "⏩ Round skip H={}: R={} → R={} (prevote from {})",
-                vote.height,
-                self.current_round.round,
-                vote.round,
-                vote.voter
-            );
-            self.current_round.round = vote.round;
-            self.current_round.step = ConsensusStep::Propose;
-            self.current_round.proposals.clear();
-            self.current_round.votes.clear();
-            self.current_round.timed_out = false;
-            self.current_round.locked_proposal = None;
-            self.current_round.valid_proposal = None;
-            // If this node is the proposer for the new round, broadcast a proposal.
-            if let Err(e) = self.enter_propose_step().await {
-                tracing::warn!("Round skip: enter_propose_step failed: {}", e);
-            }
-        }
-
         // Harden: Validate remote vote against all BFT safety invariants
         if !self.validate_remote_vote(&vote).await? {
             return Ok(());
@@ -1532,27 +1465,6 @@ impl ConsensusEngine {
     }
 
     pub(super) async fn on_precommit(&mut self, vote: ConsensusVote) -> ConsensusResult<()> {
-        // Tendermint round-skip: same as on_prevote — advance to peer's round if higher.
-        if vote.height == self.current_round.height && vote.round > self.current_round.round {
-            tracing::info!(
-                "⏩ Round skip H={}: R={} → R={} (precommit from {})",
-                vote.height,
-                self.current_round.round,
-                vote.round,
-                vote.voter
-            );
-            self.current_round.round = vote.round;
-            self.current_round.step = ConsensusStep::Propose;
-            self.current_round.proposals.clear();
-            self.current_round.votes.clear();
-            self.current_round.timed_out = false;
-            self.current_round.locked_proposal = None;
-            self.current_round.valid_proposal = None;
-            if let Err(e) = self.enter_propose_step().await {
-                tracing::warn!("Round skip (precommit): enter_propose_step failed: {}", e);
-            }
-        }
-
         // Harden: Validate remote vote against all BFT safety invariants
         if !self.validate_remote_vote(&vote).await? {
             return Ok(());
@@ -2094,9 +2006,6 @@ impl ConsensusEngine {
             );
 
             // Finalize regardless of current step (CE-L1) and regardless of current round.
-            // The round check was a liveness bug: when validators advance rounds via round-skip
-            // before commit votes accumulate, `current_round.round != round` and the commit
-            // was silently dropped even though 2/3+ validators had committed for this proposal.
             // A commit quorum for the current HEIGHT is sufficient — the specific proposal_id
             // guarantees we're committing the right block, and process_committed_block is
             // idempotent if the block was already applied.
@@ -2112,19 +2021,10 @@ impl ConsensusEngine {
                     );
                 }
 
-                if self.current_round.round != round {
-                    tracing::info!(
-                        "Committing block at height {} from round {} (local round advanced to {} via round-skip — liveness fix)",
-                        height,
-                        round,
-                        self.current_round.round
-                    );
-                }
-
                 // Process the committed block (finalization) directly.
                 // Pass `round` (the round where commit quorum was reached) so that
-                // vote counting uses the correct round even if current_round.round
-                // has already advanced via a round-skip.
+                // vote counting uses the correct round even if the local state has
+                // already moved on due to timeout-driven round advancement.
                 self.process_committed_block(proposal_id, round).await?;
             } else {
                 tracing::debug!(
