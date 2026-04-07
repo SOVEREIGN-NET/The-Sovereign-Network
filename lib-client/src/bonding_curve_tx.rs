@@ -40,7 +40,7 @@ pub fn build_bonding_curve_deploy_tx(
     chain_id: u8,
     nonce: u64,
 ) -> Result<String, String> {
-    let public_key = crate::token_tx::create_public_key(identity.public_key.clone());
+    let public_key = crate::token_tx::create_public_key_with_kyber(identity.public_key.clone(), identity.kyber_public_key.clone());
     let mut creator_key_id = [0u8; 32];
     creator_key_id.copy_from_slice(&public_key.key_id[..32]);
 
@@ -111,7 +111,7 @@ pub fn build_bonding_curve_buy_tx(
     chain_id: u8,
     nonce: u64,
 ) -> Result<String, String> {
-    let public_key = crate::token_tx::create_public_key(identity.public_key.clone());
+    let public_key = crate::token_tx::create_public_key_with_kyber(identity.public_key.clone(), identity.kyber_public_key.clone());
     let mut buyer_key_id = [0u8; 32];
     buyer_key_id.copy_from_slice(&public_key.key_id[..32]);
 
@@ -173,7 +173,7 @@ pub fn build_bonding_curve_sell_tx(
     chain_id: u8,
     nonce: u64,
 ) -> Result<String, String> {
-    let public_key = crate::token_tx::create_public_key(identity.public_key.clone());
+    let public_key = crate::token_tx::create_public_key_with_kyber(identity.public_key.clone(), identity.kyber_public_key.clone());
     let mut seller_key_id = [0u8; 32];
     seller_key_id.copy_from_slice(&public_key.key_id[..32]);
 
@@ -236,7 +236,7 @@ pub fn build_bonding_curve_graduate_tx(
     chain_id: u8,
     nonce: u64,
 ) -> Result<String, String> {
-    let public_key = crate::token_tx::create_public_key(identity.public_key.clone());
+    let public_key = crate::token_tx::create_public_key_with_kyber(identity.public_key.clone(), identity.kyber_public_key.clone());
     let mut graduator_key_id = [0u8; 32];
     graduator_key_id.copy_from_slice(&public_key.key_id[..32]);
 
@@ -305,7 +305,7 @@ pub fn build_swap_tx(
     // For AMM swaps, we use ContractExecution with encoded call data
     use lib_blockchain::types::{CallPermissions, ContractCall, ContractType};
 
-    let public_key = crate::token_tx::create_public_key(identity.public_key.clone());
+    let public_key = crate::token_tx::create_public_key_with_kyber(identity.public_key.clone(), identity.kyber_public_key.clone());
     let mut swapper_key_id = [0u8; 32];
     swapper_key_id.copy_from_slice(&public_key.key_id[..32]);
 
@@ -389,7 +389,7 @@ pub fn build_add_liquidity_tx(
 ) -> Result<String, String> {
     use lib_blockchain::types::{CallPermissions, ContractCall, ContractType};
 
-    let public_key = crate::token_tx::create_public_key(identity.public_key.clone());
+    let public_key = crate::token_tx::create_public_key_with_kyber(identity.public_key.clone(), identity.kyber_public_key.clone());
 
     let call_data = bincode::serialize(&(
         "add_liquidity",
@@ -467,7 +467,7 @@ pub fn build_remove_liquidity_tx(
 ) -> Result<String, String> {
     use lib_blockchain::types::{CallPermissions, ContractCall, ContractType};
 
-    let public_key = crate::token_tx::create_public_key(identity.public_key.clone());
+    let public_key = crate::token_tx::create_public_key_with_kyber(identity.public_key.clone(), identity.kyber_public_key.clone());
 
     let call_data = bincode::serialize(&("remove_liquidity", token_id, pool_id, lp_amount, nonce))
         .map_err(|e| format!("Failed to encode remove liquidity data: {}", e))?;
