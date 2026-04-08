@@ -4,6 +4,7 @@
 //! - `init-pools`      — Assign 4 pool wallet addresses and distribute full CBE supply (one-time)
 //! - `create-contract` — Create an on-chain employment contract
 //! - `payroll`         — Process a payroll period, triggering CBE transfer to employee
+//! - `transfer`        — Transfer CBE tokens between wallets (vesting-aware)
 
 use crate::argument_parsing::{CbeAction, CbeArgs, ZhtpCli};
 use crate::commands::web4_utils::{connect_default, load_identity_from_keystore};
@@ -54,6 +55,14 @@ fn load_default_keypair() -> CliResult<lib_crypto::keypair::KeyPair> {
     Ok(loaded.keypair)
 }
 
+/// Parse an address into a PublicKey.
+///
+/// # Note on 32-byte key_id inputs
+/// When only a 32-byte key_id is provided (not a full Dilithium public key),
+/// we construct a PublicKey with empty dilithium/kyber fields. This is
+/// acceptable for TokenTransferData which only uses the key_id field.
+/// The blockchain resolves the full public key from the key_id during
+/// transaction processing.
 fn parse_public_key(address: &str) -> CliResult<lib_crypto::PublicKey> {
     let trimmed = address.strip_prefix("did:zhtp:").unwrap_or(address);
     let hex_str = trimmed.strip_prefix("0x").unwrap_or(trimmed);
@@ -63,6 +72,8 @@ fn parse_public_key(address: &str) -> CliResult<lib_crypto::PublicKey> {
     if bytes.len() == 32 {
         let mut key_id = [0u8; 32];
         key_id.copy_from_slice(&bytes);
+        // Intentionally leaving dilithium/kyber empty - only key_id is used
+        // for TokenTransferData recipient field
         return Ok(lib_crypto::PublicKey {
             dilithium_pk: [0u8; 2592],
             kyber_pk: [0u8; 1568],
@@ -115,21 +126,10 @@ async fn fetch_token_nonce(
         })
 }
 
-fn derive_cbe_token_id() -> [u8; 32] {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = DefaultHasher::new();
-    "CBE Equity".hash(&mut hasher);
-    "CBE".hash(&mut hasher);
-    let hash = hasher.finish();
-
-    let mut id = [0u8; 32];
-    id[..8].copy_from_slice(&hash.to_le_bytes());
-    for i in 8..32 {
-        id[i] = ((hash >> (i % 8)) & 0xFF) as u8;
-    }
-    id
+/// Get the canonical CBE token ID from lib-blockchain.
+/// This avoids code duplication with the on-chain derivation.
+fn get_cbe_token_id() -> [u8; 32] {
+    lib_blockchain::Blockchain::derive_cbe_token_id_pub()
 }
 
 fn build_signed_cbe_transfer_tx(
@@ -138,7 +138,7 @@ fn build_signed_cbe_transfer_tx(
     amount: u64,
     nonce: u64,
 ) -> CliResult<Transaction> {
-    let cbe_token_id = derive_cbe_token_id();
+    let cbe_token_id = get_cbe_token_id();
 
     let transfer_data = TokenTransferData {
         token_id: cbe_token_id,
@@ -285,14 +285,28 @@ pub async fn handle_cbe_command_with_output<O: Output>(
         }
 
         CbeAction::Transfer { to, amount } => {
+            // Input validation
+            if amount == 0 {
+                return Err(CliError::ConfigError(
+                    "Transfer amount must be greater than 0".to_string(),
+                ));
+            }
+
             let keypair = load_default_keypair()?;
             let to_pubkey = parse_public_key(&to)?;
+
+            // Prevent self-transfer
+            if to_pubkey.key_id == keypair.public_key.key_id {
+                return Err(CliError::ConfigError(
+                    "Cannot transfer to yourself".to_string(),
+                ));
+            }
 
             output.info(&format!("Transferring {} CBE atoms to {}", amount, to))?;
             output.info("Signing CBE transfer transaction...")?;
 
-            // Derive CBE token ID locally (deterministic)
-            let cbe_token_id = derive_cbe_token_id();
+            // Get CBE token ID from canonical source
+            let cbe_token_id = get_cbe_token_id();
 
             // Fetch nonce for CBE token
             let client = connect_default(&cli.server).await?;
@@ -303,42 +317,10 @@ pub async fn handle_cbe_command_with_output<O: Output>(
             let tx = build_signed_cbe_transfer_tx(&keypair, &to_pubkey, amount, nonce)?;
             let tx_bytes = bincode::serialize(&tx)
                 .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {}", e)))?;
-            let request_body = json!({ "signed_tx": hex::encode(tx_bytes) });
+            let signed_tx_hex = hex::encode(tx_bytes);
 
-            let response = client
-                .post_json("/api/v1/token/transfer", &request_body)
-                .await
-                .map_err(|e| CliError::ApiCallFailed {
-                    endpoint: "/api/v1/token/transfer".to_string(),
-                    status: 0,
-                    reason: e.to_string(),
-                })?;
-
-            let response_json: serde_json::Value =
-                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
-                    endpoint: "/api/v1/token/transfer".to_string(),
-                    status: 0,
-                    reason: format!("Failed to parse response: {}", e),
-                })?;
-
-            if response_json
-                .get("success")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-            {
-                output.success("CBE transfer successful!")?;
-            } else {
-                let error = response_json
-                    .get("error")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Unknown error");
-                output.error(&format!("CBE transfer failed: {}", error))?;
-            }
-
-            let formatted = crate::argument_parsing::format_output(&response_json, &cli.format)?;
-            output.print(&formatted)?;
-
-            Ok(())
+            // Use shared post_tx helper
+            post_tx(cli, output, "/api/v1/token/transfer", signed_tx_hex).await
         }
     }
 }
