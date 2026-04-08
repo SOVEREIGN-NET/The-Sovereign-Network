@@ -563,8 +563,15 @@ impl BftQuorumProof {
 /// proof itself off-chain for sync and audit. The block header commits only to
 /// the 32-byte root; peers exchange the full `BftQuorumProof` separately.
 pub fn compute_bft_quorum_root(proof: &BftQuorumProof) -> [u8; 32] {
+    // Sort attestations by validator_id for deterministic ordering.
+    // The quorum root is embedded in the block header; all nodes must compute
+    // the identical value or their block hashes diverge and the chain forks.
+    let mut sorted: Vec<&CommitAttestation> = proof.attestations.iter().collect();
+    sorted.sort_by_key(|a| a.validator_id);
+    sorted.dedup_by_key(|a| a.validator_id);
+
     let mut hasher = blake3::Hasher::new();
-    for att in &proof.attestations {
+    for att in sorted {
         hasher.update(&att.validator_id);
         hasher.update(&att.signature);
         hasher.update(&att.proposal_id);

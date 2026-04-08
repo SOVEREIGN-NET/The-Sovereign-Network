@@ -65,6 +65,13 @@ impl GenesisFundingService {
             );
         }
 
+        // DETERMINISM: Sort genesis validators by identity_id so that every node
+        // produces the same genesis_tx output ordering regardless of the order
+        // validators appear in each node's config.toml. Different configs had
+        // validators in different orders, producing different genesis block hashes.
+        let mut genesis_validators = genesis_validators;
+        genesis_validators.sort_by_key(|v| v.identity_id.0);
+
         // Initialize outputs vector for genesis transaction
         let mut genesis_outputs = Vec::new();
         let mut total_validator_stake = 0u64;
@@ -175,23 +182,12 @@ impl GenesisFundingService {
                 identity_dilithium_pubkey.len()
             );
 
-            // Create wallet funding UTXO (still uses 32-byte identity hash for recipient)
-            let _identity_hash = user_identity_id.as_ref().unwrap().0.to_vec();
-            let wallet_output = TransactionOutput {
-                commitment: lib_blockchain::types::hash::blake3_hash(
-                    format!(
-                        "user_wallet_commitment_{}_{}",
-                        wallet_id_hex, SOV_WELCOME_BONUS
-                    )
-                    .as_bytes(),
-                ),
-                note: lib_blockchain::types::hash::blake3_hash(
-                    format!("user_wallet_note_{}", wallet_id_hex).as_bytes(),
-                ),
-                recipient: PublicKey::new([0u8; 2592]),
-            };
-
-            genesis_outputs.push(wallet_output);
+            // NOTE: The user wallet UTXO is intentionally NOT added to genesis_outputs.
+            // Each node has a different user wallet (different wallet_id), so including it
+            // in the genesis block transaction would produce a different genesis block hash
+            // on every node, making the genesis non-deterministic. The wallet is funded
+            // via the in-memory SOV mint below — the UTXO representation in the genesis
+            // block is not needed for SOV balance tracking.
 
             // Register wallet in blockchain's wallet_registry with initial balance
             // CRITICAL: Store the FULL Dilithium5 public key for signature verification

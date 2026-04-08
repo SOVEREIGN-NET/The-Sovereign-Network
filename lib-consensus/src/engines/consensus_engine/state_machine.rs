@@ -897,8 +897,13 @@ impl ConsensusEngine {
         // (due to timing skew) but they all agree on the same proposal_id, which is what
         // matters for safety. Round-scoped filtering was the root cause of commit quorum
         // never being reached when validators entered the Commit step at different times.
+        //
+        // DETERMINISM: attestations must be sorted and deduplicated by validator_id so that
+        // all nodes compute the same quorum_root, which is embedded in the block header.
+        // A non-deterministic quorum_root causes each node to store a different block hash,
+        // breaking the previous_hash chain validation for the next height.
         let quorum_proof = {
-            let attestations: Vec<lib_types::consensus::CommitAttestation> = self
+            let mut attestations: Vec<lib_types::consensus::CommitAttestation> = self
                 .vote_pool
                 .iter()
                 .filter(|(k, (_, voted_id))| {
@@ -921,6 +926,14 @@ impl ConsensusEngine {
                     })
                 })
                 .collect();
+
+            // Sort by validator_id for deterministic ordering across all nodes.
+            attestations.sort_by_key(|a| a.validator_id);
+            // Deduplicate: keep only the first (lowest-round, since pool was round-sorted) entry
+            // per validator. A validator may have cast commit votes at multiple rounds if the
+            // local round advanced after the initial cast; only one attestation per validator
+            // should contribute to the quorum root so the hash is identical on all nodes.
+            attestations.dedup_by_key(|a| a.validator_id);
 
             lib_types::consensus::BftQuorumProof {
                 height: self.current_round.height,
@@ -1284,6 +1297,27 @@ impl ConsensusEngine {
             return Ok(());
         }
 
+        // Round synchronization: if the proposal is for a higher round, advance to it.
+        // This lets lagging nodes catch up when they missed timeout-driven round increments
+        // while other validators were already spinning ahead.  We only advance — never go back.
+        if proposal.round > self.current_round.round {
+            tracing::info!(
+                "Round-sync: advancing from round {} to {} on received proposal at H={}",
+                self.current_round.round,
+                proposal.round,
+                proposal.height,
+            );
+            self.current_round.round = proposal.round;
+            self.current_round.step = ConsensusStep::Propose;
+            self.current_round.proposer = None;
+            self.current_round.proposals.clear();
+            self.current_round.votes.clear();
+            self.current_round.timed_out = false;
+            self.current_round.locked_proposal = None;
+            self.current_round.valid_proposal = None;
+            self.snapshot_validator_set(self.current_round.height);
+        }
+
         if !self.current_round.proposals.is_empty() {
             return Ok(());
         }
@@ -1436,7 +1470,7 @@ impl ConsensusEngine {
         let total_validators = self.validator_manager.get_active_validators().len() as u64;
 
         if check_supermajority(prevote_count, total_validators)
-            && self.current_round.step == ConsensusStep::PreVote
+            && self.current_round.step <= ConsensusStep::PreCommit
         {
             // **CE-S1**: Only transition if this proposal can be the valid proposal
             // If valid_proposal is already set to a DIFFERENT proposal, we have conflicting quorums
@@ -1454,6 +1488,10 @@ impl ConsensusEngine {
                 // First proposal to reach quorum in this round
                 self.current_round.valid_proposal = Some(proposal_id.clone());
             }
+            // Allow late prevote quorum to still trigger precommit casting even if the
+            // prevote timeout already fired and step advanced to PreCommit. enter_precommit_step
+            // is idempotent for the step transition (guards against double-entry) but we bypass
+            // that guard here only if we haven't yet cast a precommit for this round.
             self.enter_precommit_step().await?;
         }
 
@@ -1532,7 +1570,7 @@ impl ConsensusEngine {
         let total_validators = self.validator_manager.get_active_validators().len() as u64;
 
         if check_supermajority(precommit_count, total_validators)
-            && self.current_round.step == ConsensusStep::PreCommit
+            && self.current_round.step <= ConsensusStep::Commit
         {
             // **CE-S1**: Only transition if this proposal can be locked
             // If locked_proposal is already set to a DIFFERENT proposal, we have conflicting quorums
@@ -1549,6 +1587,9 @@ impl ConsensusEngine {
                 // First proposal to reach precommit quorum in this round
                 self.current_round.locked_proposal = Some(proposal_id.clone());
             }
+            // Allow late precommit quorum to still trigger commit vote casting even if the
+            // precommit timeout already fired and step advanced to Commit. enter_commit_step
+            // is idempotent for the step transition but we bypass that guard to cast the vote.
             self.enter_commit_step().await?;
         }
 
@@ -1801,6 +1842,21 @@ impl ConsensusEngine {
                         {
                             tracing::debug!("Failed to broadcast proposal (CE-ENG-4): {}", e);
                         }
+
+                        // Proposer enters prevote immediately after broadcasting its proposal.
+                        // Without this, the proposer waits propose_timeout (3 s) before prevoting,
+                        // while non-proposers transition on proposal receipt (<100 ms).  By the
+                        // time the proposer finally prevotes, the other nodes have exhausted their
+                        // prevote+precommit+commit timeouts (3 × 1 s = 3 s) and advanced to the
+                        // next round — causing the proposer's prevote to be rejected as stale.
+                        if let Err(e) = self.enter_prevote_step().await {
+                            tracing::warn!(
+                                "Failed to enter prevote step after proposal broadcast at H={} R={}: {}",
+                                self.current_round.height,
+                                self.current_round.round,
+                                e
+                            );
+                        }
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -1856,19 +1912,63 @@ impl ConsensusEngine {
     }
 
     async fn enter_precommit_step(&mut self) -> ConsensusResult<()> {
-        if self.current_round.step >= ConsensusStep::PreCommit {
+        // Allow re-entry when already in PreCommit step so that late-arriving prevotes
+        // that complete the quorum can still cast a precommit. We guard against going
+        // backwards (Commit or later) but not against being already in PreCommit.
+        if self.current_round.step > ConsensusStep::PreCommit {
             return Ok(());
         }
 
-        self.current_round.step = ConsensusStep::PreCommit;
-        tracing::info!(
-            "Entering PreCommit step at height {} round {}",
-            self.current_round.height,
-            self.current_round.round
-        );
+        if self.current_round.step < ConsensusStep::PreCommit {
+            self.current_round.step = ConsensusStep::PreCommit;
+            tracing::info!(
+                "Entering PreCommit step at height {} round {}",
+                self.current_round.height,
+                self.current_round.round
+            );
+        }
 
-        if let Some(proposal_id) = self.current_round.proposals.first().cloned() {
-            let prevote_count = self.count_votes_for_proposal(&proposal_id, &VoteType::PreVote);
+        // Use valid_proposal (already set by on_prevote quorum path) or fall back to
+        // the first received proposal for this round.
+        let proposal_id_opt = self
+            .current_round
+            .valid_proposal
+            .clone()
+            .or_else(|| self.current_round.proposals.first().cloned());
+
+        if let Some(proposal_id) = proposal_id_opt {
+            // Skip if we already cast a precommit for this round.
+            let already_precommitted = self
+                .validator_identity
+                .as_ref()
+                .map(|id| {
+                    self.vote_pool.contains_key(&VotePoolKey {
+                        height: self.current_round.height,
+                        round: self.current_round.round,
+                        vote_type: VoteType::PreCommit,
+                        validator_id: id.clone(),
+                    })
+                })
+                .unwrap_or(false);
+            if already_precommitted {
+                return Ok(());
+            }
+
+            // Count prevotes for this proposal in the CURRENT round only.
+            // Cross-round prevote aggregation is unsafe: different rounds may have
+            // 2/3+ prevotes for different proposals (different proposers propose
+            // different blocks each round). Aggregating them can make two distinct
+            // proposals both appear to have supermajority, breaking BFT safety.
+            let prevote_count = self
+                .vote_pool
+                .iter()
+                .filter(|(k, (_, voted_id))| {
+                    k.height == self.current_round.height
+                        && k.round == self.current_round.round
+                        && k.vote_type == VoteType::PreVote
+                        && voted_id == &proposal_id
+                })
+                .count() as u64;
             let total_validators = self.validator_manager.get_active_validators().len() as u64;
 
             if check_supermajority(prevote_count, total_validators) {
@@ -1897,16 +1997,17 @@ impl ConsensusEngine {
     }
 
     async fn enter_commit_step(&mut self) -> ConsensusResult<()> {
-        if self.current_round.step >= ConsensusStep::Commit {
-            return Ok(());
+        // Allow re-entry when already in Commit step so that late-arriving precommits
+        // that complete the quorum can still cast a commit vote. We only prevent going
+        // backwards past Commit (which would be a new round / height).
+        if self.current_round.step < ConsensusStep::Commit {
+            self.current_round.step = ConsensusStep::Commit;
+            tracing::info!(
+                "Entering Commit step at height {} round {}",
+                self.current_round.height,
+                self.current_round.round
+            );
         }
-
-        self.current_round.step = ConsensusStep::Commit;
-        tracing::info!(
-            "Entering Commit step at height {} round {}",
-            self.current_round.height,
-            self.current_round.round
-        );
 
         // valid_proposal is set when prevote quorum is reached; locked_proposal is set
         // when precommit quorum is reached.  When the prevote timer fires before prevote
@@ -1921,7 +2022,37 @@ impl ConsensusEngine {
             .cloned();
 
         if let Some(proposal_id) = commit_target {
-            let precommit_count = self.count_votes_for_proposal(&proposal_id, &VoteType::PreCommit);
+            // Skip if we already cast a commit vote for this round.
+            let already_committed = self
+                .validator_identity
+                .as_ref()
+                .map(|id| {
+                    self.vote_pool.contains_key(&VotePoolKey {
+                        height: self.current_round.height,
+                        round: self.current_round.round,
+                        vote_type: VoteType::Commit,
+                        validator_id: id.clone(),
+                    })
+                })
+                .unwrap_or(false);
+            if already_committed {
+                return Ok(());
+            }
+
+            // Count precommits for this proposal across ALL rounds at this height.
+            // count_votes_for_proposal() filters by current round, which misses precommits
+            // from the round where quorum was actually reached when the round has since
+            // advanced via timeout.  Cross-round counting is safe because the proposal_id
+            // uniquely identifies the block; no two valid proposals share the same id.
+            let precommit_count = self
+                .vote_pool
+                .iter()
+                .filter(|(k, (_, voted_id))| {
+                    k.height == self.current_round.height
+                        && k.vote_type == VoteType::PreCommit
+                        && voted_id == &proposal_id
+                })
+                .count() as u64;
             let total_validators = self.validator_manager.get_active_validators().len() as u64;
 
             if check_supermajority(precommit_count, total_validators) {
