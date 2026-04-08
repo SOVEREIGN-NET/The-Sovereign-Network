@@ -1662,20 +1662,54 @@ impl<'a> StatefulTransactionValidator<'a> {
                     || data.token_id == crate::contracts::utils::generate_lib_token_id();
                 if is_sov {
                     let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
-                    let wallet_id_hex = hex::encode(data.from);
-                    // Wallet must exist in the registry (new key_id or legacy HD-derived id).
-                    let wallet = blockchain
-                        .wallet_registry
-                        .get(&wallet_id_hex)
-                        .ok_or(ValidationError::InvalidTransaction)?;
-                    // Ownership check: for new wallets wallet_id == key_id; for legacy wallets
-                    // the wallet_id was HD-derived so they differ — fall back to dilithium_pk match.
+
+                    // For new-style wallets, wallet_id == key_id. The signature already proves
+                    // ownership — no registry lookup needed. Only legacy wallets (where wallet_id
+                    // was HD-derived and differs from key_id) require a registry check to resolve
+                    // the dilithium_pk.
                     if data.from != transaction.signature.public_key.key_id {
+                        let wallet_id_hex = hex::encode(data.from);
+                        let wallet = blockchain
+                            .wallet_registry
+                            .get(&wallet_id_hex)
+                            .ok_or_else(|| {
+                                tracing::warn!(
+                                    "[TOKEN_TRANSFER] legacy wallet not in registry: from={} key_id={}",
+                                    &wallet_id_hex[..16.min(wallet_id_hex.len())],
+                                    hex::encode(&transaction.signature.public_key.key_id[..8])
+                                );
+                                ValidationError::InvalidTransaction
+                            })?;
                         let sig_dilithium = transaction.signature.public_key.dilithium_pk.as_slice();
                         if wallet.public_key.len() != 2592
                             || wallet.public_key.as_slice() != sig_dilithium
                         {
+                            tracing::warn!(
+                                "[TOKEN_TRANSFER] legacy ownership check failed: from={} wallet_pk_len={}",
+                                &wallet_id_hex[..16.min(wallet_id_hex.len())],
+                                wallet.public_key.len()
+                            );
                             return Err(ValidationError::InvalidTransaction);
+                        }
+                    }
+
+                    // Balance check: reject at mempool time if sender has insufficient SOV.
+                    // This prevents accepted-but-unfunded transfers from being finalized by
+                    // consensus and then failing at block execution, which halts the network.
+                    let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+                    let mut sender_id = [0u8; 32];
+                    sender_id.copy_from_slice(&data.from);
+                    let sender_key = crate::Blockchain::wallet_key_for_sov(&sender_id);
+                    if let Some(token) = blockchain.token_contracts.get(&sov_token_id) {
+                        let balance = token.balance_of(&sender_key);
+                        if u128::from(balance) < data.amount {
+                            tracing::warn!(
+                                "[TOKEN_TRANSFER] insufficient SOV balance: from={} have={} need={}",
+                                hex::encode(&data.from[..8]),
+                                balance,
+                                data.amount
+                            );
+                            return Err(ValidationError::InvalidAmount);
                         }
                     }
                 } else if data.from != transaction.signature.public_key.key_id {
