@@ -1116,8 +1116,33 @@ impl RuntimeOrchestrator {
             )
             .await?;
 
-            // Token state persistence is block-atomic only. Genesis token state
-            // is persisted by the next committed block snapshot.
+            // Persist genesis in-memory SOV mints to the sled token_balances tree.
+            // genesis_funding mints via token.mint() directly into token_contracts —
+            // those mints are NOT in any block transaction, so they are invisible to
+            // load_from_store on the next restart. Writing them to token_balances here
+            // (idempotent) ensures every restart finds the correct genesis balances.
+            if let Some(store) = blockchain.store.as_ref() {
+                let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+                if let Some(sov_contract) = blockchain.token_contracts.get(&sov_token_id) {
+                    let entries: Vec<([u8; 32], u64)> = sov_contract
+                        .balances
+                        .iter()
+                        .map(|(pk, &bal)| (pk.key_id, bal))
+                        .collect();
+                    let token_id = lib_blockchain::storage::TokenId(sov_token_id);
+                    match store.backfill_token_balances_from_contract(&token_id, &entries) {
+                        Ok(n) if n > 0 => info!(
+                            "💰 Persisted {} genesis SOV balances to token_balances tree",
+                            n
+                        ),
+                        Ok(_) => {}
+                        Err(e) => warn!(
+                            "⚠️ Failed to persist genesis SOV balances to sled: {}",
+                            e
+                        ),
+                    }
+                }
+            }
         } // Release write lock
 
         info!(" Global blockchain provider initialized with user wallet funding");
