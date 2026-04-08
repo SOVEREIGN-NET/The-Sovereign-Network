@@ -1970,10 +1970,14 @@ impl RuntimeOrchestrator {
                     network_info.as_ref(),
                 )?;
 
-                // Non-validator nodes wait here for the bootstrap leader to create genesis.
-                // Validator nodes also wait now — the "independent genesis" approach caused
-                // divergent genesis blocks when nodes started with wiped sled. All nodes
-                // except the bootstrap leader MUST sync genesis from the leader.
+                // Non-bootstrap-leader, non-validator nodes wait here for the bootstrap
+                // leader to create genesis. Validator nodes skip this wait and will hit
+                // the genesis-gate bail! below — they need to either sync from the leader
+                // or be the leader themselves.
+                //
+                // The "independent genesis" approach caused divergent genesis blocks when
+                // nodes started with wiped sled. Now only the bootstrap leader can create
+                // genesis; all other nodes MUST sync from it.
                 let is_validator_node = self.config.consensus_config.validator_enabled;
                 if synced_blockchain.is_none() && !local_is_bootstrap_leader && !is_validator_node {
                     let retry_peers: Vec<_> = network_info
@@ -2031,7 +2035,9 @@ impl RuntimeOrchestrator {
                     let mut bc = lib_blockchain::Blockchain::new()?;
                     bc.set_store(store.clone());
 
-                    // Verify the genesis block hash matches the canonical hash
+                    // Log the genesis block hash for verification/debugging.
+                    // Note: Full hash verification against CANONICAL_GENESIS_HASH is done
+                    // inside lib_blockchain::Blockchain::new() -> GenesisConfig::verify_hash().
                     if let Some(genesis_block) = bc.blocks.first() {
                         let genesis_hash = hex::encode(genesis_block.header.block_hash.as_bytes());
                         info!("🔗 Genesis block hash: {}", genesis_hash);

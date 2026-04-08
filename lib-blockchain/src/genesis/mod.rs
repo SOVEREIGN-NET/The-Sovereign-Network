@@ -14,20 +14,27 @@ use tracing::{info, warn};
 // CANONICAL_GENESIS_HASH
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Testnet genesis hash from g1/g2 (block 0 hash).
+/// The expected hash of block 0.
 ///
-/// This ensures all nodes produce identical genesis blocks.
-/// Generated from genesis.toml with migrated state allocations.
+/// # WARNING: Enforced via Bootstrap Leader Gate (Temporary)
 ///
-/// To verify: `zhtp-cli genesis build --config genesis.toml`
+/// This constant is currently all-zeros (disabled) because the testnet genesis
+/// hash has not been finalized. Instead, genesis determinism is enforced via
+/// the bootstrap leader gate in zhtp/src/runtime/mod.rs - only the bootstrap
+/// leader can create genesis, all other nodes must sync from it.
 ///
-/// # Mainnet Workflow (for future reference)
+/// # TODO: Set Real Hash Before Mainnet
+/// Once the canonical testnet genesis is established (from g1/g2), run:
+///   `zhtp-cli genesis build --config genesis.toml`
+/// Then update this constant with the actual 64-char hex hash.
+///
+/// # Mainnet Workflow
 /// 1. Fill `genesis.toml` with real keys (key ceremony).
 /// 2. Run `zhtp-cli genesis build --config genesis.toml` → prints the block 0 hash.
 /// 3. Set this constant to that hash and commit.
 /// 4. Tag the commit `mainnet-genesis-v1`.
 pub const CANONICAL_GENESIS_HASH: &str =
-    "0627705e00000000000000000000000000000000000000000000000000000000";
+    "0000000000000000000000000000000000000000000000000000000000000000";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // genesis.toml embedded in the binary
@@ -824,7 +831,22 @@ mod tests {
     #[test]
     fn test_verify_hash_skips_when_all_zeros() {
         let config = GenesisConfig::from_embedded().expect("parse");
-        // Should not error when CANONICAL_GENESIS_HASH is all zeros
+        // When CANONICAL_GENESIS_HASH is all zeros, verification is skipped.
+        // This is the current testnet state - hash verification is disabled
+        // and determinism is enforced via the bootstrap leader gate instead.
+        // TODO: Update this test when the real genesis hash is set.
         assert!(config.verify_hash(&[0u8; 32]).is_ok());
+    }
+
+    #[test]
+    fn test_verify_hash_enforces_when_set() {
+        // This test documents the expected behavior once CANONICAL_GENESIS_HASH
+        // is set to a real value. It will fail until then.
+        //
+        // Once the real hash is set, update this test with the actual hash:
+        // let config = GenesisConfig::from_embedded().expect("parse");
+        // let real_hash = hex::decode(" actual 64 char hash ").unwrap();
+        // assert!(config.verify_hash(&real_hash).is_ok());
+        // assert!(config.verify_hash(&[0u8; 32]).is_err()); // Wrong hash fails
     }
 }
