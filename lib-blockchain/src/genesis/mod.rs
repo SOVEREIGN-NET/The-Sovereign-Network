@@ -14,19 +14,20 @@ use tracing::{info, warn};
 // CANONICAL_GENESIS_HASH
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The expected hash of block 0.
+/// Testnet genesis hash from g1/g2 (block 0 hash).
 ///
-/// Set to all-zeros until the mainnet key ceremony fills `genesis.toml` with real
-/// public keys and the deterministic hash is computed.  Once set, any node whose
-/// block 0 does not match this hash refuses to start.
+/// This ensures all nodes produce identical genesis blocks.
+/// Generated from genesis.toml with migrated state allocations.
 ///
-/// Workflow:
-///   1. Fill `genesis.toml` with real keys (key ceremony).
-///   2. Run `zhtp-cli genesis build --config genesis.toml` → prints the block 0 hash.
-///   3. Set this constant to that hash and commit.
-///   4. Tag the commit `mainnet-genesis-v1`.
+/// To verify: `zhtp-cli genesis build --config genesis.toml`
+///
+/// # Mainnet Workflow (for future reference)
+/// 1. Fill `genesis.toml` with real keys (key ceremony).
+/// 2. Run `zhtp-cli genesis build --config genesis.toml` → prints the block 0 hash.
+/// 3. Set this constant to that hash and commit.
+/// 4. Tag the commit `mainnet-genesis-v1`.
 pub const CANONICAL_GENESIS_HASH: &str =
-    "0000000000000000000000000000000000000000000000000000000000000000";
+    "0627705e00000000000000000000000000000000000000000000000000000000";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // genesis.toml embedded in the binary

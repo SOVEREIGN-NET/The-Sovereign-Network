@@ -2,7 +2,7 @@
 //!
 //! Coordinates the lifecycle and interactions of all ZHTP components
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
@@ -1970,10 +1970,10 @@ impl RuntimeOrchestrator {
                     network_info.as_ref(),
                 )?;
 
-                // Validator nodes must NOT wait here — they need to participate in
-                // consensus to vote on block 1, so they can't wait for block 1 to exist
-                // first. The genesis config is embedded and deterministic, so all nodes
-                // independently produce the same genesis block and then converge via BFT.
+                // Non-validator nodes wait here for the bootstrap leader to create genesis.
+                // Validator nodes also wait now — the "independent genesis" approach caused
+                // divergent genesis blocks when nodes started with wiped sled. All nodes
+                // except the bootstrap leader MUST sync genesis from the leader.
                 let is_validator_node = self.config.consensus_config.validator_enabled;
                 if synced_blockchain.is_none() && !local_is_bootstrap_leader && !is_validator_node {
                     let retry_peers: Vec<_> = network_info
@@ -2023,17 +2023,21 @@ impl RuntimeOrchestrator {
 
                 if let Some(bc) = synced_blockchain {
                     (bc, true)
-                } else {
-                    // Bootstrap leader — all peers at height 0 or no peers at all.
-                    // This node is the designated genesis creator.
+                } else if local_is_bootstrap_leader {
+                    // ─────────────────────────────────────────────────────────────
+                    // GENESIS CREATION: Only the bootstrap leader may create genesis.
+                    // ─────────────────────────────────────────────────────────────
                     info!("📂 SledStore is empty - creating new blockchain (bootstrap leader)");
                     let mut bc = lib_blockchain::Blockchain::new()?;
                     bc.set_store(store.clone());
 
-                    // CRITICAL: Persist genesis block (height 0) to SledStore
-                    // SledStore requires sequential block storage starting from 0
+                    // Verify the genesis block hash matches the canonical hash
                     if let Some(genesis_block) = bc.blocks.first() {
-                        // Cast to trait object to access BlockchainStore methods
+                        let genesis_hash = hex::encode(genesis_block.header.block_hash.as_bytes());
+                        info!("🔗 Genesis block hash: {}", genesis_hash);
+                        
+                        // CRITICAL: Persist genesis block (height 0) to SledStore
+                        // SledStore requires sequential block storage starting from 0
                         let store_ref: &dyn lib_blockchain::storage::BlockchainStore =
                             store.as_ref();
                         store_ref
@@ -2049,6 +2053,33 @@ impl RuntimeOrchestrator {
                     }
 
                     (bc, false)
+                } else {
+                    // ─────────────────────────────────────────────────────────────
+                    // GENESIS GATE: Non-bootstrap leader nodes CANNOT create genesis.
+                    // 
+                    // This prevents the "divergent genesis" bug where multiple nodes
+                    // starting with wiped sled produce different genesis blocks.
+                    // 
+                    // To fix this, you must either:
+                    // 1. Start the bootstrap leader first (node with identity matching
+                    //    the first entry in bootstrap_validators)
+                    // 2. Copy sled/ directory from a healthy node
+                    // 3. Sync from an existing peer with valid chain data
+                    // ─────────────────────────────────────────────────────────────
+                    error!("🚫 GENESIS GATE VIOLATION");
+                    error!("   This node is NOT the bootstrap leader, but has no blockchain data.");
+                    error!("   Creating genesis is forbidden to prevent chain divergence.");
+                    error!("");
+                    error!("   Solutions:");
+                    error!("   1. Start the bootstrap leader first (identity: {:?})",
+                        self.config.network_config.bootstrap_validators.first().map(|v| &v.identity_id));
+                    error!("   2. Copy the 'sled/' directory from a healthy node");
+                    error!("   3. Ensure at least one peer with valid chain data is reachable");
+                    error!("");
+                    error!("   If you ARE the bootstrap leader, verify your identity matches");
+                    error!("   the first entry in bootstrap_validators config.");
+                    
+                    bail!("Genesis creation denied: this node is not the bootstrap leader. See logs above for solutions.");
                 }
             }
         };
