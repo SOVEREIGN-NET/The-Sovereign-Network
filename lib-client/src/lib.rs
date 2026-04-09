@@ -93,6 +93,7 @@ pub use token_tx::{
     build_domain_update_tx,
     build_mint_tx,
     build_sov_wallet_transfer_tx,
+    build_token_wallet_transfer_tx,
     build_transfer_tx,
     BurnParams,
     ContentMapping,
@@ -1108,6 +1109,56 @@ pub extern "C" fn zhtp_client_build_sov_wallet_transfer(
 
     match token_tx::build_sov_wallet_transfer_tx(
         identity, &from_arr, &to_arr, amount, chain_id, nonce,
+    ) {
+        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Build a signed token transfer where the sender is identified by an explicit wallet_id.
+/// Use this for CBE and any token where `from` is a wallet_id, not the identity key_id.
+/// Returns hex-encoded transaction ready to POST to /api/v1/token/transfer.
+/// Caller must free with `zhtp_client_string_free`.
+///
+/// # Parameters
+/// - handle: Identity handle (provides signing keypair)
+/// - token_id: 32-byte token ID
+/// - from_wallet_id: 32-byte wallet_id of the sender (selectedWallet.id)
+/// - to_wallet_id: 32-byte wallet_id of the recipient
+/// - amount: Amount in smallest units (atoms)
+/// - chain_id: Network chain ID (0x03 = testnet)
+/// - nonce: Transfer nonce from GET /api/v1/token/nonce/{token_id}/{from_wallet_id}
+#[no_mangle]
+pub extern "C" fn zhtp_client_build_token_wallet_transfer(
+    handle: *const IdentityHandle,
+    token_id: *const u8,
+    from_wallet_id: *const u8,
+    to_wallet_id: *const u8,
+    amount: u64,
+    chain_id: u8,
+    nonce: u64,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || token_id.is_null() || from_wallet_id.is_null() || to_wallet_id.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let token_id_slice = unsafe { std::slice::from_raw_parts(token_id, 32) };
+    let from_slice = unsafe { std::slice::from_raw_parts(from_wallet_id, 32) };
+    let to_slice = unsafe { std::slice::from_raw_parts(to_wallet_id, 32) };
+
+    let mut token_id_arr = [0u8; 32];
+    let mut from_arr = [0u8; 32];
+    let mut to_arr = [0u8; 32];
+    token_id_arr.copy_from_slice(token_id_slice);
+    from_arr.copy_from_slice(from_slice);
+    to_arr.copy_from_slice(to_slice);
+
+    match token_tx::build_token_wallet_transfer_tx(
+        identity, &token_id_arr, &from_arr, &to_arr, amount, chain_id, nonce,
     ) {
         Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
             Ok(s) => s.into_raw(),

@@ -90,6 +90,7 @@ pub struct TokenListItem {
     pub token_id: String,
     pub name: String,
     pub symbol: String,
+    pub decimals: u8,
     pub total_supply: u64,
 }
 
@@ -411,6 +412,24 @@ impl TokenHandler {
 
         let blockchain = self.blockchain.read().await;
 
+        // CBE lives in cbe_token, not token_contracts — handle it explicitly.
+        let cbe_token_id = lib_blockchain::Blockchain::derive_cbe_token_id_pub();
+        if token_id_array == cbe_token_id {
+            let cbe = &blockchain.cbe_token;
+            let response = TokenInfoResponse {
+                token_id: token_id_hex.to_string(),
+                name: cbe.name().to_string(),
+                symbol: cbe.symbol().to_string(),
+                decimals: cbe.decimals(),
+                total_supply: cbe.total_supply(),
+                max_supply: None,
+                creator: format!("0x{}", "00".repeat(32)),
+                is_deflationary: false,
+                created_at_block: Some(0),
+            };
+            return create_json_response(serde_json::to_value(response)?);
+        }
+
         let token = blockchain
             .get_token_contract(&token_id_array)
             .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
@@ -452,8 +471,29 @@ impl TokenHandler {
 
         let is_sov = token_id_array == [0u8; 32]
             || token_id_array == lib_blockchain::contracts::utils::generate_lib_token_id();
+        let cbe_token_id = lib_blockchain::Blockchain::derive_cbe_token_id_pub();
+        let is_cbe = token_id_array == cbe_token_id;
 
         let blockchain = self.blockchain.read().await;
+
+        // CBE balances live in cbe_token, not in token_contracts.
+        if is_cbe {
+            let pubkey = self.identity_to_pubkey(address)?;
+            let key_id = pubkey.key_id;
+            let balance: u64 = if let Some(store) = blockchain.get_store() {
+                let storage_token_id = lib_blockchain::storage::TokenId(cbe_token_id);
+                let addr = lib_blockchain::storage::Address::new(key_id);
+                store.get_token_balance(&storage_token_id, &addr).unwrap_or(0) as u64
+            } else {
+                blockchain.cbe_token.balance_of_key_id(&key_id)
+            };
+            return create_json_response(json!({
+                "token_id": token_id_hex,
+                "address": address,
+                "balance": balance,
+                "symbol": "CBE"
+            }));
+        }
 
         let token = blockchain
             .get_token_contract(&token_id_array)
@@ -503,16 +543,27 @@ impl TokenHandler {
     async fn handle_list_tokens(&self) -> Result<ZhtpResponse> {
         let blockchain = self.blockchain.read().await;
 
-        let tokens: Vec<TokenListItem> = blockchain
+        let mut tokens: Vec<TokenListItem> = blockchain
             .token_contracts
             .iter()
             .map(|(id, token)| TokenListItem {
                 token_id: hex::encode(id),
                 name: token.name.clone(),
                 symbol: token.symbol.clone(),
+                decimals: token.decimals,
                 total_supply: token.total_supply,
             })
             .collect();
+
+        // CBE lives in cbe_token, not in token_contracts — include it explicitly
+        let cbe_token_id = lib_blockchain::Blockchain::derive_cbe_token_id_pub();
+        tokens.push(TokenListItem {
+            token_id: hex::encode(cbe_token_id),
+            name: blockchain.cbe_token.name().to_string(),
+            symbol: blockchain.cbe_token.symbol().to_string(),
+            decimals: blockchain.cbe_token.decimals(),
+            total_supply: blockchain.cbe_token.total_supply(),
+        });
 
         let count = tokens.len();
 
@@ -669,6 +720,36 @@ impl TokenHandler {
                     "decimals": token.decimals,
                     "balance": balance,
                     "is_creator": is_creator
+                }));
+            }
+        }
+
+        // Include CBE balance (lives in cbe_token, not in token_contracts).
+        // Use the raw address bytes as the CBE key — CBE transfers store balances under
+        // the literal address passed in data.to, which equals wallet_id for new-style
+        // wallets. target_key_id is derived from dilithium_pk only (no kyber) so it
+        // diverges from wallet_id; we must parse the address directly here.
+        {
+            let cbe_token_id = lib_blockchain::Blockchain::derive_cbe_token_id_pub();
+            let cbe_key_id = self
+                .identity_to_pubkey(address)
+                .map(|pk| pk.key_id)
+                .unwrap_or(target_key_id);
+            let cbe_balance: u64 = if let Some(store) = blockchain.get_store() {
+                let storage_token_id = lib_blockchain::storage::TokenId(cbe_token_id);
+                let addr = lib_blockchain::storage::Address::new(cbe_key_id);
+                store.get_token_balance(&storage_token_id, &addr).unwrap_or(0) as u64
+            } else {
+                blockchain.cbe_token.balance_of_key_id(&cbe_key_id)
+            };
+            if cbe_balance > 0 {
+                balances.push(json!({
+                    "token_id": hex::encode(cbe_token_id),
+                    "name": "CBE Equity",
+                    "symbol": "CBE",
+                    "decimals": 8u8,
+                    "balance": cbe_balance,
+                    "is_creator": false
                 }));
             }
         }
