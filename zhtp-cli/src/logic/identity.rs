@@ -261,9 +261,10 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_dilithium_key_correct_size_d2() {
-        let key = vec![0u8; 1312]; // Dilithium5 public key
-        assert!(validate_dilithium_public_key(&key).is_ok());
+    fn test_validate_dilithium_key_d2_rejected() {
+        // ZHTP uses Dilithium5 (2592 bytes) exclusively. Dilithium2 (1312 bytes) is not accepted.
+        let key = vec![0u8; 1312];
+        assert!(validate_dilithium_public_key(&key).is_err());
     }
 
     #[test]
