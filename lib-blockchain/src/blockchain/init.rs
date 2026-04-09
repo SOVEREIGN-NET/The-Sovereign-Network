@@ -463,6 +463,40 @@ impl Blockchain {
                                 .wallet_registry
                                 .insert(wallet_id.clone(), wallet_data.clone());
                             blockchain.wallet_blocks.insert(wallet_id, height);
+
+                            // Replay SOV minting for WalletRegistration transactions.
+                            // process_token_transactions (called below with the sled store
+                            // temporarily removed) reads balances from the in-memory
+                            // token_contracts HashMap.  Without replaying the minting here,
+                            // any subsequent TokenTransfer from this wallet will fail with
+                            // "insufficient balance: have 0" even though the balance was
+                            // correctly committed to sled during the original block execution.
+                            if tx.transaction_type == TransactionType::WalletRegistration
+                                && wallet_data.initial_balance > 0
+                            {
+                                blockchain.ensure_sov_token_contract();
+                                let sov_token_id =
+                                    crate::contracts::utils::generate_lib_token_id();
+                                let mut wallet_id_bytes = [0u8; 32];
+                                wallet_id_bytes
+                                    .copy_from_slice(wallet_data.wallet_id.as_bytes());
+                                let recipient_pk =
+                                    Self::wallet_key_for_sov(&wallet_id_bytes);
+                                let current = blockchain
+                                    .token_contracts
+                                    .get(&sov_token_id)
+                                    .map(|t| t.balance_of(&recipient_pk))
+                                    .unwrap_or(0);
+                                let deficit =
+                                    wallet_data.initial_balance.saturating_sub(current);
+                                if deficit > 0 {
+                                    if let Some(token) =
+                                        blockchain.token_contracts.get_mut(&sov_token_id)
+                                    {
+                                        let _ = token.mint(&recipient_pk, deficit);
+                                    }
+                                }
+                            }
                         }
 
                         if tx.transaction_type == TransactionType::ContractExecution {
@@ -512,16 +546,20 @@ impl Blockchain {
                         }
                     }
 
-                    let replay_store = blockchain.store.take();
-                    let token_replay = blockchain.process_token_transactions(&block);
-                    blockchain.store = replay_store;
-                    token_replay.map_err(|e| {
-                        anyhow::anyhow!(
-                            "Token replay error at height {} during load_from_store: {}",
-                            height,
-                            e
-                        )
-                    })?;
+                    // During sled-store replay we skip token transaction processing
+                    // entirely.  The correct final SOV balances are loaded from the
+                    // token_balances sled tree after this loop.
+                    //
+                    // We intentionally leave blockchain.token_nonces EMPTY here.
+                    // In BlockExecutor mode (the only production mode), nonces are
+                    // tracked exclusively in sled via increment_token_nonce() and
+                    // get_token_nonce() falls through to sled when the in-memory map
+                    // has no entry.  Populating the in-memory map from the block
+                    // history would make it a stale cache: after restart the executor
+                    // continues to update only sled, so the in-memory entry never
+                    // advances past the replay count and the nonce API returns stale
+                    // values — causing clients to submit wrong nonces that the executor
+                    // then rejects with "expected N+1, got N".
 
                     blockchain.blocks.push(block);
                     blockchain.height = height;
@@ -630,6 +668,16 @@ impl Blockchain {
                     synced
                 );
             }
+        }
+
+        // One-time correction: zero out SOV that was incorrectly minted to UBI
+        // and Savings wallets by a bug in the recovery migration path.
+        let corrected = blockchain.correct_ubi_savings_misbalances();
+        if corrected > 0 {
+            info!(
+                "Startup correction: removed erroneous 5 000 SOV welcome bonus from {} UBI/Savings wallet(s)",
+                corrected
+            );
         }
 
         let backfill_entries = blockchain.collect_sov_backfill_entries();
