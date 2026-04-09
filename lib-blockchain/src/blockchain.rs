@@ -879,6 +879,63 @@ impl Blockchain {
 
         // If BlockExecutor is configured, use it as single source of truth
         if let Some(ref executor) = self.executor {
+            // Seed SledStore with any in-memory token balances that were never persisted
+            // there. Wallets that received their initial balance via token.mint() (e.g.
+            // during register_wallet) only exist in the in-memory token_contracts HashMap;
+            // SledStore has 0 for them. The executor reads SledStore for debit_token and
+            // will abort the block if it sees 0, halting the network. backfill writes
+            // ONLY entries that are missing from the tree (idempotent, safe to call here
+            // before begin_block sets tx_active).
+            if let Some(store) = &self.store {
+                let mut seed_map: std::collections::HashMap<[u8; 32], Vec<([u8; 32], u64)>> =
+                    std::collections::HashMap::new();
+                for tx in &block.transactions {
+                    if let Some(data) = tx.token_transfer_data() {
+                        if let Some(token) = self.token_contracts.get(&data.token_id) {
+                            // Look up the sender's in-memory balance.
+                            // balances is keyed by PublicKey; the SledStore uses key_id as
+                            // the 32-byte address — they match for both SOV and custom tokens.
+                            let mem_balance = token
+                                .balances
+                                .iter()
+                                .find(|(pk, _)| pk.key_id == data.from)
+                                .map(|(_, &b)| b)
+                                .unwrap_or(0);
+                            if mem_balance > 0 {
+                                let addr = crate::storage::Address::new(data.from);
+                                let storage_token = crate::storage::TokenId(data.token_id);
+                                let sled_bal =
+                                    store.get_token_balance(&storage_token, &addr).unwrap_or(0);
+                                if sled_bal == 0 {
+                                    seed_map
+                                        .entry(data.token_id)
+                                        .or_default()
+                                        .push((data.from, mem_balance));
+                                }
+                            }
+                        }
+                    }
+                }
+                for (token_id, entries) in &seed_map {
+                    let storage_token = crate::storage::TokenId(*token_id);
+                    match store.backfill_token_balances_from_contract(&storage_token, entries) {
+                        Ok(n) if n > 0 => tracing::info!(
+                            "[seed-sled] seeded {} missing balance(s) for token {} before block {}",
+                            n,
+                            hex::encode(&token_id[..8]),
+                            block.header.height
+                        ),
+                        Err(e) => tracing::warn!(
+                            "[seed-sled] backfill failed for token {} at block {}: {}",
+                            hex::encode(&token_id[..8]),
+                            block.header.height,
+                            e
+                        ),
+                        _ => {}
+                    }
+                }
+            }
+
             // Use BlockExecutor for state mutations
             // Note: executor.apply_block() handles begin_block/commit_block internally
             match executor.apply_block(&block) {
@@ -923,6 +980,15 @@ impl Blockchain {
                     self.blocks.push(block.clone());
                     self.height += 1;
                     self.process_validator_registration_transactions(&block);
+                    // Rebuild wallet_registry and in-memory SOV balances from WalletRegistration
+                    // transactions in this block. The BlockExecutor handles SledStore state but
+                    // does NOT update the in-memory wallet_registry or token_contracts mints.
+                    // Without this call, after a restart from an old .dat file the in-memory
+                    // balance stays at 0 for wallets whose registration block was applied in
+                    // executor mode — making transfers fail the mempool balance check.
+                    if let Err(e) = self.process_wallet_transactions(&block) {
+                        warn!("process_wallet_transactions in executor path: {}", e);
+                    }
                     for tx in &block.transactions {
                         self.index_dao_registry_entry_from_tx(tx, block.header.height);
                         // Executor returns LegacySystem for ValidatorRegistration — update registry here

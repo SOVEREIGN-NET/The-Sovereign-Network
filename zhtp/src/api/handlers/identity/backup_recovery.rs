@@ -333,9 +333,11 @@ pub async fn handle_recover_identity(
         ));
     }
 
-    // Restore identity from phrase using appropriate method based on word count
+    // Restore identity from phrase using appropriate method based on word count.
+    // For the 24-word BIP39 path we also keep the Dilithium pk so we can auto-create
+    // the identity and wallet if they are not yet on-chain.
 
-    let identity_id = if words.len() == 24 {
+    let (identity_id, opt_dilithium_pk) = if words.len() == 24 {
         // 24-word BIP39 standard - derive identity using lib-client's method:
         // 1. Extract 32-byte entropy from mnemonic (NOT BIP39 PBKDF2)
         // 2. Generate Dilithium keypair from entropy (deterministic)
@@ -362,8 +364,10 @@ pub async fn handle_recover_identity(
         let id_hex = did
             .strip_prefix("did:zhtp:")
             .ok_or_else(|| anyhow::anyhow!("Invalid DID format"))?;
-        lib_crypto::Hash::from_hex(id_hex)
-            .map_err(|e| anyhow::anyhow!("Invalid identity hash: {}", e))?
+        let identity_id = lib_crypto::Hash::from_hex(id_hex)
+            .map_err(|e| anyhow::anyhow!("Invalid identity hash: {}", e))?;
+
+        (identity_id, Some(rsk.public_key.clone()))
     } else {
         // 20-word custom format - use legacy Blake3 derivation
         let phrase_manager = recovery_phrase_manager.read().await;
@@ -372,15 +376,31 @@ pub async fn handle_recover_identity(
             .await
             .map_err(|e| anyhow::anyhow!("Identity recovery failed: {}", e))?;
         drop(phrase_manager);
-        id
+        (id, None::<Vec<u8>>)
     };
 
-    // Verify identity exists in IdentityManager
-    let manager = identity_manager.read().await;
+    // Look up identity — auto-create on-chain if this is a fresh device after seed entry.
+    let did = {
+        let manager = identity_manager.read().await;
+        let existing_did = manager.get_identity(&identity_id).map(|id| id.did.clone());
+        drop(manager);
 
-    let identity = match manager.get_identity(&identity_id) {
-        Some(id) => id,
-        None => {
+        if let Some(did) = existing_did {
+            did
+        } else if let Some(ref dilithium_pk) = opt_dilithium_pk {
+            // Identity not found — register it from seed (24-word path only).
+            // This happens when the user installs fresh or after a wipe and enters their seed.
+            tracing::info!(
+                "Recovery: identity {} not found — auto-creating from seed",
+                hex::encode(&identity_id.0[..8])
+            );
+            auto_create_identity_from_seed(&identity_manager, identity_id.clone(), dilithium_pk)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!("Recovery auto-create identity failed: {}", e);
+                    format!("did:zhtp:{}", hex::encode(&identity_id.0))
+                })
+        } else {
             tracing::debug!("Recovery: identity not found for derived id");
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
@@ -388,8 +408,6 @@ pub async fn handle_recover_identity(
             ));
         }
     };
-    let did = identity.did.clone();
-    drop(manager);
 
     // Create new session for recovered identity
     let session_token = session_manager
@@ -401,6 +419,15 @@ pub async fn handle_recover_identity(
         "Identity recovered successfully: {}",
         hex::encode(&identity_id.0[..8])
     );
+
+    // Transparent wallet migration: re-mint SOV for any wallets belonging to this identity
+    // that have no sled balance (e.g. after a sled wipe, chain restart, or fresh install).
+    // Also creates a fallback wallet if none exists in the registry.
+    let migration_identity_id = identity_id.clone();
+    let migration_dilithium_pk = opt_dilithium_pk.clone();
+    tokio::spawn(async move {
+        migrate_wallets_for_identity(migration_identity_id, migration_dilithium_pk).await;
+    });
 
     // Build response
     let response = RecoverIdentityResponse {
@@ -418,6 +445,307 @@ pub async fn handle_recover_identity(
         "application/json".to_string(),
         None,
     ))
+}
+
+/// Auto-register an identity in the IdentityManager and on-chain when it is not found
+/// during seed recovery. Returns the DID string on success.
+async fn auto_create_identity_from_seed(
+    identity_manager: &Arc<RwLock<IdentityManager>>,
+    identity_id: lib_crypto::Hash,
+    dilithium_pk: &[u8],
+) -> anyhow::Result<String> {
+    let did = did_from_root_signing_public_key(dilithium_pk);
+    let now_ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    // Build lib_crypto::PublicKey from the dilithium pk (key_id = blake3(dilithium_pk)).
+    let pk_array: [u8; 2592] = dilithium_pk
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("dilithium_pk must be 2592 bytes"))?;
+    let lib_pk = lib_crypto::PublicKey::new(pk_array);
+
+    // Register in IdentityManager (idempotent — already-registered returns Ok too).
+    {
+        let mut mgr = identity_manager.write().await;
+        if mgr.get_identity(&identity_id).is_none() {
+            let _ = mgr.register_external_identity(
+                identity_id.clone(),
+                did.clone(),
+                lib_pk.clone(),
+                lib_identity::types::IdentityType::Human,
+                "seed-recovery".to_string(),
+                Some("Recovered Identity".to_string()),
+                now_ts,
+            );
+        }
+    }
+
+    // Queue a blockchain IdentityRegistration system tx so the identity is durable
+    // in the ledger and other nodes recognise it after the next block.
+    if let Ok(shared_bc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
+        if let Ok(mut blockchain) = tokio::time::timeout(
+            tokio::time::Duration::from_secs(5),
+            shared_bc.write(),
+        )
+        .await
+        {
+            // Only submit if not already in the on-chain identity_registry.
+            if !blockchain.identity_registry.contains_key(&did) {
+                let identity_data = lib_blockchain::transaction::IdentityTransactionData {
+                    did: did.clone(),
+                    display_name: "Recovered Identity".to_string(),
+                    public_key: dilithium_pk.to_vec(),
+                    ownership_proof: vec![],
+                    identity_type: "human".to_string(),
+                    did_document_hash: lib_blockchain::types::hash::blake3_hash(did.as_bytes()),
+                    created_at: now_ts,
+                    registration_fee: 0,
+                    dao_fee: 0,
+                    controlled_nodes: vec![],
+                    owned_wallets: vec![],
+                };
+                let reg_tx = lib_blockchain::transaction::Transaction::new_identity_registration(
+                    identity_data.clone(),
+                    vec![],
+                    lib_blockchain::integration::Signature {
+                        signature: vec![0xAA; 64],
+                        public_key: lib_blockchain::integration::PublicKey::new(pk_array),
+                        algorithm: lib_blockchain::integration::SignatureAlgorithm::DEFAULT,
+                        timestamp: now_ts,
+                    },
+                    b"seed-recovery-auto-register".to_vec(),
+                );
+                if let Err(e) = blockchain.add_system_transaction(reg_tx) {
+                    tracing::warn!("Recovery: failed to queue identity registration tx: {}", e);
+                } else {
+                    blockchain.identity_registry.insert(did.clone(), identity_data);
+                    tracing::info!(
+                        "Recovery: queued IdentityRegistration for {}",
+                        hex::encode(&identity_id.0[..8])
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(did)
+}
+
+/// The default SOV welcome bonus minted when a wallet has no on-chain balance (5 000 SOV).
+const RECOVERY_SOV_WELCOME_BONUS: u64 = 500_000_000_000;
+
+/// Migrate wallets belonging to `identity_id` that are registered on-chain but have
+/// no sled token balance. Submits a WalletRegistration transaction for each such
+/// wallet so the executor mints the welcome bonus into sled in the next block.
+///
+/// `dilithium_pk` is used as a fallback: if no wallets exist in the registry at all
+/// for this identity, a fresh wallet is auto-created at the server-side deterministic
+/// id (`blake3(dilithium_pk || zeros_1568)`) with `RECOVERY_SOV_WELCOME_BONUS`.
+async fn migrate_wallets_for_identity(
+    identity_id: lib_crypto::Hash,
+    dilithium_pk: Option<Vec<u8>>,
+) {
+    let shared_blockchain =
+        match crate::runtime::blockchain_provider::get_global_blockchain().await {
+            Ok(b) => b,
+            Err(_) => return,
+        };
+
+    // Collect wallets needing migration under a short read lock.
+    // We include wallets with initial_balance == 0 as well — those were typically
+    // created as a side-effect of a transfer attempt and never got the SOV bonus.
+    let (wallets_to_migrate, any_wallet_exists) = {
+        let Ok(blockchain) = tokio::time::timeout(
+            tokio::time::Duration::from_secs(3),
+            shared_blockchain.read(),
+        )
+        .await
+        else {
+            return;
+        };
+
+        let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+        let token_id_storage = lib_blockchain::storage::TokenId::new(sov_token_id);
+
+        let owned: Vec<_> = blockchain
+            .wallet_registry
+            .values()
+            .filter(|w| {
+                w.owner_identity_id
+                    .map(|owner| owner.as_bytes() == identity_id.0.as_slice())
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+
+        let any_wallet_exists = !owned.is_empty();
+
+        let to_migrate: Vec<_> = owned
+            .into_iter()
+            .filter(|w| {
+                let Some(store) = blockchain.store.as_ref() else {
+                    return false;
+                };
+                let addr = lib_blockchain::storage::Address::new(w.wallet_id.as_array());
+                store
+                    .get_token_balance(&token_id_storage, &addr)
+                    .map(|b| b == 0)
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        (to_migrate, any_wallet_exists)
+    };
+
+    // If no wallets exist in the registry for this identity at all AND we have the
+    // dilithium pk, create a new deterministic wallet.
+    if !any_wallet_exists {
+        if let Some(ref pk) = dilithium_pk {
+            create_fallback_wallet(&shared_blockchain, identity_id, pk).await;
+        }
+        return;
+    }
+
+    if wallets_to_migrate.is_empty() {
+        return;
+    }
+
+    // Submit a WalletRegistration tx for each wallet with 0 sled balance.
+    // Wallets that originally had initial_balance > 0 are re-minted at their recorded
+    // amount. Only Primary wallets with initial_balance == 0 receive the welcome bonus;
+    // UBI and Savings wallets correctly start at 0 and should stay at 0.
+    for mut wallet_data in wallets_to_migrate {
+        if wallet_data.initial_balance == 0 && wallet_data.wallet_type == "Primary" {
+            wallet_data.initial_balance = RECOVERY_SOV_WELCOME_BONUS;
+        }
+        if wallet_data.initial_balance == 0 {
+            // Nothing to mint for this wallet; skip to avoid a no-op tx.
+            continue;
+        }
+        let wallet_id_hex = hex::encode(wallet_data.wallet_id.as_bytes());
+        // Empty signature: system transactions with no signature bytes skip
+        // validate_signature (see validation.rs line 401-408). This lets the
+        // tx pass mempool intake and be included in the next block normally.
+        let reg_tx = lib_blockchain::transaction::Transaction::new_wallet_registration(
+            wallet_data.clone(),
+            vec![],
+            lib_blockchain::integration::Signature {
+                signature: vec![],
+                public_key: lib_blockchain::integration::PublicKey::new(
+                    wallet_data
+                        .public_key
+                        .as_slice()
+                        .try_into()
+                        .unwrap_or([0u8; 2592]),
+                ),
+                algorithm: lib_blockchain::integration::SignatureAlgorithm::DEFAULT,
+                timestamp: wallet_data.created_at,
+            },
+            b"wallet-migration".to_vec(),
+        );
+
+        let Ok(mut blockchain) = tokio::time::timeout(
+            tokio::time::Duration::from_secs(5),
+            shared_blockchain.write(),
+        )
+        .await
+        else {
+            tracing::warn!("Migration: write lock timeout for wallet {}", &wallet_id_hex[..16.min(wallet_id_hex.len())]);
+            continue;
+        };
+
+        // add_system_transaction bypasses signature validation (correct for a
+        // server-originated system tx where we hold no user private key).
+        match blockchain.add_system_transaction(reg_tx) {
+            Ok(_) => tracing::info!(
+                "Migration: queued WalletRegistration for {} ({} SOV)",
+                &wallet_id_hex[..16.min(wallet_id_hex.len())],
+                wallet_data.initial_balance / 100_000_000,
+            ),
+            Err(e) => tracing::warn!(
+                "Migration: failed to queue registration for {}: {}",
+                &wallet_id_hex[..16.min(wallet_id_hex.len())],
+                e
+            ),
+        }
+    }
+}
+
+/// Create a fresh wallet for `identity_id` using the server-side deterministic id
+/// `blake3(dilithium_pk || zeros_1568)`. Used when no wallet exists in the registry.
+async fn create_fallback_wallet(
+    shared_blockchain: &Arc<RwLock<lib_blockchain::Blockchain>>,
+    identity_id: lib_crypto::Hash,
+    dilithium_pk: &[u8],
+) {
+    // Compute deterministic wallet_id = blake3(dilithium_pk || zeros_1568).
+    let mut hasher_input = dilithium_pk.to_vec();
+    hasher_input.extend_from_slice(&[0u8; 1568]);
+    let wallet_id_bytes = lib_blockchain::types::hash::blake3_hash(&hasher_input);
+
+    let wallet_id_hex = hex::encode(wallet_id_bytes.as_bytes());
+    let now_ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let pk_array: [u8; 2592] = dilithium_pk.try_into().unwrap_or([0u8; 2592]);
+
+    let wallet_data = lib_blockchain::transaction::WalletTransactionData {
+        wallet_id: wallet_id_bytes,
+        wallet_type: "Primary".to_string(),
+        wallet_name: "Recovered Wallet".to_string(),
+        alias: None,
+        public_key: dilithium_pk.to_vec(),
+        owner_identity_id: Some(lib_blockchain::Hash::from_slice(&identity_id.0)),
+        seed_commitment: lib_blockchain::types::hash::blake3_hash(wallet_id_bytes.as_bytes()),
+        created_at: now_ts,
+        registration_fee: 0,
+        capabilities: 0,
+        initial_balance: RECOVERY_SOV_WELCOME_BONUS,
+    };
+
+    let reg_tx = lib_blockchain::transaction::Transaction::new_wallet_registration(
+        wallet_data.clone(),
+        vec![],
+        lib_blockchain::integration::Signature {
+            signature: vec![],
+            public_key: lib_blockchain::integration::PublicKey::new(pk_array),
+            algorithm: lib_blockchain::integration::SignatureAlgorithm::DEFAULT,
+            timestamp: now_ts,
+        },
+        b"wallet-recovery-auto-create".to_vec(),
+    );
+
+    let Ok(mut blockchain) = tokio::time::timeout(
+        tokio::time::Duration::from_secs(5),
+        shared_blockchain.write(),
+    )
+    .await
+    else {
+        tracing::warn!("Recovery: write lock timeout creating fallback wallet");
+        return;
+    };
+
+    match blockchain.add_system_transaction(reg_tx) {
+        Ok(_) => {
+            blockchain
+                .wallet_registry
+                .insert(wallet_id_hex.clone(), wallet_data);
+            tracing::info!(
+                "Recovery: created fallback wallet {} ({} SOV)",
+                &wallet_id_hex[..16.min(wallet_id_hex.len())],
+                RECOVERY_SOV_WELCOME_BONUS / 100_000_000,
+            );
+        }
+        Err(e) => tracing::warn!(
+            "Recovery: failed to create fallback wallet {}: {}",
+            &wallet_id_hex[..16.min(wallet_id_hex.len())],
+            e
+        ),
+    }
 }
 
 /// Handle GET /api/v1/identity/backup/status

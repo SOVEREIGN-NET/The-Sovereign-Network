@@ -923,6 +923,16 @@ impl Blockchain {
             );
         }
 
+        // One-time correction: zero out SOV that was incorrectly minted to UBI and
+        // Savings wallets by a bug in the recovery migration path.
+        let corrected = blockchain.correct_ubi_savings_misbalances();
+        if corrected > 0 {
+            info!(
+                "Startup correction: removed erroneous 5 000 SOV welcome bonus from {} UBI/Savings wallet(s)",
+                corrected
+            );
+        }
+
         if let Err(e) = blockchain.process_approved_governance_proposals() {
             warn!(
                 "Failed to apply governance parameter updates during load_from_file: {}",

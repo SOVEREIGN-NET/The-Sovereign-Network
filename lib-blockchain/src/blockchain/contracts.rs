@@ -207,9 +207,43 @@ impl Blockchain {
                                     );
                                 }
                             } else {
-                                return Err(anyhow::anyhow!(
-                                    "TokenTransfer SOV sender wallet not found"
-                                ));
+                                // Transparent migration: wallet not in registry and no legacy
+                                // match found. Auto-register using the dilithium_pk from the
+                                // transaction signature — the signature itself proves ownership.
+                                // This handles wallets from a previous chain without requiring
+                                // users to re-register. All nodes execute this at the same block
+                                // height so state stays consistent across the network.
+                                const SOV_WELCOME_BONUS: u64 = 5_000 * 100_000_000;
+                                let wallet_data = crate::transaction::WalletTransactionData {
+                                    wallet_id: Hash::new(transfer.from),
+                                    owner_identity_id: None,
+                                    alias: Some(format!("migrated_{}", &from_wallet_id[..8])),
+                                    wallet_name: "Migrated Wallet".to_string(),
+                                    wallet_type: "Primary".to_string(),
+                                    public_key: sender_pk.dilithium_pk.to_vec(),
+                                    capabilities: 0xFFFFFFFF,
+                                    created_at: 0,
+                                    registration_fee: 0,
+                                    initial_balance: SOV_WELCOME_BONUS,
+                                    seed_commitment: crate::types::hash::blake3_hash(
+                                        format!("migrated:{}", from_wallet_id).as_bytes(),
+                                    ),
+                                };
+                                match self.register_wallet(wallet_data) {
+                                    Ok(_) => {
+                                        info!(
+                                            "🔄 Transparent migration: auto-registered wallet {} with {} SOV at block execution",
+                                            &from_wallet_id[..16],
+                                            SOV_WELCOME_BONUS / 100_000_000,
+                                        );
+                                    }
+                                    Err(e) => {
+                                        return Err(anyhow::anyhow!(
+                                            "TokenTransfer SOV sender wallet not found and auto-registration failed: {}",
+                                            e
+                                        ));
+                                    }
+                                }
                             }
                         }
 
