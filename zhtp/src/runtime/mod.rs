@@ -2052,11 +2052,19 @@ impl RuntimeOrchestrator {
 
                 if let Some(bc) = synced_blockchain {
                     (bc, true)
-                } else if local_is_bootstrap_leader {
+                } else if local_is_bootstrap_leader || is_validator_node {
                     // ─────────────────────────────────────────────────────────────
-                    // GENESIS CREATION: Only the bootstrap leader may create genesis.
+                    // GENESIS CREATION: Bootstrap leader or validators with no peer
+                    // data may create genesis. Genesis is deterministic (same config
+                    // → same block hash on all nodes), so this is safe: all validators
+                    // that reach this path produce an identical genesis block.
+                    // Non-validator observer nodes still require syncing from a peer.
                     // ─────────────────────────────────────────────────────────────
-                    info!("📂 SledStore is empty - creating new blockchain (bootstrap leader)");
+                    if local_is_bootstrap_leader {
+                        info!("📂 SledStore is empty - creating new blockchain (bootstrap leader)");
+                    } else {
+                        info!("📂 SledStore is empty - creating genesis (validator, peers all at height 0)");
+                    }
                     let mut bc = lib_blockchain::Blockchain::new()?;
                     bc.set_store(store.clone());
 

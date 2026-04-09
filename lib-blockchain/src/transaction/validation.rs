@@ -1694,15 +1694,28 @@ impl<'a> StatefulTransactionValidator<'a> {
                     }
 
                     // Balance check: reject at mempool time if sender has insufficient SOV.
-                    // This prevents accepted-but-unfunded transfers from being finalized by
-                    // consensus and then failing at block execution, which halts the network.
-                    let sov_token_id = crate::contracts::utils::generate_lib_token_id();
-                    let mut sender_id = [0u8; 32];
-                    sender_id.copy_from_slice(&data.from);
-                    let sender_key = crate::Blockchain::wallet_key_for_sov(&sender_id);
-                    if let Some(token) = blockchain.token_contracts.get(&sov_token_id) {
-                        let balance = token.balance_of(&sender_key);
-                        if u128::from(balance) < data.amount {
+                    // Read from SledStore when available (single source of truth after
+                    // the executor path is active); fall back to in-memory token_contracts.
+                    // The in-memory balance can be stale after a node restart from .dat.
+                    {
+                        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+                        let mut sender_id = [0u8; 32];
+                        sender_id.copy_from_slice(&data.from);
+                        let storage_token = crate::storage::TokenId(sov_token_id);
+                        let addr = crate::storage::Address::new(sender_id);
+
+                        let balance: u128 = if let Some(store) = &blockchain.store {
+                            store.get_token_balance(&storage_token, &addr).unwrap_or(0)
+                        } else {
+                            let sender_key = crate::Blockchain::wallet_key_for_sov(&sender_id);
+                            blockchain
+                                .token_contracts
+                                .get(&sov_token_id)
+                                .map(|t| u128::from(t.balance_of(&sender_key)))
+                                .unwrap_or(0)
+                        };
+
+                        if balance < data.amount {
                             tracing::warn!(
                                 "[TOKEN_TRANSFER] insufficient SOV balance: from={} have={} need={}",
                                 hex::encode(&data.from[..8]),

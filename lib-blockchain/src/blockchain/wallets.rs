@@ -337,6 +337,100 @@ impl Blockchain {
         entries
     }
 
+    /// Zero out SOV balances that were incorrectly minted to UBI and Savings wallets
+    /// by a bug in the recovery migration.  The bug set `initial_balance = 5 000 SOV`
+    /// for every wallet whose sled balance was 0, regardless of wallet type.  Only
+    /// Primary wallets should have received the welcome bonus.
+    ///
+    /// Safe to call at startup (before block processing) or during load_from_file.
+    /// Wallets with a balance that differs from the canonical bonus (meaning they
+    /// received legitimate transfers on top) are left untouched.
+    pub fn correct_ubi_savings_misbalances(&mut self) -> usize {
+        const WRONG_BONUS: u64 = 500_000_000_000; // 5 000 SOV in atomic units
+
+        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+        let sov_storage_token_id = crate::storage::TokenId(sov_token_id);
+
+        // Collect wallet_ids that need correction first (avoid borrow conflicts).
+        let to_correct: Vec<([u8; 32], String)> = self
+            .wallet_registry
+            .iter()
+            .filter_map(|(wallet_id_hex, w)| {
+                if w.wallet_type == "Primary" {
+                    return None;
+                }
+                if w.initial_balance != WRONG_BONUS {
+                    return None;
+                }
+                let bytes = Self::wallet_id_bytes(wallet_id_hex)?;
+                Some((bytes, wallet_id_hex.clone()))
+            })
+            .collect();
+
+        if to_correct.is_empty() {
+            return 0;
+        }
+
+        let mut corrected = 0usize;
+
+        // Build sled correction entries (balance = 0 → removes the key).
+        // TokenId is Copy so we can use it directly in the closure.
+        let sled_entries: Vec<(crate::storage::TokenId, crate::storage::Address, u128)> = to_correct
+            .iter()
+            .map(|(bytes, _)| (sov_storage_token_id, crate::storage::Address::new(*bytes), 0u128))
+            .collect();
+
+        // Apply sled correction outside of block transaction.
+        if let Some(store) = self.get_store() {
+            match store.force_set_token_balances(&sled_entries) {
+                Ok(n) => {
+                    if n > 0 {
+                        tracing::info!(
+                            "correct_ubi_savings_misbalances: zeroed {} sled balance entries for non-Primary wallets",
+                            n
+                        );
+                    }
+                }
+                Err(e) => tracing::warn!(
+                    "correct_ubi_savings_misbalances: sled correction failed: {}",
+                    e
+                ),
+            }
+        }
+
+        // Correct the in-memory token_contracts balances.
+        for (bytes, wallet_id_hex) in &to_correct {
+            let wallet_key = Self::wallet_key_for_sov(bytes);
+            if let Some(token) = self.token_contracts.get_mut(&sov_token_id) {
+                let bal = token.balance_of(&wallet_key);
+                if bal == WRONG_BONUS {
+                    if let Err(e) = token.burn(&wallet_key, WRONG_BONUS) {
+                        tracing::warn!(
+                            "correct_ubi_savings_misbalances: burn failed for {}: {}",
+                            &wallet_id_hex[..16.min(wallet_id_hex.len())],
+                            e
+                        );
+                        continue;
+                    }
+                    corrected += 1;
+                }
+            }
+            // Reset the registry record so collect_sov_backfill_entries doesn't re-mint it.
+            if let Some(w) = self.wallet_registry.get_mut(wallet_id_hex.as_str()) {
+                w.initial_balance = 0;
+            }
+        }
+
+        if corrected > 0 {
+            tracing::info!(
+                "correct_ubi_savings_misbalances: corrected {} UBI/Savings wallets (removed erroneous 5 000 SOV bonus)",
+                corrected
+            );
+        }
+
+        corrected
+    }
+
     pub fn repair_backfill_inflation(&self) -> usize {
         let store = match self.get_store() {
             Some(s) => s,
