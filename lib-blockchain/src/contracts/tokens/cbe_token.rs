@@ -452,6 +452,20 @@ impl CbeToken {
         self.balances.get(&account.key_id).copied().unwrap_or(0)
     }
 
+    /// Get balance by raw key_id
+    pub fn balance_of_key_id(&self, key_id: &[u8; 32]) -> u64 {
+        self.balances.get(key_id).copied().unwrap_or(0)
+    }
+
+    /// Set balance by raw key_id (for syncing back from canonical store)
+    pub fn set_balance_by_key_id(&mut self, key_id: [u8; 32], balance: u64) {
+        if balance == 0 {
+            self.balances.remove(&key_id);
+        } else {
+            self.balances.insert(key_id, balance);
+        }
+    }
+
     /// Get vested (transferable) balance at a given block
     pub fn vested_balance_of(&self, account: &PublicKey, current_block: u64) -> u64 {
         let total_balance = self.balance_of(account);

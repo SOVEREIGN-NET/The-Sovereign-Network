@@ -511,6 +511,76 @@ pub fn build_sov_wallet_transfer_tx(
     Ok(hex::encode(final_tx_bytes))
 }
 
+/// Build a signed token transfer where the sender is identified by an explicit wallet_id.
+///
+/// Use this for CBE and any other token where `from` must be the wallet_id
+/// (`selectedWallet.id`) rather than the identity's derived key_id.
+/// For SOV use `build_sov_wallet_transfer_tx`; for custom tokens where
+/// `from == identity.key_id` the existing `build_transfer_tx` still works.
+///
+/// The signing key is always the identity's Dilithium keypair. The node validates
+/// that `from_wallet_id == signing_key.key_id` (new-style wallet) or that the
+/// wallet registry maps `from_wallet_id` to the signing dilithium_pk (legacy).
+pub fn build_token_wallet_transfer_tx(
+    identity: &Identity,
+    token_id: &[u8; 32],
+    from_wallet_id: &[u8; 32],
+    to_wallet_id: &[u8; 32],
+    amount: u64,
+    chain_id: u8,
+    nonce: u64,
+) -> Result<String, String> {
+    if *token_id == generate_lib_token_id() || *token_id == [0u8; 32] {
+        return Err("SOV transfers require build_sov_wallet_transfer_tx".to_string());
+    }
+
+    let sender_pk = create_public_key_with_kyber(
+        identity.public_key.clone(),
+        identity.kyber_public_key.clone(),
+    );
+
+    let transfer_data = TokenTransferData {
+        token_id: *token_id,
+        from: *from_wallet_id,
+        to: *to_wallet_id,
+        amount: amount as u128,
+        nonce,
+    };
+
+    let mut tx = Transaction::new_token_transfer_with_chain_id(
+        chain_id,
+        transfer_data,
+        Signature {
+            signature: vec![],
+            public_key: sender_pk.clone(),
+            algorithm: SignatureAlgorithm::DEFAULT,
+            timestamp: 0,
+        },
+        Vec::new(),
+    );
+
+    tx.fee = 0;
+
+    let tx_hash = tx.signing_hash();
+    let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
+        .map_err(|e| format!("Failed to sign: {}", e))?;
+
+    tx.signature = Signature {
+        signature: signature_bytes,
+        public_key: sender_pk,
+        algorithm: SignatureAlgorithm::DEFAULT,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    };
+
+    let final_tx_bytes =
+        bincode::serialize(&tx).map_err(|e| format!("Failed to serialize final tx: {}", e))?;
+
+    Ok(hex::encode(final_tx_bytes))
+}
+
 fn calculate_min_fee_from_size(
     tx_size: usize,
     base_fee: u64,

@@ -889,6 +889,7 @@ impl Blockchain {
             if let Some(store) = &self.store {
                 let mut seed_map: std::collections::HashMap<[u8; 32], Vec<([u8; 32], u64)>> =
                     std::collections::HashMap::new();
+                let cbe_token_id = self.cbe_token.token_id();
                 for tx in &block.transactions {
                     if let Some(data) = tx.token_transfer_data() {
                         if let Some(token) = self.token_contracts.get(&data.token_id) {
@@ -913,6 +914,26 @@ impl Blockchain {
                                         .push((data.from, mem_balance));
                                 }
                             }
+                        } else if data.token_id == cbe_token_id {
+                            // CBE balances live in self.cbe_token, not in token_contracts.
+                            // Prefer the in-memory balance; if that is 0 (e.g. after a sled wipe
+                            // + restart where cbe_token was not persisted), read SledStore as the
+                            // authoritative source. Only seed SledStore when it is empty.
+                            let addr = crate::storage::Address::new(data.from);
+                            let storage_token = crate::storage::TokenId(data.token_id);
+                            let sled_bal =
+                                store.get_token_balance(&storage_token, &addr).unwrap_or(0);
+                            if sled_bal == 0 {
+                                let mem_balance = self.cbe_token.balance_of_key_id(&data.from);
+                                if mem_balance > 0 {
+                                    seed_map
+                                        .entry(data.token_id)
+                                        .or_default()
+                                        .push((data.from, mem_balance));
+                                }
+                            }
+                            // If sled_bal > 0: SledStore already has the correct value;
+                            // executor will read it directly — no seeding needed.
                         }
                     }
                 }
@@ -971,6 +992,26 @@ impl Blockchain {
                                 if let Some(token) = self.token_contracts.get_mut(&sov_id) {
                                     let pk = Self::wallet_key_for_sov(&addr_bytes);
                                     token.balances.insert(pk, balance as u64);
+                                }
+                            }
+                        }
+
+                        // Sync CBE token balances back from SledStore so cbe_token stays
+                        // consistent with executed state for subsequent balance queries.
+                        let cbe_id = self.cbe_token.token_id();
+                        let storage_cbe_id = crate::storage::TokenId(cbe_id);
+                        for tx in &block.transactions {
+                            if let Some(d) = tx.token_transfer_data() {
+                                if d.token_id == cbe_id {
+                                    for addr_bytes in [d.from, d.to] {
+                                        let addr = crate::storage::Address::new(addr_bytes);
+                                        if let Ok(balance) =
+                                            store.get_token_balance(&storage_cbe_id, &addr)
+                                        {
+                                            self.cbe_token
+                                                .set_balance_by_key_id(addr_bytes, balance as u64);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2535,8 +2576,13 @@ impl Blockchain {
                 .map_err(|e| anyhow::anyhow!("InitCbeToken tx {} failed: {:?}", tx_hash_hex, e))?;
 
             info!(
-                "CBE token initialized at height {} (tx {})",
-                block.header.height, tx_hash_hex
+                "CBE token initialized at height {} (tx {}) compensation={} operational={} performance={} strategic={}",
+                block.header.height,
+                tx_hash_hex,
+                hex::encode(data.compensation_key_id),
+                hex::encode(data.operational_key_id),
+                hex::encode(data.performance_key_id),
+                hex::encode(data.strategic_key_id),
             );
         }
         Ok(())
