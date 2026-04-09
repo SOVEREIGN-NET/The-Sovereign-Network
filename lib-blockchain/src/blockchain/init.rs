@@ -188,10 +188,18 @@ impl Blockchain {
             return;
         }
 
+        // Compensation pool key_id — controlled by the network operator.
+        // Generated via tools/node-keygen with crystals-dilithium5.
+        let compensation_key_id: [u8; 32] = [
+            0xb8, 0xb0, 0x99, 0xa1, 0x4f, 0x4f, 0x3e, 0x64,
+            0x62, 0x9d, 0x72, 0x2e, 0x5a, 0x94, 0xe3, 0xee,
+            0x13, 0xab, 0x7d, 0xe5, 0x2d, 0x51, 0x4a, 0xee,
+            0x24, 0xd5, 0xa0, 0x43, 0x34, 0x0d, 0xcc, 0x84,
+        ];
         let compensation_addr = PublicKey {
             dilithium_pk: [0u8; 2592],
             kyber_pk: [0u8; 1568],
-            key_id: [0x01; 32],
+            key_id: compensation_key_id,
         };
         let operational_addr = PublicKey {
             dilithium_pk: [0u8; 2592],
@@ -546,6 +554,22 @@ impl Blockchain {
                         }
                     }
 
+                    // Replay CBE pool initialization from on-chain InitCbeToken transactions.
+                    // Unlike SOV transfers (skipped below), InitCbeToken only sets pool
+                    // addresses — no pre-existing balances needed, no nonce concerns.
+                    // Without this, every restart runs the genesis backfill which uses
+                    // placeholder key_ids [0x01; 32]…[0x04; 32] that no one controls.
+                    if !blockchain.cbe_token.is_initialized() {
+                        if let Err(e) = blockchain.process_init_cbe_token_transactions(&block) {
+                            if !e.to_string().contains("already initialized") {
+                                warn!(
+                                    "⚠️ Failed to replay InitCbeToken at height {}: {}",
+                                    height, e
+                                );
+                            }
+                        }
+                    }
+
                     // During sled-store replay we skip token transaction processing
                     // entirely.  The correct final SOV balances are loaded from the
                     // token_balances sled tree after this loop.
@@ -641,6 +665,17 @@ impl Blockchain {
             info!("CBE token not found in storage — running one-time backfill from genesis allocation");
             #[allow(deprecated)]
             blockchain.initialize_cbe_token_genesis();
+        }
+
+        let cbe_token_id = Blockchain::derive_cbe_token_id();
+        if !blockchain.bonding_curve_registry.contains(&cbe_token_id) {
+            #[allow(deprecated)]
+            blockchain.initialize_cbe_genesis();
+            if blockchain.bonding_curve_registry.contains(&cbe_token_id) {
+                info!("Restored CBE bonding curve registry entry from genesis parameters");
+            } else {
+                warn!("Failed to restore CBE bonding curve registry entry");
+            }
         }
 
         {

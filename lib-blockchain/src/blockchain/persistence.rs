@@ -914,6 +914,18 @@ impl Blockchain {
             #[allow(deprecated)]
             blockchain.initialize_cbe_token_genesis();
         }
+
+        // bonding_curve_registry is never serialized to .dat — rebuild the CBE entry on every load.
+        let cbe_token_id = Self::derive_cbe_token_id_pub();
+        if !blockchain.bonding_curve_registry.contains(&cbe_token_id) {
+            #[allow(deprecated)]
+            blockchain.initialize_cbe_genesis();
+            if blockchain.bonding_curve_registry.contains(&cbe_token_id) {
+                info!("Restored CBE bonding curve registry entry from genesis parameters");
+            } else {
+                warn!("Failed to restore CBE bonding curve registry entry");
+            }
+        }
         let backfill_entries = blockchain.collect_sov_backfill_entries();
         if !backfill_entries.is_empty() {
             warn!(
