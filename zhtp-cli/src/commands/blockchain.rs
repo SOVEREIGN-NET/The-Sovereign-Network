@@ -630,7 +630,7 @@ mod tests {
             wallet_type: "primary".to_string(),
             wallet_name: "Ghost Wallet".to_string(),
             alias: Some("primary".to_string()),
-            public_key: vec![0x22; 32],
+            public_key: vec![0x22; 2592],
             owner_identity_id: Some(lib_blockchain::Hash::new([0x33; 32])),
             seed_commitment: lib_blockchain::Hash::new([0x44; 32]),
             created_at: 1_700_000_000,

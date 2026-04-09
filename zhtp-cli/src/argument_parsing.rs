@@ -1370,6 +1370,19 @@ pub enum CbeAction {
         #[arg(long)]
         contract_id: String,
     },
+    /// Transfer CBE tokens from your wallet to another
+    ///
+    /// Requires the sender to have sufficient vested CBE balance.
+    /// Compensation pool (40%) has no vesting - immediately transferable.
+    /// Other pools (operational, performance, strategic) have vesting schedules.
+    Transfer {
+        /// Recipient address (32-byte hex key_id or did:zhtp:...)
+        #[arg(short, long)]
+        to: String,
+        /// Amount to transfer (in CBE atoms, 1 CBE = 100,000,000 atoms)
+        #[arg(short, long)]
+        amount: u64,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
