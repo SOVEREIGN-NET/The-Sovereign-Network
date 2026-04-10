@@ -95,3 +95,12 @@ keystore*
 *.pem
 .env
 .env.*
+
+# Operational / payroll artifacts
+payroll.md
+cbe_transfers_*.csv
+
+# Tool build artifacts and sled export snapshots
+tools/*/target/
+tools/sled-identity-export/state-export.json
+tools/sled-identity-export/state-snapshot.json
