@@ -2058,7 +2058,48 @@ impl BlockExecutor {
                     ));
                 }
 
-                // Apply the token transfer with 1% protocol fee routed to fee sink.
+                // CBE balances live in cbe_account_state (canonical buy/sell path), not
+                // in token_balance. Use cbe_account_state for debit/credit so that CBE
+                // transfers can spend balances acquired via BondingCurveBuy transactions.
+                //
+                // For legacy wallets where transfer_data.from (wallet_id) != key_id, the
+                // CBE balance was credited to key_id by apply_buy_cbe (which uses tx.sender
+                // = buyer_key_id). Debit from key_id so the balance is actually found.
+                let cbe_token_id_arr = crate::Blockchain::derive_cbe_token_id_pub();
+                if transfer_data.token_id == cbe_token_id_arr {
+                    // CBE transfers are fee-free: full amount goes to recipient.
+                    // (Legacy cbe_token.transfer() never charged fees.)
+                    let effective_sender = if transfer_data.from != tx.signature.public_key.key_id {
+                        tx.signature.public_key.key_id
+                    } else {
+                        transfer_data.from
+                    };
+                    let mut sender_acc = mutator.get_cbe_account_state(&effective_sender)?;
+                    if sender_acc.balance_cbe < amount {
+                        return Err(TxApplyError::InsufficientBalance {
+                            have: sender_acc.balance_cbe,
+                            need: amount,
+                            token,
+                        });
+                    }
+                    sender_acc.balance_cbe -= amount;
+                    mutator.put_cbe_account_state(&effective_sender, &sender_acc)?;
+
+                    let mut to_acc = mutator.get_cbe_account_state(&transfer_data.to)?;
+                    to_acc.balance_cbe += amount;
+                    mutator.put_cbe_account_state(&transfer_data.to, &to_acc)?;
+
+                    mutator.increment_token_nonce(&token, &from)?;
+
+                    return Ok(TxOutcome::TokenTransfer(TokenTransferOutcome {
+                        token,
+                        from,
+                        to,
+                        amount,
+                    }));
+                }
+
+                // Non-CBE: apply via standard token_balance table with 1% fee.
                 let fee_destination = *self.fee_model.protocol_params.fee_sink_address();
                 let _fee_collected = tx_apply::apply_token_transfer(
                     mutator,
@@ -2267,7 +2308,14 @@ impl BlockExecutor {
             | TransactionType::ProfitDeclaration
             | TransactionType::GovernanceConfigUpdate
             | TransactionType::UpdateOracleCommittee
-            | TransactionType::UpdateOracleConfig => Ok(TxOutcome::LegacySystem),
+            | TransactionType::UpdateOracleConfig
+            // Employment and payroll transactions: state is maintained in-memory by
+            // process_employment_contract_transactions and process_payroll_transactions
+            // (called after executor.apply_block in process_and_commit_block). The executor
+            // accepts them as no-ops so blocks containing these types don't fail validation.
+            | TransactionType::InitCbeToken
+            | TransactionType::CreateEmploymentContract
+            | TransactionType::ProcessPayroll => Ok(TxOutcome::LegacySystem),
 
             // Bonding curve types
             // BondingCurveDeploy and BondingCurveGraduate are wire-format legacy variants

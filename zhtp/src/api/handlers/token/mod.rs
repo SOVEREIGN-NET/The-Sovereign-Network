@@ -736,9 +736,21 @@ impl TokenHandler {
                 .map(|pk| pk.key_id)
                 .unwrap_or(target_key_id);
             let cbe_balance: u64 = if let Some(store) = blockchain.get_store() {
-                let storage_token_id = lib_blockchain::storage::TokenId(cbe_token_id);
-                let addr = lib_blockchain::storage::Address::new(cbe_key_id);
-                store.get_token_balance(&storage_token_id, &addr).unwrap_or(0) as u64
+                // CBE canonical path stores per-user balances in cbe_account_state.
+                let cbe_acc_bal = store
+                    .get_cbe_account_state(&cbe_key_id)
+                    .ok()
+                    .flatten()
+                    .map(|a| a.balance_cbe.min(u64::MAX as u128) as u64)
+                    .unwrap_or(0);
+                if cbe_acc_bal > 0 {
+                    cbe_acc_bal
+                } else {
+                    // Fallback to token_balance for legacy/migrated credits
+                    let storage_token_id = lib_blockchain::storage::TokenId(cbe_token_id);
+                    let addr = lib_blockchain::storage::Address::new(cbe_key_id);
+                    store.get_token_balance(&storage_token_id, &addr).unwrap_or(0) as u64
+                }
             } else {
                 blockchain.cbe_token.balance_of_key_id(&cbe_key_id)
             };

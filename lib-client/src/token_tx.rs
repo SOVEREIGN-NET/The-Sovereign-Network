@@ -524,7 +524,7 @@ pub fn build_sov_wallet_transfer_tx(
 pub fn build_token_wallet_transfer_tx(
     identity: &Identity,
     token_id: &[u8; 32],
-    from_wallet_id: &[u8; 32],
+    _from_wallet_id: &[u8; 32],
     to_wallet_id: &[u8; 32],
     amount: u64,
     chain_id: u8,
@@ -541,7 +541,11 @@ pub fn build_token_wallet_transfer_tx(
 
     let transfer_data = TokenTransferData {
         token_id: *token_id,
-        from: *from_wallet_id,
+        // from must equal the signer's key_id (blake3(dilithium_pk || kyber_pk)) — this is
+        // what the stateful validator requires and what the executor uses to look up balances.
+        // The caller's from_wallet_id is ignored here because non-SOV token balances are
+        // always stored under key_id, never under an HD-derived wallet address.
+        from: sender_pk.key_id,
         to: *to_wallet_id,
         amount: amount as u128,
         nonce,

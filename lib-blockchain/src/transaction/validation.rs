@@ -1726,27 +1726,70 @@ impl<'a> StatefulTransactionValidator<'a> {
                         }
                     }
                 } else if data.from != transaction.signature.public_key.key_id {
-                    return Err(ValidationError::InvalidTransaction);
+                    // Non-SOV token: from != key_id means legacy wallet (HD-derived address).
+                    // Apply the same dilithium_pk ownership check as SOV legacy wallets so
+                    // that iOS clients using wallet_id as `from` can still transfer CBE.
+                    let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
+                    let wallet_id_hex = hex::encode(data.from);
+                    let wallet = blockchain
+                        .wallet_registry
+                        .get(&wallet_id_hex)
+                        .ok_or_else(|| {
+                            tracing::warn!(
+                                "[TOKEN_TRANSFER] non-SOV legacy wallet not in registry: from={} key_id={}",
+                                &wallet_id_hex[..16.min(wallet_id_hex.len())],
+                                hex::encode(&transaction.signature.public_key.key_id[..8])
+                            );
+                            ValidationError::InvalidTransaction
+                        })?;
+                    let sig_dilithium = transaction.signature.public_key.dilithium_pk.as_slice();
+                    if wallet.public_key.len() != 2592
+                        || wallet.public_key.as_slice() != sig_dilithium
+                    {
+                        tracing::warn!(
+                            "[TOKEN_TRANSFER] non-SOV legacy ownership check failed: from={}",
+                            &wallet_id_hex[..16.min(wallet_id_hex.len())],
+                        );
+                        return Err(ValidationError::InvalidTransaction);
+                    }
                 }
 
                 // CBE balance check: reject at mempool time if sender has insufficient CBE.
-                // Mirrors the SOV balance check above. Reads SledStore when available (executor
-                // path), falls back to cbe_token in-memory (non-executor path or fresh restart
-                // before first CBE transfer in this session).
+                // For legacy wallets (from != key_id), the CBE balance was credited to key_id
+                // by the executor (apply_buy_cbe uses tx.sender = key_id).  Check both
+                // cbe_account_state[key_id] and cbe_account_state[from] to handle both cases.
                 let cbe_token_id = crate::Blockchain::derive_cbe_token_id_pub();
                 if data.token_id == cbe_token_id {
                     if let Some(blockchain) = self.blockchain {
-                        let storage_token = crate::storage::TokenId(cbe_token_id);
-                        let addr = crate::storage::Address::new(data.from);
-                        let balance: u128 = if let Some(store) = &blockchain.store {
-                            store.get_token_balance(&storage_token, &addr).unwrap_or(0)
+                        // For legacy wallets, CBE balance lives under key_id, not from.
+                        let effective_key = if data.from != transaction.signature.public_key.key_id {
+                            transaction.signature.public_key.key_id
                         } else {
-                            u128::from(blockchain.cbe_token.balance_of_key_id(&data.from))
+                            data.from
+                        };
+                        let balance: u128 = if let Some(store) = &blockchain.store {
+                            let cbe_acc_bal = store
+                                .get_cbe_account_state(&effective_key)
+                                .ok()
+                                .flatten()
+                                .map(|a| a.balance_cbe)
+                                .unwrap_or(0);
+                            if cbe_acc_bal > 0 {
+                                cbe_acc_bal
+                            } else {
+                                // Fallback: token_balance for legacy/migrated credits
+                                let storage_token = crate::storage::TokenId(cbe_token_id);
+                                let addr = crate::storage::Address::new(effective_key);
+                                store.get_token_balance(&storage_token, &addr).unwrap_or(0)
+                            }
+                        } else {
+                            u128::from(blockchain.cbe_token.balance_of_key_id(&effective_key))
                         };
                         if balance < data.amount {
                             tracing::warn!(
-                                "[TOKEN_TRANSFER] insufficient CBE balance: from={} have={} need={}",
+                                "[TOKEN_TRANSFER] insufficient CBE balance: from={} effective_key={} have={} need={}",
                                 hex::encode(&data.from[..8]),
+                                hex::encode(&effective_key[..8]),
                                 balance,
                                 data.amount
                             );
