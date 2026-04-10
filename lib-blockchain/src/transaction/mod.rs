@@ -19,7 +19,7 @@ pub mod validation;
 // Explicit re-exports from core module
 pub use core::{
     BondingCurveBuyData, BondingCurveDeployData, BondingCurveGraduateData, BondingCurveSellData,
-    CreateEmploymentContractData, DaoExecutionData, DaoProposalData, DaoVoteData,
+    CreateEmploymentContractData, DaoExecutionData, DaoProposalData, DaoStakeData, DaoVoteData,
     GovernanceConfigOperation, GovernanceConfigUpdateData, IdentityTransactionData,
     InitCbeTokenData, InitEntityRegistryData, ProcessPayrollData, ProfitDeclarationData,
     RecordOnRampTradeData, RevenueSource, TokenMintData, TokenTransferData, Transaction,

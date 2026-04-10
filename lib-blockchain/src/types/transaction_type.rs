@@ -141,6 +141,12 @@ pub enum TransactionType {
     ///
     /// Disburses CBE salary and optional profit-share from employer treasury to employee wallet.
     ProcessPayroll = 43,
+    /// Stake SOV tokens to a sector DAO wallet
+    ///
+    /// Locks `amount` SOV from the staker's balance into the target DAO's stake record
+    /// for `lock_blocks` blocks. The lock is absolute: `locked_until = staked_at_height + lock_blocks`.
+    /// SOV nonce is incremented to prevent double-spend.
+    DaoStake = 44,
 }
 
 impl TransactionType {
@@ -295,6 +301,9 @@ impl TransactionType {
             TransactionType::ProcessPayroll => {
                 "Process payroll disbursement for active employment contract"
             }
+            TransactionType::DaoStake => {
+                "Stake SOV tokens to a sector DAO wallet with time-lock"
+            }
         }
     }
 
@@ -345,6 +354,7 @@ impl TransactionType {
             TransactionType::InitCbeToken => "init_cbe_token",
             TransactionType::CreateEmploymentContract => "create_employment_contract",
             TransactionType::ProcessPayroll => "process_payroll",
+            TransactionType::DaoStake => "dao_stake",
         }
     }
 
@@ -395,6 +405,7 @@ impl TransactionType {
             "init_cbe_token" => Some(TransactionType::InitCbeToken),
             "create_employment_contract" => Some(TransactionType::CreateEmploymentContract),
             "process_payroll" => Some(TransactionType::ProcessPayroll),
+            "dao_stake" => Some(TransactionType::DaoStake),
             _ => None,
         }
     }

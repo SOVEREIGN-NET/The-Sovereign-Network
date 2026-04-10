@@ -7,8 +7,9 @@
 //! - InitEntityRegistry   (Bootstrap Council only — one-time, irreversible)
 //! - RecordOnRampTrade    (Oracle Committee attested fiat→CBE trades)
 //! - TreasuryAllocation   (Bootstrap Council approved SOV transfers)
+//! - DaoStake             (User stakes SOV to a sector DAO for lock_blocks duration)
 
-use lib_blockchain::transaction::{RecordOnRampTradeData, TreasuryAllocationData};
+use lib_blockchain::transaction::{DaoStakeData, RecordOnRampTradeData, TreasuryAllocationData};
 use lib_blockchain::{Approval, ApprovalDomain, ThresholdApprovalSet, Transaction};
 use lib_crypto::types::signatures::SignatureAlgorithm;
 
@@ -141,6 +142,80 @@ pub fn build_treasury_allocation_tx(
 
     let tx = Transaction::new_treasury_allocation(chain_id, data);
     let bytes = bincode::serialize(&tx).map_err(|e| format!("Failed to serialize: {}", e))?;
+    Ok(hex::encode(bytes))
+}
+
+/// Build and sign a `DaoStake` transaction.
+///
+/// Stakes `amount` nSOV from the staker to `sector_dao_key_id` for `lock_blocks` blocks.
+/// The SOV is immediately transferred to the DAO wallet's balance; a `DaoStakeRecord` is
+/// stored so the staker can claim it back after `block_height + lock_blocks` blocks pass.
+///
+/// # Arguments
+/// - `identity` — Staker's identity (contains Dilithium5 private key for signing)
+/// - `sector_dao_key_id` — 32-byte key_id of the target sector DAO wallet
+/// - `amount` — nSOV to stake (1 SOV = 1_000_000_000 nSOV)
+/// - `nonce` — Per-staker monotonic nonce (fetch from `GET /api/v1/token/nonce?...`)
+/// - `lock_blocks` — Lock duration in blocks (must be > 0; e.g., 50_400 ≈ 7 days at ~12s/block)
+/// - `chain_id` — Network chain ID (1 = mainnet)
+///
+/// # Returns
+/// Hex-encoded, bincode-serialized signed `Transaction` ready to POST to
+/// `POST /api/v1/dao/stake` as `{"signed_tx": "<hex>"}`.
+pub fn build_dao_stake_tx(
+    identity: &crate::identity::Identity,
+    sector_dao_key_id: [u8; 32],
+    amount: u128,
+    nonce: u64,
+    lock_blocks: u64,
+    chain_id: u8,
+) -> Result<String, String> {
+    use crate::token_tx::create_public_key_with_kyber;
+    use lib_blockchain::integration::crypto_integration::Signature;
+
+    let sender_pk =
+        create_public_key_with_kyber(identity.public_key.clone(), identity.kyber_public_key.clone());
+
+    let data = DaoStakeData {
+        sector_dao_key_id,
+        staker: sender_pk.key_id,
+        amount,
+        nonce,
+        lock_blocks,
+    };
+
+    // Build unsigned skeleton with empty signature so signing_hash() is deterministic.
+    let mut tx = Transaction::new_dao_stake(
+        chain_id,
+        data,
+        Signature {
+            signature: vec![],
+            public_key: sender_pk.clone(),
+            algorithm: SignatureAlgorithm::DEFAULT,
+            timestamp: 0,
+        },
+    );
+
+    // DaoStake has no UTXO fee.
+    tx.fee = 0;
+
+    // Sign using the same signing_hash() path as all other canonical transactions.
+    let tx_hash = tx.signing_hash();
+    let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
+        .map_err(|e| format!("Failed to sign DaoStake: {}", e))?;
+
+    tx.signature = Signature {
+        signature: signature_bytes,
+        public_key: sender_pk,
+        algorithm: SignatureAlgorithm::DEFAULT,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    };
+
+    let bytes =
+        bincode::serialize(&tx).map_err(|e| format!("Failed to serialize DaoStake tx: {}", e))?;
     Ok(hex::encode(bytes))
 }
 

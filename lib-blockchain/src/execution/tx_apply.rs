@@ -291,6 +291,16 @@ impl<'a> StateMutator<'a> {
     }
 
     // =========================================================================
+    // DAO Stake Primitives
+    // =========================================================================
+
+    /// Persist a DAO stake record (upsert) within the current block transaction.
+    pub fn put_dao_stake(&self, record: &crate::storage::DaoStakeRecord) -> TxApplyResult<()> {
+        self.store.put_dao_stake(record)?;
+        Ok(())
+    }
+
+    // =========================================================================
     // Contract State Primitives
     // =========================================================================
 

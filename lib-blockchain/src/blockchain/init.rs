@@ -95,6 +95,9 @@ impl Blockchain {
             phase_transition_config: crate::dao::PhaseTransitionConfig::default(),
             governance_cycles_with_quorum: 0,
             last_governance_cycle_height: 0,
+            fee_router: crate::contracts::economics::fee_router::FeeRouter::new_with_dao_wallets(
+                crate::contracts::economics::fee_router::DAO_HEALTHCARE_KEY_ID,
+            ),
         }
     }
 
@@ -570,7 +573,31 @@ impl Blockchain {
                         }
                     }
 
-                    // During sled-store replay we skip token transaction processing
+                    // Replay employment contract creation so employment_registry is populated.
+                    // Required before payroll replay below.
+                    if let Err(e) = blockchain.process_employment_contract_transactions(&block) {
+                        warn!(
+                            "⚠️ Failed to replay CreateEmploymentContract at height {}: {}",
+                            height, e
+                        );
+                    }
+
+                    // Replay payroll to rebuild cbe_token.balances for employees.
+                    // The executor reads cbe_account_state (sled) for CBE balance checks,
+                    // not cbe_token.balances (in-memory). On a fresh sled the account states
+                    // are 0. The startup seeding (backfill_cbe_account_states after this loop)
+                    // must see the correct employee balances here so it can populate sled
+                    // before initial sync reaches any CBE TokenTransfer block.
+                    if blockchain.cbe_token.is_initialized() {
+                        if let Err(e) = blockchain.process_payroll_transactions(&block) {
+                            warn!(
+                                "⚠️ Failed to replay ProcessPayroll at height {}: {}",
+                                height, e
+                            );
+                        }
+                    }
+
+                    // During sled-store replay we skip SOV token transaction processing
                     // entirely.  The correct final SOV balances are loaded from the
                     // token_balances sled tree after this loop.
                     //
@@ -667,6 +694,32 @@ impl Blockchain {
             blockchain.initialize_cbe_token_genesis();
         }
 
+        // Seed cbe_account_state in sled for all CBE pool addresses whose balance is
+        // only in cbe_token.balances (in-memory). The executor (including the fast
+        // BlockExecutor::from_config_trusted_replay path used during initial catchup sync)
+        // reads ONLY cbe_account_state. Pool addresses (e.g. compensation pool b8b099...)
+        // never go through a BondingCurveBuy, so their cbe_account_state starts at 0 on
+        // a fresh sled — causing CBE TokenTransfer blocks to fail with "Insufficient
+        // token balance: have 0" during initial sync.
+        if blockchain.cbe_token.is_initialized() {
+            let entries: Vec<([u8; 32], u128)> = blockchain
+                .cbe_token
+                .all_balances()
+                .map(|(k, v)| (k, v as u128))
+                .collect();
+            if !entries.is_empty() {
+                match store.backfill_cbe_account_states(&entries) {
+                    Ok(0) => debug!("CBE cbe_account_state already seeded — no backfill needed"),
+                    Ok(n) => info!(
+                        "💰 Seeded {} CBE pool address(es) into cbe_account_state on startup",
+                        n
+                    ),
+                    Err(e) => warn!("Failed to seed CBE pool cbe_account_states on startup: {}", e),
+                }
+            }
+        }
+
+
         let cbe_token_id = Blockchain::derive_cbe_token_id();
         if !blockchain.bonding_curve_registry.contains(&cbe_token_id) {
             #[allow(deprecated)]
@@ -745,6 +798,17 @@ impl Blockchain {
             Err(e) => {
                 warn!("⚠️ Failed to load oracle_state from SledStore: {}", e);
             }
+        }
+
+        // Initialize FeeRouter with the known sector DAO wallet addresses.
+        // The fee_sink is used for UBI/emergency/dev pools until dedicated wallets are created.
+        // FeeRouter::new_with_dao_wallets() is idempotent: if already initialized via
+        // deserialization it's already set; this only fires on first load or after sled wipe.
+        if !blockchain.fee_router.is_initialized() {
+            let fee_sink = crate::contracts::economics::fee_router::DAO_HEALTHCARE_KEY_ID;
+            blockchain.fee_router =
+                crate::contracts::economics::fee_router::FeeRouter::new_with_dao_wallets(fee_sink);
+            info!("💰 FeeRouter initialized with sector DAO wallet addresses");
         }
 
         info!(

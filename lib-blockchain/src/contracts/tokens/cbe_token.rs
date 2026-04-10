@@ -457,6 +457,14 @@ impl CbeToken {
         self.balances.get(key_id).copied().unwrap_or(0)
     }
 
+    /// Iterate over all non-zero balances as (key_id, balance) pairs.
+    /// Used to seed cbe_account_state in sled after genesis initialization so
+    /// the executor (which reads only sled) can find pool balances.
+    pub fn all_balances(&self) -> impl Iterator<Item = ([u8; 32], u64)> + '_ {
+        self.balances.iter().map(|(&k, &v)| (k, v))
+    }
+
+
     /// Set balance by raw key_id (for syncing back from canonical store)
     pub fn set_balance_by_key_id(&mut self, key_id: [u8; 32], balance: u64) {
         if balance == 0 {
