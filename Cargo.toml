@@ -22,6 +22,7 @@ members = [
     "lib-protocols",
     "tools",
     "tools/zhtp-dilithium-signer",
+    "tools/dao-register",
     "lib-storage",
     "zhtp",
     "zhtp-cli",

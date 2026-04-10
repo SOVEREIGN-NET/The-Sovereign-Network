@@ -95,6 +95,9 @@ impl Blockchain {
             phase_transition_config: crate::dao::PhaseTransitionConfig::default(),
             governance_cycles_with_quorum: 0,
             last_governance_cycle_height: 0,
+            fee_router: crate::contracts::economics::fee_router::FeeRouter::new_with_dao_wallets(
+                crate::contracts::economics::fee_router::DAO_HEALTHCARE_KEY_ID,
+            ),
         }
     }
 
@@ -794,6 +797,17 @@ impl Blockchain {
             Err(e) => {
                 warn!("⚠️ Failed to load oracle_state from SledStore: {}", e);
             }
+        }
+
+        // Initialize FeeRouter with the known sector DAO wallet addresses.
+        // The fee_sink is used for UBI/emergency/dev pools until dedicated wallets are created.
+        // FeeRouter::new_with_dao_wallets() is idempotent: if already initialized via
+        // deserialization it's already set; this only fires on first load or after sled wipe.
+        if !blockchain.fee_router.is_initialized() {
+            let fee_sink = crate::contracts::economics::fee_router::DAO_HEALTHCARE_KEY_ID;
+            blockchain.fee_router =
+                crate::contracts::economics::fee_router::FeeRouter::new_with_dao_wallets(fee_sink);
+            info!("💰 FeeRouter initialized with sector DAO wallet addresses");
         }
 
         info!(

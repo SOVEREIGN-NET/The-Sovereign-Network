@@ -425,6 +425,15 @@ pub struct Blockchain {
     /// Block height of the last governance cycle check.
     #[serde(default)]
     pub last_governance_cycle_height: u64,
+
+    // =========================================================================
+    // Fee Router — sector DAO fee distribution (45/30/15/10 split)
+    // =========================================================================
+    /// Routes collected protocol fees to UBI pool, sector DAOs, emergency reserve, dev grants.
+    /// Initialized at startup with the well-known sector DAO wallet addresses from
+    /// keys/dao-wallets.json (registered 2026-04-10).
+    #[serde(default)]
+    pub fee_router: crate::contracts::economics::fee_router::FeeRouter,
 }
 
 /// Validator information stored on-chain.
