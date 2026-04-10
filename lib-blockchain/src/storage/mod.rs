@@ -1456,6 +1456,18 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         Ok(())
     }
 
+    /// Delete a DAO stake record within the current block transaction.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn delete_dao_stake(
+        &self,
+        _sector_dao_key_id: &[u8; 32],
+        _staker: &[u8; 32],
+    ) -> StorageResult<()> {
+        Ok(())
+    }
+
     /// Iterate all stake records for a given DAO wallet.
     fn iter_dao_stakes_for_dao(
         &self,

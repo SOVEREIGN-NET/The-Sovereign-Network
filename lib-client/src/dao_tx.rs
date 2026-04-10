@@ -9,7 +9,9 @@
 //! - TreasuryAllocation   (Bootstrap Council approved SOV transfers)
 //! - DaoStake             (User stakes SOV to a sector DAO for lock_blocks duration)
 
-use lib_blockchain::transaction::{DaoStakeData, RecordOnRampTradeData, TreasuryAllocationData};
+use lib_blockchain::transaction::{
+    DaoStakeData, DaoUnstakeData, RecordOnRampTradeData, TreasuryAllocationData,
+};
 use lib_blockchain::{Approval, ApprovalDomain, ThresholdApprovalSet, Transaction};
 use lib_crypto::types::signatures::SignatureAlgorithm;
 
@@ -216,6 +218,70 @@ pub fn build_dao_stake_tx(
 
     let bytes =
         bincode::serialize(&tx).map_err(|e| format!("Failed to serialize DaoStake tx: {}", e))?;
+    Ok(hex::encode(bytes))
+}
+
+/// Build and sign a `DaoUnstake` transaction.
+///
+/// Reclaims the full locked SOV amount from `sector_dao_key_id` back to the staker.
+/// The lock period must have expired on-chain; the server rejects early unstake attempts.
+///
+/// # Arguments
+/// - `identity` — Staker's identity (contains Dilithium5 private key for signing)
+/// - `sector_dao_key_id` — 32-byte key_id of the sector DAO that holds the stake
+/// - `nonce` — Per-staker current SOV nonce (same counter used by DaoStake)
+/// - `chain_id` — Network chain ID (1 = mainnet)
+///
+/// # Returns
+/// Hex-encoded, bincode-serialized signed `Transaction` ready to POST to
+/// `POST /api/v1/dao/unstake` as `{"signed_tx": "<hex>"}`.
+pub fn build_dao_unstake_tx(
+    identity: &crate::identity::Identity,
+    sector_dao_key_id: [u8; 32],
+    nonce: u64,
+    chain_id: u8,
+) -> Result<String, String> {
+    use crate::token_tx::create_public_key_with_kyber;
+    use lib_blockchain::integration::crypto_integration::Signature;
+
+    let sender_pk =
+        create_public_key_with_kyber(identity.public_key.clone(), identity.kyber_public_key.clone());
+
+    let data = DaoUnstakeData {
+        sector_dao_key_id,
+        staker: sender_pk.key_id,
+        nonce,
+    };
+
+    let mut tx = Transaction::new_dao_unstake(
+        chain_id,
+        data,
+        Signature {
+            signature: vec![],
+            public_key: sender_pk.clone(),
+            algorithm: SignatureAlgorithm::DEFAULT,
+            timestamp: 0,
+        },
+    );
+
+    tx.fee = 0;
+
+    let tx_hash = tx.signing_hash();
+    let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
+        .map_err(|e| format!("Failed to sign DaoUnstake: {}", e))?;
+
+    tx.signature = Signature {
+        signature: signature_bytes,
+        public_key: sender_pk,
+        algorithm: SignatureAlgorithm::DEFAULT,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    };
+
+    let bytes = bincode::serialize(&tx)
+        .map_err(|e| format!("Failed to serialize DaoUnstake tx: {}", e))?;
     Ok(hex::encode(bytes))
 }
 

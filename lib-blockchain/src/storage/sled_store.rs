@@ -1668,6 +1668,19 @@ impl BlockchainStore for SledStore {
         Ok(())
     }
 
+    fn delete_dao_stake(
+        &self,
+        sector_dao_key_id: &[u8; 32],
+        staker: &[u8; 32],
+    ) -> StorageResult<()> {
+        self.require_transaction()?;
+        let key = keys::dao_stake_key(sector_dao_key_id, staker);
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let batch = batch_guard.as_mut().ok_or(StorageError::NoActiveTransaction)?;
+        batch.dao_stakes.remove(key.as_ref());
+        Ok(())
+    }
+
     fn iter_dao_stakes_for_dao(
         &self,
         sector_dao_key_id: &[u8; 32],

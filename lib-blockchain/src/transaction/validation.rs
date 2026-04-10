@@ -382,6 +382,9 @@ impl TransactionValidator {
             TransactionType::DaoStake => {
                 // Full validation deferred to stateful validator (balance, lock period, etc.)
             }
+            TransactionType::DaoUnstake => {
+                // Full validation deferred to stateful validator (lock check, record existence, etc.)
+            }
         }
 
         // Signature validation:
@@ -612,6 +615,9 @@ impl TransactionValidator {
             }
             TransactionType::DaoStake => {
                 // Full validation deferred to stateful validator (balance, lock period, etc.)
+            }
+            TransactionType::DaoUnstake => {
+                // Full validation deferred to stateful validator (lock check, record existence, etc.)
             }
         }
 
@@ -1900,6 +1906,9 @@ impl<'a> StatefulTransactionValidator<'a> {
             TransactionType::DaoStake => {
                 self.validate_dao_stake(transaction)?;
             }
+            TransactionType::DaoUnstake => {
+                self.validate_dao_unstake(transaction)?;
+            }
         }
 
         //  CRITICAL FIX: Verify sender identity exists on blockchain
@@ -1925,6 +1934,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             && transaction.transaction_type != TransactionType::TokenMint
             && transaction.transaction_type != TransactionType::TokenCreation
             && transaction.transaction_type != TransactionType::DaoStake
+            && transaction.transaction_type != TransactionType::DaoUnstake
             && !is_token_contract_execution(transaction)
         {
             tracing::debug!("[BREADCRUMB] validate_sender_identity_exists CALL");
@@ -1971,6 +1981,7 @@ impl<'a> StatefulTransactionValidator<'a> {
         // at block processing time. Skip UTXO-based fee validation entirely.
         if transaction.transaction_type == TransactionType::TokenTransfer
             || transaction.transaction_type == TransactionType::DaoStake
+            || transaction.transaction_type == TransactionType::DaoUnstake
         {
             return Ok(());
         }
@@ -2479,6 +2490,85 @@ impl<'a> StatefulTransactionValidator<'a> {
                 data.amount,
             );
             return Err(ValidationError::InvalidAmount);
+        }
+
+        Ok(())
+    }
+
+    fn validate_dao_unstake(&self, transaction: &Transaction) -> ValidationResult {
+        use crate::contracts::economics::fee_router::{
+            DAO_EDUCATION_KEY_ID, DAO_ENERGY_KEY_ID, DAO_FOOD_KEY_ID, DAO_HEALTHCARE_KEY_ID,
+            DAO_HOUSING_KEY_ID,
+        };
+
+        let data = transaction
+            .dao_unstake_data()
+            .ok_or(ValidationError::MissingRequiredData)?;
+
+        if !transaction.inputs.is_empty() {
+            return Err(ValidationError::InvalidInputs);
+        }
+        if !transaction.outputs.is_empty() {
+            return Err(ValidationError::InvalidOutputs);
+        }
+
+        // Staker must be the transaction signer.
+        if data.staker != transaction.signature.public_key.key_id {
+            tracing::warn!(
+                "[DAO_UNSTAKE] staker != signer: staker={} key_id={}",
+                hex::encode(&data.staker[..8]),
+                hex::encode(&transaction.signature.public_key.key_id[..8]),
+            );
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // Target must be a known sector DAO.
+        let known_daos = [
+            DAO_HEALTHCARE_KEY_ID,
+            DAO_EDUCATION_KEY_ID,
+            DAO_ENERGY_KEY_ID,
+            DAO_HOUSING_KEY_ID,
+            DAO_FOOD_KEY_ID,
+        ];
+        if !known_daos.contains(&data.sector_dao_key_id) {
+            tracing::warn!(
+                "[DAO_UNSTAKE] unknown DAO target: {}",
+                hex::encode(&data.sector_dao_key_id[..8]),
+            );
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
+
+        // Stake record must exist.
+        let store = match &blockchain.store {
+            Some(s) => s,
+            None => return Ok(()), // no store — defer lock check to executor
+        };
+
+        let record = match store.get_dao_stake(&data.sector_dao_key_id, &data.staker) {
+            Ok(Some(r)) => r,
+            Ok(None) => {
+                tracing::warn!(
+                    "[DAO_UNSTAKE] no stake record for staker={} dao={}",
+                    hex::encode(&data.staker[..8]),
+                    hex::encode(&data.sector_dao_key_id[..8]),
+                );
+                return Err(ValidationError::InvalidTransaction);
+            }
+            Err(_) => return Ok(()), // storage error — let executor be authoritative
+        };
+
+        // Lock period must have expired.
+        if blockchain.height < record.locked_until {
+            let remaining = record.locked_until.saturating_sub(blockchain.height);
+            tracing::warn!(
+                "[DAO_UNSTAKE] still locked: staker={} dao={} blocks_remaining={}",
+                hex::encode(&data.staker[..8]),
+                hex::encode(&data.sector_dao_key_id[..8]),
+                remaining,
+            );
+            return Err(ValidationError::InvalidTransaction);
         }
 
         Ok(())
@@ -3028,6 +3118,11 @@ pub mod utils {
             }
             TransactionType::DaoStake => {
                 transaction.dao_stake_data().is_some()
+                    && transaction.inputs.is_empty()
+                    && transaction.outputs.is_empty()
+            }
+            TransactionType::DaoUnstake => {
+                transaction.dao_unstake_data().is_some()
                     && transaction.inputs.is_empty()
                     && transaction.outputs.is_empty()
             }

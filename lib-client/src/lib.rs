@@ -60,8 +60,8 @@ pub use cbe_tx::{
 };
 pub use crypto::{Blake3, Dilithium5, Kyber1024};
 pub use dao_tx::{
-    build_dao_stake_tx, build_init_entity_registry_tx, build_record_on_ramp_trade_tx,
-    build_treasury_allocation_tx,
+    build_dao_stake_tx, build_dao_unstake_tx, build_init_entity_registry_tx,
+    build_record_on_ramp_trade_tx, build_treasury_allocation_tx,
 };
 pub use error::{ClientError, Result};
 pub use handshake::{HandshakeResult, HandshakeState};
@@ -1567,6 +1567,43 @@ pub extern "C" fn zhtp_client_build_dao_stake(
     dao_arr.copy_from_slice(dao_slice);
 
     match dao_tx::build_dao_stake_tx(identity, dao_arr, amount as u128, nonce, lock_blocks, chain_id) {
+        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Build and sign a `DaoUnstake` transaction.
+///
+/// Reclaims the full locked SOV amount from `sector_dao_key_id` back to the staker.
+/// The lock period must have expired; the server rejects early unstake with an error.
+/// Returns NULL on any error.  Caller must free with `zhtp_client_string_free`.
+///
+/// # Parameters
+/// - `handle`: Staker's identity handle
+/// - `sector_dao_key_id`: 32-byte key_id of the sector DAO that holds the stake
+/// - `nonce`: Per-staker current SOV nonce (same counter as stake)
+/// - `chain_id`: Network chain ID (1 = mainnet)
+#[no_mangle]
+pub extern "C" fn zhtp_client_build_dao_unstake(
+    handle: *const IdentityHandle,
+    sector_dao_key_id: *const u8,
+    nonce: u64,
+    chain_id: u8,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || sector_dao_key_id.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let dao_slice = unsafe { std::slice::from_raw_parts(sector_dao_key_id, 32) };
+
+    let mut dao_arr = [0u8; 32];
+    dao_arr.copy_from_slice(dao_slice);
+
+    match dao_tx::build_dao_unstake_tx(identity, dao_arr, nonce, chain_id) {
         Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
             Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),

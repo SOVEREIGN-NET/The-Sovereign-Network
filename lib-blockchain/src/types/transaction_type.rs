@@ -147,6 +147,11 @@ pub enum TransactionType {
     /// for `lock_blocks` blocks. The lock is absolute: `locked_until = staked_at_height + lock_blocks`.
     /// SOV nonce is incremented to prevent double-spend.
     DaoStake = 44,
+    /// Unstake previously locked SOV from a sector DAO wallet
+    ///
+    /// Returns the full locked amount back to the staker once `locked_until` has passed.
+    /// The stake record is deleted. SOV nonce is incremented to prevent replay.
+    DaoUnstake = 45,
 }
 
 impl TransactionType {
@@ -304,6 +309,9 @@ impl TransactionType {
             TransactionType::DaoStake => {
                 "Stake SOV tokens to a sector DAO wallet with time-lock"
             }
+            TransactionType::DaoUnstake => {
+                "Unstake locked SOV from a sector DAO wallet after lock expires"
+            }
         }
     }
 
@@ -355,6 +363,7 @@ impl TransactionType {
             TransactionType::CreateEmploymentContract => "create_employment_contract",
             TransactionType::ProcessPayroll => "process_payroll",
             TransactionType::DaoStake => "dao_stake",
+            TransactionType::DaoUnstake => "dao_unstake",
         }
     }
 
@@ -406,6 +415,7 @@ impl TransactionType {
             "create_employment_contract" => Some(TransactionType::CreateEmploymentContract),
             "process_payroll" => Some(TransactionType::ProcessPayroll),
             "dao_stake" => Some(TransactionType::DaoStake),
+            "dao_unstake" => Some(TransactionType::DaoUnstake),
             _ => None,
         }
     }
