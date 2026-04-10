@@ -194,6 +194,24 @@ pub struct WalletProjectionRecord {
     pub committed_at_height: u64,
 }
 
+/// Persistent record for a SOV stake to a sector DAO wallet.
+///
+/// Keyed in the `dao_stakes` sled tree as `sector_dao_key_id (32) || staker (32)`.
+/// An existing record is replaced when the staker re-stakes to the same DAO.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DaoStakeRecord {
+    /// Staker's key_id (32 bytes)
+    pub staker: [u8; 32],
+    /// Target DAO's key_id (32 bytes)
+    pub sector_dao_key_id: [u8; 32],
+    /// Locked SOV amount (in nSOV)
+    pub amount: u128,
+    /// Block height when the stake was last updated
+    pub staked_at_height: u64,
+    /// Absolute block height when the lock expires (staked_at_height + lock_blocks)
+    pub locked_until: u64,
+}
+
 impl Utxo {
     pub fn new(amount: u64, owner: Address, token: TokenId, created_at_height: u64) -> Self {
         Self {
@@ -1415,5 +1433,34 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         _height: u64,
     ) -> StorageResult<Option<lib_types::consensus::BftQuorumProof>> {
         Ok(None)
+    }
+
+    // =========================================================================
+    // DAO Stake Operations (default no-ops for non-sled backends)
+    // =========================================================================
+
+    /// Retrieve the stake record for `(sector_dao_key_id, staker)`, if any.
+    fn get_dao_stake(
+        &self,
+        _sector_dao_key_id: &[u8; 32],
+        _staker: &[u8; 32],
+    ) -> StorageResult<Option<DaoStakeRecord>> {
+        Ok(None)
+    }
+
+    /// Persist (upsert) a DAO stake record within the current block transaction.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn put_dao_stake(&self, _record: &DaoStakeRecord) -> StorageResult<()> {
+        Ok(())
+    }
+
+    /// Iterate all stake records for a given DAO wallet.
+    fn iter_dao_stakes_for_dao(
+        &self,
+        _sector_dao_key_id: &[u8; 32],
+    ) -> StorageResult<Vec<DaoStakeRecord>> {
+        Ok(vec![])
     }
 }

@@ -43,6 +43,7 @@ const TREE_BONDING_CURVE_SYMBOLS: &str = "bonding_curve_symbols"; // Index: symb
 const TREE_CBE_ACCOUNTS: &str = "cbe_accounts"; // Canonical CBE account states (#1926)
 const TREE_PENDING_TRANSACTIONS: &str = "pending_transactions"; // Non-consensus restart recovery
 const TREE_QUORUM_PROOFS: &str = "quorum_proofs"; // BFT quorum proofs by height
+const TREE_DAO_STAKES: &str = "dao_stakes"; // SOV stakes to sector DAOs: dao_key_id||staker → DaoStakeRecord
 const TREE_META: &str = "meta";
 
 /// Sled-based implementation of BlockchainStore
@@ -69,6 +70,7 @@ pub struct SledStore {
     cbe_accounts: Tree,          // Canonical CBE account states: key_id → BondingCurveAccountState
     pending_transactions: Tree,  // Non-consensus mempool recovery state
     quorum_proofs: Tree,         // BFT quorum proofs by height
+    dao_stakes: Tree,            // SOV stakes: dao_key_id (32) || staker (32) → DaoStakeRecord
     meta: Tree,
 
     // Transaction state
@@ -96,6 +98,7 @@ struct PendingBatch {
     bonding_curves: Batch,
     bonding_curve_symbols: Batch,
     cbe_accounts: Batch,
+    dao_stakes: Batch,
     meta: Batch,
 }
 
@@ -119,6 +122,7 @@ impl PendingBatch {
             bonding_curves: Batch::default(),
             bonding_curve_symbols: Batch::default(),
             cbe_accounts: Batch::default(),
+            dao_stakes: Batch::default(),
             meta: Batch::default(),
         }
     }
@@ -216,6 +220,9 @@ impl SledStore {
         let contract_storage = db
             .open_tree(TREE_CONTRACT_STORAGE)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let dao_stakes = db
+            .open_tree(TREE_DAO_STAKES)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
 
         Ok(Self {
             db,
@@ -238,6 +245,7 @@ impl SledStore {
             cbe_accounts,
             pending_transactions,
             quorum_proofs,
+            dao_stakes,
             meta,
             tx_active: AtomicBool::new(false),
             tx_height: AtomicU64::new(0),
@@ -1289,6 +1297,10 @@ impl BlockchainStore for SledStore {
             .apply_batch(batch.cbe_accounts)
             .map_err(|e| StorageError::Database(e.to_string()))?;
 
+        self.dao_stakes
+            .apply_batch(batch.dao_stakes)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
         // Commit point: update latest_height last. If any batch above failed,
         // latest_height stays at the previous value and the node will re-apply
         // this block on next restart.
@@ -1624,6 +1636,54 @@ impl BlockchainStore for SledStore {
             Ok(None) => Ok(None),
             Err(e) => Err(StorageError::Database(e.to_string())),
         }
+    }
+
+    // =========================================================================
+    // DAO Stake Operations
+    // =========================================================================
+
+    fn get_dao_stake(
+        &self,
+        sector_dao_key_id: &[u8; 32],
+        staker: &[u8; 32],
+    ) -> StorageResult<Option<super::DaoStakeRecord>> {
+        let key = keys::dao_stake_key(sector_dao_key_id, staker);
+        match self.dao_stakes.get(key) {
+            Ok(Some(bytes)) => {
+                let record: super::DaoStakeRecord = Self::deserialize(&bytes)?;
+                Ok(Some(record))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_dao_stake(&self, record: &super::DaoStakeRecord) -> StorageResult<()> {
+        self.require_transaction()?;
+        let key = keys::dao_stake_key(&record.sector_dao_key_id, &record.staker);
+        let value = Self::serialize(record)?;
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let batch = batch_guard.as_mut().ok_or(StorageError::NoActiveTransaction)?;
+        batch.dao_stakes.insert(key.as_ref(), value);
+        Ok(())
+    }
+
+    fn iter_dao_stakes_for_dao(
+        &self,
+        sector_dao_key_id: &[u8; 32],
+    ) -> StorageResult<Vec<super::DaoStakeRecord>> {
+        let prefix = sector_dao_key_id.as_slice();
+        let mut records = Vec::new();
+        for result in self.dao_stakes.scan_prefix(prefix) {
+            match result {
+                Ok((_key, bytes)) => {
+                    let record: super::DaoStakeRecord = Self::deserialize(&bytes)?;
+                    records.push(record);
+                }
+                Err(e) => return Err(StorageError::Database(e.to_string())),
+            }
+        }
+        Ok(records)
     }
 }
 

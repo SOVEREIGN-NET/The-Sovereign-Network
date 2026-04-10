@@ -1264,6 +1264,13 @@ impl Transaction {
         }
     }
 
+    pub fn dao_stake_data(&self) -> Option<&DaoStakeData> {
+        match &self.payload {
+            TransactionPayload::DaoStake(d) => Some(d),
+            _ => None,
+        }
+    }
+
     /// Get the size of the transaction in bytes
     pub fn size(&self) -> usize {
         bincode::serialize(self).map(|data| data.len()).unwrap_or(0)
@@ -1540,6 +1547,29 @@ impl Transaction {
             signature,
             memo: b"ZHTP_PROCESS_PAYROLL".to_vec(),
             payload: TransactionPayload::ProcessPayroll(data),
+        }
+    }
+
+    /// Build an *unsigned* DaoStake transaction skeleton.
+    ///
+    /// The caller must:
+    /// 1. Compute `tx.signing_hash()`
+    /// 2. Sign it with the staker's Dilithium5 key
+    /// 3. Set `tx.signature` with the real signature + public key
+    ///
+    /// `lock_blocks` must be > 0. `locked_until` is computed by the executor
+    /// as `block_height + lock_blocks` and is NOT in the payload.
+    pub fn new_dao_stake(chain_id: u8, data: DaoStakeData, signature: Signature) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::DaoStake,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo: b"ZHTP_DAO_STAKE".to_vec(),
+            payload: TransactionPayload::DaoStake(data),
         }
     }
 }
@@ -2099,6 +2129,28 @@ pub struct ProcessPayrollData {
     pub contract_id: [u8; 32],
 }
 
+/// SOV staking to a sector DAO wallet
+///
+/// Locks `amount` nSOV from `staker` into `sector_dao_key_id`'s stake record for
+/// `lock_blocks` blocks. The absolute unlock height (`locked_until`) is computed by
+/// the executor as `block_height + lock_blocks` so the staker cannot forge it.
+///
+/// `nonce` is a per-staker monotonic counter stored in `token_nonces` sled tree;
+/// incrementing it prevents a replayed transaction from double-spending the same SOV.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaoStakeData {
+    /// Target sector DAO wallet key_id (must be one of the 5 known DAO addresses)
+    pub sector_dao_key_id: [u8; 32],
+    /// Staker's key_id (= `tx.signature.public_key.key_id` for new wallets)
+    pub staker: [u8; 32],
+    /// Amount of SOV (in nSOV, 1 SOV = 1_000_000_000 nSOV) to lock
+    pub amount: u128,
+    /// Per-staker monotonic nonce; prevents replay attacks
+    pub nonce: u64,
+    /// Requested lock duration in blocks; executor computes `locked_until = block_height + lock_blocks`
+    pub lock_blocks: u64,
+}
+
 // ============================================================================
 // TransactionPayload enum
 // ============================================================================
@@ -2138,4 +2190,6 @@ pub enum TransactionPayload {
     InitCbeToken(InitCbeTokenData),
     CreateEmploymentContract(CreateEmploymentContractData),
     ProcessPayroll(ProcessPayrollData),
+    /// SOV stake to a sector DAO wallet (appended last for bincode discriminant stability)
+    DaoStake(DaoStakeData),
 }

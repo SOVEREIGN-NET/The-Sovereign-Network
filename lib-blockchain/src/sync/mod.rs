@@ -436,6 +436,8 @@ impl ChainSync {
                     | TransactionType::InitCbeToken
                     | TransactionType::CreateEmploymentContract
                     | TransactionType::ProcessPayroll
+                    // DaoStake: moves SOV between accounts, must go through full executor
+                    | TransactionType::DaoStake
             )
         })
     }

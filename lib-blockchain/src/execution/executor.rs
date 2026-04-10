@@ -980,7 +980,8 @@ impl BlockExecutor {
             | TransactionType::TreasuryAllocation
             | TransactionType::InitCbeToken
             | TransactionType::CreateEmploymentContract
-            | TransactionType::ProcessPayroll => {
+            | TransactionType::ProcessPayroll
+            | TransactionType::DaoStake => {
                 // Fall through to the general validation flow below without
                 // treating oracle attestations as automatically valid.
             }
@@ -1968,6 +1969,82 @@ impl BlockExecutor {
         Ok(())
     }
 
+    fn apply_dao_stake(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        block_height: u64,
+    ) -> Result<(), TxApplyError> {
+        use crate::contracts::economics::fee_router::{
+            DAO_EDUCATION_KEY_ID, DAO_ENERGY_KEY_ID, DAO_FOOD_KEY_ID, DAO_HEALTHCARE_KEY_ID,
+            DAO_HOUSING_KEY_ID,
+        };
+        use crate::storage::DaoStakeRecord;
+
+        let data = match tx.dao_stake_data() {
+            Some(d) => d,
+            None => {
+                return Err(TxApplyError::InvalidType(
+                    "DaoStake missing payload".to_string(),
+                ))
+            }
+        };
+
+        // The signer must be the declared staker.
+        if data.staker != tx.signature.public_key.key_id {
+            return Err(TxApplyError::InvalidType(
+                "DaoStake staker must match transaction signer".to_string(),
+            ));
+        }
+
+        // Only the 5 known sector DAO wallets are valid stake targets.
+        let known_daos = [
+            DAO_HEALTHCARE_KEY_ID,
+            DAO_EDUCATION_KEY_ID,
+            DAO_ENERGY_KEY_ID,
+            DAO_HOUSING_KEY_ID,
+            DAO_FOOD_KEY_ID,
+        ];
+        if !known_daos.contains(&data.sector_dao_key_id) {
+            return Err(TxApplyError::InvalidType(
+                "DaoStake target is not a known sector DAO".to_string(),
+            ));
+        }
+
+        let sov_token = Self::canonical_sov_token_id();
+        let staker_addr = Address::new(data.staker);
+        let dao_addr = Address::new(data.sector_dao_key_id);
+
+        // Debit SOV from staker, credit to DAO wallet.
+        // This moves SOV out of the staker's spendable balance for the lock period.
+        // The DaoStakeRecord tracks when it can be reclaimed.
+        mutator.transfer_token(&sov_token, &staker_addr, &dao_addr, data.amount)?;
+
+        // Increment the staker's SOV nonce to prevent replay of this exact transaction.
+        mutator.increment_token_nonce(&sov_token, &staker_addr)?;
+
+        // Persist the stake record with the absolute unlock height.
+        let locked_until = block_height.saturating_add(data.lock_blocks);
+        let record = DaoStakeRecord {
+            staker: data.staker,
+            sector_dao_key_id: data.sector_dao_key_id,
+            amount: data.amount,
+            staked_at_height: block_height,
+            locked_until,
+        };
+        mutator.put_dao_stake(&record)?;
+
+        tracing::info!(
+            "[DAO_STAKE] staker={} dao={} amount={} locked_until={}",
+            hex::encode(&data.staker[..6]),
+            hex::encode(&data.sector_dao_key_id[..6]),
+            data.amount,
+            locked_until,
+        );
+
+        Ok(())
+    }
+
     fn canonical_bonding_curve_envelope_from_transaction(
         &self,
         tx: &crate::transaction::Transaction,
@@ -2316,6 +2393,11 @@ impl BlockExecutor {
             | TransactionType::InitCbeToken
             | TransactionType::CreateEmploymentContract
             | TransactionType::ProcessPayroll => Ok(TxOutcome::LegacySystem),
+
+            TransactionType::DaoStake => {
+                self.apply_dao_stake(mutator, tx, block_height)?;
+                Ok(TxOutcome::LegacySystem)
+            }
 
             // Bonding curve types
             // BondingCurveDeploy and BondingCurveGraduate are wire-format legacy variants
