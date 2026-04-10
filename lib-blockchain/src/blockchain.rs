@@ -924,6 +924,26 @@ impl Blockchain {
                                         .push((data.from, mem_balance));
                                 }
                             }
+                        } else if data.token_id == cbe_token_id {
+                            // CBE balances live in self.cbe_token, not in token_contracts.
+                            // Prefer the in-memory balance; if that is 0 (e.g. after a sled wipe
+                            // + restart where cbe_token was not persisted), read SledStore as the
+                            // authoritative source. Only seed SledStore when it is empty.
+                            let addr = crate::storage::Address::new(data.from);
+                            let storage_token = crate::storage::TokenId(data.token_id);
+                            let sled_bal =
+                                store.get_token_balance(&storage_token, &addr).unwrap_or(0);
+                            if sled_bal == 0 {
+                                let mem_balance = self.cbe_token.balance_of_key_id(&data.from);
+                                if mem_balance > 0 {
+                                    seed_map
+                                        .entry(data.token_id)
+                                        .or_default()
+                                        .push((data.from, mem_balance));
+                                }
+                            }
+                            // If sled_bal > 0: SledStore already has the correct value;
+                            // executor will read it directly — no seeding needed.
                         }
                         // CBE transfers: seed cbe_account_state (not token_balance).
                         // The executor reads cbe_account_state for CBE debit/credit,

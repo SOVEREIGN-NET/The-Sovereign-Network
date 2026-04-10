@@ -719,6 +719,7 @@ impl Blockchain {
             }
         }
 
+
         let cbe_token_id = Blockchain::derive_cbe_token_id();
         if !blockchain.bonding_curve_registry.contains(&cbe_token_id) {
             #[allow(deprecated)]

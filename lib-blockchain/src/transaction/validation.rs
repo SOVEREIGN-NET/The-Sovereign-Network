@@ -1803,6 +1803,32 @@ impl<'a> StatefulTransactionValidator<'a> {
                         }
                     }
                 }
+
+                // CBE balance check: reject at mempool time if sender has insufficient CBE.
+                // Mirrors the SOV balance check above. Reads SledStore when available (executor
+                // path), falls back to cbe_token in-memory (non-executor path or fresh restart
+                // before first CBE transfer in this session).
+                let cbe_token_id = crate::Blockchain::derive_cbe_token_id_pub();
+                if data.token_id == cbe_token_id {
+                    if let Some(blockchain) = self.blockchain {
+                        let storage_token = crate::storage::TokenId(cbe_token_id);
+                        let addr = crate::storage::Address::new(data.from);
+                        let balance: u128 = if let Some(store) = &blockchain.store {
+                            store.get_token_balance(&storage_token, &addr).unwrap_or(0)
+                        } else {
+                            u128::from(blockchain.cbe_token.balance_of_key_id(&data.from))
+                        };
+                        if balance < data.amount {
+                            tracing::warn!(
+                                "[TOKEN_TRANSFER] insufficient CBE balance: from={} have={} need={}",
+                                hex::encode(&data.from[..8]),
+                                balance,
+                                data.amount
+                            );
+                            return Err(ValidationError::InvalidAmount);
+                        }
+                    }
+                }
             }
             TransactionType::TokenMint => {
                 if transaction.version < 2 {

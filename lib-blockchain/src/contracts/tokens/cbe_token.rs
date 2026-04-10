@@ -464,6 +464,7 @@ impl CbeToken {
         self.balances.iter().map(|(&k, &v)| (k, v))
     }
 
+
     /// Set balance by raw key_id (for syncing back from canonical store)
     pub fn set_balance_by_key_id(&mut self, key_id: [u8; 32], balance: u64) {
         if balance == 0 {
