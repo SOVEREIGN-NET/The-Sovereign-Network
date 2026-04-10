@@ -1349,6 +1349,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "dao-register"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "hex",
+ "lib-client",
+ "lib-crypto",
+ "lib-identity",
+ "lib-network",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing-subscriber",
+ "zhtp",
+]
+
+[[package]]
 name = "darling"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"

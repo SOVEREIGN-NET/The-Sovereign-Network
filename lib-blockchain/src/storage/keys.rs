@@ -258,6 +258,22 @@ pub fn cbe_account_key(key_id: &[u8; 32]) -> &[u8; 32] {
 }
 
 // =============================================================================
+// DAO STAKE KEYS
+// =============================================================================
+
+/// Key for the dao_stakes tree: sector_dao_key_id (32) || staker (32) = 64 bytes.
+///
+/// This composite key lets us scan all stakers for a given DAO via a range prefix
+/// on the first 32 bytes, while still uniquely identifying each (dao, staker) pair.
+#[inline]
+pub fn dao_stake_key(sector_dao_key_id: &[u8; 32], staker: &[u8; 32]) -> [u8; 64] {
+    let mut key = [0u8; 64];
+    key[..32].copy_from_slice(sector_dao_key_id);
+    key[32..].copy_from_slice(staker);
+    key
+}
+
+// =============================================================================
 // TESTS
 // =============================================================================
 

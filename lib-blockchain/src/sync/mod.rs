@@ -430,6 +430,14 @@ impl ChainSync {
                     | TransactionType::DaoProposal
                     | TransactionType::DaoVote
                     | TransactionType::DaoExecution
+                    // Employment and payroll: must go through Blockchain.process_and_commit_block
+                    // so that process_employment_contract_transactions and process_payroll_transactions
+                    // run after executor.apply_block, keeping cbe_token.balances accurate.
+                    | TransactionType::InitCbeToken
+                    | TransactionType::CreateEmploymentContract
+                    | TransactionType::ProcessPayroll
+                    // DaoStake: moves SOV between accounts, must go through full executor
+                    | TransactionType::DaoStake
             )
         })
     }

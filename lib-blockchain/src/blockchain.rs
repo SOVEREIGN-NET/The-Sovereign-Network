@@ -425,6 +425,15 @@ pub struct Blockchain {
     /// Block height of the last governance cycle check.
     #[serde(default)]
     pub last_governance_cycle_height: u64,
+
+    // =========================================================================
+    // Fee Router — sector DAO fee distribution (45/30/15/10 split)
+    // =========================================================================
+    /// Routes collected protocol fees to UBI pool, sector DAOs, emergency reserve, dev grants.
+    /// Initialized at startup with the well-known sector DAO wallet addresses from
+    /// keys/dao-wallets.json (registered 2026-04-10).
+    #[serde(default)]
+    pub fee_router: crate::contracts::economics::fee_router::FeeRouter,
 }
 
 /// Validator information stored on-chain.
@@ -889,6 +898,7 @@ impl Blockchain {
             if let Some(store) = &self.store {
                 let mut seed_map: std::collections::HashMap<[u8; 32], Vec<([u8; 32], u64)>> =
                     std::collections::HashMap::new();
+                let mut cbe_account_seed: Vec<([u8; 32], u128)> = Vec::new();
                 let cbe_token_id = self.cbe_token.token_id();
                 for tx in &block.transactions {
                     if let Some(data) = tx.token_transfer_data() {
@@ -935,6 +945,26 @@ impl Blockchain {
                             // If sled_bal > 0: SledStore already has the correct value;
                             // executor will read it directly — no seeding needed.
                         }
+                        // CBE transfers: seed cbe_account_state (not token_balance).
+                        // The executor reads cbe_account_state for CBE debit/credit,
+                        // which is a separate SledStore tree from token_balance.
+                        // Pool wallets (compensation/operational/etc.) have their balance
+                        // in self.cbe_token but have never gone through a BondingCurveBuy,
+                        // so cbe_account_state is empty for them. Seed it here.
+                        if data.token_id == cbe_token_id {
+                            let cbe_sled_state = store.get_cbe_account_state(&data.from);
+                            let cbe_sled_bal = cbe_sled_state
+                                .ok()
+                                .flatten()
+                                .map(|s| s.balance_cbe)
+                                .unwrap_or(0);
+                            if cbe_sled_bal == 0 {
+                                let mem_balance = self.cbe_token.balance_of_key_id(&data.from);
+                                if mem_balance > 0 {
+                                    cbe_account_seed.push((data.from, mem_balance.into()));
+                                }
+                            }
+                        }
                     }
                 }
                 for (token_id, entries) in &seed_map {
@@ -949,6 +979,21 @@ impl Blockchain {
                         Err(e) => tracing::warn!(
                             "[seed-sled] backfill failed for token {} at block {}: {}",
                             hex::encode(&token_id[..8]),
+                            block.header.height,
+                            e
+                        ),
+                        _ => {}
+                    }
+                }
+                if !cbe_account_seed.is_empty() {
+                    match store.backfill_cbe_account_states(&cbe_account_seed) {
+                        Ok(n) if n > 0 => tracing::info!(
+                            "[seed-sled] seeded {} missing cbe_account_state(s) before block {}",
+                            n,
+                            block.header.height
+                        ),
+                        Err(e) => tracing::warn!(
+                            "[seed-sled] cbe_account_state backfill failed at block {}: {}",
                             block.header.height,
                             e
                         ),
@@ -996,20 +1041,24 @@ impl Blockchain {
                             }
                         }
 
-                        // Sync CBE token balances back from SledStore so cbe_token stays
-                        // consistent with executed state for subsequent balance queries.
+                        // Sync CBE token balances back from cbe_account_state so cbe_token
+                        // stays consistent with executed state for subsequent balance queries.
+                        // NOTE: CBE balances live in the cbe_account_state tree, NOT
+                        // token_balance. Reading token_balance would always return 0 and zero
+                        // out cbe_token.balances for all touched addresses, breaking the
+                        // seeding code for subsequent CBE TokenTransfer blocks.
                         let cbe_id = self.cbe_token.token_id();
-                        let storage_cbe_id = crate::storage::TokenId(cbe_id);
                         for tx in &block.transactions {
                             if let Some(d) = tx.token_transfer_data() {
                                 if d.token_id == cbe_id {
                                     for addr_bytes in [d.from, d.to] {
-                                        let addr = crate::storage::Address::new(addr_bytes);
-                                        if let Ok(balance) =
-                                            store.get_token_balance(&storage_cbe_id, &addr)
+                                        if let Ok(Some(state)) =
+                                            store.get_cbe_account_state(&addr_bytes)
                                         {
-                                            self.cbe_token
-                                                .set_balance_by_key_id(addr_bytes, balance as u64);
+                                            self.cbe_token.set_balance_by_key_id(
+                                                addr_bytes,
+                                                state.balance_cbe as u64,
+                                            );
                                         }
                                     }
                                 }
@@ -1029,6 +1078,27 @@ impl Blockchain {
                     // executor mode — making transfers fail the mempool balance check.
                     if let Err(e) = self.process_wallet_transactions(&block) {
                         warn!("process_wallet_transactions in executor path: {}", e);
+                    }
+                    // Replay employment contract setup so that process_payroll_transactions below
+                    // can find contracts in employment_registry.
+                    if let Err(e) = self.process_employment_contract_transactions(&block) {
+                        warn!("process_employment_contract_transactions in executor path: {}", e);
+                    }
+                    // Replay CBE initialization so cbe_token pool addresses are correct before
+                    // payroll runs. The error "already initialized" is harmless — silently ignored.
+                    if let Err(e) = self.process_init_cbe_token_transactions(&block) {
+                        if !e.to_string().contains("already initialized") {
+                            warn!("process_init_cbe_token_transactions in executor path: {}", e);
+                        }
+                    }
+                    // Process payroll in-memory so that cbe_token.balances stays accurate for
+                    // employees who receive CBE via ProcessPayroll. The executor returns
+                    // LegacySystem for ProcessPayroll (no sled mutation), so without this call
+                    // employees have 0 in cbe_token.balances. The seeding code then can't seed
+                    // their cbe_account_state when they subsequently send a CBE TokenTransfer,
+                    // causing "Insufficient token balance: have 0" failures during catchup sync.
+                    if let Err(e) = self.process_payroll_transactions(&block) {
+                        warn!("process_payroll_transactions in executor path: {}", e);
                     }
                     for tx in &block.transactions {
                         self.index_dao_registry_entry_from_tx(tx, block.header.height);

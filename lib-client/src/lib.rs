@@ -60,7 +60,8 @@ pub use cbe_tx::{
 };
 pub use crypto::{Blake3, Dilithium5, Kyber1024};
 pub use dao_tx::{
-    build_init_entity_registry_tx, build_record_on_ramp_trade_tx, build_treasury_allocation_tx,
+    build_dao_stake_tx, build_init_entity_registry_tx, build_record_on_ramp_trade_tx,
+    build_treasury_allocation_tx,
 };
 pub use error::{ClientError, Result};
 pub use handshake::{HandshakeResult, HandshakeState};
@@ -1520,6 +1521,52 @@ pub extern "C" fn zhtp_client_build_token_burn(
     token_id_arr.copy_from_slice(token_id_slice);
 
     match token_tx::build_burn_tx(identity, &token_id_arr, amount, chain_id) {
+        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Build a signed DaoStake transaction.
+///
+/// Stakes `amount` nSOV (1 SOV = 1_000_000_000 nSOV) from the staker's balance to the
+/// target sector DAO wallet for `lock_blocks` blocks.  The staker is the identity
+/// identified by `handle`; `sector_dao_key_id` must be one of the 5 known DAO key_ids
+/// (see `keys/dao-wallets.json`).
+///
+/// Returns hex-encoded, bincode-serialized signed Transaction ready to POST to
+/// `POST /api/v1/dao/stake` as `{"signed_tx": "<hex>"}`.
+/// Returns NULL on any error.  Caller must free with `zhtp_client_string_free`.
+///
+/// # Parameters
+/// - `handle`: Staker's identity handle (provides Dilithium5 signing keypair)
+/// - `sector_dao_key_id`: 32-byte key_id of the target sector DAO wallet
+/// - `amount`: nSOV to stake (u64; cast to u128 internally — max ~18.4 billion SOV)
+/// - `nonce`: Per-staker monotonic nonce (fetch from `GET /api/v1/token/nonce/...`)
+/// - `lock_blocks`: Lock duration in blocks (must be > 0; e.g., 50_400 ≈ 7 days)
+/// - `chain_id`: Network chain ID (1 = mainnet)
+#[no_mangle]
+pub extern "C" fn zhtp_client_build_dao_stake(
+    handle: *const IdentityHandle,
+    sector_dao_key_id: *const u8,
+    amount: u64,
+    nonce: u64,
+    lock_blocks: u64,
+    chain_id: u8,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || sector_dao_key_id.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let dao_slice = unsafe { std::slice::from_raw_parts(sector_dao_key_id, 32) };
+
+    let mut dao_arr = [0u8; 32];
+    dao_arr.copy_from_slice(dao_slice);
+
+    match dao_tx::build_dao_stake_tx(identity, dao_arr, amount as u128, nonce, lock_blocks, chain_id) {
         Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
             Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),

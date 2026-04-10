@@ -980,7 +980,8 @@ impl BlockExecutor {
             | TransactionType::TreasuryAllocation
             | TransactionType::InitCbeToken
             | TransactionType::CreateEmploymentContract
-            | TransactionType::ProcessPayroll => {
+            | TransactionType::ProcessPayroll
+            | TransactionType::DaoStake => {
                 // Fall through to the general validation flow below without
                 // treating oracle attestations as automatically valid.
             }
@@ -1968,6 +1969,82 @@ impl BlockExecutor {
         Ok(())
     }
 
+    fn apply_dao_stake(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        block_height: u64,
+    ) -> Result<(), TxApplyError> {
+        use crate::contracts::economics::fee_router::{
+            DAO_EDUCATION_KEY_ID, DAO_ENERGY_KEY_ID, DAO_FOOD_KEY_ID, DAO_HEALTHCARE_KEY_ID,
+            DAO_HOUSING_KEY_ID,
+        };
+        use crate::storage::DaoStakeRecord;
+
+        let data = match tx.dao_stake_data() {
+            Some(d) => d,
+            None => {
+                return Err(TxApplyError::InvalidType(
+                    "DaoStake missing payload".to_string(),
+                ))
+            }
+        };
+
+        // The signer must be the declared staker.
+        if data.staker != tx.signature.public_key.key_id {
+            return Err(TxApplyError::InvalidType(
+                "DaoStake staker must match transaction signer".to_string(),
+            ));
+        }
+
+        // Only the 5 known sector DAO wallets are valid stake targets.
+        let known_daos = [
+            DAO_HEALTHCARE_KEY_ID,
+            DAO_EDUCATION_KEY_ID,
+            DAO_ENERGY_KEY_ID,
+            DAO_HOUSING_KEY_ID,
+            DAO_FOOD_KEY_ID,
+        ];
+        if !known_daos.contains(&data.sector_dao_key_id) {
+            return Err(TxApplyError::InvalidType(
+                "DaoStake target is not a known sector DAO".to_string(),
+            ));
+        }
+
+        let sov_token = Self::canonical_sov_token_id();
+        let staker_addr = Address::new(data.staker);
+        let dao_addr = Address::new(data.sector_dao_key_id);
+
+        // Debit SOV from staker, credit to DAO wallet.
+        // This moves SOV out of the staker's spendable balance for the lock period.
+        // The DaoStakeRecord tracks when it can be reclaimed.
+        mutator.transfer_token(&sov_token, &staker_addr, &dao_addr, data.amount)?;
+
+        // Increment the staker's SOV nonce to prevent replay of this exact transaction.
+        mutator.increment_token_nonce(&sov_token, &staker_addr)?;
+
+        // Persist the stake record with the absolute unlock height.
+        let locked_until = block_height.saturating_add(data.lock_blocks);
+        let record = DaoStakeRecord {
+            staker: data.staker,
+            sector_dao_key_id: data.sector_dao_key_id,
+            amount: data.amount,
+            staked_at_height: block_height,
+            locked_until,
+        };
+        mutator.put_dao_stake(&record)?;
+
+        tracing::info!(
+            "[DAO_STAKE] staker={} dao={} amount={} locked_until={}",
+            hex::encode(&data.staker[..6]),
+            hex::encode(&data.sector_dao_key_id[..6]),
+            data.amount,
+            locked_until,
+        );
+
+        Ok(())
+    }
+
     fn canonical_bonding_curve_envelope_from_transaction(
         &self,
         tx: &crate::transaction::Transaction,
@@ -2058,7 +2135,48 @@ impl BlockExecutor {
                     ));
                 }
 
-                // Apply the token transfer with 1% protocol fee routed to fee sink.
+                // CBE balances live in cbe_account_state (canonical buy/sell path), not
+                // in token_balance. Use cbe_account_state for debit/credit so that CBE
+                // transfers can spend balances acquired via BondingCurveBuy transactions.
+                //
+                // For legacy wallets where transfer_data.from (wallet_id) != key_id, the
+                // CBE balance was credited to key_id by apply_buy_cbe (which uses tx.sender
+                // = buyer_key_id). Debit from key_id so the balance is actually found.
+                let cbe_token_id_arr = crate::Blockchain::derive_cbe_token_id_pub();
+                if transfer_data.token_id == cbe_token_id_arr {
+                    // CBE transfers are fee-free: full amount goes to recipient.
+                    // (Legacy cbe_token.transfer() never charged fees.)
+                    let effective_sender = if transfer_data.from != tx.signature.public_key.key_id {
+                        tx.signature.public_key.key_id
+                    } else {
+                        transfer_data.from
+                    };
+                    let mut sender_acc = mutator.get_cbe_account_state(&effective_sender)?;
+                    if sender_acc.balance_cbe < amount {
+                        return Err(TxApplyError::InsufficientBalance {
+                            have: sender_acc.balance_cbe,
+                            need: amount,
+                            token,
+                        });
+                    }
+                    sender_acc.balance_cbe -= amount;
+                    mutator.put_cbe_account_state(&effective_sender, &sender_acc)?;
+
+                    let mut to_acc = mutator.get_cbe_account_state(&transfer_data.to)?;
+                    to_acc.balance_cbe += amount;
+                    mutator.put_cbe_account_state(&transfer_data.to, &to_acc)?;
+
+                    mutator.increment_token_nonce(&token, &from)?;
+
+                    return Ok(TxOutcome::TokenTransfer(TokenTransferOutcome {
+                        token,
+                        from,
+                        to,
+                        amount,
+                    }));
+                }
+
+                // Non-CBE: apply via standard token_balance table with 1% fee.
                 let fee_destination = *self.fee_model.protocol_params.fee_sink_address();
                 let _fee_collected = tx_apply::apply_token_transfer(
                     mutator,
@@ -2267,7 +2385,19 @@ impl BlockExecutor {
             | TransactionType::ProfitDeclaration
             | TransactionType::GovernanceConfigUpdate
             | TransactionType::UpdateOracleCommittee
-            | TransactionType::UpdateOracleConfig => Ok(TxOutcome::LegacySystem),
+            | TransactionType::UpdateOracleConfig
+            // Employment and payroll transactions: state is maintained in-memory by
+            // process_employment_contract_transactions and process_payroll_transactions
+            // (called after executor.apply_block in process_and_commit_block). The executor
+            // accepts them as no-ops so blocks containing these types don't fail validation.
+            | TransactionType::InitCbeToken
+            | TransactionType::CreateEmploymentContract
+            | TransactionType::ProcessPayroll => Ok(TxOutcome::LegacySystem),
+
+            TransactionType::DaoStake => {
+                self.apply_dao_stake(mutator, tx, block_height)?;
+                Ok(TxOutcome::LegacySystem)
+            }
 
             // Bonding curve types
             // BondingCurveDeploy and BondingCurveGraduate are wire-format legacy variants

@@ -2966,6 +2966,172 @@ impl DaoHandler {
 
     /// `POST /api/v1/dao/proposal/{id}/submit`
     ///
+    /// POST /api/v1/dao/stake
+    ///
+    /// Submit a signed `DaoStake` transaction. The client must:
+    /// 1. Build a `Transaction` with `transaction_type = DaoStake` and payload
+    ///    `TransactionPayload::DaoStake(DaoStakeData { sector_dao_key_id, staker, amount, nonce, lock_blocks })`
+    /// 2. Sign it with the staker's Dilithium5 key (staker must equal tx.signature.public_key.key_id)
+    /// 3. Bincode-serialize + hex-encode the transaction
+    /// 4. POST `{"signed_tx": "<hex>"}` here
+    ///
+    /// SOV is immediately transferred from the staker's balance to the DAO wallet
+    /// and locked until `block_height + lock_blocks`.
+    async fn handle_dao_stake(
+        &self,
+        request: &lib_protocols::types::ZhtpRequest,
+    ) -> Result<lib_protocols::types::ZhtpResponse> {
+        #[derive(Deserialize)]
+        struct DaoStakeRequest {
+            signed_tx: String,
+        }
+
+        let req: DaoStakeRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
+
+        let tx = self.decode_signed_tx_raw(&req.signed_tx)
+            .map_err(|e| {
+                return anyhow::anyhow!("Failed to decode signed_tx: {}", e);
+            })?;
+
+        if tx.transaction_type != lib_blockchain::TransactionType::DaoStake {
+            return create_json_response(json!({
+                "status": "error",
+                "message": format!("Expected DaoStake transaction, got {:?}", tx.transaction_type)
+            }));
+        }
+
+        let data = match tx.dao_stake_data() {
+            Some(d) => d.clone(),
+            None => {
+                return create_json_response(json!({
+                    "status": "error",
+                    "message": "DaoStake transaction missing payload"
+                }));
+            }
+        };
+
+        // Validate with stateful validator before accepting into mempool.
+        {
+            let blockchain_arc = self.get_blockchain().await?;
+            let blockchain = blockchain_arc.read().await;
+            let validator = lib_blockchain::transaction::StatefulTransactionValidator::new(&blockchain);
+            if let Err(e) = validator.validate_transaction_with_state(&tx) {
+                tracing::warn!(
+                    "[DAO_STAKE] validation failed: staker={} dao={} amount={} err={}",
+                    hex::encode(&data.staker[..6]),
+                    hex::encode(&data.sector_dao_key_id[..6]),
+                    data.amount,
+                    e
+                );
+                return create_json_response(json!({
+                    "status": "error",
+                    "message": format!("Validation failed: {}", e)
+                }));
+            }
+        }
+
+        let tx_hash = tx.hash();
+
+        {
+            let blockchain_arc2 = self.get_blockchain().await?;
+            let mut bc = blockchain_arc2.write().await;
+            bc.add_pending_transaction(tx)
+                .map_err(|e| anyhow::anyhow!("Mempool rejection: {}", e))?;
+        }
+
+        tracing::info!(
+            "[DAO_STAKE] accepted: staker={} dao={} amount={} lock_blocks={}",
+            hex::encode(&data.staker[..6]),
+            hex::encode(&data.sector_dao_key_id[..6]),
+            data.amount,
+            data.lock_blocks,
+        );
+
+        create_json_response(json!({
+            "status": "accepted",
+            "tx_hash": hex::encode(tx_hash.as_bytes()),
+            "staker": hex::encode(data.staker),
+            "sector_dao_key_id": hex::encode(data.sector_dao_key_id),
+            "amount": data.amount,
+            "lock_blocks": data.lock_blocks,
+            "message": "DaoStake transaction accepted into mempool"
+        }))
+    }
+
+    /// GET /api/v1/dao/stakes/{staker_key_id}
+    ///
+    /// Returns all active DAO stake records for a given staker across all 5 sector DAOs.
+    /// `staker_key_id` is the hex-encoded 32-byte key_id of the staker.
+    async fn handle_get_dao_stakes(
+        &self,
+        staker_key_id_hex: &str,
+    ) -> Result<lib_protocols::types::ZhtpResponse> {
+        use lib_blockchain::contracts::economics::fee_router::{
+            DAO_EDUCATION_KEY_ID, DAO_ENERGY_KEY_ID, DAO_FOOD_KEY_ID, DAO_HEALTHCARE_KEY_ID,
+            DAO_HOUSING_KEY_ID,
+        };
+        use lib_blockchain::storage::BlockchainStore;
+
+        let staker_bytes = hex::decode(staker_key_id_hex)
+            .map_err(|_| anyhow::anyhow!("Invalid hex for staker_key_id"))?;
+        if staker_bytes.len() != 32 {
+            return create_json_response(json!({
+                "status": "error",
+                "message": "staker_key_id must be 32 bytes (64 hex chars)"
+            }));
+        }
+        let mut staker = [0u8; 32];
+        staker.copy_from_slice(&staker_bytes);
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        let store = match &blockchain.store {
+            Some(s) => s,
+            None => {
+                return create_json_response(json!({
+                    "status": "error",
+                    "message": "Node storage not available"
+                }));
+            }
+        };
+
+        let dao_names = [
+            ("healthcare", DAO_HEALTHCARE_KEY_ID),
+            ("education",  DAO_EDUCATION_KEY_ID),
+            ("energy",     DAO_ENERGY_KEY_ID),
+            ("housing",    DAO_HOUSING_KEY_ID),
+            ("food",       DAO_FOOD_KEY_ID),
+        ];
+
+        let current_height = blockchain.height;
+        let mut stakes = Vec::new();
+
+        for (name, dao_key_id) in &dao_names {
+            if let Ok(Some(record)) = store.get_dao_stake(dao_key_id, &staker) {
+                stakes.push(json!({
+                    "sector": name,
+                    "sector_dao_key_id": hex::encode(record.sector_dao_key_id),
+                    "amount": record.amount,
+                    "staked_at_height": record.staked_at_height,
+                    "locked_until": record.locked_until,
+                    "unlocked": current_height >= record.locked_until,
+                    "blocks_remaining": record.locked_until.saturating_sub(current_height),
+                }));
+            }
+        }
+
+        create_json_response(json!({
+            "staker": staker_key_id_hex,
+            "current_height": current_height,
+            "stakes": stakes,
+            "total_staked": stakes.iter()
+                .filter_map(|s| s["amount"].as_u64())
+                .sum::<u64>()
+        }))
+    }
+
     /// Submit the assembled transaction to the mempool via `StatefulTransactionValidator`.
     /// The request body must contain a `signed_tx` field with the hex-encoded serialized Transaction.
     async fn handle_submit_proposal(
@@ -3193,6 +3359,16 @@ impl ZhtpRequestHandler for DaoHandler {
                 .map_err(anyhow::Error::from),
             (ZhtpMethod::Post, ["api", "v1", "dao", "proposal", id, "submit"]) => self
                 .handle_submit_proposal(&request, id)
+                .await
+                .map_err(anyhow::Error::from),
+
+            // DAO Staking endpoints
+            (ZhtpMethod::Post, ["api", "v1", "dao", "stake"]) => self
+                .handle_dao_stake(&request)
+                .await
+                .map_err(anyhow::Error::from),
+            (ZhtpMethod::Get, ["api", "v1", "dao", "stakes", staker_key_id]) => self
+                .handle_get_dao_stakes(staker_key_id)
                 .await
                 .map_err(anyhow::Error::from),
 
