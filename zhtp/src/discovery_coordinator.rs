@@ -6,6 +6,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{mpsc, RwLock};
@@ -719,8 +720,9 @@ impl DiscoveryCoordinator {
                 // SocketAddr::parse only handles IP literals; use to_socket_addrs for DNS names.
                 let is_valid = peer.parse::<std::net::SocketAddr>().is_ok()
                     || peer
+                        .as_str()
                         .to_socket_addrs()
-                        .map(|mut a| a.next().is_some())
+                        .map(|mut a: std::vec::IntoIter<std::net::SocketAddr>| a.next().is_some())
                         .unwrap_or(false);
                 if is_valid {
                     debug!(
