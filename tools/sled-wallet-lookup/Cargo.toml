@@ -1,0 +1,14 @@
+[package]
+name = "sled-wallet-lookup"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "sled-wallet-lookup"
+path = "src/main.rs"
+
+[dependencies]
+sled = "0.34"
+bincode = "1"
+hex = "0.4"
+blake3 = "1"

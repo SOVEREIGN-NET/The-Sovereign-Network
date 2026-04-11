@@ -6119,6 +6119,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sled-wallet-lookup"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "blake3",
+ "hex",
+ "sled",
+]
+
+[[package]]
 name = "slotmap"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

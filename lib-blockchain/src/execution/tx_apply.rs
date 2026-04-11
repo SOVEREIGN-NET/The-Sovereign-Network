@@ -294,9 +294,28 @@ impl<'a> StateMutator<'a> {
     // DAO Stake Primitives
     // =========================================================================
 
+    /// Retrieve a DAO stake record for reading (no write permission needed).
+    pub fn get_dao_stake(
+        &self,
+        sector_dao_key_id: &[u8; 32],
+        staker: &[u8; 32],
+    ) -> TxApplyResult<Option<crate::storage::DaoStakeRecord>> {
+        Ok(self.store.get_dao_stake(sector_dao_key_id, staker)?)
+    }
+
     /// Persist a DAO stake record (upsert) within the current block transaction.
     pub fn put_dao_stake(&self, record: &crate::storage::DaoStakeRecord) -> TxApplyResult<()> {
         self.store.put_dao_stake(record)?;
+        Ok(())
+    }
+
+    /// Delete a DAO stake record within the current block transaction.
+    pub fn delete_dao_stake(
+        &self,
+        sector_dao_key_id: &[u8; 32],
+        staker: &[u8; 32],
+    ) -> TxApplyResult<()> {
+        self.store.delete_dao_stake(sector_dao_key_id, staker)?;
         Ok(())
     }
 

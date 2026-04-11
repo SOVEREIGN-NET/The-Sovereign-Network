@@ -252,13 +252,80 @@ impl WalletHandler {
             }
         };
 
-        // Get wallets from the identity's wallet manager (created during identity registration)
+        // Get wallets from the identity's wallet manager (created during identity registration).
+        // If empty (e.g. after sled wipe + seed recovery), fall back to scanning
+        // blockchain.wallet_registry for wallets owned by this identity.
         let wallet_summaries = identity.list_wallets();
 
         let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
 
         let mut wallets = Vec::new();
         let mut total_balance_adjusted = 0u64;
+
+        if wallet_summaries.is_empty() {
+            // Fallback: surface wallets from the on-chain registry that belong to this identity.
+            let blockchain = self.blockchain.read().await;
+            for (wallet_id_hex, wallet_data) in &blockchain.wallet_registry {
+                let owned = wallet_data
+                    .owner_identity_id
+                    .map(|owner| owner.as_bytes() == identity_id_bytes.as_slice())
+                    .unwrap_or(false);
+                if !owned {
+                    continue;
+                }
+                let effective_balance = hex::decode(wallet_id_hex)
+                    .ok()
+                    .filter(|b| b.len() == 32)
+                    .and_then(|bytes| {
+                        blockchain.token_contracts.get(&sov_token_id).and_then(|token| {
+                            let mut key_id = [0u8; 32];
+                            key_id.copy_from_slice(&bytes);
+                            let wallet_key =
+                                lib_blockchain::integration::crypto_integration::PublicKey {
+                                    dilithium_pk: [0u8; 2592],
+                                    kyber_pk: [0u8; 1568],
+                                    key_id,
+                                };
+                            token.balances.get(&wallet_key).copied()
+                        })
+                    })
+                    .unwrap_or(0);
+                let wallet_info = WalletInfo {
+                    wallet_type: wallet_data.wallet_type.clone(),
+                    wallet_id: wallet_id_hex.clone(),
+                    available_balance: effective_balance,
+                    staked_balance: 0,
+                    pending_rewards: 0,
+                    total_balance: effective_balance,
+                    permissions: WalletPermissionsInfo {
+                        can_transfer_external: true,
+                        can_vote: wallet_data.wallet_type == "Primary",
+                        can_stake: true,
+                        can_receive_rewards: true,
+                        daily_transaction_limit: 1_000_000,
+                        requires_multisig_threshold: None,
+                    },
+                    created_at: wallet_data.created_at,
+                    description: format!("{} wallet (recovered)", wallet_data.wallet_type),
+                };
+                total_balance_adjusted += effective_balance;
+                wallets.push(wallet_info);
+            }
+            let response_data = json!({
+                "status": "success",
+                "identity_id": identity_id,
+                "total_wallets": wallets.len(),
+                "total_balance": total_balance_adjusted,
+                "wallets": wallets
+            });
+            let json_response = serde_json::to_vec(&response_data)?;
+            return Ok(ZhtpResponse::success_with_content_type(
+                json_response,
+                "application/json".to_string(),
+                None,
+            ));
+        }
+
         for summary in wallet_summaries.iter() {
             // Get full wallet details to access staked_balance and pending_rewards
             let (staked_balance, pending_rewards) =

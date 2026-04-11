@@ -181,7 +181,11 @@ pub fn generate_identity(device_id: String) -> Result<Identity> {
     Ok(Identity {
         did,
         public_key: rsk.public_key.clone(),
-        private_key: rsk.secret_key.clone(),
+        private_key: {
+            let mut pk = rsk.secret_key.clone();
+            if pk.len() == 4864 { pk.resize(4896, 0u8); }
+            pk
+        },
         kyber_public_key: kyber_pk,
         kyber_secret_key: kyber_sk,
         node_id,
@@ -237,7 +241,11 @@ pub fn restore_identity_from_seed(
     Ok(Identity {
         did,
         public_key: rsk.public_key.clone(),
-        private_key: rsk.secret_key.clone(),
+        private_key: {
+            let mut pk = rsk.secret_key.clone();
+            if pk.len() == 4864 { pk.resize(4896, 0u8); }
+            pk
+        },
         kyber_public_key: kyber_pk,
         kyber_secret_key: kyber_sk,
         node_id,
@@ -272,10 +280,9 @@ pub fn build_migrate_identity_request(
             identity.public_key.len()
         )));
     }
-    if identity.private_key.len() != Dilithium5::SECRET_KEY_SIZE {
+    if identity.private_key.len() != 4896 {
         return Err(ClientError::CryptoError(format!(
-            "Invalid Dilithium5 secret key size for migration: expected seeded {} (crystals), got {}",
-            Dilithium5::SECRET_KEY_SIZE,
+            "Invalid Dilithium5 secret key size for migration: expected 4896-byte padded format, got {}",
             identity.private_key.len()
         )));
     }
@@ -754,11 +761,8 @@ mod tests {
 
         assert!(identity.did.starts_with("did:zhtp:"));
         assert_eq!(identity.public_key.len(), Dilithium5::PUBLIC_KEY_SIZE);
-        // Seeded keys use crystals-dilithium (4864 bytes)
-        assert_eq!(
-            identity.private_key.len(),
-            Dilithium5::SECRET_KEY_SIZE
-        );
+        // Normalized to 4896-byte padded storage format for consistency
+        assert_eq!(identity.private_key.len(), 4896);
         assert_eq!(identity.kyber_public_key.len(), Kyber1024::PUBLIC_KEY_SIZE);
         assert_eq!(identity.kyber_secret_key.len(), Kyber1024::SECRET_KEY_SIZE);
         assert_eq!(identity.node_id.len(), 32);

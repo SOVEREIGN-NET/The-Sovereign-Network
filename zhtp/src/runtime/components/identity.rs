@@ -164,17 +164,13 @@ impl Component for IdentityComponent {
             }
         }
 
-        // Backfill identities from blockchain.identity_registry that are missing from IdentityManager.
-        // This ensures all nodes have consistent identity state regardless of DHT storage gaps.
-        match backfill_identities_from_blockchain(&identity_manager_arc).await {
-            Ok(count) if count > 0 => {
-                info!("✅ Blockchain identity backfill: {} identities synced to IdentityManager", count);
-            }
-            Ok(_) => {}
-            Err(e) => {
-                info!("⚠️ Blockchain identity backfill skipped (non-fatal): {}", e);
-            }
-        }
+        // DISABLED: backfill_identities_from_blockchain was overwriting wallet assignments
+        // for all DIDs on every restart when sled storage was empty (e.g. after process user
+        // migration from root to zhtp). It re-linked wallets based on owner_identity_id in
+        // blockchain.wallet_registry, which is stale after identity migration (old DID still
+        // owns the funded wallet). This caused users to see an empty unfunded wallet instead
+        // of their real one. Do NOT re-enable without fixing wallet ownership migration first.
+        // match backfill_identities_from_blockchain(&identity_manager_arc).await { ... }
 
         info!("🪙 Startup SOV backfill disabled; canonical genesis/state must already be complete");
 

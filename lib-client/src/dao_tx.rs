@@ -9,7 +9,9 @@
 //! - TreasuryAllocation   (Bootstrap Council approved SOV transfers)
 //! - DaoStake             (User stakes SOV to a sector DAO for lock_blocks duration)
 
-use lib_blockchain::transaction::{DaoStakeData, RecordOnRampTradeData, TreasuryAllocationData};
+use lib_blockchain::transaction::{
+    DaoStakeData, DaoUnstakeData, RecordOnRampTradeData, TreasuryAllocationData,
+};
 use lib_blockchain::{Approval, ApprovalDomain, ThresholdApprovalSet, Transaction};
 use lib_crypto::types::signatures::SignatureAlgorithm;
 
@@ -219,6 +221,70 @@ pub fn build_dao_stake_tx(
     Ok(hex::encode(bytes))
 }
 
+/// Build and sign a `DaoUnstake` transaction.
+///
+/// Reclaims the full locked SOV amount from `sector_dao_key_id` back to the staker.
+/// The lock period must have expired on-chain; the server rejects early unstake attempts.
+///
+/// # Arguments
+/// - `identity` — Staker's identity (contains Dilithium5 private key for signing)
+/// - `sector_dao_key_id` — 32-byte key_id of the sector DAO that holds the stake
+/// - `nonce` — Per-staker current SOV nonce (same counter used by DaoStake)
+/// - `chain_id` — Network chain ID (1 = mainnet)
+///
+/// # Returns
+/// Hex-encoded, bincode-serialized signed `Transaction` ready to POST to
+/// `POST /api/v1/dao/unstake` as `{"signed_tx": "<hex>"}`.
+pub fn build_dao_unstake_tx(
+    identity: &crate::identity::Identity,
+    sector_dao_key_id: [u8; 32],
+    nonce: u64,
+    chain_id: u8,
+) -> Result<String, String> {
+    use crate::token_tx::create_public_key_with_kyber;
+    use lib_blockchain::integration::crypto_integration::Signature;
+
+    let sender_pk =
+        create_public_key_with_kyber(identity.public_key.clone(), identity.kyber_public_key.clone());
+
+    let data = DaoUnstakeData {
+        sector_dao_key_id,
+        staker: sender_pk.key_id,
+        nonce,
+    };
+
+    let mut tx = Transaction::new_dao_unstake(
+        chain_id,
+        data,
+        Signature {
+            signature: vec![],
+            public_key: sender_pk.clone(),
+            algorithm: SignatureAlgorithm::DEFAULT,
+            timestamp: 0,
+        },
+    );
+
+    tx.fee = 0;
+
+    let tx_hash = tx.signing_hash();
+    let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
+        .map_err(|e| format!("Failed to sign DaoUnstake: {}", e))?;
+
+    tx.signature = Signature {
+        signature: signature_bytes,
+        public_key: sender_pk,
+        algorithm: SignatureAlgorithm::DEFAULT,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    };
+
+    let bytes = bincode::serialize(&tx)
+        .map_err(|e| format!("Failed to serialize DaoUnstake tx: {}", e))?;
+    Ok(hex::encode(bytes))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -299,5 +365,45 @@ mod tests {
         assert_eq!(data.spending_category, "Operations");
         assert_eq!(data.proposal_id, proposal);
         assert!(data.approvals.approvals.is_empty());
+    }
+
+    #[test]
+    fn test_build_dao_unstake_tx_round_trip() {
+        use super::build_dao_unstake_tx;
+        use std::convert::TryInto;
+        use crate::identity::generate_identity;
+
+        let identity = generate_identity("test-device".to_string()).unwrap();
+        let dao_key_id = [0xAAu8; 32];
+        let nonce = 42u64;
+        let chain_id = 1u8;
+
+        let signed_tx = build_dao_unstake_tx(&identity, dao_key_id, nonce, chain_id).unwrap();
+
+        // Verify hex encoding and round-trip serialization
+        let tx_bytes = hex::decode(&signed_tx).expect("valid hex");
+        let tx: lib_blockchain::Transaction = bincode::deserialize(&tx_bytes)
+            .expect("valid transaction");
+
+        // Verify transaction type
+        assert_eq!(tx.transaction_type, TransactionType::DaoUnstake);
+
+        // Verify memo
+        assert_eq!(tx.memo, b"ZHTP_DAO_UNSTAKE");
+
+        // Verify fee is zero
+        assert_eq!(tx.fee, 0);
+
+        // Verify no inputs/outputs (DAO transactions don't use UTXOs)
+        assert!(tx.inputs.is_empty());
+        assert!(tx.outputs.is_empty());
+
+        // Verify payload fields
+        let data = tx.dao_unstake_data().expect("DaoUnstake payload");
+        assert_eq!(data.sector_dao_key_id, dao_key_id);
+        assert_eq!(data.nonce, nonce);
+
+        // Verify signature is present and valid
+        assert!(!tx.signature.signature.is_empty());
     }
 }

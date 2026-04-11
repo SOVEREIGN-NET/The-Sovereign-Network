@@ -365,7 +365,8 @@ impl BlockExecutor {
             key_id: recipient.0,
         };
         contract.total_supply = new_supply;
-        contract.balances.insert(recipient_pk, balance);
+        let new_balance = balance + amount_u64;
+        contract.balances.insert(recipient_pk, new_balance);
         mutator.put_token_supply(&token_id, new_supply)?;
         mutator.put_token_contract(&contract)?;
         Ok(())
@@ -981,7 +982,8 @@ impl BlockExecutor {
             | TransactionType::InitCbeToken
             | TransactionType::CreateEmploymentContract
             | TransactionType::ProcessPayroll
-            | TransactionType::DaoStake => {
+            | TransactionType::DaoStake
+            | TransactionType::DaoUnstake => {
                 // Fall through to the general validation flow below without
                 // treating oracle attestations as automatically valid.
             }
@@ -2045,6 +2047,84 @@ impl BlockExecutor {
         Ok(())
     }
 
+    fn apply_dao_unstake(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        block_height: u64,
+    ) -> Result<(), TxApplyError> {
+        use crate::storage::DaoStakeRecord;
+
+        let data = match tx.dao_unstake_data() {
+            Some(d) => d,
+            None => {
+                return Err(TxApplyError::InvalidType(
+                    "DaoUnstake missing payload".to_string(),
+                ))
+            }
+        };
+
+        // The signer must be the declared staker.
+        if data.staker != tx.signature.public_key.key_id {
+            return Err(TxApplyError::InvalidType(
+                "DaoUnstake staker must match transaction signer".to_string(),
+            ));
+        }
+
+        // Load the stake record — it must exist.
+        let record: DaoStakeRecord = mutator
+            .get_dao_stake(&data.sector_dao_key_id, &data.staker)?
+            .ok_or_else(|| {
+                TxApplyError::InvalidType(format!(
+                    "DaoUnstake: no stake record found for staker={} dao={}",
+                    hex::encode(&data.staker[..6]),
+                    hex::encode(&data.sector_dao_key_id[..6]),
+                ))
+            })?;
+
+        // Enforce the lock period — cannot unstake before locked_until.
+        if block_height < record.locked_until {
+            return Err(TxApplyError::InvalidType(format!(
+                "DaoUnstake: stake still locked until height {} (current {})",
+                record.locked_until, block_height,
+            )));
+        }
+
+        let sov_token = Self::canonical_sov_token_id();
+        let dao_addr = Address::new(data.sector_dao_key_id);
+        let staker_addr = Address::new(data.staker);
+
+        // Enforce exact SOV nonce matching to prevent replay of old signed unstake transactions.
+        let expected_nonce = mutator.get_token_nonce(&sov_token, &staker_addr)?;
+        if data.nonce != expected_nonce {
+            return Err(TxApplyError::InvalidType(format!(
+                "DaoUnstake: invalid nonce for staker={} expected={} got={}",
+                hex::encode(&data.staker[..6]),
+                expected_nonce,
+                data.nonce,
+            )));
+        }
+
+        // Return locked SOV from DAO wallet back to staker.
+        mutator.transfer_token(&sov_token, &dao_addr, &staker_addr, record.amount)?;
+
+        // Delete the stake record.
+        mutator.delete_dao_stake(&data.sector_dao_key_id, &data.staker)?;
+
+        // Increment the staker's SOV nonce only after the unstake has been applied successfully.
+        mutator.increment_token_nonce(&sov_token, &staker_addr)?;
+
+        tracing::info!(
+            "[DAO_UNSTAKE] staker={} dao={} amount={} height={}",
+            hex::encode(&data.staker[..6]),
+            hex::encode(&data.sector_dao_key_id[..6]),
+            record.amount,
+            block_height,
+        );
+
+        Ok(())
+    }
+
     fn canonical_bonding_curve_envelope_from_transaction(
         &self,
         tx: &crate::transaction::Transaction,
@@ -2396,6 +2476,11 @@ impl BlockExecutor {
 
             TransactionType::DaoStake => {
                 self.apply_dao_stake(mutator, tx, block_height)?;
+                Ok(TxOutcome::LegacySystem)
+            }
+
+            TransactionType::DaoUnstake => {
+                self.apply_dao_unstake(mutator, tx, block_height)?;
                 Ok(TxOutcome::LegacySystem)
             }
 
