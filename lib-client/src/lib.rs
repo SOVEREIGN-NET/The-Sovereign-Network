@@ -1540,6 +1540,12 @@ pub extern "C" fn zhtp_client_build_token_burn(
 /// `POST /api/v1/dao/stake` as `{"signed_tx": "<hex>"}`.
 /// Returns NULL on any error.  Caller must free with `zhtp_client_string_free`.
 ///
+/// # Safety
+/// This function is unsafe because it dereferences raw pointer arguments.
+/// The caller must ensure that:
+/// - `handle` is a valid, non-null pointer to an `IdentityHandle`
+/// - `sector_dao_key_id` is a valid, non-null pointer to 32 bytes of data
+///
 /// # Parameters
 /// - `handle`: Staker's identity handle (provides Dilithium5 signing keypair)
 /// - `sector_dao_key_id`: 32-byte key_id of the target sector DAO wallet
@@ -1548,7 +1554,7 @@ pub extern "C" fn zhtp_client_build_token_burn(
 /// - `lock_blocks`: Lock duration in blocks (must be > 0; e.g., 50_400 ≈ 7 days)
 /// - `chain_id`: Network chain ID (1 = mainnet)
 #[no_mangle]
-pub extern "C" fn zhtp_client_build_dao_stake(
+pub unsafe extern "C" fn zhtp_client_build_dao_stake(
     handle: *const IdentityHandle,
     sector_dao_key_id: *const u8,
     amount: u64,
@@ -1556,23 +1562,9 @@ pub extern "C" fn zhtp_client_build_dao_stake(
     lock_blocks: u64,
     chain_id: u8,
 ) -> *mut std::ffi::c_char {
-    if handle.is_null() || sector_dao_key_id.is_null() {
-        return std::ptr::null_mut();
-    }
-
-    let identity = unsafe { &(*handle).inner };
-    let dao_slice = unsafe { std::slice::from_raw_parts(sector_dao_key_id, 32) };
-
-    let mut dao_arr = [0u8; 32];
-    dao_arr.copy_from_slice(dao_slice);
-
-    match dao_tx::build_dao_stake_tx(identity, dao_arr, amount as u128, nonce, lock_blocks, chain_id) {
-        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
-            Ok(s) => s.into_raw(),
-            Err(_) => std::ptr::null_mut(),
-        },
-        Err(_) => std::ptr::null_mut(),
-    }
+    dao_ffi_helper(handle, sector_dao_key_id, |identity, dao_key_id| {
+        dao_tx::build_dao_stake_tx(identity, dao_key_id, amount as u128, nonce, lock_blocks, chain_id)
+    })
 }
 
 /// Build and sign a `DaoUnstake` transaction.
@@ -1599,17 +1591,34 @@ pub unsafe extern "C" fn zhtp_client_build_dao_unstake(
     nonce: u64,
     chain_id: u8,
 ) -> *mut std::ffi::c_char {
-    if handle.is_null() || sector_dao_key_id.is_null() {
+    dao_ffi_helper(handle, sector_dao_key_id, |identity, dao_key_id| {
+        dao_tx::build_dao_unstake_tx(identity, dao_key_id, nonce, chain_id)
+    })
+}
+
+/// Helper function for DAO FFI operations.
+///
+/// # Safety
+/// Caller must ensure handle and dao_key_id_ptr are valid, non-null pointers.
+unsafe fn dao_ffi_helper<F>(
+    handle: *const IdentityHandle,
+    dao_key_id_ptr: *const u8,
+    build_fn: F,
+) -> *mut std::ffi::c_char
+where
+    F: FnOnce(&crate::identity::Identity, [u8; 32]) -> std::result::Result<String, String>,
+{
+    if handle.is_null() || dao_key_id_ptr.is_null() {
         return std::ptr::null_mut();
     }
 
-    let identity = unsafe { &(*handle).inner };
-    let dao_slice = unsafe { std::slice::from_raw_parts(sector_dao_key_id, 32) };
+    let identity = &(*handle).inner;
+    let key_slice = std::slice::from_raw_parts(dao_key_id_ptr, 32);
 
-    let mut dao_arr = [0u8; 32];
-    dao_arr.copy_from_slice(dao_slice);
+    let mut key_arr = [0u8; 32];
+    key_arr.copy_from_slice(key_slice);
 
-    match dao_tx::build_dao_unstake_tx(identity, dao_arr, nonce, chain_id) {
+    match build_fn(identity, key_arr) {
         Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
             Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),
