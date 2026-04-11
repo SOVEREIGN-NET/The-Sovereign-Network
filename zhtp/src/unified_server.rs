@@ -372,6 +372,7 @@ impl ZhtpUnifiedServer {
                 crate::discovery_coordinator::DiscoveryProtocol::MDns,
                 crate::discovery_coordinator::DiscoveryProtocol::DHT,
             ],
+            vec![],
         );
         let discovery_coordinator = Arc::new(
             crate::discovery_coordinator::DiscoveryCoordinator::new(discovery_config),

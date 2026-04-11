@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 
 // Re-export configuration types
 pub use aggregation::NodeConfig;
+pub use aggregation::ObserverAdmissionConfig;
 pub use aggregation::RuntimeRole;
+pub use aggregation::TrustedSyncSource;
 pub use environment::Environment;
 pub use mesh_modes::MeshMode;
 pub use network_isolation::NetworkIsolationConfig;

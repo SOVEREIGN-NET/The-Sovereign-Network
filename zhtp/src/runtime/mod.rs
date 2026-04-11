@@ -21,10 +21,39 @@ use crate::runtime::node_identity::{
 #[derive(Debug, Clone)]
 pub struct ExistingNetworkInfo {
     pub peer_count: u32,
-    pub blockchain_height: u64,
+    pub chain_state: RemoteChainState,
     pub network_id: String,
     pub bootstrap_peers: Vec<String>,
     pub environment: crate::config::Environment,
+}
+
+/// Truth model for remote peer chain availability during startup.
+///
+/// A discovered peer address does not imply that chain state is known or syncable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteChainState {
+    /// Discovery found peers, but their chain state could not be proven yet.
+    Unknown,
+    /// At least one peer explicitly reported genesis height with no committed blocks beyond it.
+    GenesisOnly,
+    /// At least one peer proved committed blocks beyond genesis.
+    Committed(u64),
+}
+
+impl RemoteChainState {
+    pub fn has_committed_blocks(&self) -> bool {
+        matches!(self, Self::Committed(height) if *height > 0)
+    }
+}
+
+impl std::fmt::Display for RemoteChainState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unknown => write!(f, "unknown"),
+            Self::GenesisOnly => write!(f, "genesis-only"),
+            Self::Committed(height) => write!(f, "committed(height={height})"),
+        }
+    }
 }
 
 pub mod blockchain_provider;
@@ -87,6 +116,7 @@ pub use shared_dht::*;
 async fn try_initial_sync_from_peer(
     store: std::sync::Arc<lib_blockchain::storage::SledStore>,
     peers: &[String],
+    trusted_sync_sources: &[crate::config::TrustedSyncSource],
 ) -> anyhow::Result<bool> {
     use lib_blockchain::storage::BlockchainStore;
     use lib_blockchain::sync::ChainSync;
@@ -169,6 +199,16 @@ async fn try_initial_sync_from_peer(
                 warn!("⚠️  Connect timeout to {}", peer_addr);
                 continue;
             }
+        }
+
+        let peer_did = client.peer_did().map(str::to_owned);
+        if !is_trusted_sync_source(peer, peer_did.as_deref(), trusted_sync_sources) {
+            warn!(
+                "⚠️  Skipping untrusted sync source {} (peer_did={})",
+                peer_addr,
+                peer_did.as_deref().unwrap_or("unknown")
+            );
+            continue;
         }
 
         // Check the peer's chain tip.
@@ -332,6 +372,25 @@ async fn try_initial_sync_from_peer(
         // All peers were unreachable or at height 0 — safe to create genesis.
         Ok(false)
     }
+}
+
+pub(crate) fn is_trusted_sync_source(
+    peer_address: &str,
+    peer_did: Option<&str>,
+    trusted_sync_sources: &[crate::config::TrustedSyncSource],
+) -> bool {
+    if trusted_sync_sources.is_empty() {
+        return true;
+    }
+
+    trusted_sync_sources.iter().any(|trusted| {
+        trusted.address == peer_address
+            && trusted
+                .peer_did
+                .as_deref()
+                .map(|expected_did| Some(expected_did) == peer_did)
+                .unwrap_or(true)
+    })
 }
 
 /// Component status information
@@ -1227,10 +1286,96 @@ impl RuntimeOrchestrator {
 
     /// Standalone observers must join an existing network unless they already have
     /// local chain state. They are not allowed to create a fresh genesis on an
-    /// empty store, and a peer set advertising only genesis height is treated as
-    /// "not ready" until blocks beyond genesis are committed.
+    /// empty store, and discovery must distinguish unknown remote state from an
+    /// explicit genesis-only network until blocks beyond genesis are committed.
     fn observer_requires_existing_network(config: &NodeConfig, has_local_chain_data: bool) -> bool {
         matches!(config.node_type, Some(crate::config::NodeType::FullNode)) && !has_local_chain_data
+    }
+
+    fn observer_admission_required(config: &NodeConfig) -> bool {
+        matches!(config.node_type, Some(crate::config::NodeType::FullNode))
+            && config.network_config.observer_admission.required
+    }
+
+    fn trusted_sync_sources(config: &NodeConfig) -> &[crate::config::TrustedSyncSource] {
+        &config.network_config.observer_admission.trusted_sync_sources
+    }
+
+    fn validate_observer_admission_policy_config(
+        config: &NodeConfig,
+        has_local_chain_data: bool,
+    ) -> Result<()> {
+        if !Self::observer_admission_required(config) {
+            return Ok(());
+        }
+
+        if config
+            .network_config
+            .observer_admission
+            .authorized_observer_dids
+            .is_empty()
+        {
+            return Err(anyhow::anyhow!(
+                "Observer admission is required, but no authorized observer DIDs were configured."
+            ));
+        }
+
+        if Self::observer_requires_existing_network(config, has_local_chain_data)
+            && Self::trusted_sync_sources(config).is_empty()
+        {
+            return Err(anyhow::anyhow!(
+                "Observer admission is required for a fresh observer, but no trusted sync sources were configured."
+            ));
+        }
+
+        for trusted_source in Self::trusted_sync_sources(config) {
+            Self::validate_validator_endpoint(&trusted_source.address).map_err(|e| {
+                anyhow::anyhow!(
+                    "Invalid trusted observer sync source `{}`: {}",
+                    trusted_source.address,
+                    e
+                )
+            })?;
+        }
+
+        Ok(())
+    }
+
+    async fn validate_local_observer_admission(&self) -> Result<()> {
+        if !Self::observer_admission_required(&self.config) {
+            return Ok(());
+        }
+
+        let keystore_path = std::env::var_os("ZHTP_KEYSTORE_DIR")
+            .map(std::path::PathBuf::from)
+            .or_else(|| dirs::home_dir().map(|home| home.join(".zhtp").join("keystore")))
+            .ok_or_else(|| anyhow::anyhow!("Could not determine keystore directory"))?;
+
+        let local_identity =
+            crate::runtime::did_startup::load_node_identity_from_keystore(&keystore_path).await?;
+        let local_identity = local_identity.ok_or_else(|| {
+            anyhow::anyhow!(
+                "Observer admission is required, but no local node DID was available in the keystore."
+            )
+        })?;
+
+        let admitted = self
+            .config
+            .network_config
+            .observer_admission
+            .authorized_observer_dids
+            .iter()
+            .any(|did| did == &local_identity.did);
+
+        if admitted {
+            info!("✓ Local observer DID admitted: {}", local_identity.did);
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "Observer DID `{}` is not admitted by config-backed observer admission policy.",
+                local_identity.did
+            ))
+        }
     }
 
     fn validate_observer_join_policy(
@@ -1243,7 +1388,7 @@ impl RuntimeOrchestrator {
         }
 
         if network_info
-            .map(|info| info.blockchain_height > 0)
+            .map(|info| info.chain_state.has_committed_blocks())
             .unwrap_or(false)
         {
             return Ok(());
@@ -1251,16 +1396,16 @@ impl RuntimeOrchestrator {
 
         let configured_bootstrap_peers = config.network_config.bootstrap_peers.len();
         let discovered_peer_count = network_info.map(|info| info.peer_count).unwrap_or(0);
-        let discovered_height = network_info
-            .map(|info| info.blockchain_height)
-            .unwrap_or_default();
+        let discovered_chain_state = network_info
+            .map(|info| info.chain_state.to_string())
+            .unwrap_or_else(|| RemoteChainState::Unknown.to_string());
 
         Err(anyhow::anyhow!(
             "Observer/full-node startup requires an existing network with committed blocks beyond genesis. \
-             Local chain state is empty, discovered peers={}, discovered_height={}, \
+             Local chain state is empty, discovered peers={}, discovered_chain_state={}, \
              configured_bootstrap_peers={}. Refusing to create genesis in observer mode.",
             discovered_peer_count,
-            discovered_height,
+            discovered_chain_state,
             configured_bootstrap_peers
         ))
     }
@@ -1673,9 +1818,13 @@ impl RuntimeOrchestrator {
             .ok()
             .flatten();
 
-        // Only join an existing network if at least one peer has committed blocks (height > 0).
-        // When all nodes start fresh simultaneously (e.g. full wipe) every peer reports height 0.
-        // In that case treat it as a new network and let this node create genesis.
+        let has_local_chain_data = self.has_local_chain_data();
+        Self::validate_observer_admission_policy_config(&self.config, has_local_chain_data)?;
+        self.validate_local_observer_admission().await?;
+
+        // Only join an existing network if at least one peer proves committed blocks.
+        // Unknown remote state and explicit genesis-only peers are both non-joinable,
+        // but they remain distinct conditions for observer startup policy and logging.
         //
         // Bootstrap leader with local chain data must NOT wait on peer startup/sync.
         // This keeps G1 deterministic across restarts and avoids startup races.
@@ -1690,14 +1839,14 @@ impl RuntimeOrchestrator {
             }
         };
         let leader_has_local_data =
-            Self::should_skip_startup_sync(local_is_bootstrap_leader, self.has_local_chain_data());
+            Self::should_skip_startup_sync(local_is_bootstrap_leader, has_local_chain_data);
         let joined_existing_network = if leader_has_local_data {
             info!("🌱 Bootstrap leader with local chain data detected - skipping startup sync");
             false
         } else {
             network_info
                 .as_ref()
-                .map(|ni| ni.blockchain_height > 0)
+                .map(|ni| ni.chain_state.has_committed_blocks())
                 .unwrap_or(false)
         };
         self.set_joined_existing_network(joined_existing_network)
@@ -1860,7 +2009,8 @@ impl RuntimeOrchestrator {
                             bc.height
                         );
                         bc.set_store(store.clone());
-                        let store_ref: &dyn lib_blockchain::storage::BlockchainStore = store.as_ref();
+                        let store_ref: &dyn lib_blockchain::storage::BlockchainStore =
+                            store.as_ref();
                         let mut migration_ok = true;
                         for block in &bc.blocks {
                             let h = block.height();
@@ -1910,6 +2060,12 @@ impl RuntimeOrchestrator {
                 // may have mined additional blocks while we were importing, so we
                 // keep draining until the peer reports no blocks ahead (Ok(false))
                 // or we've closed the gap enough (MAX_CATCHUP_ROUNDS limit).
+                let is_validator_node = self.config.consensus_config.validator_enabled;
+                let observer_requires_existing_network = Self::observer_requires_existing_network(
+                    &self.config,
+                    self.has_local_chain_data(),
+                );
+
                 if let Some(ref net_info) = network_info {
                     if !net_info.bootstrap_peers.is_empty() {
                         const MAX_CATCHUP_ROUNDS: u32 = 10;
@@ -1918,6 +2074,7 @@ impl RuntimeOrchestrator {
                             match try_initial_sync_from_peer(
                                 store.clone(),
                                 &net_info.bootstrap_peers,
+                                Self::trusted_sync_sources(&self.config),
                             )
                             .await
                             {
@@ -1960,6 +2117,11 @@ impl RuntimeOrchestrator {
                                             );
                                             synced_blockchain = Some(bc);
                                         }
+                                    } else if observer_requires_existing_network {
+                                        info!(
+                                            "ℹ️  No bootstrap peer has committed blocks yet; \
+                                             observer startup will keep waiting for an existing network."
+                                        );
                                     } else {
                                         info!("ℹ️  No peers have chain data; this node will create genesis.");
                                     }
@@ -1995,16 +2157,11 @@ impl RuntimeOrchestrator {
                     network_info.as_ref(),
                 )?;
 
-                // Non-bootstrap-leader, non-validator nodes wait here for the bootstrap
-                // leader to create genesis. Validator nodes skip this wait and will hit
-                // the genesis-gate bail! below — they need to either sync from the leader
-                // or be the leader themselves.
-                //
-                // The "independent genesis" approach caused divergent genesis blocks when
-                // nodes started with wiped sled. Now only the bootstrap leader can create
-                // genesis; all other nodes MUST sync from it.
-                let is_validator_node = self.config.consensus_config.validator_enabled;
-                if synced_blockchain.is_none() && !local_is_bootstrap_leader && !is_validator_node {
+                // Observers must never fall through to the genesis creation branch.
+                // Once startup has established that no committed peer data is available
+                // yet, stay in an explicit observer-only wait loop until a peer advances
+                // beyond genesis and can serve block data.
+                if synced_blockchain.is_none() && observer_requires_existing_network {
                     let retry_peers: Vec<_> = network_info
                         .as_ref()
                         .map(|ni| ni.bootstrap_peers.clone())
@@ -2012,8 +2169,8 @@ impl RuntimeOrchestrator {
 
                     loop {
                         info!(
-                            "⏳ Not bootstrap leader — waiting for leader to mine genesis. \
-                             Retrying peer sync in 30s (peers: {})...",
+                            "⏳ Observer has no local chain yet; waiting for bootstrap peers \
+                             to expose committed blocks. Retrying peer sync in 30s (peers: {})...",
                             retry_peers.len()
                         );
                         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
@@ -2023,13 +2180,19 @@ impl RuntimeOrchestrator {
                             continue;
                         }
 
-                        match try_initial_sync_from_peer(store.clone(), &retry_peers).await {
+                        match try_initial_sync_from_peer(
+                            store.clone(),
+                            &retry_peers,
+                            Self::trusted_sync_sources(&self.config),
+                        )
+                        .await
+                        {
                             Ok(true) => {
                                 if let Some(bc) =
                                     lib_blockchain::Blockchain::load_from_store(store.clone())?
                                 {
                                     info!(
-                                        "📂 Non-leader successfully synced from leader \
+                                        "📂 Observer synced committed blocks from peer \
                                          (height: {})",
                                         bc.height
                                     );
@@ -2039,12 +2202,12 @@ impl RuntimeOrchestrator {
                             }
                             Ok(false) => {
                                 info!(
-                                    "⏳ Bootstrap leader peers still at height 0; \
-                                     leader hasn't mined yet..."
+                                    "⏳ Bootstrap peers are still advertising height 0; \
+                                     observer will keep waiting for committed blocks..."
                                 );
                             }
                             Err(e) => {
-                                warn!("⚠️  Non-leader sync retry failed: {}; will retry...", e);
+                                warn!("⚠️  Observer peer sync retry failed: {}; will retry...", e);
                             }
                         }
                     }
@@ -2074,7 +2237,7 @@ impl RuntimeOrchestrator {
                     if let Some(genesis_block) = bc.blocks.first() {
                         let genesis_hash = hex::encode(genesis_block.header.block_hash.as_bytes());
                         info!("🔗 Genesis block hash: {}", genesis_hash);
-                        
+
                         // CRITICAL: Persist genesis block (height 0) to SledStore
                         // SledStore requires sequential block storage starting from 0
                         let store_ref: &dyn lib_blockchain::storage::BlockchainStore =
@@ -2095,10 +2258,10 @@ impl RuntimeOrchestrator {
                 } else {
                     // ─────────────────────────────────────────────────────────────
                     // GENESIS GATE: Non-bootstrap leader nodes CANNOT create genesis.
-                    // 
+                    //
                     // This prevents the "divergent genesis" bug where multiple nodes
                     // starting with wiped sled produce different genesis blocks.
-                    // 
+                    //
                     // To fix this, you must either:
                     // 1. Start the bootstrap leader first (node with identity matching
                     //    the first entry in bootstrap_validators)
@@ -2110,14 +2273,20 @@ impl RuntimeOrchestrator {
                     error!("   Creating genesis is forbidden to prevent chain divergence.");
                     error!("");
                     error!("   Solutions:");
-                    error!("   1. Start the bootstrap leader first (identity: {:?})",
-                        self.config.network_config.bootstrap_validators.first().map(|v| &v.identity_id));
+                    error!(
+                        "   1. Start the bootstrap leader first (identity: {:?})",
+                        self.config
+                            .network_config
+                            .bootstrap_validators
+                            .first()
+                            .map(|v| &v.identity_id)
+                    );
                     error!("   2. Copy the 'sled/' directory from a healthy node");
                     error!("   3. Ensure at least one peer with valid chain data is reachable");
                     error!("");
                     error!("   If you ARE the bootstrap leader, verify your identity matches");
                     error!("   the first entry in bootstrap_validators config.");
-                    
+
                     bail!("Genesis creation denied: this node is not the bootstrap leader. See logs above for solutions.");
                 }
             }
@@ -2140,8 +2309,8 @@ impl RuntimeOrchestrator {
 
         if let Some(ref net_info) = network_info {
             info!(
-                "✓ Found existing network with {} peers at height {}",
-                net_info.peer_count, net_info.blockchain_height
+                "✓ Discovered network candidate with {} peers ({})",
+                net_info.peer_count, net_info.chain_state
             );
 
             // Store bootstrap peers for mesh sync
@@ -4450,11 +4619,10 @@ impl RuntimeOrchestrator {
             orchestrator.has_local_chain_data(),
         );
 
-        // Only join if peers have actual blocks (height > 0). If all peers are at height 0,
-        // treat this as a fresh network and allow this node to create genesis.
+        // Only join if peers have actual committed blocks.
         let peers_have_blocks = network_info
             .as_ref()
-            .map(|ni| ni.blockchain_height > 0)
+            .map(|ni| ni.chain_state.has_committed_blocks())
             .unwrap_or(false);
         if leader_has_local_data {
             orchestrator.set_joined_existing_network(false).await?;
@@ -4585,6 +4753,7 @@ impl RuntimeOrchestrator {
             self.config.network_config.bootstrap_peers.clone(),
             self.config.protocols_config.api_port,
             discovery_protocols,
+            Self::trusted_sync_sources(&self.config).to_vec(),
         );
         let discovery = DiscoveryCoordinator::new(config);
         discovery.start_event_listener().await;
@@ -4609,12 +4778,22 @@ impl RuntimeOrchestrator {
                 info!("📡 Discovery attempt #{}", attempt);
                 match discovery.discover_network(&self.config.environment).await {
                     Ok(network_info) => {
-                        if !is_edge_node && network_info.blockchain_height == 0 {
-                            info!(
-                                "   ⏳ Found peers on attempt #{} but chain height is 0; \
-                                 observer startup will keep waiting for committed blocks",
-                                attempt
-                            );
+                        if !is_edge_node && !network_info.chain_state.has_committed_blocks() {
+                            match &network_info.chain_state {
+                                RemoteChainState::Unknown => info!(
+                                    "   ⏳ Found peers on attempt #{} but remote chain state is still unknown; \
+                                     observer startup will keep waiting for a committed sync source",
+                                    attempt
+                                ),
+                                RemoteChainState::GenesisOnly => info!(
+                                    "   ⏳ Found peers on attempt #{} but they only advertise genesis; \
+                                     observer startup will keep waiting for committed blocks",
+                                    attempt
+                                ),
+                                RemoteChainState::Committed(_) => unreachable!(
+                                    "guard excludes committed chain state"
+                                ),
+                            }
                             tokio::time::sleep(Duration::from_secs(5)).await;
                             attempt += 1;
                             continue;
@@ -4637,9 +4816,9 @@ impl RuntimeOrchestrator {
 
             match discovery.discover_network(&self.config.environment).await {
                 Ok(network_info) => {
-                    info!("✓ Connected to existing ZHTP network!");
+                    info!("✓ Discovered ZHTP network peers");
                     info!("   Network peers: {}", network_info.peer_count);
-                    info!("   Blockchain height: {}", network_info.blockchain_height);
+                    info!("   Remote chain state: {}", network_info.chain_state);
                     Ok(Some(network_info))
                 }
                 Err(e) => {
@@ -5040,7 +5219,7 @@ mod runtime_orchestrator_tests {
 
         let network_info = crate::runtime::ExistingNetworkInfo {
             peer_count: 3,
-            blockchain_height: 42,
+            chain_state: crate::runtime::RemoteChainState::Committed(42),
             network_id: "testnet".to_string(),
             bootstrap_peers: vec!["127.0.0.1:9334".to_string()],
             environment: crate::config::Environment::Development,
@@ -5063,21 +5242,43 @@ mod runtime_orchestrator_tests {
 
         let network_info = crate::runtime::ExistingNetworkInfo {
             peer_count: 3,
-            blockchain_height: 0,
+            chain_state: crate::runtime::RemoteChainState::GenesisOnly,
             network_id: "testnet".to_string(),
             bootstrap_peers: vec!["127.0.0.1:9334".to_string()],
             environment: crate::config::Environment::Development,
         };
 
-        let err = RuntimeOrchestrator::validate_observer_join_policy(
-            &config,
-            false,
-            Some(&network_info),
-        )
-        .expect_err("observer should keep waiting when peers only advertise genesis");
+        let err =
+            RuntimeOrchestrator::validate_observer_join_policy(&config, false, Some(&network_info))
+                .expect_err("observer should keep waiting when peers only advertise genesis");
 
         assert!(
             err.to_string().contains("beyond genesis"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn observer_join_policy_rejects_unknown_remote_chain_state() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        let network_info = crate::runtime::ExistingNetworkInfo {
+            peer_count: 2,
+            chain_state: crate::runtime::RemoteChainState::Unknown,
+            network_id: "testnet".to_string(),
+            bootstrap_peers: vec!["127.0.0.1:9334".to_string()],
+            environment: crate::config::Environment::Development,
+        };
+
+        let err =
+            RuntimeOrchestrator::validate_observer_join_policy(&config, false, Some(&network_info))
+                .expect_err("observer should not treat unknown remote state as sync-ready");
+
+        assert!(
+            err.to_string().contains("discovered_chain_state=unknown"),
             "unexpected error: {err}"
         );
     }
@@ -5112,11 +5313,91 @@ mod runtime_orchestrator_tests {
         );
 
         assert!(
-            RuntimeOrchestrator::should_retry_network_discovery_continuously(
-                &config, false, false
-            ),
+            RuntimeOrchestrator::should_retry_network_discovery_continuously(&config, false, false),
             "fresh observer should keep retrying peer discovery until it can bootstrap"
         );
+    }
+
+    #[test]
+    fn observer_admission_policy_requires_authorized_dids_when_enabled() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+        config.network_config.observer_admission.required = true;
+        config.network_config.observer_admission.trusted_sync_sources = vec![
+            crate::config::TrustedSyncSource {
+                address: "127.0.0.1:9334".to_string(),
+                peer_did: None,
+            },
+        ];
+
+        let err = RuntimeOrchestrator::validate_observer_admission_policy_config(&config, false)
+            .expect_err("observer admission should require an explicit local DID allowlist");
+        assert!(
+            err.to_string().contains("authorized observer DIDs"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn observer_admission_policy_requires_trusted_sync_sources_for_fresh_observer() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+        config.network_config.observer_admission.required = true;
+        config
+            .network_config
+            .observer_admission
+            .authorized_observer_dids = vec!["did:zhtp:testobserver".to_string()];
+
+        let err = RuntimeOrchestrator::validate_observer_admission_policy_config(&config, false)
+            .expect_err("fresh admitted observer should require at least one trusted sync source");
+        assert!(
+            err.to_string().contains("trusted sync sources"),
+            "unexpected error: {err}"
+        );
+
+        assert!(
+            RuntimeOrchestrator::validate_observer_admission_policy_config(&config, true).is_ok(),
+            "restarted observer with local chain should be allowed to run without remote sync sources"
+        );
+    }
+
+    #[test]
+    fn trusted_sync_source_matching_respects_endpoint_and_optional_did() {
+        let trusted = vec![
+            crate::config::TrustedSyncSource {
+                address: "10.1.2.3:9334".to_string(),
+                peer_did: Some("did:zhtp:trusted".to_string()),
+            },
+            crate::config::TrustedSyncSource {
+                address: "10.1.2.4:9334".to_string(),
+                peer_did: None,
+            },
+        ];
+
+        assert!(crate::runtime::is_trusted_sync_source(
+            "10.1.2.3:9334",
+            Some("did:zhtp:trusted"),
+            &trusted
+        ));
+        assert!(!crate::runtime::is_trusted_sync_source(
+            "10.1.2.3:9334",
+            Some("did:zhtp:other"),
+            &trusted
+        ));
+        assert!(crate::runtime::is_trusted_sync_source(
+            "10.1.2.4:9334",
+            Some("did:zhtp:anything"),
+            &trusted
+        ));
+        assert!(!crate::runtime::is_trusted_sync_source(
+            "10.1.2.5:9334",
+            Some("did:zhtp:trusted"),
+            &trusted
+        ));
     }
 
     #[test]
@@ -5129,9 +5410,7 @@ mod runtime_orchestrator_tests {
         assert!(RuntimeOrchestrator::validate_observer_startup_config(&config).is_ok());
         assert!(RuntimeOrchestrator::validate_observer_join_policy(&config, true, None).is_ok());
         assert!(
-            !RuntimeOrchestrator::should_retry_network_discovery_continuously(
-                &config, false, true
-            ),
+            !RuntimeOrchestrator::should_retry_network_discovery_continuously(&config, false, true),
             "observer restart with local chain state should not be forced back into discovery"
         );
     }
@@ -5145,7 +5424,7 @@ mod runtime_orchestrator_tests {
 
         let network_info = crate::runtime::ExistingNetworkInfo {
             peer_count: 4,
-            blockchain_height: 128,
+            chain_state: crate::runtime::RemoteChainState::Committed(128),
             network_id: "observer-testnet".to_string(),
             bootstrap_peers: vec!["127.0.0.1:9334".to_string()],
             environment: Environment::Development,
@@ -5162,9 +5441,7 @@ mod runtime_orchestrator_tests {
             "observer should be allowed to sync from an existing network instead of creating genesis"
         );
         assert!(
-            RuntimeOrchestrator::should_retry_network_discovery_continuously(
-                &config, false, false
-            ),
+            RuntimeOrchestrator::should_retry_network_discovery_continuously(&config, false, false),
             "fresh observer should continue discovery/sync attempts until chain data is local"
         );
     }
@@ -5202,19 +5479,17 @@ mod runtime_orchestrator_tests {
 
         let discovered_network = crate::runtime::ExistingNetworkInfo {
             peer_count: 4,
-            blockchain_height: 128,
+            chain_state: crate::runtime::RemoteChainState::Committed(128),
             network_id: "observer-sequence-testnet".to_string(),
-            bootstrap_peers: vec![
-                "127.0.0.1:9334".to_string(),
-                "127.0.0.1:9335".to_string(),
-            ],
+            bootstrap_peers: vec!["127.0.0.1:9334".to_string(), "127.0.0.1:9335".to_string()],
             environment: Environment::Development,
         };
 
         assert!(RuntimeOrchestrator::validate_observer_startup_config(&config).is_ok());
 
-        let fresh_start_err = RuntimeOrchestrator::validate_observer_join_policy(&config, false, None)
-            .expect_err("fresh observer without discovery must not serve");
+        let fresh_start_err =
+            RuntimeOrchestrator::validate_observer_join_policy(&config, false, None)
+                .expect_err("fresh observer without discovery must not serve");
         assert!(
             fresh_start_err
                 .to_string()
@@ -5222,9 +5497,7 @@ mod runtime_orchestrator_tests {
             "unexpected error: {fresh_start_err}"
         );
         assert!(
-            RuntimeOrchestrator::should_retry_network_discovery_continuously(
-                &config, false, false
-            ),
+            RuntimeOrchestrator::should_retry_network_discovery_continuously(&config, false, false),
             "fresh observer should stay in discovery until a network is found"
         );
 
@@ -5238,17 +5511,13 @@ mod runtime_orchestrator_tests {
             "observer should join once an existing network is discovered"
         );
         assert!(
-            RuntimeOrchestrator::should_retry_network_discovery_continuously(
-                &config, false, false
-            ),
+            RuntimeOrchestrator::should_retry_network_discovery_continuously(&config, false, false),
             "observer should keep trying until local chain state exists"
         );
 
         assert!(RuntimeOrchestrator::validate_observer_join_policy(&config, true, None).is_ok());
         assert!(
-            !RuntimeOrchestrator::should_retry_network_discovery_continuously(
-                &config, false, true
-            ),
+            !RuntimeOrchestrator::should_retry_network_discovery_continuously(&config, false, true),
             "observer restart with local chain should not fall back into endless discovery"
         );
     }
@@ -5278,7 +5547,7 @@ mod runtime_orchestrator_tests {
             .expect("observer runtime should initialize");
         let network_info = crate::runtime::ExistingNetworkInfo {
             peer_count: 1,
-            blockchain_height: 42,
+            chain_state: crate::runtime::RemoteChainState::Committed(42),
             network_id: "observer-runtime-join".to_string(),
             bootstrap_peers: vec!["127.0.0.1:1".to_string()],
             environment: Environment::Development,
@@ -5373,7 +5642,7 @@ mod runtime_orchestrator_tests {
 
         let discovered_network = crate::runtime::ExistingNetworkInfo {
             peer_count: 3,
-            blockchain_height: 64,
+            chain_state: crate::runtime::RemoteChainState::Committed(64),
             network_id: "observer-shared-network".to_string(),
             bootstrap_peers: vec![
                 "127.0.0.1:9334".to_string(),

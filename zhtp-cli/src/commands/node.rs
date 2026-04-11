@@ -294,10 +294,7 @@ async fn start_node_impl(
     if let Some(network_info) = network_info_opt {
         output.success("Connected to existing ZHTP network!")?;
         output.print(&format!("Network peers: {}", network_info.peer_count))?;
-        output.print(&format!(
-            "Blockchain height: {}",
-            network_info.blockchain_height
-        ))?;
+        output.print(&format!("Remote chain state: {}", network_info.chain_state))?;
 
         output.info("Initializing blockchain for sync...")?;
         orchestrator
