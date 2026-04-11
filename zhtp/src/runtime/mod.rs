@@ -1346,10 +1346,10 @@ impl RuntimeOrchestrator {
             return Ok(());
         }
 
-        let keystore_path = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
-            .join(".zhtp")
-            .join("keystore");
+        let keystore_path = std::env::var_os("ZHTP_KEYSTORE_DIR")
+            .map(std::path::PathBuf::from)
+            .or_else(|| dirs::home_dir().map(|home| home.join(".zhtp").join("keystore")))
+            .ok_or_else(|| anyhow::anyhow!("Could not determine keystore directory"))?;
 
         let local_identity =
             crate::runtime::did_startup::load_node_identity_from_keystore(&keystore_path).await?;

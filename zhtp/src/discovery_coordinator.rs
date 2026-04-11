@@ -826,12 +826,7 @@ impl DiscoveryCoordinator {
         peers: &[String],
     ) -> Result<RemoteChainProbe> {
         use lib_identity::{IdentityType, ZhtpIdentity};
-        use lib_network::client::{ZhtpClient, ZhtpClientConfig};
-
-        #[derive(serde::Deserialize)]
-        struct TipInfo {
-            height: u64,
-        }
+        const MAX_CONCURRENT_PROBES: usize = 3;
 
         if peers.is_empty() {
             return Ok(RemoteChainProbe {
@@ -856,109 +851,55 @@ impl DiscoveryCoordinator {
         let mut observed_genesis_only = false;
         let mut highest_committed_height = 0u64;
         let mut trusted_bootstrap_peers = Vec::new();
+        let mut pending_peers = peers.iter().cloned();
+        let mut probe_tasks = tokio::task::JoinSet::new();
 
-        for peer in peers {
-            let peer_addr = match peer.parse::<std::net::SocketAddr>() {
-                Ok(addr) => addr,
-                Err(_) => {
-                    warn!(
-                        "      Skipping invalid bootstrap peer address during probe: {}",
-                        peer
-                    );
-                    continue;
-                }
+        while probe_tasks.len() < MAX_CONCURRENT_PROBES {
+            let Some(peer) = pending_peers.next() else {
+                break;
             };
-
-            let mut client = match ZhtpClient::new_bootstrap_with_config(
-                temp_identity.clone(),
-                ZhtpClientConfig {
-                    allow_bootstrap: true,
-                },
-            )
-            .await
-            {
-                Ok(client) => client,
-                Err(e) => {
-                    warn!(
-                        "      Failed to create QUIC probe client for {}: {}",
-                        peer_addr, e
-                    );
-                    continue;
-                }
-            };
-
-            match tokio::time::timeout(Duration::from_secs(10), client.connect(peer)).await {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => {
-                    warn!(
-                        "      Failed to connect to {} during probe: {}",
-                        peer_addr, e
-                    );
-                    continue;
-                }
-                Err(_) => {
-                    warn!("      Timed out connecting to {} during probe", peer_addr);
-                    continue;
-                }
-            }
-
-            let peer_did = client.peer_did().map(str::to_owned);
-            if !crate::runtime::is_trusted_sync_source(
+            spawn_remote_chain_probe_task(
+                &mut probe_tasks,
                 peer,
-                peer_did.as_deref(),
-                &self.config.trusted_sync_sources,
-            ) {
-                warn!(
-                    "      Skipping untrusted observer sync source {} (peer_did={})",
-                    peer_addr,
-                    peer_did.as_deref().unwrap_or("unknown")
-                );
-                continue;
-            }
+                temp_identity.clone(),
+                self.config.trusted_sync_sources.clone(),
+            );
+        }
 
-            let tip_resp = match tokio::time::timeout(
-                Duration::from_secs(10),
-                client.get("/api/v1/blockchain/tip"),
-            )
-            .await
-            {
-                Ok(Ok(response)) => response,
-                Ok(Err(e)) => {
-                    warn!("      Failed to query chain tip from {}: {}", peer_addr, e);
-                    continue;
+        while let Some(join_result) = probe_tasks.join_next().await {
+            match join_result {
+                Ok(Some(peer_probe)) => {
+                    if peer_probe.is_trusted {
+                        trusted_bootstrap_peers.push(peer_probe.peer.clone());
+                    }
+
+                    match peer_probe.chain_state {
+                        crate::runtime::RemoteChainState::Committed(height) => {
+                            highest_committed_height = highest_committed_height.max(height);
+                        }
+                        crate::runtime::RemoteChainState::GenesisOnly => {
+                            observed_genesis_only = true;
+                        }
+                        crate::runtime::RemoteChainState::Unknown => {}
+                    }
                 }
-                Err(_) => {
-                    warn!("      Timed out querying chain tip from {}", peer_addr);
-                    continue;
-                }
-            };
-
-            if !tip_resp.is_success() {
-                warn!(
-                    "      Peer {} returned non-success for /api/v1/blockchain/tip",
-                    peer_addr
-                );
-                continue;
-            }
-
-            let tip: TipInfo = match serde_json::from_slice(&tip_resp.body) {
-                Ok(tip) => tip,
+                Ok(None) => {}
                 Err(e) => {
-                    warn!("      Failed to parse chain tip from {}: {}", peer_addr, e);
-                    continue;
+                    warn!("      Discovery probe task failed: {}", e);
                 }
-            };
+            }
 
-            trusted_bootstrap_peers.push(peer.clone());
+            if highest_committed_height > 0 {
+                probe_tasks.abort_all();
+                break;
+            }
 
-            if tip.height == 0 {
-                observed_genesis_only = true;
-                debug!("      Peer {} reports genesis-only chain state", peer_addr);
-            } else {
-                highest_committed_height = highest_committed_height.max(tip.height);
-                debug!(
-                    "      Peer {} reports committed chain height {}",
-                    peer_addr, tip.height
+            if let Some(peer) = pending_peers.next() {
+                spawn_remote_chain_probe_task(
+                    &mut probe_tasks,
+                    peer,
+                    temp_identity.clone(),
+                    self.config.trusted_sync_sources.clone(),
                 );
             }
         }
@@ -995,6 +936,141 @@ struct BlockchainInfo {
 struct RemoteChainProbe {
     chain_state: crate::runtime::RemoteChainState,
     trusted_bootstrap_peers: Vec<String>,
+}
+
+#[derive(Debug)]
+struct PeerChainProbe {
+    peer: String,
+    chain_state: crate::runtime::RemoteChainState,
+    is_trusted: bool,
+}
+
+fn spawn_remote_chain_probe_task(
+    probe_tasks: &mut tokio::task::JoinSet<Option<PeerChainProbe>>,
+    peer: String,
+    temp_identity: lib_identity::ZhtpIdentity,
+    trusted_sync_sources: Vec<crate::config::TrustedSyncSource>,
+) {
+    probe_tasks.spawn(async move {
+        use lib_network::client::{ZhtpClient, ZhtpClientConfig};
+
+        #[derive(serde::Deserialize)]
+        struct TipInfo {
+            height: u64,
+        }
+
+        let peer_addr = match peer.parse::<std::net::SocketAddr>() {
+            Ok(addr) => addr,
+            Err(_) => {
+                warn!(
+                    "      Skipping invalid bootstrap peer address during probe: {}",
+                    peer
+                );
+                return None;
+            }
+        };
+
+        let mut client = match ZhtpClient::new_bootstrap_with_config(
+            temp_identity,
+            ZhtpClientConfig {
+                allow_bootstrap: true,
+            },
+        )
+        .await
+        {
+            Ok(client) => client,
+            Err(e) => {
+                warn!(
+                    "      Failed to create QUIC probe client for {}: {}",
+                    peer_addr, e
+                );
+                return None;
+            }
+        };
+
+        match tokio::time::timeout(Duration::from_secs(10), client.connect(&peer)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                warn!(
+                    "      Failed to connect to {} during probe: {}",
+                    peer_addr, e
+                );
+                return None;
+            }
+            Err(_) => {
+                warn!("      Timed out connecting to {} during probe", peer_addr);
+                return None;
+            }
+        }
+
+        let peer_did = client.peer_did().map(str::to_owned);
+        if !crate::runtime::is_trusted_sync_source(
+            &peer,
+            peer_did.as_deref(),
+            &trusted_sync_sources,
+        ) {
+            warn!(
+                "      Skipping untrusted observer sync source {} (peer_did={})",
+                peer_addr,
+                peer_did.as_deref().unwrap_or("unknown")
+            );
+            return Some(PeerChainProbe {
+                peer,
+                chain_state: crate::runtime::RemoteChainState::Unknown,
+                is_trusted: false,
+            });
+        }
+
+        let tip_resp = match tokio::time::timeout(
+            Duration::from_secs(10),
+            client.get("/api/v1/blockchain/tip"),
+        )
+        .await
+        {
+            Ok(Ok(response)) => response,
+            Ok(Err(e)) => {
+                warn!("      Failed to query chain tip from {}: {}", peer_addr, e);
+                return None;
+            }
+            Err(_) => {
+                warn!("      Timed out querying chain tip from {}", peer_addr);
+                return None;
+            }
+        };
+
+        if !tip_resp.is_success() {
+            warn!(
+                "      Peer {} returned non-success for /api/v1/blockchain/tip",
+                peer_addr
+            );
+            return None;
+        }
+
+        let tip: TipInfo = match serde_json::from_slice(&tip_resp.body) {
+            Ok(tip) => tip,
+            Err(e) => {
+                warn!("      Failed to parse chain tip from {}: {}", peer_addr, e);
+                return None;
+            }
+        };
+
+        let chain_state = if tip.height == 0 {
+            debug!("      Peer {} reports genesis-only chain state", peer_addr);
+            crate::runtime::RemoteChainState::GenesisOnly
+        } else {
+            debug!(
+                "      Peer {} reports committed chain height {}",
+                peer_addr, tip.height
+            );
+            crate::runtime::RemoteChainState::Committed(tip.height)
+        };
+
+        Some(PeerChainProbe {
+            peer,
+            chain_state,
+            is_trusted: true,
+        })
+    });
 }
 
 impl Default for DiscoveryCoordinator {
