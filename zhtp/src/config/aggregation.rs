@@ -59,6 +59,35 @@ pub struct PartialNetworkConfig {
     /// Enables proposer rotation from block 0 in multi-node setups.
     #[serde(default)]
     pub bootstrap_validators: Vec<BootstrapValidator>,
+    /// Observer admission policy and trusted sync sources.
+    #[serde(default)]
+    pub observer_admission: Option<ObserverAdmissionConfig>,
+}
+
+/// Config-backed observer admission policy.
+///
+/// This is operator-controlled until an on-chain node registry exists.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ObserverAdmissionConfig {
+    /// Require explicit local DID admission for observer/full-node startup.
+    #[serde(default)]
+    pub required: bool,
+    /// DIDs allowed to run in observer mode when admission is required.
+    #[serde(default)]
+    pub authorized_observer_dids: Vec<String>,
+    /// Explicit peers allowed to serve bootstrap state to observers.
+    #[serde(default)]
+    pub trusted_sync_sources: Vec<TrustedSyncSource>,
+}
+
+/// Trusted peer eligible to serve observer bootstrap data.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TrustedSyncSource {
+    /// Endpoint in `host:port` form.
+    pub address: String,
+    /// Optional expected peer DID after authenticated handshake.
+    #[serde(default)]
+    pub peer_did: Option<String>,
 }
 
 /// Partial consensus configuration (matches [consensus_config] section)
@@ -268,6 +297,10 @@ pub struct NetworkConfig {
     // Bootstrap validators for multi-node genesis (Gap 5)
     #[serde(default)]
     pub bootstrap_validators: Vec<BootstrapValidator>,
+
+    /// Observer admission and trusted sync-source policy.
+    #[serde(default)]
+    pub observer_admission: ObserverAdmissionConfig,
 }
 
 /// Blockchain configuration
@@ -722,6 +755,7 @@ impl Default for NodeConfig {
                 long_range_relays: false,
                 bootstrap_peer_pins: HashMap::new(),
                 bootstrap_validators: Vec::new(), // Gap 5: Empty by default
+                observer_admission: ObserverAdmissionConfig::default(),
             },
 
             blockchain_config: BlockchainConfig {
@@ -1089,6 +1123,10 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
                             config.network_config.bootstrap_validators =
                                 network.bootstrap_validators;
                         }
+                        if let Some(observer_admission) = network.observer_admission {
+                            tracing::info!("Loaded observer admission policy from [network] section");
+                            config.network_config.observer_admission = observer_admission;
+                        }
                         if let Some(mesh_port) = network.mesh_port {
                             config.network_config.mesh_port = mesh_port;
                         }
@@ -1123,6 +1161,12 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
                             );
                             config.network_config.bootstrap_validators =
                                 network.bootstrap_validators;
+                        }
+                        if let Some(observer_admission) = network.observer_admission {
+                            tracing::info!(
+                                "Loaded observer admission policy from [network_config] section"
+                            );
+                            config.network_config.observer_admission = observer_admission;
                         }
                         if let Some(mesh_port) = network.mesh_port {
                             config.network_config.mesh_port = mesh_port;

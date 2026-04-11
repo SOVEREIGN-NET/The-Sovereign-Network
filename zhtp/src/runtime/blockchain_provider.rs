@@ -245,10 +245,7 @@ async fn handle_wallet_registered(
     let storage = crate::runtime::storage_provider::get_global_storage().await?;
     let mut storage = storage.write().await;
     storage
-        .add_to_wallet_index(
-            &owner_identity_id_hex,
-            &wallet_id_hex,
-        )
+        .add_to_wallet_index(&owner_identity_id_hex, &wallet_id_hex)
         .await?;
 
     let pending = pending_wallet_projections()
@@ -295,7 +292,10 @@ async fn handle_wallet_registered(
                 .await?;
             }
             if let Some(wallet_private_record) = pending.wallet_private_record {
-                let path = format!("/wallet_private/{}/{}", pending.identity_id, pending.wallet_id);
+                let path = format!(
+                    "/wallet_private/{}/{}",
+                    pending.identity_id, pending.wallet_id
+                );
                 dht.store_content("wallet.zhtp", &path, wallet_private_record, 86400)
                     .await?;
             }
@@ -628,8 +628,14 @@ mod tests {
             .unwrap()
             .expect("identity cache record should exist");
         let value: serde_json::Value = serde_json::from_slice(&record).unwrap();
-        assert_eq!(value.get("display_name").and_then(|v| v.as_str()), Some("Event User"));
-        assert_eq!(value.get("device_id").and_then(|v| v.as_str()), Some("device-a"));
+        assert_eq!(
+            value.get("display_name").and_then(|v| v.as_str()),
+            Some("Event User")
+        );
+        assert_eq!(
+            value.get("device_id").and_then(|v| v.as_str()),
+            Some("device-a")
+        );
         assert!(guard
             .list_identity_ids()
             .await
@@ -686,7 +692,8 @@ mod tests {
             .unwrap()
             .is_some());
         assert_eq!(
-            guard.get_wallet_private_record(&"11".repeat(32), &"22".repeat(32))
+            guard
+                .get_wallet_private_record(&"11".repeat(32), &"22".repeat(32))
                 .await
                 .unwrap(),
             Some(vec![1, 2, 3, 4])
@@ -694,7 +701,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn committed_wallet_event_without_pending_projection_does_not_materialize_cache_records() {
+    async fn committed_wallet_event_without_pending_projection_does_not_materialize_cache_records()
+    {
         let _guard = test_guard().lock().await;
         let storage = install_test_storage().await;
 
@@ -724,13 +732,15 @@ mod tests {
             .unwrap()
             .contains(&"22".repeat(32)));
         assert_eq!(
-            guard.get_wallet_record(&"11".repeat(32), &"22".repeat(32))
+            guard
+                .get_wallet_record(&"11".repeat(32), &"22".repeat(32))
                 .await
                 .unwrap(),
             None
         );
         assert_eq!(
-            guard.get_wallet_private_record(&"11".repeat(32), &"22".repeat(32))
+            guard
+                .get_wallet_private_record(&"11".repeat(32), &"22".repeat(32))
                 .await
                 .unwrap(),
             None

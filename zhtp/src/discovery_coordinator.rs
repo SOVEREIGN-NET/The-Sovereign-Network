@@ -26,6 +26,9 @@ pub struct DiscoveryConfig {
     pub discovery_port: u16,
     /// Active discovery protocols
     pub protocols: Vec<DiscoveryProtocol>,
+
+    /// Explicit peers allowed to serve observer bootstrap state.
+    pub trusted_sync_sources: Vec<crate::config::TrustedSyncSource>,
 }
 
 impl DiscoveryConfig {
@@ -34,11 +37,13 @@ impl DiscoveryConfig {
         bootstrap_peers: Vec<String>,
         discovery_port: u16,
         protocols: Vec<DiscoveryProtocol>,
+        trusted_sync_sources: Vec<crate::config::TrustedSyncSource>,
     ) -> Self {
         Self {
             bootstrap_peers,
             discovery_port,
             protocols,
+            trusted_sync_sources,
         }
     }
 }
@@ -663,10 +668,10 @@ impl DiscoveryCoordinator {
         let blockchain_info = self.fetch_blockchain_info(&discovered_peers).await?;
 
         Ok(crate::runtime::ExistingNetworkInfo {
-            peer_count: discovered_peers.len() as u32,
-            blockchain_height: blockchain_info.height,
+            peer_count: blockchain_info.trusted_bootstrap_peers.len() as u32,
+            chain_state: blockchain_info.chain_state,
             network_id: blockchain_info.network_id,
-            bootstrap_peers: discovered_peers,
+            bootstrap_peers: blockchain_info.trusted_bootstrap_peers,
             environment: environment.clone(),
         })
     }
@@ -788,33 +793,208 @@ impl DiscoveryCoordinator {
         Ok(Vec::new())
     }
 
-    /// Get blockchain info for discovered peers
-    /// NOTE: Actual blockchain sync happens via QUIC mesh protocol, not HTTP
-    /// This just returns basic info indicating peers were found
+    /// Get blockchain info for discovered peers.
+    ///
+    /// Discovery must distinguish:
+    /// - unknown remote chain state
+    /// - explicit genesis-only peers
+    /// - peers with committed blocks beyond genesis
     async fn fetch_blockchain_info(&self, peers: &[String]) -> Result<BlockchainInfo> {
-        // Don't query via HTTP - blockchain sync will happen via QUIC mesh protocol
-        // Just return info indicating we found peers to sync with
         let network_id = if peers.is_empty() {
             "zhtp-genesis".to_string()
         } else {
             info!(
-                "      Will sync blockchain via QUIC mesh from {} peer(s)",
+                "      Probing remote chain state across {} discovered peer(s)",
                 peers.len()
             );
             "zhtp-network".to_string()
         };
 
+        let probe = self.query_remote_chain_state(peers).await?;
+        let chain_state = probe.chain_state;
+        info!("      Remote chain state: {}", chain_state);
+
         Ok(BlockchainInfo {
-            height: 0, // Will be populated during QUIC mesh sync
+            chain_state,
             network_id,
+            trusted_bootstrap_peers: probe.trusted_bootstrap_peers,
         })
+    }
+
+    async fn query_remote_chain_state(
+        &self,
+        peers: &[String],
+    ) -> Result<RemoteChainProbe> {
+        use lib_identity::{IdentityType, ZhtpIdentity};
+        use lib_network::client::{ZhtpClient, ZhtpClientConfig};
+
+        #[derive(serde::Deserialize)]
+        struct TipInfo {
+            height: u64,
+        }
+
+        if peers.is_empty() {
+            return Ok(RemoteChainProbe {
+                chain_state: crate::runtime::RemoteChainState::Unknown,
+                trusted_bootstrap_peers: Vec::new(),
+            });
+        }
+
+        let timestamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let temp_identity = ZhtpIdentity::new_unified(
+            IdentityType::Device,
+            None,
+            None,
+            &format!("temp-discovery-sync-probe-{timestamp}"),
+            None,
+        )
+        .context("failed to create temporary identity for discovery probe")?;
+
+        let mut observed_genesis_only = false;
+        let mut highest_committed_height = 0u64;
+        let mut trusted_bootstrap_peers = Vec::new();
+
+        for peer in peers {
+            let peer_addr = match peer.parse::<std::net::SocketAddr>() {
+                Ok(addr) => addr,
+                Err(_) => {
+                    warn!(
+                        "      Skipping invalid bootstrap peer address during probe: {}",
+                        peer
+                    );
+                    continue;
+                }
+            };
+
+            let mut client = match ZhtpClient::new_bootstrap_with_config(
+                temp_identity.clone(),
+                ZhtpClientConfig {
+                    allow_bootstrap: true,
+                },
+            )
+            .await
+            {
+                Ok(client) => client,
+                Err(e) => {
+                    warn!(
+                        "      Failed to create QUIC probe client for {}: {}",
+                        peer_addr, e
+                    );
+                    continue;
+                }
+            };
+
+            match tokio::time::timeout(Duration::from_secs(10), client.connect(peer)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    warn!(
+                        "      Failed to connect to {} during probe: {}",
+                        peer_addr, e
+                    );
+                    continue;
+                }
+                Err(_) => {
+                    warn!("      Timed out connecting to {} during probe", peer_addr);
+                    continue;
+                }
+            }
+
+            let peer_did = client.peer_did().map(str::to_owned);
+            if !crate::runtime::is_trusted_sync_source(
+                peer,
+                peer_did.as_deref(),
+                &self.config.trusted_sync_sources,
+            ) {
+                warn!(
+                    "      Skipping untrusted observer sync source {} (peer_did={})",
+                    peer_addr,
+                    peer_did.as_deref().unwrap_or("unknown")
+                );
+                continue;
+            }
+
+            let tip_resp = match tokio::time::timeout(
+                Duration::from_secs(10),
+                client.get("/api/v1/blockchain/tip"),
+            )
+            .await
+            {
+                Ok(Ok(response)) => response,
+                Ok(Err(e)) => {
+                    warn!("      Failed to query chain tip from {}: {}", peer_addr, e);
+                    continue;
+                }
+                Err(_) => {
+                    warn!("      Timed out querying chain tip from {}", peer_addr);
+                    continue;
+                }
+            };
+
+            if !tip_resp.is_success() {
+                warn!(
+                    "      Peer {} returned non-success for /api/v1/blockchain/tip",
+                    peer_addr
+                );
+                continue;
+            }
+
+            let tip: TipInfo = match serde_json::from_slice(&tip_resp.body) {
+                Ok(tip) => tip,
+                Err(e) => {
+                    warn!("      Failed to parse chain tip from {}: {}", peer_addr, e);
+                    continue;
+                }
+            };
+
+            trusted_bootstrap_peers.push(peer.clone());
+
+            if tip.height == 0 {
+                observed_genesis_only = true;
+                debug!("      Peer {} reports genesis-only chain state", peer_addr);
+            } else {
+                highest_committed_height = highest_committed_height.max(tip.height);
+                debug!(
+                    "      Peer {} reports committed chain height {}",
+                    peer_addr, tip.height
+                );
+            }
+        }
+
+        if highest_committed_height > 0 {
+            Ok(RemoteChainProbe {
+                chain_state: crate::runtime::RemoteChainState::Committed(
+                    highest_committed_height,
+                ),
+                trusted_bootstrap_peers,
+            })
+        } else if observed_genesis_only {
+            Ok(RemoteChainProbe {
+                chain_state: crate::runtime::RemoteChainState::GenesisOnly,
+                trusted_bootstrap_peers,
+            })
+        } else {
+            Ok(RemoteChainProbe {
+                chain_state: crate::runtime::RemoteChainState::Unknown,
+                trusted_bootstrap_peers,
+            })
+        }
     }
 }
 
 #[derive(Debug)]
 struct BlockchainInfo {
-    height: u64,
+    chain_state: crate::runtime::RemoteChainState,
     network_id: String,
+    trusted_bootstrap_peers: Vec<String>,
+}
+
+#[derive(Debug)]
+struct RemoteChainProbe {
+    chain_state: crate::runtime::RemoteChainState,
+    trusted_bootstrap_peers: Vec<String>,
 }
 
 impl Default for DiscoveryCoordinator {
@@ -823,6 +1003,7 @@ impl Default for DiscoveryCoordinator {
             vec![],
             9333,
             vec![DiscoveryProtocol::UdpMulticast, DiscoveryProtocol::DHT],
+            vec![],
         );
         Self::new(config)
     }
@@ -838,6 +1019,7 @@ mod tests {
             vec!["192.168.1.1:9333".to_string()],
             9333,
             vec![DiscoveryProtocol::UdpMulticast, DiscoveryProtocol::DHT],
+            vec![],
         );
         let coordinator = DiscoveryCoordinator::new(config);
         coordinator.start_event_listener().await;
@@ -879,7 +1061,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_protocol_stats() {
-        let config = DiscoveryConfig::new(vec![], 9333, vec![]);
+        let config = DiscoveryConfig::new(vec![], 9333, vec![], vec![]);
         let coordinator = DiscoveryCoordinator::new(config);
 
         coordinator

@@ -361,8 +361,10 @@ fn reconstruct_identity_manager_from_blockchain_state(
     identity_registry: &HashMap<String, lib_blockchain::transaction::IdentityTransactionData>,
     wallet_registry: &HashMap<String, lib_blockchain::transaction::WalletTransactionData>,
 ) -> Result<(u32, u32)> {
-    let mut wallets_by_owner: HashMap<String, Vec<&lib_blockchain::transaction::WalletTransactionData>> =
-        HashMap::new();
+    let mut wallets_by_owner: HashMap<
+        String,
+        Vec<&lib_blockchain::transaction::WalletTransactionData>,
+    > = HashMap::new();
     for wallet in wallet_registry.values() {
         if let Some(owner_identity_id) = wallet.owner_identity_id {
             wallets_by_owner
@@ -395,7 +397,11 @@ fn reconstruct_identity_manager_from_blockchain_state(
         }
 
         let public_key = lib_crypto::PublicKey::new(
-            identity_data.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
+            identity_data
+                .public_key
+                .as_slice()
+                .try_into()
+                .unwrap_or([0u8; 2592]),
         );
         let display_name = if identity_data.display_name.is_empty() {
             None
@@ -413,8 +419,9 @@ fn reconstruct_identity_manager_from_blockchain_state(
             display_name,
             identity_data.created_at,
         )?;
-        identity.did_document_hash =
-            Some(lib_crypto::Hash::from_bytes(identity_data.did_document_hash.as_bytes()));
+        identity.did_document_hash = Some(lib_crypto::Hash::from_bytes(
+            identity_data.did_document_hash.as_bytes(),
+        ));
         identity.wallet_manager.wallets.clear();
         identity.wallet_manager.total_balance = 0;
 
@@ -915,7 +922,10 @@ async fn bootstrap_identities_from_dht(
                     let pk_array: [u8; 2592] = match bytes.as_slice().try_into() {
                         Ok(arr) => arr,
                         Err(_) => {
-                            warn!("Invalid public key length for identity {}, expected 2592 bytes", id_preview);
+                            warn!(
+                                "Invalid public key length for identity {}, expected 2592 bytes",
+                                id_preview
+                            );
                             continue;
                         }
                     };
@@ -1331,8 +1341,12 @@ mod tests {
         );
 
         let (identities_loaded, wallets_loaded) =
-            reconstruct_identity_manager_from_blockchain_state(&mut manager, &identities, &HashMap::new())
-                .expect("device identities should be skipped cleanly");
+            reconstruct_identity_manager_from_blockchain_state(
+                &mut manager,
+                &identities,
+                &HashMap::new(),
+            )
+            .expect("device identities should be skipped cleanly");
 
         assert_eq!(identities_loaded, 0);
         assert_eq!(wallets_loaded, 0);

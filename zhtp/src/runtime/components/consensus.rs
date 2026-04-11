@@ -523,7 +523,14 @@ async fn run_catch_up_sync_task(
         // same-height peers (e.g. other nodes on the same stale fork) from the count.
         let mut ahead_peers_rejecting: u32 = 0;
         for peer in &prioritized_peers {
-            match catchup_sync_from_peer(&peer.addr, from_height, &blockchain_slot, &bft_active_height).await {
+            match catchup_sync_from_peer(
+                &peer.addr,
+                from_height,
+                &blockchain_slot,
+                &bft_active_height,
+            )
+            .await
+            {
                 Ok(0) => {
                     debug!(
                         "Catch-up sync: peer {} at same height ({})",
@@ -772,7 +779,11 @@ async fn catchup_sync_from_peer(
             .map(|s| s.get_block_by_height(0).ok().flatten().is_none())
             .unwrap_or(false)
     };
-    let first_fetch = if no_genesis_in_sled { 0u64 } else { our_height + 1 };
+    let first_fetch = if no_genesis_in_sled {
+        0u64
+    } else {
+        our_height + 1
+    };
     if no_genesis_in_sled {
         info!(
             "⬇️  Catch-up: sled has no genesis — will fetch from block 0 (peer tip={})",
@@ -788,7 +799,9 @@ async fn catchup_sync_from_peer(
 
     while next_start <= tip.height && pages < MAX_PAGES_PER_SYNC {
         let start = next_start;
-        let end = tip.height.min(start.saturating_add(MAX_BLOCKS_PER_PAGE - 1));
+        let end = tip
+            .height
+            .min(start.saturating_add(MAX_BLOCKS_PER_PAGE - 1));
 
         info!(
             "⬇️  Catch-up: fetching blocks {}-{} from {} (peer tip={})",
@@ -835,29 +848,24 @@ async fn catchup_sync_from_peer(
             // Fallback: blocks without a proof (pre-upgrade, or peer doesn't have
             // one) are still blocked by the height guard for safety.
             let bft_height = bft_active_height.load(std::sync::atomic::Ordering::Acquire);
-            let verified_proof: Option<lib_types::consensus::BftQuorumProof> =
-                if bft_height > 0 && height >= bft_height {
-                    // Block is in the BFT-active zone.  Fetch + verify a quorum
-                    // proof from the peer BEFORE acquiring the write lock.
-                    match fetch_and_verify_quorum_proof(
-                        &mut client,
-                        &block,
-                        &blockchain_arc,
-                    )
-                    .await
-                    {
-                        Some(proof) => Some(proof),
-                        None => {
-                            debug!(
-                                "Catch-up: skipping block {} (BFT active at {}, no valid proof)",
-                                height, bft_height
-                            );
-                            break;
-                        }
+            let verified_proof: Option<lib_types::consensus::BftQuorumProof> = if bft_height > 0
+                && height >= bft_height
+            {
+                // Block is in the BFT-active zone.  Fetch + verify a quorum
+                // proof from the peer BEFORE acquiring the write lock.
+                match fetch_and_verify_quorum_proof(&mut client, &block, &blockchain_arc).await {
+                    Some(proof) => Some(proof),
+                    None => {
+                        debug!(
+                            "Catch-up: skipping block {} (BFT active at {}, no valid proof)",
+                            height, bft_height
+                        );
+                        break;
                     }
-                } else {
-                    None
-                };
+                }
+            } else {
+                None
+            };
 
             let mut bc = blockchain_arc.write().await;
 
@@ -944,7 +952,10 @@ async fn fetch_and_verify_quorum_proof(
 
     let proof: lib_types::consensus::BftQuorumProof =
         bincode::deserialize(&resp.body).ok().or_else(|| {
-            tracing::debug!("Catch-up: quorum proof deserialize failed for height {}", height);
+            tracing::debug!(
+                "Catch-up: quorum proof deserialize failed for height {}",
+                height
+            );
             None
         })?;
 
@@ -955,7 +966,8 @@ async fn fetch_and_verify_quorum_proof(
         Err(e) => {
             tracing::warn!(
                 "Catch-up: block {} quorum proof has inconsistent proposal_ids: {}",
-                height, e
+                height,
+                e
             );
             return None;
         }
@@ -1000,10 +1012,7 @@ async fn fetch_and_verify_quorum_proof(
             Some(proof)
         }
         Err(e) => {
-            tracing::warn!(
-                "Catch-up: block {} quorum proof INVALID: {}",
-                height, e
-            );
+            tracing::warn!("Catch-up: block {} quorum proof INVALID: {}", height, e);
             None
         }
     }
@@ -1107,7 +1116,8 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
                             proposal.height,
                             hex::encode(&stored_hash.0[..8]),
                             hex::encode(&bft_hash[..8]),
-                        ).into());
+                        )
+                        .into());
                     }
                 }
             }
@@ -1401,7 +1411,10 @@ impl lib_consensus::types::ConsensusBlockchainProvider for ConsensusBlockchainAd
         // This is the last-line defense: even if a stale tx slipped past
         // mempool admission, it will be filtered out here before the
         // proposer includes it in the BFT proposal.
-        let nonce_valid: Vec<bool> = pending.iter().map(|tx| blockchain.is_nonce_current(tx)).collect();
+        let nonce_valid: Vec<bool> = pending
+            .iter()
+            .map(|tx| blockchain.is_nonce_current(tx))
+            .collect();
         let previous_hash = blockchain
             .latest_block()
             .map(|b| b.hash())
@@ -1556,7 +1569,7 @@ pub fn decode_bootstrap_consensus_key(consensus_key_hex: &str) -> Option<[u8; 25
     if bytes.len() != 2592 {
         return None;
     }
-    
+
     Some(bytes.as_slice().try_into().ok()?)
 }
 
@@ -1780,13 +1793,25 @@ async fn load_local_validator_from_keystore() -> Result<(IdentityId, lib_crypto:
     }
 
     // Consensus identity uses Dilithium public key bytes for signature verification.
-    let dilithium_pk: [u8; 2592] = ks.dilithium_pk.as_slice().try_into()
+    let dilithium_pk: [u8; 2592] = ks
+        .dilithium_pk
+        .as_slice()
+        .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid dilithium_pk length, expected 2592 bytes"))?;
-    let dilithium_sk: [u8; 4896] = ks.dilithium_sk.as_slice().try_into()
+    let dilithium_sk: [u8; 4896] = ks
+        .dilithium_sk
+        .as_slice()
+        .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid dilithium_sk length, expected 4896 bytes"))?;
-    let kyber_sk: [u8; 3168] = ks.kyber_sk.as_slice().try_into()
+    let kyber_sk: [u8; 3168] = ks
+        .kyber_sk
+        .as_slice()
+        .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid kyber_sk length, expected 3168 bytes"))?;
-    let master_seed: [u8; 64] = ks.master_seed.as_slice().try_into()
+    let master_seed: [u8; 64] = ks
+        .master_seed
+        .as_slice()
+        .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid master_seed length, expected 64 bytes"))?;
     let public_key = lib_crypto::PublicKey::new(dilithium_pk);
     let private_key = lib_crypto::PrivateKey {
@@ -1989,37 +2014,43 @@ impl Component for ConsensusComponent {
         config.development_mode = is_development;
         if config.development_mode {
             info!("🔧 Development mode enabled — single-validator consensus allowed for local testing");
-            info!("   Testnet and Mainnet require minimum {} validators for BFT", lib_consensus::engines::consensus_engine::BFT_MIN_VALIDATORS);
+            info!(
+                "   Testnet and Mainnet require minimum {} validators for BFT",
+                lib_consensus::engines::consensus_engine::BFT_MIN_VALIDATORS
+            );
         } else {
-            info!("🛡️ BFT-only mode: Full consensus validation required (minimum {} validators)", lib_consensus::engines::consensus_engine::BFT_MIN_VALIDATORS);
+            info!(
+                "🛡️ BFT-only mode: Full consensus validation required (minimum {} validators)",
+                lib_consensus::engines::consensus_engine::BFT_MIN_VALIDATORS
+            );
         }
 
         // Create broadcaster — requires the mesh router set by Protocols component.
         // Protocols.start() is awaited before Consensus.start() in startup_sequence,
         // so the mesh router is guaranteed to be available here unless Protocols failed.
         // Development mode allows NoOpBroadcaster for single-node local testing.
-        let broadcaster: Arc<dyn ConsensusMessageBroadcaster> =
-            match get_global_mesh_router().await {
-                Ok(mesh_router) => {
-                    info!("Mesh router available — multi-node consensus broadcasting enabled");
-                    Arc::new(ConsensusMeshBroadcaster::new(mesh_router))
-                }
-                Err(e) if is_development => {
-                    warn!(
-                        "Mesh router not available: {} — development mode, using NoOpBroadcaster",
-                        e
-                    );
-                    Arc::new(NoOpBroadcaster)
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "Mesh router not available: {}. \
+        let broadcaster: Arc<dyn ConsensusMessageBroadcaster> = match get_global_mesh_router().await
+        {
+            Ok(mesh_router) => {
+                info!("Mesh router available — multi-node consensus broadcasting enabled");
+                Arc::new(ConsensusMeshBroadcaster::new(mesh_router))
+            }
+            Err(e) if is_development => {
+                warn!(
+                    "Mesh router not available: {} — development mode, using NoOpBroadcaster",
+                    e
+                );
+                Arc::new(NoOpBroadcaster)
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Mesh router not available: {}. \
                          BFT consensus requires a working broadcaster to reach quorum. \
                          Ensure the Protocols component started successfully before Consensus.",
-                        e
-                    ));
-                }
-            };
+                    e
+                ));
+            }
+        };
 
         let mut consensus_engine = lib_consensus::init_consensus(config, broadcaster)?;
         let (liveness_tx, mut liveness_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -2294,8 +2325,13 @@ impl Component for ConsensusComponent {
                 std::path::Path::new(&self.environment.data_directory()).join("sled");
             let bft_height_for_sync = bft_active_height.clone();
             tokio::spawn(async move {
-                run_catch_up_sync_task(catch_up_rx, blockchain_slot_for_sync, sled_path_for_sync, bft_height_for_sync)
-                    .await;
+                run_catch_up_sync_task(
+                    catch_up_rx,
+                    blockchain_slot_for_sync,
+                    sled_path_for_sync,
+                    bft_height_for_sync,
+                )
+                .await;
             });
             info!("🔄 Catch-up sync trigger wired (height-divergence recovery active)");
         }
@@ -2374,7 +2410,10 @@ impl Component for ConsensusComponent {
                     match result {
                         Ok((added, _skipped)) => {
                             if added > 0 {
-                                info!("Periodic validator sync: {} new validator(s) from blockchain", added);
+                                info!(
+                                    "Periodic validator sync: {} new validator(s) from blockchain",
+                                    added
+                                );
                             }
                         }
                         Err(e) => {
@@ -2394,14 +2433,22 @@ impl Component for ConsensusComponent {
                     } else {
                         None
                     };
-                    let entries: Vec<lib_consensus::engines::consensus_engine::ValidatorUpdateEntry> =
-                        active_validators.iter().map(|v| {
-                            let identity_hex = v.identity_id.strip_prefix("did:zhtp:").unwrap_or(&v.identity_id);
+                    let entries: Vec<
+                        lib_consensus::engines::consensus_engine::ValidatorUpdateEntry,
+                    > = active_validators
+                        .iter()
+                        .map(|v| {
+                            let identity_hex = v
+                                .identity_id
+                                .strip_prefix("did:zhtp:")
+                                .unwrap_or(&v.identity_id);
                             let identity_id = if let Ok(bytes) = hex::decode(identity_hex) {
                                 if bytes.len() >= 32 {
                                     lib_crypto::Hash::from_bytes(&bytes[..32])
                                 } else {
-                                    lib_crypto::Hash(lib_crypto::hash_blake3(v.identity_id.as_bytes()))
+                                    lib_crypto::Hash(lib_crypto::hash_blake3(
+                                        v.identity_id.as_bytes(),
+                                    ))
                                 }
                             } else {
                                 lib_crypto::Hash(lib_crypto::hash_blake3(v.identity_id.as_bytes()))
@@ -2411,7 +2458,8 @@ impl Component for ConsensusComponent {
                                 stake: v.stake,
                                 consensus_key: v.consensus_key.clone(),
                             }
-                        }).collect();
+                        })
+                        .collect();
                     let update = lib_consensus::ValidatorSetUpdate {
                         entries,
                         local_identity,
