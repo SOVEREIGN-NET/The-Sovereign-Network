@@ -366,4 +366,44 @@ mod tests {
         assert_eq!(data.proposal_id, proposal);
         assert!(data.approvals.approvals.is_empty());
     }
+
+    #[test]
+    fn test_build_dao_unstake_tx_round_trip() {
+        use super::build_dao_unstake_tx;
+        use std::convert::TryInto;
+        use crate::identity::generate_identity;
+
+        let identity = generate_identity("test-device".to_string()).unwrap();
+        let dao_key_id = [0xAAu8; 32];
+        let nonce = 42u64;
+        let chain_id = 1u8;
+
+        let signed_tx = build_dao_unstake_tx(&identity, dao_key_id, nonce, chain_id).unwrap();
+
+        // Verify hex encoding and round-trip serialization
+        let tx_bytes = hex::decode(&signed_tx).expect("valid hex");
+        let tx: lib_blockchain::Transaction = bincode::deserialize(&tx_bytes)
+            .expect("valid transaction");
+
+        // Verify transaction type
+        assert_eq!(tx.transaction_type, TransactionType::DaoUnstake);
+
+        // Verify memo
+        assert_eq!(tx.memo, b"ZHTP_DAO_UNSTAKE");
+
+        // Verify fee is zero
+        assert_eq!(tx.fee, 0);
+
+        // Verify no inputs/outputs (DAO transactions don't use UTXOs)
+        assert!(tx.inputs.is_empty());
+        assert!(tx.outputs.is_empty());
+
+        // Verify payload fields
+        let data = tx.dao_unstake_data().expect("DaoUnstake payload");
+        assert_eq!(data.sector_dao_key_id, dao_key_id);
+        assert_eq!(data.nonce, nonce);
+
+        // Verify signature is present and valid
+        assert!(!tx.signature.signature.is_empty());
+    }
 }

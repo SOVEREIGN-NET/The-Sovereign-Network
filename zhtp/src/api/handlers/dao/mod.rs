@@ -3173,14 +3173,29 @@ impl DaoHandler {
         };
 
         // Read the stake record before validation so we can return the amount in the response.
+        // Treat store/read failures as request errors instead of serializing `amount: null`.
         let stake_amount = {
             let blockchain_arc = self.get_blockchain().await?;
             let blockchain = blockchain_arc.read().await;
-            blockchain
-                .store
-                .as_ref()
-                .and_then(|s| s.get_dao_stake(&data.sector_dao_key_id, &data.staker).ok().flatten())
-                .map(|r| r.amount)
+            let store = match blockchain.store.as_ref() {
+                Some(store) => store,
+                None => {
+                    return create_json_response(json!({
+                        "status": "error",
+                        "message": "Blockchain store unavailable"
+                    }));
+                }
+            };
+
+            match store.get_dao_stake(&data.sector_dao_key_id, &data.staker) {
+                Ok(record) => record.map(|r| r.amount),
+                Err(e) => {
+                    return create_json_response(json!({
+                        "status": "error",
+                        "message": format!("Failed to read DAO stake record: {}", e)
+                    }));
+                }
+            }
         };
 
         // Stateful validation (checks lock period, record existence, signer).

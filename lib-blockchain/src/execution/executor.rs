@@ -2093,14 +2093,25 @@ impl BlockExecutor {
         let dao_addr = Address::new(data.sector_dao_key_id);
         let staker_addr = Address::new(data.staker);
 
+        // Enforce exact SOV nonce matching to prevent replay of old signed unstake transactions.
+        let expected_nonce = mutator.get_token_nonce(&sov_token, &staker_addr)?;
+        if data.nonce != expected_nonce {
+            return Err(TxApplyError::InvalidType(format!(
+                "DaoUnstake: invalid nonce for staker={} expected={} got={}",
+                hex::encode(&data.staker[..6]),
+                expected_nonce,
+                data.nonce,
+            )));
+        }
+
         // Return locked SOV from DAO wallet back to staker.
         mutator.transfer_token(&sov_token, &dao_addr, &staker_addr, record.amount)?;
 
-        // Increment the staker's SOV nonce to prevent replay.
-        mutator.increment_token_nonce(&sov_token, &staker_addr)?;
-
         // Delete the stake record.
         mutator.delete_dao_stake(&data.sector_dao_key_id, &data.staker)?;
+
+        // Increment the staker's SOV nonce only after the unstake has been applied successfully.
+        mutator.increment_token_nonce(&sov_token, &staker_addr)?;
 
         tracing::info!(
             "[DAO_UNSTAKE] staker={} dao={} amount={} height={}",

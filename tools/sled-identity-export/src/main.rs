@@ -82,7 +82,14 @@ fn main() {
     let mut total = 0usize;
 
     for result in wallets_tree.iter() {
-        let (_key, value) = result.expect("iter error");
+        let (_key, value) = match result {
+            Ok(entry) => entry,
+            Err(err) => {
+                eprintln!("wallets iteration error: {}", err);
+                deser_errors += 1;
+                continue;
+            }
+        };
         total += 1;
 
         // Try V1: wallet_id=[u8;32]
@@ -165,7 +172,14 @@ fn main() {
 
     // Also pull display names from identity_meta tree
     for result in identity_meta_tree.iter() {
-        let (_key, value) = result.expect("iter error");
+        let (_key, value) = match result {
+            Ok(entry) => entry,
+            Err(err) => {
+                eprintln!("wallets iteration error: {}", err);
+                deser_errors += 1;
+                continue;
+            }
+        };
         if let Ok(meta) = bincode::deserialize::<IdentityMetadata>(&value) {
             if meta.did.starts_with("did:zhtp:") {
                 if let Some(entry) = identity_map.get_mut(&meta.did) {
@@ -173,8 +187,12 @@ fn main() {
                 } else {
                     let pk_hash = blake3::hash(&meta.public_key);
                     let computed_did = format!("did:zhtp:{}", hex::encode(pk_hash.as_bytes()));
+                    if meta.did != computed_did {
+                        eprintln!("Warning: identity_meta DID mismatch; stored DID {} does not match computed DID {}",
+                            meta.did, computed_did);
+                    }
                     identity_map.insert(computed_did.clone(), ExportedIdentity {
-                        did: meta.did,
+                        did: computed_did.clone(),
                         display_name: meta.display_name,
                         public_key: hex::encode(&meta.public_key),
                         identity_type: "human".to_string(),

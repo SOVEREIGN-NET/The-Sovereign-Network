@@ -79,8 +79,31 @@ fn main() {
         master_seed,
     };
 
+    // Warn if output path already exists
+    if std::path::Path::new(out_path).exists() {
+        eprintln!("Warning: output file '{}' already exists and will be overwritten", out_path);
+    }
+
     let json = serde_json::to_string_pretty(&keystore).expect("json failed");
-    std::fs::write(out_path, &json).expect("write failed");
+    
+    // Write with restrictive permissions (0o600) on Unix
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(out_path)
+            .expect("write failed");
+        use std::io::Write;
+        file.write_all(json.as_bytes()).expect("write failed");
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(out_path, &json).expect("write failed");
+    }
 
     println!("=== NEW NODE KEY GENERATED ===");
     println!("Saved to: {}", out_path);
