@@ -6,6 +6,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{mpsc, RwLock};
@@ -714,9 +715,16 @@ impl DiscoveryCoordinator {
                     }
                 }
 
-                // Trust configured bootstrap peers - QUIC connection will validate reachability
-                // No TCP check needed since we use UDP/QUIC only
-                if peer.parse::<std::net::SocketAddr>().is_ok() {
+                // Trust configured bootstrap peers - QUIC connection will validate reachability.
+                // Accept both IP:port ("1.2.3.4:9334") and host:port ("node.example.com:9334").
+                // SocketAddr::parse only handles IP literals; use to_socket_addrs for DNS names.
+                let is_valid = peer.parse::<std::net::SocketAddr>().is_ok()
+                    || peer
+                        .as_str()
+                        .to_socket_addrs()
+                        .map(|mut a: std::vec::IntoIter<std::net::SocketAddr>| a.next().is_some())
+                        .unwrap_or(false);
+                if is_valid {
                     debug!(
                         "      ✓ Adding bootstrap peer {} (will verify via QUIC)",
                         peer_hash
