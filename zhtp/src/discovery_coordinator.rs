@@ -714,9 +714,15 @@ impl DiscoveryCoordinator {
                     }
                 }
 
-                // Trust configured bootstrap peers - QUIC connection will validate reachability
-                // No TCP check needed since we use UDP/QUIC only
-                if peer.parse::<std::net::SocketAddr>().is_ok() {
+                // Trust configured bootstrap peers - QUIC connection will validate reachability.
+                // Accept both IP:port ("1.2.3.4:9334") and host:port ("node.example.com:9334").
+                // SocketAddr::parse only handles IP literals; use to_socket_addrs for DNS names.
+                let is_valid = peer.parse::<std::net::SocketAddr>().is_ok()
+                    || peer
+                        .to_socket_addrs()
+                        .map(|mut a| a.next().is_some())
+                        .unwrap_or(false);
+                if is_valid {
                     debug!(
                         "      ✓ Adding bootstrap peer {} (will verify via QUIC)",
                         peer_hash
