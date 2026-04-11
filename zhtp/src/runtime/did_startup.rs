@@ -127,14 +127,46 @@ fn load_from_keystore(
         .map_err(|e| KeystoreError::Corrupt(user_private_key_file.clone(), e.to_string()))?;
 
     let user_private_key = PrivateKey {
-        dilithium_sk: user_keystore_key.dilithium_sk.as_slice().try_into()
-            .map_err(|_| KeystoreError::Corrupt(user_private_key_file.clone(), "Invalid dilithium_sk length".to_string()))?,
-        dilithium_pk: user_keystore_key.dilithium_pk.as_slice().try_into()
-            .map_err(|_| KeystoreError::Corrupt(user_private_key_file.clone(), "Invalid dilithium_pk length".to_string()))?,
-        kyber_sk: user_keystore_key.kyber_sk.as_slice().try_into()
-            .map_err(|_| KeystoreError::Corrupt(user_private_key_file.clone(), "Invalid kyber_sk length".to_string()))?,
-        master_seed: user_keystore_key.master_seed.as_slice().try_into()
-            .map_err(|_| KeystoreError::Corrupt(user_private_key_file.clone(), "Invalid master_seed length".to_string()))?,
+        dilithium_sk: user_keystore_key
+            .dilithium_sk
+            .as_slice()
+            .try_into()
+            .map_err(|_| {
+                KeystoreError::Corrupt(
+                    user_private_key_file.clone(),
+                    "Invalid dilithium_sk length".to_string(),
+                )
+            })?,
+        dilithium_pk: user_keystore_key
+            .dilithium_pk
+            .as_slice()
+            .try_into()
+            .map_err(|_| {
+                KeystoreError::Corrupt(
+                    user_private_key_file.clone(),
+                    "Invalid dilithium_pk length".to_string(),
+                )
+            })?,
+        kyber_sk: user_keystore_key
+            .kyber_sk
+            .as_slice()
+            .try_into()
+            .map_err(|_| {
+                KeystoreError::Corrupt(
+                    user_private_key_file.clone(),
+                    "Invalid kyber_sk length".to_string(),
+                )
+            })?,
+        master_seed: user_keystore_key
+            .master_seed
+            .as_slice()
+            .try_into()
+            .map_err(|_| {
+                KeystoreError::Corrupt(
+                    user_private_key_file.clone(),
+                    "Invalid master_seed length".to_string(),
+                )
+            })?,
     };
 
     let mut user_identity =
@@ -152,14 +184,46 @@ fn load_from_keystore(
         .map_err(|e| KeystoreError::Corrupt(node_private_key_file.clone(), e.to_string()))?;
 
     let node_private_key = PrivateKey {
-        dilithium_sk: node_keystore_key.dilithium_sk.as_slice().try_into()
-            .map_err(|_| KeystoreError::Corrupt(node_private_key_file.clone(), "Invalid dilithium_sk length".to_string()))?,
-        dilithium_pk: node_keystore_key.dilithium_pk.as_slice().try_into()
-            .map_err(|_| KeystoreError::Corrupt(node_private_key_file.clone(), "Invalid dilithium_pk length".to_string()))?,
-        kyber_sk: node_keystore_key.kyber_sk.as_slice().try_into()
-            .map_err(|_| KeystoreError::Corrupt(node_private_key_file.clone(), "Invalid kyber_sk length".to_string()))?,
-        master_seed: node_keystore_key.master_seed.as_slice().try_into()
-            .map_err(|_| KeystoreError::Corrupt(node_private_key_file.clone(), "Invalid master_seed length".to_string()))?,
+        dilithium_sk: node_keystore_key
+            .dilithium_sk
+            .as_slice()
+            .try_into()
+            .map_err(|_| {
+                KeystoreError::Corrupt(
+                    node_private_key_file.clone(),
+                    "Invalid dilithium_sk length".to_string(),
+                )
+            })?,
+        dilithium_pk: node_keystore_key
+            .dilithium_pk
+            .as_slice()
+            .try_into()
+            .map_err(|_| {
+                KeystoreError::Corrupt(
+                    node_private_key_file.clone(),
+                    "Invalid dilithium_pk length".to_string(),
+                )
+            })?,
+        kyber_sk: node_keystore_key
+            .kyber_sk
+            .as_slice()
+            .try_into()
+            .map_err(|_| {
+                KeystoreError::Corrupt(
+                    node_private_key_file.clone(),
+                    "Invalid kyber_sk length".to_string(),
+                )
+            })?,
+        master_seed: node_keystore_key
+            .master_seed
+            .as_slice()
+            .try_into()
+            .map_err(|_| {
+                KeystoreError::Corrupt(
+                    node_private_key_file.clone(),
+                    "Invalid master_seed length".to_string(),
+                )
+            })?,
     };
 
     let node_identity = ZhtpIdentity::from_serialized(&node_identity_data, &node_private_key)
@@ -420,13 +484,25 @@ pub async fn load_node_identity_from_keystore(
         .map_err(|e| anyhow!("Failed to parse node private key: {}", e))?;
 
     let private_key = PrivateKey {
-        dilithium_sk: keystore_key.dilithium_sk.as_slice().try_into()
+        dilithium_sk: keystore_key
+            .dilithium_sk
+            .as_slice()
+            .try_into()
             .map_err(|_| anyhow!("Invalid dilithium_sk length"))?,
-        dilithium_pk: keystore_key.dilithium_pk.as_slice().try_into()
+        dilithium_pk: keystore_key
+            .dilithium_pk
+            .as_slice()
+            .try_into()
             .map_err(|_| anyhow!("Invalid dilithium_pk length"))?,
-        kyber_sk: keystore_key.kyber_sk.as_slice().try_into()
+        kyber_sk: keystore_key
+            .kyber_sk
+            .as_slice()
+            .try_into()
             .map_err(|_| anyhow!("Invalid kyber_sk length"))?,
-        master_seed: keystore_key.master_seed.as_slice().try_into()
+        master_seed: keystore_key
+            .master_seed
+            .as_slice()
+            .try_into()
             .map_err(|_| anyhow!("Invalid master_seed length"))?,
     };
 
