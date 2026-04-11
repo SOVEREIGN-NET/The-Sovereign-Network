@@ -96,6 +96,11 @@ keystore*
 .env
 .env.*
 
+# Operational docs (local only — published to wiki)
+docs/node-hardening.md
+docs/security-assessment-g1.md
+docs/bonding-curve-gap-analysis.md
+
 # Operational / payroll artifacts
 payroll.md
 cbe_transfers_*.csv
