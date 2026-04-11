@@ -29,6 +29,7 @@ members = [
     "explorer",
     "tests/lib-identity/test-lib-identity-imports",
     "tests/integration",
+    "tools/sled-wallet-lookup",
 ]
 
 [workspace.package]
