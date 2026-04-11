@@ -1581,13 +1581,19 @@ pub extern "C" fn zhtp_client_build_dao_stake(
 /// The lock period must have expired; the server rejects early unstake with an error.
 /// Returns NULL on any error.  Caller must free with `zhtp_client_string_free`.
 ///
+/// # Safety
+/// This function is unsafe because it dereferences raw pointer arguments.
+/// The caller must ensure that:
+/// - `handle` is a valid, non-null pointer to an `IdentityHandle`
+/// - `sector_dao_key_id` is a valid, non-null pointer to 32 bytes of data
+///
 /// # Parameters
 /// - `handle`: Staker's identity handle
 /// - `sector_dao_key_id`: 32-byte key_id of the sector DAO that holds the stake
 /// - `nonce`: Per-staker current SOV nonce (same counter as stake)
 /// - `chain_id`: Network chain ID (1 = mainnet)
 #[no_mangle]
-pub extern "C" fn zhtp_client_build_dao_unstake(
+pub unsafe extern "C" fn zhtp_client_build_dao_unstake(
     handle: *const IdentityHandle,
     sector_dao_key_id: *const u8,
     nonce: u64,
