@@ -3132,6 +3132,117 @@ impl DaoHandler {
         }))
     }
 
+    /// POST /api/v1/dao/unstake
+    ///
+    /// Submit a signed `DaoUnstake` transaction. Returns the full locked SOV to the staker.
+    /// Rejected if the stake record's `locked_until` has not passed yet.
+    ///
+    /// Request body: `{"signed_tx": "<hex>"}`
+    /// Response: `{"status":"accepted","tx_hash":"...","staker":"...","sector_dao_key_id":"...","amount":<u128>,"message":"..."}`
+    async fn handle_dao_unstake(
+        &self,
+        request: &lib_protocols::types::ZhtpRequest,
+    ) -> Result<lib_protocols::types::ZhtpResponse> {
+        #[derive(Deserialize)]
+        struct DaoUnstakeRequest {
+            signed_tx: String,
+        }
+
+        let req: DaoUnstakeRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
+
+        let tx = self
+            .decode_signed_tx_raw(&req.signed_tx)
+            .map_err(|e| anyhow::anyhow!("Failed to decode signed_tx: {}", e))?;
+
+        if tx.transaction_type != lib_blockchain::TransactionType::DaoUnstake {
+            return create_json_response(json!({
+                "status": "error",
+                "message": format!("Expected DaoUnstake transaction, got {:?}", tx.transaction_type)
+            }));
+        }
+
+        let data = match tx.dao_unstake_data() {
+            Some(d) => d.clone(),
+            None => {
+                return create_json_response(json!({
+                    "status": "error",
+                    "message": "DaoUnstake transaction missing payload"
+                }));
+            }
+        };
+
+        // Read the stake record before validation so we can return the amount in the response.
+        // Treat store/read failures as request errors instead of serializing `amount: null`.
+        let stake_amount = {
+            let blockchain_arc = self.get_blockchain().await?;
+            let blockchain = blockchain_arc.read().await;
+            let store = match blockchain.store.as_ref() {
+                Some(store) => store,
+                None => {
+                    return create_json_response(json!({
+                        "status": "error",
+                        "message": "Blockchain store unavailable"
+                    }));
+                }
+            };
+
+            match store.get_dao_stake(&data.sector_dao_key_id, &data.staker) {
+                Ok(record) => record.map(|r| r.amount),
+                Err(e) => {
+                    return create_json_response(json!({
+                        "status": "error",
+                        "message": format!("Failed to read DAO stake record: {}", e)
+                    }));
+                }
+            }
+        };
+
+        // Stateful validation (checks lock period, record existence, signer).
+        {
+            let blockchain_arc = self.get_blockchain().await?;
+            let blockchain = blockchain_arc.read().await;
+            let validator =
+                lib_blockchain::transaction::StatefulTransactionValidator::new(&blockchain);
+            if let Err(e) = validator.validate_transaction_with_state(&tx) {
+                tracing::warn!(
+                    "[DAO_UNSTAKE] validation failed: staker={} dao={} err={}",
+                    hex::encode(&data.staker[..6]),
+                    hex::encode(&data.sector_dao_key_id[..6]),
+                    e
+                );
+                return create_json_response(json!({
+                    "status": "error",
+                    "message": format!("Validation failed: {}", e)
+                }));
+            }
+        }
+
+        let tx_hash = tx.hash();
+
+        {
+            let blockchain_arc2 = self.get_blockchain().await?;
+            let mut bc = blockchain_arc2.write().await;
+            bc.add_pending_transaction(tx)
+                .map_err(|e| anyhow::anyhow!("Mempool rejection: {}", e))?;
+        }
+
+        tracing::info!(
+            "[DAO_UNSTAKE] accepted: staker={} dao={}",
+            hex::encode(&data.staker[..6]),
+            hex::encode(&data.sector_dao_key_id[..6]),
+        );
+
+        create_json_response(json!({
+            "status": "accepted",
+            "tx_hash": hex::encode(tx_hash.as_bytes()),
+            "staker": hex::encode(data.staker),
+            "sector_dao_key_id": hex::encode(data.sector_dao_key_id),
+            "amount": stake_amount,
+            "message": "DaoUnstake transaction accepted into mempool"
+        }))
+    }
+
     /// Submit the assembled transaction to the mempool via `StatefulTransactionValidator`.
     /// The request body must contain a `signed_tx` field with the hex-encoded serialized Transaction.
     async fn handle_submit_proposal(
@@ -3365,6 +3476,10 @@ impl ZhtpRequestHandler for DaoHandler {
             // DAO Staking endpoints
             (ZhtpMethod::Post, ["api", "v1", "dao", "stake"]) => self
                 .handle_dao_stake(&request)
+                .await
+                .map_err(anyhow::Error::from),
+            (ZhtpMethod::Post, ["api", "v1", "dao", "unstake"]) => self
+                .handle_dao_unstake(&request)
                 .await
                 .map_err(anyhow::Error::from),
             (ZhtpMethod::Get, ["api", "v1", "dao", "stakes", staker_key_id]) => self

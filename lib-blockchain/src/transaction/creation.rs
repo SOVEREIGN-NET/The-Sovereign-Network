@@ -697,7 +697,8 @@ pub mod utils {
             | TransactionType::InitCbeToken
             | TransactionType::CreateEmploymentContract
             | TransactionType::ProcessPayroll
-            | TransactionType::DaoStake => {
+            | TransactionType::DaoStake
+            | TransactionType::DaoUnstake => {
                 // Threshold-approval, CBE, and staking transactions - must have no inputs/outputs
                 if !inputs.is_empty() {
                     return Err(TransactionCreateError::InvalidInputs);
