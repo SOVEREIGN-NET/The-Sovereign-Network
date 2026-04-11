@@ -756,6 +756,13 @@ impl Blockchain {
                     synced
                 );
             }
+            
+            // Also sync total supply from sled
+            if let Ok(Some(supply)) = store.get_token_supply(&storage_sov_id) {
+                if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+                    token.total_supply = supply;
+                }
+            }
         }
 
         // One-time correction: zero out SOV that was incorrectly minted to UBI

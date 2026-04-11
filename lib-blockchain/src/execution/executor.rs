@@ -365,7 +365,8 @@ impl BlockExecutor {
             key_id: recipient.0,
         };
         contract.total_supply = new_supply;
-        contract.balances.insert(recipient_pk, balance);
+        let new_balance = balance + amount_u64;
+        contract.balances.insert(recipient_pk, new_balance);
         mutator.put_token_supply(&token_id, new_supply)?;
         mutator.put_token_contract(&contract)?;
         Ok(())
