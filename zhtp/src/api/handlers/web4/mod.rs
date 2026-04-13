@@ -233,14 +233,14 @@ impl Web4Handler {
             .values()
             .map(|contract| {
                 serde_json::json!({
-                    "domain": contract.domain,
-                    "owner": contract.owner,
-                    "contract_id": contract.contract_id,
+                    "domain": &contract.domain,
+                    "owner": &contract.owner,
+                    "contract_id": &contract.contract_id,
                     "registered_at": contract.domain_record.registered_at,
                     "expires_at": contract.domain_record.expires_at,
                     "routes": contract.routes.len(),
-                    "title": contract.metadata.title,
-                    "description": contract.metadata.description,
+                    "title": &contract.metadata.title,
+                    "description": &contract.metadata.description,
                 })
             })
             .collect();

@@ -22,7 +22,7 @@ pub struct ServiceStatus {
 
 struct SessionState {
     active_backend: Option<String>,
-    client: Option<Web4Client>,
+    client: Option<Arc<Web4Client>>,
 }
 
 pub struct ZhtpDaemonService {
@@ -59,27 +59,17 @@ impl ZhtpDaemonService {
     }
 
     pub async fn resolve_domain(&self, domain: &str) -> Result<serde_json::Value> {
-        let mut session = self.session.lock().await;
-        self.ensure_connected(&mut session).await?;
-        match session
-            .client
-            .as_ref()
-            .context("Connected client missing after ensure_connected")?
-            .resolve_domain(domain, None)
-            .await
-        {
+        let client = self.connected_client().await?;
+        match client.resolve_domain(domain, None).await {
             Ok(value) => Ok(value),
             Err(first_error) => {
                 warn!(
                     error = %first_error,
                     "Resolve failed on active backend, reconnecting"
                 );
-                session.client = None;
-                session.active_backend = None;
-                self.ensure_connected(&mut session).await?;
-                session
-                    .client
-                    .as_ref()
+                self.invalidate_client(&client).await;
+                self.connected_client()
+                    .await
                     .context("Connected client missing after reconnect")?
                     .resolve_domain(domain, None)
                     .await
@@ -89,19 +79,23 @@ impl ZhtpDaemonService {
     }
 
     pub async fn fetch_content(&self, domain: &str, path: &str) -> Result<ZhtpResponse> {
-        let mut session = self.session.lock().await;
-        self.ensure_connected(&mut session).await?;
-        match self.fetch_content_with_active_client(&session, domain, path).await {
+        let client = self.connected_client().await?;
+        match self.fetch_content_with_active_client(client.as_ref(), domain, path).await {
             Ok(response) => Ok(response),
             Err(first_error) => {
                 warn!(
                     error = %first_error,
                     "Content fetch failed on active backend, reconnecting"
                 );
-                session.client = None;
-                session.active_backend = None;
-                self.ensure_connected(&mut session).await?;
-                self.fetch_content_with_active_client(&session, domain, path)
+                self.invalidate_client(&client).await;
+                self.fetch_content_with_active_client(
+                    self.connected_client()
+                        .await
+                        .context("Connected client missing after reconnect")?
+                        .as_ref(),
+                    domain,
+                    path,
+                )
                     .await
                     .context("Content fetch failed after reconnect")
             }
@@ -109,33 +103,28 @@ impl ZhtpDaemonService {
     }
 
     pub async fn list_domains(&self) -> Result<serde_json::Value> {
-        let mut session = self.session.lock().await;
-        self.ensure_connected(&mut session).await?;
-        match self.list_domains_with_active_client(&session).await {
+        let client = self.connected_client().await?;
+        match self.list_domains_with_active_client(client.as_ref()).await {
             Ok(value) => Ok(value),
             Err(first_error) => {
                 warn!(
                     error = %first_error,
                     "Domain list failed on active backend, reconnecting"
                 );
-                session.client = None;
-                session.active_backend = None;
-                self.ensure_connected(&mut session).await?;
-                self.list_domains_with_active_client(&session)
+                self.invalidate_client(&client).await;
+                self.list_domains_with_active_client(
+                    self.connected_client()
+                        .await
+                        .context("Connected client missing after reconnect")?
+                        .as_ref(),
+                )
                     .await
                     .context("Domain list failed after reconnect")
             }
         }
     }
 
-    async fn list_domains_with_active_client(
-        &self,
-        session: &SessionState,
-    ) -> Result<serde_json::Value> {
-        let client = session
-            .client
-            .as_ref()
-            .context("Connected client missing after ensure_connected")?;
+    async fn list_domains_with_active_client(&self, client: &Web4Client) -> Result<serde_json::Value> {
         for uri in ["/api/v1/web4/domains/catalog", "/api/v1/dns/domains"] {
             let request = ZhtpRequest::get(uri.to_string(), Some(self.identity.id.clone()))?;
             let response = client.request(request).await?;
@@ -174,14 +163,10 @@ impl ZhtpDaemonService {
 
     async fn fetch_content_with_active_client(
         &self,
-        session: &SessionState,
+        client: &Web4Client,
         domain: &str,
         path: &str,
     ) -> Result<ZhtpResponse> {
-        let client = session
-            .client
-            .as_ref()
-            .context("Connected client missing after ensure_connected")?;
         let resolved = client
             .resolve_domain(domain, None)
             .await
@@ -270,18 +255,22 @@ impl ZhtpDaemonService {
         Ok(response.body)
     }
 
-    async fn ensure_connected(&self, session: &mut SessionState) -> Result<()> {
-        if session.client.is_some() {
-            return Ok(());
+    async fn connected_client(&self) -> Result<Arc<Web4Client>> {
+        if let Some(client) = self.session.lock().await.client.clone() {
+            return Ok(client);
         }
-
         let mut errors = Vec::new();
         for backend in &self.config.backend_nodes {
             match self.connect_backend(backend).await {
                 Ok(client) => {
+                    let client = Arc::new(client);
+                    let mut session = self.session.lock().await;
+                    if let Some(existing) = session.client.clone() {
+                        return Ok(existing);
+                    }
                     session.active_backend = Some(backend.clone());
-                    session.client = Some(client);
-                    return Ok(());
+                    session.client = Some(client.clone());
+                    return Ok(client);
                 }
                 Err(error) => {
                     errors.push(format!("{}: {}", backend, error));
@@ -293,6 +282,18 @@ impl ZhtpDaemonService {
             "Unable to connect to any configured backend node: {}",
             errors.join(" | ")
         ))
+    }
+
+    async fn invalidate_client(&self, client: &Arc<Web4Client>) {
+        let mut session = self.session.lock().await;
+        if session
+            .client
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, client))
+        {
+            session.client = None;
+            session.active_backend = None;
+        }
     }
 
     async fn connect_backend(&self, backend: &str) -> Result<Web4Client> {
@@ -406,4 +407,71 @@ fn candidate_manifest_paths(requested_path: &str) -> Vec<String> {
     }
 
     candidates
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{candidate_manifest_paths, normalize_requested_path, resolve_manifest_file};
+    use lib_network::web4::{ManifestFile, Web4Manifest};
+    use std::collections::BTreeMap;
+
+    fn manifest_with(paths: &[&str]) -> Web4Manifest {
+        let files = paths
+            .iter()
+            .map(|path| {
+                (
+                    (*path).to_string(),
+                    ManifestFile {
+                        cid: format!("cid-{path}"),
+                        size: 1,
+                        content_type: "text/html".to_string(),
+                        hash: format!("hash-{path}"),
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        Web4Manifest {
+            domain: "example.sov".to_string(),
+            version: 1,
+            previous_manifest: None,
+            build_hash: "build-hash".to_string(),
+            files,
+            created_at: 0,
+            created_by: "did:zhtp:test".to_string(),
+            message: None,
+        }
+    }
+
+    #[test]
+    fn normalize_requested_path_strips_query_and_fragment() {
+        assert_eq!(normalize_requested_path("/select-dao.txt?_rsc=abc#frag"), "/select-dao.txt");
+        assert_eq!(normalize_requested_path("feed?page=1"), "/feed");
+        assert_eq!(normalize_requested_path("/"), "/index.html");
+    }
+
+    #[test]
+    fn candidate_manifest_paths_include_html_and_index_variants() {
+        let candidates = candidate_manifest_paths("/select-dao.txt");
+        assert!(candidates.contains(&"/select-dao.txt".to_string()));
+        assert!(candidates.contains(&"/select-dao.html".to_string()));
+        assert!(candidates.contains(&"select-dao.html".to_string()));
+        assert!(candidates.contains(&"/select-dao/index.html".to_string()));
+        assert!(candidates.contains(&"/index.html".to_string()));
+    }
+
+    #[test]
+    fn resolve_manifest_file_prefers_route_specific_file_before_index_fallback() {
+        let manifest = manifest_with(&["select-dao.html", "index.html"]);
+        let (path, _) = resolve_manifest_file(&manifest, "/select-dao").expect("route should resolve");
+        assert_eq!(path, "select-dao.html");
+    }
+
+    #[test]
+    fn resolve_manifest_file_supports_rsc_text_payloads() {
+        let manifest = manifest_with(&["select-dao.txt", "index.html"]);
+        let (path, _) =
+            resolve_manifest_file(&manifest, "/select-dao.txt").expect("rsc payload should resolve");
+        assert_eq!(path, "select-dao.txt");
+    }
 }

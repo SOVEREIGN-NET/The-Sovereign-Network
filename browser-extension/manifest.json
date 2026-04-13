@@ -10,8 +10,10 @@
   ],
   "host_permissions": [
     "http://127.0.0.1:7840/*",
-    "https://*/*",
-    "http://*/*"
+    "https://*.zhtp/*",
+    "http://*.zhtp/*",
+    "https://*.sov/*",
+    "http://*.sov/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -19,17 +21,5 @@
   "action": {
     "default_title": "ZHTP Browser Bridge",
     "default_popup": "popup.html"
-  },
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "viewer.html",
-        "viewer.js",
-        "viewer.css"
-      ],
-      "matches": [
-        "<all_urls>"
-      ]
-    }
-  ]
+  }
 }

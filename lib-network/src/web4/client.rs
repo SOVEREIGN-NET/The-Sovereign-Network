@@ -35,7 +35,7 @@ use uuid::Uuid;
 use quinn::{ClientConfig, Connection, Endpoint};
 
 use lib_identity::ZhtpIdentity;
-use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse};
+use lib_protocols::types::{ZhtpRequest, ZhtpResponse};
 use lib_protocols::wire::{read_response, write_request, ZhtpRequestWire};
 
 use crate::handshake::{HandshakeContext, NonceCache};
@@ -433,17 +433,11 @@ impl Web4Client {
     }
 
     /// Send a request and receive response (internal - handles auth context)
-    async fn send_request(&self, request: ZhtpRequest, require_auth: bool) -> Result<ZhtpResponse> {
+    async fn send_request(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         let conn = self
             .connection
             .as_ref()
             .ok_or_else(|| anyhow!("Not connected to node"))?;
-
-        let _ = require_auth;
-        let _ = matches!(
-            request.method,
-            ZhtpMethod::Post | ZhtpMethod::Put | ZhtpMethod::Delete
-        );
 
         // V2 QUIC control-plane requests require authenticated session context
         let seq = conn.next_sequence();
@@ -504,7 +498,7 @@ impl Web4Client {
 
     /// Send a request (public API - auto-detects auth requirement)
     pub async fn request(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
-        self.send_request(request, false).await
+        self.send_request(request).await
     }
 
     /// Upload a blob and get its content ID
@@ -516,7 +510,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, true).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -548,7 +542,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, true).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -586,7 +580,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, true).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -617,7 +611,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, true).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -637,7 +631,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, false).await?;
+        let response = self.send_request(request).await?;
 
         if response.status.code() == 404 {
             return Ok(None);
@@ -662,7 +656,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, false).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -693,7 +687,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, false).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -720,7 +714,7 @@ impl Web4Client {
 
         let request = ZhtpRequest::get(url, Some(self.identity.id.clone()))?;
 
-        let response = self.send_request(request, false).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -759,7 +753,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, true).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -789,7 +783,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, true).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -820,7 +814,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, false).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -848,7 +842,7 @@ impl Web4Client {
         };
 
         let request = ZhtpRequest::get(uri, Some(self.identity.id.clone()))?;
-        let response = self.send_request(request, false).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -964,7 +958,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, true).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -998,7 +992,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, true).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -1038,7 +1032,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, true).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -1137,7 +1131,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, false).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(

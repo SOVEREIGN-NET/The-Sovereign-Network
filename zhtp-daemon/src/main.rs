@@ -9,7 +9,6 @@ use config::DaemonConfig;
 use service::ZhtpDaemonService;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -56,12 +55,5 @@ async fn async_main() -> Result<()> {
 }
 
 fn build_router(service: Arc<ZhtpDaemonService>) -> Router {
-    api::router(api::AppState { service })
-        .layer(TraceLayer::new_for_http())
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
-        )
+    api::router(api::AppState { service }).layer(TraceLayer::new_for_http())
 }
