@@ -54,6 +54,7 @@ Archive contents:
 - `bin/zhtp-daemon`
 - `config/config.toml`
 - `systemd/zhtp-daemon.service`
+- `scripts/install-zhtp-daemon-linux.sh`
 - `README.md`
 
 ## Linux install
@@ -72,6 +73,14 @@ sha256sum -c ../zhtp-daemon-linux-x86_64.sha256
 ```
 
 ### 2. Install the binary and service unit
+
+Fast path:
+
+```bash
+sudo bash scripts/install-zhtp-daemon-linux.sh
+```
+
+Manual path:
 
 ```bash
 sudo install -m 0755 bin/zhtp-daemon /usr/local/bin/zhtp-daemon
