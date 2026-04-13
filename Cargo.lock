@@ -9009,6 +9009,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "zhtp-daemon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "base64 0.22.1",
+ "dirs",
+ "hex",
+ "lib-crypto",
+ "lib-identity",
+ "lib-network",
+ "lib-protocols",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml 0.8.23",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "zhtp-dilithium-signer"
 version = "0.1.0"
 dependencies = [

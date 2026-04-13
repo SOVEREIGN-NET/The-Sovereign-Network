@@ -225,6 +225,46 @@ impl Web4Handler {
         }
     }
 
+    /// Get a read-only catalog of deployed Web4 contracts from blockchain state.
+    async fn get_web4_domain_catalog(&self) -> ZhtpResult<ZhtpResponse> {
+        let blockchain = self.blockchain.read().await;
+        let mut domains: Vec<serde_json::Value> = blockchain
+            .get_all_web4_contracts()
+            .values()
+            .map(|contract| {
+                serde_json::json!({
+                    "domain": contract.domain,
+                    "owner": contract.owner,
+                    "contract_id": contract.contract_id,
+                    "registered_at": contract.domain_record.registered_at,
+                    "expires_at": contract.domain_record.expires_at,
+                    "routes": contract.routes.len(),
+                    "title": contract.metadata.title,
+                    "description": contract.metadata.description,
+                })
+            })
+            .collect();
+
+        domains.sort_by(|left, right| {
+            left.get("domain")
+                .and_then(|value| value.as_str())
+                .cmp(&right.get("domain").and_then(|value| value.as_str()))
+        });
+
+        let response = serde_json::json!({
+            "domains": domains,
+            "total_count": domains.len(),
+            "source": "blockchain_web4_contracts",
+        });
+
+        Ok(ZhtpResponse::success_with_content_type(
+            serde_json::to_vec(&response)
+                .map_err(|e| anyhow::anyhow!("Failed to serialize catalog: {}", e))?,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
     /// Load Web4 resource content (Issue #9)
     /// POST /api/v1/web4/load
     async fn load_web4_resource(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
@@ -590,6 +630,9 @@ impl ZhtpRequestHandler for Web4Handler {
             // Issue #9: Web4 resource loading and domain resolution
             "/api/v1/web4/load" if request.method == lib_protocols::ZhtpMethod::Post => {
                 self.load_web4_resource(request).await
+            }
+            "/api/v1/web4/domains/catalog" if request.method == lib_protocols::ZhtpMethod::Get => {
+                self.get_web4_domain_catalog().await
             }
             path if path.starts_with("/api/v1/web4/resolve/") => {
                 self.resolve_web4_domain(request).await

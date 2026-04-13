@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ZHTP Browser Bridge</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="shell">
+    <h1>ZHTP</h1>
+    <p class="subhead">Open a QUIC-native Web4 domain through the local daemon.</p>
+    <form id="open-form">
+      <label for="domain">Domain</label>
+      <input id="domain" name="domain" type="text" placeholder="example.zhtp" autocomplete="off">
+      <label for="path">Path</label>
+      <input id="path" name="path" type="text" placeholder="/" autocomplete="off">
+      <button type="submit">Open</button>
+    </form>
+    <section id="status" class="status">Checking daemon status…</section>
+    <section class="domains">
+      <h2>Available Domains</h2>
+      <div id="domains" class="domain-list">Loading…</div>
+    </section>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "ZHTP Browser Bridge",
+  "version": "0.1.0",
+  "description": "Browser companion for QUIC-native ZHTP/Web4 domains via the local zhtp-daemon.",
+  "permissions": [
+    "tabs",
+    "storage",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:7840/*",
+    "https://*/*",
+    "http://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "ZHTP Browser Bridge",
+    "default_popup": "popup.html"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "viewer.html",
+        "viewer.js",
+        "viewer.css"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
+}

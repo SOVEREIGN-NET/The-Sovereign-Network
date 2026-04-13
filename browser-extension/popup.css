@@ -1,0 +1,112 @@
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  background: linear-gradient(160deg, #f4efe4, #e7f2ea);
+  color: #152018;
+  min-width: 320px;
+}
+
+.shell {
+  padding: 16px;
+}
+
+h1 {
+  margin: 0 0 6px;
+  font-size: 22px;
+}
+
+.subhead {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: #435348;
+}
+
+form {
+  display: grid;
+  gap: 8px;
+}
+
+label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+input {
+  border: 1px solid #a8b5ab;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+  background: rgba(255, 255, 255, 0.75);
+}
+
+button {
+  margin-top: 6px;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #214b32;
+  color: #f9f6ef;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.status {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.6);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.domains {
+  margin-top: 14px;
+}
+
+.domains h2 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #2d4033;
+}
+
+.domain-list {
+  display: grid;
+  gap: 8px;
+}
+
+.domain-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.domain-meta {
+  min-width: 0;
+}
+
+.domain-name {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.domain-owner {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: #54665a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.domain-open {
+  margin-top: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  flex: 0 0 auto;
+}
