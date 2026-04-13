@@ -1,0 +1,55 @@
+name: Release zhtp-daemon (Linux)
+
+on:
+  push:
+    tags:
+      - 'daemon-v[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., 0.1.0)'
+        required: true
+        default: '0.1.0'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-release:
+    name: Build & Release (Linux x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev libdbus-1-dev pkg-config
+
+      - name: Build release binary
+        run: cargo build --release -p zhtp-daemon --locked
+
+      - name: Strip binary
+        run: strip target/release/zhtp-daemon
+
+      - name: Package Linux release
+        run: bash scripts/package-zhtp-daemon-linux.sh
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('daemon-v{0}', inputs.version) }}
+          name: zhtp-daemon ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
+          files: |
+            target/release/zhtp-daemon-linux-x86_64.tar.gz
+            target/release/zhtp-daemon-linux-x86_64.sha256
+          draft: false
+          prerelease: false
+          generate_release_notes: true

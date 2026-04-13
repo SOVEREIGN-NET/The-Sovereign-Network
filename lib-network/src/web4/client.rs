@@ -35,10 +35,11 @@ use uuid::Uuid;
 use quinn::{ClientConfig, Connection, Endpoint};
 
 use lib_identity::ZhtpIdentity;
-use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse};
+use lib_protocols::types::{ZhtpRequest, ZhtpResponse};
 use lib_protocols::wire::{read_response, write_request, ZhtpRequestWire};
 
 use crate::handshake::{HandshakeContext, NonceCache};
+use crate::handshake::security::derive_v2_session_keys;
 use crate::protocols::quic_handshake;
 
 use super::trust::{TrustConfig, ZhtpTrustVerifier};
@@ -106,8 +107,8 @@ struct AuthenticatedConnection {
     #[allow(dead_code)]
     session_key: [u8; 32],
 
-    /// Application-layer MAC key (derived from session_key)
-    app_key: [u8; 32],
+    /// V2 request MAC key derived from handshake transcript
+    mac_key: [u8; 32],
 
     /// Peer's verified DID (from UHP handshake)
     peer_did: String,
@@ -123,23 +124,6 @@ impl AuthenticatedConnection {
     /// Get next sequence number
     fn next_sequence(&self) -> u64 {
         self.sequence.fetch_add(1, Ordering::SeqCst)
-    }
-
-    /// Derive application-layer MAC key from session key
-    fn derive_app_key(
-        session_key: &[u8; 32],
-        session_id: &[u8; 32],
-        peer_did: &str,
-        client_did: &str,
-    ) -> [u8; 32] {
-        // HKDF-style derivation using BLAKE3
-        let mut input = Vec::new();
-        input.extend_from_slice(b"zhtp-web4-app-mac");
-        input.extend_from_slice(session_key);
-        input.extend_from_slice(session_id);
-        input.extend_from_slice(peer_did.as_bytes());
-        input.extend_from_slice(client_did.as_bytes());
-        lib_crypto::hash_blake3(&input)
     }
 }
 
@@ -380,13 +364,11 @@ impl Web4Client {
             }
         }
 
-        // Derive application-layer MAC key
-        let app_key = AuthenticatedConnection::derive_app_key(
+        let v2_keys = derive_v2_session_keys(
             &handshake_result.session_key,
-            &handshake_result.session_id,
-            &peer_did,
-            &self.identity.did,
-        );
+            &handshake_result.handshake_hash,
+        )
+        .context("Failed to derive V2 session keys")?;
 
         info!(
             peer_did = %peer_did,
@@ -397,10 +379,10 @@ impl Web4Client {
         self.connection = Some(AuthenticatedConnection {
             quic_conn: connection,
             session_key: handshake_result.session_key,
-            app_key,
+            mac_key: v2_keys.mac_key,
             peer_did,
             session_id: handshake_result.session_id,
-            sequence: AtomicU64::new(0),
+            sequence: AtomicU64::new(1),
         });
 
         Ok(())
@@ -451,31 +433,21 @@ impl Web4Client {
     }
 
     /// Send a request and receive response (internal - handles auth context)
-    async fn send_request(&self, request: ZhtpRequest, require_auth: bool) -> Result<ZhtpResponse> {
+    async fn send_request(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         let conn = self
             .connection
             .as_ref()
             .ok_or_else(|| anyhow!("Not connected to node"))?;
 
-        // Determine if this request needs authentication
-        let is_mutation = matches!(
-            request.method,
-            ZhtpMethod::Post | ZhtpMethod::Put | ZhtpMethod::Delete
+        // V2 QUIC control-plane requests require authenticated session context
+        let seq = conn.next_sequence();
+        let wire_request = ZhtpRequestWire::new_authenticated(
+            request,
+            conn.session_id,
+            self.identity.did.clone(),
+            seq,
+            &conn.mac_key,
         );
-
-        // Create wire request with auth context for mutations
-        let wire_request = if is_mutation || require_auth {
-            let seq = conn.next_sequence();
-            ZhtpRequestWire::new_authenticated(
-                request,
-                conn.session_id,
-                self.identity.did.clone(),
-                seq,
-                &conn.app_key,
-            )
-        } else {
-            ZhtpRequestWire::new(request)
-        };
 
         let request_id = wire_request.request_id;
 
@@ -526,7 +498,7 @@ impl Web4Client {
 
     /// Send a request (public API - auto-detects auth requirement)
     pub async fn request(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
-        self.send_request(request, false).await
+        self.send_request(request).await
     }
 
     /// Upload a blob and get its content ID
@@ -538,7 +510,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, true).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -570,7 +542,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, true).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -608,7 +580,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, true).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -639,7 +611,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, true).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -659,7 +631,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, false).await?;
+        let response = self.send_request(request).await?;
 
         if response.status.code() == 404 {
             return Ok(None);
@@ -684,7 +656,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, false).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -715,7 +687,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, false).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -742,7 +714,7 @@ impl Web4Client {
 
         let request = ZhtpRequest::get(url, Some(self.identity.id.clone()))?;
 
-        let response = self.send_request(request, false).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -781,7 +753,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, true).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -811,7 +783,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, true).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -842,7 +814,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, false).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -853,6 +825,34 @@ impl Web4Client {
         }
 
         serde_json::from_slice(&response.body).context("Invalid JSON response")
+    }
+
+    /// Fetch Web4 content bytes for a domain/path pair.
+    ///
+    /// The returned [`ZhtpResponse`] preserves the upstream content headers so
+    /// callers can relay the result to browsers or other clients without
+    /// collapsing MIME, caching, or fallback semantics.
+    pub async fn get_content(&self, domain: &str, path: &str) -> Result<ZhtpResponse> {
+        let normalized_path = if path.is_empty() { "/" } else { path };
+        let trimmed_path = normalized_path.trim_start_matches('/');
+        let uri = if trimmed_path.is_empty() {
+            format!("/api/v1/web4/content/{}", domain)
+        } else {
+            format!("/api/v1/web4/content/{}/{}", domain, trimmed_path)
+        };
+
+        let request = ZhtpRequest::get(uri, Some(self.identity.id.clone()))?;
+        let response = self.send_request(request).await?;
+
+        if !response.status.is_success() {
+            return Err(anyhow!(
+                "Failed to fetch content: {} {}",
+                response.status.code(),
+                response.status_message
+            ));
+        }
+
+        Ok(response)
     }
 
     /// Upload a blob with automatic chunking for large files
@@ -958,7 +958,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, true).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -992,7 +992,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, true).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -1032,7 +1032,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, true).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -1131,7 +1131,7 @@ impl Web4Client {
             Some(self.identity.id.clone()),
         )?;
 
-        let response = self.send_request(request, false).await?;
+        let response = self.send_request(request).await?;
 
         if !response.status.is_success() {
             return Err(anyhow!(

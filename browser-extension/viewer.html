@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ZHTP Viewer</title>
+  <link rel="stylesheet" href="viewer.css">
+</head>
+<body>
+  <header class="bar">
+    <div class="titleblock">
+      <span class="badge">ZHTP</span>
+      <div>
+        <strong id="domain-label">Loading…</strong>
+        <span id="source-label" class="meta"></span>
+      </div>
+    </div>
+    <div id="daemon-status" class="meta">Checking daemon…</div>
+  </header>
+  <main class="frame-shell">
+    <iframe id="content-frame" title="ZHTP content" sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads"></iframe>
+  </main>
+  <aside id="inspector" class="inspector"></aside>
+  <script src="viewer.js"></script>
+</body>
+</html>
