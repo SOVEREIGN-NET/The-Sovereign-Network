@@ -7,6 +7,8 @@ const DEFAULT_CONFIG_NAME: &str = "config.toml";
 const DEFAULT_ROOT_DIR: &str = ".zhtp-daemon";
 const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:7840";
 const DEFAULT_NODE_ADDR: &str = "127.0.0.1:443";
+const ENV_ROOT_DIR: &str = "ZHTP_DAEMON_ROOT_DIR";
+const ENV_CONFIG_PATH: &str = "ZHTP_DAEMON_CONFIG";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -68,6 +70,12 @@ impl Default for DaemonConfig {
 
 impl DaemonConfig {
     pub fn config_path() -> Result<PathBuf> {
+        if let Some(path) = std::env::var_os(ENV_CONFIG_PATH) {
+            return Ok(PathBuf::from(path));
+        }
+        if let Some(root_dir) = std::env::var_os(ENV_ROOT_DIR) {
+            return Ok(PathBuf::from(root_dir).join(DEFAULT_CONFIG_NAME));
+        }
         let home = dirs::home_dir().context("Cannot determine home directory")?;
         Ok(home.join(DEFAULT_ROOT_DIR).join(DEFAULT_CONFIG_NAME))
     }
