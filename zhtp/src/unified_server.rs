@@ -185,10 +185,7 @@ impl ZhtpUnifiedServer {
         use lib_identity::{IdentityType, ZhtpIdentity};
 
         // Try to load from keystore first (consistent with WalletStartupManager)
-        let keystore_dir = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
-            .join(".zhtp")
-            .join("keystore");
+        let keystore_dir = crate::node_data_dir().join("keystore");
         let keystore_path = keystore_dir.join(NODE_IDENTITY_FILENAME);
 
         if keystore_path.exists() {

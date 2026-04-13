@@ -149,6 +149,11 @@ pub struct Blockchain {
     /// Smart contract registry - Web4 Website contracts (contract_id -> Web4Contract)
     #[serde(default)]
     pub web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
+    /// Authoritative on-chain domain registry (domain name -> record).
+    /// Populated from DomainRegistration / DomainUpdate transactions committed to blocks.
+    /// This is the canonical source of truth; sled/DHT DomainRegistry is a cache.
+    #[serde(default)]
+    pub domain_registry: HashMap<String, crate::transaction::OnChainDomainRecord>,
     /// Contract deployment block heights (contract_id -> block_height)
     #[serde(default)]
     pub contract_blocks: HashMap<[u8; 32], u64>,

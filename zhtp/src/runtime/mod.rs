@@ -1249,10 +1249,7 @@ impl RuntimeOrchestrator {
             None => return Ok(false),
         };
 
-        let keystore_path = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
-            .join(".zhtp")
-            .join("keystore");
+        let keystore_path = crate::node_data_dir().join("keystore");
 
         let local_identity =
             crate::runtime::did_startup::load_node_identity_from_keystore(&keystore_path).await?;
@@ -1348,8 +1345,7 @@ impl RuntimeOrchestrator {
 
         let keystore_path = std::env::var_os("ZHTP_KEYSTORE_DIR")
             .map(std::path::PathBuf::from)
-            .or_else(|| dirs::home_dir().map(|home| home.join(".zhtp").join("keystore")))
-            .ok_or_else(|| anyhow::anyhow!("Could not determine keystore directory"))?;
+            .unwrap_or_else(|| crate::node_data_dir().join("keystore"));
 
         let local_identity =
             crate::runtime::did_startup::load_node_identity_from_keystore(&keystore_path).await?;
@@ -1821,6 +1817,28 @@ impl RuntimeOrchestrator {
         let has_local_chain_data = self.has_local_chain_data();
         Self::validate_observer_admission_policy_config(&self.config, has_local_chain_data)?;
         self.validate_local_observer_admission().await?;
+
+        // Always store bootstrap peers for persistent QUIC outbound connections.
+        // start_blockchain_sync() (which normally does this) is skipped for bootstrap leaders
+        // with local data, so we must store here unconditionally. Without this the consensus
+        // broadcaster has no peers to send votes to.
+        {
+            let cfg_peers = self.config.network_config.bootstrap_peers.clone();
+            if !cfg_peers.is_empty() {
+                match crate::runtime::bootstrap_peers_provider::set_bootstrap_peers(
+                    cfg_peers.clone(),
+                )
+                .await
+                {
+                    Ok(()) => info!(
+                        "Stored {} bootstrap peer(s) for persistent QUIC connections: {:?}",
+                        cfg_peers.len(),
+                        cfg_peers
+                    ),
+                    Err(e) => warn!("Failed to store bootstrap peers: {}", e),
+                }
+            }
+        }
 
         // Only join an existing network if at least one peer proves committed blocks.
         // Unknown remote state and explicit genesis-only peers are both non-joinable,
@@ -3097,8 +3115,7 @@ impl RuntimeOrchestrator {
         let keystore_dir = std::env::var("ZHTP_KEYSTORE_DIR")
             .ok()
             .map(PathBuf::from)
-            .or_else(|| dirs::home_dir().map(|h| h.join(".zhtp").join("keystore")))
-            .ok_or_else(|| anyhow::anyhow!("Could not determine keystore directory"))?;
+            .unwrap_or_else(|| crate::node_data_dir().join("keystore"));
 
         let node_identity_json =
             tokio::fs::read_to_string(keystore_dir.join(NODE_IDENTITY_FILENAME))
@@ -4602,6 +4619,33 @@ impl RuntimeOrchestrator {
 
         // PHASE 3: Setup identity and blockchain
         info!("🔑 Phase 3: Setting up identity and blockchain...");
+
+        // Always store bootstrap peers so the protocols/QUIC component can establish
+        // outbound connections to validators regardless of whether we're syncing the chain.
+        // Without this, nodes that skip startup sync (bootstrap leader with local data) never
+        // call start_blockchain_sync() and therefore never populate the global peer provider,
+        // leaving the consensus broadcaster with zero peers to send votes to.
+        // Use the config peers directly — network_info.bootstrap_peers only includes "trusted
+        // sync sources" which may be empty even when bootstrap_peers are configured.
+        {
+            let cfg_peers = orchestrator.config.network_config.bootstrap_peers.clone();
+            if !cfg_peers.is_empty() {
+                if let Err(e) = crate::runtime::bootstrap_peers_provider::set_bootstrap_peers(
+                    cfg_peers.clone(),
+                )
+                .await
+                {
+                    warn!("Failed to store bootstrap peers for QUIC connections: {}", e);
+                } else {
+                    info!(
+                        "Stored {} bootstrap peer(s) for persistent QUIC connections: {:?}",
+                        cfg_peers.len(),
+                        cfg_peers
+                    );
+                }
+            }
+        }
+
         // Skip startup sync for the bootstrap leader when local chain data exists.
         // This keeps G1 independent on restart and avoids pointless sync waits.
         let local_is_bootstrap_leader = match orchestrator.is_local_bootstrap_leader().await {
@@ -6074,10 +6118,7 @@ pub async fn create_or_load_node_identity(
 ) -> Result<lib_identity::ZhtpIdentity> {
     // Use the standard keystore path for ALL environments
     // This matches WalletStartupManager and ensures identity persistence
-    let keystore_path = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
-        .join(".zhtp")
-        .join("keystore");
+    let keystore_path = crate::node_data_dir().join("keystore");
 
     // SECURITY REVIEW: ZHTP_DEVICE_NAME env var is checked inside resolve_device_name()
     // to allow operators to configure deterministic NodeId across restarts and cluster

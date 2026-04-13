@@ -72,11 +72,9 @@ fn default_genesis_balance() -> u64 {
     SOV_WELCOME_BONUS // Default genesis wallet balance (atomic units)
 }
 
-/// Get the default keystore path (~/.zhtp/keystore)
-/// Uses dirs::home_dir() for proper path expansion
+/// Get the default keystore path (under node_data_dir/keystore)
 fn get_default_keystore_path() -> Result<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| anyhow!("Could not determine home directory"))?;
-    Ok(home.join(".zhtp").join("keystore"))
+    Ok(crate::node_data_dir().join("keystore"))
 }
 
 /// Load identity and wallet from keystore (pure - no prints)

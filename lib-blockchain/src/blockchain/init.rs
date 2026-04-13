@@ -98,6 +98,7 @@ impl Blockchain {
             fee_router: crate::contracts::economics::fee_router::FeeRouter::new_with_dao_wallets(
                 crate::contracts::economics::fee_router::DAO_HEALTHCARE_KEY_ID,
             ),
+            domain_registry: HashMap::new(),
         }
     }
 
@@ -572,6 +573,9 @@ impl Blockchain {
                             }
                         }
                     }
+
+                    // Replay domain registration/update transactions.
+                    blockchain.process_domain_transactions(&block);
 
                     // Replay employment contract creation so employment_registry is populated.
                     // Required before payroll replay below.

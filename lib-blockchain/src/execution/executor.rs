@@ -983,7 +983,10 @@ impl BlockExecutor {
             | TransactionType::CreateEmploymentContract
             | TransactionType::ProcessPayroll
             | TransactionType::DaoStake
-            | TransactionType::DaoUnstake => {
+            | TransactionType::DaoUnstake
+            // Domain registration/update - state applied by process_domain_transactions
+            | TransactionType::DomainRegistration
+            | TransactionType::DomainUpdate => {
                 // Fall through to the general validation flow below without
                 // treating oracle attestations as automatically valid.
             }

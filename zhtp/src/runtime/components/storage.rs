@@ -48,9 +48,7 @@ impl Component for StorageComponent {
                     .dht_persist_path
                     .clone()
                     .unwrap_or_else(|| {
-                        dirs::home_dir()
-                            .unwrap_or_else(|| std::path::PathBuf::from("."))
-                            .join(".zhtp")
+                        crate::node_data_dir()
                             .join("storage")
                             .join("dht_db")
                     });

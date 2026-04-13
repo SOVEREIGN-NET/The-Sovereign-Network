@@ -390,6 +390,22 @@ impl TransactionValidator {
             TransactionType::DaoUnstake => {
                 // Full validation deferred to stateful validator (lock check, record existence, etc.)
             }
+            TransactionType::DomainRegistration => {
+                if !transaction
+                    .memo
+                    .starts_with(crate::transaction::DOMAIN_REGISTRATION_PREFIX)
+                {
+                    return Err(ValidationError::InvalidMemo);
+                }
+            }
+            TransactionType::DomainUpdate => {
+                if !transaction
+                    .memo
+                    .starts_with(crate::transaction::DOMAIN_UPDATE_PREFIX)
+                {
+                    return Err(ValidationError::InvalidMemo);
+                }
+            }
         }
 
         // Signature validation:
@@ -623,6 +639,22 @@ impl TransactionValidator {
             }
             TransactionType::DaoUnstake => {
                 // Full validation deferred to stateful validator (lock check, record existence, etc.)
+            }
+            TransactionType::DomainRegistration => {
+                if !transaction
+                    .memo
+                    .starts_with(crate::transaction::DOMAIN_REGISTRATION_PREFIX)
+                {
+                    return Err(ValidationError::InvalidMemo);
+                }
+            }
+            TransactionType::DomainUpdate => {
+                if !transaction
+                    .memo
+                    .starts_with(crate::transaction::DOMAIN_UPDATE_PREFIX)
+                {
+                    return Err(ValidationError::InvalidMemo);
+                }
             }
         }
 
@@ -1914,6 +1946,22 @@ impl<'a> StatefulTransactionValidator<'a> {
             TransactionType::DaoUnstake => {
                 self.validate_dao_unstake(transaction)?;
             }
+            TransactionType::DomainRegistration => {
+                if !transaction
+                    .memo
+                    .starts_with(crate::transaction::DOMAIN_REGISTRATION_PREFIX)
+                {
+                    return Err(ValidationError::InvalidMemo);
+                }
+            }
+            TransactionType::DomainUpdate => {
+                if !transaction
+                    .memo
+                    .starts_with(crate::transaction::DOMAIN_UPDATE_PREFIX)
+                {
+                    return Err(ValidationError::InvalidMemo);
+                }
+            }
         }
 
         //  CRITICAL FIX: Verify sender identity exists on blockchain
@@ -1940,6 +1988,8 @@ impl<'a> StatefulTransactionValidator<'a> {
             && transaction.transaction_type != TransactionType::TokenCreation
             && transaction.transaction_type != TransactionType::DaoStake
             && transaction.transaction_type != TransactionType::DaoUnstake
+            && transaction.transaction_type != TransactionType::DomainRegistration
+            && transaction.transaction_type != TransactionType::DomainUpdate
             && !is_token_contract_execution(transaction)
         {
             tracing::debug!("[BREADCRUMB] validate_sender_identity_exists CALL");
@@ -3147,6 +3197,20 @@ pub mod utils {
             }
             TransactionType::DaoUnstake => {
                 transaction.dao_unstake_data().is_some()
+                    && transaction.inputs.is_empty()
+                    && transaction.outputs.is_empty()
+            }
+            TransactionType::DomainRegistration => {
+                transaction
+                    .memo
+                    .starts_with(crate::transaction::DOMAIN_REGISTRATION_PREFIX)
+                    && transaction.inputs.is_empty()
+                    && transaction.outputs.is_empty()
+            }
+            TransactionType::DomainUpdate => {
+                transaction
+                    .memo
+                    .starts_with(crate::transaction::DOMAIN_UPDATE_PREFIX)
                     && transaction.inputs.is_empty()
                     && transaction.outputs.is_empty()
             }

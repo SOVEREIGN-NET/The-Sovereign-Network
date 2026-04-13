@@ -8,6 +8,7 @@ pub mod contract_deployment;
 pub mod contract_execution;
 pub mod core;
 pub mod creation;
+pub mod domain;
 pub mod fee;
 pub mod hashing;
 pub mod oracle_governance;
@@ -15,6 +16,11 @@ pub mod signing;
 pub mod threshold_approval;
 pub mod token_creation;
 pub mod validation;
+
+pub use domain::{
+    DomainRegistrationPayload, DomainUpdatePayload, OnChainDomainRecord,
+    DOMAIN_REGISTRATION_PREFIX, DOMAIN_UPDATE_PREFIX,
+};
 
 // Explicit re-exports from core module
 pub use core::{

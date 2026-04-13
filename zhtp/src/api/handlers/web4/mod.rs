@@ -607,6 +607,11 @@ impl ZhtpRequestHandler for Web4Handler {
             "/api/v1/web4/domains/update" if request.method == lib_protocols::ZhtpMethod::Post => {
                 self.update_domain_version(request).await
             }
+            "/api/v1/web4/domains/catalog"
+                if request.method == lib_protocols::ZhtpMethod::Get =>
+            {
+                self.get_domains_catalog(request).await
+            }
             path if path.starts_with("/api/v1/web4/domains/status/")
                 && request.method == lib_protocols::ZhtpMethod::Get =>
             {

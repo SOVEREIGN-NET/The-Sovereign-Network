@@ -507,6 +507,59 @@ impl Web4Handler {
             simple_request.domain, total_fees
         );
 
+        // Insert into blockchain.domain_registry so the catalog reflects this immediately.
+        {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let title = simple_request
+                .metadata
+                .as_ref()
+                .and_then(|m| m.get("title"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(&simple_request.domain)
+                .to_string();
+            let description = simple_request
+                .metadata
+                .as_ref()
+                .and_then(|m| m.get("description"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Web4 website")
+                .to_string();
+            let tags: Vec<String> = simple_request
+                .metadata
+                .as_ref()
+                .and_then(|m| m.get("tags"))
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let on_chain_record = lib_blockchain::transaction::OnChainDomainRecord {
+                domain: simple_request.domain.clone(),
+                owner_did: owner_did.clone(),
+                manifest_cid: String::new(),
+                build_hash: String::new(),
+                title,
+                description,
+                category: "general".to_string(),
+                tags,
+                registered_at: now,
+                expires_at: now + 365 * 86_400,
+                version: 1,
+                updated_at: now,
+                fee_tx_hash: fee_tx_hash_hex.clone(),
+            };
+            let mut blockchain = self.blockchain.write().await;
+            blockchain
+                .domain_registry
+                .entry(simple_request.domain.clone())
+                .or_insert(on_chain_record);
+        }
+
         // Get the ACTUAL content mappings from domain registry (with correct DHT hashes)
         let actual_content_mappings = match self.name_resolver.resolve(&simple_request.domain).await
         {
@@ -729,6 +782,38 @@ impl Web4Handler {
             " Domain {} registered with DeployManifest {}",
             request.domain, request.deploy_manifest_cid
         );
+
+        // Insert into blockchain.domain_registry so the catalog reflects this immediately
+        // and the record persists across restarts via BlockchainStorageV9.
+        {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let on_chain_record = lib_blockchain::transaction::OnChainDomainRecord {
+                domain: request.domain.clone(),
+                owner_did: owner_did.clone(),
+                manifest_cid: request.deploy_manifest_cid.clone(),
+                build_hash: hex::encode(manifest.root_hash),
+                title: request.domain.clone(),
+                description: format!(
+                    "Domain registered via DeployManifest {}",
+                    request.deploy_manifest_cid
+                ),
+                category: "website".to_string(),
+                tags: vec!["web4".to_string(), "manifest".to_string()],
+                registered_at: now,
+                expires_at: now + 365 * 86_400,
+                version: 1,
+                updated_at: now,
+                fee_tx_hash: fee_tx_hash_hex.clone(),
+            };
+            let mut blockchain = self.blockchain.write().await;
+            blockchain
+                .domain_registry
+                .entry(request.domain.clone())
+                .or_insert(on_chain_record);
+        }
 
         let response = serde_json::json!({
             "status": "success",
@@ -1773,6 +1858,84 @@ impl Web4Handler {
                 ))
             }
         }
+    }
+
+    /// GET /api/v1/web4/domains/catalog
+    ///
+    /// Returns a sorted catalog of all deployed Web4 domains sourced directly from
+    /// blockchain state (web4_contracts). Does not depend on the in-memory DNS registry.
+    pub async fn get_domains_catalog(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        // Primary source: authoritative on-chain domain_registry (populated from
+        // DomainRegistration txs committed to blocks, and directly on registration).
+        let on_chain: std::collections::HashMap<String, serde_json::Value> = {
+            let blockchain = self.blockchain.read().await;
+            blockchain
+                .get_all_domains()
+                .iter()
+                .map(|(domain, r)| {
+                    let entry = serde_json::json!({
+                        "domain": r.domain,
+                        "owner": r.owner_did,
+                        "manifest_cid": r.manifest_cid,
+                        "build_hash": r.build_hash,
+                        "title": r.title,
+                        "description": r.description,
+                        "category": r.category,
+                        "tags": r.tags,
+                        "registered_at": r.registered_at,
+                        "expires_at": r.expires_at,
+                        "version": r.version,
+                        "source": "on_chain",
+                    });
+                    (domain.clone(), entry)
+                })
+                .collect()
+        };
+
+        // Secondary source: sled/DHT DomainRegistry (legacy domains not yet on-chain).
+        // Merge in any domain not already present in the on-chain registry.
+        let sled_records = self.domain_registry.list_all_domain_records().await;
+        let mut entries: Vec<serde_json::Value> = on_chain.values().cloned().collect();
+        for r in sled_records {
+            if !on_chain.contains_key(&r.domain) {
+                entries.push(serde_json::json!({
+                    "domain": r.domain,
+                    "owner": hex::encode(&r.owner.0),
+                    "manifest_cid": r.current_web4_manifest_cid,
+                    "build_hash": "",
+                    "title": r.metadata.title,
+                    "description": r.metadata.description,
+                    "category": r.metadata.category,
+                    "tags": r.metadata.tags,
+                    "registered_at": r.registered_at,
+                    "expires_at": r.expires_at,
+                    "version": r.version,
+                    "source": "sled_cache",
+                }));
+            }
+        }
+
+        entries.sort_by(|a, b| {
+            a["domain"]
+                .as_str()
+                .unwrap_or("")
+                .cmp(b["domain"].as_str().unwrap_or(""))
+        });
+
+        let total = entries.len();
+        let response = serde_json::json!({
+            "domains": entries,
+            "total_count": total,
+        });
+
+        let body = serde_json::to_vec(&response)
+            .map_err(|e| anyhow!("Failed to serialize catalog: {}", e))?;
+
+        Ok(ZhtpResponse::success_with_content_type(
+            body,
+            "application/json".to_string(),
+            None,
+        ))
     }
 
     /// Admin: migrate legacy domain records to the latest format

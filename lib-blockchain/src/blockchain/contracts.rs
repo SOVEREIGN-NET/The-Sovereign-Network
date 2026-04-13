@@ -1015,6 +1015,98 @@ impl Blockchain {
         &self.web4_contracts
     }
 
+    /// Process DomainRegistration and DomainUpdate transactions from a block.
+    /// Writes authoritative records into `self.domain_registry`.
+    pub fn process_domain_transactions(&mut self, block: &Block) {
+        let block_ts = block.header.timestamp;
+        let block_height = block.height();
+
+        for tx in &block.transactions {
+            if tx.transaction_type == TransactionType::DomainRegistration {
+                match crate::transaction::DomainRegistrationPayload::decode_memo(&tx.memo) {
+                    Ok(payload) => {
+                        let expires_at =
+                            block_ts + payload.duration_days.saturating_mul(86_400);
+                        let record = crate::transaction::OnChainDomainRecord {
+                            domain: payload.domain.clone(),
+                            owner_did: payload.owner_did,
+                            manifest_cid: payload.manifest_cid,
+                            build_hash: payload.build_hash,
+                            title: payload.title,
+                            description: payload.description,
+                            category: payload.category,
+                            tags: payload.tags,
+                            registered_at: block_ts,
+                            expires_at,
+                            version: 1,
+                            updated_at: block_ts,
+                            fee_tx_hash: payload.fee_tx_hash,
+                        };
+                        info!(
+                            "⛓️  Domain registered on-chain: {} at height {}",
+                            record.domain, block_height
+                        );
+                        self.domain_registry.insert(payload.domain, record);
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to decode DomainRegistration memo at height {}: {}",
+                            block_height, e
+                        );
+                    }
+                }
+            } else if tx.transaction_type == TransactionType::DomainUpdate {
+                match crate::transaction::DomainUpdatePayload::decode_memo(&tx.memo) {
+                    Ok(payload) => {
+                        if let Some(record) = self.domain_registry.get_mut(&payload.domain) {
+                            // CAS check
+                            if record.manifest_cid != payload.expected_previous_manifest_cid {
+                                warn!(
+                                    "DomainUpdate CAS mismatch for {} at height {}: expected {}, got {}",
+                                    payload.domain,
+                                    block_height,
+                                    record.manifest_cid,
+                                    payload.expected_previous_manifest_cid
+                                );
+                                continue;
+                            }
+                            record.manifest_cid = payload.new_manifest_cid;
+                            record.build_hash = payload.build_hash;
+                            record.version += 1;
+                            record.updated_at = block_ts;
+                            record.fee_tx_hash = payload.fee_tx_hash;
+                            info!(
+                                "⛓️  Domain updated on-chain: {} v{} at height {}",
+                                record.domain, record.version, block_height
+                            );
+                        } else {
+                            warn!(
+                                "DomainUpdate for unknown domain {} at height {}",
+                                payload.domain, block_height
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to decode DomainUpdate memo at height {}: {}",
+                            block_height, e
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Get the authoritative on-chain domain registry.
+    pub fn get_all_domains(&self) -> &HashMap<String, crate::transaction::OnChainDomainRecord> {
+        &self.domain_registry
+    }
+
+    /// Look up a single domain record from chain state.
+    pub fn get_domain(&self, domain: &str) -> Option<&crate::transaction::OnChainDomainRecord> {
+        self.domain_registry.get(domain)
+    }
+
     pub fn contract_exists(&self, contract_id: &[u8; 32]) -> bool {
         self.token_contracts.contains_key(contract_id)
             || self.web4_contracts.contains_key(contract_id)

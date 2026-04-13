@@ -271,9 +271,7 @@ impl DhtIntegrationAdapter {
     }
 
     fn default_persist_path() -> PathBuf {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".zhtp")
+        crate::node_data_dir()
             .join("storage")
             .join("dht_adapter.sled")
     }
