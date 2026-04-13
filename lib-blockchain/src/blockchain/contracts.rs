@@ -1065,8 +1065,8 @@ impl Blockchain {
                                     "DomainUpdate CAS mismatch for {} at height {}: expected {}, got {}",
                                     payload.domain,
                                     block_height,
-                                    record.manifest_cid,
-                                    payload.expected_previous_manifest_cid
+                                    payload.expected_previous_manifest_cid,
+                                    record.manifest_cid
                                 );
                                 continue;
                             }
