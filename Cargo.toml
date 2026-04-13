@@ -25,6 +25,7 @@ members = [
     "tools/dao-register",
     "lib-storage",
     "zhtp",
+    "zhtp-daemon",
     "zhtp-cli",
     "explorer",
     "tests/lib-identity/test-lib-identity-imports",

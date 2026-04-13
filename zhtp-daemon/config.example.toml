@@ -1,0 +1,7 @@
+listen_addr = "127.0.0.1:7840"
+backend_nodes = ["178.105.9.247:9334"]
+
+[trust]
+mode = "strict"
+node_did = "did:zhtp:bf409db91ad276fa35e8af9c78a48facdfba99eb95fcbf01719310e91c558a9c"
+pin_spki = "d9802595e6795eb67a0930665b456af491ce3c29be1cc9587a101b1f53a9e417"
