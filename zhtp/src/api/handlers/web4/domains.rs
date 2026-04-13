@@ -507,6 +507,63 @@ impl Web4Handler {
             simple_request.domain, total_fees
         );
 
+        // Insert into blockchain.domain_registry so the catalog reflects this immediately.
+        {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let title = simple_request
+                .metadata
+                .as_ref()
+                .and_then(|m| m.get("title"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(&simple_request.domain)
+                .to_string();
+            let description = simple_request
+                .metadata
+                .as_ref()
+                .and_then(|m| m.get("description"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Web4 website")
+                .to_string();
+            let tags: Vec<String> = simple_request
+                .metadata
+                .as_ref()
+                .and_then(|m| m.get("tags"))
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut blockchain = self.blockchain.write().await;
+            let (registered_at, version) = blockchain
+                .domain_registry
+                .get(&simple_request.domain)
+                .map(|r| (r.registered_at, r.version.saturating_add(1)))
+                .unwrap_or((now, 1));
+            blockchain.domain_registry.insert(
+                simple_request.domain.clone(),
+                lib_blockchain::transaction::OnChainDomainRecord {
+                    domain: simple_request.domain.clone(),
+                    owner_did: owner_did.clone(),
+                    manifest_cid: String::new(),
+                    build_hash: String::new(),
+                    title,
+                    description,
+                    category: "general".to_string(),
+                    tags,
+                    registered_at,
+                    expires_at: now + 365 * 86_400,
+                    version,
+                    updated_at: now,
+                    fee_tx_hash: fee_tx_hash_hex.clone(),
+                },
+            );
+        }
+
         // Get the ACTUAL content mappings from domain registry (with correct DHT hashes)
         let actual_content_mappings = match self.name_resolver.resolve(&simple_request.domain).await
         {
@@ -729,6 +786,44 @@ impl Web4Handler {
             " Domain {} registered with DeployManifest {}",
             request.domain, request.deploy_manifest_cid
         );
+
+        // Upsert into blockchain.domain_registry so the catalog reflects this immediately
+        // and the record persists across restarts via BlockchainStorageV9.
+        // Preserve registered_at and increment version on re-registration so clients
+        // can detect updates without treating them as new entries.
+        {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let mut blockchain = self.blockchain.write().await;
+            let (registered_at, version) = blockchain
+                .domain_registry
+                .get(&request.domain)
+                .map(|r| (r.registered_at, r.version.saturating_add(1)))
+                .unwrap_or((now, 1));
+            blockchain.domain_registry.insert(
+                request.domain.clone(),
+                lib_blockchain::transaction::OnChainDomainRecord {
+                    domain: request.domain.clone(),
+                    owner_did: owner_did.clone(),
+                    manifest_cid: request.deploy_manifest_cid.clone(),
+                    build_hash: hex::encode(manifest.root_hash),
+                    title: request.domain.clone(),
+                    description: format!(
+                        "Domain registered via DeployManifest {}",
+                        request.deploy_manifest_cid
+                    ),
+                    category: "website".to_string(),
+                    tags: vec!["web4".to_string(), "manifest".to_string()],
+                    registered_at,
+                    expires_at: now + 365 * 86_400,
+                    version,
+                    updated_at: now,
+                    fee_tx_hash: fee_tx_hash_hex.clone(),
+                },
+            );
+        }
 
         let response = serde_json::json!({
             "status": "success",
@@ -1775,6 +1870,41 @@ impl Web4Handler {
         }
     }
 
+    /// GET /api/v1/web4/domains/catalog
+    ///
+    /// Returns a sorted catalog of all deployed Web4 domains. Primary source is the
+    /// on-chain `domain_registry` (populated from `DomainRegistration` transactions and
+    /// direct registration writes). Legacy domains not yet on-chain are sourced from the
+    /// in-memory sled `DomainRegistry` cache as a fallback; on-chain entries take precedence
+    /// when both sources contain the same domain name.
+    pub async fn get_domains_catalog(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        // Primary source: authoritative on-chain domain_registry (populated from
+        // DomainRegistration txs committed to blocks, and directly on registration).
+        let on_chain = {
+            let blockchain = self.blockchain.read().await;
+            blockchain.get_all_domains().clone()
+        };
+
+        // Secondary source: sled/DHT DomainRegistry (legacy domains not yet on-chain).
+        let sled_records = self.domain_registry.list_all_domain_records().await;
+
+        let entries = merge_catalog_entries(&on_chain, sled_records);
+        let total = entries.len();
+        let response = serde_json::json!({
+            "domains": entries,
+            "total_count": total,
+        });
+
+        let body = serde_json::to_vec(&response)
+            .map_err(|e| anyhow!("Failed to serialize catalog: {}", e))?;
+
+        Ok(ZhtpResponse::success_with_content_type(
+            body,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
     /// Admin: migrate legacy domain records to the latest format
     pub async fn migrate_domains(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         info!("Running domain migration");
@@ -1806,11 +1936,157 @@ impl Web4Handler {
     }
 }
 
+/// Merges on-chain domain entries (primary) with sled-cached entries (fallback).
+///
+/// On-chain entries take precedence: any domain present in `on_chain` is used as-is
+/// and the corresponding sled record (if any) is silently dropped. Sled-only domains
+/// are appended and tagged `"sled_cache"`. The returned list is sorted alphabetically
+/// by domain name for deterministic output.
+fn merge_catalog_entries(
+    on_chain: &std::collections::HashMap<String, lib_blockchain::transaction::OnChainDomainRecord>,
+    sled_records: Vec<lib_network::web4::DomainRecord>,
+) -> Vec<serde_json::Value> {
+    let mut entries: Vec<serde_json::Value> = on_chain
+        .values()
+        .map(|r| {
+            serde_json::json!({
+                "domain": r.domain,
+                "owner": r.owner_did,
+                "manifest_cid": r.manifest_cid,
+                "build_hash": r.build_hash,
+                "title": r.title,
+                "description": r.description,
+                "category": r.category,
+                "tags": r.tags,
+                "registered_at": r.registered_at,
+                "expires_at": r.expires_at,
+                "version": r.version,
+                "source": "on_chain",
+            })
+        })
+        .collect();
+
+    for r in sled_records {
+        if !on_chain.contains_key(&r.domain) {
+            entries.push(serde_json::json!({
+                "domain": r.domain,
+                "owner": format!("did:zhtp:{}", hex::encode(&r.owner.0)),
+                "manifest_cid": r.current_web4_manifest_cid,
+                "build_hash": "",
+                "title": r.metadata.title,
+                "description": r.metadata.description,
+                "category": r.metadata.category,
+                "tags": r.metadata.tags,
+                "registered_at": r.registered_at,
+                "expires_at": r.expires_at,
+                "version": r.version,
+                "source": "sled_cache",
+            }));
+        }
+    }
+
+    entries.sort_by(|a, b| {
+        a["domain"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(b["domain"].as_str().unwrap_or(""))
+    });
+    entries
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use async_trait::async_trait;
     use lib_blockchain::contracts::utils::generate_lib_token_id;
+
+    // ── catalog merge unit tests ──────────────────────────────────────────────
+
+    fn make_on_chain(domain: &str, owner: &str, version: u64) -> lib_blockchain::transaction::OnChainDomainRecord {
+        lib_blockchain::transaction::OnChainDomainRecord {
+            domain: domain.to_string(),
+            owner_did: owner.to_string(),
+            manifest_cid: "cid".to_string(),
+            build_hash: "hash".to_string(),
+            title: domain.to_string(),
+            description: String::new(),
+            category: "general".to_string(),
+            tags: vec![],
+            registered_at: 1000,
+            expires_at: 2000,
+            version,
+            updated_at: 1000,
+            fee_tx_hash: String::new(),
+        }
+    }
+
+    fn make_sled(domain: &str, owner_bytes: [u8; 32], version: u64) -> lib_network::web4::DomainRecord {
+        lib_network::web4::DomainRecord {
+            domain: domain.to_string(),
+            owner: lib_crypto::Hash(owner_bytes),
+            current_web4_manifest_cid: "sled-cid".to_string(),
+            version,
+            registered_at: 500,
+            updated_at: 500,
+            expires_at: 1500,
+            ownership_proof: Default::default(),
+            content_mappings: Default::default(),
+            metadata: Default::default(),
+            transfer_history: vec![],
+        }
+    }
+
+    #[test]
+    fn catalog_merge_on_chain_wins_over_sled() {
+        let mut on_chain = std::collections::HashMap::new();
+        on_chain.insert("foo.sov".to_string(), make_on_chain("foo.sov", "did:zhtp:aaa", 3));
+
+        let sled = vec![make_sled("foo.sov", [0u8; 32], 1)];
+        let entries = merge_catalog_entries(&on_chain, sled);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["source"], "on_chain");
+        assert_eq!(entries[0]["version"], 3);
+        assert_eq!(entries[0]["owner"], "did:zhtp:aaa");
+    }
+
+    #[test]
+    fn catalog_merge_sled_only_domain_appears() {
+        let on_chain = std::collections::HashMap::new();
+        let sled = vec![make_sled("bar.sov", [0xab; 32], 2)];
+        let entries = merge_catalog_entries(&on_chain, sled);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["domain"], "bar.sov");
+        assert_eq!(entries[0]["source"], "sled_cache");
+        assert_eq!(entries[0]["version"], 2);
+    }
+
+    #[test]
+    fn catalog_merge_sled_owner_normalized_to_did() {
+        let on_chain = std::collections::HashMap::new();
+        let owner = [0xdeu8; 32];
+        let sled = vec![make_sled("baz.sov", owner, 1)];
+        let entries = merge_catalog_entries(&on_chain, sled);
+
+        let expected = format!("did:zhtp:{}", hex::encode(owner));
+        assert_eq!(entries[0]["owner"], expected);
+    }
+
+    #[test]
+    fn catalog_merge_sorted_alphabetically() {
+        let mut on_chain = std::collections::HashMap::new();
+        on_chain.insert("zoo.sov".to_string(), make_on_chain("zoo.sov", "did:zhtp:z", 1));
+        on_chain.insert("aaa.sov".to_string(), make_on_chain("aaa.sov", "did:zhtp:a", 1));
+
+        let sled = vec![make_sled("mmm.sov", [0u8; 32], 1)];
+        let entries = merge_catalog_entries(&on_chain, sled);
+
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0]["domain"], "aaa.sov");
+        assert_eq!(entries[1]["domain"], "mmm.sov");
+        assert_eq!(entries[2]["domain"], "zoo.sov");
+    }
     use lib_blockchain::contracts::TokenContract;
     use lib_blockchain::integration::crypto_integration::{
         PublicKey as BcPublicKey, Signature as BcSignature,

@@ -109,10 +109,7 @@ fn create_persistent_storage(
     local_node_id: lib_identity::NodeId,
     dispatcher: &DhtIntegrationDispatcher,
 ) -> DhtStorageHandle {
-    let zhtp_dir = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".zhtp")
-        .join("storage");
+    let zhtp_dir = crate::node_data_dir().join("storage");
 
     if let Err(e) = std::fs::create_dir_all(&zhtp_dir) {
         warn!(

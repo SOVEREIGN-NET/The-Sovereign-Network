@@ -2,6 +2,33 @@
 //!
 //! Public exports and integration patterns for the ZHTP node orchestrator
 
+use std::path::PathBuf;
+use std::sync::OnceLock;
+
+/// Global node data directory — set once at startup from --data-dir arg or home_dir default.
+/// All components that need the data path must read from here instead of calling
+/// dirs::home_dir() directly, so the path is consistent regardless of how the OS
+/// home directory is configured for the service account.
+static NODE_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Set the global node data directory. Must be called once from main() before
+/// any components start. Panics if called more than once.
+pub fn set_node_data_dir(path: PathBuf) {
+    NODE_DATA_DIR.set(path).expect("NODE_DATA_DIR already set");
+}
+
+/// Get the global node data directory. Falls back to ~/.zhtp if not set (tests/dev).
+pub fn node_data_dir() -> PathBuf {
+    NODE_DATA_DIR
+        .get()
+        .cloned()
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .map(|d| d.join(".zhtp"))
+                .unwrap_or_else(|| PathBuf::from(".zhtp"))
+        })
+}
+
 pub mod config;
 pub mod integration;
 pub mod monitoring;

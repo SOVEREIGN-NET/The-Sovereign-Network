@@ -2077,8 +2077,7 @@ async fn load_migration_authority_keypair() -> anyhow::Result<lib_crypto::KeyPai
     let keystore_dir = std::env::var("ZHTP_KEYSTORE_DIR")
         .ok()
         .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|h| h.join(".zhtp").join("keystore")))
-        .unwrap_or_else(|| PathBuf::from("."));
+        .unwrap_or_else(|| crate::node_data_dir().join("keystore"));
 
     let key_path = keystore_dir.join(NODE_PRIVATE_KEY_FILENAME);
     let key_json = tokio::fs::read_to_string(&key_path)

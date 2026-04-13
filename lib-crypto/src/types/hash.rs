@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 /// in consensus message structures. This ensures canonical ordering for
 /// deterministic serialization (CM-3, CM-4). Must NOT use HashMap for
 /// any consensus-critical data structures.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub struct Hash(pub [u8; 32]);
 
 impl Hash {

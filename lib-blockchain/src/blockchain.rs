@@ -149,6 +149,11 @@ pub struct Blockchain {
     /// Smart contract registry - Web4 Website contracts (contract_id -> Web4Contract)
     #[serde(default)]
     pub web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
+    /// Authoritative on-chain domain registry (domain name -> record).
+    /// Populated from DomainRegistration / DomainUpdate transactions committed to blocks.
+    /// This is the canonical source of truth; sled/DHT DomainRegistry is a cache.
+    #[serde(default)]
+    pub domain_registry: HashMap<String, crate::transaction::OnChainDomainRecord>,
     /// Contract deployment block heights (contract_id -> block_height)
     #[serde(default)]
     pub contract_blocks: HashMap<[u8; 32], u64>,
@@ -1084,6 +1089,7 @@ impl Blockchain {
                     if let Err(e) = self.process_employment_contract_transactions(&block) {
                         warn!("process_employment_contract_transactions in executor path: {}", e);
                     }
+                    self.process_domain_transactions(&block);
                     // Replay CBE initialization so cbe_token pool addresses are correct before
                     // payroll runs. The error "already initialized" is harmless — silently ignored.
                     if let Err(e) = self.process_init_cbe_token_transactions(&block) {
@@ -1240,6 +1246,7 @@ impl Blockchain {
         self.process_init_cbe_token_transactions(&block)?;
         self.process_employment_contract_transactions(&block)?;
         self.process_payroll_transactions(&block)?;
+        self.process_domain_transactions(&block);
         self.process_contract_transactions(&block)?;
         self.process_token_transactions(&block)?;
         self.process_validator_registration_transactions(&block);
@@ -1379,6 +1386,7 @@ impl Blockchain {
         self.process_init_cbe_token_transactions(&block)?;
         self.process_employment_contract_transactions(&block)?;
         self.process_payroll_transactions(&block)?;
+        self.process_domain_transactions(&block);
 
         // Skip token/contract processing when using BlockExecutor - it handles these
         if !self.has_executor() {

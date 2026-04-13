@@ -50,6 +50,7 @@ pub struct DomainRecord {
     /// Domain name (e.g., "myapp.zhtp")
     pub domain: String,
     /// Owner's identity
+    #[serde(default)]
     pub owner: IdentityId,
     /// CANONICAL: Current Web4Manifest CID (runtime truth for resolution)
     /// This is the authoritative pointer used by all domain resolution logic
@@ -65,12 +66,16 @@ pub struct DomainRecord {
     /// Expiration timestamp
     pub expires_at: u64,
     /// Domain ownership proof
+    #[serde(default)]
     pub ownership_proof: ZeroKnowledgeProof,
     /// Content mappings (path -> content_hash) - cached from current manifest
+    #[serde(default)]
     pub content_mappings: HashMap<String, String>,
     /// Domain metadata
+    #[serde(default)]
     pub metadata: DomainMetadata,
     /// Transfer history
+    #[serde(default)]
     pub transfer_history: Vec<DomainTransfer>,
 }
 
@@ -308,7 +313,7 @@ pub struct DomainStatusResponse {
 }
 
 /// Domain metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DomainMetadata {
     /// Domain title/name
     pub title: String,
@@ -325,7 +330,7 @@ pub struct DomainMetadata {
 }
 
 /// Domain economic settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DomainEconomicSettings {
     /// Registration fee paid
     pub registration_fee: f64,

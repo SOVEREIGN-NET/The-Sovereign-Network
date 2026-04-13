@@ -19,6 +19,12 @@ async fn main() -> anyhow::Result<()> {
     // Parse command-line arguments
     let args = parse_cli_args();
 
+    // Pin the data directory globally so all components use the same path regardless
+    // of how dirs::home_dir() behaves for the service account. This prevents the
+    // "silent path drift" bug where changing the OS home dir causes data to be read
+    // from an empty new directory while real data sits in the old location.
+    zhtp::set_node_data_dir(args.data_dir.clone());
+
     // Load and validate configuration
     let config = load_configuration(&args).await?;
 
