@@ -152,6 +152,16 @@ pub enum TransactionType {
     /// Returns the full locked amount back to the staker once `locked_until` has passed.
     /// The stake record is deleted. SOV nonce is incremented to prevent replay.
     DaoUnstake = 45,
+    /// Register a new Web4 domain on-chain (authoritative ownership record).
+    ///
+    /// Payload: `DOMREG1:` prefix + bincode(DomainRegistrationPayload) in memo field.
+    /// Block processor writes record to `Blockchain::domain_registry`.
+    DomainRegistration = 46,
+    /// Update an existing Web4 domain (new manifest deployment).
+    ///
+    /// Payload: `DOMUPD1:` prefix + bincode(DomainUpdatePayload) in memo field.
+    /// Block processor updates record in `Blockchain::domain_registry`.
+    DomainUpdate = 47,
 }
 
 impl TransactionType {
@@ -312,6 +322,12 @@ impl TransactionType {
             TransactionType::DaoUnstake => {
                 "Unstake locked SOV from a sector DAO wallet after lock expires"
             }
+            TransactionType::DomainRegistration => {
+                "Register a new Web4 domain (authoritative on-chain ownership)"
+            }
+            TransactionType::DomainUpdate => {
+                "Update Web4 domain manifest (new deployment)"
+            }
         }
     }
 
@@ -364,6 +380,8 @@ impl TransactionType {
             TransactionType::ProcessPayroll => "process_payroll",
             TransactionType::DaoStake => "dao_stake",
             TransactionType::DaoUnstake => "dao_unstake",
+            TransactionType::DomainRegistration => "domain_registration",
+            TransactionType::DomainUpdate => "domain_update",
         }
     }
 
@@ -416,6 +434,8 @@ impl TransactionType {
             "process_payroll" => Some(TransactionType::ProcessPayroll),
             "dao_stake" => Some(TransactionType::DaoStake),
             "dao_unstake" => Some(TransactionType::DaoUnstake),
+            "domain_registration" => Some(TransactionType::DomainRegistration),
+            "domain_update" => Some(TransactionType::DomainUpdate),
             _ => None,
         }
     }

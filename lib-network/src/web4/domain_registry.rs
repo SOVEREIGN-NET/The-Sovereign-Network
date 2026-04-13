@@ -116,6 +116,12 @@ impl DomainRegistry {
         // Parse records outside of any lock
         let mut parsed_records = Vec::new();
         for (domain, data) in records {
+            // Skip non-domain entries stored under the web4/domain/ prefix namespace.
+            // Content blobs (content:{cid}) and manifest records (manifest:{id}) are stored
+            // here for storage convenience but are not DomainRecord JSON.
+            if domain.starts_with("content:") || domain.starts_with("manifest:") {
+                continue;
+            }
             match serde_json::from_slice::<DomainRecord>(&data) {
                 Ok(record) => {
                     // MIGRATION: Immediately re-save with new format (serde aliases make old data readable)
@@ -130,7 +136,7 @@ impl DomainRegistry {
                     parsed_records.push((domain, record));
                 }
                 Err(e) => {
-                    warn!("Failed to deserialize domain record: {}", e);
+                    warn!("Skipping non-domain record '{}': {}", domain, e);
                 }
             }
         }
@@ -827,6 +833,13 @@ impl DomainRegistry {
     pub async fn get_statistics(&self) -> Result<Web4Statistics> {
         let stats = self.stats.read().await;
         Ok(stats.clone())
+    }
+
+    /// Return a snapshot of all in-memory domain records (loaded from sled at startup).
+    /// Used by the catalog endpoint as a fallback when blockchain.domain_registry is empty.
+    pub async fn list_all_domain_records(&self) -> Vec<DomainRecord> {
+        let records = self.domain_records.read().await;
+        records.values().cloned().collect()
     }
 
     /// Validate domain name format

@@ -1760,8 +1760,7 @@ async fn load_local_validator_from_keystore() -> Result<(IdentityId, lib_crypto:
     let keystore_dir = std::env::var("ZHTP_KEYSTORE_DIR")
         .ok()
         .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|h| h.join(".zhtp").join("keystore")))
-        .ok_or_else(|| anyhow::anyhow!("Could not determine keystore directory"))?;
+        .unwrap_or_else(|| crate::node_data_dir().join("keystore"));
 
     let node_identity_path = keystore_dir.join(NODE_IDENTITY_FILENAME);
     let node_key_path = keystore_dir.join(NODE_PRIVATE_KEY_FILENAME);

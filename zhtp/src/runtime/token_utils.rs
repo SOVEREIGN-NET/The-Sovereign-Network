@@ -59,8 +59,7 @@ pub(crate) async fn load_validator_keypair_from_keystore() -> Result<lib_crypto:
     let keystore_dir = std::env::var("ZHTP_KEYSTORE_DIR")
         .ok()
         .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|h| h.join(".zhtp").join("keystore")))
-        .ok_or_else(|| anyhow::anyhow!("Could not determine keystore directory"))?;
+        .unwrap_or_else(|| crate::node_data_dir().join("keystore"));
 
     let key_path = keystore_dir.join(NODE_PRIVATE_KEY_FILENAME);
     let key_json = tokio::fs::read_to_string(&key_path)

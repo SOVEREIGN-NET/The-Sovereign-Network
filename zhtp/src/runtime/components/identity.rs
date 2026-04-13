@@ -287,12 +287,10 @@ pub fn create_default_storage_config() -> Result<lib_storage::UnifiedStorageConf
     use lib_identity::NodeId;
     use lib_storage::{ErasureConfig, StorageConfig, StorageTier, UnifiedStorageConfig};
 
-    // Set up persistence path under ~/.zhtp/storage/
-    // Note: sled requires a DIRECTORY path, not a file path
-    let zhtp_dir = dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join(".zhtp")
-        .join("storage");
+    // Set up persistence path under {data_dir}/storage/
+    // Use the global node data dir (set from --data-dir arg at startup) so all
+    // components agree on the same path regardless of the OS home directory.
+    let zhtp_dir = crate::node_data_dir().join("storage");
     let dht_persist_path = zhtp_dir.join("dht_db");
 
     Ok(UnifiedStorageConfig {
@@ -460,9 +458,7 @@ async fn rebuild_index_from_backup(
 ) -> Result<u32> {
     use std::io::BufReader;
 
-    let backup_path = dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join(".zhtp")
+    let backup_path = crate::node_data_dir()
         .join("backup")
         .join("identities.json");
 
@@ -517,9 +513,7 @@ async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
 
     info!("🔄 MIGRATION MODE: ZHTP_MIGRATE_IDENTITIES=1 detected");
 
-    let backup_path = dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join(".zhtp")
+    let backup_path = crate::node_data_dir()
         .join("backup")
         .join("identities.json");
 
