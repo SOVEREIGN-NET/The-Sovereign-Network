@@ -390,6 +390,22 @@ impl TransactionValidator {
             TransactionType::DaoUnstake => {
                 // Full validation deferred to stateful validator (lock check, record existence, etc.)
             }
+            TransactionType::DomainRegistration => {
+                if !transaction
+                    .memo
+                    .starts_with(crate::transaction::DOMAIN_REGISTRATION_PREFIX)
+                {
+                    return Err(ValidationError::InvalidMemo);
+                }
+            }
+            TransactionType::DomainUpdate => {
+                if !transaction
+                    .memo
+                    .starts_with(crate::transaction::DOMAIN_UPDATE_PREFIX)
+                {
+                    return Err(ValidationError::InvalidMemo);
+                }
+            }
         }
 
         // Signature validation:
@@ -623,6 +639,22 @@ impl TransactionValidator {
             }
             TransactionType::DaoUnstake => {
                 // Full validation deferred to stateful validator (lock check, record existence, etc.)
+            }
+            TransactionType::DomainRegistration => {
+                if !transaction
+                    .memo
+                    .starts_with(crate::transaction::DOMAIN_REGISTRATION_PREFIX)
+                {
+                    return Err(ValidationError::InvalidMemo);
+                }
+            }
+            TransactionType::DomainUpdate => {
+                if !transaction
+                    .memo
+                    .starts_with(crate::transaction::DOMAIN_UPDATE_PREFIX)
+                {
+                    return Err(ValidationError::InvalidMemo);
+                }
             }
         }
 
@@ -1914,6 +1946,72 @@ impl<'a> StatefulTransactionValidator<'a> {
             TransactionType::DaoUnstake => {
                 self.validate_dao_unstake(transaction)?;
             }
+            TransactionType::DomainRegistration => {
+                if !transaction
+                    .memo
+                    .starts_with(crate::transaction::DOMAIN_REGISTRATION_PREFIX)
+                {
+                    return Err(ValidationError::InvalidMemo);
+                }
+                // Authorization: the owner_did in the payload must match the signer's key_id.
+                // This prevents a malicious actor from claiming ownership of a domain under a
+                // DID they don't control.
+                let payload =
+                    crate::transaction::domain::DomainRegistrationPayload::decode_memo(
+                        &transaction.memo,
+                    )
+                    .map_err(|_| ValidationError::InvalidMemo)?;
+                let signer_did = format!(
+                    "did:zhtp:{}",
+                    hex::encode(transaction.signature.public_key.key_id)
+                );
+                if payload.owner_did != signer_did {
+                    tracing::warn!(
+                        "[DOMAIN_REG] owner_did mismatch: payload={} signer={}",
+                        payload.owner_did,
+                        signer_did
+                    );
+                    return Err(ValidationError::InvalidTransaction);
+                }
+            }
+            TransactionType::DomainUpdate => {
+                if !transaction
+                    .memo
+                    .starts_with(crate::transaction::DOMAIN_UPDATE_PREFIX)
+                {
+                    return Err(ValidationError::InvalidMemo);
+                }
+                // Authorization: the owner_did in the payload must match the signer's key_id,
+                // and if the domain already exists on-chain, the signer must be the current owner.
+                let payload =
+                    crate::transaction::domain::DomainUpdatePayload::decode_memo(&transaction.memo)
+                        .map_err(|_| ValidationError::InvalidMemo)?;
+                let signer_did = format!(
+                    "did:zhtp:{}",
+                    hex::encode(transaction.signature.public_key.key_id)
+                );
+                if payload.owner_did != signer_did {
+                    tracing::warn!(
+                        "[DOMAIN_UPDATE] owner_did mismatch: payload={} signer={}",
+                        payload.owner_did,
+                        signer_did
+                    );
+                    return Err(ValidationError::InvalidTransaction);
+                }
+                if let Some(blockchain) = self.blockchain {
+                    if let Some(existing) = blockchain.domain_registry.get(&payload.domain) {
+                        if existing.owner_did != signer_did {
+                            tracing::warn!(
+                                "[DOMAIN_UPDATE] not owner: domain={} current_owner={} signer={}",
+                                payload.domain,
+                                existing.owner_did,
+                                signer_did
+                            );
+                            return Err(ValidationError::InvalidTransaction);
+                        }
+                    }
+                }
+            }
         }
 
         //  CRITICAL FIX: Verify sender identity exists on blockchain
@@ -1940,6 +2038,8 @@ impl<'a> StatefulTransactionValidator<'a> {
             && transaction.transaction_type != TransactionType::TokenCreation
             && transaction.transaction_type != TransactionType::DaoStake
             && transaction.transaction_type != TransactionType::DaoUnstake
+            && transaction.transaction_type != TransactionType::DomainRegistration // owner_did↔signer binding enforced above
+            && transaction.transaction_type != TransactionType::DomainUpdate // owner_did↔signer binding enforced above
             && !is_token_contract_execution(transaction)
         {
             tracing::debug!("[BREADCRUMB] validate_sender_identity_exists CALL");
@@ -3147,6 +3247,20 @@ pub mod utils {
             }
             TransactionType::DaoUnstake => {
                 transaction.dao_unstake_data().is_some()
+                    && transaction.inputs.is_empty()
+                    && transaction.outputs.is_empty()
+            }
+            TransactionType::DomainRegistration => {
+                transaction
+                    .memo
+                    .starts_with(crate::transaction::DOMAIN_REGISTRATION_PREFIX)
+                    && transaction.inputs.is_empty()
+                    && transaction.outputs.is_empty()
+            }
+            TransactionType::DomainUpdate => {
+                transaction
+                    .memo
+                    .starts_with(crate::transaction::DOMAIN_UPDATE_PREFIX)
                     && transaction.inputs.is_empty()
                     && transaction.outputs.is_empty()
             }

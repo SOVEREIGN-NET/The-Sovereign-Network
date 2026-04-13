@@ -1339,6 +1339,22 @@ impl ConsensusEngine {
 
         let proposal_id = proposal.id.clone();
         self.current_round.proposals.push(proposal_id.clone());
+
+        // Relay proposal to all validators so nodes without a direct connection
+        // to the proposer still receive it (star-topology gossip).
+        // This is safe: on_proposal's `proposals.is_empty()` check prevents double-processing,
+        // and each node only relays a proposal once (the second time proposals is non-empty).
+        let relay_proposal = proposal.clone();
+        let relay_validator_ids = self.get_active_validator_ids();
+        let relay_msg = ValidatorMessage::Propose { proposal: relay_proposal };
+        if let Err(e) = self
+            .broadcaster
+            .broadcast_to_validators(relay_msg, &relay_validator_ids)
+            .await
+        {
+            tracing::debug!("Proposal relay failed (non-critical): {}", e);
+        }
+
         self.pending_proposals.push_back(proposal);
 
         match self.current_round.step {
@@ -1456,6 +1472,20 @@ impl ConsensusEngine {
         self.vote_pool
             .insert(key, (vote.clone(), proposal_id.clone()));
 
+        // Relay prevote to all validators so nodes without a direct connection
+        // to the voter still receive it (star-topology gossip).
+        // Duplicate detection (vote_pool key) prevents relay loops: the second
+        // time this vote arrives, the pool check fires and returns early without relay.
+        let relay_msg = ValidatorMessage::Vote { vote: vote.clone() };
+        let relay_validator_ids = self.get_active_validator_ids();
+        if let Err(e) = self
+            .broadcaster
+            .broadcast_to_validators(relay_msg, &relay_validator_ids)
+            .await
+        {
+            tracing::debug!("PreVote relay failed (non-critical): {}", e);
+        }
+
         tracing::debug!(
             "Added PreVote from {} for proposal {:?} at height {} round {}",
             vote.voter,
@@ -1555,6 +1585,19 @@ impl ConsensusEngine {
         let proposal_id = vote.proposal_id.clone();
         self.vote_pool
             .insert(key, (vote.clone(), proposal_id.clone()));
+
+        // Relay precommit to all validators (star-topology gossip).
+        // Critical: without this, nodes that are only connected to a hub (g1)
+        // cannot collect precommits from non-hub validators — quorum is impossible.
+        let relay_msg = ValidatorMessage::Vote { vote: vote.clone() };
+        let relay_validator_ids = self.get_active_validator_ids();
+        if let Err(e) = self
+            .broadcaster
+            .broadcast_to_validators(relay_msg, &relay_validator_ids)
+            .await
+        {
+            tracing::debug!("PreCommit relay failed (non-critical): {}", e);
+        }
 
         tracing::debug!(
             "Added PreCommit from {} for proposal {:?} at height {} round {}",
@@ -1684,6 +1727,20 @@ impl ConsensusEngine {
         let proposal_id = vote.proposal_id.clone();
         self.vote_pool
             .insert(key, (vote.clone(), proposal_id.clone()));
+
+        // Relay commit vote to all validators (star-topology gossip).
+        // g2 and g3 only have persistent QUIC connections to g1 (hub), not to each other.
+        // Without relay, a commit vote from g3 never reaches g2, so g2 can never aggregate
+        // the 3-of-3 commit quorum required to finalize a block.
+        let relay_msg = ValidatorMessage::Vote { vote: vote.clone() };
+        let relay_validator_ids = self.get_active_validator_ids();
+        if let Err(e) = self
+            .broadcaster
+            .broadcast_to_validators(relay_msg, &relay_validator_ids)
+            .await
+        {
+            tracing::debug!("Commit vote relay failed (non-critical): {}", e);
+        }
 
         tracing::debug!(
             "Stored commit vote from {} for proposal {:?} at height {} round {} (current step: {:?})",

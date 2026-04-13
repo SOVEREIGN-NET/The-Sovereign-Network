@@ -239,6 +239,7 @@ impl BlockchainV1 {
             fee_router: crate::contracts::economics::fee_router::FeeRouter::new_with_dao_wallets(
                 crate::contracts::economics::fee_router::DAO_HEALTHCARE_KEY_ID,
             ),
+            domain_registry: HashMap::new(),
         }
     }
 }
@@ -541,6 +542,7 @@ impl BlockchainStorageV3 {
             fee_router: crate::contracts::economics::fee_router::FeeRouter::new_with_dao_wallets(
                 crate::contracts::economics::fee_router::DAO_HEALTHCARE_KEY_ID,
             ),
+            domain_registry: HashMap::new(),
         }
     }
 }
@@ -684,9 +686,32 @@ impl BlockchainStorageV8 {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct BlockchainStorageV9 {
+    pub v8: BlockchainStorageV8,
+    #[serde(default)]
+    pub domain_registry:
+        HashMap<String, crate::transaction::OnChainDomainRecord>,
+}
+
+impl BlockchainStorageV9 {
+    fn from_blockchain(bc: &Blockchain) -> Self {
+        Self {
+            v8: BlockchainStorageV8::from_blockchain(bc),
+            domain_registry: bc.domain_registry.clone(),
+        }
+    }
+
+    fn to_blockchain(self) -> Blockchain {
+        let mut blockchain = self.v8.to_blockchain();
+        blockchain.domain_registry = self.domain_registry;
+        blockchain
+    }
+}
+
 impl Blockchain {
     pub(crate) const FILE_MAGIC: [u8; 4] = [0x5A, 0x48, 0x54, 0x50];
-    const FILE_VERSION: u16 = 8;
+    const FILE_VERSION: u16 = 9;
 
     #[deprecated(
         since = "0.2.0",
@@ -710,7 +735,7 @@ impl Blockchain {
             std::fs::create_dir_all(parent)?;
         }
 
-        let storage = BlockchainStorageV8::from_blockchain(self);
+        let storage = BlockchainStorageV9::from_blockchain(self);
         let serialized = bincode::serialize(&storage)
             .map_err(|e| anyhow::anyhow!("Failed to serialize blockchain: {}", e))?;
 
@@ -758,6 +783,14 @@ impl Blockchain {
             info!("📂 Detected versioned format v{}", version);
 
             match version {
+                9 => deserialize_or_err::<BlockchainStorageV9, _, _>(
+                    data,
+                    "v9 blockchain",
+                    |storage| {
+                    info!("📂 Loaded blockchain storage v9 (on-chain domain registry)");
+                    storage.to_blockchain()
+                },
+                )?,
                 8 => deserialize_or_err::<BlockchainStorageV8, _, _>(
                     data,
                     "v8 blockchain",

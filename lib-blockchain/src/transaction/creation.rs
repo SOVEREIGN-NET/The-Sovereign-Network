@@ -698,8 +698,10 @@ pub mod utils {
             | TransactionType::CreateEmploymentContract
             | TransactionType::ProcessPayroll
             | TransactionType::DaoStake
-            | TransactionType::DaoUnstake => {
-                // Threshold-approval, CBE, and staking transactions - must have no inputs/outputs
+            | TransactionType::DaoUnstake
+            | TransactionType::DomainRegistration
+            | TransactionType::DomainUpdate => {
+                // Threshold-approval, CBE, staking, and domain transactions - no inputs/outputs
                 if !inputs.is_empty() {
                     return Err(TransactionCreateError::InvalidInputs);
                 }
