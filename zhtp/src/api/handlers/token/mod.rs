@@ -419,8 +419,8 @@ impl TokenHandler {
                 token_id: token_id_hex.to_string(),
                 name: "CBE Equity".to_string(),
                 symbol: "CBE".to_string(),
-                decimals: 8,
-                total_supply: lib_blockchain::contracts::bonding_curve::canonical::CBE_TOTAL_SUPPLY as u128,
+                decimals: lib_blockchain::contracts::bonding_curve::canonical::CBE_DECIMALS,
+                total_supply: lib_blockchain::contracts::bonding_curve::canonical::CBE_TOTAL_SUPPLY,
                 max_supply: None,
                 creator: format!("0x{}", "00".repeat(32)),
                 is_deflationary: false,
@@ -558,8 +558,8 @@ impl TokenHandler {
             token_id: hex::encode(cbe_token_id),
             name: "CBE Equity".to_string(),
             symbol: "CBE".to_string(),
-            decimals: 8,
-            total_supply: 100_000_000_000u128,
+            decimals: lib_blockchain::contracts::bonding_curve::canonical::CBE_DECIMALS,
+            total_supply: lib_blockchain::contracts::bonding_curve::canonical::CBE_TOTAL_SUPPLY,
         });
 
         let count = tokens.len();
@@ -743,7 +743,7 @@ impl TokenHandler {
                     "token_id": hex::encode(cbe_token_id),
                     "name": "CBE Equity",
                     "symbol": "CBE",
-                    "decimals": 8u8,
+                    "decimals": lib_blockchain::contracts::bonding_curve::canonical::CBE_DECIMALS,
                     "balance": cbe_balance,
                     "is_creator": false
                 }));

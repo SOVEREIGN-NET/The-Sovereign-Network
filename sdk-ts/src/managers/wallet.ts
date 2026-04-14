@@ -45,7 +45,7 @@ export class WalletManager {
       const data = response.data ? JSON.parse(response.data) : null;
       const balance = BigInt(data?.balance || 0);
 
-      await this.output.success(`Balance: ${(Number(balance) / 100_000_000).toFixed(8)} ZHTP`);
+      await this.output.success(`Balance: ${(Number(balance) / 1_000_000_000_000_000_000).toFixed(8)} ZHTP`);
       return balance;
     } catch (error) {
       throw new WalletError(`Balance check error: ${error instanceof Error ? error.message : 'unknown'}`, {
@@ -90,7 +90,7 @@ export class WalletManager {
       });
     }
 
-    await this.output.info(`Sending ${(Number(amount) / 100_000_000).toFixed(8)} ZHTP from ${from} to ${to}`);
+    await this.output.info(`Sending ${(Number(amount) / 1_000_000_000_000_000_000).toFixed(8)} ZHTP from ${from} to ${to}`);
 
     try {
       const config = getWalletOpConfig(WalletOp.Transfer);
@@ -155,7 +155,7 @@ export class WalletManager {
       throw new ValidationError('Insufficient balance for staking', balanceValidation.errors);
     }
 
-    await this.output.info(`Staking ${(Number(amount) / 100_000_000).toFixed(8)} ZHTP`);
+    await this.output.info(`Staking ${(Number(amount) / 1_000_000_000_000_000_000).toFixed(8)} ZHTP`);
 
     try {
       const config = getWalletOpConfig(WalletOp.Stake);
@@ -205,7 +205,7 @@ export class WalletManager {
       throw new ValidationError('Invalid unstake amount', amountValidation.errors);
     }
 
-    await this.output.info(`Unstaking ${(Number(amount) / 100_000_000).toFixed(8)} ZHTP`);
+    await this.output.info(`Unstaking ${(Number(amount) / 1_000_000_000_000_000_000).toFixed(8)} ZHTP`);
 
     try {
       const config = getWalletOpConfig(WalletOp.Unstake);
