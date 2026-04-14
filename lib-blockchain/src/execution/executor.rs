@@ -1853,10 +1853,16 @@ impl BlockExecutor {
             .sov_treasury_cbe_balance
             .checked_add(sov_treasury_credit)
             .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: sov_treasury overflow".to_string()))?;
-        econ.liquidity_pool_balance = econ
-            .liquidity_pool_balance
-            .checked_add(liquidity_credit)
-            .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: liquidity_pool overflow".to_string()))?;
+        econ.liquidity_pool
+            .mint(liquidity_credit)
+            .map_err(|e| TxApplyError::InvalidType(format!("BUY_CBE: liquidity pool: {e}")))?;
+        // Keep legacy field in sync for backwards compat.
+        econ.liquidity_pool_balance = econ.liquidity_pool.balance;
+
+        // Satisfy PRE_BACKED entries FIFO from the compensation pool routing share.
+        // For now the full liquidity credit is used as the compensation routing share.
+        econ.satisfy_pre_backed(liquidity_credit);
+
         if econ.reserve_balance >= GRAD_THRESHOLD {
             econ.graduated = true;
         }
@@ -4310,6 +4316,7 @@ mod tests {
                 total_sov_minted: 0,
                 graduated: false,
                 sell_enabled: false,
+                ..Default::default()
             })
             .unwrap();
         }
@@ -4520,6 +4527,7 @@ mod tests {
                 total_sov_minted: 0,
                 graduated: false,
                 sell_enabled: true,
+                ..Default::default()
             })
             .unwrap();
         }

@@ -1,5 +1,41 @@
 use serde::{Deserialize, Serialize};
 
+// ── Pool ceiling constants (in 18-decimal atoms) ───────────────────────────
+// These are duplicated here so lib-types stays self-contained (no dep on
+// lib-blockchain).  The canonical copies live in
+// lib-blockchain::contracts::bonding_curve::canonical.
+const POOL_SCALE: u128 = 1_000_000_000_000_000_000;
+const COMPENSATION_POOL_CEILING: u128 = 400_000_000 * POOL_SCALE;
+const TREASURY_POOL_CEILING: u128 = 200_000_000 * POOL_SCALE;
+const LIQUIDITY_POOL_CEILING: u128 = 200_000_000 * POOL_SCALE;
+const INCENTIVE_POOL_CEILING: u128 = 100_000_000 * POOL_SCALE;
+const STRATEGIC_RESERVE_CEILING: u128 = 100_000_000 * POOL_SCALE;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PoolState {
+    pub balance: u128,
+    pub ceiling: u128,
+}
+
+impl PoolState {
+    pub fn can_mint(&self, amount: u128) -> bool {
+        self.balance
+            .checked_add(amount)
+            .map_or(false, |new| new <= self.ceiling)
+    }
+    pub fn mint(&mut self, amount: u128) -> Result<(), &'static str> {
+        let new = self
+            .balance
+            .checked_add(amount)
+            .ok_or("pool balance overflow")?;
+        if new > self.ceiling {
+            return Err("would exceed pool ceiling");
+        }
+        self.balance = new;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BondingCurveBand {
     pub index: u64,
@@ -51,7 +87,7 @@ impl Nonce48 {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BondingCurveEconomicState {
     /// Circulating CBE supply (18-decimal bonding curve atoms).
     pub s_c: u128,
@@ -64,7 +100,7 @@ pub struct BondingCurveEconomicState {
     #[serde(alias = "treasury_balance")]
     pub sov_treasury_cbe_balance: u128,
     /// Liquidity pool — 48% of each deposit (60% of the 80% DAO portion).
-    /// Accumulates toward graduation; becomes CBE side of AMM seed at graduation.
+    /// Kept for backwards compatibility; mirrors `liquidity_pool.balance`.
     #[serde(default)]
     pub liquidity_pool_balance: u128,
     /// Total SOV minted from on-ramp deposits (event-driven, priced at NAV model).
@@ -72,6 +108,110 @@ pub struct BondingCurveEconomicState {
     pub total_sov_minted: u128,
     pub graduated: bool,
     pub sell_enabled: bool,
+
+    // ── Five pool ceilings (Feature #2126) ─────────────────────────────────
+    #[serde(default)]
+    pub compensation_pool: PoolState,
+    #[serde(default)]
+    pub treasury_pool: PoolState,
+    #[serde(default)]
+    pub liquidity_pool: PoolState,
+    #[serde(default)]
+    pub incentive_pool: PoolState,
+    #[serde(default)]
+    pub strategic_reserve: PoolState,
+
+    // ── PRE_BACKED FIFO queue (Feature #2124) ──────────────────────────────
+    #[serde(default)]
+    pub outstanding_pre_backed: u128,
+    #[serde(default)]
+    pub pre_backed_queue: Vec<PreBackedEntry>,
+
+    // ── Debt ceiling (Feature #2125) ───────────────────────────────────────
+    #[serde(default)]
+    pub debt_state: DebtState,
+}
+
+impl Default for BondingCurveEconomicState {
+    fn default() -> Self {
+        Self {
+            s_c: 0,
+            reserve_balance: 0,
+            sov_treasury_cbe_balance: 0,
+            liquidity_pool_balance: 0,
+            total_sov_minted: 0,
+            graduated: false,
+            sell_enabled: false,
+            compensation_pool: PoolState {
+                balance: 0,
+                ceiling: COMPENSATION_POOL_CEILING,
+            },
+            treasury_pool: PoolState {
+                balance: 0,
+                ceiling: TREASURY_POOL_CEILING,
+            },
+            liquidity_pool: PoolState {
+                balance: 0,
+                ceiling: LIQUIDITY_POOL_CEILING,
+            },
+            incentive_pool: PoolState {
+                balance: 0,
+                ceiling: INCENTIVE_POOL_CEILING,
+            },
+            strategic_reserve: PoolState {
+                balance: 0,
+                ceiling: STRATEGIC_RESERVE_CEILING,
+            },
+            outstanding_pre_backed: 0,
+            pre_backed_queue: Vec::new(),
+            debt_state: DebtState::Green,
+        }
+    }
+}
+
+impl BondingCurveEconomicState {
+    /// Create a new economic state with pool ceilings initialised from constants.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Satisfy PRE_BACKED entries in FIFO order using the given amount.
+    pub fn satisfy_pre_backed(&mut self, amount: u128) {
+        let mut remaining = amount;
+        for entry in &mut self.pre_backed_queue {
+            if entry.satisfied || remaining == 0 {
+                continue;
+            }
+            if remaining >= entry.amount_cbe {
+                remaining -= entry.amount_cbe;
+                self.outstanding_pre_backed = self
+                    .outstanding_pre_backed
+                    .saturating_sub(entry.amount_cbe);
+                entry.satisfied = true;
+            } else {
+                // partial satisfaction not supported — skip
+                break;
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreBackedEntry {
+    pub block_height: u64,
+    pub amount_cbe: u128,
+    pub recipient: [u8; 32],
+    pub deliverable_hash: [u8; 32],
+    pub satisfied: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum DebtState {
+    #[default]
+    Green,
+    Yellow,
+    Orange,
+    Red,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -199,9 +339,10 @@ mod tests {
         let state = BondingCurveEconomicState {
             s_c: 1,
             reserve_balance: 2,
-            treasury_balance: 3,
+            sov_treasury_cbe_balance: 3,
             graduated: true,
             sell_enabled: false,
+            ..Default::default()
         };
 
         let encoded = bincode::serialize(&state).unwrap();
@@ -243,5 +384,154 @@ mod tests {
 
         assert_eq!(bincode::serialize(&buy).unwrap().len(), 80);
         assert_eq!(bincode::serialize(&sell).unwrap().len(), 64);
+    }
+
+    // ── Pool ceiling tests (Feature #2126) ─────────────────────────────────
+
+    #[test]
+    fn pool_mint_up_to_ceiling_succeeds() {
+        let mut pool = PoolState {
+            balance: 0,
+            ceiling: 1000,
+        };
+        assert!(pool.can_mint(1000));
+        assert!(pool.mint(500).is_ok());
+        assert_eq!(pool.balance, 500);
+        assert!(pool.mint(500).is_ok());
+        assert_eq!(pool.balance, 1000);
+    }
+
+    #[test]
+    fn pool_mint_over_ceiling_fails() {
+        let mut pool = PoolState {
+            balance: 0,
+            ceiling: 1000,
+        };
+        assert!(!pool.can_mint(1001));
+        assert!(pool.mint(1001).is_err());
+        assert_eq!(pool.balance, 0); // unchanged
+    }
+
+    #[test]
+    fn pool_mint_incremental_over_ceiling_fails() {
+        let mut pool = PoolState {
+            balance: 999,
+            ceiling: 1000,
+        };
+        assert!(pool.can_mint(1));
+        assert!(!pool.can_mint(2));
+        assert!(pool.mint(2).is_err());
+        assert_eq!(pool.balance, 999); // unchanged
+    }
+
+    #[test]
+    fn pool_can_mint_overflow_returns_false() {
+        let pool = PoolState {
+            balance: u128::MAX,
+            ceiling: u128::MAX,
+        };
+        assert!(!pool.can_mint(1));
+    }
+
+    #[test]
+    fn default_economic_state_has_pool_ceilings() {
+        let econ = BondingCurveEconomicState::default();
+        assert_eq!(econ.compensation_pool.ceiling, COMPENSATION_POOL_CEILING);
+        assert_eq!(econ.treasury_pool.ceiling, TREASURY_POOL_CEILING);
+        assert_eq!(econ.liquidity_pool.ceiling, LIQUIDITY_POOL_CEILING);
+        assert_eq!(econ.incentive_pool.ceiling, INCENTIVE_POOL_CEILING);
+        assert_eq!(econ.strategic_reserve.ceiling, STRATEGIC_RESERVE_CEILING);
+        assert_eq!(econ.compensation_pool.balance, 0);
+    }
+
+    // ── PRE_BACKED FIFO tests (Feature #2124) ─────────────────────────────
+
+    #[test]
+    fn satisfy_pre_backed_fifo_order() {
+        let mut econ = BondingCurveEconomicState::default();
+        econ.pre_backed_queue = vec![
+            PreBackedEntry {
+                block_height: 1,
+                amount_cbe: 100,
+                recipient: [1u8; 32],
+                deliverable_hash: [0xAA; 32],
+                satisfied: false,
+            },
+            PreBackedEntry {
+                block_height: 2,
+                amount_cbe: 200,
+                recipient: [2u8; 32],
+                deliverable_hash: [0xBB; 32],
+                satisfied: false,
+            },
+            PreBackedEntry {
+                block_height: 3,
+                amount_cbe: 50,
+                recipient: [3u8; 32],
+                deliverable_hash: [0xCC; 32],
+                satisfied: false,
+            },
+        ];
+        econ.outstanding_pre_backed = 350;
+
+        // Satisfy with 150: covers entry 0 (100) fully, entry 1 (200) not enough → skip
+        econ.satisfy_pre_backed(150);
+        assert!(econ.pre_backed_queue[0].satisfied);
+        assert!(!econ.pre_backed_queue[1].satisfied);
+        assert!(!econ.pre_backed_queue[2].satisfied);
+        assert_eq!(econ.outstanding_pre_backed, 250);
+    }
+
+    #[test]
+    fn satisfy_pre_backed_clears_all_when_enough() {
+        let mut econ = BondingCurveEconomicState::default();
+        econ.pre_backed_queue = vec![
+            PreBackedEntry {
+                block_height: 1,
+                amount_cbe: 100,
+                recipient: [1u8; 32],
+                deliverable_hash: [0xAA; 32],
+                satisfied: false,
+            },
+            PreBackedEntry {
+                block_height: 2,
+                amount_cbe: 200,
+                recipient: [2u8; 32],
+                deliverable_hash: [0xBB; 32],
+                satisfied: false,
+            },
+        ];
+        econ.outstanding_pre_backed = 300;
+
+        econ.satisfy_pre_backed(500);
+        assert!(econ.pre_backed_queue[0].satisfied);
+        assert!(econ.pre_backed_queue[1].satisfied);
+        assert_eq!(econ.outstanding_pre_backed, 0);
+    }
+
+    #[test]
+    fn satisfy_pre_backed_skips_already_satisfied() {
+        let mut econ = BondingCurveEconomicState::default();
+        econ.pre_backed_queue = vec![
+            PreBackedEntry {
+                block_height: 1,
+                amount_cbe: 100,
+                recipient: [1u8; 32],
+                deliverable_hash: [0xAA; 32],
+                satisfied: true, // already done
+            },
+            PreBackedEntry {
+                block_height: 2,
+                amount_cbe: 50,
+                recipient: [2u8; 32],
+                deliverable_hash: [0xBB; 32],
+                satisfied: false,
+            },
+        ];
+        econ.outstanding_pre_backed = 50;
+
+        econ.satisfy_pre_backed(50);
+        assert!(econ.pre_backed_queue[1].satisfied);
+        assert_eq!(econ.outstanding_pre_backed, 0);
     }
 }

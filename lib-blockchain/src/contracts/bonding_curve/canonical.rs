@@ -71,6 +71,44 @@ pub const P_START_2: u128 = 813_345_700_000_000;
 pub const P_START_3: u128 = 1_713_345_700_000_000;
 pub const P_START_4: u128 = 2_713_345_700_000_000;
 
+// ── Pool ceilings (Feature #2126) ──────────────────────────────────────────
+//
+// Five named pools, each with a maximum ever-mintable ceiling.  No pool is
+// pre-minted at genesis.  Changing any ceiling is a hard fork.
+
+pub const COMPENSATION_POOL_CEILING: u128 = 400_000_000 * SCALE; // 400M CBE
+pub const TREASURY_POOL_CEILING: u128 = 200_000_000 * SCALE; // 200M CBE
+pub const LIQUIDITY_POOL_CEILING: u128 = 200_000_000 * SCALE; // 200M CBE
+pub const INCENTIVE_POOL_CEILING: u128 = 100_000_000 * SCALE; // 100M CBE
+pub const STRATEGIC_RESERVE_CEILING: u128 = 100_000_000 * SCALE; // 100M CBE
+
+// ── Debt ceiling and safety valves (Feature #2125) ─────────────────────────
+//
+// Maximum genesis payroll debt in CBE atoms (71M × 10^18).
+// Protocol invariant — cannot be raised by governance.
+
+pub const DEBT_CEILING: u128 = 71_000_000 * SCALE;
+
+/// Debt state thresholds (fraction of ceiling)
+pub const DEBT_GREEN_MAX: u128 = DEBT_CEILING / 4; // 0-25%
+pub const DEBT_YELLOW_MAX: u128 = DEBT_CEILING / 2; // 25-50%
+pub const DEBT_ORANGE_MAX: u128 = DEBT_CEILING * 3 / 4; // 50-75%
+// RED: 75-100% of DEBT_CEILING
+
+/// Compute the debt state from outstanding pre-backed amount.
+pub fn compute_debt_state(outstanding: u128) -> lib_types::DebtState {
+    use lib_types::DebtState;
+    if outstanding <= DEBT_GREEN_MAX {
+        DebtState::Green
+    } else if outstanding <= DEBT_YELLOW_MAX {
+        DebtState::Yellow
+    } else if outstanding <= DEBT_ORANGE_MAX {
+        DebtState::Orange
+    } else {
+        DebtState::Red
+    }
+}
+
 // ── Upgrade-gated curve parameters ──────────────────────────────────────────
 //
 // The following parameters CAN change via a protocol upgrade transaction but
@@ -665,5 +703,56 @@ mod floor_tests {
             assert!(f > prev_floor, "floor must rise: prev={prev_floor}, now={f}");
             prev_floor = f;
         }
+    }
+}
+
+#[cfg(test)]
+mod debt_state_tests {
+    use super::*;
+    use lib_types::DebtState;
+
+    #[test]
+    fn debt_state_green_at_zero() {
+        assert_eq!(compute_debt_state(0), DebtState::Green);
+    }
+
+    #[test]
+    fn debt_state_green_at_boundary() {
+        assert_eq!(compute_debt_state(DEBT_GREEN_MAX), DebtState::Green);
+    }
+
+    #[test]
+    fn debt_state_yellow_just_above_green() {
+        assert_eq!(compute_debt_state(DEBT_GREEN_MAX + 1), DebtState::Yellow);
+    }
+
+    #[test]
+    fn debt_state_yellow_at_boundary() {
+        assert_eq!(compute_debt_state(DEBT_YELLOW_MAX), DebtState::Yellow);
+    }
+
+    #[test]
+    fn debt_state_orange_just_above_yellow() {
+        assert_eq!(compute_debt_state(DEBT_YELLOW_MAX + 1), DebtState::Orange);
+    }
+
+    #[test]
+    fn debt_state_orange_at_boundary() {
+        assert_eq!(compute_debt_state(DEBT_ORANGE_MAX), DebtState::Orange);
+    }
+
+    #[test]
+    fn debt_state_red_just_above_orange() {
+        assert_eq!(compute_debt_state(DEBT_ORANGE_MAX + 1), DebtState::Red);
+    }
+
+    #[test]
+    fn debt_state_red_at_ceiling() {
+        assert_eq!(compute_debt_state(DEBT_CEILING), DebtState::Red);
+    }
+
+    #[test]
+    fn debt_state_red_above_ceiling() {
+        assert_eq!(compute_debt_state(DEBT_CEILING + 1), DebtState::Red);
     }
 }
