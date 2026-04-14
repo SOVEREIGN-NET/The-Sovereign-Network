@@ -8,8 +8,12 @@ use lib_blockchain::{TransactionOutput, TransactionType};
 use lib_crypto::hashing::hash_blake3;
 use lib_crypto::Hash;
 use lib_identity::identity::IdentityManager;
-use lib_identity::types::IdentityId;
+use lib_identity::types::{IdentityId, IdentityView};
 use lib_identity::wallets::{wallet_types::ContentTransferType, WalletId};
+
+// Access control imports
+use lib_access_control::{SecurityPrincipal, Role};
+use lib_types::NodeType;
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 use lib_protocols::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_storage::WalletContentManager;
@@ -43,6 +47,24 @@ impl MarketplaceHandler {
         }
     }
 
+    /// Extract a SecurityPrincipal from an incoming request.
+    fn extract_principal(&self, request: &ZhtpRequest) -> SecurityPrincipal {
+        if let Some(node_type_str) = request.headers.get("x-node-type") {
+            let node_type = NodeType::from_config(Some(&node_type_str));
+            return SecurityPrincipal::new("did:zhtp:node", Role::Node, node_type);
+        }
+        if let Some(auth) = request.headers.get("authorization") {
+            if auth.to_lowercase().starts_with("bearer ") {
+                return SecurityPrincipal::new(
+                    "did:zhtp:session",
+                    Role::Citizen,
+                    NodeType::FullNode,
+                );
+            }
+        }
+        SecurityPrincipal::new("did:zhtp:public", Role::Public, NodeType::Relay)
+    }
+
     /// Route incoming requests to appropriate handlers
     async fn handle_request_internal(&self, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         let path = &request.uri;
@@ -53,7 +75,8 @@ impl MarketplaceHandler {
         match (request.method, segments.as_slice()) {
             // POST /api/marketplace/content/{content_hash}/transfer
             (ZhtpMethod::Post, ["api", "marketplace", "content", content_hash, "transfer"]) => {
-                self.transfer_content(content_hash, &request.body).await
+                let principal = self.extract_principal(request);
+                self.transfer_content(content_hash, &request.body, &principal).await
             }
 
             // POST /api/marketplace/content/{content_hash}/list
@@ -64,7 +87,8 @@ impl MarketplaceHandler {
 
             // POST /api/marketplace/content/{content_hash}/buy
             (ZhtpMethod::Post, ["api", "marketplace", "content", content_hash, "buy"]) => {
-                self.buy_content(content_hash, &request.body).await
+                let principal = self.extract_principal(request);
+                self.buy_content(content_hash, &request.body, &principal).await
             }
 
             // GET /api/marketplace/listings
@@ -92,6 +116,7 @@ impl MarketplaceHandler {
         &self,
         content_hash_str: &str,
         body: &[u8],
+        principal: &SecurityPrincipal,
     ) -> ZhtpResult<ZhtpResponse> {
         info!("Processing content transfer for: {}", content_hash_str);
 
@@ -131,6 +156,7 @@ impl MarketplaceHandler {
                     &to_wallet,
                     request.price,
                     &content_hash,
+                    principal,
                 )
                 .await?;
 
@@ -263,7 +289,12 @@ impl MarketplaceHandler {
     /// POST /api/marketplace/content/{content_hash}/buy
     ///
     /// Buy content from marketplace
-    async fn buy_content(&self, content_hash_str: &str, body: &[u8]) -> ZhtpResult<ZhtpResponse> {
+    async fn buy_content(
+        &self,
+        content_hash_str: &str,
+        body: &[u8],
+        principal: &SecurityPrincipal,
+    ) -> ZhtpResult<ZhtpResponse> {
         info!("Processing content purchase: {}", content_hash_str);
 
         // Parse request body
@@ -303,6 +334,7 @@ impl MarketplaceHandler {
                 &seller_wallet,
                 request.offered_price,
                 &content_hash,
+                principal,
             )
             .await?;
 
@@ -373,6 +405,7 @@ impl MarketplaceHandler {
         to_wallet: &WalletId,
         amount: u64,
         content_hash: &Hash,
+        principal: &SecurityPrincipal,
     ) -> Result<Hash, anyhow::Error> {
         info!(
             "Creating blockchain payment transaction: {} → {} for {} SOV",
@@ -396,6 +429,17 @@ impl MarketplaceHandler {
 
         // Get buyer's identity and private key (P1-7: private keys stored in identity)
         let identity_mgr = self.identity_manager.read().await;
+
+        // Payment transactions require full self-access to the buyer identity.
+        match identity_mgr.get_identity_view(principal, &identity_id) {
+            Some(IdentityView::Full(_)) => {}
+            _ => {
+                return Err(anyhow!(
+                    "Access denied: can only create payments for your own identity"
+                ));
+            }
+        }
+
         let identity = identity_mgr
             .get_identity(&identity_id)
             .ok_or_else(|| anyhow!("Identity not found for buyer {}", hex::encode(&identity_id)))?;
