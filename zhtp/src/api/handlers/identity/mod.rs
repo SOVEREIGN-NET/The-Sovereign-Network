@@ -92,10 +92,10 @@ fn extract_principal_from_request(request: &ZhtpRequest) -> SecurityPrincipal {
     // Authenticated sessions (placeholder: any bearer token is treated as
     // a citizen session until full session-to-principal mapping is wired).
     // NOTE: The principal DID is currently a placeholder (`did:zhtp:session`).
-    // This means `determine_relation` will treat the caller as External rather
-    // than Self_ when they request their own identity. Full self-access
-    // requires a session→DID mapping, which must be wired before `Role::Citizen`
-    // principals can obtain a FullIdentityView of their own identity.
+    // Because the DID does not match any stored identity, access-controlled
+    // view selection will treat the caller as External rather than Self_ when
+    // they request their own identity. Full self-access requires a
+    // session→DID mapping so the principal DID matches the subject DID.
     if let Some(auth) = request.headers.authorization.as_deref() {
         if auth.to_lowercase().starts_with("bearer ") {
             return SecurityPrincipal::new(

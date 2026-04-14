@@ -1564,4 +1564,78 @@ mod access_control_tests {
             "Self DID lookup should return Full view"
         );
     }
+
+    #[test]
+    fn test_emergency_with_override_capability_gets_full_view() {
+        let mut manager = IdentityManager::new();
+        let identity = test_identity();
+        let id = identity.id.clone();
+        manager.add_identity(identity);
+
+        // Emergency + EmergencyOverride capability must obtain a Full view.
+        let principal = SecurityPrincipal::new("did:zhtp:emergency", Role::Emergency, NodeType::FullNode)
+            .with_capability(lib_access_control::Capability::EmergencyOverride);
+        let view = manager.get_identity_view(&principal, &id);
+        assert!(
+            matches!(view, Some(IdentityView::Full(_))),
+            "Emergency principal with EmergencyOverride should receive Full view"
+        );
+    }
+
+    #[test]
+    fn test_emergency_without_override_capability_gets_public_view() {
+        let mut manager = IdentityManager::new();
+        let identity = test_identity();
+        let id = identity.id.clone();
+        manager.add_identity(identity);
+
+        // Emergency role without EmergencyOverride capability is denied even
+        // CoreIdentity access by the policy engine, so the view is None.
+        let principal =
+            SecurityPrincipal::new("did:zhtp:emergency", Role::Emergency, NodeType::FullNode);
+        let view = manager.get_identity_view(&principal, &id);
+        assert!(
+            view.is_none(),
+            "Emergency principal without EmergencyOverride should be denied (None)"
+        );
+    }
+
+    #[test]
+    fn test_citizen_self_view_omits_zk_credentials() {
+        let mut manager = IdentityManager::new();
+        let identity = test_identity();
+        let did = identity.did.clone();
+        manager.add_identity(identity);
+
+        // Citizen requesting their own identity: ZkProofPrivate is denied by policy,
+        // so the FullIdentityView must return an empty credentials map.
+        let principal = SecurityPrincipal::new(&did, Role::Citizen, NodeType::FullNode);
+        let view = manager.get_identity_view_by_did(&principal, &did);
+        match view {
+            Some(IdentityView::Full(full)) => {
+                assert!(
+                    full.credentials.is_empty(),
+                    "Citizen self-view should have empty credentials (ZkProofPrivate denied)"
+                );
+            }
+            other => panic!("Expected FullIdentityView, got {:?}", other.map(|_| "Some(_)")),
+        }
+    }
+
+    #[test]
+    fn test_system_gets_full_view_with_credentials() {
+        let mut manager = IdentityManager::new();
+        let identity = test_identity();
+        // Add a dummy credential so we can verify the system sees it.
+        let id = identity.id.clone();
+        manager.add_identity(identity);
+
+        // System principal is exempt from ZkProofPrivate restriction.
+        let principal = SecurityPrincipal::system();
+        let view = manager.get_identity_view(&principal, &id);
+        assert!(
+            matches!(view, Some(IdentityView::Full(_))),
+            "System principal should always receive Full view"
+        );
+    }
 }
