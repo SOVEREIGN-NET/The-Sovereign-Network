@@ -624,11 +624,82 @@ impl BlockchainStorageV6 {
     }
 }
 
+/// Stub type that matches the bincode serialization layout of the old CbeToken
+/// struct. Needed so that V7 `.dat` files can still be deserialized after the
+/// real CbeToken module was deleted (EPIC-001 Phase 1F). The value is never
+/// used — `to_blockchain()` ignores it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct LegacyCbeTokenStub {
+    token_id: [u8; 32],
+    balances: HashMap<[u8; 32], u64>,
+    vesting_schedules: HashMap<[u8; 32], Vec<LegacyVestingScheduleStub>>,
+    allowances: HashMap<[u8; 32], HashMap<[u8; 32], u64>>,
+    total_supply: u64,
+    distribution: LegacyDistributionStub,
+    pool_addresses: LegacyPoolAddressesStub,
+    initialized: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LegacyVestingScheduleStub {
+    total_amount: u64,
+    vested_amount: u64,
+    start_block: u64,
+    vesting_duration_blocks: u64,
+    cliff_blocks: u64,
+    pool: LegacyVestingPoolStub,
+}
+
+/// Mirrors the old VestingPool enum layout for bincode compat (u32 variant index).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+enum LegacyVestingPoolStub {
+    Compensation,
+    Operational,
+    Performance,
+    Strategic,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LegacyDistributionStub {
+    compensation: u64,
+    operational: u64,
+    performance: u64,
+    strategic: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct LegacyPoolAddressesStub {
+    compensation: Option<[u8; 32]>,
+    operational: Option<[u8; 32]>,
+    performance: Option<[u8; 32]>,
+    strategic: Option<[u8; 32]>,
+}
+
+impl Default for LegacyCbeTokenStub {
+    fn default() -> Self {
+        Self {
+            token_id: [0u8; 32],
+            balances: HashMap::new(),
+            vesting_schedules: HashMap::new(),
+            allowances: HashMap::new(),
+            total_supply: 0,
+            distribution: LegacyDistributionStub {
+                compensation: 0,
+                operational: 0,
+                performance: 0,
+                strategic: 0,
+            },
+            pool_addresses: LegacyPoolAddressesStub::default(),
+            initialized: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct BlockchainStorageV7 {
     pub v6: BlockchainStorageV6,
     #[serde(default)]
-    pub cbe_token: crate::contracts::tokens::CbeToken,
+    pub cbe_token: LegacyCbeTokenStub,
 }
 
 impl BlockchainStorageV7 {
@@ -645,7 +716,7 @@ impl BlockchainStorageV7 {
                 last_oracle_epoch_processed: bc.last_oracle_epoch_processed,
                 entity_registry: bc.entity_registry.clone(),
             },
-            cbe_token: crate::contracts::tokens::CbeToken::new(),
+            cbe_token: LegacyCbeTokenStub::default(),
         }
     }
 

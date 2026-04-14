@@ -1580,43 +1580,6 @@ impl BlockchainStore for SledStore {
         Ok(())
     }
 
-    fn backfill_cbe_account_states(
-        &self,
-        entries: &[([u8; 32], u128)],
-    ) -> StorageResult<usize> {
-        if self.tx_active.load(Ordering::SeqCst) {
-            return Err(StorageError::TransactionAlreadyActive);
-        }
-        let mut batch = sled::Batch::default();
-        let mut written = 0usize;
-        for (key_id, balance_cbe) in entries {
-            if *balance_cbe == 0 {
-                continue;
-            }
-            let key = keys::cbe_account_key(key_id);
-            match self.cbe_accounts.get(key) {
-                Ok(Some(_)) => {} // Already populated, skip
-                Ok(None) => {
-                    let state = lib_types::BondingCurveAccountState {
-                        key_id: *key_id,
-                        balance_cbe: *balance_cbe,
-                        balance_sov: 0,
-                        next_nonce: lib_types::Nonce48::zero(),
-                    };
-                    let value = Self::serialize(&state)?;
-                    batch.insert(key.as_ref(), value);
-                    written += 1;
-                }
-                Err(e) => return Err(StorageError::Database(e.to_string())),
-            }
-        }
-        if written > 0 {
-            self.cbe_accounts
-                .apply_batch(batch)
-                .map_err(|e| StorageError::Database(e.to_string()))?;
-        }
-        Ok(written)
-    }
 
     fn put_quorum_proof(
         &self,
