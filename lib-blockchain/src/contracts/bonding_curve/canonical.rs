@@ -89,6 +89,13 @@ pub const STRATEGIC_RESERVE_CEILING: u128 = 100_000_000 * SCALE; // 100M CBE
 
 pub const DEBT_CEILING: u128 = 71_000_000 * SCALE;
 
+/// Genesis treasury allocation — 20B CBE minted off-curve to SOV treasury.
+///
+/// Per spec §3.2 (Configuration B): this allocation is off-curve (does NOT
+/// increment S_c) and is UNLOCKED (tradeable when the AMM opens).
+/// Changing this value is a hard fork.
+pub const GENESIS_TREASURY_ALLOCATION: u128 = 20_000_000_000 * SCALE; // 20B CBE
+
 /// Debt state thresholds (fraction of ceiling)
 pub const DEBT_GREEN_MAX: u128 = DEBT_CEILING / 4; // 0-25%
 pub const DEBT_YELLOW_MAX: u128 = DEBT_CEILING / 2; // 25-50%

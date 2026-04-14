@@ -689,9 +689,36 @@ impl BlockExecutor {
             // migration path, or coordinating a breaking storage-format change.
             // Any such change without migration will corrupt deserialization of
             // existing chains.
-            self.store
-                .put_cbe_economic_state(&lib_types::BondingCurveEconomicState::default())
-                .map_err(|e| BlockApplyError::PersistFailed(e.to_string()))?;
+            // ── Genesis economic state with 20B treasury allocation (#2127) ──
+            {
+                use crate::contracts::bonding_curve::canonical::GENESIS_TREASURY_ALLOCATION;
+
+                let mut econ = lib_types::BondingCurveEconomicState::default();
+                econ.genesis_treasury_allocation = GENESIS_TREASURY_ALLOCATION;
+                // S_c stays 0 — this allocation is explicitly off-curve.
+
+                self.store
+                    .put_cbe_economic_state(&econ)
+                    .map_err(|e| BlockApplyError::PersistFailed(e.to_string()))?;
+
+                // Credit 20B CBE to the SOV treasury address in the token ledger.
+                let cbe_token_id = TokenId::new(crate::Blockchain::derive_cbe_token_id_pub());
+                let treasury_addr = *self.fee_model.protocol_params.fee_sink_address();
+                let current = self.store
+                    .get_token_balance(&cbe_token_id, &treasury_addr)
+                    .unwrap_or(0);
+                self.store
+                    .set_token_balance(
+                        &cbe_token_id,
+                        &treasury_addr,
+                        current.saturating_add(GENESIS_TREASURY_ALLOCATION),
+                    )
+                    .map_err(|e| BlockApplyError::PersistFailed(e.to_string()))?;
+
+                tracing::info!(
+                    "Genesis: 20B CBE treasury allocation credited (off-curve, S_c=0)"
+                );
+            }
 
             self.store
                 .append_block(block)
@@ -1863,6 +1890,14 @@ impl BlockExecutor {
         // Keep legacy field in sync for backwards compat.
         econ.liquidity_pool_balance = econ.liquidity_pool.balance;
 
+        // ── SOVRN audit token (#2129) ────────────────────────────────────
+        // SOVRN tracks the SOV value flowing into the liquidity pool.
+        // On BUY_CBE the liquidity_credit is already in SOV atoms — that is
+        // the SOVRN mint amount (value-weighted at 1:1 SOV).
+        econ.sovrn_total_supply = econ
+            .sovrn_total_supply
+            .saturating_add(liquidity_credit);
+
         // Satisfy PRE_BACKED entries FIFO from the compensation pool routing share.
         // For now the full liquidity credit is used as the compensation routing share.
         econ.satisfy_pre_backed(liquidity_credit);
@@ -2092,6 +2127,25 @@ impl BlockExecutor {
         });
         econ.outstanding_pre_backed = new_outstanding;
         econ.debt_state = compute_debt_state(new_outstanding);
+
+        // ── 5b. SOVRN audit token (#2129) ───────────────────────────────────
+        // For payroll, 60% of X goes to liquidity as CBE obligation.
+        // SOVRN = liquidity_cbe × P(S_c) / SCALE  (SOV-denominated value).
+        {
+            use crate::contracts::bonding_curve::canonical::{price_at_supply, SCALE};
+            use crate::contracts::utils::u256_to_u128;
+            use primitive_types::U256;
+
+            let liquidity_cbe = amount_cbe * 60 / 100;
+            let price = price_at_supply(econ.s_c);
+            let sovrn_mint = U256::from(liquidity_cbe)
+                .checked_mul(U256::from(price))
+                .unwrap_or(U256::zero())
+                / U256::from(SCALE);
+            econ.sovrn_total_supply = econ
+                .sovrn_total_supply
+                .saturating_add(u256_to_u128(sovrn_mint).unwrap_or(0));
+        }
 
         // ── 6. Persist economic state ───────────────────────────────────────
         mutator.put_cbe_economic_state(&econ)?;
@@ -2992,6 +3046,9 @@ mod tests {
         // #1927: genesis must explicitly persist the canonical CBE economic
         // zero-state so reads after block 0 return a concrete record rather
         // than an implicit fallback default.
+        // #2127: genesis now includes the 20B treasury allocation (off-curve).
+        use crate::contracts::bonding_curve::canonical::GENESIS_TREASURY_ALLOCATION;
+
         let store = create_test_store();
         let executor = BlockExecutor::with_store(store.clone());
 
@@ -2999,8 +3056,11 @@ mod tests {
         executor.apply_block(&genesis).unwrap();
 
         let state = store.get_cbe_economic_state().unwrap();
-        assert_eq!(state, lib_types::BondingCurveEconomicState::default());
-        assert_eq!(state.s_c, 0);
+        let mut expected = lib_types::BondingCurveEconomicState::default();
+        expected.genesis_treasury_allocation = GENESIS_TREASURY_ALLOCATION;
+        assert_eq!(state, expected);
+        assert_eq!(state.s_c, 0); // off-curve: S_c stays 0
+        assert_eq!(state.genesis_treasury_allocation, GENESIS_TREASURY_ALLOCATION);
         assert!(!state.graduated);
         assert!(!state.sell_enabled);
     }

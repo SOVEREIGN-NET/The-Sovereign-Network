@@ -130,6 +130,19 @@ pub struct BondingCurveEconomicState {
     // ── Debt ceiling (Feature #2125) ───────────────────────────────────────
     #[serde(default)]
     pub debt_state: DebtState,
+
+    // ── Genesis treasury allocation (Feature #2127) ───────────────────────
+    /// 20B CBE minted off-curve to SOV treasury at genesis (Config B).
+    /// Set once during genesis init; does NOT affect S_c.
+    #[serde(default)]
+    pub genesis_treasury_allocation: u128,
+
+    // ── SOVRN audit token (Feature #2129) ─────────────────────────────────
+    /// Cumulative SOVRN supply — value-weighted audit record of SOV flowing
+    /// into the liquidity pool (on BUY_CBE) and CBE-valued obligations from
+    /// payroll mints.  Denominated in SOV atoms.
+    #[serde(default)]
+    pub sovrn_total_supply: u128,
 }
 
 impl Default for BondingCurveEconomicState {
@@ -165,6 +178,8 @@ impl Default for BondingCurveEconomicState {
             outstanding_pre_backed: 0,
             pre_backed_queue: Vec::new(),
             debt_state: DebtState::Green,
+            genesis_treasury_allocation: 0,
+            sovrn_total_supply: 0,
         }
     }
 }
