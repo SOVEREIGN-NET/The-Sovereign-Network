@@ -69,7 +69,7 @@ mod sov_token_tests {
 
 #[cfg(test)]
 mod cbe_token_tests {
-    use lib_blockchain::contracts::tokens::cbe_token::CBE_TOTAL_SUPPLY_TOKENS;
+    use lib_blockchain::contracts::tokens::CBE_TOTAL_SUPPLY_TOKENS;
     use lib_types::TOKEN_SCALE_18;
 
     const CBE_TOTAL_SUPPLY: u128 = CBE_TOTAL_SUPPLY_TOKENS as u128;
@@ -365,7 +365,7 @@ mod fee_router_tests {
 
 #[cfg(test)]
 mod week1_financial_validation {
-    use lib_blockchain::contracts::tokens::cbe_token::CBE_TOTAL_SUPPLY_TOKENS;
+    use lib_blockchain::contracts::tokens::CBE_TOTAL_SUPPLY_TOKENS;
     use lib_types::SOV_TOTAL_SUPPLY_TOKENS;
 
     const SOV_TOTAL_SUPPLY: u128 = SOV_TOTAL_SUPPLY_TOKENS;

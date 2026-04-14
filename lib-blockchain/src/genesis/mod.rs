@@ -51,7 +51,6 @@ const EMBEDDED_GENESIS_TOML: &[u8] = include_bytes!("../../../genesis.toml");
 pub struct GenesisConfig {
     pub chain: ChainConfig,
     pub sov: SovConfig,
-    pub cbe_token: CbeTokenConfig,
     pub entity_registry: EntityRegistryConfig,
     pub bootstrap_council: BootstrapCouncilConfig,
     pub bonding_curve: BondingCurveConfig,
@@ -71,33 +70,6 @@ pub struct ChainConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SovConfig {
     pub initial_supply: u64,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct CbeTokenConfig {
-    pub total_supply: u64,
-    #[serde(default)]
-    pub compensation_pool_key: String,
-    #[serde(default)]
-    pub operational_pool_key: String,
-    #[serde(default)]
-    pub performance_pool_key: String,
-    #[serde(default)]
-    pub strategic_pool_key: String,
-    pub vesting: CbeVestingConfig,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct CbeVestingConfig {
-    pub operational: VestingScheduleConfig,
-    pub performance: VestingScheduleConfig,
-    pub strategic: VestingScheduleConfig,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct VestingScheduleConfig {
-    pub cliff_months: u64,
-    pub vest_months: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -733,13 +705,10 @@ fn days_since_unix_epoch(year: u64, month: u64, day: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::tokens::CBE_TOTAL_SUPPLY;
-
     #[test]
     fn test_from_embedded_parses() {
         let config = GenesisConfig::from_embedded().expect("embedded genesis.toml should parse");
         assert_eq!(config.chain.chain_id, 1);
-        assert_eq!(config.cbe_token.total_supply, 100_000_000_000);
         assert_eq!(config.bootstrap_council.threshold, 3);
         assert_eq!(config.bonding_curve.graduation_threshold, 2_745_966);
     }

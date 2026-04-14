@@ -6,6 +6,29 @@ use primitive_types::U256;
 
 use crate::contracts::utils::{integer_sqrt_u256, mul_div_floor_u128, u256_to_u128, MathError};
 
+// ── CBE economic identity constants ─────────────────────────────────────────
+//
+// These constants define the CBE token's identity and economic parameters.
+// They were originally in `contracts/tokens/cbe_token.rs` and were moved here
+// (EPIC-001 Phase 1F) because the bonding curve is the canonical home for CBE
+// economics after the CbeToken struct was removed from the protocol layer.
+
+/// Token symbol used by the bonding curve registry and oracle checks.
+pub const CBE_SYMBOL: &str = "CBE";
+
+/// Token name used to derive the canonical CBE token ID.
+pub const CBE_NAME: &str = "CBE Equity";
+
+/// Number of decimal places for CBE display (1 CBE = 10^8 atoms in the legacy
+/// runtime; the bonding curve itself uses 18 decimals internally).
+pub const CBE_DECIMALS: u8 = 8;
+
+/// Whole-token CBE total supply (100 billion).
+pub const CBE_TOTAL_SUPPLY_TOKENS: u64 = 100_000_000_000;
+
+/// Total supply in legacy 8-decimal atoms (100B * 10^8).
+pub const CBE_TOTAL_SUPPLY: u64 = CBE_TOTAL_SUPPLY_TOKENS * 100_000_000;
+
 // ── Immutable curve logic ────────────────────────────────────────────────────
 //
 // The following constants encode the CBE bonding curve execution rules as

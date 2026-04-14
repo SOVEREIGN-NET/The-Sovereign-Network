@@ -14,27 +14,9 @@ genesis_time = "2026-04-05T00:00:00Z"
 # SOV is minted exclusively via UBI — no initial allocation at genesis
 initial_supply = 0
 
-[cbe_token]
-total_supply           = 100_000_000_000  # 100 billion CBE
-# Dilithium5 public keys (hex-encoded) for each pool.
-# Set to "" until mainnet key ceremony. Nodes use stub key_ids [0x01..0x04] when empty.
-# Issue #1900 (CBE-2): pool key generation ceremony
-compensation_pool_key  = ""   # 40% — no vesting, immediately available under CBE DAO
-operational_pool_key   = ""   # 30% — 12-month cliff, 36-month vest
-performance_pool_key   = ""   # 20% — 6-month cliff, 24-month vest
-strategic_pool_key     = ""   # 10% — 12-month cliff, 48-month vest
-
-[cbe_token.vesting.operational]
-cliff_months = 12
-vest_months  = 36
-
-[cbe_token.vesting.performance]
-cliff_months = 6
-vest_months  = 24
-
-[cbe_token.vesting.strategic]
-cliff_months = 12
-vest_months  = 48
+# [cbe_token] section removed — EPIC-001 Phase 1E.
+# CBE economic parameters now live in lib-blockchain/src/contracts/bonding_curve/canonical.rs.
+# CBE bonding curve config remains in [cbe_curve] below.
 
 [entity_registry]
 # Dilithium5 public keys (hex-encoded) for treasury addresses.

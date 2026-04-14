@@ -376,7 +376,8 @@ impl TransactionValidator {
                 // Threshold approval; full validation deferred to stateful validator
             }
             TransactionType::InitCbeToken => {
-                // Full validation deferred to stateful validator
+                // Deprecated — always reject at syntactic level (EPIC-001 Phase 1D).
+                return Err(ValidationError::AlreadyInitialized);
             }
             TransactionType::CreateEmploymentContract => {
                 // Full validation deferred to stateful validator
@@ -423,7 +424,6 @@ impl TransactionValidator {
                     | TransactionType::TokenMint
                     | TransactionType::TokenCreation
                     | TransactionType::InitEntityRegistry
-                    | TransactionType::InitCbeToken
             );
         let has_nonempty_sig = !transaction.signature.signature.is_empty();
         // Skip tx-level sig validation for threshold-approval-only types
@@ -626,7 +626,8 @@ impl TransactionValidator {
                 // Threshold approval; full validation deferred to stateful validator
             }
             TransactionType::InitCbeToken => {
-                // Full validation deferred to stateful validator
+                // Deprecated — always reject (EPIC-001 Phase 1D).
+                return Err(ValidationError::AlreadyInitialized);
             }
             TransactionType::CreateEmploymentContract => {
                 // Full validation deferred to stateful validator
@@ -672,7 +673,6 @@ impl TransactionValidator {
                     | TransactionType::TokenMint
                     | TransactionType::TokenCreation
                     | TransactionType::InitEntityRegistry
-                    | TransactionType::InitCbeToken
             );
         let has_nonempty_sig = !transaction.signature.signature.is_empty();
         let is_threshold_only_sflag = matches!(
@@ -1903,7 +1903,8 @@ impl<'a> StatefulTransactionValidator<'a> {
                 self.validate_treasury_allocation(transaction)?;
             }
             TransactionType::InitCbeToken => {
-                self.validate_init_cbe_token(transaction)?;
+                // Deprecated — always reject (EPIC-001 Phase 1D).
+                return Err(ValidationError::AlreadyInitialized);
             }
             TransactionType::CreateEmploymentContract => {
                 self.validate_create_employment_contract(transaction)?;
@@ -2382,12 +2383,6 @@ impl<'a> StatefulTransactionValidator<'a> {
         })?;
 
         Ok(())
-    }
-
-    fn validate_init_cbe_token(&self, _transaction: &Transaction) -> ValidationResult {
-        // InitCbeToken is no longer processed — always reject.
-        // CBE token state has been removed from the Blockchain struct (EPIC-001 Phase 1).
-        Err(ValidationError::AlreadyInitialized)
     }
 
     fn validate_create_employment_contract(&self, transaction: &Transaction) -> ValidationResult {

@@ -1401,18 +1401,6 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         state: &lib_types::BondingCurveAccountState,
     ) -> StorageResult<()>;
 
-    /// Seed missing CBE account states from the in-memory CBE token balances.
-    ///
-    /// Must only be called at startup before block processing begins (no active
-    /// transaction). Only writes entries whose `cbe_account_state` is absent
-    /// (idempotent). Used to initialise pool wallets whose balances were set
-    /// via `cbe_token.init()` but were never written to SledStore.
-    fn backfill_cbe_account_states(
-        &self,
-        _entries: &[([u8; 32], u128)],
-    ) -> StorageResult<usize> {
-        Ok(0) // Default no-op for non-sled backends
-    }
 
     // =========================================================================
     // BFT Quorum Proof Operations (default no-ops for non-sled backends)
