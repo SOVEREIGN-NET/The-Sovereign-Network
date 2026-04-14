@@ -612,3 +612,53 @@ mod tests {
         assert_eq!(payout_for_burn(amount, current_supply).unwrap(), expected);
     }
 }
+
+// ── Floor price computation ─────────────────────────────────────────────────
+
+/// Compute the CBE floor price from on-chain state.
+///
+/// Floor = locked_reserve / circulating_supply (both in SCALE units).
+/// Returns the price in SCALE units (1e18 = 1 SOV per CBE).
+/// Returns 0 if circulating supply is zero (no deposits yet).
+pub fn floor_price(econ: &lib_types::BondingCurveEconomicState) -> u128 {
+    if econ.s_c == 0 {
+        return 0;
+    }
+    // Use U256 to avoid overflow: (reserve * SCALE) / s_c
+    let result = U256::from(econ.reserve_balance)
+        .checked_mul(U256::from(SCALE))
+        .unwrap_or(U256::zero())
+        / U256::from(econ.s_c);
+    u256_to_u128(result).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod floor_tests {
+    use super::*;
+    use lib_types::BondingCurveEconomicState;
+
+    #[test]
+    fn floor_zero_supply_returns_zero() {
+        let econ = BondingCurveEconomicState::default();
+        assert_eq!(floor_price(&econ), 0);
+    }
+
+    #[test]
+    fn floor_rises_monotonically_with_deposits() {
+        let mut econ = BondingCurveEconomicState::default();
+
+        // Simulate 3 deposits of 1000 SCALE SOV each (20/32/48 split)
+        let mut prev_floor = 0u128;
+        for _ in 0..3 {
+            let deposit = 1000 * SCALE;
+            let reserve_credit = deposit * 32 / 100;
+            let delta_s = mint_with_reserve(reserve_credit, econ.s_c).unwrap();
+            econ.s_c += delta_s;
+            econ.reserve_balance += reserve_credit;
+
+            let f = floor_price(&econ);
+            assert!(f > prev_floor, "floor must rise: prev={prev_floor}, now={f}");
+            prev_floor = f;
+        }
+    }
+}
