@@ -365,10 +365,7 @@ impl GenesisConfig {
         use crate::contracts::bonding_curve::{
             BondingCurveToken, CurveType, PiecewiseLinearCurve, Threshold,
         };
-        use crate::contracts::tokens::{
-            CbeToken, VestingPool, CBE_NAME, CBE_OPERATIONAL_TREASURY, CBE_PERFORMANCE_INCENTIVES,
-            CBE_STRATEGIC_RESERVES, CBE_SYMBOL,
-        };
+        use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
         use crate::integration::crypto_integration::PublicKey;
         info!(
             "Building genesis block from config (chain_id={})",
@@ -407,62 +404,8 @@ impl GenesisConfig {
         // ── bootstrap blockchain state ───────────────────────────────────────
         let mut bc = crate::Blockchain::new_empty_for_genesis(genesis_block)?;
 
-        // ── CBE token pool keys ─────────────────────────────────────────────
-        let compensation_key = key_from_hex_or_stub(&self.cbe_token.compensation_pool_key, 0x01);
-        let operational_key = key_from_hex_or_stub(&self.cbe_token.operational_pool_key, 0x02);
-        let performance_key = key_from_hex_or_stub(&self.cbe_token.performance_pool_key, 0x03);
-        let strategic_key = key_from_hex_or_stub(&self.cbe_token.strategic_pool_key, 0x04);
-
-        // ── initialise CBE token ─────────────────────────────────────────────
-        bc.cbe_token = CbeToken::new();
-        bc.cbe_token
-            .init(
-                &compensation_key,
-                &operational_key,
-                &performance_key,
-                &strategic_key,
-            )
-            .map_err(|e| anyhow::anyhow!("CBE token init failed: {}", e))?;
-
-        const SECONDS_PER_MONTH: u64 = 30 * 24 * 60 * 60;
-        const BLOCKS_PER_MONTH: u64 = SECONDS_PER_MONTH / crate::TARGET_BLOCK_TIME;
-
-        let v = &self.cbe_token.vesting;
-
-        bc.cbe_token
-            .create_vesting(
-                &operational_key,
-                CBE_OPERATIONAL_TREASURY,
-                0,
-                v.operational.vest_months * BLOCKS_PER_MONTH,
-                v.operational.cliff_months * BLOCKS_PER_MONTH,
-                VestingPool::Operational,
-            )
-            .map_err(|e| anyhow::anyhow!("Operational vesting failed: {}", e))?;
-
-        bc.cbe_token
-            .create_vesting(
-                &performance_key,
-                CBE_PERFORMANCE_INCENTIVES,
-                0,
-                v.performance.vest_months * BLOCKS_PER_MONTH,
-                v.performance.cliff_months * BLOCKS_PER_MONTH,
-                VestingPool::Performance,
-            )
-            .map_err(|e| anyhow::anyhow!("Performance vesting failed: {}", e))?;
-
-        bc.cbe_token
-            .create_vesting(
-                &strategic_key,
-                CBE_STRATEGIC_RESERVES,
-                0,
-                v.strategic.vest_months * BLOCKS_PER_MONTH,
-                v.strategic.cliff_months * BLOCKS_PER_MONTH,
-                VestingPool::Strategic,
-            )
-            .map_err(|e| anyhow::anyhow!("Strategic vesting failed: {}", e))?;
-
-        info!("CBE token initialized: 100B supply with vesting schedules");
+        // NOTE: cbe_token field removed from Blockchain (EPIC-001 Phase 1).
+        // CBE token state will be managed via the standard token_balances sled tree.
 
         // ── bonding curve ────────────────────────────────────────────────────
         let genesis_creator = PublicKey {
@@ -720,6 +663,7 @@ impl GenesisConfig {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Parse a hex-encoded Dilithium5 public key, or return a stub with `fill` key_id byte.
+#[allow(dead_code)]
 fn key_from_hex_or_stub(
     hex_str: &str,
     fill: u8,
@@ -808,24 +752,16 @@ mod tests {
         assert_eq!(ts, 1_775_347_200);
     }
 
-    #[test]
-    fn test_build_block0_produces_initialized_cbe_token() {
-        let config = GenesisConfig::from_embedded().expect("parse");
-        let bc = config.build_block0().expect("build_block0");
-        assert!(
-            bc.cbe_token.is_initialized(),
-            "CBE token must be initialized"
-        );
-        assert_eq!(bc.cbe_token.total_supply(), CBE_TOTAL_SUPPLY);
-    }
+    // cbe_token field removed from Blockchain (EPIC-001 Phase 1).
+    // Tests that verified cbe_token on the Blockchain struct are no longer applicable.
 
     #[test]
     fn test_build_block0_is_deterministic() {
         let config = GenesisConfig::from_embedded().expect("parse");
         let bc1 = config.build_block0().expect("build 1");
         let bc2 = config.build_block0().expect("build 2");
-        // Both produce the same CBE supply
-        assert_eq!(bc1.cbe_token.total_supply(), bc2.cbe_token.total_supply());
+        // Both produce the same block hash
+        assert_eq!(bc1.blocks[0].header.block_hash, bc2.blocks[0].header.block_hash);
     }
 
     #[test]

@@ -412,16 +412,15 @@ impl TokenHandler {
 
         let blockchain = self.blockchain.read().await;
 
-        // CBE lives in cbe_token, not token_contracts — handle it explicitly.
+        // CBE token info: return static metadata (token state no longer in-memory)
         let cbe_token_id = lib_blockchain::Blockchain::derive_cbe_token_id_pub();
         if token_id_array == cbe_token_id {
-            let cbe = &blockchain.cbe_token;
             let response = TokenInfoResponse {
                 token_id: token_id_hex.to_string(),
-                name: cbe.name().to_string(),
-                symbol: cbe.symbol().to_string(),
-                decimals: cbe.decimals(),
-                total_supply: cbe.total_supply() as u128,
+                name: "CBE Equity".to_string(),
+                symbol: "CBE".to_string(),
+                decimals: 8,
+                total_supply: 100_000_000_000u128,
                 max_supply: None,
                 creator: format!("0x{}", "00".repeat(32)),
                 is_deflationary: false,
@@ -476,7 +475,7 @@ impl TokenHandler {
 
         let blockchain = self.blockchain.read().await;
 
-        // CBE balances live in cbe_token, not in token_contracts.
+        // CBE balances: read from SledStore only (cbe_token field removed)
         if is_cbe {
             let pubkey = self.identity_to_pubkey(address)?;
             let key_id = pubkey.key_id;
@@ -485,7 +484,7 @@ impl TokenHandler {
                 let addr = lib_blockchain::storage::Address::new(key_id);
                 store.get_token_balance(&storage_token_id, &addr).unwrap_or(0) as u64
             } else {
-                blockchain.cbe_token.balance_of_key_id(&key_id)
+                0
             };
             return create_json_response(json!({
                 "token_id": token_id_hex,
@@ -555,14 +554,14 @@ impl TokenHandler {
             })
             .collect();
 
-        // CBE lives in cbe_token, not in token_contracts — include it explicitly
+        // CBE token: include with static metadata (cbe_token field removed from Blockchain)
         let cbe_token_id = lib_blockchain::Blockchain::derive_cbe_token_id_pub();
         tokens.push(TokenListItem {
             token_id: hex::encode(cbe_token_id),
-            name: blockchain.cbe_token.name().to_string(),
-            symbol: blockchain.cbe_token.symbol().to_string(),
-            decimals: blockchain.cbe_token.decimals(),
-            total_supply: blockchain.cbe_token.total_supply() as u128,
+            name: "CBE Equity".to_string(),
+            symbol: "CBE".to_string(),
+            decimals: 8,
+            total_supply: 100_000_000_000u128,
         });
 
         let count = tokens.len();
@@ -752,7 +751,7 @@ impl TokenHandler {
                     store.get_token_balance(&storage_token_id, &addr).unwrap_or(0) as u64
                 }
             } else {
-                blockchain.cbe_token.balance_of_key_id(&cbe_key_id)
+                0
             };
             if cbe_balance > 0 {
                 balances.push(json!({

@@ -198,14 +198,12 @@ impl BlockchainV1 {
             executor: None,
             treasury_kernel: None,
             bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry::new(),
-            cbe_token: crate::contracts::tokens::CbeToken::new(),
             amm_pools: HashMap::new(),
             governance_phase: crate::dao::GovernancePhase::default(),
             council_members: Vec::new(),
             council_threshold: default_council_threshold(),
             entity_registry: None,
             employment_registry: crate::contracts::employment::EmploymentRegistry::new(),
-            cbe_dao_id: None,
             treasury_epoch_spend: HashMap::new(),
             treasury_epoch_length_blocks: default_treasury_epoch_length(),
             emergency_state: false,
@@ -501,14 +499,12 @@ impl BlockchainStorageV3 {
             executor: None,
             treasury_kernel: None,
             bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry::new(),
-            cbe_token: crate::contracts::tokens::CbeToken::new(),
             amm_pools: HashMap::new(),
             governance_phase: self.governance_phase,
             council_members: self.council_members,
             council_threshold: self.council_threshold,
             entity_registry: None,
             employment_registry: crate::contracts::employment::EmploymentRegistry::new(),
-            cbe_dao_id: None,
             treasury_epoch_spend: self.treasury_epoch_spend,
             treasury_epoch_length_blocks: self.treasury_epoch_length_blocks,
             emergency_state: self.emergency_state,
@@ -649,14 +645,13 @@ impl BlockchainStorageV7 {
                 last_oracle_epoch_processed: bc.last_oracle_epoch_processed,
                 entity_registry: bc.entity_registry.clone(),
             },
-            cbe_token: bc.cbe_token.clone(),
+            cbe_token: crate::contracts::tokens::CbeToken::new(),
         }
     }
 
     pub(super) fn to_blockchain(self) -> Blockchain {
-        let mut blockchain = self.v6.to_blockchain();
-        blockchain.cbe_token = self.cbe_token;
-        blockchain
+        // cbe_token field removed from Blockchain — ignore V7's persisted value
+        self.v6.to_blockchain()
     }
 }
 
@@ -674,14 +669,14 @@ impl BlockchainStorageV8 {
         Self {
             v7: BlockchainStorageV7::from_blockchain(bc),
             employment_registry: bc.employment_registry.clone(),
-            cbe_dao_id: bc.cbe_dao_id,
+            cbe_dao_id: None,
         }
     }
 
     fn to_blockchain(self) -> Blockchain {
         let mut blockchain = self.v7.to_blockchain();
         blockchain.employment_registry = self.employment_registry;
-        blockchain.cbe_dao_id = self.cbe_dao_id;
+        // cbe_dao_id field removed from Blockchain — ignore V8's persisted value
         blockchain
     }
 }
@@ -948,23 +943,6 @@ impl Blockchain {
         blockchain.ensure_treasury_wallet();
         blockchain.migrate_sov_key_balances_to_wallets();
 
-        if !blockchain.cbe_token.is_initialized() {
-            info!("CBE token not found in storage — running one-time backfill from genesis allocation");
-            #[allow(deprecated)]
-            blockchain.initialize_cbe_token_genesis();
-        }
-
-        // bonding_curve_registry is never serialized to .dat — rebuild the CBE entry on every load.
-        let cbe_token_id = Self::derive_cbe_token_id_pub();
-        if !blockchain.bonding_curve_registry.contains(&cbe_token_id) {
-            #[allow(deprecated)]
-            blockchain.initialize_cbe_genesis();
-            if blockchain.bonding_curve_registry.contains(&cbe_token_id) {
-                info!("Restored CBE bonding curve registry entry from genesis parameters");
-            } else {
-                warn!("Failed to restore CBE bonding curve registry entry");
-            }
-        }
         let backfill_entries = blockchain.collect_sov_backfill_entries();
         if !backfill_entries.is_empty() {
             warn!(
