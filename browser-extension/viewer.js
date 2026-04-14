@@ -40,29 +40,25 @@ async function loadViewer() {
 
   domainLabel.textContent = `${domain}${path}`;
   sourceLabel.textContent = source || `zhtp://${domain}${path}`;
-  frame.src = buildRawContentUrl(domain, path);
 
   try {
-    const [statusResponse, resolveResponse] = await Promise.all([
-      fetch(STATUS_URL),
-      fetch(`${RESOLVE_URL}/${encodeURIComponent(domain)}`)
-    ]);
+    const status = await fetchCompatibleDaemonStatus(STATUS_URL);
 
-    if (!statusResponse.ok) {
-      throw new Error(`daemon returned ${statusResponse.status}`);
-    }
+    const resolveResponse = await fetch(`${RESOLVE_URL}/${encodeURIComponent(domain)}`);
     if (!resolveResponse.ok) {
       throw new Error(`resolve returned ${resolveResponse.status}`);
     }
-
-    const status = await statusResponse.json();
     const resolved = await resolveResponse.json();
 
-    daemonStatus.textContent = `Daemon online. Backend ${status.active_backend || "pending"}.`;
+    frame.src = buildRawContentUrl(domain, path);
+    daemonStatus.textContent =
+      `Daemon ${status.daemon_version}. Backend ${status.active_backend || "pending"}.`;
     inspector.textContent = `Owner ${resolved.owner || "unknown"} · Registered ${resolved.registered_at || "unknown"} · Expires ${resolved.expires_at || "unknown"}.`;
   } catch (error) {
-    daemonStatus.textContent = "Daemon unavailable";
+    daemonStatus.textContent =
+      error.code === "DAEMON_INCOMPATIBLE" ? "Daemon incompatible" : "Daemon unavailable";
     inspector.textContent = `Resolution failed: ${error.message}`;
+    frame.removeAttribute("src");
   }
 }
 
