@@ -56,34 +56,5 @@ async fn test_store_backed_apply_genesis_and_block1() {
     );
 }
 
-#[test]
-fn test_restart_runtime_state_skips_cbe_genesis() {
-    let blockchain = Blockchain::new_runtime_state();
-    assert!(
-        !blockchain.cbe_token.is_initialized(),
-        "restart constructor must not run CBE genesis side effects"
-    );
-}
-
-#[tokio::test]
-async fn test_load_from_store_backfills_cbe_token_without_constructor_genesis() {
-    let temp = tempfile::tempdir().unwrap();
-    let store_path = temp.path().join("restart_store");
-    let store = std::sync::Arc::new(SledStore::open(&store_path).unwrap());
-
-    let mut bc = Blockchain::new_with_store(store.clone()).unwrap();
-    let genesis_header = make_header(0, Hash::default());
-    let genesis = Block::new(genesis_header, vec![]);
-    bc.add_block(genesis)
-        .await
-        .expect("genesis should apply without error");
-
-    let reloaded = Blockchain::load_from_store(store)
-        .expect("load_from_store should succeed")
-        .expect("store should contain a chain");
-
-    assert!(
-        reloaded.cbe_token.is_initialized(),
-        "restart reconstruction must restore CBE state even without constructor genesis"
-    );
-}
+// cbe_token field removed from Blockchain (EPIC-001 Phase 1).
+// Tests that verified cbe_token state on the Blockchain struct are no longer applicable.

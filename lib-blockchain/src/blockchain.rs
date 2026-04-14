@@ -275,9 +275,6 @@ pub struct Blockchain {
     /// Tracks all bonding curve tokens from deployment through AMM graduation
     #[serde(default)]
     pub bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry,
-    /// CBE corporate equity token with 100B genesis allocation and vesting (Issue #1843)
-    #[serde(default)]
-    pub cbe_token: crate::contracts::tokens::CbeToken,
     /// AMM liquidity pools for graduated bonding curve tokens
     /// Pool ID -> persisted AMM pool mapping
     #[serde(default)]
@@ -310,11 +307,6 @@ pub struct Blockchain {
     /// On-chain employment contract registry — populated by CreateEmploymentContract txs.
     #[serde(default)]
     pub employment_registry: crate::contracts::employment::EmploymentRegistry,
-    /// DAO ID of the CBE DAO (DAOType::FP). Set when a FP DAO registers with the CBE token_id.
-    /// None until CBE DAO is created via factory.
-    #[serde(default)]
-    pub cbe_dao_id: Option<[u8; 32]>,
-
     // =========================================================================
     // DAO Treasury Execution (dao-2)
     // =========================================================================
@@ -903,8 +895,6 @@ impl Blockchain {
             if let Some(store) = &self.store {
                 let mut seed_map: std::collections::HashMap<[u8; 32], Vec<([u8; 32], u128)>> =
                     std::collections::HashMap::new();
-                let mut cbe_account_seed: Vec<([u8; 32], u128)> = Vec::new();
-                let cbe_token_id = self.cbe_token.token_id();
                 for tx in &block.transactions {
                     if let Some(data) = tx.token_transfer_data() {
                         if let Some(token) = self.token_contracts.get(&data.token_id) {
@@ -929,46 +919,6 @@ impl Blockchain {
                                         .push((data.from, mem_balance));
                                 }
                             }
-                        } else if data.token_id == cbe_token_id {
-                            // CBE balances live in self.cbe_token, not in token_contracts.
-                            // Prefer the in-memory balance; if that is 0 (e.g. after a sled wipe
-                            // + restart where cbe_token was not persisted), read SledStore as the
-                            // authoritative source. Only seed SledStore when it is empty.
-                            let addr = crate::storage::Address::new(data.from);
-                            let storage_token = crate::storage::TokenId(data.token_id);
-                            let sled_bal =
-                                store.get_token_balance(&storage_token, &addr).unwrap_or(0);
-                            if sled_bal == 0 {
-                                let mem_balance = self.cbe_token.balance_of_key_id(&data.from);
-                                if mem_balance > 0 {
-                                    seed_map
-                                        .entry(data.token_id)
-                                        .or_default()
-                                        .push((data.from, mem_balance as u128));
-                                }
-                            }
-                            // If sled_bal > 0: SledStore already has the correct value;
-                            // executor will read it directly — no seeding needed.
-                        }
-                        // CBE transfers: seed cbe_account_state (not token_balance).
-                        // The executor reads cbe_account_state for CBE debit/credit,
-                        // which is a separate SledStore tree from token_balance.
-                        // Pool wallets (compensation/operational/etc.) have their balance
-                        // in self.cbe_token but have never gone through a BondingCurveBuy,
-                        // so cbe_account_state is empty for them. Seed it here.
-                        if data.token_id == cbe_token_id {
-                            let cbe_sled_state = store.get_cbe_account_state(&data.from);
-                            let cbe_sled_bal = cbe_sled_state
-                                .ok()
-                                .flatten()
-                                .map(|s| s.balance_cbe)
-                                .unwrap_or(0);
-                            if cbe_sled_bal == 0 {
-                                let mem_balance = self.cbe_token.balance_of_key_id(&data.from);
-                                if mem_balance > 0 {
-                                    cbe_account_seed.push((data.from, mem_balance.into()));
-                                }
-                            }
                         }
                     }
                 }
@@ -984,21 +934,6 @@ impl Blockchain {
                         Err(e) => tracing::warn!(
                             "[seed-sled] backfill failed for token {} at block {}: {}",
                             hex::encode(&token_id[..8]),
-                            block.header.height,
-                            e
-                        ),
-                        _ => {}
-                    }
-                }
-                if !cbe_account_seed.is_empty() {
-                    match store.backfill_cbe_account_states(&cbe_account_seed) {
-                        Ok(n) if n > 0 => tracing::info!(
-                            "[seed-sled] seeded {} missing cbe_account_state(s) before block {}",
-                            n,
-                            block.header.height
-                        ),
-                        Err(e) => tracing::warn!(
-                            "[seed-sled] cbe_account_state backfill failed at block {}: {}",
                             block.header.height,
                             e
                         ),
@@ -1046,29 +981,6 @@ impl Blockchain {
                             }
                         }
 
-                        // Sync CBE token balances back from cbe_account_state so cbe_token
-                        // stays consistent with executed state for subsequent balance queries.
-                        // NOTE: CBE balances live in the cbe_account_state tree, NOT
-                        // token_balance. Reading token_balance would always return 0 and zero
-                        // out cbe_token.balances for all touched addresses, breaking the
-                        // seeding code for subsequent CBE TokenTransfer blocks.
-                        let cbe_id = self.cbe_token.token_id();
-                        for tx in &block.transactions {
-                            if let Some(d) = tx.token_transfer_data() {
-                                if d.token_id == cbe_id {
-                                    for addr_bytes in [d.from, d.to] {
-                                        if let Ok(Some(state)) =
-                                            store.get_cbe_account_state(&addr_bytes)
-                                        {
-                                            self.cbe_token.set_balance_by_key_id(
-                                                addr_bytes,
-                                                state.balance_cbe as u64,
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
                     }
 
                     // Update blockchain metadata
@@ -1084,28 +996,11 @@ impl Blockchain {
                     if let Err(e) = self.process_wallet_transactions(&block) {
                         warn!("process_wallet_transactions in executor path: {}", e);
                     }
-                    // Replay employment contract setup so that process_payroll_transactions below
-                    // can find contracts in employment_registry.
+                    // Replay employment contract setup so executor has in-memory registry.
                     if let Err(e) = self.process_employment_contract_transactions(&block) {
                         warn!("process_employment_contract_transactions in executor path: {}", e);
                     }
                     self.process_domain_transactions(&block);
-                    // Replay CBE initialization so cbe_token pool addresses are correct before
-                    // payroll runs. The error "already initialized" is harmless — silently ignored.
-                    if let Err(e) = self.process_init_cbe_token_transactions(&block) {
-                        if !e.to_string().contains("already initialized") {
-                            warn!("process_init_cbe_token_transactions in executor path: {}", e);
-                        }
-                    }
-                    // Process payroll in-memory so that cbe_token.balances stays accurate for
-                    // employees who receive CBE via ProcessPayroll. The executor returns
-                    // LegacySystem for ProcessPayroll (no sled mutation), so without this call
-                    // employees have 0 in cbe_token.balances. The seeding code then can't seed
-                    // their cbe_account_state when they subsequently send a CBE TokenTransfer,
-                    // causing "Insufficient token balance: have 0" failures during catchup sync.
-                    if let Err(e) = self.process_payroll_transactions(&block) {
-                        warn!("process_payroll_transactions in executor path: {}", e);
-                    }
                     for tx in &block.transactions {
                         self.index_dao_registry_entry_from_tx(tx, block.header.height);
                         // Executor returns LegacySystem for ValidatorRegistration — update registry here
@@ -1243,9 +1138,7 @@ impl Blockchain {
         self.process_identity_transactions(&block)?;
         self.process_wallet_transactions(&block)?;
         self.process_entity_registry_transactions(&block)?;
-        self.process_init_cbe_token_transactions(&block)?;
         self.process_employment_contract_transactions(&block)?;
-        self.process_payroll_transactions(&block)?;
         self.process_domain_transactions(&block);
         self.process_contract_transactions(&block)?;
         self.process_token_transactions(&block)?;
@@ -1383,9 +1276,7 @@ impl Blockchain {
         self.process_identity_transactions(&block)?;
         self.process_wallet_transactions(&block)?;
         self.process_entity_registry_transactions(&block)?;
-        self.process_init_cbe_token_transactions(&block)?;
         self.process_employment_contract_transactions(&block)?;
-        self.process_payroll_transactions(&block)?;
         self.process_domain_transactions(&block);
 
         // Skip token/contract processing when using BlockExecutor - it handles these
@@ -2601,71 +2492,6 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Process InitCbeToken transactions in a block.
-    ///
-    /// Enforces one-time initialization: once the CBE token is initialized, any subsequent
-    /// InitCbeToken transaction is a block-level error.
-    pub fn process_init_cbe_token_transactions(&mut self, block: &Block) -> Result<()> {
-        for tx in &block.transactions {
-            if tx.transaction_type != crate::types::transaction_type::TransactionType::InitCbeToken
-            {
-                continue;
-            }
-            let tx_hash_hex = hex::encode(tx.hash().as_bytes());
-            let data = tx.init_cbe_token_data().ok_or_else(|| {
-                anyhow::anyhow!("InitCbeToken tx {} is missing payload", tx_hash_hex)
-            })?;
-
-            if self.cbe_token.is_initialized() {
-                return Err(anyhow::anyhow!(
-                    "InitCbeToken tx {} rejected: CBE token already initialized",
-                    tx_hash_hex
-                ));
-            }
-
-            let compensation_pk = PublicKey {
-                dilithium_pk: [0u8; 2592],
-                kyber_pk: [0u8; 1568],
-                key_id: data.compensation_key_id,
-            };
-            let operational_pk = PublicKey {
-                dilithium_pk: [0u8; 2592],
-                kyber_pk: [0u8; 1568],
-                key_id: data.operational_key_id,
-            };
-            let performance_pk = PublicKey {
-                dilithium_pk: [0u8; 2592],
-                kyber_pk: [0u8; 1568],
-                key_id: data.performance_key_id,
-            };
-            let strategic_pk = PublicKey {
-                dilithium_pk: [0u8; 2592],
-                kyber_pk: [0u8; 1568],
-                key_id: data.strategic_key_id,
-            };
-
-            self.cbe_token
-                .init(
-                    &compensation_pk,
-                    &operational_pk,
-                    &performance_pk,
-                    &strategic_pk,
-                )
-                .map_err(|e| anyhow::anyhow!("InitCbeToken tx {} failed: {:?}", tx_hash_hex, e))?;
-
-            info!(
-                "CBE token initialized at height {} (tx {}) compensation={} operational={} performance={} strategic={}",
-                block.header.height,
-                tx_hash_hex,
-                hex::encode(data.compensation_key_id),
-                hex::encode(data.operational_key_id),
-                hex::encode(data.performance_key_id),
-                hex::encode(data.strategic_key_id),
-            );
-        }
-        Ok(())
-    }
-
     /// Process CreateEmploymentContract transactions in a block.
     pub fn process_employment_contract_transactions(&mut self, block: &Block) -> Result<()> {
         use crate::contracts::employment::{ContractAccessType, EconomicPeriod};
@@ -2738,95 +2564,6 @@ impl Blockchain {
                 "Employment contract {:?} created at height {} (tx {})",
                 hex::encode(contract_id),
                 block.header.height,
-                tx_hash_hex
-            );
-        }
-        Ok(())
-    }
-
-    /// Process ProcessPayroll transactions in a block.
-    pub fn process_payroll_transactions(&mut self, block: &Block) -> Result<()> {
-        use crate::contracts::executor::ExecutionContext;
-
-        for tx in &block.transactions {
-            if tx.transaction_type
-                != crate::types::transaction_type::TransactionType::ProcessPayroll
-            {
-                continue;
-            }
-            let tx_hash_hex = hex::encode(tx.hash().as_bytes());
-            let data = tx.process_payroll_data().ok_or_else(|| {
-                anyhow::anyhow!("ProcessPayroll tx {} is missing payload", tx_hash_hex)
-            })?;
-            let contract_id = data.contract_id;
-
-            // Look up the employee's PublicKey before mutably borrowing employment_registry
-            let employee_pk = self
-                .employment_registry
-                .get_contract(&contract_id)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "ProcessPayroll tx {}: contract {:?} not found",
-                        tx_hash_hex,
-                        hex::encode(contract_id)
-                    )
-                })?
-                .employee_sid
-                .clone();
-
-            // Compute payroll amounts and update contract state
-            let payment = self
-                .employment_registry
-                .process_payroll(contract_id, block.header.height)
-                .map_err(|e| anyhow::anyhow!("ProcessPayroll tx {} failed: {}", tx_hash_hex, e))?;
-
-            // Skip zero-net payments (nothing to transfer)
-            if payment.net_amount == 0 {
-                info!(
-                    "Payroll tx {}: net=0, no CBE transfer (height {})",
-                    tx_hash_hex, block.header.height
-                );
-                continue;
-            }
-
-            // Transfer net_amount CBE from compensation pool → employee
-            let comp_key_id = self.cbe_token.compensation_pool_key_id().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "ProcessPayroll tx {}: CBE token not initialized (no compensation pool)",
-                    tx_hash_hex
-                )
-            })?;
-
-            let comp_caller = PublicKey {
-                dilithium_pk: [0u8; 2592],
-                kyber_pk: [0u8; 1568],
-                key_id: comp_key_id,
-            };
-            let ctx = ExecutionContext::new(
-                comp_caller,
-                block.header.height,
-                block.header.timestamp,
-                0,
-                tx.hash().into(),
-            );
-
-            self.cbe_token
-                .transfer(&ctx, &employee_pk, payment.net_amount, block.header.height)
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "ProcessPayroll tx {}: CBE transfer failed: {:?}",
-                        tx_hash_hex,
-                        e
-                    )
-                })?;
-
-            info!(
-                "Payroll executed at height {}: gross={}, tax={}, net={} CBE → {:?} (tx {})",
-                block.header.height,
-                payment.gross_amount,
-                payment.tax_amount,
-                payment.net_amount,
-                hex::encode(employee_pk.key_id),
                 tx_hash_hex
             );
         }

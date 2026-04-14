@@ -322,17 +322,6 @@ impl Blockchain {
 
     pub(super) fn index_dao_registry_entry_from_tx(&mut self, tx: &Transaction, block_height: u64) {
         if let Some(entry) = Self::dao_registry_entry_from_tx(tx, block_height) {
-            if self.cbe_dao_id.is_none()
-                && entry.class == "fp"
-                && entry.token_key_id == self.cbe_token.token_id()
-            {
-                self.cbe_dao_id = Some(entry.dao_id);
-                info!(
-                    "CBE DAO registered at height {}: dao_id={}",
-                    block_height,
-                    hex::encode(entry.dao_id)
-                );
-            }
             self.dao_registry_index.entry(entry.dao_id).or_insert(entry);
         }
     }

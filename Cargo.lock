@@ -6890,6 +6890,7 @@ dependencies = [
  "lib-network",
  "lib-protocols",
  "serde",
+ "serde_json",
  "sled",
 ]
 

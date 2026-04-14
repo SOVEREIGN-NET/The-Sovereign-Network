@@ -97,7 +97,6 @@ impl Blockchain {
                     }
 
                     let is_sov = Self::is_sov_token_id(&transfer.token_id);
-                    let is_cbe = transfer.token_id == self.cbe_token.token_id();
                     let token_id = if is_sov {
                         sov_token_id
                     } else {
@@ -305,33 +304,6 @@ impl Blockchain {
                             &treasury_pk_opt,
                             block.height(),
                         )?;
-                    } else if is_cbe {
-                        if sender_pk.key_id != transfer.from {
-                            return Err(anyhow::anyhow!(
-                                "TokenTransfer CBE sender key_id mismatch"
-                            ));
-                        }
-
-                        let recipient_pk_bytes = self
-                            .resolve_public_key_by_key_id(&transfer.to)
-                            .ok_or_else(|| {
-                                anyhow::anyhow!("TokenTransfer CBE recipient not found")
-                            })?;
-                        let recipient_pk = PublicKey::new(
-                            recipient_pk_bytes.as_slice().try_into().unwrap_or([0u8; 2592])
-                        );
-
-                        let ctx = crate::contracts::executor::ExecutionContext::new(
-                            sender_pk.clone(),
-                            block.height(),
-                            block.header.timestamp,
-                            0,
-                            tx_hash,
-                        );
-
-                        self.cbe_token
-                            .transfer(&ctx, &recipient_pk, amount_u64, block.height())
-                            .map_err(|e| anyhow::anyhow!("CBE TokenTransfer failed: {}", e))?;
                     } else {
                         if sender_pk.key_id != transfer.from {
                             return Err(anyhow::anyhow!("TokenTransfer sender key_id mismatch"));
@@ -380,9 +352,10 @@ impl Blockchain {
                     *self.token_nonces.entry(nonce_key).or_insert(0) += 1;
 
                     if tracing::enabled!(tracing::Level::INFO) {
+                        let cbe_token_id = Self::derive_cbe_token_id_pub();
                         let token_label: std::borrow::Cow<'_, str> = if is_sov {
                             "SOV".into()
-                        } else if is_cbe {
+                        } else if token_id == cbe_token_id {
                             "CBE".into()
                         } else {
                             hex::encode(&token_id[..4]).into()
