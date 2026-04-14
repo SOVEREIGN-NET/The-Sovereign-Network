@@ -882,7 +882,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
                 // Use new capability-bound transfer API with ExecutionContext
                 let _burn_amount = token
-                    .transfer(context, &to, amount)
+                    .transfer(context, &to, amount as u128)
                     .map_err(|e| anyhow!("{}", e))?;
 
                 // Stage token change for atomic commit
@@ -915,10 +915,10 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 // Creator-gated tokens use mint() directly.
                 if token.kernel_mint_authority.is_some() {
                     token
-                        .mint_kernel_only(&context.caller, &to, amount)
+                        .mint_kernel_only(&context.caller, &to, amount as u128)
                         .map_err(|e| anyhow!("{}", e))?;
                 } else {
-                    token.mint(&to, amount).map_err(|e| anyhow!("{}", e))?;
+                    token.mint(&to, amount as u128).map_err(|e| anyhow!("{}", e))?;
                 }
 
                 // Stage token change for atomic commit
@@ -939,7 +939,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
                 // Burn from caller's own balance
                 token
-                    .burn(&context.caller, amount)
+                    .burn(&context.caller, amount as u128)
                     .map_err(|e| anyhow!("{}", e))?;
 
                 // Stage token change for atomic commit

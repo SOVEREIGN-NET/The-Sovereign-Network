@@ -72,7 +72,7 @@ fn test_treasury_balance_uses_token_contract() {
     if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
         token
             .balances
-            .insert(treasury_pubkey.clone(), treasury_amount);
+            .insert(treasury_pubkey.clone(), treasury_amount as u128);
     }
 
     // Query treasury balance - should reflect the credited amount
@@ -96,7 +96,7 @@ fn test_treasury_balance_not_placeholder() {
     if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
         token
             .balances
-            .insert(treasury_pubkey.clone(), expected_amount);
+            .insert(treasury_pubkey.clone(), expected_amount as u128);
     }
 
     // Query balance multiple times - should always return the exact amount

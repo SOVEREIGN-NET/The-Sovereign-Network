@@ -15,11 +15,6 @@ pub use constants::{
     SOV_FEE_RATE_BPS, SOV_PROTOCOL_DECIMALS, SOV_PROTOCOL_MAX_SUPPLY, SOV_TOKEN_DECIMALS,
     SOV_TOKEN_MAX_SUPPLY, SOV_TOKEN_NAME, SOV_TOKEN_SYMBOL, SOV_TOTAL_SUPPLY_TOKENS,
 };
-pub use lib_types::{
-    CBE_DECIMALS as CBE_PROTOCOL_DECIMALS, CBE_MAX_SUPPLY as CBE_PROTOCOL_MAX_SUPPLY,
-    CBE_TOTAL_SUPPLY_TOKENS,
-};
-
 // Re-export CBE token
 pub use cbe_token::{
     CbeToken, CbeTokenError, DistributionAllocation, VestingPool, VestingSchedule,

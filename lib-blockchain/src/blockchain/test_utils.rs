@@ -135,14 +135,14 @@ impl Blockchain {
             .get_mut(&sov_id)
             .ok_or_else(|| anyhow::anyhow!("SOV token contract not found"))?;
         token
-            .credit_balance(&pk, amount)
+            .credit_balance(&pk, amount as u128)
             .map_err(|e| anyhow::anyhow!("Treasury credit failed: {}", e))?;
         Ok(())
     }
 
     /// Query the raw SOV balance for an arbitrary 64-char hex wallet ID.
     /// For unit tests only.
-    pub fn get_wallet_sov_for_test(&self, wallet_id_hex: &str) -> Result<u64> {
+    pub fn get_wallet_sov_for_test(&self, wallet_id_hex: &str) -> Result<u128> {
         let id_bytes: [u8; 32] = hex::decode(wallet_id_hex)
             .map_err(|e| anyhow::anyhow!("Bad wallet hex: {}", e))?
             .try_into()
@@ -200,7 +200,7 @@ impl Blockchain {
             .get_mut(&sov_id)
             .ok_or_else(|| anyhow::anyhow!("SOV token contract not found"))?;
         token
-            .credit_balance(&pk, amount)
+            .credit_balance(&pk, amount as u128)
             .map_err(|e| anyhow::anyhow!("Identity SOV credit failed: {}", e))?;
         Ok(())
     }

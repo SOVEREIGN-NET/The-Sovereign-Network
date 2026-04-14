@@ -121,23 +121,23 @@ fn test_token_contract_large_numbers() {
         "Big Token".to_string(),
         "BIG".to_string(),
         18,
-        u64::MAX, // Maximum possible supply
+        u128::MAX, // Maximum possible supply
         false,
         0,
         test_public_key(20),
     );
 
-    token.total_supply = u64::MAX - 1;
-    token.balances.insert(test_public_key(21), u64::MAX / 2);
+    token.total_supply = u128::MAX - 1;
+    token.balances.insert(test_public_key(21), u128::MAX / 2);
 
     let serialized = bincode::serialize(&token).expect("Failed to serialize");
     let deserialized: TokenContract =
         bincode::deserialize(&serialized).expect("Failed to deserialize");
 
-    assert_eq!(deserialized.total_supply, u64::MAX - 1);
+    assert_eq!(deserialized.total_supply, u128::MAX - 1);
     assert_eq!(
         deserialized.balances.get(&test_public_key(21)),
-        Some(&(u64::MAX / 2))
+        Some(&(u128::MAX / 2))
     );
 }
 
