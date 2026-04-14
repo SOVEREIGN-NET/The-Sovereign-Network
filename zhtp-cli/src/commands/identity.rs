@@ -224,10 +224,7 @@ async fn register_identity_on_chain(
     cli: &ZhtpCli,
     output: &dyn Output,
 ) -> CliResult<()> {
-    let keystore = match keystore_path {
-        Some(path) => PathBuf::from(path),
-        None => get_default_keystore_path()?,
-    };
+    let keystore = logic::resolve_keystore_path(cli, keystore_path, false)?;
 
     let identity_file = keystore.join(USER_IDENTITY_FILENAME);
     let private_key_file = keystore.join(USER_PRIVATE_KEY_FILENAME);
