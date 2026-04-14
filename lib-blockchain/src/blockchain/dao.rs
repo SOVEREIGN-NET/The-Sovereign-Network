@@ -89,7 +89,7 @@ impl Blockchain {
             if total == 0 {
                 0
             } else {
-                let max_bal = token.balances.values().copied().max().unwrap_or(0);
+                let max_bal = token.max_balance();
                 ((max_bal as u128 * 10_000) / total as u128).min(u16::MAX as u128) as u16
             }
         } else {

@@ -99,7 +99,7 @@ fn test_fee_deduction_reduces_sender_balance() {
 
     // Credit initial balance to sender
     if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
-        token.balances.insert(sender.clone(), initial_balance);
+        token.set_balance(&sender, initial_balance);
     }
 
     // Verify initial balance
@@ -193,7 +193,7 @@ fn test_fee_deduction_handles_insufficient_balance() {
 
     // Credit low balance to sender
     if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
-        token.balances.insert(sender.clone(), initial_balance);
+        token.set_balance(&sender, initial_balance);
     }
 
     // Create a transfer transaction with fee higher than balance
@@ -245,9 +245,9 @@ fn test_fee_deduction_accumulates_multiple_transactions() {
 
     // Credit initial balances
     if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
-        token.balances.insert(sender1.clone(), initial_balance);
-        token.balances.insert(sender2.clone(), initial_balance);
-        token.balances.insert(sender3.clone(), initial_balance);
+        token.set_balance(&sender1, initial_balance);
+        token.set_balance(&sender2, initial_balance);
+        token.set_balance(&sender3, initial_balance);
     }
 
     // Create transactions with different fees and unique nullifiers

@@ -77,7 +77,7 @@ impl TreasuryKernel {
                 if balance < amount as u128 {
                     return Err(KernelOpError::InsufficientBalance);
                 }
-                token.balances.insert(from.clone(), balance - amount as u128);
+                token.set_balance(from, balance - amount as u128);
                 token.total_supply = token.total_supply.saturating_sub(amount as u128);
                 Ok(())
             }

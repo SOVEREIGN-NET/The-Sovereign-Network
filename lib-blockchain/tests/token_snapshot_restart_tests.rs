@@ -128,7 +128,7 @@ fn wallet_key(wallet_id: &[u8; 32]) -> PublicKey {
 }
 
 fn funded_recipient_count(token: &lib_blockchain::contracts::TokenContract) -> usize {
-    token.balances.values().filter(|&&balance| balance > 0).count()
+    token.holder_count()
 }
 
 #[test]

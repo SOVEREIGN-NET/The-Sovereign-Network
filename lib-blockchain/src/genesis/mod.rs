@@ -250,8 +250,7 @@ impl GenesisStateSnapshot {
         let sov_id = generate_lib_token_id();
         let sov_balances = if let Some(token) = bc.token_contracts.get(&sov_id) {
             let mut balances: Vec<SovBalanceAllocation> = token
-                .balances
-                .iter()
+                .balances_iter()
                 .filter(|(_, &bal)| bal > 0)
                 .map(|(pk, &bal)| SovBalanceAllocation {
                     wallet_id: hex::encode(pk.key_id),

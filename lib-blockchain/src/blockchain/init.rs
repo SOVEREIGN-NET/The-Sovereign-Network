@@ -468,8 +468,7 @@ impl Blockchain {
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
         if let Some(sov_contract) = blockchain.token_contracts.get(&sov_token_id) {
             let entries: Vec<([u8; 32], u128)> = sov_contract
-                .balances
-                .iter()
+                .balances_iter()
                 .map(|(pk, &bal)| (pk.key_id, bal))
                 .collect();
             let token_id = crate::storage::TokenId(sov_token_id);
@@ -541,7 +540,7 @@ impl Blockchain {
                         if balance > 0 {
                             if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
                                 let pk = Self::wallet_key_for_sov(&wallet_bytes);
-                                token.balances.insert(pk, balance as u128);
+                                token.set_balance(&pk, balance as u128);
                                 synced += 1;
                             }
                         }

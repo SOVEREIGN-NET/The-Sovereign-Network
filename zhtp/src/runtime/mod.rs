@@ -1184,8 +1184,7 @@ impl RuntimeOrchestrator {
                 let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
                 if let Some(sov_contract) = blockchain.token_contracts.get(&sov_token_id) {
                     let entries: Vec<([u8; 32], u128)> = sov_contract
-                        .balances
-                        .iter()
+                        .balances_iter()
                         .map(|(pk, &bal)| (pk.key_id, bal))
                         .collect();
                     let token_id = lib_blockchain::storage::TokenId(sov_token_id);

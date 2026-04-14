@@ -902,10 +902,8 @@ impl Blockchain {
                             // balances is keyed by PublicKey; the SledStore uses key_id as
                             // the 32-byte address — they match for both SOV and custom tokens.
                             let mem_balance = token
-                                .balances
-                                .iter()
-                                .find(|(pk, _)| pk.key_id == data.from)
-                                .map(|(_, &b)| b)
+                                .find_balance_by_key_id(&data.from)
+                                .map(|(_, b)| b)
                                 .unwrap_or(0);
                             if mem_balance > 0 {
                                 let addr = crate::storage::Address::new(data.from);
@@ -976,7 +974,7 @@ impl Blockchain {
                             if let Ok(balance) = store.get_token_balance(&storage_sov_id, &addr) {
                                 if let Some(token) = self.token_contracts.get_mut(&sov_id) {
                                     let pk = Self::wallet_key_for_sov(&addr_bytes);
-                                    token.balances.insert(pk, balance as u128);
+                                    token.set_balance(&pk, balance as u128);
                                 }
                             }
                         }
@@ -1795,7 +1793,7 @@ impl Blockchain {
             // SOV token operations go through TreasuryKernel for new transactions,
             // but this historical fee deduction maintains existing behavior.
             let new_balance = sender_balance - tx.fee as u128;
-            sov_token.balances.insert(fee_payer.clone(), new_balance);
+            sov_token.set_balance(&fee_payer, new_balance);
 
             total_fees = total_fees.saturating_add(tx.fee);
 
@@ -1819,8 +1817,7 @@ impl Blockchain {
                         let treasury_key = Self::wallet_key_for_sov(&treasury_id);
                         let treasury_balance = sov_token.balance_of(&treasury_key);
                         sov_token
-                            .balances
-                            .insert(treasury_key, treasury_balance.saturating_add(total_fees as u128));
+                            .set_balance(&treasury_key, treasury_balance.saturating_add(total_fees as u128));
                         debug!(
                             "Block {} fees credited to DAO treasury: {} SOV",
                             block.height(),
@@ -2378,13 +2375,11 @@ impl Blockchain {
         }
         let sender_bal_post = token.balance_of(sender);
         token
-            .balances
-            .insert(sender.clone(), sender_bal_post.saturating_sub(fee_amount as u128));
+            .set_balance(sender, sender_bal_post.saturating_sub(fee_amount as u128));
         if let Some(ref tpk) = treasury_key {
             let tbal = token.balance_of(tpk);
             token
-                .balances
-                .insert(tpk.clone(), tbal.saturating_add(fee_amount as u128));
+                .set_balance(tpk, tbal.saturating_add(fee_amount as u128));
             debug!(
                 "TokenTransfer: {} SOV fee → DAO treasury (height {})",
                 fee_amount, height

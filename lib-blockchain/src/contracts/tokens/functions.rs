@@ -173,8 +173,7 @@ pub fn create_deflationary_token(
 /// Get all non-zero balances
 pub fn get_all_balances(contract: &TokenContract) -> HashMap<PublicKey, u128> {
     contract
-        .balances
-        .iter()
+        .balances_iter()
         .filter(|(_, &balance)| balance > 0)
         .map(|(key, &balance)| (key.clone(), balance))
         .collect()
@@ -183,8 +182,7 @@ pub fn get_all_balances(contract: &TokenContract) -> HashMap<PublicKey, u128> {
 /// Get all allowances for an owner
 pub fn get_all_allowances(contract: &TokenContract, owner: &PublicKey) -> HashMap<PublicKey, u128> {
     contract
-        .allowances
-        .get(owner)
+        .get_owner_allowances(owner)
         .map(|allowances| {
             allowances
                 .iter()
@@ -197,17 +195,16 @@ pub fn get_all_allowances(contract: &TokenContract, owner: &PublicKey) -> HashMa
 
 /// Calculate total value locked (TVL) in token (requires price)
 pub fn calculate_tvl(contract: &TokenContract, price_per_token: f64) -> f64 {
-    let total_locked: u128 = contract.balances.values().sum();
+    let total_locked: u128 = contract.total_balance_sum();
     (total_locked as f64 / 10f64.powi(contract.decimals as i32)) * price_per_token
 }
 
 /// Get token distribution statistics
 pub fn get_distribution_stats(contract: &TokenContract) -> TokenDistributionStats {
     let balances: Vec<u128> = contract
-        .balances
-        .values()
-        .filter(|&&balance| balance > 0)
-        .copied()
+        .balances_iter()
+        .map(|(_, &bal)| bal)
+        .filter(|&balance| balance > 0)
         .collect();
 
     if balances.is_empty() {
