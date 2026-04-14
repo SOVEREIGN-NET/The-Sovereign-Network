@@ -534,7 +534,7 @@ async fn auto_create_identity_from_seed(
 }
 
 /// The default SOV welcome bonus minted when a wallet has no on-chain balance (5 000 SOV).
-const RECOVERY_SOV_WELCOME_BONUS: u64 = 500_000_000_000;
+const RECOVERY_SOV_WELCOME_BONUS: u128 = lib_types::sov::atoms(5_000);
 
 /// Migrate wallets belonging to `identity_id` that are registered on-chain but have
 /// no sled token balance. Submits a WalletRegistration transaction for each such
@@ -737,7 +737,7 @@ async fn create_fallback_wallet(
             tracing::info!(
                 "Recovery: created fallback wallet {} ({} SOV)",
                 &wallet_id_hex[..16.min(wallet_id_hex.len())],
-                RECOVERY_SOV_WELCOME_BONUS / 100_000_000,
+                RECOVERY_SOV_WELCOME_BONUS / lib_types::sov::SCALE,
             );
         }
         Err(e) => tracing::warn!(
@@ -1452,7 +1452,7 @@ pub async fn handle_migrate_identity(
         let mut short_key_count = 0usize;
         let mut short_key_min_len: Option<usize> = None;
         let mut short_key_max_len: Option<usize> = None;
-        let mut short_key_backfill_total: u64 = 0;
+        let mut short_key_backfill_total: u128 = 0;
         let mut movable_balance_total: u128 = 0;
         let _has_token_contract: bool;
 
@@ -1619,7 +1619,7 @@ pub async fn handle_migrate_identity(
     }
 
     // Mark old identity as migrated and collect wallet info for transfer
-    let mut wallet_ids_to_transfer: Vec<(lib_identity::wallets::WalletId, String, u64)> =
+    let mut wallet_ids_to_transfer: Vec<(lib_identity::wallets::WalletId, String, u128)> =
         Vec::new();
     let mut old_wallet_manager: Option<lib_identity::wallets::WalletManager> = None;
 

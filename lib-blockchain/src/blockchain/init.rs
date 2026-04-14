@@ -503,12 +503,11 @@ impl Blockchain {
         }
         blockchain.rebuild_dao_registry_index();
 
-        const SOV_ATOMIC_UNITS: u64 = 100_000_000;
         let mut migrated_count = 0usize;
         for wallet in blockchain.wallet_registry.values_mut() {
-            if wallet.initial_balance > 0 && wallet.initial_balance < SOV_ATOMIC_UNITS {
+            if wallet.initial_balance > 0 && wallet.initial_balance < lib_types::sov::SCALE {
                 let old = wallet.initial_balance;
-                wallet.initial_balance = old.saturating_mul(SOV_ATOMIC_UNITS);
+                wallet.initial_balance = old.saturating_mul(lib_types::sov::SCALE);
                 migrated_count += 1;
                 info!(
                     "Migrated wallet initial_balance: {} -> {} atomic units",

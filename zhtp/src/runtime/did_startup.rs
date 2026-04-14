@@ -65,10 +65,10 @@ struct PersistedWalletData {
     node_wallet_id: Vec<u8>,
     node_identity_id: Vec<u8>,
     #[serde(default = "default_genesis_balance")]
-    balance: u64,
+    balance: u128,
 }
 
-fn default_genesis_balance() -> u64 {
+fn default_genesis_balance() -> u128 {
     SOV_WELCOME_BONUS // Default genesis wallet balance (atomic units)
 }
 

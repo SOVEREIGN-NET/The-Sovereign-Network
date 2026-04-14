@@ -194,7 +194,7 @@ impl Web4Handler {
         // The actual on-chain transfer amount is in 18-decimal atomic units.
         const DOMAIN_REGISTRATION_FEE_SOV_WHOLE: u64 = 10;
         const DOMAIN_REGISTRATION_FEE_ATOMIC: u128 =
-            DOMAIN_REGISTRATION_FEE_SOV_WHOLE as u128 * lib_types::TOKEN_SCALE_18;
+            lib_types::sov::atoms(DOMAIN_REGISTRATION_FEE_SOV_WHOLE as u128);
 
         // Fee is fixed; if the client provides it explicitly, it must match.
         let user_provided_fee = simple_request.fee.unwrap_or(DOMAIN_REGISTRATION_FEE_SOV_WHOLE);
@@ -707,7 +707,7 @@ impl Web4Handler {
 
         const DOMAIN_REGISTRATION_FEE_SOV_WHOLE: u64 = 10;
         const DOMAIN_REGISTRATION_FEE_ATOMIC: u128 =
-            DOMAIN_REGISTRATION_FEE_SOV_WHOLE as u128 * lib_types::TOKEN_SCALE_18;
+            lib_types::sov::atoms(DOMAIN_REGISTRATION_FEE_SOV_WHOLE as u128);
         let user_provided_fee = request.fee.unwrap_or(DOMAIN_REGISTRATION_FEE_SOV_WHOLE);
         if user_provided_fee != DOMAIN_REGISTRATION_FEE_SOV_WHOLE {
             return Err(anyhow!(

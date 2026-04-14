@@ -1,6 +1,6 @@
 //! Welcome bonus for new citizens from the original identity.rs
 
-use crate::constants::{SOV_ATOMIC_UNITS, SOV_WELCOME_BONUS_SOV};
+use crate::constants::SOV_WELCOME_BONUS_SOV;
 use crate::economics::{EconomicModel, Priority, Transaction, TransactionType};
 use crate::types::IdentityId;
 use crate::wallets::WalletId;
@@ -14,8 +14,8 @@ pub struct WelcomeBonus {
     pub identity_id: IdentityId,
     /// Wallet receiving the bonus
     pub wallet_id: WalletId,
-    /// Bonus amount (atomic units)
-    pub bonus_amount: u64,
+    /// Bonus amount (atomic units, u128 for 18-decimal SOV)
+    pub bonus_amount: u128,
     /// Welcome bonus transaction
     pub bonus_tx: Transaction,
     /// Bonus authenticity proof
@@ -29,7 +29,7 @@ impl WelcomeBonus {
     pub fn new(
         identity_id: IdentityId,
         wallet_id: WalletId,
-        bonus_amount: u64,
+        bonus_amount: u128,
         bonus_tx: Transaction,
         bonus_proof: [u8; 32],
         granted_at: u64,
@@ -55,7 +55,7 @@ impl WelcomeBonus {
             .as_secs();
 
         // Welcome bonus: 5,000 SOV tokens to get started (atomic units)
-        let bonus_amount = SOV_WELCOME_BONUS_SOV.saturating_mul(SOV_ATOMIC_UNITS);
+        let bonus_amount = lib_types::sov::atoms(SOV_WELCOME_BONUS_SOV as u128);
 
         // Create welcome bonus transaction
         let bonus_tx = Transaction::new(
@@ -80,7 +80,7 @@ impl WelcomeBonus {
         );
 
         tracing::info!(
-            "🎁 WELCOME BONUS: Citizen {} received {} SOV tokens",
+            "WELCOME BONUS: Citizen {} received {} SOV tokens",
             hex::encode(&identity_id.0[..8]),
             SOV_WELCOME_BONUS_SOV
         );
@@ -147,7 +147,7 @@ impl WelcomeBonus {
 pub struct WelcomeBonusSummary {
     pub identity_id: IdentityId,
     pub wallet_id: WalletId,
-    pub bonus_amount: u64,
+    pub bonus_amount: u128,
     pub granted_at: u64,
     pub days_since_granted: u64,
     pub is_verified: bool,

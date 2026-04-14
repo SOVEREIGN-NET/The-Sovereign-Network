@@ -1113,7 +1113,7 @@ impl ZhtpIdentity {
     }
 
     /// Get total balance across all wallets
-    pub fn get_total_balance(&self) -> u64 {
+    pub fn get_total_balance(&self) -> u128 {
         self.wallet_manager.total_balance
     }
 
@@ -1122,7 +1122,7 @@ impl ZhtpIdentity {
         &mut self,
         from_wallet: &crate::wallets::WalletId,
         to_wallet: &crate::wallets::WalletId,
-        amount: u64,
+        amount: u128,
         purpose: String,
     ) -> Result<Hash> {
         self.update_activity();
