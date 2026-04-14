@@ -39,6 +39,10 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 use uuid;
 
+// Access control imports
+use crate::api::principal::extract_principal_from_request;
+use lib_access_control::SecurityPrincipal;
+
 /// Standardized error response format (Issue #11)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorResponse {
@@ -108,6 +112,11 @@ impl Web4Handler {
     /// Get reference to the domain registry
     pub fn get_domain_registry(&self) -> Arc<DomainRegistry> {
         Arc::clone(&self.domain_registry)
+    }
+
+    /// Extract a SecurityPrincipal from an incoming request.
+    fn extract_principal(&self, request: &ZhtpRequest) -> SecurityPrincipal {
+        extract_principal_from_request(request)
     }
 
     /// Attach a POUW validator for emitting Web4 receipts on successful serves/resolves
@@ -674,7 +683,8 @@ impl ZhtpRequestHandler for Web4Handler {
 
             // Domain management endpoints
             path if path.starts_with("/api/v1/web4/domains/register") => {
-                self.register_domain_simple(request.body).await
+                let principal = self.extract_principal(&request);
+                self.register_domain_simple(request.body, &principal).await
             }
             path if path.starts_with("/api/v1/web4/domains?")
                 && request.method == lib_protocols::ZhtpMethod::Get =>

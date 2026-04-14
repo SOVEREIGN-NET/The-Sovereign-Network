@@ -12,7 +12,10 @@
 
 use crate::storage::{
     AccountState, Address, AddressExt, BlockchainStore, IdentityConsensus, IdentityMetadata,
-    OutPoint, TokenId, Utxo, WalletProjectionRecord, WalletState,
+    IdentityMetadataView, OutPoint, TokenId, Utxo, WalletProjectionRecord, WalletState,
+};
+use lib_access_control::{
+    AccessDomain, AccessOperation, AccessPolicy, SecurityPrincipal, SubjectRelation,
 };
 use crate::transaction::{Transaction, TransactionOutput};
 use crate::types::Hash;
@@ -535,11 +538,89 @@ impl<'a> StateMutator<'a> {
     /// Get identity metadata by DID hash
     ///
     /// Returns the human-readable metadata for DID resolution.
+    ///
+    /// # Security
+    /// This returns the raw, unfiltered metadata struct. It should only be used
+    /// during internal consensus operations. All external reads must use
+    /// `get_identity_metadata_filtered` instead.
     pub fn get_identity_metadata(
         &self,
         did_hash: &[u8; 32],
     ) -> TxApplyResult<Option<IdentityMetadata>> {
         Ok(self.store.get_identity_metadata(did_hash)?)
+    }
+
+    /// Get an access-controlled view of identity metadata.
+    ///
+    /// This is the **only** metadata method that should be used for
+    /// cross-boundary reads.
+    pub fn get_identity_metadata_filtered(
+        &self,
+        principal: &SecurityPrincipal,
+        relation: SubjectRelation,
+        did_hash: &[u8; 32],
+    ) -> TxApplyResult<Option<IdentityMetadataView>> {
+        let policy = AccessPolicy::default();
+
+        // Baseline check: can the principal even resolve the identity?
+        let core_decision = policy.check_access(
+            principal,
+            relation,
+            AccessDomain::CoreIdentity,
+            AccessOperation::Resolve,
+        );
+        if !core_decision.is_allowed() {
+            return Ok(None);
+        }
+
+        let metadata = match self.store.get_identity_metadata(did_hash)? {
+            Some(m) => m,
+            None => return Ok(None),
+        };
+
+        // Full view for self, owner context, or elevated roles.
+        if matches!(relation, SubjectRelation::Self_ | SubjectRelation::Owner)
+            || matches!(
+                principal.role,
+                lib_access_control::Role::System
+                    | lib_access_control::Role::Emergency
+                    | lib_access_control::Role::Council
+            )
+        {
+            return Ok(Some(IdentityMetadataView::from_metadata(&metadata)));
+        }
+
+        // InfraAdmin sees node graph but not wallet/attribute detail.
+        if principal.role == lib_access_control::Role::InfraAdmin {
+            return Ok(Some(IdentityMetadataView {
+                did: metadata.did,
+                display_name: metadata.display_name,
+                public_key: None,
+                controlled_nodes: Some(metadata.controlled_nodes),
+                owned_wallets: None,
+                attributes: Some(Vec::new()),
+            }));
+        }
+
+        // Device owner sees limited scope.
+        if principal.role == lib_access_control::Role::Device
+            && matches!(relation, SubjectRelation::Owner)
+        {
+            return Ok(Some(IdentityMetadataView {
+                did: metadata.did,
+                display_name: metadata.display_name,
+                public_key: None,
+                controlled_nodes: Some(metadata.controlled_nodes),
+                owned_wallets: Some(metadata.owned_wallets),
+                attributes: Some(Vec::new()),
+            }));
+        }
+
+        // Default: public view.
+        Ok(Some(IdentityMetadataView::public(
+            metadata.did,
+            metadata.display_name,
+        )))
     }
 
     /// Check if an identity exists

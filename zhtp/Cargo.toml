@@ -27,6 +27,7 @@ lib-identity = { path = "../lib-identity" }
 lib-storage = { path = "../lib-storage" }
 lib-network = { path = "../lib-network" }
 lib-types = { path = "../lib-types" }
+lib-access-control = { path = "../lib-access-control" }
 lib-blockchain = { path = "../lib-blockchain", features = ["contracts"], optional = true }
 lib-consensus = { path = "../lib-consensus" }
 lib-economy = { path = "../lib-economy" }

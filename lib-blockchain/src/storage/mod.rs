@@ -637,6 +637,47 @@ impl Default for IdentityMetadata {
     }
 }
 
+/// Access-controlled view of identity metadata.
+///
+/// This is the only metadata shape that may be returned across trust
+/// boundaries. Sensitive fields are wrapped in `Option` so that unauthorized
+/// callers receive `None` instead of the actual data.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdentityMetadataView {
+    pub did: String,
+    pub display_name: String,
+    pub public_key: Option<Vec<u8>>,
+    pub controlled_nodes: Option<Vec<String>>,
+    pub owned_wallets: Option<Vec<String>>,
+    pub attributes: Option<Vec<IdentityAttributeFull>>,
+}
+
+impl IdentityMetadataView {
+    /// Build a public-scoped view (minimal exposure).
+    pub fn public(did: String, display_name: String) -> Self {
+        Self {
+            did,
+            display_name,
+            public_key: None,
+            controlled_nodes: None,
+            owned_wallets: None,
+            attributes: Some(Vec::new()),
+        }
+    }
+
+    /// Build a full view from raw metadata (owner, admin, council, self).
+    pub fn from_metadata(metadata: &IdentityMetadata) -> Self {
+        Self {
+            did: metadata.did.clone(),
+            display_name: metadata.display_name.clone(),
+            public_key: Some(metadata.public_key.clone()),
+            controlled_nodes: Some(metadata.controlled_nodes.clone()),
+            owned_wallets: Some(metadata.owned_wallets.clone()),
+            attributes: Some(metadata.attributes.clone()),
+        }
+    }
+}
+
 /// Full attribute with string data (metadata only, non-consensus)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IdentityAttributeFull {
