@@ -325,6 +325,11 @@ impl IdentityManager {
         Ok(())
     }
 
+    /// Remove an identity (used to clear observed stubs before upgrading to full citizen).
+    pub fn remove_identity(&mut self, identity_id: &IdentityId) {
+        self.identities.remove(identity_id);
+    }
+
     /// Register an externally-created identity WITH full citizenship benefits (3 wallets)
     ///
     /// This method registers an identity where the keys were generated on the client

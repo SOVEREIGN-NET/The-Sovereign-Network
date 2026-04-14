@@ -1590,15 +1590,41 @@ impl IdentityHandler {
             }
         };
 
-        // Check if identity already exists
+        // Check if identity already exists with wallets (fully registered).
+        // An "observed" identity from UHP handshake auto-registration has no wallets —
+        // allow upgrading it to full citizen status.
         {
-            let identity_manager = self.identity_manager.read().await;
-            if identity_manager.get_identity(&identity_id).is_some() {
+            let has_wallets = if let Ok(blockchain_arc) =
+                crate::runtime::blockchain_provider::get_global_blockchain().await
+            {
+                let blockchain = blockchain_arc.read().await;
+                let id_hash = lib_blockchain::Hash::from_slice(&identity_id.0);
+                blockchain
+                    .wallet_registry
+                    .values()
+                    .any(|w| w.owner_identity_id.as_ref() == Some(&id_hash))
+            } else {
+                false
+            };
+
+            if has_wallets {
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::Conflict,
                     "Identity already registered".to_string(),
                 ));
             }
+
+            // If an observed stub exists from UHP auto-registration, remove it
+            // so register_external_citizen_identity can create the full citizen entry.
+            let mut identity_manager = self.identity_manager.write().await;
+            if identity_manager.get_identity(&identity_id).is_some() {
+                tracing::info!(
+                    "📱 Removing observed stub to upgrade to full citizen: {}",
+                    &did[..did.len().min(32)]
+                );
+                identity_manager.remove_identity(&identity_id);
+            }
+            drop(identity_manager);
         }
 
         // Create identity record (without private key - client keeps it)

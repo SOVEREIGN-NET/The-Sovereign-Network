@@ -55,6 +55,7 @@ pub fn action_to_operation(action: &IdentityAction) -> IdentityOperation {
     match action {
         IdentityAction::Create { .. } => IdentityOperation::Create,
         IdentityAction::CreateDid { .. } => IdentityOperation::CreateWithType,
+        IdentityAction::Register { .. } => IdentityOperation::Create,
         IdentityAction::Verify { .. } => IdentityOperation::Verify,
         IdentityAction::List => IdentityOperation::List,
         IdentityAction::SimulateMessage { .. }
@@ -106,6 +107,20 @@ async fn handle_identity_command_impl(
 
             // Imperative: File I/O
             create_identity_with_type_impl(&name, &identity_type, output).await
+        }
+        IdentityAction::Register {
+            display_name,
+            device_id,
+            keystore,
+        } => {
+            register_identity_on_chain(
+                &display_name,
+                &device_id,
+                keystore.as_deref(),
+                cli,
+                output,
+            )
+            .await
         }
         IdentityAction::Verify { identity_id } => {
             // Pure validation
@@ -195,6 +210,140 @@ async fn create_identity_impl(
     output.success(&format!("Identity saved to: {:?}", identity_file))?;
     output.success(&format!("Private key saved to: {:?}", private_key_file))?;
     output.warning("Keep your identity secure! It contains cryptographic material.")?;
+
+    Ok(())
+}
+
+/// Register identity on-chain: generates keys (if needed), then calls
+/// POST /api/v1/identity/register to create identity + 3 wallets + SOV welcome bonus.
+/// This matches the app's identity creation flow — the single canonical path.
+async fn register_identity_on_chain(
+    display_name: &str,
+    device_id: &str,
+    keystore_path: Option<&str>,
+    cli: &ZhtpCli,
+    output: &dyn Output,
+) -> CliResult<()> {
+    let keystore = match keystore_path {
+        Some(path) => PathBuf::from(path),
+        None => get_default_keystore_path()?,
+    };
+
+    let identity_file = keystore.join(USER_IDENTITY_FILENAME);
+    let private_key_file = keystore.join(USER_PRIVATE_KEY_FILENAME);
+
+    // Generate keys if no local identity exists
+    if identity_file.exists() {
+        output.info("Using existing identity from keystore...")?;
+    } else {
+        output.info("Generating cryptographic keys (Dilithium5 + Kyber1024)...")?;
+        std::fs::create_dir_all(&keystore).map_err(|e| {
+            CliError::IdentityError(format!("Failed to create keystore directory: {}", e))
+        })?;
+        let id = ZhtpIdentity::new_unified(
+            lib_identity::IdentityType::Device,
+            None,
+            None,
+            display_name,
+            None,
+        )
+        .map_err(|e| CliError::IdentityError(format!("Failed to generate identity: {}", e)))?;
+
+        // Save private key
+        let pk = id
+            .private_key
+            .as_ref()
+            .ok_or_else(|| CliError::IdentityError("Missing private key".to_string()))?;
+        save_private_key_to_file(pk, &private_key_file)?;
+
+        // Save identity
+        let json = serde_json::to_string_pretty(&id)
+            .map_err(|e| CliError::IdentityError(format!("Failed to serialize: {}", e)))?;
+        std::fs::write(&identity_file, &json).map_err(|e| {
+            CliError::IdentityError(format!("Failed to write identity: {}", e))
+        })?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(
+                &private_key_file,
+                std::fs::Permissions::from_mode(0o600),
+            );
+        }
+
+        output.success(&format!("DID: {}", id.did))?;
+        output.success(&format!("Keys saved to: {:?}", keystore))?;
+    }
+
+    // Load keypair for signing (this works with both hex and array formats)
+    let loaded = load_identity_from_keystore(&keystore)?;
+    output.info(&format!("DID: {}", loaded.identity.did))?;
+    output.info("Registering on-chain (identity + wallets + SOV welcome bonus)...")?;
+
+    // Build registration proof: sign "ZHTP_REGISTER:{timestamp}"
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| CliError::ConfigError(format!("Time error: {}", e)))?
+        .as_secs();
+    let proof_message = format!("ZHTP_REGISTER:{}", timestamp);
+    let proof_sig = lib_crypto::sign_message(&loaded.keypair, proof_message.as_bytes())
+        .map_err(|e| CliError::IdentityError(format!("Failed to sign proof: {}", e)))?;
+
+    // Base64-encode public keys
+    let dilithium_pk_b64 = base64::engine::general_purpose::STANDARD
+        .encode(&loaded.keypair.public_key.dilithium_pk);
+    let kyber_pk_b64 = base64::engine::general_purpose::STANDARD
+        .encode(&loaded.keypair.public_key.kyber_pk);
+    let proof_b64 =
+        base64::engine::general_purpose::STANDARD.encode(&proof_sig.signature);
+
+    let body = serde_json::json!({
+        "public_key": dilithium_pk_b64,
+        "kyber_public_key": kyber_pk_b64,
+        "device_id": device_id,
+        "display_name": display_name,
+        "identity_type": "human",
+        "registration_proof": proof_b64,
+        "timestamp": timestamp,
+    });
+
+    // Connect and POST
+    let trust_config = build_trust_config(None, None, false, true)?;
+    let client = connect_client(loaded.identity.clone(), trust_config, &cli.server).await?;
+    let response = client
+        .post_json("/api/v1/identity/register", &body)
+        .await
+        .map_err(|e| CliError::ConfigError(format!("Registration failed: {}", e)))?;
+
+    let result: serde_json::Value = ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::ConfigError(format!("Failed to parse response: {}", e)))?;
+
+    if result.get("status").and_then(|s| s.as_str()) == Some("success") {
+        output.success("Identity registered on-chain")?;
+        if let Some(did) = result.get("did").and_then(|d| d.as_str()) {
+            output.print(&format!("DID: {}", did))?;
+        }
+        if let Some(primary) = result.get("primary_wallet_id").and_then(|w| w.as_str()) {
+            output.print(&format!("Primary wallet: {}", primary))?;
+        }
+        if let Some(ubi) = result.get("ubi_wallet_id").and_then(|w| w.as_str()) {
+            output.print(&format!("UBI wallet: {}", ubi))?;
+        }
+        if let Some(savings) = result.get("savings_wallet_id").and_then(|w| w.as_str()) {
+            output.print(&format!("Savings wallet: {}", savings))?;
+        }
+    } else {
+        let err = result
+            .get("message")
+            .or_else(|| result.get("error"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("Unknown error");
+        return Err(CliError::IdentityError(format!(
+            "On-chain registration failed: {}",
+            err
+        )));
+    }
 
     Ok(())
 }
