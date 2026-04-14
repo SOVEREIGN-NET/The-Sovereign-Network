@@ -152,10 +152,10 @@ impl ZhtpRequestHandler for WalletHandler {
 struct WalletInfo {
     wallet_type: String,
     wallet_id: String,
-    available_balance: u64,
+    available_balance: u128,
     staked_balance: u64,
     pending_rewards: u64,
-    total_balance: u64,
+    total_balance: u128,
     permissions: WalletPermissionsInfo,
     created_at: u64,
     description: String,
@@ -260,7 +260,7 @@ impl WalletHandler {
         let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
 
         let mut wallets = Vec::new();
-        let mut total_balance_adjusted = 0u64;
+        let mut total_balance_adjusted = 0u128;
 
         if wallet_summaries.is_empty() {
             // Fallback: surface wallets from the on-chain registry that belong to this identity.
@@ -290,14 +290,13 @@ impl WalletHandler {
                         })
                     })
                     .unwrap_or(0);
-                let effective_balance_u64 = effective_balance as u64;
                 let wallet_info = WalletInfo {
                     wallet_type: wallet_data.wallet_type.clone(),
                     wallet_id: wallet_id_hex.clone(),
-                    available_balance: effective_balance_u64,
+                    available_balance: effective_balance,
                     staked_balance: 0,
                     pending_rewards: 0,
-                    total_balance: effective_balance_u64,
+                    total_balance: effective_balance,
                     permissions: WalletPermissionsInfo {
                         can_transfer_external: true,
                         can_vote: wallet_data.wallet_type == "Primary",
@@ -309,7 +308,7 @@ impl WalletHandler {
                     created_at: wallet_data.created_at,
                     description: format!("{} wallet (recovered)", wallet_data.wallet_type),
                 };
-                total_balance_adjusted += effective_balance_u64;
+                total_balance_adjusted += effective_balance;
                 wallets.push(wallet_info);
             }
             let response_data = json!({
@@ -365,14 +364,13 @@ impl WalletHandler {
                     .unwrap_or(0)
             };
 
-            let effective_balance_u64 = effective_balance as u64;
             let wallet_info = WalletInfo {
                 wallet_type: format!("{:?}", summary.wallet_type),
                 wallet_id: wallet_id_hex.clone(), // Full 64-char hex wallet_id for transfers
-                available_balance: effective_balance_u64.saturating_sub(staked_balance),
+                available_balance: effective_balance.saturating_sub(staked_balance as u128),
                 staked_balance,
                 pending_rewards,
-                total_balance: effective_balance_u64 + pending_rewards,
+                total_balance: effective_balance + pending_rewards as u128,
                 permissions: WalletPermissionsInfo {
                     can_transfer_external: true,
                     can_vote: summary.wallet_type == lib_identity::wallets::WalletType::Primary,
@@ -384,7 +382,7 @@ impl WalletHandler {
                 created_at: summary.created_at,
                 description: format!("{:?} wallet for identity", summary.wallet_type),
             };
-            total_balance_adjusted += effective_balance_u64 + pending_rewards;
+            total_balance_adjusted += effective_balance + pending_rewards as u128;
             wallets.push(wallet_info);
         }
 
@@ -477,13 +475,13 @@ impl WalletHandler {
                 let (mut available_balance, staked_balance, pending_rewards, created_at) =
                     if let Some(wallet) = identity.wallet_manager.get_wallet(&summary.id) {
                         (
-                            wallet.balance.saturating_sub(wallet.staked_balance),
+                            wallet.balance.saturating_sub(wallet.staked_balance) as u128,
                             wallet.staked_balance,
                             wallet.pending_rewards,
                             wallet.created_at,
                         )
                     } else {
-                        (summary.balance, 0, 0, summary.created_at)
+                        (summary.balance as u128, 0, 0, summary.created_at)
                     };
 
                 // Prefer SOV token contract balance (live balance) for this wallet.
@@ -518,21 +516,20 @@ impl WalletHandler {
                                 ),
                             )
                         };
-                        let token_balance_u64 = token_balance as u64;
-                        if token_balance_u64 != available_balance {
+                        if token_balance != available_balance {
                             tracing::debug!(
                                 "Using SOV token balance for wallet {}: {} (was {})",
                                 &wallet_id_hex[..16],
-                                token_balance_u64,
+                                token_balance,
                                 available_balance
                             );
-                            available_balance = token_balance_u64;
+                            available_balance = token_balance;
                         }
                     }
                 }
                 drop(blockchain);
 
-                let total_balance = available_balance + staked_balance + pending_rewards;
+                let total_balance = available_balance + staked_balance as u128 + pending_rewards as u128;
 
                 let response_data = json!({
                     "status": "success",

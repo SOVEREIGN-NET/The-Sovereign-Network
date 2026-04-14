@@ -77,8 +77,8 @@ pub struct TokenInfoResponse {
     pub name: String,
     pub symbol: String,
     pub decimals: u8,
-    pub total_supply: u64,
-    pub max_supply: Option<u64>,
+    pub total_supply: u128,
+    pub max_supply: Option<u128>,
     pub creator: String,
     pub is_deflationary: bool,
     pub created_at_block: Option<u64>,
@@ -91,7 +91,7 @@ pub struct TokenListItem {
     pub name: String,
     pub symbol: String,
     pub decimals: u8,
-    pub total_supply: u64,
+    pub total_supply: u128,
 }
 
 // ============================================================================
@@ -421,7 +421,7 @@ impl TokenHandler {
                 name: cbe.name().to_string(),
                 symbol: cbe.symbol().to_string(),
                 decimals: cbe.decimals(),
-                total_supply: cbe.total_supply(),
+                total_supply: cbe.total_supply() as u128,
                 max_supply: None,
                 creator: format!("0x{}", "00".repeat(32)),
                 is_deflationary: false,
@@ -441,11 +441,11 @@ impl TokenHandler {
             name: token.name.clone(),
             symbol: token.symbol.clone(),
             decimals: token.decimals,
-            total_supply: token.total_supply as u64,
-            max_supply: if token.max_supply == u64::MAX as u128 {
+            total_supply: token.total_supply,
+            max_supply: if token.max_supply == u128::MAX {
                 None
             } else {
-                Some(token.max_supply as u64)
+                Some(token.max_supply)
             },
             creator: format!("0x{}", hex::encode(&token.creator.key_id)),
             is_deflationary: token.is_deflationary,
@@ -551,7 +551,7 @@ impl TokenHandler {
                 name: token.name.clone(),
                 symbol: token.symbol.clone(),
                 decimals: token.decimals,
-                total_supply: token.total_supply as u64,
+                total_supply: token.total_supply,
             })
             .collect();
 
@@ -562,7 +562,7 @@ impl TokenHandler {
             name: blockchain.cbe_token.name().to_string(),
             symbol: blockchain.cbe_token.symbol().to_string(),
             decimals: blockchain.cbe_token.decimals(),
-            total_supply: blockchain.cbe_token.total_supply(),
+            total_supply: blockchain.cbe_token.total_supply() as u128,
         });
 
         let count = tokens.len();

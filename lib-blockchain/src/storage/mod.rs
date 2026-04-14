@@ -887,13 +887,13 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// Get token total supply.
     ///
     /// Returns None if no supply is tracked (token not initialized with supply).
-    fn get_token_supply(&self, token: &TokenId) -> StorageResult<Option<u64>>;
+    fn get_token_supply(&self, token: &TokenId) -> StorageResult<Option<u128>>;
 
     /// Set token total supply.
     ///
     /// # Requirements
     /// - MUST be called within begin_block/commit_block
-    fn put_token_supply(&self, token: &TokenId, supply: u64) -> StorageResult<()>;
+    fn put_token_supply(&self, token: &TokenId, supply: u128) -> StorageResult<()>;
 
     /// Get the latest persisted token subsystem snapshot.
     fn get_token_state_snapshot(&self) -> StorageResult<Option<TokenStateSnapshot>>;
@@ -1017,7 +1017,7 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     fn backfill_token_balances_from_contract(
         &self,
         _token_id: &TokenId,
-        _entries: &[([u8; 32], u64)],
+        _entries: &[([u8; 32], u128)],
     ) -> StorageResult<usize> {
         Ok(0) // Default no-op
     }

@@ -351,8 +351,7 @@ impl BlockExecutor {
         let mut contract = mutator
             .get_token_contract(&token_id)?
             .unwrap_or_else(crate::contracts::TokenContract::new_sov_native);
-        let current_supply_u64 = mutator.get_token_supply(&token_id)?.unwrap_or(contract.total_supply as u64);
-        let current_supply = current_supply_u64 as u128;
+        let current_supply = mutator.get_token_supply(&token_id)?.unwrap_or(contract.total_supply);
         let amount_u128 = amount;
         let new_supply = current_supply.checked_add(amount_u128).ok_or_else(|| {
             TxApplyError::InvalidType("SOV total supply overflow".to_string())
@@ -366,7 +365,7 @@ impl BlockExecutor {
         contract.total_supply = new_supply;
         let new_balance = balance + amount_u128;
         contract.balances.insert(recipient_pk, new_balance);
-        mutator.put_token_supply(&token_id, new_supply as u64)?;
+        mutator.put_token_supply(&token_id, new_supply)?;
         mutator.put_token_contract(&contract)?;
         Ok(())
     }

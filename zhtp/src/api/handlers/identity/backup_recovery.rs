@@ -1453,7 +1453,7 @@ pub async fn handle_migrate_identity(
         let mut short_key_min_len: Option<usize> = None;
         let mut short_key_max_len: Option<usize> = None;
         let mut short_key_backfill_total: u64 = 0;
-        let mut movable_balance_total: u64 = 0;
+        let mut movable_balance_total: u128 = 0;
         let _has_token_contract: bool;
 
         match crate::runtime::blockchain_provider::get_global_blockchain().await {
@@ -1488,7 +1488,7 @@ pub async fn handle_migrate_identity(
                             let new_pk = lib_crypto::PublicKey::new(new_pk_bytes);
                             if old_pk != new_pk {
                                 movable_balance_total =
-                                    movable_balance_total.saturating_add(token.balance_of(&old_pk) as u64);
+                                    movable_balance_total.saturating_add(token.balance_of(&old_pk));
                             }
                         }
                     }
@@ -1760,16 +1760,17 @@ pub async fn handle_migrate_identity(
                         if existing.initial_balance > 0 {
                             let token_opt = blockchain.token_contracts.get(&sov_token_id);
                             let current_balance =
-                                token_opt.map(|t| t.balance_of(&wallet_addr) as u64).unwrap_or(0);
-                            if current_balance < existing.initial_balance {
-                                let mint_amount = existing.initial_balance - current_balance;
+                                token_opt.map(|t| t.balance_of(&wallet_addr)).unwrap_or(0);
+                            if current_balance < existing.initial_balance as u128 {
+                                let mint_amount = existing.initial_balance as u128 - current_balance;
+                                let mint_amount_u64 = u64::try_from(mint_amount).unwrap_or(u64::MAX);
                                 let memo =
                                     format!("TOKEN_BACKFILL_V1:{}", wallet_id_str).into_bytes();
                                 if let Ok(tx) = build_signed_sov_mint_tx(
                                     &migration_authority_kp,
                                     chain_id,
                                     &wallet_id_bytes,
-                                    mint_amount,
+                                    mint_amount_u64,
                                     memo,
                                 ) {
                                     mint_txs.push(tx);
@@ -1796,18 +1797,19 @@ pub async fn handle_migrate_identity(
                                 .unwrap_or([0u8; 2592]);
                             let old_pk = lib_crypto::PublicKey::new(old_pk_bytes);
                             if old_pk.key_id != wallet_addr.key_id {
-                                let old_balance = token.balance_of(&old_pk) as u64;
+                                let old_balance = token.balance_of(&old_pk);
                                 if old_balance > 0 {
                                     let memo = format!(
                                         "TOKEN_MIGRATE_V1:{}",
                                         hex::encode(&old_public_key)
                                     )
                                     .into_bytes();
+                                    let old_balance_u64 = u64::try_from(old_balance).unwrap_or(u64::MAX);
                                     if let Ok(tx) = build_signed_sov_mint_tx(
                                         &migration_authority_kp,
                                         chain_id,
                                         &wallet_id_bytes,
-                                        old_balance,
+                                        old_balance_u64,
                                         memo,
                                     ) {
                                         mint_txs.push(tx);
