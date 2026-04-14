@@ -18,7 +18,8 @@ use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 
 // Access control imports
-use lib_access_control::{SecurityPrincipal, Role};
+use crate::api::principal::extract_principal_from_request;
+use lib_access_control::{Role, SecurityPrincipal};
 use lib_types::NodeType;
 
 // Identity management imports
@@ -76,34 +77,6 @@ impl IdentityHandler {
     fn extract_principal(&self, request: &ZhtpRequest) -> SecurityPrincipal {
         extract_principal_from_request(request)
     }
-}
-
-/// Extract a `SecurityPrincipal` from an incoming request.
-///
-/// This is the incremental integration point. In the future it will inspect
-/// bearer tokens, delegation certificates, and UHP auth context. For now it
-/// uses simple headers to distinguish public, node, and session callers.
-fn extract_principal_from_request(request: &ZhtpRequest) -> SecurityPrincipal {
-    // Node-to-node calls may declare their node type.
-    if let Some(node_type_str) = request.headers.get("x-node-type") {
-        let node_type = NodeType::from_config(Some(&node_type_str));
-        return SecurityPrincipal::new("did:zhtp:node", Role::Node, node_type);
-    }
-
-    // Authenticated sessions (placeholder: any bearer token is treated as
-    // a citizen session until full session-to-principal mapping is wired).
-    if let Some(auth) = request.headers.get("authorization") {
-        if auth.to_lowercase().starts_with("bearer ") {
-            return SecurityPrincipal::new(
-                "did:zhtp:session",
-                Role::Citizen,
-                NodeType::FullNode,
-            );
-        }
-    }
-
-    // Default: unauthenticated public caller.
-    SecurityPrincipal::public()
 }
 
 #[async_trait::async_trait]

@@ -25,8 +25,8 @@ use lib_blockchain::Blockchain;
 use crate::config::Environment;
 
 // Access control imports
+use crate::api::principal::extract_principal_from_request;
 use lib_access_control::{AccessDomain, AccessOperation, AccessPolicy, SecurityPrincipal, SubjectRelation};
-use lib_types::NodeType;
 
 /// Clean blockchain handler implementation
 ///
@@ -54,20 +54,7 @@ impl BlockchainHandler {
 
     /// Extract a SecurityPrincipal from an incoming request.
     fn extract_principal(&self, request: &ZhtpRequest) -> SecurityPrincipal {
-        if let Some(node_type_str) = request.headers.get("x-node-type") {
-            let node_type = NodeType::from_config(Some(&node_type_str));
-            return SecurityPrincipal::new("did:zhtp:node", lib_access_control::Role::Node, node_type);
-        }
-        if let Some(auth) = request.headers.get("authorization") {
-            if auth.to_lowercase().starts_with("bearer ") {
-                return SecurityPrincipal::new(
-                    "did:zhtp:session",
-                    lib_access_control::Role::Citizen,
-                    NodeType::FullNode,
-                );
-            }
-        }
-        SecurityPrincipal::new("did:zhtp:public", lib_access_control::Role::Public, NodeType::Relay)
+        extract_principal_from_request(request)
     }
 
     /// Check if the principal is allowed to read wallet graph data for the given identity.

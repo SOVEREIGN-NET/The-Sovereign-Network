@@ -12,8 +12,8 @@ use lib_identity::types::{IdentityId, IdentityView};
 use lib_identity::wallets::{wallet_types::ContentTransferType, WalletId};
 
 // Access control imports
-use lib_access_control::{SecurityPrincipal, Role};
-use lib_types::NodeType;
+use crate::api::principal::extract_principal_from_request;
+use lib_access_control::SecurityPrincipal;
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 use lib_protocols::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_storage::WalletContentManager;
@@ -49,20 +49,7 @@ impl MarketplaceHandler {
 
     /// Extract a SecurityPrincipal from an incoming request.
     fn extract_principal(&self, request: &ZhtpRequest) -> SecurityPrincipal {
-        if let Some(node_type_str) = request.headers.get("x-node-type") {
-            let node_type = NodeType::from_config(Some(&node_type_str));
-            return SecurityPrincipal::new("did:zhtp:node", Role::Node, node_type);
-        }
-        if let Some(auth) = request.headers.get("authorization") {
-            if auth.to_lowercase().starts_with("bearer ") {
-                return SecurityPrincipal::new(
-                    "did:zhtp:session",
-                    Role::Citizen,
-                    NodeType::FullNode,
-                );
-            }
-        }
-        SecurityPrincipal::new("did:zhtp:public", Role::Public, NodeType::Relay)
+        extract_principal_from_request(request)
     }
 
     /// Route incoming requests to appropriate handlers
