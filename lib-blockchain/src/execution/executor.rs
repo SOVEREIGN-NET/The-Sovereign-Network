@@ -1800,9 +1800,16 @@ impl BlockExecutor {
             )));
         }
 
-        // 20/80 ALPHA split: floors reserve (ALPHA leg), remainder to treasury so the sum is exact.
-        let reserve_credit = amount_in * 20 / 100;
-        let treasury_credit = amount_in - reserve_credit;
+        // Event-driven on-ramp split (see docs/architecture/token-architecture.md):
+        //   20% → SOV treasury (held as CBE tokens, contributes to SOV NAV)
+        //   32% → CBE strategic reserve (locked, backs floor price)
+        //   48% → CBE liquidity pool (accumulates toward graduation)
+        //
+        // The 80% DAO portion splits 40/60 into reserve/liquidity.
+        // Integer arithmetic: compute each leg, liquidity gets the remainder for exactness.
+        let sov_treasury_credit = amount_in * 20 / 100;
+        let reserve_credit = amount_in * 32 / 100;
+        let liquidity_credit = amount_in - sov_treasury_credit - reserve_credit;
 
         let delta_s = mint_with_reserve(reserve_credit, econ.s_c)
             .map_err(|e| TxApplyError::InvalidType(format!("BUY_CBE: mint overflow: {e:?}")))?;
@@ -1842,10 +1849,14 @@ impl BlockExecutor {
             .reserve_balance
             .checked_add(reserve_credit)
             .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: reserve overflow".to_string()))?;
-        econ.treasury_balance = econ
-            .treasury_balance
-            .checked_add(treasury_credit)
-            .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: treasury overflow".to_string()))?;
+        econ.sov_treasury_cbe_balance = econ
+            .sov_treasury_cbe_balance
+            .checked_add(sov_treasury_credit)
+            .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: sov_treasury overflow".to_string()))?;
+        econ.liquidity_pool_balance = econ
+            .liquidity_pool_balance
+            .checked_add(liquidity_credit)
+            .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: liquidity_pool overflow".to_string()))?;
         if econ.reserve_balance >= GRAD_THRESHOLD {
             econ.graduated = true;
         }
@@ -1870,6 +1881,40 @@ impl BlockExecutor {
             &Address::new(sender),
             delta_s,
         )?;
+
+        // ── Event-driven SOV minting ──────────────────────────────────────
+        // The 20% SOV treasury portion generates new SOV supply. SOV mints
+        // proportional to the CBE value deposited, priced at the current
+        // SOV NAV model:
+        //   sov_to_mint = sov_treasury_credit_cbe × cbe_price / sov_price
+        //
+        // During bootstrap (before SOV has a market price), SOV genesis
+        // price is $0.10. CBE price comes from the bonding curve at current s_c.
+        // Both prices are in SCALE (1e18) units.
+        //
+        // For now, use the curve price as the CBE/SOV ratio directly:
+        //   sov_to_mint = sov_treasury_credit (in SOV atoms, since buyer paid in SOV)
+        // This is correct because the buyer already paid `amount_in` SOV, and 20%
+        // of that SOV is the treasury's share. The SOV minting matches the value
+        // contributed to the treasury.
+        let sov_to_mint = sov_treasury_credit;
+        if sov_to_mint > 0 {
+            // Credit the SOV treasury address with the newly minted SOV.
+            // The treasury address is the fee_sink (DAO treasury).
+            let treasury_addr = *self.fee_model.protocol_params.fee_sink_address();
+            mutator.credit_token(
+                &Self::canonical_sov_token_id(),
+                &treasury_addr,
+                sov_to_mint,
+            )?;
+            // Track total SOV minted via on-ramp for audit.
+            econ.total_sov_minted = econ
+                .total_sov_minted
+                .checked_add(sov_to_mint)
+                .unwrap_or(econ.total_sov_minted);
+            // Re-persist econ with updated total_sov_minted.
+            mutator.put_cbe_economic_state(&econ)?;
+        }
 
         Ok(CanonicalBondingCurveOutcome::Buy(BondingCurveBuyOutcome {
             token_id: crate::Blockchain::derive_cbe_token_id_pub(),
@@ -4127,12 +4172,13 @@ mod tests {
         // Read from the committed tree.
         let econ = store.get_cbe_economic_state().unwrap();
         assert_eq!(econ.s_c, delta_s, "supply must equal minted tokens");
-        assert!(econ.reserve_balance > 0, "reserve must be credited");
-        assert!(econ.treasury_balance > 0, "treasury must be credited");
+        assert!(econ.reserve_balance > 0, "reserve (32%) must be credited");
+        assert!(econ.sov_treasury_cbe_balance > 0, "sov treasury (20%) must be credited");
+        assert!(econ.liquidity_pool_balance > 0, "liquidity pool (48%) must be credited");
         assert_eq!(
-            econ.reserve_balance + econ.treasury_balance,
+            econ.reserve_balance + econ.sov_treasury_cbe_balance + econ.liquidity_pool_balance,
             amount_in,
-            "reserve + treasury must equal amount_in exactly"
+            "reserve + sov_treasury + liquidity must equal amount_in exactly (20/32/48 split)"
         );
 
         // Token balances: SOV debited, CBE credited via token_balances tree.
@@ -4252,10 +4298,16 @@ mod tests {
             // Pre-load reserve so the next buy tips graduation.
             // reserve_credit of a 100 * SCALE buy ≈ 20 * SCALE; GRAD_THRESHOLD ≈ 2_745_966 * SCALE.
             // Use seeded econ state with reserve = GRAD_THRESHOLD - 1.
+            // With 20/32/48 split, if reserve=R then the total deposit that produced it
+            // was R * 100/32 ≈ R * 3.125. SOV treasury = 20% and liquidity = 48%.
+            let reserve_seeded = GRAD_THRESHOLD - 1;
+            let implied_total = reserve_seeded * 100 / 32;
             seed.put_cbe_economic_state(&BondingCurveEconomicState {
                 s_c: 0,
-                reserve_balance: GRAD_THRESHOLD - 1,
-                treasury_balance: (GRAD_THRESHOLD - 1) * 4, // 80% split equivalent
+                reserve_balance: reserve_seeded,
+                sov_treasury_cbe_balance: implied_total * 20 / 100,
+                liquidity_pool_balance: implied_total * 48 / 100,
+                total_sov_minted: 0,
                 graduated: false,
                 sell_enabled: false,
             })
@@ -4463,7 +4515,9 @@ mod tests {
             seed.put_cbe_economic_state(&BondingCurveEconomicState {
                 s_c: cbe_amount,
                 reserve_balance: 0, // empty — solvency check must fail
-                treasury_balance: 0,
+                sov_treasury_cbe_balance: 0,
+                liquidity_pool_balance: 0,
+                total_sov_minted: 0,
                 graduated: false,
                 sell_enabled: true,
             })
