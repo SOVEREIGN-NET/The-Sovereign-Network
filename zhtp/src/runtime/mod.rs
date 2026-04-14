@@ -4148,7 +4148,7 @@ impl RuntimeOrchestrator {
 
         // Sync balances from blockchain to identity wallets
         let mut synced_count = 0;
-        let mut total_synced_amount = 0u64;
+        let mut total_synced_amount = 0u128;
 
         for identity in identity_manager.list_identities_mut() {
             for (wallet_id, wallet) in identity.wallet_manager.wallets.iter_mut() {
@@ -4221,7 +4221,7 @@ impl RuntimeOrchestrator {
         let blockchain = blockchain_arc.read().await;
 
         // Scan UTXO set for outputs owned by this wallet
-        let mut wallet_utxos: Vec<(lib_blockchain::Hash, u32, u64)> = Vec::new();
+        let mut wallet_utxos: Vec<(lib_blockchain::Hash, u32, u128)> = Vec::new();
 
         info!(
             " Scanning {} UTXOs for wallet pubkey: {}",
@@ -4253,11 +4253,11 @@ impl RuntimeOrchestrator {
         info!(" Found {} UTXOs for wallet", wallet_utxos.len());
 
         // Step 2: Select UTXOs to cover amount + fee
-        let fee = 100u64; // 100 micro-SOV fee
-        let required_amount = amount + fee;
+        let fee = 100u128; // 100 micro-SOV fee
+        let required_amount = amount as u128 + fee;
 
         let mut selected_utxos = Vec::new();
-        let mut total_selected = 0u64;
+        let mut total_selected = 0u128;
 
         for utxo in wallet_utxos {
             selected_utxos.push(utxo.clone());
@@ -4303,7 +4303,7 @@ impl RuntimeOrchestrator {
             .ok_or_else(|| anyhow::anyhow!("IdentityManager not initialized"))?;
 
         // Convert lib_blockchain::Hash to lib_crypto::Hash for IdentityManager
-        let _selected_utxos_crypto: Vec<(lib_crypto::Hash, u32, u64)> = selected_utxos
+        let _selected_utxos_crypto: Vec<(lib_crypto::Hash, u32, u128)> = selected_utxos
             .iter()
             .map(|(hash, idx, amt)| (lib_crypto::Hash::from_bytes(hash.as_bytes()), *idx, *amt))
             .collect();

@@ -128,7 +128,7 @@ fn main() -> Result<()> {
 
     let total_minted: u128 = token_mint_wallets.values().sum();
     println!("  Total SOV minted via blocks:        {} (raw units)", total_minted);
-    println!("  Total SOV minted via blocks:        {} SOV", total_minted / 100_000_000);
+    println!("  Total SOV minted via blocks:        {} SOV", lib_types::sov::to_display(total_minted));
     println!();
 
     // Now load blockchain state and compare
@@ -167,7 +167,7 @@ fn main() -> Result<()> {
         .map(|t| t.total_balance_sum())
         .unwrap_or(0);
     println!("  SOV token balance entries:  {}", sov_balance_count);
-    println!("  SOV total supply in memory: {} (raw), {} SOV", sov_total, sov_total / 100_000_000);
+    println!("  SOV total supply in memory: {} (raw), {} SOV", sov_total, lib_types::sov::to_display(sov_total));
     println!();
 
     println!("=== DIVERGENCE ANALYSIS ===");

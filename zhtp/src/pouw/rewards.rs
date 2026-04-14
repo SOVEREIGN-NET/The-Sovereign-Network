@@ -20,45 +20,43 @@ use super::validation::ValidatedReceipt;
 /// Epoch duration in seconds (1 hour default)
 pub const DEFAULT_EPOCH_DURATION_SECS: u64 = 3600;
 
-/// Base reward unit (in smallest denomination, 10^-8 SOV)
-pub const BASE_REWARD_UNIT: u64 = 1000;
+/// Base reward unit (in smallest denomination, 10^-18 SOV)
+pub const BASE_REWARD_UNIT: u128 = 1_000_000_000_000; // 10^12 atoms = 0.000001 SOV
 
 // ─── SOV Budget Allocation ────────────────────────────────────────────────────
-// Total supply:  21,000,000 SOV × 10^8 atomic units
+// Total supply:  21,000,000 SOV × 10^18 atomic units
 // POUW budget:   10% of total supply over 4 years
 // Per-epoch:     budget / (4 years × 8760 epochs/year) ≈ 59.93 SOV / epoch
 // Per-node cap:  epoch pool / expected_active_nodes (default 100 nodes)
-//                ≈ 0.599 SOV = 59,931,506 atomic units per node per epoch
+//                ≈ 0.599 SOV per node per epoch
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Total SOV supply in atomic units (21M SOV × 10^8)
-pub const SOV_TOTAL_SUPPLY: u64 = 21_000_000 * 100_000_000;
+/// Total SOV supply in atomic units (21M SOV × 10^18)
+pub const SOV_TOTAL_SUPPLY: u128 = lib_types::sov::atoms(21_000_000);
 
 /// POUW reward budget: 10% of total supply
-pub const POUW_BUDGET_FRACTION_PERCENT: u64 = 10;
+pub const POUW_BUDGET_FRACTION_PERCENT: u128 = 10;
 
 /// POUW budget vesting period in years
-pub const POUW_BUDGET_YEARS: u64 = 4;
+pub const POUW_BUDGET_YEARS: u128 = 4;
 
 /// Total POUW allocation in atomic units
-pub const POUW_TOTAL_BUDGET: u64 = SOV_TOTAL_SUPPLY / 100 * POUW_BUDGET_FRACTION_PERCENT;
+pub const POUW_TOTAL_BUDGET: u128 = SOV_TOTAL_SUPPLY / 100 * POUW_BUDGET_FRACTION_PERCENT;
 
 /// Epochs per year (3600s epochs, 365 days)
-pub const EPOCHS_PER_YEAR: u64 = 365 * 24;
+pub const EPOCHS_PER_YEAR: u128 = 365 * 24;
 
 /// Per-epoch pool across all nodes (atomic units)
-/// = 2,100,000,000,000 / (4 × 8760) = 59,931,506 atomic units ≈ 0.599 SOV
-pub const POUW_EPOCH_POOL: u64 = POUW_TOTAL_BUDGET / (POUW_BUDGET_YEARS * EPOCHS_PER_YEAR);
+pub const POUW_EPOCH_POOL: u128 = POUW_TOTAL_BUDGET / (POUW_BUDGET_YEARS * EPOCHS_PER_YEAR);
 
 /// Expected active nodes at launch — used to compute per-node epoch cap
-pub const EXPECTED_ACTIVE_NODES: u64 = 100;
+pub const EXPECTED_ACTIVE_NODES: u128 = 100;
 
 /// Per-node cap per epoch = epoch_pool / expected_active_nodes
-/// ≈ 599,315 atomic units ≈ 0.006 SOV per node per epoch
-pub const POUW_PER_NODE_EPOCH_CAP: u64 = POUW_EPOCH_POOL / EXPECTED_ACTIVE_NODES;
+pub const POUW_PER_NODE_EPOCH_CAP: u128 = POUW_EPOCH_POOL / EXPECTED_ACTIVE_NODES;
 
 /// Backwards-compatible alias — use POUW_PER_NODE_EPOCH_CAP for new code
-pub const MAX_REWARD_PER_EPOCH: u64 = POUW_PER_NODE_EPOCH_CAP;
+pub const MAX_REWARD_PER_EPOCH: u128 = POUW_PER_NODE_EPOCH_CAP;
 
 // ─── Anomaly Detection ────────────────────────────────────────────────────────
 
@@ -90,9 +88,9 @@ pub struct Reward {
     /// Breakdown by proof type
     pub proof_type_counts: ProofTypeCounts,
     /// Raw reward amount (before multipliers)
-    pub raw_amount: u64,
+    pub raw_amount: u128,
     /// Final reward amount (after multipliers)
-    pub final_amount: u64,
+    pub final_amount: u128,
     /// Calculation timestamp
     pub calculated_at: u64,
     /// Payout status
@@ -154,7 +152,7 @@ pub struct RewardTransaction {
     /// Epoch this reward covers
     pub epoch: u64,
     /// Amount paid in atomic SOV units
-    pub amount: u64,
+    pub amount: u128,
     /// Unix timestamp when the payout was processed
     pub paid_at: u64,
     /// On-chain transaction hash (None for kernel-minted rewards)
@@ -177,9 +175,9 @@ pub struct EpochClientStats {
 #[derive(Debug, Clone)]
 pub struct EpochPoolConfig {
     /// Total SOV emitted per epoch across all nodes (atomic units)
-    pub epoch_pool: u64,
+    pub epoch_pool: u128,
     /// Expected number of active nodes (used to derive per-node cap)
-    pub expected_active_nodes: u64,
+    pub expected_active_nodes: u128,
 }
 
 impl EpochPoolConfig {
@@ -192,7 +190,7 @@ impl EpochPoolConfig {
     }
 
     /// Per-node cap = epoch_pool / expected_active_nodes
-    pub fn per_node_cap(&self) -> u64 {
+    pub fn per_node_cap(&self) -> u128 {
         self.epoch_pool / self.expected_active_nodes.max(1)
     }
 }
@@ -203,7 +201,7 @@ pub struct DIDEpochRecord {
     pub epoch: u64,
     pub weighted_receipt_count: u64,
     pub bytes_verified: u64,
-    pub reward_amount: u64,
+    pub reward_amount: u128,
     pub hit_cap: bool,
 }
 
@@ -349,7 +347,7 @@ impl RewardCalculator {
                 * self.multipliers.web4_content_served;
 
         // Raw amount = base unit * weighted count
-        let raw_amount = BASE_REWARD_UNIT * weighted_count;
+        let raw_amount = BASE_REWARD_UNIT * weighted_count as u128;
 
         // Apply per-node epoch cap (governance-adjustable via EpochPoolConfig)
         let final_amount = raw_amount.min(self.pool_config.per_node_cap());
@@ -391,7 +389,7 @@ impl RewardCalculator {
         client_did: &str,
         weighted_count: u64,
         bytes_verified: u64,
-        reward_amount: u64,
+        reward_amount: u128,
         epoch: u64,
         hit_cap: bool,
         min_bytes_per_receipt: u64,
@@ -651,7 +649,7 @@ impl RewardCalculator {
     }
 
     /// Get total rewards paid
-    pub async fn total_paid_rewards(&self) -> u64 {
+    pub async fn total_paid_rewards(&self) -> u128 {
         self.rewards
             .read()
             .await

@@ -43,7 +43,7 @@ impl WalletManager {
     }
 
     /// Add funds to a wallet
-    pub fn add_funds_to_wallet(&mut self, wallet_id: &WalletId, amount: u64) -> Result<()> {
+    pub fn add_funds_to_wallet(&mut self, wallet_id: &WalletId, amount: u128) -> Result<()> {
         let new_balance = if let Some(wallet) = self.wallets.get_mut(wallet_id) {
             wallet.add_funds(amount);
             wallet.balance
@@ -64,7 +64,7 @@ impl WalletManager {
     }
 
     /// Remove funds from a wallet
-    pub fn remove_funds_from_wallet(&mut self, wallet_id: &WalletId, amount: u64) -> Result<()> {
+    pub fn remove_funds_from_wallet(&mut self, wallet_id: &WalletId, amount: u128) -> Result<()> {
         let new_balance = if let Some(wallet) = self.wallets.get_mut(wallet_id) {
             wallet
                 .remove_funds(amount)
@@ -87,12 +87,12 @@ impl WalletManager {
     }
 
     /// Get wallet balance
-    pub fn get_wallet_balance(&self, wallet_id: &WalletId) -> Option<u64> {
+    pub fn get_wallet_balance(&self, wallet_id: &WalletId) -> Option<u128> {
         self.wallets.get(wallet_id).map(|wallet| wallet.balance)
     }
 
     /// Check if wallet has sufficient funds
-    pub fn has_sufficient_funds(&self, wallet_id: &WalletId, amount: u64) -> bool {
+    pub fn has_sufficient_funds(&self, wallet_id: &WalletId, amount: u128) -> bool {
         self.get_wallet_balance(wallet_id)
             .map_or(false, |balance| balance >= amount)
     }
@@ -101,11 +101,11 @@ impl WalletManager {
     pub fn bulk_transfer_to_wallets(
         &mut self,
         from_wallet: &WalletId,
-        transfers: Vec<(WalletId, u64)>,
+        transfers: Vec<(WalletId, u128)>,
         purpose: String,
     ) -> Result<Vec<Hash>> {
         // Calculate total amount needed
-        let total_amount: u64 = transfers.iter().map(|(_, amount)| amount).sum();
+        let total_amount: u128 = transfers.iter().map(|(_, amount)| amount).sum();
 
         // Check if source wallet has sufficient funds
         if !self.has_sufficient_funds(from_wallet, total_amount) {
@@ -158,7 +158,7 @@ impl WalletManager {
     }
 
     /// Auto-distribute UBI to UBI wallets
-    pub fn auto_distribute_ubi(&mut self, amount_per_wallet: u64) -> Result<Vec<Hash>> {
+    pub fn auto_distribute_ubi(&mut self, amount_per_wallet: u128) -> Result<Vec<Hash>> {
         let ubi_wallets: Vec<WalletId> = self
             .wallets
             .values()
@@ -205,7 +205,7 @@ impl WalletManager {
     /// Process UBI distribution to all eligible wallets
     pub fn process_ubi_distribution(
         &mut self,
-        total_ubi_pool: u64,
+        total_ubi_pool: u128,
     ) -> Result<UbiDistributionResult> {
         let ubi_wallets: Vec<WalletId> = self
             .wallets
@@ -227,9 +227,9 @@ impl WalletManager {
             });
         }
 
-        let individual_amount = total_ubi_pool / ubi_wallets.len() as u64;
+        let individual_amount = total_ubi_pool / ubi_wallets.len() as u128;
         let mut distribution_hashes = Vec::new();
-        let mut total_distributed = 0;
+        let mut total_distributed = 0u128;
 
         for wallet_id in &ubi_wallets {
             if let Some(wallet) = self.wallets.get_mut(wallet_id) {
@@ -269,13 +269,13 @@ impl WalletManager {
 
     /// Generate staking rewards for eligible wallets
     pub fn generate_staking_rewards(&mut self, reward_rate: f64) -> Result<StakingRewardsResult> {
-        let mut total_rewards = 0u64;
+        let mut total_rewards = 0u128;
         let mut reward_recipients = 0;
         let mut reward_details = Vec::new();
 
         for (wallet_id, wallet) in self.wallets.iter_mut() {
             if wallet.staked_balance > 0 {
-                let reward_amount = (wallet.staked_balance as f64 * reward_rate) as u64;
+                let reward_amount = (wallet.staked_balance as f64 * reward_rate) as u128;
                 wallet.add_rewards(reward_amount);
 
                 total_rewards += reward_amount;
@@ -371,7 +371,7 @@ impl WalletManager {
     }
 
     /// Calculate total balance across all wallets
-    pub fn calculate_total_balance(&mut self) -> u64 {
+    pub fn calculate_total_balance(&mut self) -> u128 {
         self.total_balance = self.wallets.values().map(|wallet| wallet.balance).sum();
         self.total_balance
     }
@@ -448,9 +448,9 @@ pub struct TransactionSummary {
 /// Result of UBI distribution process
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UbiDistributionResult {
-    pub total_distributed: u64,
+    pub total_distributed: u128,
     pub recipients: usize,
-    pub individual_amount: u64,
+    pub individual_amount: u128,
     pub distribution_hashes: Vec<Hash>,
     pub distribution_timestamp: u64,
 }
@@ -458,7 +458,7 @@ pub struct UbiDistributionResult {
 /// Result of staking rewards generation
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StakingRewardsResult {
-    pub total_rewards: u64,
+    pub total_rewards: u128,
     pub reward_recipients: usize,
     pub reward_rate: f64,
     pub reward_details: Vec<WalletRewardDetail>,
@@ -469,9 +469,9 @@ pub struct StakingRewardsResult {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WalletRewardDetail {
     pub wallet_id: WalletId,
-    pub staked_amount: u64,
-    pub reward_amount: u64,
-    pub new_total_rewards: u64,
+    pub staked_amount: u128,
+    pub reward_amount: u128,
+    pub new_total_rewards: u128,
 }
 
 /// Cross-wallet transaction request
@@ -479,7 +479,7 @@ pub struct WalletRewardDetail {
 pub struct CrossWalletTransactionRequest {
     pub from_wallet_id: WalletId,
     pub to_wallet_id: WalletId,
-    pub amount: u64,
+    pub amount: u128,
     pub purpose: String,
 }
 
@@ -489,9 +489,9 @@ pub struct CrossWalletTransactionResult {
     pub transaction_hash: Hash,
     pub from_wallet_id: WalletId,
     pub to_wallet_id: WalletId,
-    pub amount: u64,
-    pub new_from_balance: u64,
-    pub new_to_balance: u64,
+    pub amount: u128,
+    pub new_from_balance: u128,
+    pub new_to_balance: u128,
     pub timestamp: u64,
 }
 
@@ -501,7 +501,7 @@ pub struct WalletHealthReport {
     pub total_wallets: usize,
     pub healthy_wallets: usize,
     pub unhealthy_wallets: usize,
-    pub total_balance: u64,
+    pub total_balance: u128,
     pub issues: Vec<String>,
     pub check_timestamp: u64,
 }

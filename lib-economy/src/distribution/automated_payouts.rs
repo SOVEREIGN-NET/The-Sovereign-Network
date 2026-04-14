@@ -162,7 +162,7 @@ impl AutomatedUBI {
                 let wallet_hash = Hash(*wallet_address);
                 let actual_payout = if let Some(registration) = registrations.get_mut(&wallet_hash)
                 {
-                    registration.record_payout(ubi_per_citizen, current_block)
+                    registration.record_payout(ubi_per_citizen as u128, current_block)
                 } else {
                     // Log warning if registration is missing - indicates data inconsistency
                     // This suggests the citizen is in the recipients list but not in registrations
@@ -173,13 +173,13 @@ impl AutomatedUBI {
                         hex::encode(wallet_address),
                         current_block
                     );
-                    ubi_per_citizen
+                    ubi_per_citizen as u128
                 };
 
                 // If remainder was distributed, update wallet accordingly
-                if actual_payout > ubi_per_citizen {
-                    let remainder = actual_payout - ubi_per_citizen;
-                    wallet.available_balance = wallet.available_balance.saturating_add(remainder);
+                if actual_payout > ubi_per_citizen as u128 {
+                    let remainder = actual_payout - ubi_per_citizen as u128;
+                    wallet.available_balance = wallet.available_balance.saturating_add(remainder as u64);
                 }
 
                 info!(
