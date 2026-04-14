@@ -47,11 +47,13 @@ pub const BAND_4_SLOPE: u64 = 300_000; // 3.0e-11
 /// CBE Band 1 base price offset scaled by PRICE_SCALE (0.0003133457 SOV/CBE)
 pub const BAND_1_BASE_OFFSET: i64 = 31_335;
 
-/// CBE supply band upper boundaries in billions of tokens (Issue #1842)
+/// Supply band upper boundaries in billions of tokens (Issue #1842)
+/// These are CBE DAO constants — not protocol-level.
 pub const BAND_1_END_BILLIONS: u64 = 10;
 pub const BAND_2_END_BILLIONS: u64 = 30;
 pub const BAND_3_END_BILLIONS: u64 = 60;
-pub const CBE_MAX_SUPPLY_BILLIONS: u64 = 100;
+/// Total CBE supply cap in billions (must match canonical::MAX_SUPPLY / SCALE).
+pub const MAX_SUPPLY_BILLIONS: u64 = 100;
 
 /// Maximum rounding error allowed at band price boundaries (atomic units)
 pub const PRICE_CONTINUITY_TOLERANCE: u128 = 1;
@@ -153,12 +155,12 @@ impl PiecewiseLinearCurve {
                 },
                 SupplyBand {
                     start_supply: band_end(BAND_3_END_BILLIONS),
-                    end_supply: band_end(CBE_MAX_SUPPLY_BILLIONS),
+                    end_supply: band_end(MAX_SUPPLY_BILLIONS),
                     slope: BAND_4_SLOPE,
                     base_offset: base_4,
                 },
             ],
-            max_supply: band_end(CBE_MAX_SUPPLY_BILLIONS),
+            max_supply: band_end(MAX_SUPPLY_BILLIONS),
         }
     }
 

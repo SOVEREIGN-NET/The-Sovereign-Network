@@ -133,13 +133,14 @@ impl TokenContract {
     /// # Arguments
     /// * `kernel_authority` - The public key of the Treasury Kernel (only entity that can mint)
     pub fn new_sov_with_kernel_authority(kernel_authority: PublicKey) -> Self {
+        use super::constants::*;
         let creator = PublicKey::new([0u8; 2592]); // Mock creator for SOV
         let mut token = Self::new(
             crate::contracts::utils::generate_lib_token_id(),
             "SOV Token".to_string(),
             "SOV".to_string(),
-            8,
-            1_000_000_000 * 100_000_000, // 1B SOV with 8 decimals
+            SOV_TOKEN_DECIMALS,
+            SOV_TOKEN_MAX_SUPPLY,        // 18-decimal max supply
             false,                       // SOV is not deflationary
             0,                           // No burn rate for SOV
             creator,
@@ -814,7 +815,7 @@ mod tests {
 
         assert_eq!(token.name, "SOV Token");
         assert_eq!(token.symbol, "SOV");
-        assert_eq!(token.decimals, 8);
+        assert_eq!(token.decimals, 18);
         assert!(!token.is_deflationary);
         assert_eq!(token.kernel_mint_authority, Some(kernel_addr));
     }
