@@ -174,7 +174,7 @@ impl TreasuryKernel {
         }
 
         // Get current circulating supply from token contract
-        let circulating_supply = u64::try_from(token.total_supply).unwrap_or(u64::MAX);
+        let circulating_supply = token.total_supply;
 
         // Apply the update
         let new_srv = self
