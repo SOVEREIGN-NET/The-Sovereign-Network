@@ -2,6 +2,7 @@
 //!
 //! Defines the canonical governance transaction for configuration updates.
 
+use lib_access_control::Role;
 use lib_types::{BlockHeight, TokenId};
 use serde::{Deserialize, Serialize};
 
@@ -87,6 +88,43 @@ impl GovernanceConfigTx {
         }
 
         Ok(())
+    }
+
+    /// Validate that the proposer has sufficient authority for this change.
+    ///
+    /// - Council (or higher) is required for authority and protocol fields.
+    /// - Citizen (or higher) can propose fee and policy fields.
+    /// - Public cannot propose governance changes.
+    pub fn validate_authority(&self, proposer_role: Role) -> GovernanceResult<()> {
+        if !self.field.is_governable() {
+            return Err(GovernanceError::FieldNotGovernable(self.field));
+        }
+
+        let required = if self.field.requires_council_role() {
+            match proposer_role {
+                Role::Council
+                | Role::InfraAdmin
+                | Role::PolicyAdmin
+                | Role::Emergency
+                | Role::System => return Ok(()),
+                _ => "Council or higher",
+            }
+        } else {
+            match proposer_role {
+                Role::Citizen
+                | Role::Council
+                | Role::InfraAdmin
+                | Role::PolicyAdmin
+                | Role::Emergency
+                | Role::System => return Ok(()),
+                _ => "Citizen or higher",
+            }
+        };
+
+        Err(GovernanceError::Unauthorized(format!(
+            "Field {:?} requires {} role, got {:?}",
+            self.field, required, proposer_role
+        )))
     }
 
     /// Get the unique identifier for this pending change

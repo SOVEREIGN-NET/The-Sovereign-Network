@@ -24,6 +24,10 @@ use lib_blockchain::types::{transaction_type::TransactionType, ContractType};
 use lib_blockchain::Blockchain;
 use crate::config::Environment;
 
+// Access control imports
+use crate::api::principal::extract_principal_from_request;
+use lib_access_control::{AccessDomain, AccessOperation, SecurityPrincipal};
+
 /// Clean blockchain handler implementation
 ///
 /// NOTE: This handler does NOT store a blockchain reference.
@@ -32,13 +36,28 @@ use crate::config::Environment;
 /// added via mesh protocol).
 pub struct BlockchainHandler {
     environment: Environment,
+    identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
 }
 
 impl BlockchainHandler {
-    pub fn new(_blockchain: Arc<RwLock<Blockchain>>, environment: Environment) -> Self {
+    pub fn new(
+        _blockchain: Arc<RwLock<Blockchain>>,
+        environment: Environment,
+        identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
+    ) -> Self {
         // We ignore the passed blockchain reference and always fetch from global provider
-        Self { environment }
+        Self {
+            environment,
+            identity_manager,
+        }
     }
+
+    /// Extract a SecurityPrincipal from an incoming request.
+    fn extract_principal(&self, request: &ZhtpRequest) -> SecurityPrincipal {
+        extract_principal_from_request(request)
+    }
+
+
 
     /// Get the current shared blockchain instance
     /// This ensures we always see the latest state
@@ -1166,6 +1185,8 @@ impl BlockchainHandler {
             search_type = Some(explicit);
         }
 
+        let principal = self.extract_principal(&request);
+
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
         let latest_height = blockchain
@@ -1231,19 +1252,6 @@ impl BlockchainHandler {
             }))
         };
 
-        let resolve_identity = |did: &str| -> Option<serde_json::Value> {
-            let identity = blockchain.identity_registry.get(&did.to_string())?;
-            Some(serde_json::json!({
-                "did": identity.did,
-                "display_name": identity.display_name,
-                "identity_type": identity.identity_type,
-                "registration_fee": identity.registration_fee,
-                "created_at": identity.created_at,
-                "controlled_nodes": identity.controlled_nodes,
-                "owned_wallets": identity.owned_wallets,
-            }))
-        };
-
         if let Some(kind) = search_type.as_deref() {
             match kind {
                 "tx" => {
@@ -1265,9 +1273,29 @@ impl BlockchainHandler {
                     }
                 }
                 "did" => {
-                    result = resolve_identity(&value);
-                    if result.is_some() {
-                        result_type = Some("did".to_string());
+                    if let Some(identity) = blockchain.identity_registry.get(&value.to_string()) {
+                        let identity_mgr = self.identity_manager.read().await;
+                        let view = identity_mgr.get_identity_view_by_did(&principal, &identity.did);
+                        let (controlled_nodes, owned_wallets) = match view {
+                            Some(lib_identity::types::IdentityView::Full(_))
+                            | Some(lib_identity::types::IdentityView::Council(_))
+                            | Some(lib_identity::types::IdentityView::DeviceOwner(_)) => {
+                                (Some(identity.controlled_nodes.clone()), Some(identity.owned_wallets.clone()))
+                            }
+                            _ => (None::<Vec<String>>, None::<Vec<String>>),
+                        };
+                        result = Some(serde_json::json!({
+                            "did": identity.did,
+                            "display_name": identity.display_name,
+                            "identity_type": identity.identity_type,
+                            "registration_fee": identity.registration_fee,
+                            "created_at": identity.created_at,
+                            "controlled_nodes": controlled_nodes,
+                            "owned_wallets": owned_wallets,
+                        }));
+                        if result.is_some() {
+                            result_type = Some("did".to_string());
+                        }
                     }
                 }
                 _ => {
@@ -2814,21 +2842,55 @@ impl BlockchainHandler {
             .get(5)
             .ok_or_else(|| anyhow::anyhow!("DID required"))?;
 
+        let principal = self.extract_principal(&request);
+        let identity_manager = self.identity_manager.read().await;
+
+        // Gate blockchain identity metadata behind the same view system.
+        let view = identity_manager.get_identity_view_by_did(&principal, did);
+        drop(identity_manager);
+
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
         // Query identity from registry
         if let Some(identity) = blockchain.identity_registry.get(&did.to_string()) {
-            let response_data = serde_json::json!({
-                "status": "identity_found",
-                "did": identity.did,
-                "display_name": identity.display_name,
-                "identity_type": identity.identity_type,
-                "registration_fee": identity.registration_fee,
-                "created_at": identity.created_at,
-                "controlled_nodes": identity.controlled_nodes,
-                "owned_wallets": identity.owned_wallets,
-            });
+            let response_data = match view {
+                Some(lib_identity::types::IdentityView::Public(_)) => {
+                    serde_json::json!({
+                        "status": "identity_found",
+                        "did": identity.did,
+                        "display_name": identity.display_name,
+                        "identity_type": identity.identity_type,
+                        "registration_fee": identity.registration_fee,
+                        "created_at": identity.created_at,
+                    })
+                }
+                Some(_) => {
+                    serde_json::json!({
+                        "status": "identity_found",
+                        "did": identity.did,
+                        "display_name": identity.display_name,
+                        "identity_type": identity.identity_type,
+                        "registration_fee": identity.registration_fee,
+                        "created_at": identity.created_at,
+                        "controlled_nodes": identity.controlled_nodes,
+                        "owned_wallets": identity.owned_wallets,
+                    })
+                }
+                None => {
+                    let response_data = serde_json::json!({
+                        "status": "identity_not_found",
+                        "did": did,
+                        "message": format!("Identity not found for DID: {}", did),
+                    });
+                    let json_response = serde_json::to_vec(&response_data)?;
+                    return Ok(ZhtpResponse::success_with_content_type(
+                        json_response,
+                        "application/json".to_string(),
+                        None,
+                    ));
+                }
+            };
 
             let json_response = serde_json::to_vec(&response_data)?;
             return Ok(ZhtpResponse::success_with_content_type(
@@ -2855,6 +2917,8 @@ impl BlockchainHandler {
 
     /// List wallets, optionally filtered by owner identity
     async fn handle_list_wallets(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let principal = self.extract_principal(&request);
+
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
@@ -2870,6 +2934,39 @@ impl BlockchainHandler {
         } else {
             None
         };
+
+        // Access control: unfiltered enumeration is restricted to elevated roles.
+        if owner_filter.is_none() {
+            let allowed = matches!(
+                principal.role,
+                lib_access_control::Role::System
+                    | lib_access_control::Role::Node
+                    | lib_access_control::Role::InfraAdmin
+                    | lib_access_control::Role::Council
+                    | lib_access_control::Role::Emergency
+            );
+            if !allowed {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::Forbidden,
+                    "Unfiltered wallet enumeration requires elevated privileges".to_string(),
+                ));
+            }
+        } else {
+            // Filtered enumeration: check WalletGraph access for the specified owner.
+            let owner_id_hex = owner_filter.as_ref().unwrap();
+            if let Ok(owner_hash) = lib_blockchain::types::Hash::from_hex(owner_id_hex) {
+                let crypto_hash = lib_crypto::Hash::from_bytes(owner_hash.as_bytes());
+                let identity_manager = self.identity_manager.read().await;
+                if !identity_manager.check_access(&principal, &crypto_hash, AccessDomain::WalletGraph, AccessOperation::Read) {
+                    drop(identity_manager);
+                    return Ok(ZhtpResponse::error(
+                        ZhtpStatus::Forbidden,
+                        "Access denied to wallet list for this owner".to_string(),
+                    ));
+                }
+                drop(identity_manager);
+            }
+        }
 
         // Collect wallets, optionally filtering by owner_identity_id
         let wallets: Vec<serde_json::Value> = blockchain
@@ -3151,6 +3248,7 @@ mod tests {
         let handler = BlockchainHandler::new(
             Arc::new(RwLock::new(Blockchain::new().expect("Blockchain::new"))),
             Environment::Development,
+            Arc::new(RwLock::new(lib_identity::IdentityManager::new())),
         );
 
         let chain_info_request = ZhtpRequest {
