@@ -290,11 +290,11 @@ impl Blockchain {
         None
     }
 
-    pub fn collect_sov_backfill_entries(&self) -> Vec<([u8; 32], u64, String)> {
+    pub fn collect_sov_backfill_entries(&self) -> Vec<([u8; 32], u128, String)> {
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
         let token_opt = self.token_contracts.get(&sov_token_id);
 
-        let mut entries: Vec<([u8; 32], u64, String)> = Vec::new();
+        let mut entries: Vec<([u8; 32], u128, String)> = Vec::new();
         for (wallet_id, wallet) in &self.wallet_registry {
             let is_on_chain = self
                 .wallet_blocks
@@ -344,7 +344,7 @@ impl Blockchain {
     /// Wallets with a balance that differs from the canonical bonus (meaning they
     /// received legitimate transfers on top) are left untouched.
     pub fn correct_ubi_savings_misbalances(&mut self) -> usize {
-        const WRONG_BONUS: u64 = 500_000_000_000; // 5 000 SOV in atomic units
+        const WRONG_BONUS: u128 = 500_000_000_000; // 5 000 SOV in old 8-decimal atomic units
 
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
         let sov_storage_token_id = crate::storage::TokenId(sov_token_id);
@@ -597,7 +597,7 @@ impl Blockchain {
         &mut self,
         wallet_id: &str,
         recipient_identity: &[u8],
-        amount: u64,
+        amount: u128,
     ) -> Hash {
         let utxo_output = crate::transaction::TransactionOutput {
             commitment: crate::types::hash::blake3_hash(

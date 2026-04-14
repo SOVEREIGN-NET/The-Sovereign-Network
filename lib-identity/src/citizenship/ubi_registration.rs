@@ -1,6 +1,6 @@
 //! UBI registration system from the original identity.rs
 
-use crate::constants::{SOV_ATOMIC_UNITS, SOV_UBI_MONTHLY_SOV};
+use crate::constants::SOV_UBI_MONTHLY_SOV;
 use crate::economics::{EconomicModel, Priority, Transaction, TransactionType};
 use crate::types::IdentityId;
 use crate::wallets::WalletId;
@@ -25,9 +25,9 @@ pub struct UbiRegistration {
     /// UBI registration transaction
     pub registration_tx: Transaction,
     /// Daily UBI amount (~33 SOV, atomic units)
-    pub daily_amount: u64,
+    pub daily_amount: u128,
     /// Monthly UBI amount (1000 SOV, atomic units)
-    pub monthly_amount: u64,
+    pub monthly_amount: u128,
     /// UBI eligibility proof
     pub eligibility_proof: [u8; 32],
     /// Registration block height (deterministic consensus layer)
@@ -35,9 +35,9 @@ pub struct UbiRegistration {
     /// Last UBI payout block height (deterministic consensus layer)
     pub last_payout_block: Option<u64>,
     /// Total UBI received to date
-    pub total_received: u64,
+    pub total_received: u128,
     /// Accumulated remainder from integer division (e.g., 1000 / 30 = 33 remainder 10)
-    pub remainder_balance: u64,
+    pub remainder_balance: u128,
 }
 
 impl UbiRegistration {
@@ -46,15 +46,15 @@ impl UbiRegistration {
         identity_id: IdentityId,
         ubi_wallet_id: WalletId,
         registration_tx: Transaction,
-        daily_amount: u64,
-        monthly_amount: u64,
+        daily_amount: u128,
+        monthly_amount: u128,
         eligibility_proof: [u8; 32],
         registered_at_block: u64,
         last_payout_block: Option<u64>,
-        total_received: u64,
+        total_received: u128,
     ) -> Self {
         // Calculate remainder from monthly to daily division (1000 / 30 = 33 remainder 10)
-        let remainder = monthly_amount % 30;
+        let remainder = monthly_amount % 30u128;
         Self {
             identity_id,
             ubi_wallet_id,
@@ -79,7 +79,7 @@ impl UbiRegistration {
         let current_block = economic_model.current_block;
 
         // Calculate monthly UBI amount (1000 SOV tokens per month, atomic units)
-        let monthly_ubi_amount = SOV_UBI_MONTHLY_SOV.saturating_mul(SOV_ATOMIC_UNITS);
+        let monthly_ubi_amount = lib_types::sov::atoms(SOV_UBI_MONTHLY_SOV as u128);
         let daily_ubi_amount = monthly_ubi_amount / 30; // ~33 SOV per day
 
         // Create UBI registration transaction
@@ -107,7 +107,7 @@ impl UbiRegistration {
         tracing::info!(
             "UBI REGISTERED: Citizen {} eligible for {} SOV daily ({} SOV monthly) at block {}",
             hex::encode(&identity_id.0[..8]),
-            daily_ubi_amount / SOV_ATOMIC_UNITS,
+            daily_ubi_amount / lib_types::sov::SCALE,
             SOV_UBI_MONTHLY_SOV,
             current_block
         );
@@ -143,17 +143,17 @@ impl UbiRegistration {
 
     /// Record a UBI payout with block height (deterministic)
     /// Accumulates remainder and distributes when threshold reached
-    pub fn record_payout(&mut self, amount: u64, block_height: u64) -> u64 {
+    pub fn record_payout(&mut self, amount: u128, block_height: u64) -> u128 {
         let mut actual_payout = amount;
 
         // Add remainder accumulation - distribute remainder every DAYS_PER_MONTH payouts
         // The remainder comes from the monthly amount / DAYS_PER_MONTH division (e.g., 1000 / 30 = 33 remainder 10)
         self.remainder_balance = self
             .remainder_balance
-            .saturating_add(self.daily_amount % DAYS_PER_MONTH);
-        if self.remainder_balance >= DAYS_PER_MONTH {
-            actual_payout = amount + (self.remainder_balance / DAYS_PER_MONTH);
-            self.remainder_balance %= DAYS_PER_MONTH;
+            .saturating_add(self.daily_amount % DAYS_PER_MONTH as u128);
+        if self.remainder_balance >= DAYS_PER_MONTH as u128 {
+            actual_payout = amount + (self.remainder_balance / DAYS_PER_MONTH as u128);
+            self.remainder_balance %= DAYS_PER_MONTH as u128;
         }
 
         self.last_payout_block = Some(block_height);
@@ -172,8 +172,8 @@ impl UbiRegistration {
     }
 
     /// Calculate expected total UBI based on blocks since registration
-    pub fn expected_total_ubi(&self, current_block: u64) -> u64 {
-        self.days_since_registration(current_block)
+    pub fn expected_total_ubi(&self, current_block: u64) -> u128 {
+        (self.days_since_registration(current_block) as u128)
             .saturating_mul(self.daily_amount)
     }
 

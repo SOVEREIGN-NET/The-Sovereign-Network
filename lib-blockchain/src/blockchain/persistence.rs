@@ -86,6 +86,48 @@ impl BlockV1 {
     }
 }
 
+/// Legacy wallet data with u64 initial_balance (pre-18-decimal migration).
+/// Used only for deserializing old .dat persistence formats (V1–V9).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct WalletTransactionDataLegacy {
+    pub wallet_id: Hash,
+    pub wallet_type: String,
+    pub wallet_name: String,
+    pub alias: Option<String>,
+    pub public_key: Vec<u8>,
+    pub owner_identity_id: Option<Hash>,
+    pub seed_commitment: Hash,
+    pub created_at: u64,
+    pub registration_fee: u64,
+    pub capabilities: u32,
+    pub initial_balance: u64,
+}
+
+impl WalletTransactionDataLegacy {
+    /// Convert to the current WalletTransactionData, widening initial_balance to u128.
+    fn to_current(self) -> crate::transaction::WalletTransactionData {
+        crate::transaction::WalletTransactionData {
+            wallet_id: self.wallet_id,
+            wallet_type: self.wallet_type,
+            wallet_name: self.wallet_name,
+            alias: self.alias,
+            public_key: self.public_key,
+            owner_identity_id: self.owner_identity_id,
+            seed_commitment: self.seed_commitment,
+            created_at: self.created_at,
+            registration_fee: self.registration_fee,
+            capabilities: self.capabilities,
+            initial_balance: self.initial_balance as u128,
+        }
+    }
+}
+
+fn migrate_legacy_wallet_registry(
+    legacy: HashMap<String, WalletTransactionDataLegacy>,
+) -> HashMap<String, crate::transaction::WalletTransactionData> {
+    legacy.into_iter().map(|(k, v)| (k, v.to_current())).collect()
+}
+
 /// Blockchain V1 format (Dec 2025) - for backward compatibility migration
 /// This struct matches the format used by production nodes before the Phase 2 updates.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,7 +141,7 @@ pub(super) struct BlockchainV1 {
     pub pending_transactions: Vec<TransactionV1>,
     pub identity_registry: HashMap<String, IdentityTransactionData>,
     pub identity_blocks: HashMap<String, u64>,
-    pub wallet_registry: HashMap<String, crate::transaction::WalletTransactionData>,
+    pub wallet_registry: HashMap<String, WalletTransactionDataLegacy>,
     pub wallet_blocks: HashMap<String, u64>,
     pub economics_transactions: Vec<EconomicsTransaction>,
     pub token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
@@ -158,7 +200,7 @@ impl BlockchainV1 {
             pending_transactions,
             identity_registry: self.identity_registry,
             identity_blocks: self.identity_blocks,
-            wallet_registry: self.wallet_registry,
+            wallet_registry: migrate_legacy_wallet_registry(self.wallet_registry),
             wallet_blocks: self.wallet_blocks,
             economics_transactions: self.economics_transactions,
             token_contracts: self.token_contracts,
@@ -259,7 +301,7 @@ pub(super) struct BlockchainStorageV3 {
     pub pending_transactions: Vec<Transaction>,
     pub identity_registry: HashMap<String, IdentityTransactionData>,
     pub identity_blocks: HashMap<String, u64>,
-    pub wallet_registry: HashMap<String, crate::transaction::WalletTransactionData>,
+    pub wallet_registry: HashMap<String, WalletTransactionDataLegacy>,
     pub wallet_blocks: HashMap<String, u64>,
     #[serde(default)]
     pub economics_transactions: Vec<EconomicsTransaction>,
@@ -386,7 +428,21 @@ impl BlockchainStorageV3 {
             pending_transactions: bc.pending_transactions.clone(),
             identity_registry: bc.identity_registry.clone(),
             identity_blocks: bc.identity_blocks.clone(),
-            wallet_registry: bc.wallet_registry.clone(),
+            wallet_registry: bc.wallet_registry.iter().map(|(k, v)| {
+                (k.clone(), WalletTransactionDataLegacy {
+                    wallet_id: v.wallet_id,
+                    wallet_type: v.wallet_type.clone(),
+                    wallet_name: v.wallet_name.clone(),
+                    alias: v.alias.clone(),
+                    public_key: v.public_key.clone(),
+                    owner_identity_id: v.owner_identity_id,
+                    seed_commitment: v.seed_commitment,
+                    created_at: v.created_at,
+                    registration_fee: v.registration_fee,
+                    capabilities: v.capabilities,
+                    initial_balance: v.initial_balance as u64,
+                })
+            }).collect(),
             wallet_blocks: bc.wallet_blocks.clone(),
             economics_transactions: bc.economics_transactions.clone(),
             token_contracts: bc.token_contracts.clone(),
@@ -459,7 +515,7 @@ impl BlockchainStorageV3 {
             pending_transactions: self.pending_transactions,
             identity_registry: self.identity_registry,
             identity_blocks: self.identity_blocks,
-            wallet_registry: self.wallet_registry,
+            wallet_registry: migrate_legacy_wallet_registry(self.wallet_registry),
             wallet_blocks: self.wallet_blocks,
             economics_transactions: self.economics_transactions,
             token_contracts: self.token_contracts,
@@ -780,9 +836,39 @@ impl BlockchainStorageV9 {
     }
 }
 
+/// V10: wallet_registry uses u128 initial_balance (18-decimal SOV migration).
+/// The nested V9 chain still reads old u64 data, so `to_blockchain()` first
+/// loads V9 (with u64→u128 widening in V3), then overwrites wallet_registry
+/// with the native u128 copy persisted here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct BlockchainStorageV10 {
+    pub v9: BlockchainStorageV9,
+    /// Wallet registry with u128 initial_balance — overwrites the u64-widened copy from V9.
+    #[serde(default)]
+    pub wallet_registry_u128: HashMap<String, crate::transaction::WalletTransactionData>,
+}
+
+impl BlockchainStorageV10 {
+    fn from_blockchain(bc: &Blockchain) -> Self {
+        Self {
+            v9: BlockchainStorageV9::from_blockchain(bc),
+            wallet_registry_u128: bc.wallet_registry.clone(),
+        }
+    }
+
+    fn to_blockchain(self) -> Blockchain {
+        let mut blockchain = self.v9.to_blockchain();
+        // Overwrite the u64-widened wallet_registry with the native u128 copy.
+        if !self.wallet_registry_u128.is_empty() {
+            blockchain.wallet_registry = self.wallet_registry_u128;
+        }
+        blockchain
+    }
+}
+
 impl Blockchain {
     pub(crate) const FILE_MAGIC: [u8; 4] = [0x5A, 0x48, 0x54, 0x50];
-    const FILE_VERSION: u16 = 9;
+    const FILE_VERSION: u16 = 10;
 
     #[deprecated(
         since = "0.2.0",
@@ -806,7 +892,7 @@ impl Blockchain {
             std::fs::create_dir_all(parent)?;
         }
 
-        let storage = BlockchainStorageV9::from_blockchain(self);
+        let storage = BlockchainStorageV10::from_blockchain(self);
         let serialized = bincode::serialize(&storage)
             .map_err(|e| anyhow::anyhow!("Failed to serialize blockchain: {}", e))?;
 
@@ -854,6 +940,14 @@ impl Blockchain {
             info!("📂 Detected versioned format v{}", version);
 
             match version {
+                10 => deserialize_or_err::<BlockchainStorageV10, _, _>(
+                    data,
+                    "v10 blockchain",
+                    |storage| {
+                    info!("📂 Loaded blockchain storage v10 (u128 wallet initial_balance)");
+                    storage.to_blockchain()
+                },
+                )?,
                 9 => deserialize_or_err::<BlockchainStorageV9, _, _>(
                     data,
                     "v9 blockchain",
@@ -995,12 +1089,11 @@ impl Blockchain {
 
         let elapsed = start.elapsed();
 
-        const SOV_ATOMIC_UNITS: u64 = 100_000_000;
         let mut migrated_count = 0usize;
         for wallet in blockchain.wallet_registry.values_mut() {
-            if wallet.initial_balance > 0 && wallet.initial_balance < SOV_ATOMIC_UNITS {
+            if wallet.initial_balance > 0 && wallet.initial_balance < lib_types::sov::SCALE {
                 let old = wallet.initial_balance;
-                wallet.initial_balance = old.saturating_mul(SOV_ATOMIC_UNITS);
+                wallet.initial_balance = old.saturating_mul(lib_types::sov::SCALE);
                 migrated_count += 1;
                 info!(
                     "Migrated wallet initial_balance: {} -> {} atomic units",

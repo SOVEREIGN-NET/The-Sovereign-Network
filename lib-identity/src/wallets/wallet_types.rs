@@ -52,12 +52,12 @@ pub struct QuantumWallet {
     pub name: String,
     /// Optional alias for quick access
     pub alias: Option<String>,
-    /// Current balance in SOV tokens
-    pub balance: u64,
+    /// Current balance in SOV tokens (atomic units, u128 for 18-decimal)
+    pub balance: u128,
     /// Staked balance for rewards
-    pub staked_balance: u64,
+    pub staked_balance: u128,
     /// Pending rewards from staking
-    pub pending_rewards: u64,
+    pub pending_rewards: u128,
     /// Owner identity (optional for standalone wallets)
     pub owner_id: Option<IdentityId>,
     /// Quantum-resistant public key
@@ -199,9 +199,9 @@ pub struct DaoWalletProperties {
     /// DAO founding timestamp
     pub founded_at: u64,
     /// Total incoming funds received
-    pub total_funds_received: u64,
+    pub total_funds_received: u128,
     /// Total outgoing funds spent
-    pub total_funds_spent: u64,
+    pub total_funds_spent: u128,
     /// Number of public transactions
     pub transaction_count: u64,
 }
@@ -214,7 +214,7 @@ pub struct PublicTransactionEntry {
     /// Timestamp of transaction
     pub timestamp: u64,
     /// Amount transacted
-    pub amount: u64,
+    pub amount: u128,
     /// Whether funds came in (true) or went out (false)
     pub is_incoming: bool,
     /// Counterparty wallet ID (if disclosed)
@@ -231,7 +231,7 @@ pub struct DaoGovernanceSettings {
     /// Minimum number of signatures required for transactions
     pub min_signatures_required: u32,
     /// Maximum single transaction amount without governance approval
-    pub max_single_transaction: u64,
+    pub max_single_transaction: u128,
     /// Whether governance voting is required for large transactions
     pub requires_governance_vote: bool,
     /// Voting threshold percentage (0-100)
@@ -273,8 +273,8 @@ pub struct WalletSummary {
     pub name: String,
     /// Optional alias
     pub alias: Option<String>,
-    /// Current balance
-    pub balance: u64,
+    /// Current balance (atomic units, u128 for 18-decimal SOV)
+    pub balance: u128,
     /// Creation timestamp
     pub created_at: u64,
     /// Last transaction timestamp
@@ -700,13 +700,13 @@ impl QuantumWallet {
     }
 
     /// Add funds to the wallet
-    pub fn add_funds(&mut self, amount: u64) {
+    pub fn add_funds(&mut self, amount: u128) {
         self.balance += amount;
         self.update_last_transaction();
     }
 
     /// Remove funds from the wallet (if sufficient balance)
-    pub fn remove_funds(&mut self, amount: u64) -> Result<(), &'static str> {
+    pub fn remove_funds(&mut self, amount: u128) -> Result<(), &'static str> {
         if self.balance >= amount {
             self.balance -= amount;
             self.update_last_transaction();
@@ -789,7 +789,7 @@ impl QuantumWallet {
     }
 
     /// Deduct funds from wallet (with proper error handling)
-    pub fn deduct_funds(&mut self, amount: u64) -> Result<(), &'static str> {
+    pub fn deduct_funds(&mut self, amount: u128) -> Result<(), &'static str> {
         if self.balance >= amount {
             self.balance -= amount;
             self.update_last_transaction();
@@ -800,7 +800,7 @@ impl QuantumWallet {
     }
 
     /// Add rewards to pending rewards
-    pub fn add_rewards(&mut self, amount: u64) {
+    pub fn add_rewards(&mut self, amount: u128) {
         self.pending_rewards += amount;
         self.update_last_transaction();
     }
@@ -833,7 +833,7 @@ impl QuantumWallet {
     /// Add a public transaction to DAO log (only for DAO wallets)
     pub fn add_dao_transaction(
         &mut self,
-        amount: u64,
+        amount: u128,
         is_incoming: bool,
         counterparty_wallet: Option<WalletId>,
         purpose: String,

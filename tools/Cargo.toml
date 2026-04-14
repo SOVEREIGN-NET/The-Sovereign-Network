@@ -33,6 +33,7 @@ lib-protocols = { path = "../lib-protocols" }
 lib-network = { path = "../lib-network" }
 lib-crypto = { path = "../lib-crypto" }
 lib-blockchain = { path = "../lib-blockchain" }
+lib-types = { path = "../lib-types" }
 hex = "0.4"
 anyhow = "1"
 sled = "0.34"

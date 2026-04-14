@@ -26,11 +26,17 @@ pub const TESTNET_GENESIS_HASH: [u8; 32] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
-/// SOV atomic units (8 decimals): 1 SOV = 100,000,000 units
-pub const SOV_ATOMIC_UNITS: u64 = 100_000_000;
+/// SOV atomic units (18 decimals): 1 SOV = 10^18 units
+pub const SOV_ATOMIC_UNITS: u128 = lib_types::sov::SCALE;
 
 /// Welcome bonus amount in SOV (human units)
-pub const SOV_WELCOME_BONUS_SOV: u64 = 5_000;
+pub const SOV_WELCOME_BONUS_SOV: u128 = 5_000;
+
+/// Welcome bonus in atomic units (18-decimal)
+pub const SOV_WELCOME_BONUS: u128 = lib_types::sov::atoms(5_000);
 
 /// Monthly UBI amount in SOV (human units)
-pub const SOV_UBI_MONTHLY_SOV: u64 = 1_000;
+pub const SOV_UBI_MONTHLY_SOV: u128 = 1_000;
+
+/// Monthly UBI in atomic units (18-decimal)
+pub const SOV_UBI_MONTHLY: u128 = lib_types::sov::atoms(1_000);

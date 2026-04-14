@@ -431,7 +431,7 @@ struct ExplorerStatsResponse {
     total_transactions: u64,
     avg_block_time_secs: Option<u64>,
     total_supply: u128,
-    total_ubi_distributed: u64,
+    total_ubi_distributed: u128,
     active_validators: usize,
     mempool_size: usize,
 }
@@ -1103,7 +1103,7 @@ impl BlockchainHandler {
             .map(|token| token.total_supply)
             .unwrap_or(0);
 
-        let total_ubi_distributed: u64 = blockchain
+        let total_ubi_distributed: u128 = blockchain
             .ubi_registry
             .values()
             .map(|entry| entry.total_received)

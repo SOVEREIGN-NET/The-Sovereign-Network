@@ -153,8 +153,8 @@ struct WalletInfo {
     wallet_type: String,
     wallet_id: String,
     available_balance: u128,
-    staked_balance: u64,
-    pending_rewards: u64,
+    staked_balance: u128,
+    pending_rewards: u128,
     total_balance: u128,
     permissions: WalletPermissionsInfo,
     created_at: u64,
@@ -367,10 +367,10 @@ impl WalletHandler {
             let wallet_info = WalletInfo {
                 wallet_type: format!("{:?}", summary.wallet_type),
                 wallet_id: wallet_id_hex.clone(), // Full 64-char hex wallet_id for transfers
-                available_balance: effective_balance.saturating_sub(staked_balance as u128),
+                available_balance: effective_balance.saturating_sub(staked_balance),
                 staked_balance,
                 pending_rewards,
-                total_balance: effective_balance + pending_rewards as u128,
+                total_balance: effective_balance + pending_rewards,
                 permissions: WalletPermissionsInfo {
                     can_transfer_external: true,
                     can_vote: summary.wallet_type == lib_identity::wallets::WalletType::Primary,
@@ -382,7 +382,7 @@ impl WalletHandler {
                 created_at: summary.created_at,
                 description: format!("{:?} wallet for identity", summary.wallet_type),
             };
-            total_balance_adjusted += effective_balance + pending_rewards as u128;
+            total_balance_adjusted += effective_balance + pending_rewards;
             wallets.push(wallet_info);
         }
 
@@ -475,13 +475,13 @@ impl WalletHandler {
                 let (mut available_balance, staked_balance, pending_rewards, created_at) =
                     if let Some(wallet) = identity.wallet_manager.get_wallet(&summary.id) {
                         (
-                            wallet.balance.saturating_sub(wallet.staked_balance) as u128,
+                            wallet.balance.saturating_sub(wallet.staked_balance),
                             wallet.staked_balance,
                             wallet.pending_rewards,
                             wallet.created_at,
                         )
                     } else {
-                        (summary.balance as u128, 0, 0, summary.created_at)
+                        (summary.balance, 0, 0, summary.created_at)
                     };
 
                 // Prefer SOV token contract balance (live balance) for this wallet.
@@ -529,7 +529,7 @@ impl WalletHandler {
                 }
                 drop(blockchain);
 
-                let total_balance = available_balance + staked_balance as u128 + pending_rewards as u128;
+                let total_balance = available_balance + staked_balance + pending_rewards;
 
                 let response_data = json!({
                     "status": "success",
@@ -1357,7 +1357,7 @@ impl WalletHandler {
             .ok_or_else(|| anyhow::anyhow!("No primary wallet found"))?;
 
         // Check balance
-        if primary_wallet.balance < send_req.amount {
+        if primary_wallet.balance < send_req.amount as u128 {
             return Ok(create_error_response(
                 ZhtpStatus::PaymentRequired,
                 format!(
