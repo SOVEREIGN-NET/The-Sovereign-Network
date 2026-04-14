@@ -4,6 +4,7 @@
 
 pub mod handlers;
 pub mod middleware;
+pub mod principal;
 pub mod server;
 
 pub use handlers::*;

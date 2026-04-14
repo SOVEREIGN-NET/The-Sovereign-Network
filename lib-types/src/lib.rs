@@ -12,6 +12,7 @@ pub mod errors;
 pub mod fees;
 pub mod mempool;
 pub mod node_id;
+pub mod node_type;
 pub mod peer;
 pub mod primitives;
 pub mod storage;
@@ -45,6 +46,7 @@ pub use economy::{
 pub use errors::*;
 pub use fees::{FeeDeficit, FeeInput, FeeParams, SigScheme, TxKind};
 pub use node_id::NodeId;
+pub use node_type::NodeType;
 pub use peer::PeerId;
 pub use storage::ProtocolStorageStats;
 pub use tokenomics::{

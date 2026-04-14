@@ -23,11 +23,13 @@
 //! };
 //! ```
 
+pub mod council;
 pub mod errors;
 pub mod fields;
 pub mod pending;
 pub mod tx;
 
+pub use council::{AuditScope, CouncilAction, CouncilProposal, validate_council_action};
 pub use errors::{GovernanceError, GovernanceResult};
 pub use fields::ConfigField;
 pub use pending::{PendingChange, PendingChanges};

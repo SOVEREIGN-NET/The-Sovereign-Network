@@ -133,6 +133,27 @@ impl ConfigField {
         }
     }
 
+    /// Check if this field requires Council (or higher) role to propose changes.
+    pub fn requires_council_role(&self) -> bool {
+        match self {
+            // Authority changes are council-only
+            ConfigField::AuthorityAdd | ConfigField::AuthorityRemove => true,
+            // Protocol parameter changes are council-only
+            ConfigField::BlockSizeLimit | ConfigField::TxCountLimit | ConfigField::BaseFeePerByte => true,
+            // Fee and policy changes can be proposed by citizens but require council approval
+            ConfigField::TransferFeeBps
+            | ConfigField::BurnFeeBps
+            | ConfigField::FeeCap
+            | ConfigField::MinFee
+            | ConfigField::TransferPolicy
+            | ConfigField::FeeRecipient
+            | ConfigField::TreasuryAddress
+            | ConfigField::MaxSupply => false,
+            // Immutable fields cannot be proposed by anyone
+            ConfigField::Name | ConfigField::Symbol | ConfigField::Decimals | ConfigField::TokenId => false,
+        }
+    }
+
     /// Get human-readable description
     pub fn description(&self) -> &'static str {
         match self {

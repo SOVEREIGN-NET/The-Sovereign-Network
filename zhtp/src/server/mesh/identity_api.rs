@@ -20,7 +20,9 @@ use tracing::{error, info, warn};
 
 use crate::api::handlers::constants::SOV_WELCOME_BONUS;
 use crate::session_manager::SessionManager;
+use lib_access_control::{Role, SecurityPrincipal};
 use lib_identity::IdentityManager;
+use lib_types::NodeType;
 
 /// Safe string truncation for display (avoids panic on short strings)
 #[inline]
@@ -40,6 +42,34 @@ pub struct MeshZhtpRequest {
 /// Parse mesh-specific ZHTP request format and convert to standard ZhtpRequest
 pub fn parse_mesh_request(mesh_data: &serde_json::Value) -> Result<MeshZhtpRequest> {
     serde_json::from_value(mesh_data.clone()).context("Failed to parse mesh ZHTP request")
+}
+
+/// Extract a SecurityPrincipal from a mesh request context.
+///
+/// Mesh requests default to Node role since they traverse the peer mesh.
+/// If the wrapped ZHTP request contains an authorization bearer token,
+/// we treat it as a citizen session (placeholder until full cert parsing).
+fn extract_mesh_principal(zhtp_request: &serde_json::Value) -> SecurityPrincipal {
+    if let Some(headers) = zhtp_request.get("headers") {
+        if let Some(auth) = headers.get("authorization").and_then(|v| v.as_str()) {
+            if auth.to_lowercase().starts_with("bearer ") {
+                return SecurityPrincipal::new(
+                    "did:zhtp:session",
+                    Role::Citizen,
+                    NodeType::FullNode,
+                );
+            }
+        }
+        if let Some(node_type) = headers.get("x-node-type").and_then(|v| v.as_str()) {
+            return SecurityPrincipal::new(
+                "did:zhtp:node",
+                Role::Node,
+                NodeType::from_config(Some(node_type)),
+            );
+        }
+    }
+    // Default: unauthenticated mesh traffic is treated as public.
+    SecurityPrincipal::public()
 }
 
 /// Handle identity API requests directly via UDP mesh for maximum efficiency
@@ -63,8 +93,25 @@ pub async fn handle_identity_mesh_request(
         }
     };
 
+    let principal = extract_mesh_principal(zhtp_request);
+
+    // Helper to deny unauthenticated public principals from mutating mesh endpoints.
+    async fn check_public_denied(principal: &SecurityPrincipal) -> Option<Result<Option<Vec<u8>>>> {
+        if principal.role == Role::Public {
+            Some(create_error_mesh_response(
+                403,
+                "Public principals cannot perform this operation over mesh",
+            ).await)
+        } else {
+            None
+        }
+    }
+
     // Route based on URI path
     if mesh_req.uri == "/api/v1/identity/create" && mesh_req.method.to_uppercase() == "POST" {
+        if let Some(resp) = check_public_denied(&principal).await {
+            return resp;
+        }
         info!("✨ Creating new zkDID identity via UDP mesh");
 
         // Extract request data from the original ZHTP request body

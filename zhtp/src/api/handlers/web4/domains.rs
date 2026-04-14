@@ -5,7 +5,9 @@ use crate::web4_manifest::{
 };
 use anyhow::anyhow;
 use base64::{engine::general_purpose, Engine as _};
-use lib_identity::ZhtpIdentity;
+use lib_identity::{types::IdentityView, ZhtpIdentity};
+use lib_access_control::{SecurityPrincipal, Role};
+use lib_types::NodeType;
 use lib_network::web4::{
     DomainEconomicSettings, DomainLookupResponse, DomainMetadata, DomainRegistrationRequest,
     PublicOwnerInfo,
@@ -125,14 +127,18 @@ pub struct ApiDomainReleaseRequest {
 impl Web4Handler {
     /// Register a domain using simplified format (for easy testing/deployment)
     /// Supports both manifest-based (from CLI deploy) and content-based formats
-    pub async fn register_domain_simple(&self, request_body: Vec<u8>) -> ZhtpResult<ZhtpResponse> {
+    pub async fn register_domain_simple(
+        &self,
+        request_body: Vec<u8>,
+        principal: &SecurityPrincipal,
+    ) -> ZhtpResult<ZhtpResponse> {
         info!("Processing Web4 domain registration request");
 
         // Try manifest-based request first (simpler format from CLI deploy)
         if let Ok(manifest_request) =
             serde_json::from_slice::<ManifestDomainRegistrationRequest>(&request_body)
         {
-            return self.register_domain_from_manifest(manifest_request).await;
+            return self.register_domain_from_manifest(manifest_request, principal).await;
         }
 
         // Fall back to simple request with inline content
@@ -158,12 +164,26 @@ impl Web4Handler {
         // Look up owner identity using boundary-safe DID API
         // This is the correct layer: accept DID, use get_identity_by_did()
         let identity_mgr = self.identity_manager.read().await;
+        let view = identity_mgr.get_identity_view_by_did(principal, &owner_did);
+
+        // Domain registration requires at least device-owner level access.
+        match view {
+            Some(IdentityView::Public(_)) | None => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::Forbidden,
+                    "Access denied: cannot register domain for this identity".to_string(),
+                ));
+            }
+            _ => {}
+        }
+
         let owner_identity = identity_mgr.get_identity_by_did(&owner_did)
             .ok_or_else(|| anyhow!(
                 "Owner identity not found: {}. Please register this identity first using /api/v1/identity/create",
                 owner_did
             ))?
             .clone();
+        drop(identity_mgr);
 
         // DEBUG: Check wallet state right after retrieval
         info!("  WALLET DEBUG (after IdentityManager retrieval):");
@@ -179,7 +199,6 @@ impl Web4Handler {
             );
         }
 
-        drop(identity_mgr);
         info!(
             " Using identity: {} (Display name: {})",
             owner_did,
@@ -665,6 +684,7 @@ impl Web4Handler {
     async fn register_domain_from_manifest(
         &self,
         request: ManifestDomainRegistrationRequest,
+        principal: &SecurityPrincipal,
     ) -> ZhtpResult<ZhtpResponse> {
         info!("Processing manifest-based domain registration");
         info!(" Domain: {}", request.domain);
@@ -685,6 +705,7 @@ impl Web4Handler {
 
         // Look up owner identity using boundary-safe DID API
         let identity_mgr = self.identity_manager.read().await;
+        let view = identity_mgr.get_identity_view_by_did(principal, &owner_did);
         let owner_identity = identity_mgr
             .get_identity_by_did(&owner_did)
             .ok_or_else(|| {
@@ -695,6 +716,17 @@ impl Web4Handler {
             })?
             .clone();
         drop(identity_mgr);
+
+        // Domain registration requires at least device-owner level access.
+        match view {
+            Some(IdentityView::Public(_)) | None => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::Forbidden,
+                    "Access denied: cannot register domain for this identity".to_string(),
+                ));
+            }
+            _ => {}
+        }
         info!(" Verified owner identity: {}", owner_did);
 
         if owner_identity.did != manifest.author_did {
@@ -2370,8 +2402,13 @@ mod tests {
         let request =
             simple_registration_request(&owner_identity, "valid-fee.zhtp", "<html>ok</html>", &tx)?;
 
+        let principal = SecurityPrincipal::new(
+            owner_identity.did.clone(),
+            Role::Citizen,
+            NodeType::FullNode,
+        );
         let response = handler
-            .register_domain_simple(serde_json::to_vec(&request)?)
+            .register_domain_simple(serde_json::to_vec(&request)?, &principal)
             .await?;
         assert_eq!(response.status, ZhtpStatus::Ok);
         let body: serde_json::Value = serde_json::from_slice(&response.body)?;
@@ -2411,8 +2448,13 @@ mod tests {
             &tx,
         )?;
 
+        let principal = SecurityPrincipal::new(
+            owner_identity.did.clone(),
+            Role::Citizen,
+            NodeType::FullNode,
+        );
         let result = handler
-            .register_domain_simple(serde_json::to_vec(&request)?)
+            .register_domain_simple(serde_json::to_vec(&request)?, &principal)
             .await;
         assert!(result.is_err(), "invalid fee tx amount should be rejected");
         let err = format!("{}", result.err().unwrap());

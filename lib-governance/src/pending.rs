@@ -134,32 +134,14 @@ impl PendingChanges {
 
     /// Check if there's a pending change for a target+field
     pub fn has_pending(&self, target: &TokenId, field: ConfigField) -> bool {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        target.as_bytes().hash(&mut hasher);
-        field.hash(&mut hasher);
-
-        let hash = hasher.finish();
-        let mut id = [0u8; 32];
-        id[..8].copy_from_slice(&hash.to_le_bytes());
-
-        self.by_id.contains_key(&id)
+        self.lookup_change_id(target, field)
+            .map(|id| self.by_id.contains_key(&id))
+            .unwrap_or(false)
     }
 
     /// Cancel a pending change (governance veto)
     pub fn cancel(&mut self, target: &TokenId, field: ConfigField) -> Option<PendingChange> {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        target.as_bytes().hash(&mut hasher);
-        field.hash(&mut hasher);
-
-        let hash = hasher.finish();
-        let mut change_id = [0u8; 32];
-        change_id[..8].copy_from_slice(&hash.to_le_bytes());
+        let change_id = self.lookup_change_id(target, field)?;
 
         if let Some(height) = self.by_id.remove(&change_id) {
             if let Some(changes) = self.by_height.get_mut(&height) {
@@ -169,6 +151,20 @@ impl PendingChanges {
             }
         }
         None
+    }
+
+    /// Compute the deterministic change_id for a target+field combination.
+    fn lookup_change_id(&self, target: &TokenId, field: ConfigField) -> Option<[u8; 32]> {
+        use blake3::Hasher;
+
+        let mut hasher = Hasher::new();
+        hasher.update(b"ZHTP_GOVERNANCE_CHANGE_V1");
+        hasher.update(target.as_bytes());
+
+        let field_bytes = bincode::serialize(&field).ok()?;
+        hasher.update(&field_bytes);
+
+        Some(*hasher.finalize().as_bytes())
     }
 
     /// Get total number of pending changes
