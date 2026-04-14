@@ -1234,6 +1234,8 @@ impl BlockchainHandler {
             search_type = Some(explicit);
         }
 
+        let principal = self.extract_principal(&request);
+
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
         let latest_height = blockchain
@@ -1301,14 +1303,15 @@ impl BlockchainHandler {
 
         let resolve_identity = |did: &str| -> Option<serde_json::Value> {
             let identity = blockchain.identity_registry.get(&did.to_string())?;
+            let is_public = principal.role == lib_access_control::Role::Public;
             Some(serde_json::json!({
                 "did": identity.did,
                 "display_name": identity.display_name,
                 "identity_type": identity.identity_type,
                 "registration_fee": identity.registration_fee,
                 "created_at": identity.created_at,
-                "controlled_nodes": identity.controlled_nodes,
-                "owned_wallets": identity.owned_wallets,
+                "controlled_nodes": if is_public { None::<Vec<String>> } else { Some(identity.controlled_nodes.clone()) },
+                "owned_wallets": if is_public { None::<Vec<String>> } else { Some(identity.owned_wallets.clone()) },
             }))
         };
 
