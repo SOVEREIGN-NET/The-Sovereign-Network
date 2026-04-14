@@ -498,6 +498,22 @@ pub enum IdentityAction {
         #[arg(short, long)]
         recovery_options: Vec<String>,
     },
+    /// Register identity on-chain (creates identity + wallets + SOV welcome bonus)
+    ///
+    /// If no local keystore exists, generates keys first. Then calls the node's
+    /// /api/v1/identity/register endpoint to register on-chain with 3 wallets
+    /// (Primary, UBI, Savings) and receive the SOV welcome bonus.
+    Register {
+        /// Display name
+        #[arg(short, long)]
+        display_name: String,
+        /// Device identifier
+        #[arg(long, default_value = "cli-device")]
+        device_id: String,
+        /// Path to identity keystore directory
+        #[arg(short, long)]
+        keystore: Option<String>,
+    },
     /// Verify identity (orchestrated)
     Verify {
         /// Identity ID
