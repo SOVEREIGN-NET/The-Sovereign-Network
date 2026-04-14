@@ -173,8 +173,8 @@ impl TreasuryKernel {
                 .map_err(|_| KernelOpError::InvalidState)?;
         }
 
-        // Get current circulating supply from token contract
-        let circulating_supply = u64::try_from(token.total_supply).unwrap_or(u64::MAX);
+        // Get current circulating supply from token contract (full u128 precision)
+        let circulating_supply = token.total_supply;
 
         // Apply the update
         let new_srv = self
@@ -404,9 +404,10 @@ mod tests {
 
         // Pre-mint some tokens to have non-zero circulating supply
         // Use the kernel address to mint (it has kernel authority)
+        // Mint 50M SOV in 18-decimal atomic units
         let _ =
-            token.mint_kernel_only(&test_kernel_address(), &test_user(), 50_000_000_000_000_000);
-        assert_eq!(token.total_supply, 50_000_000_000_000_000); // 50M SOV
+            token.mint_kernel_only(&test_kernel_address(), &test_user(), 50_000_000_000_000_000_000_000_000);
+        assert_eq!(token.total_supply, 50_000_000_000_000_000_000_000_000); // 50M SOV
 
         // Small increase from 109M to 110M committed value
         // With circulating supply of 50M SOV, SRV changes from ~$0.0218 to ~$0.0220

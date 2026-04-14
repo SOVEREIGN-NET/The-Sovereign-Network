@@ -418,7 +418,9 @@ impl Blockchain {
         if total_cast == 0 {
             return Ok(false);
         }
-        let circulating = self.get_circulating_sov_supply().max(1);
+        // Normalize circulating supply to whole-token units for consistent comparison
+        // with voting_power (which is computed in whole-token units)
+        let circulating = (self.get_circulating_sov_supply() / lib_types::TOKEN_SCALE_18).max(1);
         let participation_pct = (total_cast as u128 * 100) / circulating;
         if participation_pct < quorum_pct as u128 {
             return Ok(false);

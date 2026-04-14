@@ -33,8 +33,8 @@ pub struct SRVState {
     /// Example: 109_000_000 = $1,090,000
     pub committed_value_usd: u64,
 
-    /// Circulating supply at time of last SRV calculation (8 decimals)
-    pub circulating_supply_sov: u64,
+    /// Circulating supply at time of last SRV calculation (18 decimals)
+    pub circulating_supply_sov: u128,
 
     /// Stability multiplier in basis points (10000 = 1.0)
     pub stability_multiplier_bps: u16,
@@ -72,7 +72,7 @@ pub struct SRVUpdateRecord {
     /// Committed value used
     pub committed_value_usd: u64,
     /// Circulating supply used
-    pub circulating_supply_sov: u64,
+    pub circulating_supply_sov: u128,
     /// Proposal ID that authorized this update
     pub proposal_id: [u8; 32],
 }
@@ -120,7 +120,7 @@ impl SRVState {
     /// # Arguments
     /// * `initial_srv` - Initial SRV value (8 decimals)
     /// * `committed_value_usd` - Initial committed value in USD cents
-    /// * `circulating_supply_sov` - Initial circulating supply (8 decimals)
+    /// * `circulating_supply_sov` - Initial circulating supply (18 decimals)
     /// * `stability_multiplier_bps` - Initial stability multiplier (basis points)
     ///
     /// # Returns
@@ -128,7 +128,7 @@ impl SRVState {
     pub fn new(
         initial_srv: u64,
         committed_value_usd: u64,
-        circulating_supply_sov: u64,
+        circulating_supply_sov: u128,
         stability_multiplier_bps: u16,
     ) -> Self {
         Self {
@@ -149,13 +149,13 @@ impl SRVState {
     /// Default genesis values:
     /// - SRV: $0.0218 (2_180_000 with 8 decimals)
     /// - Committed value: $1,090,000 (109_000_000 cents)
-    /// - Circulating supply: 50M SOV (50_000_000_000_000_000 with 8 decimals)
+    /// - Circulating supply: 50M SOV (50_000_000_000_000_000_000_000_000 with 18 decimals)
     /// - Stability multiplier: 1.0 (10_000 basis points)
     pub fn new_genesis() -> Self {
         Self::new(
             2_180_000,              // $0.0218
             109_000_000,            // $1,090,000
-            50_000_000_000_000_000, // 50M SOV
+            50_000_000_000_000_000_000_000_000, // 50M SOV
             10_000,                 // 1.0
         )
     }
@@ -166,19 +166,19 @@ impl SRVState {
     ///
     /// Where:
     /// - Committed_Value_USD is in cents (2 decimals)
-    /// - Circulating_SOV is in atomic units (8 decimals)
+    /// - Circulating_SOV is in atomic units (18 decimals)
     /// - SRV result is in USD per SOV (8 decimals)
     ///
     /// # Arguments
     /// * `committed_value_usd` - Total committed value in USD cents
-    /// * `circulating_supply_sov` - Circulating SOV (8 decimals, atomic units)
+    /// * `circulating_supply_sov` - Circulating SOV (18 decimals, atomic units)
     /// * `multiplier_bps` - Stability multiplier in basis points
     ///
     /// # Returns
     /// SRV in USD per SOV (8 decimal precision)
     pub fn calculate_srv(
         committed_value_usd: u64,
-        circulating_supply_sov: u64,
+        circulating_supply_sov: u128,
         multiplier_bps: u16,
     ) -> Result<u64, SRVError> {
         // Prevent division by zero
@@ -192,19 +192,19 @@ impl SRVState {
         }
 
         // Integer math for determinism:
-        // SRV = committed_value_usd * 10^14 / circulating_supply_sov * multiplier_bps / 10^4
+        // SRV = committed_value_usd * 10^24 / circulating_supply_sov * multiplier_bps / 10^4
         //
         // Explanation:
         // - committed_value_usd is in cents ($1 = 100 cents)
-        // - circulating_supply_sov is in atomic units (1 SOV = 10^8)
+        // - circulating_supply_sov is in atomic units (1 SOV = 10^18)
         // - We want SRV in USD per SOV with 8 decimals
-        // - 10^14 = 10^8 (SRV decimals) * 10^8 (SOV decimals) / 10^2 (cents to USD)
+        // - 10^24 = 10^8 (SRV decimals) * 10^18 (SOV decimals) / 10^2 (cents to USD)
         //
         // Rearranging to avoid overflow:
-        // SRV = (committed_value_usd * 10^14 / circulating_supply_sov) * multiplier_bps / 10^4
+        // SRV = (committed_value_usd * 10^24 / circulating_supply_sov) * multiplier_bps / 10^4
 
         let base_srv = (committed_value_usd as u128)
-            .checked_mul(10_000_000_000_000_00u128) // 10^14
+            .checked_mul(1_000_000_000_000_000_000_000_000u128) // 10^24
             .ok_or(SRVError::Overflow)?
             .checked_div(circulating_supply_sov as u128)
             .ok_or(SRVError::Overflow)?;
@@ -260,7 +260,7 @@ impl SRVState {
     ///
     /// # Arguments
     /// * `new_committed_value` - Updated committed value in USD cents
-    /// * `circulating_supply` - Current circulating supply (8 decimals)
+    /// * `circulating_supply` - Current circulating supply (18 decimals)
     /// * `proposal_id` - Authorizing proposal ID
     /// * `height` - Current block height
     /// * `epoch` - Current epoch
@@ -270,7 +270,7 @@ impl SRVState {
     pub fn apply_update(
         &mut self,
         new_committed_value: u64,
-        circulating_supply: u64,
+        circulating_supply: u128,
         proposal_id: [u8; 32],
         height: u64,
         epoch: u64,
@@ -354,8 +354,8 @@ pub struct SRVGenesisConfig {
     pub initial_srv: u64,
     /// Initial committed value in USD cents
     pub initial_committed_value_usd: u64,
-    /// Initial circulating supply (8 decimals)
-    pub initial_circulating_supply: u64,
+    /// Initial circulating supply (18 decimals)
+    pub initial_circulating_supply: u128,
     /// Initial stability multiplier (basis points)
     pub stability_multiplier_bps: u16,
     /// Maximum change per update (basis points)
@@ -367,7 +367,7 @@ impl Default for SRVGenesisConfig {
         Self {
             initial_srv: 2_180_000,                             // $0.0218
             initial_committed_value_usd: 109_000_000,           // $1,090,000
-            initial_circulating_supply: 50_000_000_000_000_000, // 50M SOV
+            initial_circulating_supply: 50_000_000_000_000_000_000_000_000, // 50M SOV
             stability_multiplier_bps: 10_000,                   // 1.0
             max_change_bps: 100,                                // 1%
         }
@@ -392,10 +392,10 @@ mod tests {
 
     #[test]
     fn test_srv_state_new() {
-        let state = SRVState::new(2_180_000, 109_000_000, 50_000_000_000_000_000, 10_000);
+        let state = SRVState::new(2_180_000, 109_000_000, 50_000_000_000_000_000_000_000_000, 10_000);
         assert_eq!(state.current_srv, 2_180_000);
         assert_eq!(state.committed_value_usd, 109_000_000);
-        assert_eq!(state.circulating_supply_sov, 50_000_000_000_000_000);
+        assert_eq!(state.circulating_supply_sov, 50_000_000_000_000_000_000_000_000);
         assert_eq!(state.stability_multiplier_bps, 10_000);
         assert_eq!(state.max_change_bps, 100);
     }
@@ -405,7 +405,7 @@ mod tests {
         let state = SRVState::new_genesis();
         assert_eq!(state.current_srv, 2_180_000);
         assert_eq!(state.committed_value_usd, 109_000_000);
-        assert_eq!(state.circulating_supply_sov, 50_000_000_000_000_000);
+        assert_eq!(state.circulating_supply_sov, 50_000_000_000_000_000_000_000_000);
         assert_eq!(state.stability_multiplier_bps, 10_000);
     }
 
@@ -413,11 +413,11 @@ mod tests {
     fn test_calculate_srv_genesis_values() {
         // Test with genesis values
         // Committed: $1,090,000 = 109,000,000 cents
-        // Circulating: 50M SOV = 50,000,000,000,000,000 (8 decimals)
+        // Circulating: 50M SOV = 50_000_000_000_000_000_000_000_000 (18 decimals)
         // Multiplier: 1.0 = 10,000 bps
         // Expected: $0.0218 = 2,180,000 (8 decimals)
 
-        let srv = SRVState::calculate_srv(109_000_000, 50_000_000_000_000_000, 10_000).unwrap();
+        let srv = SRVState::calculate_srv(109_000_000, 50_000_000_000_000_000_000_000_000, 10_000).unwrap();
         assert_eq!(srv, 2_180_000);
     }
 
@@ -426,7 +426,7 @@ mod tests {
         // Test with 0.95 stability multiplier
         // Expected: $0.0218 * 0.95 = $0.02071
 
-        let srv = SRVState::calculate_srv(109_000_000, 50_000_000_000_000_000, 9_500).unwrap();
+        let srv = SRVState::calculate_srv(109_000_000, 50_000_000_000_000_000_000_000_000, 9_500).unwrap();
         assert_eq!(srv, 2_071_000); // 2,071,000 = $0.02071
     }
 
@@ -438,13 +438,13 @@ mod tests {
 
     #[test]
     fn test_calculate_srv_zero_multiplier_fails() {
-        let result = SRVState::calculate_srv(109_000_000, 50_000_000_000_000_000, 0);
+        let result = SRVState::calculate_srv(109_000_000, 50_000_000_000_000_000_000_000_000, 0);
         assert_eq!(result, Err(SRVError::InvalidStabilityMultiplier));
     }
 
     #[test]
     fn test_validate_proposed_change_within_limit() {
-        let state = SRVState::new(2_180_000, 109_000_000, 50_000_000_000_000_000, 10_000);
+        let state = SRVState::new(2_180_000, 109_000_000, 50_000_000_000_000_000_000_000_000, 10_000);
 
         // 0.5% increase (within 1% limit)
         let new_srv = 2_180_000 + (2_180_000 / 200); // +0.5%
@@ -457,7 +457,7 @@ mod tests {
 
     #[test]
     fn test_validate_proposed_change_exceeds_limit() {
-        let state = SRVState::new(2_180_000, 109_000_000, 50_000_000_000_000_000, 10_000);
+        let state = SRVState::new(2_180_000, 109_000_000, 50_000_000_000_000_000_000_000_000, 10_000);
 
         // 2% increase (exceeds 1% limit)
         let new_srv = 2_180_000 + (2_180_000 / 50); // +2%
@@ -469,7 +469,7 @@ mod tests {
 
     #[test]
     fn test_validate_proposed_change_when_paused() {
-        let mut state = SRVState::new(2_180_000, 109_000_000, 50_000_000_000_000_000, 10_000);
+        let mut state = SRVState::new(2_180_000, 109_000_000, 50_000_000_000_000_000_000_000_000, 10_000);
         state.set_emergency_pause(true);
 
         assert_eq!(
@@ -480,13 +480,13 @@ mod tests {
 
     #[test]
     fn test_apply_update() {
-        let mut state = SRVState::new(2_180_000, 109_000_000, 50_000_000_000_000_000, 10_000);
+        let mut state = SRVState::new(2_180_000, 109_000_000, 50_000_000_000_000_000_000_000_000, 10_000);
 
         // Update with small committed value increase (within 1% limit)
         // Increase from $1.09M to $1.10M = ~0.9% increase
         let result = state.apply_update(
             110_000_000, // slight increase from 109M
-            50_000_000_000_000_000,
+            50_000_000_000_000_000_000_000_000,
             [1u8; 32],
             100,
             1,
@@ -502,12 +502,12 @@ mod tests {
 
     #[test]
     fn test_apply_update_exceeds_limit_fails() {
-        let mut state = SRVState::new(2_180_000, 109_000_000, 50_000_000_000_000_000, 10_000);
+        let mut state = SRVState::new(2_180_000, 109_000_000, 50_000_000_000_000_000_000_000_000, 10_000);
 
         // Try to increase SRV by 50% (way over 1% limit)
         let result = state.apply_update(
             163_500_000, // would give 50% increase
-            50_000_000_000_000_000,
+            50_000_000_000_000_000_000_000_000,
             [1u8; 32],
             100,
             1,
@@ -519,7 +519,7 @@ mod tests {
 
     #[test]
     fn test_update_stability_multiplier() {
-        let mut state = SRVState::new(2_180_000, 109_000_000, 50_000_000_000_000_000, 10_000);
+        let mut state = SRVState::new(2_180_000, 109_000_000, 50_000_000_000_000_000_000_000_000, 10_000);
 
         assert!(state.update_stability_multiplier(9_500).is_ok());
         assert_eq!(state.stability_multiplier_bps, 9_500);
@@ -533,13 +533,13 @@ mod tests {
 
     #[test]
     fn test_history_pruning() {
-        let mut state = SRVState::new(2_180_000, 109_000_000, 50_000_000_000_000_000, 10_000);
+        let mut state = SRVState::new(2_180_000, 109_000_000, 50_000_000_000_000_000_000_000_000, 10_000);
 
         // Add 105 updates
         for i in 0..105 {
             let _ = state.apply_update(
                 109_000_000 + i as u64,
-                50_000_000_000_000_000,
+                50_000_000_000_000_000_000_000_000,
                 [i as u8; 32],
                 i as u64,
                 i as u64,
@@ -552,7 +552,7 @@ mod tests {
 
     #[test]
     fn test_current_srv_formatted() {
-        let state = SRVState::new(2_180_000, 109_000_000, 50_000_000_000_000_000, 10_000);
+        let state = SRVState::new(2_180_000, 109_000_000, 50_000_000_000_000_000_000_000_000, 10_000);
         assert_eq!(state.current_srv_formatted(), "$0.02180000");
     }
 
@@ -561,7 +561,7 @@ mod tests {
         let config = SRVGenesisConfig::default();
         assert_eq!(config.initial_srv, 2_180_000);
         assert_eq!(config.initial_committed_value_usd, 109_000_000);
-        assert_eq!(config.initial_circulating_supply, 50_000_000_000_000_000);
+        assert_eq!(config.initial_circulating_supply, 50_000_000_000_000_000_000_000_000);
         assert_eq!(config.stability_multiplier_bps, 10_000);
         assert_eq!(config.max_change_bps, 100);
     }

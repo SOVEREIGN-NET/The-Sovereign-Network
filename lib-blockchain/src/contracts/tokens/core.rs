@@ -161,10 +161,10 @@ impl TokenContract {
             token_id,
             name,
             symbol,
-            8,                    // Default 8 decimals
-            u64::MAX as u128,     // Very large max supply
-            false,                // Not deflationary by default
-            0,                    // No burn rate
+            super::constants::SOV_TOKEN_DECIMALS, // Default 18 decimals (protocol standard)
+            u64::MAX as u128,                     // Very large max supply
+            false,                                // Not deflationary by default
+            0,                                    // No burn rate
             creator.clone(),
         );
 
@@ -631,7 +631,7 @@ mod tests {
 
         assert_eq!(token.name, "Test Token");
         assert_eq!(token.symbol, "TEST");
-        assert_eq!(token.decimals, 8);
+        assert_eq!(token.decimals, 18);
         assert!(!token.is_deflationary);
         assert_eq!(token.creator, public_key);
         assert_eq!(token.total_supply, 100_000_000);
