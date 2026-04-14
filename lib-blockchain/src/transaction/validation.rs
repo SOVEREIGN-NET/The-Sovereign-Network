@@ -2432,6 +2432,21 @@ impl<'a> StatefulTransactionValidator<'a> {
             return Err(ValidationError::InvalidTransaction);
         }
 
+        // amount_cbe must be positive
+        if data.amount_cbe == 0 {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // collaborator_address must be non-zero
+        if data.collaborator_address == [0u8; 32] {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // deliverable_hash must be non-zero (protocol invariant: no deliverable = no mint)
+        if data.deliverable_hash == [0u8; 32] {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
         Ok(())
     }
 

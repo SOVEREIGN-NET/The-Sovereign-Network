@@ -804,6 +804,10 @@ impl BlockExecutor {
                 TxOutcome::TreasuryAllocation => {
                     summary.balance_changes += 2; // source debit + destination credit
                 }
+                TxOutcome::PayrollMint => {
+                    // Collaborator credit + treasury credit = 2 balance changes
+                    summary.balance_changes += 2;
+                }
                 TxOutcome::LegacySystem => {
                     // No state changes for legacy system transactions.
                 }
@@ -2003,6 +2007,126 @@ impl BlockExecutor {
         ))
     }
 
+    /// Apply a payroll mint — synthetic CBE bonding curve event (spec §6).
+    ///
+    /// Mints `amount_cbe` (X) CBE to the collaborator wallet and 0.25X to the SOV
+    /// treasury address.  Records a PRE_BACKED entry for the full 1.25X gross.
+    /// No SOV enters the system — `s_c` does not change, `reserve_balance` is
+    /// unaffected, and the floor price remains stable.
+    fn apply_payroll_mint(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        block_height: u64,
+    ) -> Result<(), TxApplyError> {
+        use crate::contracts::bonding_curve::canonical::{compute_debt_state, DEBT_CEILING};
+        use crate::transaction::core::ProcessPayrollData;
+
+        let data: &ProcessPayrollData = tx
+            .process_payroll_data()
+            .ok_or_else(|| {
+                TxApplyError::InvalidType("ProcessPayroll missing payload".to_string())
+            })?;
+
+        let amount_cbe = data.amount_cbe;
+        let collaborator = data.collaborator_address;
+        let deliverable_hash = data.deliverable_hash;
+
+        if amount_cbe == 0 {
+            return Err(TxApplyError::InvalidType(
+                "PAYROLL_MINT: amount_cbe must be > 0".to_string(),
+            ));
+        }
+
+        // ── 1. Compute gross mint (1.25X) and split ─────────────────────────
+        let gross = amount_cbe
+            .checked_mul(125)
+            .and_then(|v| v.checked_div(100))
+            .ok_or_else(|| {
+                TxApplyError::InvalidType("PAYROLL_MINT: gross overflow".to_string())
+            })?;
+
+        // 0.25X → SOV treasury (held as CBE, not swapped)
+        let sov_treasury_credit = gross / 5; // = 0.25X
+        // Remaining X split: 40% reserve, 60% liquidity — but these are CBE-denominated
+        // obligations, not SOV. The actual reserve_balance (SOV) doesn't change because
+        // no SOV entered. We track the obligation via PRE_BACKED.
+
+        // ── 2. Debt ceiling check ───────────────────────────────────────────
+        let mut econ = mutator.get_cbe_economic_state()?;
+
+        let new_outstanding = econ
+            .outstanding_pre_backed
+            .checked_add(gross)
+            .ok_or_else(|| {
+                TxApplyError::InvalidType("PAYROLL_MINT: outstanding overflow".to_string())
+            })?;
+
+        if new_outstanding > DEBT_CEILING {
+            return Err(TxApplyError::InvalidType(format!(
+                "PAYROLL_MINT: debt ceiling breached — outstanding {} + gross {} > ceiling {}",
+                econ.outstanding_pre_backed, gross, DEBT_CEILING
+            )));
+        }
+
+        // ── 3. Update compensation pool (tracks CBE allocated to collaborators)
+        econ.compensation_pool
+            .mint(amount_cbe)
+            .map_err(|e| TxApplyError::InvalidType(format!("PAYROLL_MINT: compensation pool: {e}")))?;
+
+        // ── 4. Update SOV treasury CBE balance ──────────────────────────────
+        econ.sov_treasury_cbe_balance = econ
+            .sov_treasury_cbe_balance
+            .checked_add(sov_treasury_credit)
+            .ok_or_else(|| {
+                TxApplyError::InvalidType("PAYROLL_MINT: sov_treasury overflow".to_string())
+            })?;
+
+        // ── 5. Record PRE_BACKED entry ──────────────────────────────────────
+        econ.pre_backed_queue.push(lib_types::PreBackedEntry {
+            block_height,
+            amount_cbe: gross,
+            recipient: collaborator,
+            deliverable_hash,
+            satisfied: false,
+        });
+        econ.outstanding_pre_backed = new_outstanding;
+        econ.debt_state = compute_debt_state(new_outstanding);
+
+        // ── 6. Persist economic state ───────────────────────────────────────
+        mutator.put_cbe_economic_state(&econ)?;
+
+        // ── 7. Credit CBE tokens ────────────────────────────────────────────
+        let cbe_token_id = TokenId::new(crate::Blockchain::derive_cbe_token_id_pub());
+
+        // X CBE → collaborator wallet
+        mutator.credit_token(
+            &cbe_token_id,
+            &Address::new(collaborator),
+            amount_cbe,
+        )?;
+
+        // 0.25X CBE → SOV treasury address
+        let treasury_addr = *self.fee_model.protocol_params.fee_sink_address();
+        mutator.credit_token(
+            &cbe_token_id,
+            &treasury_addr,
+            sov_treasury_credit,
+        )?;
+
+        tracing::info!(
+            "PAYROLL_MINT: collaborator={} amount_cbe={} gross={} treasury_credit={} deliverable={} outstanding={}",
+            hex::encode(&collaborator[..4]),
+            amount_cbe,
+            gross,
+            sov_treasury_credit,
+            hex::encode(&deliverable_hash[..4]),
+            new_outstanding,
+        );
+
+        Ok(())
+    }
+
     /// Apply a TreasuryAllocation transaction — transfer SOV from source treasury
     /// to destination DAO wallet in the canonical token ledger.
     fn apply_treasury_allocation(
@@ -2500,13 +2624,17 @@ impl BlockExecutor {
             | TransactionType::GovernanceConfigUpdate
             | TransactionType::UpdateOracleCommittee
             | TransactionType::UpdateOracleConfig
-            // Employment and payroll transactions: state is maintained in-memory by
-            // process_employment_contract_transactions and process_payroll_transactions
-            // (called after executor.apply_block in process_and_commit_block). The executor
-            // accepts them as no-ops so blocks containing these types don't fail validation.
+            // Employment contract creation and CBE init: state is maintained in-memory by
+            // process_employment_contract_transactions (called after executor.apply_block
+            // in process_and_commit_block). The executor accepts them as no-ops so blocks
+            // containing these types don't fail validation.
             | TransactionType::InitCbeToken
-            | TransactionType::CreateEmploymentContract
-            | TransactionType::ProcessPayroll => Ok(TxOutcome::LegacySystem),
+            | TransactionType::CreateEmploymentContract => Ok(TxOutcome::LegacySystem),
+
+            TransactionType::ProcessPayroll => {
+                self.apply_payroll_mint(mutator, tx, block_height)?;
+                Ok(TxOutcome::PayrollMint)
+            }
 
             TransactionType::DaoStake => {
                 self.apply_dao_stake(mutator, tx, block_height)?;
@@ -2674,6 +2802,8 @@ enum TxOutcome {
     Coinbase(CoinbaseOutcome),
     /// Treasury allocation: SOV transferred from source treasury to destination wallet.
     TreasuryAllocation,
+    /// Payroll mint: synthetic curve event that mints CBE to a collaborator.
+    PayrollMint,
     /// Legacy system transaction types (IdentityRegistration, WalletRegistration, etc.)
     /// accepted as no-ops by the Phase-2 executor for backwards compatibility.
     LegacySystem,

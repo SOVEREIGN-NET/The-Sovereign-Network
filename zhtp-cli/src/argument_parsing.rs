@@ -1380,11 +1380,20 @@ pub enum CbeAction {
         #[arg(long, default_value = "0")]
         profit_share_bp: u16,
     },
-    /// Process a payroll period for an employment contract
+    /// Process a payroll period for an employment contract (synthetic curve event)
     Payroll {
         /// 32-byte hex employment contract ID
         #[arg(long)]
         contract_id: String,
+        /// CBE amount the collaborator earns (X, in 18-decimal atoms)
+        #[arg(long)]
+        amount_cbe: u128,
+        /// Collaborator wallet address (32-byte hex key_id)
+        #[arg(long)]
+        collaborator: String,
+        /// Blake3 hash of the governance-approved deliverable (32-byte hex)
+        #[arg(long)]
+        deliverable_hash: String,
     },
     /// Transfer CBE tokens from your wallet to another
     ///
