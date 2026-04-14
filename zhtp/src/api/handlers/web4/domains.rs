@@ -190,25 +190,28 @@ impl Web4Handler {
                 .unwrap_or("no name")
         );
 
-        // Domain registration fee: fixed 10 SOV
-        const DOMAIN_REGISTRATION_FEE_SOV: u64 = 10;
+        // Domain registration fee: fixed 10 SOV (in whole tokens for display / signature).
+        // The actual on-chain transfer amount is in 18-decimal atomic units.
+        const DOMAIN_REGISTRATION_FEE_SOV_WHOLE: u64 = 10;
+        const DOMAIN_REGISTRATION_FEE_ATOMIC: u128 =
+            DOMAIN_REGISTRATION_FEE_SOV_WHOLE as u128 * lib_types::TOKEN_SCALE_18;
 
         // Fee is fixed; if the client provides it explicitly, it must match.
-        let user_provided_fee = simple_request.fee.unwrap_or(DOMAIN_REGISTRATION_FEE_SOV);
-        if user_provided_fee != DOMAIN_REGISTRATION_FEE_SOV {
+        let user_provided_fee = simple_request.fee.unwrap_or(DOMAIN_REGISTRATION_FEE_SOV_WHOLE);
+        if user_provided_fee != DOMAIN_REGISTRATION_FEE_SOV_WHOLE {
             return Err(anyhow!(
                 "Invalid fee: provided {} SOV, required exactly {} SOV for domain registration",
                 user_provided_fee,
-                DOMAIN_REGISTRATION_FEE_SOV
+                DOMAIN_REGISTRATION_FEE_SOV_WHOLE
             ));
         }
 
         info!(
             " Domain registration fee: {} SOV",
-            DOMAIN_REGISTRATION_FEE_SOV
+            DOMAIN_REGISTRATION_FEE_SOV_WHOLE
         );
 
-        let registration_fee_sov = DOMAIN_REGISTRATION_FEE_SOV as u128;
+        let registration_fee_sov = DOMAIN_REGISTRATION_FEE_ATOMIC;
 
         // ========== SECURITY: SIGNATURE VERIFICATION ==========
         // Verify that the request was signed by the owner's private key
@@ -702,26 +705,28 @@ impl Web4Handler {
             ));
         }
 
-        const DOMAIN_REGISTRATION_FEE_SOV: u64 = 10;
-        let user_provided_fee = request.fee.unwrap_or(DOMAIN_REGISTRATION_FEE_SOV);
-        if user_provided_fee != DOMAIN_REGISTRATION_FEE_SOV {
+        const DOMAIN_REGISTRATION_FEE_SOV_WHOLE: u64 = 10;
+        const DOMAIN_REGISTRATION_FEE_ATOMIC: u128 =
+            DOMAIN_REGISTRATION_FEE_SOV_WHOLE as u128 * lib_types::TOKEN_SCALE_18;
+        let user_provided_fee = request.fee.unwrap_or(DOMAIN_REGISTRATION_FEE_SOV_WHOLE);
+        if user_provided_fee != DOMAIN_REGISTRATION_FEE_SOV_WHOLE {
             return Err(anyhow!(
                 "Invalid fee: provided {} SOV, required exactly {} SOV for domain registration",
                 user_provided_fee,
-                DOMAIN_REGISTRATION_FEE_SOV
+                DOMAIN_REGISTRATION_FEE_SOV_WHOLE
             ));
         }
         let fee_payment_tx_raw = request.fee_payment_tx.as_deref().ok_or_else(|| {
             anyhow!(
                 "fee_payment_tx is required. Submit a signed canonical TokenTransfer \
                  from owner Primary wallet to DAO treasury wallet for {} SOV.",
-                DOMAIN_REGISTRATION_FEE_SOV
+                DOMAIN_REGISTRATION_FEE_SOV_WHOLE
             )
         })?;
         let fee_tx_hash_hex = self
             .validate_and_submit_domain_fee_tx(
                 &owner_identity,
-                DOMAIN_REGISTRATION_FEE_SOV as u128,
+                DOMAIN_REGISTRATION_FEE_ATOMIC,
                 fee_payment_tx_raw,
             )
             .await?;
@@ -831,7 +836,7 @@ impl Web4Handler {
             "deploy_manifest_cid": request.deploy_manifest_cid,
             "owner": owner_did,
             "registration_id": registration_result.registration_id,
-            "fees_charged": DOMAIN_REGISTRATION_FEE_SOV,
+            "fees_charged": DOMAIN_REGISTRATION_FEE_SOV_WHOLE,
             "fee_payment_tx_hash": fee_tx_hash_hex,
             "message": "Domain registered successfully"
         });

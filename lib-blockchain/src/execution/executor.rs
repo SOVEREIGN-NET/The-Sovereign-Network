@@ -352,18 +352,17 @@ impl BlockExecutor {
             .get_token_contract(&token_id)?
             .unwrap_or_else(crate::contracts::TokenContract::new_sov_native);
         let current_supply = mutator.get_token_supply(&token_id)?.unwrap_or(contract.total_supply);
-        let amount_u128 = amount;
-        let new_supply = current_supply.checked_add(amount_u128).ok_or_else(|| {
+        let new_supply = current_supply.checked_add(amount).ok_or_else(|| {
             TxApplyError::InvalidType("SOV total supply overflow".to_string())
         })?;
-        let balance = mutator.get_token_balance(&token_id, recipient)? as u128;
+        let balance = mutator.get_token_balance_u128(&token_id, recipient)?;
         let recipient_pk = lib_crypto::PublicKey {
             dilithium_pk: [0u8; 2592],
             kyber_pk: [0u8; 1568],
             key_id: recipient.0,
         };
         contract.total_supply = new_supply;
-        let new_balance = balance + amount_u128;
+        let new_balance = balance + amount;
         contract.balances.insert(recipient_pk, new_balance);
         mutator.put_token_supply(&token_id, new_supply)?;
         mutator.put_token_contract(&contract)?;

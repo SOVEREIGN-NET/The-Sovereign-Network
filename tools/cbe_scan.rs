@@ -11,18 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 fn get_cbe_token_id() -> [u8; 32] {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    "CBE Equity".hash(&mut hasher);
-    "CBE".hash(&mut hasher);
-    let hash = hasher.finish();
-    let mut token_id = [0u8; 32];
-    token_id[..8].copy_from_slice(&hash.to_le_bytes());
-    for i in 8..32 {
-        token_id[i] = ((hash >> (i % 8)) & 0xFF) as u8;
-    }
-    token_id
+    lib_blockchain::Blockchain::derive_cbe_token_id_pub()
 }
 
 fn main() -> Result<()> {

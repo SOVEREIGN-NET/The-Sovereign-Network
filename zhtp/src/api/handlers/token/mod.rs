@@ -420,7 +420,7 @@ impl TokenHandler {
                 name: "CBE Equity".to_string(),
                 symbol: "CBE".to_string(),
                 decimals: 8,
-                total_supply: 100_000_000_000u128,
+                total_supply: lib_blockchain::contracts::bonding_curve::canonical::CBE_TOTAL_SUPPLY as u128,
                 max_supply: None,
                 creator: format!("0x{}", "00".repeat(32)),
                 is_deflationary: false,
@@ -479,10 +479,10 @@ impl TokenHandler {
         if is_cbe {
             let pubkey = self.identity_to_pubkey(address)?;
             let key_id = pubkey.key_id;
-            let balance: u64 = if let Some(store) = blockchain.get_store() {
+            let balance: u128 = if let Some(store) = blockchain.get_store() {
                 let storage_token_id = lib_blockchain::storage::TokenId(cbe_token_id);
                 let addr = lib_blockchain::storage::Address::new(key_id);
-                store.get_token_balance(&storage_token_id, &addr).unwrap_or(0) as u64
+                store.get_token_balance(&storage_token_id, &addr).unwrap_or(0)
             } else {
                 0
             };
@@ -734,22 +734,11 @@ impl TokenHandler {
                 .identity_to_pubkey(address)
                 .map(|pk| pk.key_id)
                 .unwrap_or(target_key_id);
-            let cbe_balance: u64 = if let Some(store) = blockchain.get_store() {
-                // CBE canonical path stores per-user balances in cbe_account_state.
-                let cbe_acc_bal = store
-                    .get_cbe_account_state(&cbe_key_id)
-                    .ok()
-                    .flatten()
-                    .map(|a| a.balance_cbe.min(u64::MAX as u128) as u64)
-                    .unwrap_or(0);
-                if cbe_acc_bal > 0 {
-                    cbe_acc_bal
-                } else {
-                    // Fallback to token_balance for legacy/migrated credits
-                    let storage_token_id = lib_blockchain::storage::TokenId(cbe_token_id);
-                    let addr = lib_blockchain::storage::Address::new(cbe_key_id);
-                    store.get_token_balance(&storage_token_id, &addr).unwrap_or(0) as u64
-                }
+            let cbe_balance: u128 = if let Some(store) = blockchain.get_store() {
+                // Phase 1B moved all CBE balances to token_balances.
+                let storage_token_id = lib_blockchain::storage::TokenId(cbe_token_id);
+                let addr = lib_blockchain::storage::Address::new(cbe_key_id);
+                store.get_token_balance(&storage_token_id, &addr).unwrap_or(0)
             } else {
                 0
             };

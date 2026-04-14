@@ -279,7 +279,7 @@ async fn register_domain_impl(
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| CliError::ConfigError(format!("Time error: {}", e)))?
         .as_secs();
-    let fee = 10u64; // Domain registration fee: 10 SOV (matches server DOMAIN_REGISTRATION_FEE_SOV)
+    let fee = 10u64; // Domain registration fee: 10 SOV (whole tokens, matches server DOMAIN_REGISTRATION_FEE_SOV_WHOLE)
     let message = format!("{}|{}|{}", domain, timestamp, fee);
     let signature = sign_message(&loaded.keypair, message.as_bytes())
         .map_err(|e| CliError::ConfigError(format!("Failed to sign registration: {}", e)))?;

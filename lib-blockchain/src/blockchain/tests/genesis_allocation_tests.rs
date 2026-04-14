@@ -1,6 +1,5 @@
-// CBE token field removed from Blockchain struct (EPIC-001 Phase 1).
-// These tests verified cbe_token in-memory state and are no longer applicable.
-// Retained tests that don't depend on cbe_token below.
+// Genesis allocation tests: SOV wallet registration and CBE bonding curve initial state.
+// (Formerly cbe_genesis_allocation_tests.rs; renamed after CBE in-memory token removal.)
 
 use super::*;
 
