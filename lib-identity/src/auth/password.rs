@@ -498,7 +498,9 @@ impl PasswordManager {
 
     /// Remove all data for an identity (password + imported marker)
     pub fn remove_identity(&mut self, identity_id: &IdentityId) {
-        self.password_hashes.remove(identity_id);
+        if let Some(mut hash) = self.password_hashes.remove(identity_id) {
+            hash.zeroize();
+        }
         self.imported_identities.remove(identity_id);
     }
 

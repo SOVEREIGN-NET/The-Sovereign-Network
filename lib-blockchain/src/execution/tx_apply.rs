@@ -578,8 +578,9 @@ impl<'a> StateMutator<'a> {
             None => return Ok(None),
         };
 
-        // Full view for self, owner context, or elevated roles.
-        if matches!(relation, SubjectRelation::Self_ | SubjectRelation::Owner)
+        // Full view for self or elevated roles (Owner alone does not grant full view;
+        // a Device+Owner principal is handled below in the narrower device-owner branch).
+        if matches!(relation, SubjectRelation::Self_)
             || matches!(
                 principal.role,
                 lib_access_control::Role::System

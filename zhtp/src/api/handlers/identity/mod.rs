@@ -80,18 +80,23 @@ impl IdentityHandler {
 /// Extract a `SecurityPrincipal` from an incoming request.
 ///
 /// This is the incremental integration point. In the future it will inspect
-/// bearer tokens, delegation certificates, and UHP auth context. For now it
-/// uses simple headers to distinguish public, node, and session callers.
+/// bearer tokens, delegation certificates, and authenticated UHP / transport
+/// context. Untrusted request headers must not be used to assert node
+/// identity or elevate the caller to `Role::Node`.
 fn extract_principal_from_request(request: &ZhtpRequest) -> SecurityPrincipal {
-    // Node-to-node calls may declare their node type.
-    if let Some(node_type_str) = request.headers.get("x-node-type") {
-        let node_type = NodeType::from_config(Some(&node_type_str));
-        return SecurityPrincipal::new("did:zhtp:node", Role::Node, node_type);
-    }
+    // Do not infer node identity from the caller-controlled `x-node-type`
+    // header. Node principals must come from an authenticated node-to-node
+    // channel or other verified peer identity, neither of which is available
+    // in this request extraction path.
 
     // Authenticated sessions (placeholder: any bearer token is treated as
     // a citizen session until full session-to-principal mapping is wired).
-    if let Some(auth) = request.headers.get("authorization") {
+    // NOTE: The principal DID is currently a placeholder (`did:zhtp:session`).
+    // This means `determine_relation` will treat the caller as External rather
+    // than Self_ when they request their own identity. Full self-access
+    // requires a session→DID mapping, which must be wired before `Role::Citizen`
+    // principals can obtain a FullIdentityView of their own identity.
+    if let Some(auth) = request.headers.authorization.as_deref() {
         if auth.to_lowercase().starts_with("bearer ") {
             return SecurityPrincipal::new(
                 "did:zhtp:session",
@@ -534,32 +539,19 @@ impl IdentityHandler {
         let principal = self.extract_principal(&request);
         let identity_manager = self.identity_manager.read().await;
 
-        // Use access-controlled view retrieval
+        // Use access-controlled view retrieval. Both the found and not-found
+        // branches return the same JSON envelope shape so clients can handle
+        // both outcomes uniformly.
         match identity_manager.get_identity_view(&principal, &identity_id) {
-            Some(view) => {
-                let json_response = serde_json::to_vec(&view)?;
-                Ok(ZhtpResponse::success_with_content_type(
-                    json_response,
-                    "application/json".to_string(),
-                    None,
-                ))
-            }
+            Some(view) => Ok(ZhtpResponse::json(&view, None)?),
             None => {
-                // Anti-enumeration: indistinguishable not-found.
-                let response_data = IdentityResponse {
-                    status: "identity_not_found".to_string(),
-                    identity_id: identity_id.to_string(),
-                    identity_type: "unknown".to_string(),
-                    access_level: "None".to_string(),
-                    created_at: 0,
-                    last_active: 0,
-                };
-                let json_response = serde_json::to_vec(&response_data)?;
-                Ok(ZhtpResponse::success_with_content_type(
-                    json_response,
-                    "application/json".to_string(),
-                    None,
-                ))
+                // Anti-enumeration: return a consistent not-found envelope.
+                let response_body = json!({
+                    "status": "not_found",
+                    "identity_id": identity_id.to_string(),
+                    "message": "Identity not found"
+                });
+                Ok(ZhtpResponse::json(&response_body, None)?)
             }
         }
     }
@@ -1927,6 +1919,21 @@ mod principal_extraction_tests {
         }
     }
 
+    fn request_with_authorization(value: &str) -> ZhtpRequest {
+        let mut headers = ZhtpHeaders::new();
+        headers.authorization = Some(value.to_string());
+        ZhtpRequest {
+            method: ZhtpMethod::Get,
+            uri: "/test".to_string(),
+            version: "ZHTP/1.0".to_string(),
+            headers,
+            body: vec![],
+            timestamp: 0,
+            requester: None,
+            auth_proof: None,
+        }
+    }
+
     #[test]
     fn test_extract_principal_no_auth_returns_public() {
         let request = ZhtpRequest {
@@ -1946,27 +1953,28 @@ mod principal_extraction_tests {
 
     #[test]
     fn test_extract_principal_bearer_returns_citizen() {
-        let request = request_with_header("authorization", "Bearer token123");
+        // Use the `authorization` field on ZhtpHeaders directly, not the custom
+        // header map (which `headers.get("authorization")` would have checked).
+        let request = request_with_authorization("Bearer token123");
         let principal = extract_principal_from_request(&request);
         assert_eq!(principal.role, Role::Citizen);
         assert_eq!(principal.did, "did:zhtp:session");
     }
 
     #[test]
-    fn test_extract_principal_node_type_returns_node() {
+    fn test_x_node_type_header_is_ignored() {
+        // The `x-node-type` header is caller-controlled and must not grant
+        // Role::Node. Without a proper authenticated channel the request
+        // should fall back to the public principal.
         let request = request_with_header("x-node-type", "validator");
         let principal = extract_principal_from_request(&request);
-        assert_eq!(principal.role, Role::Node);
-        assert_eq!(principal.did, "did:zhtp:node");
-        assert_eq!(principal.node_type, NodeType::Validator);
+        assert_eq!(principal.role, Role::Public);
     }
 
     #[test]
-    fn test_extract_principal_relay_node_type() {
+    fn test_extract_principal_relay_node_type_also_ignored() {
         let request = request_with_header("x-node-type", "relay");
         let principal = extract_principal_from_request(&request);
-        assert_eq!(principal.role, Role::Node);
-        assert_eq!(principal.did, "did:zhtp:node");
-        assert_eq!(principal.node_type, NodeType::Relay);
+        assert_eq!(principal.role, Role::Public);
     }
 }

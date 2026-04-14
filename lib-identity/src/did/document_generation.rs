@@ -405,13 +405,15 @@ pub fn resolve_did(did: &str) -> Result<DidDocument, String> {
 ///
 /// This is the **only** resolution method that should be exposed across trust
 /// boundaries. It filters service endpoints and the device registry according
-/// to the caller's principal.
+/// to the caller's principal. The subject relation is derived internally from
+/// the principal and the target DID to prevent privilege escalation by callers
+/// supplying a forged relation.
 pub fn resolve_did_for_principal(
     did: &str,
     principal: &SecurityPrincipal,
-    relation: SubjectRelation,
 ) -> Result<DidDocumentView, String> {
     let document = storage::resolve_did_document(did)?;
+    let relation = derive_relation_for_did(principal, did);
     filter_did_document(document, principal, relation)
 }
 
@@ -419,15 +421,47 @@ pub fn resolve_did_for_principal(
 ///
 /// Returns a filtered view containing only the verification methods,
 /// service endpoints, and device registry entries the principal is
-/// authorized to see.
+/// authorized to see. The subject relation is derived internally from the
+/// principal and the identity to prevent privilege escalation.
 pub fn generate_did_document_for_principal(
     identity: &ZhtpIdentity,
     principal: &SecurityPrincipal,
-    relation: SubjectRelation,
     base_url: Option<&str>,
 ) -> Result<DidDocumentView, String> {
     let document = generate_did_document(identity, base_url)?;
+    let relation = derive_relation_for_identity(principal, identity);
     filter_did_document(document, principal, relation)
+}
+
+/// Derive the subject relation from a principal and a target DID string.
+///
+/// Used by `resolve_did_for_principal` to prevent callers from forging
+/// a more-privileged relation.
+fn derive_relation_for_did(principal: &SecurityPrincipal, did: &str) -> SubjectRelation {
+    if principal.did == did {
+        return SubjectRelation::Self_;
+    }
+    if principal.role == lib_access_control::Role::Public {
+        return SubjectRelation::Public;
+    }
+    SubjectRelation::External
+}
+
+/// Derive the subject relation from a principal and a target identity.
+///
+/// Used by `generate_did_document_for_principal` to prevent callers from
+/// forging a more-privileged relation.
+fn derive_relation_for_identity(
+    principal: &SecurityPrincipal,
+    identity: &ZhtpIdentity,
+) -> SubjectRelation {
+    if principal.did == identity.did {
+        return SubjectRelation::Self_;
+    }
+    if principal.role == lib_access_control::Role::Public {
+        return SubjectRelation::Public;
+    }
+    SubjectRelation::External
 }
 
 fn filter_did_document(
@@ -1086,7 +1120,6 @@ mod tests {
         let doc = generate_did_document_for_principal(
             &identity,
             &principal,
-            SubjectRelation::Public,
             None,
         )?;
 
@@ -1119,7 +1152,6 @@ mod tests {
         let doc = generate_did_document_for_principal(
             &identity,
             &principal,
-            SubjectRelation::Self_,
             None,
         )?;
 
@@ -1153,7 +1185,6 @@ mod tests {
         let doc = generate_did_document_for_principal(
             &identity,
             &principal,
-            SubjectRelation::External,
             None,
         )?;
 

@@ -283,37 +283,21 @@ impl DhtHandler {
     async fn initialize_dht_client(&self, request_body: Vec<u8>) -> ZhtpResult<ZhtpResponse> {
         info!(" Initializing DHT client...");
 
-        let init_request: DhtInitializeRequest = match serde_json::from_slice(&request_body) {
-            Ok(req) => req,
-            Err(e) => {
-                error!("Invalid initialize request: {}", e);
-                return Ok(ZhtpResponse::error(
-                    ZhtpStatus::BadRequest,
-                    format!("Invalid request format: {}", e),
-                ));
-            }
-        };
+        // Validate request format; the body content is otherwise not used since
+        // caller-supplied identity is intentionally ignored (see below).
+        if let Err(e) = serde_json::from_slice::<DhtInitializeRequest>(&request_body) {
+            error!("Invalid initialize request: {}", e);
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                format!("Invalid request format: {}", e),
+            ));
+        }
 
-        // Resolve full identity locally — never trust a full identity sent over the wire.
-        let identity = match init_request.identity {
-            Some(peer) => {
-                let identity_manager = self.identity_manager.read().await;
-                identity_manager
-                    .get_identity_by_did(&peer.did)
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        warn!(
-                            "DHT init requested with unknown DID {}, using default identity",
-                            peer.did
-                        );
-                        self.create_default_dht_identity()
-                    })
-            }
-            None => {
-                // Create a default identity for DHT operations
-                self.create_default_dht_identity()
-            }
-        };
+        // Always use the locally configured node identity for DHT initialization.
+        // A remote caller must never be able to choose which local identity the
+        // node presents to the DHT mesh: ignoring any caller-supplied identity
+        // prevents identity confusion and impersonation attacks.
+        let identity = self.create_default_dht_identity();
 
         // Initialize DHT client using shared global instance
         match crate::runtime::shared_dht::initialize_global_dht(identity).await {

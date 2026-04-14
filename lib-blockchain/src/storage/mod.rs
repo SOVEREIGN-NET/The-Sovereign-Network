@@ -661,7 +661,7 @@ impl IdentityMetadataView {
             public_key: None,
             controlled_nodes: None,
             owned_wallets: None,
-            attributes: Some(Vec::new()),
+            attributes: None,
         }
     }
 

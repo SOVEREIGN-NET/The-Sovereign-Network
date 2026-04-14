@@ -299,10 +299,25 @@ impl IdentityManager {
             dao_member_id: identity.dao_member_id.clone(),
         };
 
-        // Full view: self, system, or emergency.
+        // Full view: self, system, or emergency (with EmergencyOverride capability).
+        let is_emergency_full_access = principal.role == lib_access_control::Role::Emergency
+            && principal.has_capability(&lib_access_control::Capability::EmergencyOverride);
         if matches!(relation, SubjectRelation::Self_)
             || principal.role == lib_access_control::Role::System
+            || is_emergency_full_access
         {
+            // Exclude private ZK witness material when policy denies ZkProofPrivate.
+            let zk_private_decision = policy.check_access(
+                principal,
+                relation,
+                lib_access_control::AccessDomain::ZkProofPrivate,
+                lib_access_control::AccessOperation::Read,
+            );
+            let credentials = if zk_private_decision.is_allowed() {
+                identity.credentials.clone()
+            } else {
+                std::collections::HashMap::new()
+            };
             return Some(IdentityView::Full(FullIdentityView {
                 core: public_core,
                 age: identity.age,
@@ -311,21 +326,29 @@ impl IdentityManager {
                 device_node_ids: identity.device_node_ids.clone(),
                 owner_identity_id: identity.owner_identity_id.clone(),
                 reward_wallet_id: identity.reward_wallet_id.clone(),
-                credentials: identity.credentials.clone(),
+                credentials,
                 attestations: identity.attestations.clone(),
             }));
         }
 
-        // Council view: investigation scope.
+        // Council view: investigation scope (requires Investigate capability).
         if principal.role == lib_access_control::Role::Council {
-            return Some(IdentityView::Council(CouncilView {
-                core: public_core,
-                age: identity.age,
-                jurisdiction: identity.jurisdiction.clone(),
-                controlled_node_count: identity.device_node_ids.len(),
-                owned_wallet_count: identity.wallet_manager.list_wallets().len(),
-                credential_types: identity.credentials.keys().cloned().collect(),
-            }));
+            let investigation_decision = policy.check_access(
+                principal,
+                relation,
+                lib_access_control::AccessDomain::Governance,
+                lib_access_control::AccessOperation::Read,
+            );
+            if investigation_decision.is_allowed() {
+                return Some(IdentityView::Council(CouncilView {
+                    core: public_core,
+                    age: identity.age,
+                    jurisdiction: identity.jurisdiction.clone(),
+                    controlled_node_count: identity.device_node_ids.len(),
+                    owned_wallet_count: identity.wallet_manager.list_wallets().len(),
+                    credential_types: identity.credentials.keys().cloned().collect(),
+                }));
+            }
         }
 
         // Device owner view.
@@ -1443,12 +1466,30 @@ mod access_control_tests {
         let id = identity.id.clone();
         manager.add_identity(identity);
 
+        // Council view requires the Investigate capability.
+        let principal = SecurityPrincipal::new("did:zhtp:council", Role::Council, NodeType::FullNode)
+            .with_capability(lib_access_control::Capability::Investigate);
+        let view = manager.get_identity_view(&principal, &id);
+        assert!(
+            matches!(view, Some(IdentityView::Council(_))),
+            "Council principal with Investigate capability should receive Council view"
+        );
+    }
+
+    #[test]
+    fn test_council_without_investigate_gets_public_view() {
+        let mut manager = IdentityManager::new();
+        let identity = test_identity();
+        let id = identity.id.clone();
+        manager.add_identity(identity);
+
+        // Council without the Investigate capability must fall back to public view.
         let principal =
             SecurityPrincipal::new("did:zhtp:council", Role::Council, NodeType::FullNode);
         let view = manager.get_identity_view(&principal, &id);
         assert!(
-            matches!(view, Some(IdentityView::Council(_))),
-            "Council principal should receive Council view"
+            matches!(view, Some(IdentityView::Public(_))),
+            "Council principal without Investigate capability should receive Public view"
         );
     }
 
