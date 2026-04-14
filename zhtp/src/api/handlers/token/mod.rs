@@ -441,11 +441,11 @@ impl TokenHandler {
             name: token.name.clone(),
             symbol: token.symbol.clone(),
             decimals: token.decimals,
-            total_supply: token.total_supply,
-            max_supply: if token.max_supply == u64::MAX {
+            total_supply: token.total_supply as u64,
+            max_supply: if token.max_supply == u64::MAX as u128 {
                 None
             } else {
-                Some(token.max_supply)
+                Some(token.max_supply as u64)
             },
             creator: format!("0x{}", hex::encode(&token.creator.key_id)),
             is_deflationary: token.is_deflationary,
@@ -511,7 +511,7 @@ impl TokenHandler {
                 let addr = lib_blockchain::storage::Address::new(wallet_id);
                 store
                     .get_token_balance(&storage_token_id, &addr)
-                    .unwrap_or(0) as u64
+                    .unwrap_or(0) as u128
             } else {
                 let wallet_key = PublicKey {
                     dilithium_pk: [0u8; 2592],
@@ -551,7 +551,7 @@ impl TokenHandler {
                 name: token.name.clone(),
                 symbol: token.symbol.clone(),
                 decimals: token.decimals,
-                total_supply: token.total_supply,
+                total_supply: token.total_supply as u64,
             })
             .collect();
 

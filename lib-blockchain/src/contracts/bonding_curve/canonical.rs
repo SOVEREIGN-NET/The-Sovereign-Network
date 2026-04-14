@@ -1,6 +1,6 @@
 pub use lib_types::{
     BondingCurveBand as Band, BondingCurveBuyReceipt, BondingCurveBuyTx, BondingCurveSellReceipt,
-    BondingCurveSellTx, CBE_MAX_SUPPLY, TOKEN_SCALE_18,
+    BondingCurveSellTx, TOKEN_SCALE_18,
 };
 use primitive_types::U256;
 
@@ -31,7 +31,10 @@ pub const MAX_GROSS_SOV_PER_TX: u128 = 1_000_000_000_000_000_000_000_000;
 /// Per-transaction minted-supply cap.  Changing this value is a hard fork.
 pub const MAX_DELTA_S_PER_TX: u128 = 100_000_000_000 * SCALE;
 
-pub const MAX_SUPPLY: u128 = CBE_MAX_SUPPLY;
+/// CBE max supply in 18-decimal bonding curve atoms (100B tokens × 10^18).
+/// This is the bonding curve's internal accounting unit, independent of CBE's
+/// 8-decimal display convention. Immutable — changing is a hard fork.
+pub const MAX_SUPPLY: u128 = 100_000_000_000 * SCALE;
 
 /// Band price anchors — part of the immutable curve shape.
 pub const P_START_0: u128 = 313_345_700_000_000;

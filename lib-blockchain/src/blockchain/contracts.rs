@@ -287,7 +287,7 @@ impl Blockchain {
                             .get_mut(&token_id)
                             .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
                         let from_bal = token.balance_of(&from_wallet_addr);
-                        if from_bal < amount_u64 {
+                        if from_bal < amount_u64 as u128 {
                             return Err(anyhow::anyhow!(
                                 "TokenTransfer insufficient balance: have {}, need {}",
                                 from_bal,
@@ -295,7 +295,7 @@ impl Blockchain {
                             ));
                         }
                         token
-                            .transfer(&ctx, &to_wallet_addr, net_amount)
+                            .transfer(&ctx, &to_wallet_addr, net_amount as u128)
                             .map_err(|e| anyhow::anyhow!("TokenTransfer failed: {}", e))?;
                         Self::apply_token_transfer_with_fee(
                             token,
@@ -357,7 +357,7 @@ impl Blockchain {
                             .get_mut(&token_id)
                             .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
                         let sender_bal = token.balance_of(&sender_pk);
-                        if sender_bal < amount_u64 {
+                        if sender_bal < amount_u64 as u128 {
                             return Err(anyhow::anyhow!(
                                 "TokenTransfer insufficient balance: have {}, need {}",
                                 sender_bal,
@@ -365,7 +365,7 @@ impl Blockchain {
                             ));
                         }
                         token
-                            .transfer(&ctx, &recipient_pk, net_amount)
+                            .transfer(&ctx, &recipient_pk, net_amount as u128)
                             .map_err(|e| anyhow::anyhow!("TokenTransfer failed: {}", e))?;
                         Self::apply_token_transfer_with_fee(
                             token,
@@ -567,7 +567,7 @@ impl Blockchain {
                                 .token_contracts
                                 .get_mut(&token_id)
                                 .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
-                            token.burn(&from_pk, amount_u64).map_err(|e| {
+                            token.burn(&from_pk, amount_u64 as u128).map_err(|e| {
                                 anyhow::anyhow!("Token migration burn failed: {}", e)
                             })?;
                         }
@@ -600,7 +600,7 @@ impl Blockchain {
                             .get_mut(&token_id)
                             .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
                         token
-                            .mint(&recipient_pk, amount_u64)
+                            .mint(&recipient_pk, amount_u64 as u128)
                             .map_err(|e| anyhow::anyhow!("TokenMint failed: {}", e))?;
                     }
 
@@ -649,16 +649,16 @@ impl Blockchain {
                     } else {
                         payload.decimals
                     };
-                    token.max_supply = payload.initial_supply;
+                    token.max_supply = payload.initial_supply as u128;
                     token
-                        .mint(&creator, creator_allocation)
+                        .mint(&creator, creator_allocation as u128)
                         .map_err(|e| anyhow::anyhow!("TokenCreation mint failed: {}", e))?;
                     let treasury_pk = lib_crypto::types::keys::PublicKey {
                         dilithium_pk: [0u8; 2592],
                         kyber_pk: [0u8; 1568],
                         key_id: payload.treasury_recipient,
                     };
-                    token.mint(&treasury_pk, treasury_allocation).map_err(|e| {
+                    token.mint(&treasury_pk, treasury_allocation as u128).map_err(|e| {
                         anyhow::anyhow!("TokenCreation treasury mint failed: {}", e)
                     })?;
 

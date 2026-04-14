@@ -1100,7 +1100,7 @@ impl BlockchainHandler {
         let total_supply = blockchain
             .token_contracts
             .get(&sov_token_id)
-            .map(|token| token.total_supply)
+            .map(|token| token.total_supply as u64)
             .unwrap_or(0);
 
         let total_ubi_distributed: u64 = blockchain

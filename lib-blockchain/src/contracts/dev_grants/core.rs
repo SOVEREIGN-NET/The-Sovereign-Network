@@ -265,7 +265,7 @@ impl DevGrants {
         // Capability-bound: source is derived from ctx, not from parameter
         // ====================================================================
         let burned = token
-            .transfer(ctx, recipient, amt)
+            .transfer(ctx, recipient, amt as u128)
             .map_err(|_| Error::TokenTransferFailed)?;
 
         // ====================================================================
@@ -289,7 +289,7 @@ impl DevGrants {
             recipient_key_id: grant.recipient_key_id,
             amount: grant.amount,
             executed_at: current_height,
-            token_burned: burned,
+            token_burned: burned as u64,
         };
 
         self.disbursements.push(disbursement);

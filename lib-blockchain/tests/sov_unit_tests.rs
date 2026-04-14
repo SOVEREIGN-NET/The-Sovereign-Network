@@ -69,8 +69,10 @@ mod sov_token_tests {
 
 #[cfg(test)]
 mod cbe_token_tests {
-    use lib_types::{CBE_TOTAL_SUPPLY_TOKENS, TOKEN_SCALE_18};
+    use lib_types::TOKEN_SCALE_18;
 
+    /// CBE is a DAO token — its supply constant is self-contained, not from lib-types.
+    const CBE_TOTAL_SUPPLY_TOKENS: u128 = 100_000_000_000;
     const CBE_TOTAL_SUPPLY: u128 = CBE_TOTAL_SUPPLY_TOKENS;
     const CBE_COMPENSATION_POOL: u128 = 40_000_000_000;
     const CBE_OPERATIONAL_TREASURY: u128 = 30_000_000_000;
@@ -130,10 +132,9 @@ mod cbe_token_tests {
 
     #[test]
     fn test_cbe_atomic_supply_uses_18_decimals() {
-        assert_eq!(
-            CBE_TOTAL_SUPPLY_TOKENS * TOKEN_SCALE_18,
-            lib_types::CBE_MAX_SUPPLY
-        );
+        // CBE bonding curve uses 18-decimal internal accounting (100B × 10^18).
+        let cbe_max_supply_curve = CBE_TOTAL_SUPPLY_TOKENS * TOKEN_SCALE_18;
+        assert_eq!(cbe_max_supply_curve, 100_000_000_000_000_000_000_000_000_000);
     }
 
     #[test]
@@ -365,10 +366,11 @@ mod fee_router_tests {
 
 #[cfg(test)]
 mod week1_financial_validation {
-    use lib_types::{CBE_TOTAL_SUPPLY_TOKENS, SOV_TOTAL_SUPPLY_TOKENS};
+    use lib_types::SOV_TOTAL_SUPPLY_TOKENS;
 
     const SOV_TOTAL_SUPPLY: u128 = SOV_TOTAL_SUPPLY_TOKENS;
-    const CBE_TOTAL_SUPPLY: u128 = CBE_TOTAL_SUPPLY_TOKENS;
+    /// CBE is a DAO token — supply constant defined locally, not from lib-types.
+    const CBE_TOTAL_SUPPLY: u128 = 100_000_000_000;
     const FEE_RATE_BASIS_POINTS: u16 = 100;
     const UBI_ALLOCATION_PERCENT: u8 = 45;
     const DAO_ALLOCATION_PERCENT: u8 = 30;

@@ -1186,7 +1186,7 @@ impl RuntimeOrchestrator {
                     let entries: Vec<([u8; 32], u64)> = sov_contract
                         .balances
                         .iter()
-                        .map(|(pk, &bal)| (pk.key_id, bal))
+                        .map(|(pk, &bal)| (pk.key_id, bal as u64))
                         .collect();
                     let token_id = lib_blockchain::storage::TokenId(sov_token_id);
                     match store.backfill_token_balances_from_contract(&token_id, &entries) {
