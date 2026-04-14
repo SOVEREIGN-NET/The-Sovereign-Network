@@ -42,7 +42,12 @@ pub const CBE_TOTAL_SUPPLY: u128 = CBE_TOTAL_SUPPLY_TOKENS * TOKEN_SCALE_18;
 pub const SCALE: u128 = TOKEN_SCALE_18;
 pub const SLOPE_DEN: u128 = 100_000_000_000_000;
 
-/// Graduation threshold (atomic SOV units).  Locked by team decision.
+/// Graduation threshold — reserve balance in atomic SOV units.
+///
+/// This is the executor-side check (SOV atoms in the locked reserve).
+/// The oracle-gate graduation check uses GRADUATION_THRESHOLD_USD in types.rs.
+/// Both must agree economically — GRAD_THRESHOLD ≈ GRADUATION_THRESHOLD_USD / SOV_price.
+///
 /// Changing this value is a hard fork.
 pub const GRAD_THRESHOLD: u128 = 2_745_966 * SCALE;
 

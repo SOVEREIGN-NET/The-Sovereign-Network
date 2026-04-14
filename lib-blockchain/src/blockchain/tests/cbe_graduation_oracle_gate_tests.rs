@@ -1,6 +1,22 @@
 use super::*;
-use crate::contracts::bonding_curve::{BondingCurveToken, Phase, PiecewiseLinearCurve};
+use crate::contracts::bonding_curve::{
+    BondingCurveToken, Phase, PiecewiseLinearCurve, GRADUATION_THRESHOLD_USD,
+};
 use crate::contracts::tokens::CBE_SYMBOL;
+
+/// Micro-USD per whole USD (oracle reserve precision).
+const MICRO_USD_PER_USD: u128 = 1_000_000;
+
+/// Reserve value that meets the graduation threshold at $1/SOV oracle price.
+/// Derived from the single source of truth: GRADUATION_THRESHOLD_USD.
+fn reserve_at_threshold() -> u128 {
+    GRADUATION_THRESHOLD_USD * MICRO_USD_PER_USD
+}
+
+/// Reserve value below the graduation threshold.
+fn reserve_below_threshold() -> u128 {
+    reserve_at_threshold() / 2
+}
 
 fn create_test_cbe_token(reserve_micro_usd: u128) -> BondingCurveToken {
     BondingCurveToken {
@@ -28,10 +44,22 @@ fn create_test_cbe_token(reserve_micro_usd: u128) -> BondingCurveToken {
     }
 }
 
+fn setup_fresh_oracle(blockchain: &mut Blockchain, epoch_id: u64) {
+    blockchain
+        .oracle_state
+        .try_finalize_price(crate::oracle::FinalizedOraclePrice {
+            epoch_id,
+            sov_usd_price: 100_000_000, // $1.00 in oracle price precision
+            cbe_usd_price: None,
+        });
+    blockchain.oracle_state.config.max_price_staleness_epochs = 10;
+    blockchain.oracle_state.config.epoch_duration_secs = 300;
+}
+
 #[test]
 fn cbe_graduation_rejects_missing_finalized_price() {
     let mut blockchain = Blockchain::default();
-    let token = create_test_cbe_token(300_000_000_000);
+    let token = create_test_cbe_token(reserve_at_threshold());
     blockchain.bonding_curve_registry.register(token).unwrap();
 
     let result = blockchain.validate_cbe_graduation_oracle_gate([1u8; 32], 1_700_000_000);
@@ -48,21 +76,14 @@ fn cbe_graduation_rejects_missing_finalized_price() {
 #[test]
 fn cbe_graduation_rejects_stale_finalized_price() {
     let mut blockchain = Blockchain::default();
-    let token = create_test_cbe_token(300_000_000_000);
+    let token = create_test_cbe_token(reserve_at_threshold());
     blockchain.bonding_curve_registry.register(token).unwrap();
 
-    blockchain
-        .oracle_state
-        .try_finalize_price(crate::oracle::FinalizedOraclePrice {
-            epoch_id: 0,
-            sov_usd_price: 100_000_000,
-            cbe_usd_price: None,
-        });
-
+    // Epoch 0 finalized, but timestamp is far ahead → stale
+    setup_fresh_oracle(&mut blockchain, 0);
     blockchain.oracle_state.config.max_price_staleness_epochs = 5;
-    blockchain.oracle_state.config.epoch_duration_secs = 300;
 
-    let block_timestamp = 10 * 300;
+    let block_timestamp = 10 * 300; // 10 epochs ahead
     let result = blockchain.validate_cbe_graduation_oracle_gate([1u8; 32], block_timestamp);
 
     assert!(result.is_err());
@@ -77,21 +98,10 @@ fn cbe_graduation_rejects_stale_finalized_price() {
 #[test]
 fn cbe_graduation_accepts_fresh_finalized_price() {
     let mut blockchain = Blockchain::default();
-    // GRADUATION_THRESHOLD_USD = 2_745_966 USD
-    // At $1/SOV with 8 decimals: 2_745_966 * 10^8 = 274_596_600_000_000
-    let token = create_test_cbe_token(274_596_600_000_000);
+    let token = create_test_cbe_token(reserve_at_threshold());
     blockchain.bonding_curve_registry.register(token).unwrap();
 
-    blockchain
-        .oracle_state
-        .try_finalize_price(crate::oracle::FinalizedOraclePrice {
-            epoch_id: 5,
-            sov_usd_price: 100_000_000,
-            cbe_usd_price: None,
-        });
-
-    blockchain.oracle_state.config.max_price_staleness_epochs = 10;
-    blockchain.oracle_state.config.epoch_duration_secs = 300;
+    setup_fresh_oracle(&mut blockchain, 5);
 
     let block_timestamp = 10 * 300;
     let result = blockchain.validate_cbe_graduation_oracle_gate([1u8; 32], block_timestamp);
@@ -102,19 +112,10 @@ fn cbe_graduation_accepts_fresh_finalized_price() {
 #[test]
 fn cbe_graduation_rejects_reserve_below_threshold() {
     let mut blockchain = Blockchain::default();
-    let token = create_test_cbe_token(200_000_000_000);
+    let token = create_test_cbe_token(reserve_below_threshold());
     blockchain.bonding_curve_registry.register(token).unwrap();
 
-    blockchain
-        .oracle_state
-        .try_finalize_price(crate::oracle::FinalizedOraclePrice {
-            epoch_id: 10,
-            sov_usd_price: 100_000_000,
-            cbe_usd_price: None,
-        });
-
-    blockchain.oracle_state.config.max_price_staleness_epochs = 10;
-    blockchain.oracle_state.config.epoch_duration_secs = 300;
+    setup_fresh_oracle(&mut blockchain, 10);
 
     let block_timestamp = 10 * 300;
     let result = blockchain.validate_cbe_graduation_oracle_gate([1u8; 32], block_timestamp);
@@ -127,21 +128,10 @@ fn cbe_graduation_rejects_reserve_below_threshold() {
 #[test]
 fn cbe_graduation_accepts_reserve_at_threshold_boundary() {
     let mut blockchain = Blockchain::default();
-    // GRADUATION_THRESHOLD_USD = 2_745_966 USD
-    // At $1/SOV with 8 decimals: 2_745_966 * 10^8 = 274_596_600_000_000
-    let token = create_test_cbe_token(274_596_600_000_000);
+    let token = create_test_cbe_token(reserve_at_threshold());
     blockchain.bonding_curve_registry.register(token).unwrap();
 
-    blockchain
-        .oracle_state
-        .try_finalize_price(crate::oracle::FinalizedOraclePrice {
-            epoch_id: 10,
-            sov_usd_price: 100_000_000,
-            cbe_usd_price: None,
-        });
-
-    blockchain.oracle_state.config.max_price_staleness_epochs = 10;
-    blockchain.oracle_state.config.epoch_duration_secs = 300;
+    setup_fresh_oracle(&mut blockchain, 10);
 
     let block_timestamp = 10 * 300;
     let result = blockchain.validate_cbe_graduation_oracle_gate([1u8; 32], block_timestamp);
@@ -156,7 +146,7 @@ fn cbe_graduation_accepts_reserve_at_threshold_boundary() {
 #[test]
 fn cbe_graduation_skips_non_cbe_tokens() {
     let mut blockchain = Blockchain::default();
-    let mut token = create_test_cbe_token(300_000_000_000);
+    let mut token = create_test_cbe_token(reserve_at_threshold());
     token.symbol = "OTHER".to_string();
     blockchain.bonding_curve_registry.register(token).unwrap();
 
@@ -168,7 +158,7 @@ fn cbe_graduation_skips_non_cbe_tokens() {
 #[test]
 fn cbe_graduation_skips_already_graduated() {
     let mut blockchain = Blockchain::default();
-    let mut token = create_test_cbe_token(300_000_000_000);
+    let mut token = create_test_cbe_token(reserve_at_threshold());
     token.phase = Phase::Graduated;
     blockchain.bonding_curve_registry.register(token).unwrap();
 
