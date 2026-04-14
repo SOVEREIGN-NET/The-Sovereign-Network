@@ -173,12 +173,12 @@ impl<'a> StateMutator<'a> {
         let _burn_amount = if let Ok(Some(contract)) = self.store.get_token_contract(token) {
             if contract.is_deflationary && contract.burn_rate > 0 {
                 // burn_rate is in basis points (1/10000)
-                let burn = (amount * contract.burn_rate as u128 / 10_000) as u64;
+                let burn = amount * contract.burn_rate as u128 / 10_000;
                 if burn > 0 {
                     // Debit sender the full amount
                     self.debit_token(token, from, amount)?;
                     // Credit receiver the amount minus burn
-                    self.credit_token(token, to, amount.saturating_sub(burn as u128))?;
+                    self.credit_token(token, to, amount.saturating_sub(burn))?;
                     // Reduce total supply
                     if let Ok(Some(supply)) = self.store.get_token_supply(token) {
                         self.store
@@ -572,14 +572,14 @@ impl<'a> StateMutator<'a> {
     }
 
     /// Read token supply without mutating state.
-    pub fn get_token_supply(&self, token: &TokenId) -> TxApplyResult<Option<u64>> {
+    pub fn get_token_supply(&self, token: &TokenId) -> TxApplyResult<Option<u128>> {
         self.store
             .get_token_supply(token)
             .map_err(|e| TxApplyError::Storage(e.to_string()))
     }
 
     /// Persist token supply in canonical state storage.
-    pub fn put_token_supply(&self, token: &TokenId, supply: u64) -> TxApplyResult<()> {
+    pub fn put_token_supply(&self, token: &TokenId, supply: u128) -> TxApplyResult<()> {
         self.store
             .put_token_supply(token, supply)
             .map_err(|e| TxApplyError::Storage(e.to_string()))

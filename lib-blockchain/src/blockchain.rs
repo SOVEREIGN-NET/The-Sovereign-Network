@@ -901,7 +901,7 @@ impl Blockchain {
             // ONLY entries that are missing from the tree (idempotent, safe to call here
             // before begin_block sets tx_active).
             if let Some(store) = &self.store {
-                let mut seed_map: std::collections::HashMap<[u8; 32], Vec<([u8; 32], u64)>> =
+                let mut seed_map: std::collections::HashMap<[u8; 32], Vec<([u8; 32], u128)>> =
                     std::collections::HashMap::new();
                 let mut cbe_account_seed: Vec<([u8; 32], u128)> = Vec::new();
                 let cbe_token_id = self.cbe_token.token_id();
@@ -926,7 +926,7 @@ impl Blockchain {
                                     seed_map
                                         .entry(data.token_id)
                                         .or_default()
-                                        .push((data.from, mem_balance as u64));
+                                        .push((data.from, mem_balance));
                                 }
                             }
                         } else if data.token_id == cbe_token_id {
@@ -944,7 +944,7 @@ impl Blockchain {
                                     seed_map
                                         .entry(data.token_id)
                                         .or_default()
-                                        .push((data.from, mem_balance));
+                                        .push((data.from, mem_balance as u128));
                                 }
                             }
                             // If sled_bal > 0: SledStore already has the correct value;
@@ -4131,8 +4131,8 @@ impl Blockchain {
             })
             .sum();
 
-        // 1 SOV (1e8 atomic units) = 1 base vote unit
-        let base_power = (sov_balance / 100_000_000) as u64;
+        // 1 SOV (1e18 atomic units) = 1 base vote unit
+        let base_power = (sov_balance / lib_types::TOKEN_SCALE_18) as u64;
 
         // Add power from identities that delegated directly to this user (non-transitive).
         // Keys and values in vote_delegations are 64-char hex-encoded identity IDs.
@@ -4153,7 +4153,7 @@ impl Blockchain {
                         self.token_contracts.get(&sov_id).map(|t| t.balance_of(&pk))
                     })
                     .sum();
-                Some((bal / 100_000_000) as u64)
+                Some((bal / lib_types::TOKEN_SCALE_18) as u64)
             })
             .sum();
 

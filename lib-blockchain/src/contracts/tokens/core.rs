@@ -515,7 +515,9 @@ impl TokenContract {
 
     /// Check if supply can accommodate minting
     pub fn can_mint(&self, amount: u128) -> bool {
-        self.total_supply + amount <= self.max_supply
+        self.total_supply
+            .checked_add(amount)
+            .map_or(false, |sum| sum <= self.max_supply)
     }
 
     /// Get remaining mintable supply
