@@ -165,13 +165,6 @@ impl Web4Handler {
         // This is the correct layer: accept DID, use get_identity_by_did()
         let identity_mgr = self.identity_manager.read().await;
         let view = identity_mgr.get_identity_view_by_did(principal, &owner_did);
-        let owner_identity = identity_mgr.get_identity_by_did(&owner_did)
-            .ok_or_else(|| anyhow!(
-                "Owner identity not found: {}. Please register this identity first using /api/v1/identity/create",
-                owner_did
-            ))?
-            .clone();
-        drop(identity_mgr);
 
         // Domain registration requires at least device-owner level access.
         match view {
@@ -183,6 +176,14 @@ impl Web4Handler {
             }
             _ => {}
         }
+
+        let owner_identity = identity_mgr.get_identity_by_did(&owner_did)
+            .ok_or_else(|| anyhow!(
+                "Owner identity not found: {}. Please register this identity first using /api/v1/identity/create",
+                owner_did
+            ))?
+            .clone();
+        drop(identity_mgr);
 
         // DEBUG: Check wallet state right after retrieval
         info!("  WALLET DEBUG (after IdentityManager retrieval):");

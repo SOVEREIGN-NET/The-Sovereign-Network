@@ -21,11 +21,11 @@ use lib_economy::wallets::{
     // Removed unused CrossWalletTransaction, WalletBalance
 };
 use lib_identity::{identity::ZhtpIdentity as Identity, IdentityManager};
-use lib_identity::types::IdentityView;
+
 
 // Access control imports
 use crate::api::principal::extract_principal_from_request;
-use lib_access_control::{AccessDomain, AccessOperation, AccessPolicy, SecurityPrincipal, SubjectRelation};
+use lib_access_control::{AccessDomain, AccessOperation, SecurityPrincipal};
 
 /// Helper function to create JSON responses correctly
 fn create_json_response(data: serde_json::Value) -> Result<ZhtpResponse> {
@@ -69,43 +69,7 @@ impl WalletHandler {
         extract_principal_from_request(request)
     }
 
-    /// Check if the principal is allowed to read wallet graph data for the given identity.
-    async fn check_wallet_graph_access(
-        &self,
-        principal: &SecurityPrincipal,
-        identity_id: &lib_crypto::Hash,
-    ) -> Result<bool> {
-        let identity_manager = self.identity_manager.read().await;
-        let identity = match identity_manager.get_identity(identity_id) {
-            Some(id) => id,
-            None => return Ok(false),
-        };
 
-        let relation = if principal.did == identity.did {
-            SubjectRelation::Self_
-        } else if let Ok(principal_id) = lib_identity::did::parse_did_to_identity_id(&principal.did) {
-            if let Some(ref owner_id) = identity.owner_identity_id {
-                if principal_id == *owner_id {
-                    SubjectRelation::Owner
-                } else {
-                    SubjectRelation::External
-                }
-            } else {
-                SubjectRelation::External
-            }
-        } else {
-            if principal.role == lib_access_control::Role::Public {
-                SubjectRelation::Public
-            } else {
-                SubjectRelation::External
-            }
-        };
-
-        let policy = AccessPolicy::default();
-        Ok(policy
-            .check_access(principal, relation, AccessDomain::WalletGraph, AccessOperation::Read)
-            .is_allowed())
-    }
 }
 
 #[async_trait::async_trait]
@@ -287,7 +251,9 @@ impl WalletHandler {
 
         // Graph-traversal guard: WalletGraph / Read
         let principal = self.extract_principal(request);
-        if !self.check_wallet_graph_access(&principal, &identity_hash).await? {
+        let identity_manager = self.identity_manager.read().await;
+        if !identity_manager.check_access(&principal, &identity_hash, AccessDomain::WalletGraph, AccessOperation::Read) {
+            drop(identity_manager);
             return Ok(create_error_response(
                 ZhtpStatus::Forbidden,
                 "Access denied to wallet list".to_string(),
@@ -509,12 +475,15 @@ impl WalletHandler {
 
         // Graph-traversal guard: WalletGraph / Read
         let principal = self.extract_principal(request);
-        if !self.check_wallet_graph_access(&principal, &identity_hash).await? {
+        let identity_manager = self.identity_manager.read().await;
+        if !identity_manager.check_access(&principal, &identity_hash, AccessDomain::WalletGraph, AccessOperation::Read) {
+            drop(identity_manager);
             return Ok(create_error_response(
                 ZhtpStatus::Forbidden,
                 "Access denied to wallet balance".to_string(),
             ));
         }
+        drop(identity_manager);
 
         // Get the identity from stored state
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
@@ -663,12 +632,15 @@ impl WalletHandler {
 
         // Graph-traversal guard: WalletGraph / Read
         let principal = self.extract_principal(request);
-        if !self.check_wallet_graph_access(&principal, &identity_hash).await? {
+        let identity_manager = self.identity_manager.read().await;
+        if !identity_manager.check_access(&principal, &identity_hash, AccessDomain::WalletGraph, AccessOperation::Read) {
+            drop(identity_manager);
             return Ok(create_error_response(
                 ZhtpStatus::Forbidden,
                 "Access denied to wallet statistics".to_string(),
             ));
         }
+        drop(identity_manager);
 
         // Get the identity from stored state
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
@@ -1296,12 +1268,15 @@ impl WalletHandler {
 
         // Graph-traversal guard: WalletGraph / Read
         let principal = self.extract_principal(request);
-        if !self.check_wallet_graph_access(&principal, &identity_hash).await? {
+        let identity_manager = self.identity_manager.read().await;
+        if !identity_manager.check_access(&principal, &identity_hash, AccessDomain::WalletGraph, AccessOperation::Read) {
+            drop(identity_manager);
             return Ok(create_error_response(
                 ZhtpStatus::Forbidden,
                 "Access denied to wallet transactions".to_string(),
             ));
         }
+        drop(identity_manager);
 
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
             Some(identity) => identity,

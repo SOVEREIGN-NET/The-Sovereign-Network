@@ -11,7 +11,16 @@ use lib_types::NodeType;
 /// and UHP auth context. For now it uses simple headers to distinguish
 /// public, node, and session callers.
 pub fn extract_principal_from_request(request: &ZhtpRequest) -> SecurityPrincipal {
+    // If the transport/session layer has already authenticated the caller
+    // and set request.requester, use that DID directly.
+    if let Some(ref identity_id) = request.requester {
+        let did = format!("did:zhtp:{}", hex::encode(&identity_id.0));
+        return SecurityPrincipal::new(&did, Role::Citizen, NodeType::FullNode);
+    }
+
     // Node-to-node calls may declare their node type.
+    // TODO: in production this should come from authenticated UHP context,
+    // not from caller-controlled headers.
     if let Some(node_type_str) = request.headers.get("x-node-type") {
         let node_type = NodeType::from_config(Some(&node_type_str));
         return SecurityPrincipal::new("did:zhtp:node", Role::Node, node_type);

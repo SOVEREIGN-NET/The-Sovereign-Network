@@ -61,6 +61,7 @@ impl NodeType {
             Some("relay") => NodeType::Relay,
             Some("full") | None => NodeType::FullNode,
             Some(unknown) => {
+                // Unknown node types fall back to FullNode safely.
                 eprintln!(
                     "Warning: unknown node_type {:?}; falling back to \"full\"",
                     unknown

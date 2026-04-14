@@ -68,8 +68,8 @@ fn extract_mesh_principal(zhtp_request: &serde_json::Value) -> SecurityPrincipal
             );
         }
     }
-    // Default: mesh traffic is treated as originating from a node.
-    SecurityPrincipal::new("did:zhtp:node", Role::Node, NodeType::FullNode)
+    // Default: unauthenticated mesh traffic is treated as public.
+    SecurityPrincipal::public()
 }
 
 /// Handle identity API requests directly via UDP mesh for maximum efficiency
