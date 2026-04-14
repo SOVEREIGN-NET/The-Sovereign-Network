@@ -2327,6 +2327,7 @@ fn create_default_mesh_identity() -> lib_identity::ZhtpIdentity {
             verification_key: vec![],
             plonky2_proof: None,
             proof: vec![],
+            ..lib_proofs::ZkProof::empty()
         },
         credentials: HashMap::new(),
         reputation: 100,                        // High reputation for mesh server

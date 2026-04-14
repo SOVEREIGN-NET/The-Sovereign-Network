@@ -44,7 +44,12 @@ path = "src/lib.rs"
 [features]
 default = ["std"]
 std = []
+# Enable real cryptographic proof backends (required for production builds)
+real-proofs = []
+# Enable fake/mock proof paths for testing and migration ONLY.
+# This feature MUST NOT be enabled in release or production builds.
+fake-proofs = []
 # Production feature for optimized circuits
-production = []
+production = ["real-proofs"]
 # Development feature for testing
-dev = []
+dev = ["fake-proofs"]

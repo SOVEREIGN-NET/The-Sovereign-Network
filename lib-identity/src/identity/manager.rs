@@ -748,6 +748,7 @@ impl IdentityManager {
             verification_key: vec![],
             plonky2_proof: None,
             proof: vec![],
+            ..lib_proofs::ZkProof::empty()
         };
 
         Ok(ZkCredential::new(
@@ -945,6 +946,7 @@ impl IdentityManager {
             verification_key: verification_key.to_vec(),
             plonky2_proof: None, // Could be populated with actual Plonky2 proof
             proof: vec![],       // Legacy compatibility field
+            ..lib_proofs::ZkProof::empty()
         })
     }
 
@@ -1332,6 +1334,7 @@ impl IdentityManager {
             verification_key: verification_commitment.to_vec(),
             plonky2_proof: None,
             proof: vec![], // Legacy compatibility
+            ..lib_proofs::ZkProof::empty()
         })
     }
 

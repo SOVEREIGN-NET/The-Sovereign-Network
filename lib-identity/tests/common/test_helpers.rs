@@ -44,6 +44,7 @@ pub fn create_test_identity_with_device(device: &str, citizenship_verified: bool
         verification_key: vec![9, 10, 11, 12],
         plonky2_proof: None,
         proof: vec![],
+        ..lib_proofs::ZkProof::empty()
     };
 
     ZhtpIdentity::new(

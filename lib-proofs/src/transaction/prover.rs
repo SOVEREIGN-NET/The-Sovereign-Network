@@ -88,6 +88,7 @@ impl ZkTransactionProver {
                     verification_key: vec![],
                     plonky2_proof: Some(tx_proof),
                     proof: vec![],
+                    ..ZkProof::empty()
                 },
                 balance_proof: ZkProof {
                     proof_system: "Plonky2".to_string(),
@@ -96,6 +97,7 @@ impl ZkTransactionProver {
                     verification_key: vec![],
                     plonky2_proof: Some(amount_range_proof),
                     proof: vec![],
+                    ..ZkProof::empty()
                 },
                 nullifier_proof: ZkProof {
                     proof_system: "Plonky2".to_string(),
@@ -104,6 +106,7 @@ impl ZkTransactionProver {
                     verification_key: vec![],
                     plonky2_proof: Some(balance_range_proof),
                     proof: vec![],
+                    ..ZkProof::empty()
                 },
             });
         }
@@ -204,6 +207,7 @@ impl ZkTransactionProver {
                 verification_key: vec![0x01, 0x02, 0x03, 0x04], // verification keys would be generated
                 plonky2_proof: Some(amount_plonky2_proof),
                 proof: vec![],
+                ..ZkProof::empty()
             },
             balance_proof: ZkProof {
                 proof_system: "Plonky2".to_string(),
@@ -212,6 +216,7 @@ impl ZkTransactionProver {
                 verification_key: vec![0x05, 0x06, 0x07, 0x08], // verification keys would be generated
                 plonky2_proof: Some(balance_plonky2_proof),
                 proof: vec![],
+                ..ZkProof::empty()
             },
             nullifier_proof: ZkProof {
                 proof_system: "Plonky2".to_string(),
@@ -220,6 +225,7 @@ impl ZkTransactionProver {
                 verification_key: vec![0x09, 0x0A, 0x0B, 0x0C], // verification keys would be generated
                 plonky2_proof: Some(nullifier_plonky2_proof),
                 proof: vec![],
+                ..ZkProof::empty()
             },
         })
     }

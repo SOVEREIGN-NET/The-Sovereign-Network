@@ -520,6 +520,7 @@ impl ZhtpIdentity {
             verification_key: public_key.dilithium_pk.to_vec(),
             plonky2_proof: None,
             proof: vec![],
+            ..lib_proofs::ZkProof::empty()
         };
 
         let current_time = std::time::SystemTime::now()
@@ -771,7 +772,7 @@ impl ZhtpIdentity {
         metadata.insert("registration_type".to_string(), "external".to_string());
 
         // Create placeholder ownership proof (actual proof was verified during registration)
-        let ownership_proof = ZeroKnowledgeProof::placeholder();
+        let ownership_proof = ZeroKnowledgeProof::empty();
 
         Ok(ZhtpIdentity {
             id: id.clone(),

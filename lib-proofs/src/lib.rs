@@ -90,7 +90,10 @@ pub fn initialize_zk_system() -> Result<ZkProofSystem> {
     ZkProofSystem::new()
 }
 
-/// Create a default proof for development/testing using unified system
+/// Create a default proof for development/testing using unified system.
+///
+/// **TEST / FAKE-PROOFS ONLY.** Unavailable in production builds.
+#[cfg(any(test, feature = "fake-proofs"))]
 pub fn create_default_proof() -> ZkProof {
     ZkProof::default()
 }
@@ -109,5 +112,6 @@ mod tests {
     fn test_default_proof_creation() {
         let proof = create_default_proof();
         assert!(proof.is_empty());
+        assert!(proof.is_mock);
     }
 }

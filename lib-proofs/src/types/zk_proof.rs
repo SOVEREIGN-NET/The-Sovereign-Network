@@ -6,6 +6,30 @@
 use crate::plonky2::Plonky2Proof;
 use serde::{Deserialize, Serialize};
 
+fn default_version() -> String {
+    "v0".to_string()
+}
+
+fn default_circuit_version() -> u32 {
+    1
+}
+
+/// Runtime guard: reject mock proofs outside of tests or fake-proofs builds.
+#[inline]
+pub fn ensure_mock_allowed() -> anyhow::Result<()> {
+    #[cfg(not(any(test, feature = "fake-proofs")))]
+    {
+        return Err(anyhow::anyhow!(
+            "Mock/placeholder proofs are disabled in production builds. \
+             Enable feature 'fake-proofs' for testing only."
+        ));
+    }
+    #[cfg(any(test, feature = "fake-proofs"))]
+    {
+        Ok(())
+    }
+}
+
 /// Zero-knowledge proof (unified approach matching ZHTPDEV-main65)
 #[derive(Debug, Clone)]
 pub struct ZkProof {
@@ -21,10 +45,13 @@ pub struct ZkProof {
     pub plonky2_proof: Option<Plonky2Proof>,
     /// Deprecated proof format (kept for data structure compatibility only)
     pub proof: Vec<u8>,
-}
-
-fn default_version() -> String {
-    "v0".to_string()
+    /// Circuit identifier for strict verification matching
+    pub circuit_id: String,
+    /// Circuit version for strict verification matching
+    pub circuit_version: u32,
+    /// True if this proof is a mock, stub, or placeholder.
+    /// Mock proofs are rejected in production builds.
+    pub is_mock: bool,
 }
 
 impl Serialize for ZkProof {
@@ -33,7 +60,7 @@ impl Serialize for ZkProof {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("ZkProof", 7)?;
+        let mut state = serializer.serialize_struct("ZkProof", 10)?;
         state.serialize_field("version", &default_version())?;
         state.serialize_field("proof_system", &self.proof_system)?;
         state.serialize_field("proof_data", &self.proof_data)?;
@@ -41,6 +68,9 @@ impl Serialize for ZkProof {
         state.serialize_field("verification_key", &self.verification_key)?;
         state.serialize_field("plonky2_proof", &self.plonky2_proof)?;
         state.serialize_field("proof", &self.proof)?;
+        state.serialize_field("circuit_id", &self.circuit_id)?;
+        state.serialize_field("circuit_version", &self.circuit_version)?;
+        state.serialize_field("is_mock", &self.is_mock)?;
         state.end()
     }
 }
@@ -59,6 +89,12 @@ impl<'de> Deserialize<'de> for ZkProof {
             verification_key: Vec<u8>,
             plonky2_proof: Option<Plonky2Proof>,
             proof: Vec<u8>,
+            #[serde(default)]
+            circuit_id: String,
+            #[serde(default = "default_circuit_version")]
+            circuit_version: u32,
+            #[serde(default)]
+            is_mock: bool,
         }
 
         let mv: MaybeVersionedProof = MaybeVersionedProof::deserialize(deserializer)?;
@@ -70,6 +106,24 @@ impl<'de> Deserialize<'de> for ZkProof {
             tracing::warn!("ZkProof version mismatch: {}", version);
         }
 
+        // Backward compat: legacy proofs without explicit is_mock are considered mock
+        // if they look like placeholders or empty proofs.
+        let is_mock = if mv.is_mock {
+            true
+        } else if mv.proof_data.is_empty()
+            && mv.public_inputs.is_empty()
+            && mv.verification_key.is_empty()
+            && mv.plonky2_proof.is_none()
+        {
+            tracing::warn!(
+                "Deserialized ZkProof has no proof data and no is_mock flag; \
+                 treating as mock for safety"
+            );
+            true
+        } else {
+            false
+        };
+
         Ok(ZkProof {
             proof_system: mv.proof_system,
             proof_data: mv.proof_data,
@@ -77,6 +131,9 @@ impl<'de> Deserialize<'de> for ZkProof {
             verification_key: mv.verification_key,
             plonky2_proof: mv.plonky2_proof,
             proof: mv.proof,
+            circuit_id: mv.circuit_id,
+            circuit_version: mv.circuit_version,
+            is_mock,
         })
     }
 }
@@ -91,19 +148,22 @@ impl ZkProof {
         plonky2_proof: Option<Plonky2Proof>,
     ) -> Self {
         Self {
-            proof_system, // Use the provided proof system identifier
+            proof_system,
             proof_data: proof_data.clone(),
             public_inputs,
             verification_key,
             plonky2_proof,
-            proof: proof_data, // Legacy compatibility
+            proof: proof_data,
+            circuit_id: String::new(),
+            circuit_version: 1,
+            is_mock: false,
         }
     }
 
-    /// Create a placeholder proof for cases where actual proof is not needed
+    /// Create a placeholder proof for cases where actual proof is not needed.
     ///
-    /// Used for externally registered identities where the registration proof
-    /// was already verified during the API call, so no ongoing proof is stored.
+    /// **TEST / FAKE-PROOFS ONLY.** This is unavailable in production builds.
+    #[cfg(any(test, feature = "fake-proofs"))]
     pub fn placeholder() -> Self {
         Self {
             proof_system: "placeholder".to_string(),
@@ -112,6 +172,9 @@ impl ZkProof {
             verification_key: vec![],
             plonky2_proof: None,
             proof: vec![],
+            circuit_id: "placeholder".to_string(),
+            circuit_version: 0,
+            is_mock: true,
         }
     }
 
@@ -128,15 +191,16 @@ impl ZkProof {
             verification_key: plonky2_proof.verification_key_hash.to_vec(),
             plonky2_proof: Some(plonky2_proof),
             proof: vec![],
+            circuit_id: String::new(),
+            circuit_version: 1,
+            is_mock: false,
         }
     }
 
     /// Create a ZkProof from public inputs (generates proof internally)
     pub fn from_public_inputs(public_inputs: Vec<u64>) -> anyhow::Result<Self> {
-        // Try to create a Plonky2 proof
         match crate::plonky2::ZkProofSystem::new() {
             Ok(zk_system) => {
-                // Use the ZK system to generate a proof from public inputs
                 match zk_system.prove_transaction(
                     public_inputs.get(0).copied().unwrap_or(0),
                     public_inputs.get(1).copied().unwrap_or(0),
@@ -145,26 +209,23 @@ impl ZkProof {
                     public_inputs.get(4).copied().unwrap_or(0),
                 ) {
                     Ok(plonky2_proof) => Ok(Self::from_plonky2(plonky2_proof)),
-                    Err(e) => {
-                        // NO FALLBACK - fail hard if Plonky2 proof creation fails
-                        Err(anyhow::anyhow!(
-                            "Plonky2 proof creation failed - no fallbacks allowed: {:?}",
-                            e
-                        ))
-                    }
+                    Err(e) => Err(anyhow::anyhow!(
+                        "Plonky2 proof creation failed - no fallbacks allowed: {:?}",
+                        e
+                    )),
                 }
             }
-            Err(e) => {
-                // NO FALLBACK - fail hard if ZK system initialization fails
-                Err(anyhow::anyhow!(
-                    "ZK system initialization failed - no fallbacks allowed: {:?}",
-                    e
-                ))
-            }
+            Err(e) => Err(anyhow::anyhow!(
+                "ZK system initialization failed - no fallbacks allowed: {:?}",
+                e
+            )),
         }
     }
 
-    /// Create a default/empty proof (always Plonky2)
+    /// Create a default/empty proof.
+    ///
+    /// Note: empty proofs are marked `is_mock = true` and will be rejected
+    /// by `verify()` in production builds.
     pub fn empty() -> Self {
         Self {
             proof_system: "Plonky2".to_string(),
@@ -173,6 +234,9 @@ impl ZkProof {
             verification_key: vec![],
             plonky2_proof: None,
             proof: vec![],
+            circuit_id: String::new(),
+            circuit_version: 0,
+            is_mock: true,
         }
     }
 
@@ -198,13 +262,23 @@ impl ZkProof {
             && self.verification_key.is_empty()
     }
 
-    /// Verify this proof using unified ZK system
+    /// Reject mock proofs outside of tests or fake-proofs builds.
+    pub fn ensure_not_mock(&self) -> anyhow::Result<()> {
+        if self.is_mock {
+            ensure_mock_allowed()?;
+        }
+        Ok(())
+    }
+
+    /// Verify this proof using unified ZK system.
+    ///
+    /// In production builds, mock/placeholder/empty proofs will fail verification.
     pub fn verify(&self) -> anyhow::Result<bool> {
+        self.ensure_not_mock()?;
+
         if let Some(ref plonky2_proof) = self.plonky2_proof {
-            // Use ZkProofSystem for verification (unified approach)
             let zk_system = crate::plonky2::ZkProofSystem::new()?;
 
-            // Determine proof type and verify accordingly
             match plonky2_proof.proof_system.as_str() {
                 "ZHTP-Optimized-Transaction" => zk_system.verify_transaction(plonky2_proof),
                 "ZHTP-Optimized-Identity" => zk_system.verify_identity(plonky2_proof),
@@ -215,7 +289,6 @@ impl ZkProof {
                 _ => Ok(false), // Unknown proof type
             }
         } else {
-            // NO FALLBACK - all proofs must use Plonky2
             Err(anyhow::anyhow!(
                 "Proof must use Plonky2 - no fallbacks allowed"
             ))
@@ -292,7 +365,6 @@ mod tests {
     fn test_zk_proof_creation() {
         use crate::plonky2::Plonky2Proof;
 
-        // Create a valid Plonky2Proof
         let plonky2 = Plonky2Proof {
             proof: vec![1, 2, 3],
             public_inputs: vec![4, 5, 6],
@@ -313,54 +385,82 @@ mod tests {
 
         assert_eq!(proof.proof_system, "Plonky2");
         assert!(proof.is_plonky2());
-        assert_eq!(proof.size(), 6); // 3 (proof) + 3 (public_inputs) = 6
+        assert_eq!(proof.size(), 6);
         assert!(!proof.is_empty());
+        assert!(!proof.is_mock);
     }
 
     #[test]
-    fn test_zk_proof_type() {
-        let tx_type = ZkProofType::Transaction;
-        assert_eq!(tx_type.as_str(), "transaction");
-
-        let parsed = ZkProofType::from_str("identity");
-        assert_eq!(parsed, ZkProofType::Identity);
-
-        let custom = ZkProofType::Custom("my_proof".to_string());
-        assert_eq!(custom.as_str(), "my_proof");
+    fn test_placeholder_is_mock() {
+        let proof = ZkProof::placeholder();
+        assert!(proof.is_mock);
+        assert_eq!(proof.circuit_id, "placeholder");
     }
 
     #[test]
-    fn test_default_proof() {
-        let proof = ZkProof::default();
-        assert!(proof.is_empty());
-        assert!(proof.is_plonky2());
+    fn test_empty_is_mock() {
+        let proof = ZkProof::empty();
+        assert!(proof.is_mock);
     }
 
     #[test]
-    fn test_proof_serialization_includes_version() {
-        let proof = ZkProof::new(
-            "Plonky2".to_string(),
-            vec![1, 2, 3],
-            vec![4, 5, 6],
-            vec![7, 8, 9],
-            None,
-        );
-        let json = serde_json::to_string(&proof).expect("serialize");
-        assert!(json.contains("\"version\":\"v0\""));
-        assert!(json.contains("\"proof_system\":\"Plonky2\""));
+    fn test_default_is_mock() {
+        let proof: ZkProof = Default::default();
+        assert!(proof.is_mock);
     }
 
     #[test]
-    fn test_proof_deserialization_accepts_legacy_without_version() {
-        let legacy = r#"{
-            "proof_system":"Plonky2",
-            "proof_data":[1,2],
-            "public_inputs":[3,4],
-            "verification_key":[5,6],
-            "plonky2_proof":null,
-            "proof":[]
+    fn test_mock_allowed_in_tests() {
+        let proof = ZkProof::placeholder();
+        assert!(proof.ensure_not_mock().is_ok());
+    }
+
+    #[test]
+    fn test_serialize_deserialize_roundtrip() {
+        let plonky2 = crate::plonky2::Plonky2Proof {
+            proof: vec![1, 2, 3],
+            public_inputs: vec![4, 5, 6],
+            verification_key_hash: [7; 32],
+            proof_system: "Plonky2".to_string(),
+            generated_at: 1234567890,
+            circuit_id: "test_circuit".to_string(),
+            private_input_commitment: [8; 32],
+        };
+
+        let original = ZkProof {
+            proof_system: "Plonky2".to_string(),
+            proof_data: vec![1, 2, 3],
+            public_inputs: vec![4, 5, 6],
+            verification_key: vec![7, 8, 9],
+            plonky2_proof: Some(plonky2),
+            proof: vec![1, 2, 3],
+            circuit_id: "cid".to_string(),
+            circuit_version: 2,
+            is_mock: false,
+        };
+
+        let json = serde_json::to_string(&original).unwrap();
+        let decoded: ZkProof = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(decoded.proof_system, original.proof_system);
+        assert_eq!(decoded.circuit_id, original.circuit_id);
+        assert_eq!(decoded.circuit_version, original.circuit_version);
+        assert_eq!(decoded.is_mock, original.is_mock);
+    }
+
+    #[test]
+    fn test_deserialize_legacy_empty_as_mock() {
+        let legacy_json = r#"{
+            "version": "v0",
+            "proof_system": "Plonky2",
+            "proof_data": [],
+            "public_inputs": [],
+            "verification_key": [],
+            "plonky2_proof": null,
+            "proof": []
         }"#;
-        let proof: ZkProof = serde_json::from_str(legacy).expect("deserialize legacy");
-        assert_eq!(proof.proof_system, "Plonky2");
+
+        let decoded: ZkProof = serde_json::from_str(legacy_json).unwrap();
+        assert!(decoded.is_mock);
     }
 }

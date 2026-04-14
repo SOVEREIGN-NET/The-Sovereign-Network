@@ -53,6 +53,7 @@ pub async fn generate_ubi_proof(recipient: &PublicKey, amount: u64, round: u64) 
                 verification_key: vec![], // Simplified for now
                 plonky2_proof: Some(plonky2_proof),
                 proof: vec![], // Legacy field
+                ..lib_proofs::ZkProof::empty()
             };
 
             // Serialize the proof

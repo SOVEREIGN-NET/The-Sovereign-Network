@@ -3284,6 +3284,7 @@ mod tests {
             verification_key: vec![9, 10, 11, 12],
             plonky2_proof: None,
             proof: vec![], // Deprecated field
+            ..lib_proofs::ZkProof::empty()
         };
 
         let current_time = SystemTime::now()
@@ -3300,6 +3301,7 @@ mod tests {
                 verification_key: vec![],
                 plonky2_proof: None,
                 proof: vec![],
+                ..lib_proofs::ZkProof::empty()
             },
             access_requirements: vec![],
             encrypted_metadata: vec![17, 18, 19, 20],

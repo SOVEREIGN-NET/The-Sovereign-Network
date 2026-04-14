@@ -251,6 +251,7 @@ impl CredentialFactory {
             verification_key: verification_key.to_vec(),
             plonky2_proof: None,
             proof: vec![],
+            ..lib_proofs::ZkProof::empty()
         })
     }
 
@@ -271,6 +272,7 @@ impl CredentialFactory {
             verification_key: proof_data.to_vec(),
             plonky2_proof: None,
             proof: vec![],
+            ..lib_proofs::ZkProof::empty()
         })
     }
 
@@ -291,6 +293,7 @@ impl CredentialFactory {
             verification_key: proof_data.to_vec(),
             plonky2_proof: None,
             proof: vec![],
+            ..lib_proofs::ZkProof::empty()
         })
     }
 
@@ -316,6 +319,7 @@ impl CredentialFactory {
                 verification_key: vec![],
                 plonky2_proof: None,
                 proof: vec![],
+                ..lib_proofs::ZkProof::empty()
             },
             issued_at: current_time,
             expires_at: None,
