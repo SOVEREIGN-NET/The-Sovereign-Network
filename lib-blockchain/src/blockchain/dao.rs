@@ -400,11 +400,11 @@ impl Blockchain {
         Ok(approval_percent >= required_approval_percent as u64)
     }
 
-    pub fn get_circulating_sov_supply(&self) -> u64 {
+    pub fn get_circulating_sov_supply(&self) -> u128 {
         let sov_id = crate::contracts::utils::generate_lib_token_id();
         self.token_contracts
             .get(&sov_id)
-            .map(|t| t.total_supply as u64)
+            .map(|t| t.total_supply)
             .unwrap_or(0)
     }
 
@@ -419,8 +419,8 @@ impl Blockchain {
             return Ok(false);
         }
         let circulating = self.get_circulating_sov_supply().max(1);
-        let participation_pct = (total_cast * 100) / circulating;
-        if participation_pct < quorum_pct as u64 {
+        let participation_pct = (total_cast as u128 * 100) / circulating;
+        if participation_pct < quorum_pct as u128 {
             return Ok(false);
         }
         let yes_pct = (yes_votes * 100) / total_cast;
@@ -455,7 +455,7 @@ impl Blockchain {
             .ok_or_else(|| anyhow::anyhow!("Treasury wallet not found in registry"))
     }
 
-    pub fn get_dao_treasury_balance(&self) -> Result<u64> {
+    pub fn get_dao_treasury_balance(&self) -> Result<u128> {
         let treasury_wallet_id = self
             .dao_treasury_wallet_id
             .as_ref()
@@ -477,7 +477,7 @@ impl Blockchain {
 
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
         if let Some(token) = self.token_contracts.get(&sov_token_id) {
-            Ok(token.balance_of(&treasury_key) as u64)
+            Ok(token.balance_of(&treasury_key))
         } else {
             tracing::debug!(
                 "SOV token contract not found, treasury balance query returning 0 during bootstrap"
@@ -606,7 +606,7 @@ impl Blockchain {
         let recipient_pk = Self::wallet_key_for_sov(&recip_id_bytes);
 
         let treasury_balance = self.get_dao_treasury_balance()?;
-        if treasury_balance < amount {
+        if treasury_balance < amount as u128 {
             return Err(anyhow::anyhow!(
                 "Insufficient treasury balance: need {}, available {}",
                 amount,
@@ -619,7 +619,8 @@ impl Blockchain {
             if let Some(&stored) = self.treasury_epoch_start_balance.get(&epoch) {
                 stored
             } else {
-                let start = treasury_balance.saturating_add(spent_this_epoch);
+                let treasury_balance_u64 = u64::try_from(treasury_balance).unwrap_or(u64::MAX);
+                let start = treasury_balance_u64.saturating_add(spent_this_epoch);
                 self.treasury_epoch_start_balance.insert(epoch, start);
                 start
             };

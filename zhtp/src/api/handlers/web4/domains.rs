@@ -208,7 +208,7 @@ impl Web4Handler {
             DOMAIN_REGISTRATION_FEE_SOV
         );
 
-        let registration_fee_sov = DOMAIN_REGISTRATION_FEE_SOV;
+        let registration_fee_sov = DOMAIN_REGISTRATION_FEE_SOV as u128;
 
         // ========== SECURITY: SIGNATURE VERIFICATION ==========
         // Verify that the request was signed by the owner's private key
@@ -349,7 +349,7 @@ impl Web4Handler {
                 user_sov_balance, registration_fee_sov
             );
 
-            if user_sov_balance < registration_fee_sov as u128 {
+            if user_sov_balance < registration_fee_sov {
                 return Err(anyhow!(
                     "Insufficient SOV balance. Required: {} SOV, Available: {} SOV. \
                     You need SOV tokens to register domains.",
@@ -721,7 +721,7 @@ impl Web4Handler {
         let fee_tx_hash_hex = self
             .validate_and_submit_domain_fee_tx(
                 &owner_identity,
-                DOMAIN_REGISTRATION_FEE_SOV,
+                DOMAIN_REGISTRATION_FEE_SOV as u128,
                 fee_payment_tx_raw,
             )
             .await?;
@@ -872,7 +872,7 @@ impl Web4Handler {
     async fn validate_and_submit_domain_fee_tx(
         &self,
         owner_identity: &ZhtpIdentity,
-        registration_fee_sov: u64,
+        registration_fee_sov: u128,
         fee_payment_tx_raw: &str,
     ) -> anyhow::Result<String> {
         let fee_payment_tx_bytes = hex::decode(fee_payment_tx_raw)
@@ -901,7 +901,7 @@ impl Web4Handler {
         if !is_sov {
             return Err(anyhow!("fee_payment_tx must transfer SOV token"));
         }
-        if fee_transfer.amount != registration_fee_sov as u128 {
+        if fee_transfer.amount != registration_fee_sov {
             return Err(anyhow!(
                 "fee_payment_tx amount mismatch: expected {} SOV, got {}",
                 registration_fee_sov,

@@ -1922,7 +1922,7 @@ pub struct ConsensusStatus {
     pub validator_count: usize,
     pub active_validators: usize,
     pub dao_proposals: usize,
-    pub treasury_balance: u64,
+    pub treasury_balance: u128,
     pub is_producing_blocks: bool,
 }
 
