@@ -48,5 +48,5 @@ pub use node_id::NodeId;
 pub use peer::PeerId;
 pub use storage::ProtocolStorageStats;
 pub use tokenomics::{
-    SOV_DECIMALS, SOV_MAX_SUPPLY, SOV_TOTAL_SUPPLY_TOKENS, TOKEN_SCALE_18,
+    sov, SOV_DECIMALS, SOV_MAX_SUPPLY, SOV_TOTAL_SUPPLY_TOKENS, TOKEN_SCALE_18,
 };

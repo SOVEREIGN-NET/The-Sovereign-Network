@@ -972,7 +972,7 @@ async fn bootstrap_identities_from_dht(
                                 if !bc.wallet_registry.contains_key(wid) {
                                     let wallet_bytes = hex::decode(wid).unwrap_or_default();
                                     if wallet_bytes.len() >= 32 {
-                                        const WELCOME_BONUS: u64 = SOV_WELCOME_BONUS;
+                                        const WELCOME_BONUS: u128 = SOV_WELCOME_BONUS;
                                         let wallet_data =
                                             lib_blockchain::transaction::WalletTransactionData {
                                                 wallet_id: lib_blockchain::Hash::from_slice(

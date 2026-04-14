@@ -212,7 +212,7 @@ impl Blockchain {
                                 // This handles wallets from a previous chain without requiring
                                 // users to re-register. All nodes execute this at the same block
                                 // height so state stays consistent across the network.
-                                const SOV_WELCOME_BONUS: u64 = 5_000 * 100_000_000;
+                                const SOV_WELCOME_BONUS: u128 = lib_types::sov::atoms(5_000);
                                 let wallet_data = crate::transaction::WalletTransactionData {
                                     wallet_id: Hash::new(transfer.from),
                                     owner_identity_id: None,
@@ -233,7 +233,7 @@ impl Blockchain {
                                         info!(
                                             "🔄 Transparent migration: auto-registered wallet {} with {} SOV at block execution",
                                             &from_wallet_id[..16],
-                                            SOV_WELCOME_BONUS / 100_000_000,
+                                            SOV_WELCOME_BONUS / lib_types::sov::SCALE,
                                         );
                                     }
                                     Err(e) => {
@@ -452,11 +452,7 @@ impl Blockchain {
                                 new_remainder %= 30;
                             }
 
-                            let amount_u64: u64 = mint
-                                .amount
-                                .try_into()
-                                .map_err(|_| anyhow::anyhow!("TokenMint amount exceeds u64"))?;
-                            if amount_u64 != expected_payout {
+                            if mint.amount != expected_payout {
                                 return Err(anyhow::anyhow!("UBI mint amount mismatch"));
                             }
 

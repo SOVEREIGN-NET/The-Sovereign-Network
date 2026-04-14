@@ -43,8 +43,8 @@ pub struct Transaction {
     pub from: [u8; 32],
     /// Recipient address
     pub to: [u8; 32],
-    /// Transaction amount
-    pub amount: u64,
+    /// Transaction amount (atomic units, u128 for 18-decimal SOV)
+    pub amount: u128,
     /// Base transaction fee
     pub base_fee: u64,
     /// DAO fee portion
@@ -66,7 +66,7 @@ impl Transaction {
     pub fn new(
         from: [u8; 32],
         to: [u8; 32],
-        amount: u64,
+        amount: u128,
         tx_type: TransactionType,
         economic_model: &mut super::EconomicModel,
         tx_size: u64,
@@ -207,7 +207,7 @@ pub struct TransactionSummary {
     pub tx_id: Hash,
     pub from: [u8; 32],
     pub to: [u8; 32],
-    pub amount: u64,
+    pub amount: u128,
     pub total_fee: u64,
     pub tx_type: TransactionType,
     pub timestamp: u64,

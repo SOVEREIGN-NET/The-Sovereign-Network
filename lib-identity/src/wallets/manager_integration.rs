@@ -66,7 +66,7 @@ pub struct WalletManager {
     /// Map of alias to wallet ID for quick lookup
     pub alias_map: HashMap<String, WalletId>,
     /// Total balance across all wallets
-    pub total_balance: u64,
+    pub total_balance: u128,
     /// Creation timestamp
     pub created_at: u64,
     /// Optional password protection for individual wallets
@@ -347,7 +347,7 @@ impl WalletManager {
         &mut self,
         from_wallet: &WalletId,
         to_wallet: &WalletId,
-        amount: u64,
+        amount: u128,
         purpose: String,
     ) -> Result<Hash> {
         // Verify both wallets exist and belong to this identity
@@ -583,7 +583,7 @@ impl WalletManager {
     pub fn add_funds_to_dao_wallet(
         &mut self,
         wallet_id: &WalletId,
-        amount: u64,
+        amount: u128,
         counterparty_wallet: Option<WalletId>,
         purpose: String,
         authorized_by_did: Option<IdentityId>,
@@ -677,7 +677,7 @@ impl WalletManager {
     pub fn remove_funds_from_dao_wallet(
         &mut self,
         wallet_id: &WalletId,
-        amount: u64,
+        amount: u128,
         counterparty_wallet: Option<WalletId>,
         purpose: String,
         authorized_by_did: Option<IdentityId>,

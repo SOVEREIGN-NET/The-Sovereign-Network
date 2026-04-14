@@ -129,7 +129,7 @@ impl MarketplaceHandler {
                     &request.buyer_identity_id,
                     &from_wallet,
                     &to_wallet,
-                    request.price,
+                    request.price as u128,
                     &content_hash,
                 )
                 .await?;
@@ -301,7 +301,7 @@ impl MarketplaceHandler {
                 &request.buyer_identity_id,
                 &buyer_wallet,
                 &seller_wallet,
-                request.offered_price,
+                request.offered_price as u128,
                 &content_hash,
             )
             .await?;
@@ -371,7 +371,7 @@ impl MarketplaceHandler {
         buyer_identity_id: &str,
         from_wallet: &WalletId,
         to_wallet: &WalletId,
-        amount: u64,
+        amount: u128,
         content_hash: &Hash,
     ) -> Result<Hash, anyhow::Error> {
         info!(
@@ -418,7 +418,7 @@ impl MarketplaceHandler {
         info!(" Scanning blockchain UTXO set for buyer wallet's spendable outputs...");
 
         let blockchain = self.blockchain.read().await;
-        let mut wallet_utxos: Vec<(lib_blockchain::Hash, u32, u64)> = Vec::new();
+        let mut wallet_utxos: Vec<(lib_blockchain::Hash, u32, u128)> = Vec::new();
 
         info!(
             " Scanning {} UTXOs for wallet pubkey: {}",
@@ -453,7 +453,7 @@ impl MarketplaceHandler {
         let required_amount = amount + fee;
 
         let mut selected_utxos = Vec::new();
-        let mut total_selected = 0u64;
+        let mut total_selected = 0u128;
 
         for utxo in wallet_utxos {
             selected_utxos.push(utxo.clone());
@@ -497,10 +497,10 @@ impl MarketplaceHandler {
             // Create ZK proof for transaction privacy
             let zk_proof =
                 lib_blockchain::integration::zk_integration::ZkTransactionProof::prove_transaction(
-                    total_selected, // sender_balance
-                    0,              // receiver_balance (not needed for input)
-                    amount,         // payment amount
-                    fee,            // transaction fee
+                    total_selected as u64, // sender_balance
+                    0,                     // receiver_balance (not needed for input)
+                    amount as u64,         // payment amount
+                    fee as u64,            // transaction fee
                     [0u8; 32],      // sender_blinding (placeholder)
                     [0u8; 32],      // receiver_blinding
                     [0u8; 32],      // nullifier
@@ -612,7 +612,7 @@ impl MarketplaceHandler {
             .transaction_type(TransactionType::Transfer)
             .add_inputs(inputs)
             .add_outputs(outputs)
-            .fee(fee)
+            .fee(fee as u64)
             .build(&private_key)
             .map_err(|e| anyhow!("Failed to build transaction: {:?}", e))?;
 

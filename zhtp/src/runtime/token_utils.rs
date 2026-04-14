@@ -6,7 +6,7 @@ use lib_blockchain::Transaction;
 /// Build a signed SOV token mint transaction using the node's validator key.
 pub async fn build_sov_mint_tx(
     recipient_wallet_id: &[u8; 32],
-    amount: u64,
+    amount: u128,
     memo: Vec<u8>,
 ) -> Result<Transaction> {
     let validator_kp = load_validator_keypair_from_keystore().await?;
@@ -15,7 +15,7 @@ pub async fn build_sov_mint_tx(
     let token_mint_data = TokenMintData {
         token_id: lib_blockchain::contracts::utils::generate_lib_token_id(),
         to: *recipient_wallet_id,
-        amount: amount as u128,
+        amount,
     };
 
     let mut tx = Transaction::new_token_mint_with_chain_id(

@@ -232,7 +232,7 @@ async fn main() -> Result<()> {
         manager.get_dao_wallets_by_type(false).len()
     );
 
-    let total_dao_funds: u64 = dao_wallets.iter().map(|w| w.balance).sum();
+    let total_dao_funds: u128 = dao_wallets.iter().map(|w| w.balance).sum();
     println!("Total DAO Funds: {} SOV", total_dao_funds);
 
     for dao_wallet in dao_wallets {

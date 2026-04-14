@@ -229,13 +229,13 @@ impl PouwHandler {
         rewards: &[crate::pouw::rewards::Reward],
         field: &str,
         scope: &str,
-    ) -> u64 {
+    ) -> u128 {
         rewards
             .iter()
-            .try_fold(0u64, |acc, r| acc.checked_add(r.final_amount))
+            .try_fold(0u128, |acc, r| acc.checked_add(r.final_amount))
             .unwrap_or_else(|| {
                 warn!("Overflow calculating {} for {}", field, scope);
-                u64::MAX
+                u128::MAX
             })
     }
 
@@ -565,14 +565,14 @@ impl PouwHandler {
         let calculator = &*self.reward_calculator;
         let rewards = calculator.get_client_rewards(client_did).await;
 
-        let total_earned: u64 =
+        let total_earned: u128 =
             Self::checked_reward_sum(&rewards, "total_earned", &format!("client {}", client_did));
         let paid_rewards: Vec<_> = rewards
             .iter()
             .filter(|r| r.payout_status == crate::pouw::rewards::PayoutStatus::Paid)
             .cloned()
             .collect();
-        let total_paid: u64 = Self::checked_reward_sum(
+        let total_paid: u128 = Self::checked_reward_sum(
             &paid_rewards,
             "total_paid",
             &format!("client {}", client_did),
@@ -649,14 +649,14 @@ impl PouwHandler {
         let calculator = &*self.reward_calculator;
         let rewards = calculator.get_epoch_rewards(epoch).await;
 
-        let total_earned: u64 =
+        let total_earned: u128 =
             Self::checked_reward_sum(&rewards, "total_earned", &format!("epoch {}", epoch));
         let paid_rewards: Vec<_> = rewards
             .iter()
             .filter(|r| r.payout_status == crate::pouw::rewards::PayoutStatus::Paid)
             .cloned()
             .collect();
-        let total_paid: u64 =
+        let total_paid: u128 =
             Self::checked_reward_sum(&paid_rewards, "total_paid", &format!("epoch {}", epoch));
         let total_rewards = rewards.len();
         let page_rewards: Vec<_> = rewards.into_iter().skip(offset).take(limit).collect();
@@ -696,15 +696,15 @@ impl PouwHandler {
     async fn handle_get_stats(&self) -> ZhtpResult<ZhtpResponse> {
         let rewards = self.reward_calculator.get_all_rewards().await;
         let total_rewards = rewards.len() as u64;
-        let total_earned: u64 = rewards
+        let total_earned: u128 = rewards
             .iter()
             .map(|r| r.final_amount)
-            .fold(0u64, |acc, x| acc.saturating_add(x));
-        let total_paid: u64 = rewards
+            .fold(0u128, |acc, x| acc.saturating_add(x));
+        let total_paid: u128 = rewards
             .iter()
             .filter(|r| r.payout_status == crate::pouw::rewards::PayoutStatus::Paid)
             .map(|r| r.final_amount)
-            .fold(0u64, |acc, x| acc.saturating_add(x));
+            .fold(0u128, |acc, x| acc.saturating_add(x));
         let pending_count = rewards
             .iter()
             .filter(|r| r.payout_status == crate::pouw::rewards::PayoutStatus::Pending)

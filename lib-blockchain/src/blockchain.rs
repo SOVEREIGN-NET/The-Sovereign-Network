@@ -527,18 +527,18 @@ pub struct UbiRegistryEntry {
     pub identity_id: String,
     /// UBI wallet ID where payments are sent
     pub ubi_wallet_id: String,
-    /// Daily UBI amount (~33 SOV)
-    pub daily_amount: u64,
-    /// Monthly UBI amount (1000 SOV)
-    pub monthly_amount: u64,
+    /// Daily UBI amount (~33 SOV, atomic units u128 for 18-decimal)
+    pub daily_amount: u128,
+    /// Monthly UBI amount (1000 SOV, atomic units u128 for 18-decimal)
+    pub monthly_amount: u128,
     /// Block height when registered for UBI
     pub registered_at_block: u64,
     /// Block height of last UBI payout (None if never received)
     pub last_payout_block: Option<u64>,
     /// Total UBI received to date
-    pub total_received: u64,
+    pub total_received: u128,
     /// Accumulated remainder from integer division (1000/30 = 33 remainder 10)
-    pub remainder_balance: u64,
+    pub remainder_balance: u128,
     /// Whether UBI is currently active for this citizen
     pub is_active: bool,
 }
@@ -549,7 +549,7 @@ pub struct UbiMintEntry {
     pub identity_id: String,
     pub wallet_id: String,
     pub recipient_wallet_id: [u8; 32],
-    pub payout: u64,
+    pub payout: u128,
 }
 
 /// Economics transaction record (simplified for blockchain package)
@@ -3832,7 +3832,7 @@ impl Blockchain {
     /// Calculate comprehensive voting power for a user in DAO governance
     /// Calculate effective voting power for a user, applying `self.voting_power_mode`.
     ///
-    /// Raw power = (total SOV balance across all wallets) / 100_000_000 (1 SOV = 1 unit)
+    /// Raw power = (total SOV balance across all wallets) / 10^18 (1 SOV = 1 unit)
     ///           + sum of each direct delegator's raw power.
     ///
     /// The raw power is then transformed by `voting_power_mode`:
@@ -3864,7 +3864,7 @@ impl Blockchain {
             .sum();
 
         // 1 SOV (1e18 atomic units) = 1 base vote unit
-        let base_power = (sov_balance / lib_types::TOKEN_SCALE_18) as u64;
+        let base_power = (sov_balance / lib_types::sov::SCALE) as u64;
 
         // Add power from identities that delegated directly to this user (non-transitive).
         // Keys and values in vote_delegations are 64-char hex-encoded identity IDs.
@@ -3885,7 +3885,7 @@ impl Blockchain {
                         self.token_contracts.get(&sov_id).map(|t| t.balance_of(&pk))
                     })
                     .sum();
-                Some((bal / lib_types::TOKEN_SCALE_18) as u64)
+                Some((bal / lib_types::sov::SCALE) as u64)
             })
             .sum();
 
@@ -6231,12 +6231,12 @@ impl Blockchain {
     /// who are due for their payout (last_payout_block + BLOCKS_PER_DAY <= current_block).
     ///
     /// This is the "best" approach - fully automatic, deterministic, no user action required.
-    pub fn process_automatic_ubi_distribution(&mut self, current_block: u64) -> Result<u64> {
-        let mut total_distributed = 0u64;
+    pub fn process_automatic_ubi_distribution(&mut self, current_block: u64) -> Result<u128> {
+        let mut total_distributed = 0u128;
         let mut recipients_paid = 0u64;
 
         // Collect updates to avoid borrowing issues
-        let mut updates: Vec<(String, u64, Option<u64>, u64)> = Vec::new();
+        let mut updates: Vec<(String, u128, Option<u64>, u128)> = Vec::new();
 
         for (identity_id, entry) in self.ubi_registry.iter() {
             if !entry.is_active {
@@ -6381,7 +6381,7 @@ impl Blockchain {
             ));
         }
 
-        let monthly_amount = 1000u64; // 1000 SOV per month
+        let monthly_amount = lib_types::sov::atoms(1_000); // 1000 SOV per month
         let daily_amount = monthly_amount / 30; // ~33 SOV per day
 
         let entry = UbiRegistryEntry {
@@ -6457,7 +6457,7 @@ impl Blockchain {
     pub fn mint_sov_for_pouw(
         &mut self,
         recipient_key_id: [u8; 32],
-        amount: u64,
+        amount: u128,
     ) -> anyhow::Result<()> {
         self.ensure_sov_token_contract();
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
@@ -6470,7 +6470,7 @@ impl Blockchain {
             key_id: recipient_key_id,
         };
         token
-            .mint(&recipient, amount as u128)
+            .mint(&recipient, amount)
             .map_err(|e| anyhow::anyhow!("POUW SOV mint failed: {}", e))?;
         Ok(())
     }

@@ -1622,11 +1622,11 @@ fn register_wallet_on_blockchain(
         let seed_commitment = lib_blockchain::Hash::from_slice(&[0u8; 32]);
 
         // Welcome bonus (5,000 SOV) goes to Primary wallet
-        let initial_balance = if wallet_type == "Primary" {
+        let initial_balance: u128 = if wallet_type == "Primary" {
             citizenship_result
                 .get("welcome_bonus")
                 .and_then(|wb| wb.get("bonus_amount"))
-                .and_then(|v| v.as_u64())
+                .and_then(|v| v.as_u64().map(|n| n as u128))
                 .unwrap_or(SOV_WELCOME_BONUS) // Default welcome bonus amount (atomic units)
         } else {
             0 // Other wallets start with 0 balance
