@@ -89,7 +89,7 @@ impl Blockchain {
             if total == 0 {
                 0
             } else {
-                let max_bal = token.balances.values().copied().max().unwrap_or(0);
+                let max_bal = token.max_balance();
                 ((max_bal as u128 * 10_000) / total as u128).min(u16::MAX as u128) as u16
             }
         } else {
@@ -322,17 +322,6 @@ impl Blockchain {
 
     pub(super) fn index_dao_registry_entry_from_tx(&mut self, tx: &Transaction, block_height: u64) {
         if let Some(entry) = Self::dao_registry_entry_from_tx(tx, block_height) {
-            if self.cbe_dao_id.is_none()
-                && entry.class == "fp"
-                && entry.token_key_id == self.cbe_token.token_id()
-            {
-                self.cbe_dao_id = Some(entry.dao_id);
-                info!(
-                    "CBE DAO registered at height {}: dao_id={}",
-                    block_height,
-                    hex::encode(entry.dao_id)
-                );
-            }
             self.dao_registry_index.entry(entry.dao_id).or_insert(entry);
         }
     }
@@ -400,7 +389,7 @@ impl Blockchain {
         Ok(approval_percent >= required_approval_percent as u64)
     }
 
-    pub fn get_circulating_sov_supply(&self) -> u64 {
+    pub fn get_circulating_sov_supply(&self) -> u128 {
         let sov_id = crate::contracts::utils::generate_lib_token_id();
         self.token_contracts
             .get(&sov_id)
@@ -419,8 +408,8 @@ impl Blockchain {
             return Ok(false);
         }
         let circulating = self.get_circulating_sov_supply().max(1);
-        let participation_pct = (total_cast * 100) / circulating;
-        if participation_pct < quorum_pct as u64 {
+        let participation_pct = (total_cast as u128 * 100) / circulating;
+        if participation_pct < quorum_pct as u128 {
             return Ok(false);
         }
         let yes_pct = (yes_votes * 100) / total_cast;
@@ -455,7 +444,7 @@ impl Blockchain {
             .ok_or_else(|| anyhow::anyhow!("Treasury wallet not found in registry"))
     }
 
-    pub fn get_dao_treasury_balance(&self) -> Result<u64> {
+    pub fn get_dao_treasury_balance(&self) -> Result<u128> {
         let treasury_wallet_id = self
             .dao_treasury_wallet_id
             .as_ref()
@@ -606,7 +595,7 @@ impl Blockchain {
         let recipient_pk = Self::wallet_key_for_sov(&recip_id_bytes);
 
         let treasury_balance = self.get_dao_treasury_balance()?;
-        if treasury_balance < amount {
+        if treasury_balance < amount as u128 {
             return Err(anyhow::anyhow!(
                 "Insufficient treasury balance: need {}, available {}",
                 amount,
@@ -619,7 +608,8 @@ impl Blockchain {
             if let Some(&stored) = self.treasury_epoch_start_balance.get(&epoch) {
                 stored
             } else {
-                let start = treasury_balance.saturating_add(spent_this_epoch);
+                let treasury_balance_u64 = u64::try_from(treasury_balance).unwrap_or(u64::MAX);
+                let start = treasury_balance_u64.saturating_add(spent_this_epoch);
                 self.treasury_epoch_start_balance.insert(epoch, start);
                 start
             };
@@ -659,10 +649,10 @@ impl Blockchain {
             .get_mut(&sov_id)
             .ok_or_else(|| anyhow::anyhow!("SOV token contract not found"))?;
         sov_token
-            .debit_balance(&treasury_pk, amount)
+            .debit_balance(&treasury_pk, amount as u128)
             .map_err(|e| anyhow::anyhow!("Treasury debit failed: {}", e))?;
         sov_token
-            .credit_balance(&recipient_pk, amount)
+            .credit_balance(&recipient_pk, amount as u128)
             .map_err(|e| anyhow::anyhow!("Recipient credit failed: {}", e))?;
 
         *self.treasury_epoch_spend.entry(epoch).or_insert(0) += amount;

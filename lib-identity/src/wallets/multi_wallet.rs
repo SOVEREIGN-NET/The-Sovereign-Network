@@ -171,15 +171,15 @@ pub struct WalletTypeSummary {
 /// Balance summary by wallet type
 #[derive(Debug, Clone, Default)]
 pub struct WalletBalanceSummary {
-    pub primary_balance: u64,
-    pub ubi_balance: u64,
-    pub savings_balance: u64,
-    pub stealth_balance: u64,
-    pub standard_balance: u64,
-    pub business_balance: u64,
-    pub nonprofit_dao_balance: u64,
-    pub forprofit_dao_balance: u64,
-    pub total_balance: u64,
+    pub primary_balance: u128,
+    pub ubi_balance: u128,
+    pub savings_balance: u128,
+    pub stealth_balance: u128,
+    pub standard_balance: u128,
+    pub business_balance: u128,
+    pub nonprofit_dao_balance: u128,
+    pub forprofit_dao_balance: u128,
+    pub total_balance: u128,
 }
 
 impl WalletTypeSummary {

@@ -19,15 +19,25 @@ path = "sled_migration.rs"
 name = "testnet_reset"
 path = "testnet_reset.rs"
 
+[[bin]]
+name = "cbe_scan"
+path = "cbe_scan.rs"
+
+[[bin]]
+name = "testnet_snapshot"
+path = "testnet_snapshot.rs"
+
 [dependencies]
 lib-identity = { path = "../lib-identity" }
 lib-protocols = { path = "../lib-protocols" }
 lib-network = { path = "../lib-network" }
 lib-crypto = { path = "../lib-crypto" }
 lib-blockchain = { path = "../lib-blockchain" }
+lib-types = { path = "../lib-types" }
 hex = "0.4"
 anyhow = "1"
 sled = "0.34"
 bincode = "1.3"
 serde = { version = "1.0", features = ["derive"] }
 blake3 = "1"
+serde_json = "1"

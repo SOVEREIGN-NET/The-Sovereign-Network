@@ -9,8 +9,8 @@ use std::collections::HashMap;
 /// Reward calculation engine
 #[derive(Debug, Clone)]
 pub struct RewardCalculator {
-    /// Base reward per block
-    base_reward: u64,
+    /// Base reward per block (atomic units, u128 for 18-decimal SOV)
+    base_reward: u128,
     /// Reward multipliers for different work types
     work_multipliers: HashMap<UsefulWorkType, f64>,
     /// Historical reward data
@@ -21,7 +21,7 @@ pub struct RewardCalculator {
 #[derive(Debug, Clone)]
 pub struct RewardRound {
     pub height: u64,
-    pub total_rewards: u64,
+    pub total_rewards: u128,
     pub validator_rewards: HashMap<IdentityId, ValidatorReward>,
     pub timestamp: u64,
 }
@@ -30,10 +30,10 @@ pub struct RewardRound {
 #[derive(Debug, Clone)]
 pub struct ValidatorReward {
     pub validator: IdentityId,
-    pub base_reward: u64,
-    pub work_bonus: u64,
-    pub participation_bonus: u64,
-    pub total_reward: u64,
+    pub base_reward: u128,
+    pub work_bonus: u128,
+    pub participation_bonus: u128,
+    pub total_reward: u128,
     pub work_breakdown: HashMap<UsefulWorkType, u64>,
 }
 
@@ -48,7 +48,7 @@ impl RewardCalculator {
         work_multipliers.insert(UsefulWorkType::BridgeOperations, 1.5);
 
         Self {
-            base_reward: 100 * 1_000_000, // 100 SOV base reward
+            base_reward: lib_types::sov::atoms(100), // 100 SOV base reward (18-decimal)
             work_multipliers,
             reward_history: Vec::new(),
         }
@@ -62,7 +62,7 @@ impl RewardCalculator {
     ) -> Result<RewardRound> {
         let active_validators = validator_manager.get_active_validators();
         let mut validator_rewards = HashMap::new();
-        let mut total_rewards = 0u64;
+        let mut total_rewards = 0u128;
 
         for validator in active_validators {
             let reward = self.calculate_validator_reward(validator)?;
@@ -103,13 +103,13 @@ impl RewardCalculator {
     ) -> Result<ValidatorReward> {
         // Base reward based primarily on stake (traditional validator model)
         let stake_factor = (validator.stake as f64).sqrt() / 1000.0;
-        let base_reward = (self.base_reward as f64 * stake_factor) as u64;
+        let base_reward = (self.base_reward as f64 * stake_factor) as u128;
 
         // Optional storage bonus (only if validator provides storage)
         let _storage_bonus = if validator.storage_provided > 0 {
             let storage_gb = validator.storage_provided as f64 / (1024.0 * 1024.0 * 1024.0);
             (base_reward as f64 * 0.1 * storage_gb.ln().max(0.0)).min(base_reward as f64 * 0.2)
-                as u64
+                as u128
         } else {
             0
         };
@@ -131,7 +131,7 @@ impl RewardCalculator {
         let work_bonus = self.calculate_work_bonus(&work_breakdown);
 
         // Participation bonus based on reputation
-        let participation_bonus = (validator.reputation as u64 * self.base_reward) / 10000;
+        let participation_bonus = (validator.reputation as u128 * self.base_reward) / 10000;
 
         let total_reward = base_reward + work_bonus + participation_bonus;
 
@@ -146,12 +146,12 @@ impl RewardCalculator {
     }
 
     /// Calculate work bonus based on useful work performed
-    fn calculate_work_bonus(&self, work_breakdown: &HashMap<UsefulWorkType, u64>) -> u64 {
-        let mut total_bonus = 0u64;
+    fn calculate_work_bonus(&self, work_breakdown: &HashMap<UsefulWorkType, u64>) -> u128 {
+        let mut total_bonus = 0u128;
 
         for (work_type, amount) in work_breakdown {
             if let Some(multiplier) = self.work_multipliers.get(work_type) {
-                let bonus = (*amount as f64 * multiplier * 10.0) as u64; // 10 SOV per unit
+                let bonus = (*amount as f64 * multiplier * 10.0) as u128; // 10 SOV per unit
                 total_bonus += bonus;
             }
         }
@@ -184,9 +184,9 @@ impl RewardCalculator {
     /// Get reward statistics
     pub fn get_reward_stats(&self) -> RewardStatistics {
         let total_rounds = self.reward_history.len();
-        let total_rewards: u64 = self.reward_history.iter().map(|r| r.total_rewards).sum();
+        let total_rewards: u128 = self.reward_history.iter().map(|r| r.total_rewards).sum();
         let average_per_round = if total_rounds > 0 {
-            total_rewards / total_rounds as u64
+            total_rewards / total_rounds as u128
         } else {
             0
         };
@@ -210,7 +210,7 @@ impl RewardCalculator {
     }
 
     /// Adjust base reward (governance decision)
-    pub fn adjust_base_reward(&mut self, new_base_reward: u64) {
+    pub fn adjust_base_reward(&mut self, new_base_reward: u128) {
         let old_reward = self.base_reward;
         self.base_reward = new_base_reward;
         tracing::info!(
@@ -225,7 +225,7 @@ impl RewardCalculator {
 #[derive(Debug, Clone)]
 pub struct RewardStatistics {
     pub total_rounds: u64,
-    pub total_rewards_distributed: u64,
-    pub average_rewards_per_round: u64,
-    pub current_base_reward: u64,
+    pub total_rewards_distributed: u128,
+    pub average_rewards_per_round: u128,
+    pub current_base_reward: u128,
 }

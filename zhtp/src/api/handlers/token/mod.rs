@@ -77,8 +77,8 @@ pub struct TokenInfoResponse {
     pub name: String,
     pub symbol: String,
     pub decimals: u8,
-    pub total_supply: u64,
-    pub max_supply: Option<u64>,
+    pub total_supply: u128,
+    pub max_supply: Option<u128>,
     pub creator: String,
     pub is_deflationary: bool,
     pub created_at_block: Option<u64>,
@@ -91,7 +91,7 @@ pub struct TokenListItem {
     pub name: String,
     pub symbol: String,
     pub decimals: u8,
-    pub total_supply: u64,
+    pub total_supply: u128,
 }
 
 // ============================================================================
@@ -412,16 +412,15 @@ impl TokenHandler {
 
         let blockchain = self.blockchain.read().await;
 
-        // CBE lives in cbe_token, not token_contracts — handle it explicitly.
+        // CBE token info: return static metadata (token state no longer in-memory)
         let cbe_token_id = lib_blockchain::Blockchain::derive_cbe_token_id_pub();
         if token_id_array == cbe_token_id {
-            let cbe = &blockchain.cbe_token;
             let response = TokenInfoResponse {
                 token_id: token_id_hex.to_string(),
-                name: cbe.name().to_string(),
-                symbol: cbe.symbol().to_string(),
-                decimals: cbe.decimals(),
-                total_supply: cbe.total_supply(),
+                name: "CBE Equity".to_string(),
+                symbol: "CBE".to_string(),
+                decimals: lib_blockchain::contracts::bonding_curve::canonical::CBE_DECIMALS,
+                total_supply: lib_blockchain::contracts::bonding_curve::canonical::CBE_TOTAL_SUPPLY,
                 max_supply: None,
                 creator: format!("0x{}", "00".repeat(32)),
                 is_deflationary: false,
@@ -442,7 +441,7 @@ impl TokenHandler {
             symbol: token.symbol.clone(),
             decimals: token.decimals,
             total_supply: token.total_supply,
-            max_supply: if token.max_supply == u64::MAX {
+            max_supply: if token.max_supply == u128::MAX {
                 None
             } else {
                 Some(token.max_supply)
@@ -476,16 +475,16 @@ impl TokenHandler {
 
         let blockchain = self.blockchain.read().await;
 
-        // CBE balances live in cbe_token, not in token_contracts.
+        // CBE balances: read from SledStore only (cbe_token field removed)
         if is_cbe {
             let pubkey = self.identity_to_pubkey(address)?;
             let key_id = pubkey.key_id;
-            let balance: u64 = if let Some(store) = blockchain.get_store() {
+            let balance: u128 = if let Some(store) = blockchain.get_store() {
                 let storage_token_id = lib_blockchain::storage::TokenId(cbe_token_id);
                 let addr = lib_blockchain::storage::Address::new(key_id);
-                store.get_token_balance(&storage_token_id, &addr).unwrap_or(0) as u64
+                store.get_token_balance(&storage_token_id, &addr).unwrap_or(0)
             } else {
-                blockchain.cbe_token.balance_of_key_id(&key_id)
+                0
             };
             return create_json_response(json!({
                 "token_id": token_id_hex,
@@ -511,7 +510,7 @@ impl TokenHandler {
                 let addr = lib_blockchain::storage::Address::new(wallet_id);
                 store
                     .get_token_balance(&storage_token_id, &addr)
-                    .unwrap_or(0) as u64
+                    .unwrap_or(0) as u128
             } else {
                 let wallet_key = PublicKey {
                     dilithium_pk: [0u8; 2592],
@@ -524,10 +523,8 @@ impl TokenHandler {
             let pubkey = self.identity_to_pubkey(address)?;
             let target_key_id = pubkey.key_id;
             token
-                .balances
-                .iter()
-                .find(|(pk, _)| pk.key_id == target_key_id)
-                .map(|(_, bal)| *bal)
+                .find_balance_by_key_id(&target_key_id)
+                .map(|(_, bal)| bal)
                 .unwrap_or(0)
         };
 
@@ -555,14 +552,14 @@ impl TokenHandler {
             })
             .collect();
 
-        // CBE lives in cbe_token, not in token_contracts — include it explicitly
+        // CBE token: include with static metadata (cbe_token field removed from Blockchain)
         let cbe_token_id = lib_blockchain::Blockchain::derive_cbe_token_id_pub();
         tokens.push(TokenListItem {
             token_id: hex::encode(cbe_token_id),
-            name: blockchain.cbe_token.name().to_string(),
-            symbol: blockchain.cbe_token.symbol().to_string(),
-            decimals: blockchain.cbe_token.decimals(),
-            total_supply: blockchain.cbe_token.total_supply(),
+            name: "CBE Equity".to_string(),
+            symbol: "CBE".to_string(),
+            decimals: lib_blockchain::contracts::bonding_curve::canonical::CBE_DECIMALS,
+            total_supply: lib_blockchain::contracts::bonding_curve::canonical::CBE_TOTAL_SUPPLY,
         });
 
         let count = tokens.len();
@@ -696,10 +693,8 @@ impl TokenHandler {
                 }
             } else {
                 token
-                    .balances
-                    .iter()
-                    .find(|(pk, _)| pk.key_id == target_key_id)
-                    .map(|(_, bal)| *bal)
+                    .find_balance_by_key_id(&target_key_id)
+                    .map(|(_, bal)| bal)
                     .unwrap_or(0)
             };
 
@@ -707,7 +702,7 @@ impl TokenHandler {
                 "token/balances: token={} ({}) balance_count={} found_balance={}",
                 token.name,
                 token.symbol,
-                token.balances.len(),
+                token.balances_len(),
                 balance
             );
 
@@ -735,31 +730,20 @@ impl TokenHandler {
                 .identity_to_pubkey(address)
                 .map(|pk| pk.key_id)
                 .unwrap_or(target_key_id);
-            let cbe_balance: u64 = if let Some(store) = blockchain.get_store() {
-                // CBE canonical path stores per-user balances in cbe_account_state.
-                let cbe_acc_bal = store
-                    .get_cbe_account_state(&cbe_key_id)
-                    .ok()
-                    .flatten()
-                    .map(|a| a.balance_cbe.min(u64::MAX as u128) as u64)
-                    .unwrap_or(0);
-                if cbe_acc_bal > 0 {
-                    cbe_acc_bal
-                } else {
-                    // Fallback to token_balance for legacy/migrated credits
-                    let storage_token_id = lib_blockchain::storage::TokenId(cbe_token_id);
-                    let addr = lib_blockchain::storage::Address::new(cbe_key_id);
-                    store.get_token_balance(&storage_token_id, &addr).unwrap_or(0) as u64
-                }
+            let cbe_balance: u128 = if let Some(store) = blockchain.get_store() {
+                // Phase 1B moved all CBE balances to token_balances.
+                let storage_token_id = lib_blockchain::storage::TokenId(cbe_token_id);
+                let addr = lib_blockchain::storage::Address::new(cbe_key_id);
+                store.get_token_balance(&storage_token_id, &addr).unwrap_or(0)
             } else {
-                blockchain.cbe_token.balance_of_key_id(&cbe_key_id)
+                0
             };
             if cbe_balance > 0 {
                 balances.push(json!({
                     "token_id": hex::encode(cbe_token_id),
                     "name": "CBE Equity",
                     "symbol": "CBE",
-                    "decimals": 8u8,
+                    "decimals": lib_blockchain::contracts::bonding_curve::canonical::CBE_DECIMALS,
                     "balance": cbe_balance,
                     "is_creator": false
                 }));

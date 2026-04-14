@@ -1,10 +1,33 @@
 pub use lib_types::{
     BondingCurveBand as Band, BondingCurveBuyReceipt, BondingCurveBuyTx, BondingCurveSellReceipt,
-    BondingCurveSellTx, CBE_MAX_SUPPLY, TOKEN_SCALE_18,
+    BondingCurveSellTx, TOKEN_SCALE_18,
 };
 use primitive_types::U256;
 
 use crate::contracts::utils::{integer_sqrt_u256, mul_div_floor_u128, u256_to_u128, MathError};
+
+// ── CBE economic identity constants ─────────────────────────────────────────
+//
+// These constants define the CBE token's identity and economic parameters.
+// They were originally in `contracts/tokens/cbe_token.rs` and were moved here
+// (EPIC-001 Phase 1F) because the bonding curve is the canonical home for CBE
+// economics after the CbeToken struct was removed from the protocol layer.
+
+/// Token symbol used by the bonding curve registry and oracle checks.
+pub const CBE_SYMBOL: &str = "CBE";
+
+/// Token name used to derive the canonical CBE token ID.
+pub const CBE_NAME: &str = "CBE Equity";
+
+/// Number of decimal places for CBE (18 decimals, same as SOV).
+/// DAOs choose their own decimals — CBE chose 18.
+pub const CBE_DECIMALS: u8 = 18;
+
+/// Whole-token CBE total supply (100 billion).
+pub const CBE_TOTAL_SUPPLY_TOKENS: u128 = 100_000_000_000;
+
+/// Total supply in 18-decimal atoms (100B × 10^18).
+pub const CBE_TOTAL_SUPPLY: u128 = CBE_TOTAL_SUPPLY_TOKENS * TOKEN_SCALE_18;
 
 // ── Immutable curve logic ────────────────────────────────────────────────────
 //
@@ -31,7 +54,10 @@ pub const MAX_GROSS_SOV_PER_TX: u128 = 1_000_000_000_000_000_000_000_000;
 /// Per-transaction minted-supply cap.  Changing this value is a hard fork.
 pub const MAX_DELTA_S_PER_TX: u128 = 100_000_000_000 * SCALE;
 
-pub const MAX_SUPPLY: u128 = CBE_MAX_SUPPLY;
+/// CBE max supply in 18-decimal bonding curve atoms (100B tokens × 10^18).
+/// This is the bonding curve's internal accounting unit, independent of CBE's
+/// 8-decimal display convention. Immutable — changing is a hard fork.
+pub const MAX_SUPPLY: u128 = 100_000_000_000 * SCALE;
 
 /// Band price anchors — part of the immutable curve shape.
 pub const P_START_0: u128 = 313_345_700_000_000;
@@ -584,5 +610,55 @@ mod tests {
         .unwrap()
             + cost_single_band(BANDS[1].start_supply, current_supply, &BANDS[1]).unwrap();
         assert_eq!(payout_for_burn(amount, current_supply).unwrap(), expected);
+    }
+}
+
+// ── Floor price computation ─────────────────────────────────────────────────
+
+/// Compute the CBE floor price from on-chain state.
+///
+/// Floor = locked_reserve / circulating_supply (both in SCALE units).
+/// Returns the price in SCALE units (1e18 = 1 SOV per CBE).
+/// Returns 0 if circulating supply is zero (no deposits yet).
+pub fn floor_price(econ: &lib_types::BondingCurveEconomicState) -> u128 {
+    if econ.s_c == 0 {
+        return 0;
+    }
+    // Use U256 to avoid overflow: (reserve * SCALE) / s_c
+    let result = U256::from(econ.reserve_balance)
+        .checked_mul(U256::from(SCALE))
+        .unwrap_or(U256::zero())
+        / U256::from(econ.s_c);
+    u256_to_u128(result).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod floor_tests {
+    use super::*;
+    use lib_types::BondingCurveEconomicState;
+
+    #[test]
+    fn floor_zero_supply_returns_zero() {
+        let econ = BondingCurveEconomicState::default();
+        assert_eq!(floor_price(&econ), 0);
+    }
+
+    #[test]
+    fn floor_rises_monotonically_with_deposits() {
+        let mut econ = BondingCurveEconomicState::default();
+
+        // Simulate 3 deposits of 1000 SCALE SOV each (20/32/48 split)
+        let mut prev_floor = 0u128;
+        for _ in 0..3 {
+            let deposit = 1000 * SCALE;
+            let reserve_credit = deposit * 32 / 100;
+            let delta_s = mint_with_reserve(reserve_credit, econ.s_c).unwrap();
+            econ.s_c += delta_s;
+            econ.reserve_balance += reserve_credit;
+
+            let f = floor_price(&econ);
+            assert!(f > prev_floor, "floor must rise: prev={prev_floor}, now={f}");
+            prev_floor = f;
+        }
     }
 }

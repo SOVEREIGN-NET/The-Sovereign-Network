@@ -55,7 +55,7 @@ export class DomainManager {
     const fee = calculateDomainRegistrationFee(domain, years);
 
     await this.output.info(`Registering ${domain} for ${years} year(s)`);
-    await this.output.info(`Registration fee: ${(Number(fee) / 100_000_000).toFixed(8)} ZHTP`);
+    await this.output.info(`Registration fee: ${(Number(fee) / 1_000_000_000_000_000_000).toFixed(8)} ZHTP`);
 
     try {
       // Get operation config

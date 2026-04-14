@@ -29,7 +29,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use blake3;
 
-const SOV_PER_WALLET: u128 = 500_000_000_000; // 5,000 SOV × 10^8
+const SOV_PER_WALLET: u128 = lib_types::sov::atoms(5_000); // 5,000 SOV × 10^18
 /// Canonical wallet type string for Primary wallets (matches WalletType::Primary serialization).
 const PRIMARY_WALLET_TYPE: &str = "Primary";
 const MAX_TRANSACTIONS_PER_BLOCK: usize = 4096;
@@ -225,7 +225,7 @@ fn main() -> Result<()> {
     println!("  Identities:             {}", identities.len());
     println!("  Wallets (all types):    {}", wallets.len());
     println!("  Primary wallets minted: {}", primary_wallets.len());
-    println!("  Total SOV minted:       {} SOV", total_sov / 100_000_000);
+    println!("  Total SOV minted:       {} SOV", lib_types::sov::to_display(total_sov));
     println!("  Output sled:            {}", output_path.display());
     println!();
     println!("Next steps:");

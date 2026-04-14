@@ -42,7 +42,7 @@ const PRICE_SCALE: u128 = 100_000_000;
 
 /// Token decimals (8)
 const TOKEN_DECIMALS: u128 = 100_000_000;
-const SOV_ATOMIC_UNITS: u128 = 1_000_000_000_000_000_000;
+const SOV_ATOMIC_UNITS: u128 = lib_types::sov::SCALE;
 
 // ============================================================================
 // Test Helpers

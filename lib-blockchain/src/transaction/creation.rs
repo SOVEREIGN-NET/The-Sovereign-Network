@@ -701,7 +701,7 @@ pub mod utils {
             | TransactionType::DaoUnstake
             | TransactionType::DomainRegistration
             | TransactionType::DomainUpdate => {
-                // Threshold-approval, CBE, staking, and domain transactions - no inputs/outputs
+                // Threshold-approval, staking, domain, and legacy CBE transactions - no inputs/outputs
                 if !inputs.is_empty() {
                     return Err(TransactionCreateError::InvalidInputs);
                 }

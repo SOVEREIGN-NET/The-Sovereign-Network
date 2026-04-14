@@ -8,8 +8,12 @@ use lib_blockchain::{TransactionOutput, TransactionType};
 use lib_crypto::hashing::hash_blake3;
 use lib_crypto::Hash;
 use lib_identity::identity::IdentityManager;
-use lib_identity::types::IdentityId;
+use lib_identity::types::{IdentityId, IdentityView};
 use lib_identity::wallets::{wallet_types::ContentTransferType, WalletId};
+
+// Access control imports
+use crate::api::principal::extract_principal_from_request;
+use lib_access_control::SecurityPrincipal;
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 use lib_protocols::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_storage::WalletContentManager;
@@ -43,6 +47,11 @@ impl MarketplaceHandler {
         }
     }
 
+    /// Extract a SecurityPrincipal from an incoming request.
+    fn extract_principal(&self, request: &ZhtpRequest) -> SecurityPrincipal {
+        extract_principal_from_request(request)
+    }
+
     /// Route incoming requests to appropriate handlers
     async fn handle_request_internal(&self, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         let path = &request.uri;
@@ -53,7 +62,8 @@ impl MarketplaceHandler {
         match (request.method, segments.as_slice()) {
             // POST /api/marketplace/content/{content_hash}/transfer
             (ZhtpMethod::Post, ["api", "marketplace", "content", content_hash, "transfer"]) => {
-                self.transfer_content(content_hash, &request.body).await
+                let principal = self.extract_principal(request);
+                self.transfer_content(content_hash, &request.body, &principal).await
             }
 
             // POST /api/marketplace/content/{content_hash}/list
@@ -64,7 +74,8 @@ impl MarketplaceHandler {
 
             // POST /api/marketplace/content/{content_hash}/buy
             (ZhtpMethod::Post, ["api", "marketplace", "content", content_hash, "buy"]) => {
-                self.buy_content(content_hash, &request.body).await
+                let principal = self.extract_principal(request);
+                self.buy_content(content_hash, &request.body, &principal).await
             }
 
             // GET /api/marketplace/listings
@@ -92,6 +103,7 @@ impl MarketplaceHandler {
         &self,
         content_hash_str: &str,
         body: &[u8],
+        principal: &SecurityPrincipal,
     ) -> ZhtpResult<ZhtpResponse> {
         info!("Processing content transfer for: {}", content_hash_str);
 
@@ -129,8 +141,9 @@ impl MarketplaceHandler {
                     &request.buyer_identity_id,
                     &from_wallet,
                     &to_wallet,
-                    request.price,
+                    request.price as u128,
                     &content_hash,
+                    principal,
                 )
                 .await?;
 
@@ -263,7 +276,12 @@ impl MarketplaceHandler {
     /// POST /api/marketplace/content/{content_hash}/buy
     ///
     /// Buy content from marketplace
-    async fn buy_content(&self, content_hash_str: &str, body: &[u8]) -> ZhtpResult<ZhtpResponse> {
+    async fn buy_content(
+        &self,
+        content_hash_str: &str,
+        body: &[u8],
+        principal: &SecurityPrincipal,
+    ) -> ZhtpResult<ZhtpResponse> {
         info!("Processing content purchase: {}", content_hash_str);
 
         // Parse request body
@@ -301,8 +319,9 @@ impl MarketplaceHandler {
                 &request.buyer_identity_id,
                 &buyer_wallet,
                 &seller_wallet,
-                request.offered_price,
+                request.offered_price as u128,
                 &content_hash,
+                principal,
             )
             .await?;
 
@@ -371,8 +390,9 @@ impl MarketplaceHandler {
         buyer_identity_id: &str,
         from_wallet: &WalletId,
         to_wallet: &WalletId,
-        amount: u64,
+        amount: u128,
         content_hash: &Hash,
+        principal: &SecurityPrincipal,
     ) -> Result<Hash, anyhow::Error> {
         info!(
             "Creating blockchain payment transaction: {} → {} for {} SOV",
@@ -396,6 +416,17 @@ impl MarketplaceHandler {
 
         // Get buyer's identity and private key (P1-7: private keys stored in identity)
         let identity_mgr = self.identity_manager.read().await;
+
+        // Payment transactions require full self-access to the buyer identity.
+        match identity_mgr.get_identity_view(principal, &identity_id) {
+            Some(IdentityView::Full(_)) => {}
+            _ => {
+                return Err(anyhow!(
+                    "Access denied: can only create payments for your own identity"
+                ));
+            }
+        }
+
         let identity = identity_mgr
             .get_identity(&identity_id)
             .ok_or_else(|| anyhow!("Identity not found for buyer {}", hex::encode(&identity_id)))?;
@@ -418,7 +449,7 @@ impl MarketplaceHandler {
         info!(" Scanning blockchain UTXO set for buyer wallet's spendable outputs...");
 
         let blockchain = self.blockchain.read().await;
-        let mut wallet_utxos: Vec<(lib_blockchain::Hash, u32, u64)> = Vec::new();
+        let mut wallet_utxos: Vec<(lib_blockchain::Hash, u32, u128)> = Vec::new();
 
         info!(
             " Scanning {} UTXOs for wallet pubkey: {}",
@@ -453,7 +484,7 @@ impl MarketplaceHandler {
         let required_amount = amount + fee;
 
         let mut selected_utxos = Vec::new();
-        let mut total_selected = 0u64;
+        let mut total_selected = 0u128;
 
         for utxo in wallet_utxos {
             selected_utxos.push(utxo.clone());
@@ -497,10 +528,10 @@ impl MarketplaceHandler {
             // Create ZK proof for transaction privacy
             let zk_proof =
                 lib_blockchain::integration::zk_integration::ZkTransactionProof::prove_transaction(
-                    total_selected, // sender_balance
-                    0,              // receiver_balance (not needed for input)
-                    amount,         // payment amount
-                    fee,            // transaction fee
+                    total_selected as u64, // sender_balance
+                    0,                     // receiver_balance (not needed for input)
+                    amount as u64,         // payment amount
+                    fee as u64,            // transaction fee
                     [0u8; 32],      // sender_blinding (placeholder)
                     [0u8; 32],      // receiver_blinding
                     [0u8; 32],      // nullifier
@@ -612,7 +643,7 @@ impl MarketplaceHandler {
             .transaction_type(TransactionType::Transfer)
             .add_inputs(inputs)
             .add_outputs(outputs)
-            .fee(fee)
+            .fee(fee as u64)
             .build(&private_key)
             .map_err(|e| anyhow!("Failed to build transaction: {:?}", e))?;
 

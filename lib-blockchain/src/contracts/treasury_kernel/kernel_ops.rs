@@ -40,7 +40,7 @@ impl TreasuryKernel {
 
         match reason {
             CreditReason::Mint | CreditReason::UbiDistribution => token
-                .mint_kernel_only(self.kernel_address(), to, amount)
+                .mint_kernel_only(self.kernel_address(), to, amount as u128)
                 .map_err(|e| {
                     if e.contains("exceed maximum supply") {
                         KernelOpError::ExceedsMaxSupply
@@ -51,7 +51,7 @@ impl TreasuryKernel {
                     }
                 }),
             CreditReason::FeeDistribution | CreditReason::Reward | CreditReason::Transfer => token
-                .credit_balance(to, amount)
+                .credit_balance(to, amount as u128)
                 .map_err(|_| KernelOpError::Overflow),
         }
     }
@@ -74,15 +74,15 @@ impl TreasuryKernel {
             DebitReason::Burn => {
                 // Bypass kernel_only_mode gate — kernel IS the authority
                 let balance = token.balance_of(from);
-                if balance < amount {
+                if balance < amount as u128 {
                     return Err(KernelOpError::InsufficientBalance);
                 }
-                token.balances.insert(from.clone(), balance - amount);
-                token.total_supply = token.total_supply.saturating_sub(amount);
+                token.set_balance(from, balance - amount as u128);
+                token.total_supply = token.total_supply.saturating_sub(amount as u128);
                 Ok(())
             }
             DebitReason::FeeCollection | DebitReason::Slash | DebitReason::Transfer => token
-                .debit_balance(from, amount)
+                .debit_balance(from, amount as u128)
                 .map_err(|_| KernelOpError::InsufficientBalance),
         }
     }
@@ -99,7 +99,7 @@ impl TreasuryKernel {
         self.verify_caller(caller)?;
 
         token
-            .lock_balance(account, amount)
+            .lock_balance(account, amount as u128)
             .map_err(|_| KernelOpError::InsufficientBalance)
     }
 
@@ -115,7 +115,7 @@ impl TreasuryKernel {
         self.verify_caller(caller)?;
 
         token
-            .release_balance(account, amount)
+            .release_balance(account, amount as u128)
             .map_err(|_| KernelOpError::InsufficientLockedBalance)
     }
 
@@ -155,12 +155,12 @@ impl TreasuryKernel {
 
         // Debit source (respects locked balances)
         token
-            .debit_balance(from, amount)
+            .debit_balance(from, amount as u128)
             .map_err(|_| KernelOpError::InsufficientBalance)?;
 
         // Credit destination
         token
-            .credit_balance(to, amount)
+            .credit_balance(to, amount as u128)
             .map_err(|_| KernelOpError::Overflow)?;
 
         Ok(())

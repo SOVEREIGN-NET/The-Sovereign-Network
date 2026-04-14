@@ -637,6 +637,47 @@ impl Default for IdentityMetadata {
     }
 }
 
+/// Access-controlled view of identity metadata.
+///
+/// This is the only metadata shape that may be returned across trust
+/// boundaries. Sensitive fields are wrapped in `Option` so that unauthorized
+/// callers receive `None` instead of the actual data.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdentityMetadataView {
+    pub did: String,
+    pub display_name: String,
+    pub public_key: Option<Vec<u8>>,
+    pub controlled_nodes: Option<Vec<String>>,
+    pub owned_wallets: Option<Vec<String>>,
+    pub attributes: Option<Vec<IdentityAttributeFull>>,
+}
+
+impl IdentityMetadataView {
+    /// Build a public-scoped view (minimal exposure).
+    pub fn public(did: String, display_name: String) -> Self {
+        Self {
+            did,
+            display_name,
+            public_key: None,
+            controlled_nodes: None,
+            owned_wallets: None,
+            attributes: None,
+        }
+    }
+
+    /// Build a full view from raw metadata (owner, admin, council, self).
+    pub fn from_metadata(metadata: &IdentityMetadata) -> Self {
+        Self {
+            did: metadata.did.clone(),
+            display_name: metadata.display_name.clone(),
+            public_key: Some(metadata.public_key.clone()),
+            controlled_nodes: Some(metadata.controlled_nodes.clone()),
+            owned_wallets: Some(metadata.owned_wallets.clone()),
+            attributes: Some(metadata.attributes.clone()),
+        }
+    }
+}
+
 /// Full attribute with string data (metadata only, non-consensus)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IdentityAttributeFull {
@@ -887,13 +928,13 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// Get token total supply.
     ///
     /// Returns None if no supply is tracked (token not initialized with supply).
-    fn get_token_supply(&self, token: &TokenId) -> StorageResult<Option<u64>>;
+    fn get_token_supply(&self, token: &TokenId) -> StorageResult<Option<u128>>;
 
     /// Set token total supply.
     ///
     /// # Requirements
     /// - MUST be called within begin_block/commit_block
-    fn put_token_supply(&self, token: &TokenId, supply: u64) -> StorageResult<()>;
+    fn put_token_supply(&self, token: &TokenId, supply: u128) -> StorageResult<()>;
 
     /// Get the latest persisted token subsystem snapshot.
     fn get_token_state_snapshot(&self) -> StorageResult<Option<TokenStateSnapshot>>;
@@ -1017,7 +1058,7 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     fn backfill_token_balances_from_contract(
         &self,
         _token_id: &TokenId,
-        _entries: &[([u8; 32], u64)],
+        _entries: &[([u8; 32], u128)],
     ) -> StorageResult<usize> {
         Ok(0) // Default no-op
     }
@@ -1401,18 +1442,6 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         state: &lib_types::BondingCurveAccountState,
     ) -> StorageResult<()>;
 
-    /// Seed missing CBE account states from the in-memory CBE token balances.
-    ///
-    /// Must only be called at startup before block processing begins (no active
-    /// transaction). Only writes entries whose `cbe_account_state` is absent
-    /// (idempotent). Used to initialise pool wallets whose balances were set
-    /// via `cbe_token.init()` but were never written to SledStore.
-    fn backfill_cbe_account_states(
-        &self,
-        _entries: &[([u8; 32], u128)],
-    ) -> StorageResult<usize> {
-        Ok(0) // Default no-op for non-sled backends
-    }
 
     // =========================================================================
     // BFT Quorum Proof Operations (default no-ops for non-sled backends)

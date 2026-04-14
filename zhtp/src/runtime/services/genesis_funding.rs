@@ -221,7 +221,7 @@ impl GenesisFundingService {
             if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
                 if token.balance_of(&recipient_pk) == 0 {
                     token
-                        .mint(&recipient_pk, SOV_WELCOME_BONUS)
+                        .mint(&recipient_pk, SOV_WELCOME_BONUS as u128)
                         .map_err(|e| anyhow::anyhow!("failed to mint genesis wallet SOV: {}", e))?;
                 }
             }

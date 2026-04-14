@@ -18,7 +18,7 @@ pub fn approve_spending(
     spender: &PublicKey,
     amount: u64,
 ) {
-    contract.approve(owner, spender, amount);
+    contract.approve(owner, spender, amount as u128);
 }
 
 /// Mint new tokens
@@ -34,7 +34,7 @@ pub fn mint_tokens(
     to: &PublicKey,
     amount: u64,
 ) -> Result<(), String> {
-    contract.mint(to, amount)
+    contract.mint(to, amount as u128)
 }
 
 /// Burn tokens from account
@@ -50,7 +50,7 @@ pub fn burn_tokens(
     from: &PublicKey,
     amount: u64,
 ) -> Result<(), String> {
-    contract.burn(from, amount)
+    contract.burn(from, amount as u128)
 }
 
 /// Mint new tokens via Treasury Kernel (preferred path)
@@ -82,12 +82,12 @@ pub fn burn_tokens_via_kernel(
 }
 
 /// Get account balance
-pub fn get_balance(contract: &TokenContract, account: &PublicKey) -> u64 {
+pub fn get_balance(contract: &TokenContract, account: &PublicKey) -> u128 {
     contract.balance_of(account)
 }
 
 /// Get spending allowance
-pub fn get_allowance(contract: &TokenContract, owner: &PublicKey, spender: &PublicKey) -> u64 {
+pub fn get_allowance(contract: &TokenContract, owner: &PublicKey, spender: &PublicKey) -> u128 {
     contract.allowance(owner, spender)
 }
 
@@ -103,11 +103,11 @@ pub fn validate_token(contract: &TokenContract) -> Result<(), String> {
 
 /// Check if minting amount is possible
 pub fn can_mint_amount(contract: &TokenContract, amount: u64) -> bool {
-    contract.can_mint(amount)
+    contract.can_mint(amount as u128)
 }
 
 /// Get remaining mintable supply
-pub fn get_remaining_supply(contract: &TokenContract) -> u64 {
+pub fn get_remaining_supply(contract: &TokenContract) -> u128 {
     contract.remaining_supply()
 }
 
@@ -152,14 +152,14 @@ pub fn create_deflationary_token(
         name,
         symbol,
         decimals,
-        max_supply,
+        max_supply as u128,
         true, // is_deflationary
-        burn_rate,
+        burn_rate as u128,
         creator.clone(),
     );
 
     if initial_supply > 0 {
-        let _ = token.mint(&creator, initial_supply);
+        let _ = token.mint(&creator, initial_supply as u128);
     }
 
     token
@@ -171,20 +171,18 @@ pub fn create_deflationary_token(
 /// Batch transfers should be implemented using the new transfer(ctx, to, amount) API.
 
 /// Get all non-zero balances
-pub fn get_all_balances(contract: &TokenContract) -> HashMap<PublicKey, u64> {
+pub fn get_all_balances(contract: &TokenContract) -> HashMap<PublicKey, u128> {
     contract
-        .balances
-        .iter()
+        .balances_iter()
         .filter(|(_, &balance)| balance > 0)
         .map(|(key, &balance)| (key.clone(), balance))
         .collect()
 }
 
 /// Get all allowances for an owner
-pub fn get_all_allowances(contract: &TokenContract, owner: &PublicKey) -> HashMap<PublicKey, u64> {
+pub fn get_all_allowances(contract: &TokenContract, owner: &PublicKey) -> HashMap<PublicKey, u128> {
     contract
-        .allowances
-        .get(owner)
+        .get_owner_allowances(owner)
         .map(|allowances| {
             allowances
                 .iter()
@@ -197,17 +195,16 @@ pub fn get_all_allowances(contract: &TokenContract, owner: &PublicKey) -> HashMa
 
 /// Calculate total value locked (TVL) in token (requires price)
 pub fn calculate_tvl(contract: &TokenContract, price_per_token: f64) -> f64 {
-    let total_locked: u64 = contract.balances.values().sum();
+    let total_locked: u128 = contract.total_balance_sum();
     (total_locked as f64 / 10f64.powi(contract.decimals as i32)) * price_per_token
 }
 
 /// Get token distribution statistics
 pub fn get_distribution_stats(contract: &TokenContract) -> TokenDistributionStats {
-    let balances: Vec<u64> = contract
-        .balances
-        .values()
-        .filter(|&&balance| balance > 0)
-        .copied()
+    let balances: Vec<u128> = contract
+        .balances_iter()
+        .map(|(_, &bal)| bal)
+        .filter(|&balance| balance > 0)
         .collect();
 
     if balances.is_empty() {
@@ -218,7 +215,7 @@ pub fn get_distribution_stats(contract: &TokenContract) -> TokenDistributionStat
     let total_supply = contract.total_supply;
     let largest_balance = *balances.iter().max().unwrap_or(&0);
     let smallest_balance = *balances.iter().min().unwrap_or(&0);
-    let average_balance = total_supply / total_holders as u64;
+    let average_balance = total_supply / total_holders as u128;
 
     // Calculate concentration (percentage held by top holder)
     let concentration = if total_supply > 0 {
@@ -241,11 +238,11 @@ pub fn get_distribution_stats(contract: &TokenContract) -> TokenDistributionStat
 #[derive(Debug, Clone)]
 pub struct TokenDistributionStats {
     pub total_holders: usize,
-    pub largest_balance: u64,
-    pub smallest_balance: u64,
-    pub average_balance: u64,
+    pub largest_balance: u128,
+    pub smallest_balance: u128,
+    pub average_balance: u128,
     pub concentration_percentage: f64,
-    pub total_supply: u64,
+    pub total_supply: u128,
 }
 
 impl Default for TokenDistributionStats {
@@ -276,20 +273,20 @@ pub fn token_swap(
     amount_b: u64,
 ) -> Result<(u64, u64), String> {
     // Check balances
-    if token_a.balance_of(user) < amount_a {
+    if token_a.balance_of(user) < amount_a as u128 {
         return Err("Insufficient balance in token A".to_string());
     }
-    if token_b.balance_of(user) < amount_b {
+    if token_b.balance_of(user) < amount_b as u128 {
         return Err("Insufficient balance in token B".to_string());
     }
 
     // Burn tokens from user (simplified swap mechanism)
-    token_a.burn(user, amount_a)?;
-    token_b.burn(user, amount_b)?;
+    token_a.burn(user, amount_a as u128)?;
+    token_b.burn(user, amount_b as u128)?;
 
     // Mint swapped amounts (simplified)
-    token_a.mint(user, amount_b)?;
-    token_b.mint(user, amount_a)?;
+    token_a.mint(user, amount_b as u128)?;
+    token_b.mint(user, amount_a as u128)?;
 
     Ok((amount_a, amount_b))
 }

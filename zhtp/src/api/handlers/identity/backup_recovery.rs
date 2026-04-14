@@ -534,7 +534,7 @@ async fn auto_create_identity_from_seed(
 }
 
 /// The default SOV welcome bonus minted when a wallet has no on-chain balance (5 000 SOV).
-const RECOVERY_SOV_WELCOME_BONUS: u64 = 500_000_000_000;
+const RECOVERY_SOV_WELCOME_BONUS: u128 = lib_types::sov::atoms(5_000);
 
 /// Migrate wallets belonging to `identity_id` that are registered on-chain but have
 /// no sled token balance. Submits a WalletRegistration transaction for each such
@@ -737,7 +737,7 @@ async fn create_fallback_wallet(
             tracing::info!(
                 "Recovery: created fallback wallet {} ({} SOV)",
                 &wallet_id_hex[..16.min(wallet_id_hex.len())],
-                RECOVERY_SOV_WELCOME_BONUS / 100_000_000,
+                RECOVERY_SOV_WELCOME_BONUS / lib_types::sov::SCALE,
             );
         }
         Err(e) => tracing::warn!(
@@ -1452,8 +1452,8 @@ pub async fn handle_migrate_identity(
         let mut short_key_count = 0usize;
         let mut short_key_min_len: Option<usize> = None;
         let mut short_key_max_len: Option<usize> = None;
-        let mut short_key_backfill_total: u64 = 0;
-        let mut movable_balance_total: u64 = 0;
+        let mut short_key_backfill_total: u128 = 0;
+        let mut movable_balance_total: u128 = 0;
         let _has_token_contract: bool;
 
         match crate::runtime::blockchain_provider::get_global_blockchain().await {
@@ -1619,7 +1619,7 @@ pub async fn handle_migrate_identity(
     }
 
     // Mark old identity as migrated and collect wallet info for transfer
-    let mut wallet_ids_to_transfer: Vec<(lib_identity::wallets::WalletId, String, u64)> =
+    let mut wallet_ids_to_transfer: Vec<(lib_identity::wallets::WalletId, String, u128)> =
         Vec::new();
     let mut old_wallet_manager: Option<lib_identity::wallets::WalletManager> = None;
 
@@ -1761,15 +1761,16 @@ pub async fn handle_migrate_identity(
                             let token_opt = blockchain.token_contracts.get(&sov_token_id);
                             let current_balance =
                                 token_opt.map(|t| t.balance_of(&wallet_addr)).unwrap_or(0);
-                            if current_balance < existing.initial_balance {
-                                let mint_amount = existing.initial_balance - current_balance;
+                            if current_balance < existing.initial_balance as u128 {
+                                let mint_amount = existing.initial_balance as u128 - current_balance;
+                                let mint_amount_u64 = u64::try_from(mint_amount).unwrap_or(u64::MAX);
                                 let memo =
                                     format!("TOKEN_BACKFILL_V1:{}", wallet_id_str).into_bytes();
                                 if let Ok(tx) = build_signed_sov_mint_tx(
                                     &migration_authority_kp,
                                     chain_id,
                                     &wallet_id_bytes,
-                                    mint_amount,
+                                    mint_amount_u64,
                                     memo,
                                 ) {
                                     mint_txs.push(tx);
@@ -1803,11 +1804,12 @@ pub async fn handle_migrate_identity(
                                         hex::encode(&old_public_key)
                                     )
                                     .into_bytes();
+                                    let old_balance_u64 = u64::try_from(old_balance).unwrap_or(u64::MAX);
                                     if let Ok(tx) = build_signed_sov_mint_tx(
                                         &migration_authority_kp,
                                         chain_id,
                                         &wallet_id_bytes,
-                                        old_balance,
+                                        old_balance_u64,
                                         memo,
                                     ) {
                                         mint_txs.push(tx);
