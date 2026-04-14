@@ -3199,6 +3199,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lib-access-control"
+version = "0.1.0"
+dependencies = [
+ "lib-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "lib-blockchain"
 version = "0.1.0"
 dependencies = [
@@ -3210,6 +3219,7 @@ dependencies = [
  "criterion",
  "hex",
  "indexmap 2.13.0",
+ "lib-access-control",
  "lib-consensus",
  "lib-crypto",
  "lib-economy",
@@ -3367,6 +3377,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "blake3",
+ "lib-access-control",
  "lib-types",
  "serde",
  "serde_json",
@@ -3387,6 +3398,7 @@ dependencies = [
  "hex",
  "hkdf",
  "hmac",
+ "lib-access-control",
  "lib-crypto",
  "lib-identity-core",
  "lib-proofs",
@@ -8914,6 +8926,7 @@ dependencies = [
  "futures",
  "hex",
  "keyring",
+ "lib-access-control",
  "lib-blockchain",
  "lib-client",
  "lib-consensus",
