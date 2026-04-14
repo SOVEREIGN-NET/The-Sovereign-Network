@@ -9,12 +9,13 @@ ARCHIVE_PATH="${TARGET_DIR}/${PACKAGE_NAME}.tar.gz"
 CHECKSUM_PATH="${TARGET_DIR}/${PACKAGE_NAME}.sha256"
 
 rm -rf "${STAGE_DIR}" "${ARCHIVE_PATH}" "${CHECKSUM_PATH}"
-mkdir -p "${STAGE_DIR}/bin" "${STAGE_DIR}/config" "${STAGE_DIR}/systemd"
+mkdir -p "${STAGE_DIR}/bin" "${STAGE_DIR}/config" "${STAGE_DIR}/systemd" "${STAGE_DIR}/scripts"
 
 install -m 0755 "${TARGET_DIR}/zhtp-daemon" "${STAGE_DIR}/bin/zhtp-daemon"
 install -m 0644 "${ROOT_DIR}/zhtp-daemon/README.md" "${STAGE_DIR}/README.md"
 install -m 0644 "${ROOT_DIR}/zhtp-daemon/config.example.toml" "${STAGE_DIR}/config/config.toml"
 install -m 0644 "${ROOT_DIR}/deploy/zhtp-daemon.service" "${STAGE_DIR}/systemd/zhtp-daemon.service"
+install -m 0755 "${ROOT_DIR}/scripts/install-zhtp-daemon-linux.sh" "${STAGE_DIR}/scripts/install-zhtp-daemon-linux.sh"
 
 tar -C "${TARGET_DIR}" -czf "${ARCHIVE_PATH}" "${PACKAGE_NAME}"
 (
