@@ -459,15 +459,11 @@ impl TreasuryKernel {
         key_id: &[u8; 32],
     ) -> Result<PublicKey, KernelOpError> {
         // First try to find the full key in token balances (preferred)
-        for pk in token.balances.keys() {
-            if &pk.key_id == key_id {
-                return Ok(pk.clone());
-            }
+        if let Some((pk, _)) = token.find_balance_by_key_id(key_id) {
+            return Ok(pk.clone());
         }
-        for pk in token.locked_balances.keys() {
-            if &pk.key_id == key_id {
-                return Ok(pk.clone());
-            }
+        if let Some(pk) = token.find_locked_balance_by_key_id(key_id) {
+            return Ok(pk.clone());
         }
 
         // Fallback: construct minimal PublicKey with just key_id

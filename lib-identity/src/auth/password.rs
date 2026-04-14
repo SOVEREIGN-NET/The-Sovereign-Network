@@ -496,6 +496,12 @@ impl PasswordManager {
         }
     }
 
+    /// Remove all data for an identity (password + imported marker)
+    pub fn remove_identity(&mut self, identity_id: &IdentityId) {
+        self.password_hashes.remove(identity_id);
+        self.imported_identities.remove(identity_id);
+    }
+
     /// Get list of identities with passwords set
     pub fn list_identities_with_passwords(&self) -> Vec<&IdentityId> {
         self.password_hashes.keys().collect()

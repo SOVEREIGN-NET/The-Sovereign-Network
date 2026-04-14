@@ -195,13 +195,12 @@ fn test_block_fees_credited_to_treasury() {
     assert_eq!(balance_before, 0, "Treasury must start with zero balance");
 
     // Simulate what process_token_transactions does: credit fees via wallet_key_for_sov.
-    let fee_amount: u64 = 42_000_000;
+    let fee_amount: u128 = 42_000_000;
     let treasury_key = wallet_key_for_sov(&treasury_id);
     if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
         let current = token.balance_of(&treasury_key);
         token
-            .balances
-            .insert(treasury_key, current.saturating_add(fee_amount));
+            .set_balance(&treasury_key, current.saturating_add(fee_amount));
     }
 
     // get_dao_treasury_balance must reflect the credited fees.
@@ -209,7 +208,7 @@ fn test_block_fees_credited_to_treasury() {
         .get_dao_treasury_balance()
         .expect("get_dao_treasury_balance");
     assert_eq!(
-        balance_after, fee_amount,
+        balance_after as u128, fee_amount,
         "Treasury balance must equal credited fee amount ({} SOV)",
         fee_amount
     );

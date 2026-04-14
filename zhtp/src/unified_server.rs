@@ -461,6 +461,7 @@ impl ZhtpUnifiedServer {
         let dht_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(DhtHandler::new_with_storage(
             mesh_router_arc.clone(),
             storage.clone(),
+            identity_manager.clone(),
         ));
         mesh_router_arc.set_dht_handler(dht_handler.clone()).await;
 
@@ -803,8 +804,11 @@ impl ZhtpUnifiedServer {
 
         // Blockchain operations
         let environment = detect_environment();
-        let blockchain_handler: Arc<dyn ZhtpRequestHandler> =
-            Arc::new(BlockchainHandler::new(blockchain.clone(), environment));
+        let blockchain_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(BlockchainHandler::new(
+            blockchain.clone(),
+            environment,
+            identity_manager.clone(),
+        ));
         zhtp_router.register_handler("/api/v1/blockchain".to_string(), blockchain_handler.clone());
         zhtp_router.register_handler("/api/v1/chain".to_string(), blockchain_handler);
 

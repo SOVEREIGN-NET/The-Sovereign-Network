@@ -480,8 +480,8 @@ pub struct WalletTransactionData {
     pub registration_fee: u64,
     /// Wallet capabilities flags
     pub capabilities: u32,
-    /// Initial balance (if any)
-    pub initial_balance: u64,
+    /// Initial balance (if any) — u128 to hold 18-decimal SOV amounts
+    pub initial_balance: u128,
 }
 
 /// Minimal wallet reference for blockchain sync (sensitive data moved to DHT)
@@ -500,7 +500,7 @@ pub struct WalletReference {
     /// Registration fee paid
     pub registration_fee: u64,
     /// Initial balance (source of truth for wallet balances in UTXO/Pedersen system)
-    pub initial_balance: u64,
+    pub initial_balance: u128,
 }
 
 /// Sensitive wallet data stored in encrypted DHT
@@ -514,8 +514,8 @@ pub struct WalletPrivateData {
     pub seed_commitment: Hash,
     /// Wallet capabilities flags
     pub capabilities: u32,
-    /// Initial balance (if any)
-    pub initial_balance: u64,
+    /// Initial balance (if any) — u128 to hold 18-decimal SOV amounts
+    pub initial_balance: u128,
     /// Private transaction history
     pub transaction_history: Vec<Hash>,
     /// Private notes/metadata

@@ -53,9 +53,23 @@ impl Nonce48 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct BondingCurveEconomicState {
+    /// Circulating CBE supply (18-decimal bonding curve atoms).
     pub s_c: u128,
+    /// Locked strategic reserve — 32% of each deposit (40% of the 80% DAO portion).
+    /// Backs the floor price: floor = reserve_balance / s_c.
     pub reserve_balance: u128,
-    pub treasury_balance: u128,
+    /// SOV treasury's CBE holdings — 20% of each deposit (network tax).
+    /// Held as CBE tokens (not swapped). SOV treasury NAV includes this
+    /// valued at current CBE price.
+    #[serde(alias = "treasury_balance")]
+    pub sov_treasury_cbe_balance: u128,
+    /// Liquidity pool — 48% of each deposit (60% of the 80% DAO portion).
+    /// Accumulates toward graduation; becomes CBE side of AMM seed at graduation.
+    #[serde(default)]
+    pub liquidity_pool_balance: u128,
+    /// Total SOV minted from on-ramp deposits (event-driven, priced at NAV model).
+    #[serde(default)]
+    pub total_sov_minted: u128,
     pub graduated: bool,
     pub sell_enabled: bool,
 }

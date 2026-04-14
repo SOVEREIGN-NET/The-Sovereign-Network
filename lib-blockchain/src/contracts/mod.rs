@@ -211,7 +211,7 @@ mod tests {
     fn test_lib_constants() {
         assert_eq!(SOV_NATIVE_SYMBOL, "SOV");
         assert_eq!(SOV_NATIVE_NAME, "Sovereign");
-        assert_eq!(SOV_NATIVE_DECIMALS, 8);
-        assert_eq!(SOV_NATIVE_MAX_SUPPLY, 2_100_000_000_000_000);
+        assert_eq!(SOV_NATIVE_DECIMALS, 18);
+        assert_eq!(SOV_NATIVE_MAX_SUPPLY, lib_types::SOV_MAX_SUPPLY);
     }
 }

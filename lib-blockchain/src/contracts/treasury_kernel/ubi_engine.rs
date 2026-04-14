@@ -155,7 +155,7 @@ impl KernelState {
                                 match token.as_mut().unwrap().mint_kernel_only(
                                     kernel_addr,
                                     &recipient,
-                                    claim.amount,
+                                    claim.amount as u128,
                                 ) {
                                     Ok(()) => {
                                         tracing::debug!(
@@ -527,14 +527,14 @@ mod tests {
         // Verify tokens were actually minted to citizen's balance
         let balance_after = token.balance_of(&citizen_pubkey);
         assert_eq!(
-            balance_after, ubi_amount,
+            balance_after, ubi_amount as u128,
             "Citizen should have {} SOV after UBI mint, got {}",
             ubi_amount, balance_after
         );
 
         // Verify total supply increased
         assert_eq!(
-            token.total_supply, ubi_amount,
+            token.total_supply, ubi_amount as u128,
             "Total supply should be {} after mint",
             ubi_amount
         );

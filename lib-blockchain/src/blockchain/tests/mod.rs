@@ -4,7 +4,7 @@ pub(super) use super::persistence::{
     LegacyBlockchainStorageV5,
 };
 
-mod cbe_genesis_allocation_tests;
+mod genesis_allocation_tests;
 mod cbe_graduation_oracle_gate_tests;
 mod oracle_storage_migration_tests;
 mod replay_contract_execution_tests;

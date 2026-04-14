@@ -57,14 +57,12 @@ impl Blockchain {
             executor: None,
             treasury_kernel: None,
             bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry::new(),
-            cbe_token: crate::contracts::tokens::CbeToken::new(),
             amm_pools: HashMap::new(),
             governance_phase: crate::dao::GovernancePhase::default(),
             council_members: Vec::new(),
             council_threshold: default_council_threshold(),
             entity_registry: None,
             employment_registry: crate::contracts::employment::EmploymentRegistry::new(),
-            cbe_dao_id: None,
             treasury_epoch_spend: HashMap::new(),
             treasury_epoch_length_blocks: default_treasury_epoch_length(),
             emergency_state: false,
@@ -124,151 +122,21 @@ impl Blockchain {
 
     #[deprecated(
         since = "0.2.0",
-        note = "Superseded by GenesisConfig::build_block0() (GENESIS-1 #1909)"
+        note = "cbe_token field removed from Blockchain (EPIC-001 Phase 1)"
     )]
     #[allow(dead_code)]
     pub(super) fn initialize_cbe_genesis(&mut self) {
-        use crate::contracts::bonding_curve::{
-            BondingCurveToken, CurveType, PiecewiseLinearCurve, Threshold,
-        };
-        use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
-
-        let token_id = Self::derive_cbe_token_id();
-        self.initialize_cbe_token_genesis();
-
-        if self.bonding_curve_registry.contains(&token_id) {
-            return;
-        }
-
-        let genesis_creator = PublicKey {
-            dilithium_pk: [0u8; 2592],
-            kyber_pk: [0u8; 1568],
-            key_id: [0u8; 32],
-        };
-
-        let curve_type = CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default());
-        let threshold = Threshold::ReserveAmount(2_745_966_000);
-
-        match BondingCurveToken::deploy(
-            token_id,
-            CBE_NAME.to_string(),
-            CBE_SYMBOL.to_string(),
-            curve_type,
-            threshold,
-            true,
-            genesis_creator,
-            "did:zhtp:genesis".to_string(),
-            0,
-            self.get_genesis_timestamp(),
-        ) {
-            Ok(token) => {
-                if let Err(e) = self.bonding_curve_registry.register(token) {
-                    warn!("Failed to register CBE genesis token: {}", e);
-                } else {
-                    info!(
-                        "CBE genesis bonding curve token initialized: {}",
-                        hex::encode(&token_id[..8])
-                    );
-                }
-            }
-            Err(e) => {
-                warn!("Failed to deploy CBE genesis token: {}", e);
-            }
-        }
+        // No-op: cbe_token field removed from Blockchain struct.
+        // CBE bonding curve entry is set up by GenesisConfig::build_block0().
     }
 
     #[deprecated(
         since = "0.2.0",
-        note = "Superseded by GenesisConfig::build_block0() (GENESIS-1 #1909)"
+        note = "cbe_token field removed from Blockchain (EPIC-001 Phase 1)"
     )]
     #[allow(dead_code)]
     pub(super) fn initialize_cbe_token_genesis(&mut self) {
-        use crate::contracts::tokens::{
-            VestingPool, CBE_OPERATIONAL_TREASURY, CBE_PERFORMANCE_INCENTIVES,
-            CBE_STRATEGIC_RESERVES,
-        };
-
-        if self.cbe_token.is_initialized() {
-            return;
-        }
-
-        // Compensation pool key_id — controlled by the network operator.
-        // Generated via tools/node-keygen with crystals-dilithium5.
-        let compensation_key_id: [u8; 32] = [
-            0xb8, 0xb0, 0x99, 0xa1, 0x4f, 0x4f, 0x3e, 0x64,
-            0x62, 0x9d, 0x72, 0x2e, 0x5a, 0x94, 0xe3, 0xee,
-            0x13, 0xab, 0x7d, 0xe5, 0x2d, 0x51, 0x4a, 0xee,
-            0x24, 0xd5, 0xa0, 0x43, 0x34, 0x0d, 0xcc, 0x84,
-        ];
-        let compensation_addr = PublicKey {
-            dilithium_pk: [0u8; 2592],
-            kyber_pk: [0u8; 1568],
-            key_id: compensation_key_id,
-        };
-        let operational_addr = PublicKey {
-            dilithium_pk: [0u8; 2592],
-            kyber_pk: [0u8; 1568],
-            key_id: [0x02; 32],
-        };
-        let performance_addr = PublicKey {
-            dilithium_pk: [0u8; 2592],
-            kyber_pk: [0u8; 1568],
-            key_id: [0x03; 32],
-        };
-        let strategic_addr = PublicKey {
-            dilithium_pk: [0u8; 2592],
-            kyber_pk: [0u8; 1568],
-            key_id: [0x04; 32],
-        };
-
-        if let Err(e) = self.cbe_token.init(
-            &compensation_addr,
-            &operational_addr,
-            &performance_addr,
-            &strategic_addr,
-        ) {
-            warn!("Failed to initialize CBE token: {}", e);
-            return;
-        }
-
-        let start_block = 0u64;
-        const SECONDS_PER_MONTH: u64 = 30 * 24 * 60 * 60;
-        const BLOCKS_PER_MONTH: u64 = SECONDS_PER_MONTH / crate::TARGET_BLOCK_TIME;
-
-        if let Err(e) = self.cbe_token.create_vesting(
-            &operational_addr,
-            CBE_OPERATIONAL_TREASURY,
-            start_block,
-            36 * BLOCKS_PER_MONTH,
-            12 * BLOCKS_PER_MONTH,
-            VestingPool::Operational,
-        ) {
-            warn!("Failed to create operational vesting: {}", e);
-        }
-
-        if let Err(e) = self.cbe_token.create_vesting(
-            &performance_addr,
-            CBE_PERFORMANCE_INCENTIVES,
-            start_block,
-            24 * BLOCKS_PER_MONTH,
-            6 * BLOCKS_PER_MONTH,
-            VestingPool::Performance,
-        ) {
-            warn!("Failed to create performance vesting: {}", e);
-        }
-
-        if let Err(e) = self.cbe_token.create_vesting(
-            &strategic_addr,
-            CBE_STRATEGIC_RESERVES,
-            start_block,
-            48 * BLOCKS_PER_MONTH,
-            12 * BLOCKS_PER_MONTH,
-            VestingPool::Strategic,
-        ) {
-            warn!("Failed to create strategic vesting: {}", e);
-        }
-
-        info!("CBE token initialized: 100B supply with vesting schedules");
+        // No-op: cbe_token field removed from Blockchain struct.
     }
 
     pub(super) fn get_genesis_timestamp(&self) -> u64 {
@@ -499,8 +367,8 @@ impl Blockchain {
                                     .get(&sov_token_id)
                                     .map(|t| t.balance_of(&recipient_pk))
                                     .unwrap_or(0);
-                                let deficit =
-                                    wallet_data.initial_balance.saturating_sub(current);
+                                let target = wallet_data.initial_balance as u128;
+                                let deficit = target.saturating_sub(current);
                                 if deficit > 0 {
                                     if let Some(token) =
                                         blockchain.token_contracts.get_mut(&sov_token_id)
@@ -559,46 +427,15 @@ impl Blockchain {
                     }
 
                     // Replay CBE pool initialization from on-chain InitCbeToken transactions.
-                    // Unlike SOV transfers (skipped below), InitCbeToken only sets pool
-                    // addresses — no pre-existing balances needed, no nonce concerns.
-                    // Without this, every restart runs the genesis backfill which uses
-                    // placeholder key_ids [0x01; 32]…[0x04; 32] that no one controls.
-                    if !blockchain.cbe_token.is_initialized() {
-                        if let Err(e) = blockchain.process_init_cbe_token_transactions(&block) {
-                            if !e.to_string().contains("already initialized") {
-                                warn!(
-                                    "⚠️ Failed to replay InitCbeToken at height {}: {}",
-                                    height, e
-                                );
-                            }
-                        }
-                    }
-
                     // Replay domain registration/update transactions.
                     blockchain.process_domain_transactions(&block);
 
                     // Replay employment contract creation so employment_registry is populated.
-                    // Required before payroll replay below.
                     if let Err(e) = blockchain.process_employment_contract_transactions(&block) {
                         warn!(
                             "⚠️ Failed to replay CreateEmploymentContract at height {}: {}",
                             height, e
                         );
-                    }
-
-                    // Replay payroll to rebuild cbe_token.balances for employees.
-                    // The executor reads cbe_account_state (sled) for CBE balance checks,
-                    // not cbe_token.balances (in-memory). On a fresh sled the account states
-                    // are 0. The startup seeding (backfill_cbe_account_states after this loop)
-                    // must see the correct employee balances here so it can populate sled
-                    // before initial sync reaches any CBE TokenTransfer block.
-                    if blockchain.cbe_token.is_initialized() {
-                        if let Err(e) = blockchain.process_payroll_transactions(&block) {
-                            warn!(
-                                "⚠️ Failed to replay ProcessPayroll at height {}: {}",
-                                height, e
-                            );
-                        }
                     }
 
                     // During sled-store replay we skip SOV token transaction processing
@@ -630,9 +467,8 @@ impl Blockchain {
 
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
         if let Some(sov_contract) = blockchain.token_contracts.get(&sov_token_id) {
-            let entries: Vec<([u8; 32], u64)> = sov_contract
-                .balances
-                .iter()
+            let entries: Vec<([u8; 32], u128)> = sov_contract
+                .balances_iter()
                 .map(|(pk, &bal)| (pk.key_id, bal))
                 .collect();
             let token_id = crate::storage::TokenId(sov_token_id);
@@ -667,12 +503,11 @@ impl Blockchain {
         }
         blockchain.rebuild_dao_registry_index();
 
-        const SOV_ATOMIC_UNITS: u64 = 100_000_000;
         let mut migrated_count = 0usize;
         for wallet in blockchain.wallet_registry.values_mut() {
-            if wallet.initial_balance > 0 && wallet.initial_balance < SOV_ATOMIC_UNITS {
+            if wallet.initial_balance > 0 && wallet.initial_balance < lib_types::sov::SCALE {
                 let old = wallet.initial_balance;
-                wallet.initial_balance = old.saturating_mul(SOV_ATOMIC_UNITS);
+                wallet.initial_balance = old.saturating_mul(lib_types::sov::SCALE);
                 migrated_count += 1;
                 info!(
                     "Migrated wallet initial_balance: {} -> {} atomic units",
@@ -692,49 +527,6 @@ impl Blockchain {
         blockchain.migrate_sov_key_balances_to_wallets();
         blockchain.repair_backfill_inflation();
 
-        if !blockchain.cbe_token.is_initialized() {
-            info!("CBE token not found in storage — running one-time backfill from genesis allocation");
-            #[allow(deprecated)]
-            blockchain.initialize_cbe_token_genesis();
-        }
-
-        // Seed cbe_account_state in sled for all CBE pool addresses whose balance is
-        // only in cbe_token.balances (in-memory). The executor (including the fast
-        // BlockExecutor::from_config_trusted_replay path used during initial catchup sync)
-        // reads ONLY cbe_account_state. Pool addresses (e.g. compensation pool b8b099...)
-        // never go through a BondingCurveBuy, so their cbe_account_state starts at 0 on
-        // a fresh sled — causing CBE TokenTransfer blocks to fail with "Insufficient
-        // token balance: have 0" during initial sync.
-        if blockchain.cbe_token.is_initialized() {
-            let entries: Vec<([u8; 32], u128)> = blockchain
-                .cbe_token
-                .all_balances()
-                .map(|(k, v)| (k, v as u128))
-                .collect();
-            if !entries.is_empty() {
-                match store.backfill_cbe_account_states(&entries) {
-                    Ok(0) => debug!("CBE cbe_account_state already seeded — no backfill needed"),
-                    Ok(n) => info!(
-                        "💰 Seeded {} CBE pool address(es) into cbe_account_state on startup",
-                        n
-                    ),
-                    Err(e) => warn!("Failed to seed CBE pool cbe_account_states on startup: {}", e),
-                }
-            }
-        }
-
-
-        let cbe_token_id = Blockchain::derive_cbe_token_id();
-        if !blockchain.bonding_curve_registry.contains(&cbe_token_id) {
-            #[allow(deprecated)]
-            blockchain.initialize_cbe_genesis();
-            if blockchain.bonding_curve_registry.contains(&cbe_token_id) {
-                info!("Restored CBE bonding curve registry entry from genesis parameters");
-            } else {
-                warn!("Failed to restore CBE bonding curve registry entry");
-            }
-        }
-
         {
             let sov_token_id = crate::contracts::utils::generate_lib_token_id();
             let storage_sov_id = crate::storage::TokenId(sov_token_id);
@@ -747,7 +539,7 @@ impl Blockchain {
                         if balance > 0 {
                             if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
                                 let pk = Self::wallet_key_for_sov(&wallet_bytes);
-                                token.balances.insert(pk, balance as u64);
+                                token.set_balance(&pk, balance as u128);
                                 synced += 1;
                             }
                         }
@@ -764,7 +556,7 @@ impl Blockchain {
             // Also sync total supply from sled
             if let Ok(Some(supply)) = store.get_token_supply(&storage_sov_id) {
                 if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
-                    token.total_supply = supply;
+                    token.total_supply = supply as u128;
                 }
             }
         }

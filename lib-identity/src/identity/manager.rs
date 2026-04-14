@@ -14,10 +14,13 @@ use crate::credentials::ZkCredential;
 use crate::economics::EconomicModel;
 use crate::identity::{PrivateIdentityData, ZhtpIdentity};
 use crate::types::{
-    AccessLevel, CredentialType, IdentityId, IdentityProofParams, IdentityType,
-    IdentityVerification,
+    AccessLevel, CouncilView, CredentialType, DeviceOwnerView, FullIdentityView, IdentityId,
+    IdentityProofParams, IdentityType, IdentityVerification, IdentityView, PublicIdentityView,
 };
 use crate::wallets::WalletType;
+use lib_access_control::{
+    AccessDomain, AccessOperation, AccessPolicy, SecurityPrincipal, SubjectRelation,
+};
 
 /// Identity Manager for ZHTP - Complete implementation from original identity.rs
 #[derive(Debug)]
@@ -247,8 +250,148 @@ impl IdentityManager {
     }
 
     /// Get mutable identity by ID (for wallet restoration during bootstrap)
+    ///
+    /// # Security
+    /// This returns the raw, unfiltered identity struct. It should only be used
+    /// during internal bootstrap/consensus operations. All external reads must
+    /// use `get_identity_view` instead.
     pub fn get_identity_mut(&mut self, identity_id: &IdentityId) -> Option<&mut ZhtpIdentity> {
         self.identities.get_mut(identity_id)
+    }
+
+    /// Get an access-controlled view of an identity.
+    ///
+    /// This is the **only** method that should be used for cross-boundary reads.
+    /// It evaluates the caller's principal against the access policy and returns
+    /// a statically typed view that cannot leak private fields.
+    pub fn get_identity_view(
+        &self,
+        principal: &SecurityPrincipal,
+        identity_id: &IdentityId,
+    ) -> Option<IdentityView> {
+        let identity = self.identities.get(identity_id)?;
+        let relation = self.determine_relation(principal, identity);
+        let policy = AccessPolicy::default();
+
+        // CoreIdentity is the baseline for any view.
+        let core_decision = policy.check_access(
+            principal,
+            relation,
+            AccessDomain::CoreIdentity,
+            AccessOperation::Read,
+        );
+        if !core_decision.is_allowed() {
+            return None;
+        }
+
+        let public_core = PublicIdentityView {
+            id: identity.id.clone(),
+            did: identity.did.clone(),
+            identity_type: identity.identity_type.clone(),
+            public_key: identity.public_key.clone(),
+            node_id: identity.node_id.clone(),
+            reputation: identity.reputation,
+            access_level: identity.access_level.clone(),
+            citizenship_verified: identity.citizenship_verified,
+            created_at: identity.created_at,
+            last_active: identity.last_active,
+            dao_voting_power: identity.dao_voting_power,
+            dao_member_id: identity.dao_member_id.clone(),
+        };
+
+        // Full view: self, system, or emergency.
+        let has_emergency_override = principal.role == lib_access_control::Role::Emergency
+            && principal
+                .capabilities
+                .contains(&lib_access_control::Capability::EmergencyOverride);
+        if matches!(relation, SubjectRelation::Self_)
+            || principal.role == lib_access_control::Role::System
+            || has_emergency_override
+        {
+            return Some(IdentityView::Full(FullIdentityView {
+                core: public_core,
+                age: identity.age,
+                jurisdiction: identity.jurisdiction.clone(),
+                metadata: identity.metadata.clone(),
+                device_node_ids: identity.device_node_ids.clone(),
+                owner_identity_id: identity.owner_identity_id.clone(),
+                reward_wallet_id: identity.reward_wallet_id.clone(),
+                credentials: identity.credentials.clone(),
+                attestations: identity.attestations.clone(),
+            }));
+        }
+
+        // Council view: investigation scope (requires Investigate capability).
+        if principal.role == lib_access_control::Role::Council
+            && principal.has_capability(&lib_access_control::Capability::Investigate)
+        {
+            return Some(IdentityView::Council(CouncilView {
+                core: public_core,
+                age: identity.age,
+                jurisdiction: identity.jurisdiction.clone(),
+                controlled_node_count: identity.device_node_ids.len(),
+                owned_wallet_count: identity.wallet_manager.list_wallets().len(),
+                credential_types: identity.credentials.keys().cloned().collect(),
+            }));
+        }
+
+        // Device owner view.
+        if principal.role == lib_access_control::Role::Device
+            && matches!(relation, SubjectRelation::Owner)
+        {
+            return Some(IdentityView::DeviceOwner(DeviceOwnerView {
+                core: public_core,
+                reward_wallet_id: identity.reward_wallet_id.clone(),
+                device_node_ids: identity.device_node_ids.values().cloned().collect(),
+            }));
+        }
+
+        // Default: public view only.
+        Some(IdentityView::Public(public_core))
+    }
+
+    /// Determine the relationship between a principal and a subject identity.
+    fn determine_relation(
+        &self,
+        principal: &SecurityPrincipal,
+        identity: &ZhtpIdentity,
+    ) -> SubjectRelation {
+        if principal.did == identity.did {
+            return SubjectRelation::Self_;
+        }
+
+        // Parse principal DID to IdentityId for owner comparison.
+        if let Ok(principal_id) = crate::did::parse_did_to_identity_id(&principal.did) {
+            if let Some(ref owner_id) = identity.owner_identity_id {
+                if principal_id == *owner_id {
+                    return SubjectRelation::Owner;
+                }
+            }
+        }
+
+        if principal.role == lib_access_control::Role::Public {
+            SubjectRelation::Public
+        } else {
+            SubjectRelation::External
+        }
+    }
+
+    /// Check whether `principal` is allowed to perform `operation` on `domain`
+    /// with respect to the identity identified by `identity_id`.
+    pub fn check_access(
+        &self,
+        principal: &SecurityPrincipal,
+        identity_id: &lib_crypto::Hash,
+        domain: lib_access_control::AccessDomain,
+        operation: lib_access_control::AccessOperation,
+    ) -> bool {
+        let identity = match self.get_identity(identity_id) {
+            Some(id) => id,
+            None => return false,
+        };
+        let relation = self.determine_relation(principal, &identity);
+        let policy = lib_access_control::AccessPolicy::default();
+        policy.check_access(principal, relation, domain, operation).is_allowed()
     }
 
     /// Add an existing identity to the manager
@@ -327,14 +470,7 @@ impl IdentityManager {
 
     /// Remove an identity (used to clear observed stubs before upgrading to full citizen).
     pub fn remove_identity(&mut self, identity_id: &IdentityId) {
-        // Remove the primary identity record.
         self.identities.remove(identity_id);
-
-        // Clear all additional per-identity state to avoid leaving stale data behind.
-        self.private_data.remove(identity_id);
-        self.trusted_issuers.remove(identity_id);
-        self.verification_cache.remove(identity_id);
-        self.password_manager.remove_identity(identity_id);
     }
 
     /// Register an externally-created identity WITH full citizenship benefits (3 wallets)
@@ -1225,10 +1361,27 @@ impl IdentityManager {
     }
 
     /// Get identity by DID
+    ///
+    /// # Security
+    /// Returns the raw, unfiltered identity. Use `get_identity_view_by_did` for
+    /// all cross-boundary reads.
     pub fn get_identity_by_did(&self, did: &str) -> Option<&ZhtpIdentity> {
         self.identities
             .values()
             .find(|identity| identity.did.starts_with(did) || did.starts_with(&identity.did))
+    }
+
+    /// Get an access-controlled view of an identity by DID.
+    ///
+    /// This is the **only** DID lookup method that should be used across trust
+    /// boundaries.
+    pub fn get_identity_view_by_did(
+        &self,
+        principal: &SecurityPrincipal,
+        did: &str,
+    ) -> Option<IdentityView> {
+        let identity = self.get_identity_by_did(did)?;
+        self.get_identity_view(principal, &identity.id)
     }
 
     /// Get identity ID by DID
@@ -1250,5 +1403,143 @@ impl IdentityManager {
 impl Default for IdentityManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod access_control_tests {
+    use super::*;
+    use lib_access_control::Role;
+    use lib_types::NodeType;
+
+    fn test_identity() -> ZhtpIdentity {
+        ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            Some([0u8; 64]),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_self_principal_gets_full_view() {
+        let mut manager = IdentityManager::new();
+        let identity = test_identity();
+        let did = identity.did.clone();
+        let id = identity.id.clone();
+        manager.add_identity(identity);
+
+        let principal = SecurityPrincipal::new(&did, Role::Citizen, NodeType::FullNode);
+        let view = manager.get_identity_view(&principal, &id);
+        assert!(
+            matches!(view, Some(IdentityView::Full(_))),
+            "Self principal should receive Full view"
+        );
+    }
+
+    #[test]
+    fn test_public_principal_gets_public_view() {
+        let mut manager = IdentityManager::new();
+        let identity = test_identity();
+        let id = identity.id.clone();
+        manager.add_identity(identity);
+
+        let principal = SecurityPrincipal::public();
+        let view = manager.get_identity_view(&principal, &id);
+        assert!(
+            matches!(view, Some(IdentityView::Public(_))),
+            "Public principal should receive Public view"
+        );
+    }
+
+    #[test]
+    fn test_council_principal_gets_council_view() {
+        let mut manager = IdentityManager::new();
+        let identity = test_identity();
+        let id = identity.id.clone();
+        manager.add_identity(identity);
+
+        let principal =
+            SecurityPrincipal::new("did:zhtp:council", Role::Council, NodeType::FullNode)
+                .with_capability(lib_access_control::Capability::Investigate);
+        let view = manager.get_identity_view(&principal, &id);
+        assert!(
+            matches!(view, Some(IdentityView::Council(_))),
+            "Council principal should receive Council view"
+        );
+    }
+
+    #[test]
+    fn test_infraadmin_principal_gets_public_view_for_other() {
+        let mut manager = IdentityManager::new();
+        let identity = test_identity();
+        let id = identity.id.clone();
+        manager.add_identity(identity);
+
+        let principal =
+            SecurityPrincipal::new("did:zhtp:admin", Role::InfraAdmin, NodeType::FullNode);
+        let view = manager.get_identity_view(&principal, &id);
+        assert!(
+            matches!(view, Some(IdentityView::Public(_))),
+            "InfraAdmin principal should receive Public view for other identities (no god-mode)"
+        );
+    }
+
+    #[test]
+    fn test_system_principal_gets_full_view() {
+        let mut manager = IdentityManager::new();
+        let identity = test_identity();
+        let id = identity.id.clone();
+        manager.add_identity(identity);
+
+        let principal = SecurityPrincipal::system();
+        let view = manager.get_identity_view(&principal, &id);
+        assert!(
+            matches!(view, Some(IdentityView::Full(_))),
+            "System principal should receive Full view"
+        );
+    }
+
+    #[test]
+    fn test_unknown_identity_returns_none() {
+        let manager = IdentityManager::new();
+        let principal = SecurityPrincipal::public();
+        let fake_id =
+            IdentityId::from_hex("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap();
+        let view = manager.get_identity_view(&principal, &fake_id);
+        assert!(view.is_none(), "Unknown identity should return None");
+    }
+
+    #[test]
+    fn test_get_identity_view_by_did_public() {
+        let mut manager = IdentityManager::new();
+        let identity = test_identity();
+        let did = identity.did.clone();
+        manager.add_identity(identity);
+
+        let principal = SecurityPrincipal::public();
+        let view = manager.get_identity_view_by_did(&principal, &did);
+        assert!(
+            matches!(view, Some(IdentityView::Public(_))),
+            "Public DID lookup should return Public view"
+        );
+    }
+
+    #[test]
+    fn test_get_identity_view_by_did_self() {
+        let mut manager = IdentityManager::new();
+        let identity = test_identity();
+        let did = identity.did.clone();
+        manager.add_identity(identity);
+
+        let principal = SecurityPrincipal::new(&did, Role::Citizen, NodeType::FullNode);
+        let view = manager.get_identity_view_by_did(&principal, &did);
+        assert!(
+            matches!(view, Some(IdentityView::Full(_))),
+            "Self DID lookup should return Full view"
+        );
     }
 }

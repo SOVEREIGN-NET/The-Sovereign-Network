@@ -224,72 +224,56 @@ async fn register_identity_on_chain(
     cli: &ZhtpCli,
     output: &dyn Output,
 ) -> CliResult<()> {
-    let keystore = logic::resolve_keystore_path(cli, keystore_path, false)?;
+    let keystore = match keystore_path {
+        Some(path) => PathBuf::from(path),
+        None => get_default_keystore_path()?,
+    };
 
     let identity_file = keystore.join(USER_IDENTITY_FILENAME);
     let private_key_file = keystore.join(USER_PRIVATE_KEY_FILENAME);
-    let identity_exists = identity_file.exists();
-    let private_key_exists = private_key_file.exists();
 
-    // Use an existing identity only when the keystore is complete.
-    // If only one file exists, fail early with a targeted error instead of
-    // proceeding and surfacing a less actionable load/parsing failure later.
-    match (identity_exists, private_key_exists) {
-        (true, true) => {
-            output.info("Using existing identity from keystore...")?;
+    // Generate keys if no local identity exists
+    if identity_file.exists() {
+        output.info("Using existing identity from keystore...")?;
+    } else {
+        output.info("Generating cryptographic keys (Dilithium5 + Kyber1024)...")?;
+        std::fs::create_dir_all(&keystore).map_err(|e| {
+            CliError::IdentityError(format!("Failed to create keystore directory: {}", e))
+        })?;
+        let id = ZhtpIdentity::new_unified(
+            lib_identity::IdentityType::Device,
+            None,
+            None,
+            display_name,
+            None,
+        )
+        .map_err(|e| CliError::IdentityError(format!("Failed to generate identity: {}", e)))?;
+
+        // Save private key
+        let pk = id
+            .private_key
+            .as_ref()
+            .ok_or_else(|| CliError::IdentityError("Missing private key".to_string()))?;
+        save_private_key_to_file(pk, &private_key_file)?;
+
+        // Save identity
+        let json = serde_json::to_string_pretty(&id)
+            .map_err(|e| CliError::IdentityError(format!("Failed to serialize: {}", e)))?;
+        std::fs::write(&identity_file, &json).map_err(|e| {
+            CliError::IdentityError(format!("Failed to write identity: {}", e))
+        })?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(
+                &private_key_file,
+                std::fs::Permissions::from_mode(0o600),
+            );
         }
-        (false, false) => {
-            output.info("Generating cryptographic keys (Dilithium5 + Kyber1024)...")?;
-            std::fs::create_dir_all(&keystore).map_err(|e| {
-                CliError::IdentityError(format!("Failed to create keystore directory: {}", e))
-            })?;
-            let id = ZhtpIdentity::new_unified(
-                lib_identity::IdentityType::Device,
-                None,
-                None,
-                display_name,
-                None,
-            )
-            .map_err(|e| CliError::IdentityError(format!("Failed to generate identity: {}", e)))?;
 
-            // Save private key
-            let pk = id
-                .private_key
-                .as_ref()
-                .ok_or_else(|| CliError::IdentityError("Missing private key".to_string()))?;
-            save_private_key_to_file(pk, &private_key_file)?;
-
-            // Save identity
-            let json = serde_json::to_string_pretty(&id)
-                .map_err(|e| CliError::IdentityError(format!("Failed to serialize: {}", e)))?;
-            std::fs::write(&identity_file, &json).map_err(|e| {
-                CliError::IdentityError(format!("Failed to write identity: {}", e))
-            })?;
-
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(
-                    &private_key_file,
-                    std::fs::Permissions::from_mode(0o600),
-                );
-            }
-
-            output.success(&format!("DID: {}", id.did))?;
-            output.success(&format!("Keys saved to: {:?}", keystore))?;
-        }
-        (true, false) => {
-            return Err(CliError::IdentityError(format!(
-                "Inconsistent keystore at {:?}: found {} but missing {}. Remove the incomplete keystore files or restore the missing file, then try again.",
-                keystore, USER_IDENTITY_FILENAME, USER_PRIVATE_KEY_FILENAME
-            )));
-        }
-        (false, true) => {
-            return Err(CliError::IdentityError(format!(
-                "Inconsistent keystore at {:?}: found {} but missing {}. Remove the incomplete keystore files or restore the missing file, then try again.",
-                keystore, USER_PRIVATE_KEY_FILENAME, USER_IDENTITY_FILENAME
-            )));
-        }
+        output.success(&format!("DID: {}", id.did))?;
+        output.success(&format!("Keys saved to: {:?}", keystore))?;
     }
 
     // Load keypair for signing (this works with both hex and array formats)

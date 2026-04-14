@@ -27,6 +27,7 @@ use lib_consensus::{DaoProposalType, DaoVoteChoice};
 use lib_crypto::Hash as CryptoHash;
 use lib_identity::IdentityManager;
 
+use crate::api::principal::extract_principal_from_request;
 use crate::session_manager::SessionManager;
 
 /// Helper function to create JSON responses correctly
@@ -1498,7 +1499,11 @@ impl DaoHandler {
     }
 
     /// Handle get voting power endpoint
-    async fn handle_get_voting_power(&self, identity_id_str: &str) -> Result<ZhtpResponse> {
+    async fn handle_get_voting_power(
+        &self,
+        identity_id_str: &str,
+        request: &ZhtpRequest,
+    ) -> Result<ZhtpResponse> {
         let identity_id = match Self::string_to_identity_hash(identity_id_str) {
             Ok(id) => id,
             Err(_) => {
@@ -1509,13 +1514,24 @@ impl DaoHandler {
             }
         };
 
-        // Validate identity exists
+        // Validate identity exists and principal has governance access.
+        let principal = extract_principal_from_request(request);
         let identity_manager = self.identity_manager.read().await;
+        let view = identity_manager.get_identity_view(&principal, &identity_id);
         if identity_manager.get_identity(&identity_id).is_none() {
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
                 "Identity not found".to_string(),
             ));
+        }
+        match view {
+            Some(lib_identity::types::IdentityView::Public(_)) | None => {
+                return Ok(create_error_response(
+                    ZhtpStatus::Forbidden,
+                    "Access denied to governance data".to_string(),
+                ));
+            }
+            _ => {}
         }
 
         let blockchain_arc = self.get_blockchain().await?;
@@ -3344,7 +3360,7 @@ impl ZhtpRequestHandler for DaoHandler {
                 .await
                 .map_err(anyhow::Error::from),
             (ZhtpMethod::Get, ["api", "v1", "dao", "vote", "power", identity_id]) => self
-                .handle_get_voting_power(identity_id)
+                .handle_get_voting_power(identity_id, &request)
                 .await
                 .map_err(anyhow::Error::from),
             (ZhtpMethod::Get, ["api", "v1", "dao", "votes", proposal_id]) => self

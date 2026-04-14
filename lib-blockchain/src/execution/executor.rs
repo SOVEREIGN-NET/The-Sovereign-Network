@@ -347,26 +347,23 @@ impl BlockExecutor {
         recipient: &Address,
         amount: u128,
     ) -> Result<(), TxApplyError> {
-        let amount_u64 = u64::try_from(amount).map_err(|_| {
-            TxApplyError::InvalidType("SOV mint amount exceeds u64".to_string())
-        })?;
         let token_id = Self::canonical_sov_token_id();
         let mut contract = mutator
             .get_token_contract(&token_id)?
             .unwrap_or_else(crate::contracts::TokenContract::new_sov_native);
         let current_supply = mutator.get_token_supply(&token_id)?.unwrap_or(contract.total_supply);
-        let new_supply = current_supply.checked_add(amount_u64).ok_or_else(|| {
+        let new_supply = current_supply.checked_add(amount).ok_or_else(|| {
             TxApplyError::InvalidType("SOV total supply overflow".to_string())
         })?;
-        let balance = mutator.get_token_balance(&token_id, recipient)?;
+        let balance = mutator.get_token_balance_u128(&token_id, recipient)?;
         let recipient_pk = lib_crypto::PublicKey {
             dilithium_pk: [0u8; 2592],
             kyber_pk: [0u8; 1568],
             key_id: recipient.0,
         };
         contract.total_supply = new_supply;
-        let new_balance = balance + amount_u64;
-        contract.balances.insert(recipient_pk, new_balance);
+        let new_balance = balance + amount;
+        contract.set_balance(&recipient_pk, new_balance);
         mutator.put_token_supply(&token_id, new_supply)?;
         mutator.put_token_contract(&contract)?;
         Ok(())
@@ -1718,19 +1715,30 @@ impl BlockExecutor {
             });
         }
 
-        // ── 8. Balance check ──────────────────────────────────────────────────
+        // ── 8. Balance check (reads from token_balances tree) ────────────────
         if is_buy {
-            if account.balance_sov < amount_in_or_cbe {
+            let sov_bal = mutator.get_token_balance_u128(
+                &Self::canonical_sov_token_id(),
+                &Address::new(sender),
+            )?;
+            if sov_bal < amount_in_or_cbe {
                 return Err(TxApplyError::InvalidType(format!(
                     "BUY_CBE: insufficient SOV balance (have {}, need {})",
-                    account.balance_sov, amount_in_or_cbe
+                    sov_bal, amount_in_or_cbe
                 )));
             }
-        } else if account.balance_cbe < amount_in_or_cbe {
-            return Err(TxApplyError::InvalidType(format!(
-                "SELL_CBE: insufficient CBE balance (have {}, need {})",
-                account.balance_cbe, amount_in_or_cbe
-            )));
+        } else {
+            let cbe_token_id = TokenId::new(crate::Blockchain::derive_cbe_token_id_pub());
+            let cbe_bal = mutator.get_token_balance_u128(
+                &cbe_token_id,
+                &Address::new(sender),
+            )?;
+            if cbe_bal < amount_in_or_cbe {
+                return Err(TxApplyError::InvalidType(format!(
+                    "SELL_CBE: insufficient CBE balance (have {}, need {})",
+                    cbe_bal, amount_in_or_cbe
+                )));
+            }
         }
 
         // ── 9. expected_s_c stale-state check ────────────────────────────────
@@ -1792,9 +1800,16 @@ impl BlockExecutor {
             )));
         }
 
-        // 20/80 ALPHA split: floors reserve (ALPHA leg), remainder to treasury so the sum is exact.
-        let reserve_credit = amount_in * 20 / 100;
-        let treasury_credit = amount_in - reserve_credit;
+        // Event-driven on-ramp split (see docs/architecture/token-architecture.md):
+        //   20% → SOV treasury (held as CBE tokens, contributes to SOV NAV)
+        //   32% → CBE strategic reserve (locked, backs floor price)
+        //   48% → CBE liquidity pool (accumulates toward graduation)
+        //
+        // The 80% DAO portion splits 40/60 into reserve/liquidity.
+        // Integer arithmetic: compute each leg, liquidity gets the remainder for exactness.
+        let sov_treasury_credit = amount_in * 20 / 100;
+        let reserve_credit = amount_in * 32 / 100;
+        let liquidity_credit = amount_in - sov_treasury_credit - reserve_credit;
 
         let delta_s = mint_with_reserve(reserve_credit, econ.s_c)
             .map_err(|e| TxApplyError::InvalidType(format!("BUY_CBE: mint overflow: {e:?}")))?;
@@ -1834,20 +1849,19 @@ impl BlockExecutor {
             .reserve_balance
             .checked_add(reserve_credit)
             .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: reserve overflow".to_string()))?;
-        econ.treasury_balance = econ
-            .treasury_balance
-            .checked_add(treasury_credit)
-            .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: treasury overflow".to_string()))?;
+        econ.sov_treasury_cbe_balance = econ
+            .sov_treasury_cbe_balance
+            .checked_add(sov_treasury_credit)
+            .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: sov_treasury overflow".to_string()))?;
+        econ.liquidity_pool_balance = econ
+            .liquidity_pool_balance
+            .checked_add(liquidity_credit)
+            .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: liquidity_pool overflow".to_string()))?;
         if econ.reserve_balance >= GRAD_THRESHOLD {
             econ.graduated = true;
         }
 
-        account.balance_sov = account.balance_sov.checked_sub(amount_in).ok_or_else(|| {
-            TxApplyError::InvalidType("BUY_CBE: SOV balance underflow".to_string())
-        })?;
-        account.balance_cbe = account.balance_cbe.checked_add(delta_s).ok_or_else(|| {
-            TxApplyError::InvalidType("BUY_CBE: CBE balance overflow".to_string())
-        })?;
+        // Only nonce lives in cbe_account_state now; balances use token_balances tree.
         account.next_nonce = next_nonce;
 
         mutator.put_cbe_economic_state(&econ)?;
@@ -1859,6 +1873,48 @@ impl BlockExecutor {
             &Address::new(sender),
             amount_in,
         )?;
+
+        // Wire CBE ledger: credit sender's CBE token balance.
+        let cbe_token_id = TokenId::new(crate::Blockchain::derive_cbe_token_id_pub());
+        mutator.credit_token(
+            &cbe_token_id,
+            &Address::new(sender),
+            delta_s,
+        )?;
+
+        // ── Event-driven SOV minting ──────────────────────────────────────
+        // The 20% SOV treasury portion generates new SOV supply. SOV mints
+        // proportional to the CBE value deposited, priced at the current
+        // SOV NAV model:
+        //   sov_to_mint = sov_treasury_credit_cbe × cbe_price / sov_price
+        //
+        // During bootstrap (before SOV has a market price), SOV genesis
+        // price is $0.10. CBE price comes from the bonding curve at current s_c.
+        // Both prices are in SCALE (1e18) units.
+        //
+        // For now, use the curve price as the CBE/SOV ratio directly:
+        //   sov_to_mint = sov_treasury_credit (in SOV atoms, since buyer paid in SOV)
+        // This is correct because the buyer already paid `amount_in` SOV, and 20%
+        // of that SOV is the treasury's share. The SOV minting matches the value
+        // contributed to the treasury.
+        let sov_to_mint = sov_treasury_credit;
+        if sov_to_mint > 0 {
+            // Credit the SOV treasury address with the newly minted SOV.
+            // The treasury address is the fee_sink (DAO treasury).
+            let treasury_addr = *self.fee_model.protocol_params.fee_sink_address();
+            mutator.credit_token(
+                &Self::canonical_sov_token_id(),
+                &treasury_addr,
+                sov_to_mint,
+            )?;
+            // Track total SOV minted via on-ramp for audit.
+            econ.total_sov_minted = econ
+                .total_sov_minted
+                .checked_add(sov_to_mint)
+                .unwrap_or(econ.total_sov_minted);
+            // Re-persist econ with updated total_sov_minted.
+            mutator.put_cbe_economic_state(&econ)?;
+        }
 
         Ok(CanonicalBondingCurveOutcome::Buy(BondingCurveBuyOutcome {
             token_id: crate::Blockchain::derive_cbe_token_id_pub(),
@@ -1910,16 +1966,19 @@ impl BlockExecutor {
             .checked_sub(sov_out)
             .ok_or_else(|| TxApplyError::InvalidType("SELL_CBE: reserve underflow".to_string()))?;
 
-        account.balance_cbe = account.balance_cbe.checked_sub(amount_cbe).ok_or_else(|| {
-            TxApplyError::InvalidType("SELL_CBE: CBE balance underflow".to_string())
-        })?;
-        account.balance_sov = account.balance_sov.checked_add(sov_out).ok_or_else(|| {
-            TxApplyError::InvalidType("SELL_CBE: SOV balance overflow".to_string())
-        })?;
+        // Only nonce lives in cbe_account_state now; balances use token_balances tree.
         account.next_nonce = next_nonce;
 
         mutator.put_cbe_economic_state(&econ)?;
         mutator.put_cbe_account_state(&sender, &account)?;
+
+        // Wire CBE ledger: debit seller's CBE token balance.
+        let cbe_token_id = TokenId::new(crate::Blockchain::derive_cbe_token_id_pub());
+        mutator.debit_token(
+            &cbe_token_id,
+            &Address::new(sender),
+            amount_cbe,
+        )?;
 
         // Wire SOV ledger: credit seller's actual SOV token balance.
         mutator.credit_token(
@@ -2218,56 +2277,22 @@ impl BlockExecutor {
                     ));
                 }
 
-                // CBE balances live in cbe_account_state (canonical buy/sell path), not
-                // in token_balance. Use cbe_account_state for debit/credit so that CBE
-                // transfers can spend balances acquired via BondingCurveBuy transactions.
-                //
-                // For legacy wallets where transfer_data.from (wallet_id) != key_id, the
-                // CBE balance was credited to key_id by apply_buy_cbe (which uses tx.sender
-                // = buyer_key_id). Debit from key_id so the balance is actually found.
+                // CBE transfers use standard token_balances with 0 fee;
+                // all other tokens use standard token_balances with the SOV fee rate.
                 let cbe_token_id_arr = crate::Blockchain::derive_cbe_token_id_pub();
-                if transfer_data.token_id == cbe_token_id_arr {
-                    // CBE transfers are fee-free: full amount goes to recipient.
-                    // (Legacy cbe_token.transfer() never charged fees.)
-                    let effective_sender = if transfer_data.from != tx.signature.public_key.key_id {
-                        tx.signature.public_key.key_id
-                    } else {
-                        transfer_data.from
-                    };
-                    let mut sender_acc = mutator.get_cbe_account_state(&effective_sender)?;
-                    if sender_acc.balance_cbe < amount {
-                        return Err(TxApplyError::InsufficientBalance {
-                            have: sender_acc.balance_cbe,
-                            need: amount,
-                            token,
-                        });
-                    }
-                    sender_acc.balance_cbe -= amount;
-                    mutator.put_cbe_account_state(&effective_sender, &sender_acc)?;
-
-                    let mut to_acc = mutator.get_cbe_account_state(&transfer_data.to)?;
-                    to_acc.balance_cbe += amount;
-                    mutator.put_cbe_account_state(&transfer_data.to, &to_acc)?;
-
-                    mutator.increment_token_nonce(&token, &from)?;
-
-                    return Ok(TxOutcome::TokenTransfer(TokenTransferOutcome {
-                        token,
-                        from,
-                        to,
-                        amount,
-                    }));
-                }
-
-                // Non-CBE: apply via standard token_balance table with 1% fee.
                 let fee_destination = *self.fee_model.protocol_params.fee_sink_address();
+                let fee_bps = if transfer_data.token_id == cbe_token_id_arr {
+                    0u16
+                } else {
+                    crate::contracts::tokens::constants::SOV_FEE_RATE_BPS
+                };
                 let _fee_collected = tx_apply::apply_token_transfer(
                     mutator,
                     &token,
                     &from,
                     &to,
                     amount,
-                    crate::contracts::tokens::constants::SOV_FEE_RATE_BPS,
+                    fee_bps,
                     &fee_destination,
                 )?;
 
@@ -2385,8 +2410,8 @@ impl BlockExecutor {
                 } else {
                     payload.decimals
                 };
-                token.max_supply = payload.initial_supply;
-                token.mint(&creator, creator_allocation).map_err(|e| {
+                token.max_supply = payload.initial_supply as u128;
+                token.mint(&creator, creator_allocation as u128).map_err(|e| {
                     TxApplyError::Internal(format!("TokenCreation mint failed: {e}"))
                 })?;
                 let treasury_pk = lib_crypto::PublicKey {
@@ -2394,7 +2419,7 @@ impl BlockExecutor {
                     kyber_pk: [0u8; 1568],
                     key_id: payload.treasury_recipient,
                 };
-                token.mint(&treasury_pk, treasury_allocation).map_err(|e| {
+                token.mint(&treasury_pk, treasury_allocation as u128).map_err(|e| {
                     TxApplyError::Internal(format!("TokenCreation treasury mint failed: {e}"))
                 })?;
 
@@ -4101,7 +4126,7 @@ mod tests {
                 &BondingCurveAccountState {
                     key_id: [0x11; 32],
                     balance_cbe: 0,
-                    balance_sov: 10_000 * SCALE, // plenty of SOV
+                    balance_sov: 0, // balances now live in token_balances tree
                     next_nonce: Nonce48::from_u64(0).unwrap(),
                 },
             )
@@ -4147,18 +4172,28 @@ mod tests {
         // Read from the committed tree.
         let econ = store.get_cbe_economic_state().unwrap();
         assert_eq!(econ.s_c, delta_s, "supply must equal minted tokens");
-        assert!(econ.reserve_balance > 0, "reserve must be credited");
-        assert!(econ.treasury_balance > 0, "treasury must be credited");
+        assert!(econ.reserve_balance > 0, "reserve (32%) must be credited");
+        assert!(econ.sov_treasury_cbe_balance > 0, "sov treasury (20%) must be credited");
+        assert!(econ.liquidity_pool_balance > 0, "liquidity pool (48%) must be credited");
         assert_eq!(
-            econ.reserve_balance + econ.treasury_balance,
+            econ.reserve_balance + econ.sov_treasury_cbe_balance + econ.liquidity_pool_balance,
             amount_in,
-            "reserve + treasury must equal amount_in exactly"
+            "reserve + sov_treasury + liquidity must equal amount_in exactly (20/32/48 split)"
         );
 
-        // Account state: SOV debited, CBE credited, nonce incremented.
+        // Token balances: SOV debited, CBE credited via token_balances tree.
+        let sov_token_id =
+            crate::storage::TokenId::new(crate::contracts::utils::generate_lib_token_id());
+        let cbe_token_id =
+            crate::storage::TokenId::new(crate::Blockchain::derive_cbe_token_id_pub());
+        let addr = crate::storage::Address::new([0x11; 32]);
+        let sov_bal = store.get_token_balance(&sov_token_id, &addr).unwrap();
+        let cbe_bal = store.get_token_balance(&cbe_token_id, &addr).unwrap();
+        assert_eq!(sov_bal, 10_000 * SCALE - amount_in);
+        assert_eq!(cbe_bal, delta_s);
+
+        // Nonce incremented in cbe_account_state.
         let acc = store.get_cbe_account_state(&[0x11; 32]).unwrap().unwrap();
-        assert_eq!(acc.balance_sov, 10_000 * SCALE - amount_in);
-        assert_eq!(acc.balance_cbe, delta_s);
         assert_eq!(acc.next_nonce.to_u64(), 1);
     }
 
@@ -4175,13 +4210,21 @@ mod tests {
 
         store.begin_block(0).unwrap();
         {
+            // Seed the SOV token ledger so balance check passes.
+            let sov_token_id =
+                crate::storage::TokenId::new(crate::contracts::utils::generate_lib_token_id());
+            let addr = crate::storage::Address::new([0x22; 32]);
+            store
+                .set_token_balance(&sov_token_id, &addr, 10_000 * SCALE)
+                .unwrap();
+
             let seed = StateMutator::new(store.as_ref());
             seed.put_cbe_account_state(
                 &[0x22; 32],
                 &BondingCurveAccountState {
                     key_id: [0x22; 32],
                     balance_cbe: 0,
-                    balance_sov: 10_000 * SCALE,
+                    balance_sov: 0,
                     next_nonce: Nonce48::from_u64(0).unwrap(),
                 },
             )
@@ -4247,7 +4290,7 @@ mod tests {
                 &BondingCurveAccountState {
                     key_id: [0x33; 32],
                     balance_cbe: 0,
-                    balance_sov: 100_000 * SCALE,
+                    balance_sov: 0, // balances now live in token_balances tree
                     next_nonce: Nonce48::from_u64(0).unwrap(),
                 },
             )
@@ -4255,10 +4298,16 @@ mod tests {
             // Pre-load reserve so the next buy tips graduation.
             // reserve_credit of a 100 * SCALE buy ≈ 20 * SCALE; GRAD_THRESHOLD ≈ 2_745_966 * SCALE.
             // Use seeded econ state with reserve = GRAD_THRESHOLD - 1.
+            // With 20/32/48 split, if reserve=R then the total deposit that produced it
+            // was R * 100/32 ≈ R * 3.125. SOV treasury = 20% and liquidity = 48%.
+            let reserve_seeded = GRAD_THRESHOLD - 1;
+            let implied_total = reserve_seeded * 100 / 32;
             seed.put_cbe_economic_state(&BondingCurveEconomicState {
                 s_c: 0,
-                reserve_balance: GRAD_THRESHOLD - 1,
-                treasury_balance: (GRAD_THRESHOLD - 1) * 4, // 80% split equivalent
+                reserve_balance: reserve_seeded,
+                sov_treasury_cbe_balance: implied_total * 20 / 100,
+                liquidity_pool_balance: implied_total * 48 / 100,
+                total_sov_minted: 0,
                 graduated: false,
                 sell_enabled: false,
             })
@@ -4326,7 +4375,7 @@ mod tests {
                 &BondingCurveAccountState {
                     key_id: [0x44; 32],
                     balance_cbe: 0,
-                    balance_sov: 10_000 * SCALE,
+                    balance_sov: 0, // balances now live in token_balances tree
                     next_nonce: Nonce48::from_u64(0).unwrap(),
                 },
             )
@@ -4410,9 +4459,18 @@ mod tests {
         assert_eq!(econ.s_c, 0, "all CBE burned, supply must return to 0");
         assert_eq!(econ.reserve_balance, reserve_after_buy - sov_out);
 
+        // Token balances: CBE fully burned, SOV = initial - buy_cost + sell_payout.
+        let sov_token_id =
+            crate::storage::TokenId::new(crate::contracts::utils::generate_lib_token_id());
+        let cbe_token_id =
+            crate::storage::TokenId::new(crate::Blockchain::derive_cbe_token_id_pub());
+        let addr = crate::storage::Address::new([0x44; 32]);
+        let cbe_bal = store.get_token_balance(&cbe_token_id, &addr).unwrap();
+        let sov_bal = store.get_token_balance(&sov_token_id, &addr).unwrap();
+        assert_eq!(cbe_bal, 0, "all CBE must be consumed");
+        assert_eq!(sov_bal, 10_000 * SCALE - amount_in + sov_out);
+
         let acc = store.get_cbe_account_state(&[0x44; 32]).unwrap().unwrap();
-        assert_eq!(acc.balance_cbe, 0, "all CBE must be consumed");
-        assert_eq!(acc.balance_sov, 10_000 * SCALE - amount_in + sov_out);
         assert_eq!(acc.next_nonce.to_u64(), 2);
     }
 
@@ -4433,12 +4491,20 @@ mod tests {
         let cbe_amount = 100 * SCALE;
         store.begin_block(0).unwrap();
         {
+            // Seed CBE token balance so the balance check passes.
+            let cbe_token_id =
+                crate::storage::TokenId::new(crate::Blockchain::derive_cbe_token_id_pub());
+            let addr = crate::storage::Address::new([0x55; 32]);
+            store
+                .set_token_balance(&cbe_token_id, &addr, cbe_amount)
+                .unwrap();
+
             let seed = StateMutator::new(store.as_ref());
             seed.put_cbe_account_state(
                 &[0x55; 32],
                 &BondingCurveAccountState {
                     key_id: [0x55; 32],
-                    balance_cbe: cbe_amount,
+                    balance_cbe: 0,
                     balance_sov: 0,
                     next_nonce: Nonce48::from_u64(0).unwrap(),
                 },
@@ -4449,7 +4515,9 @@ mod tests {
             seed.put_cbe_economic_state(&BondingCurveEconomicState {
                 s_c: cbe_amount,
                 reserve_balance: 0, // empty — solvency check must fail
-                treasury_balance: 0,
+                sov_treasury_cbe_balance: 0,
+                liquidity_pool_balance: 0,
+                total_sov_minted: 0,
                 graduated: false,
                 sell_enabled: true,
             })
@@ -4511,7 +4579,7 @@ mod tests {
                 &BondingCurveAccountState {
                     key_id: [0x66; 32],
                     balance_cbe: 0,
-                    balance_sov: 10_000 * SCALE,
+                    balance_sov: 0, // balances now live in token_balances tree
                     next_nonce: Nonce48::from_u64(0).unwrap(),
                 },
             )
@@ -4669,7 +4737,7 @@ mod tests {
                 &BondingCurveAccountState {
                     key_id: signer.public_key.key_id,
                     balance_cbe: 0,
-                    balance_sov: 10_000,
+                    balance_sov: 0, // balances now live in token_balances tree
                     next_nonce: Nonce48::from_u64(0).unwrap(),
                 },
             )

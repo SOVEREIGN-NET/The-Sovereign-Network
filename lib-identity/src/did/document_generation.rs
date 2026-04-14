@@ -7,6 +7,7 @@
 
 use crate::did::storage;
 use crate::identity::ZhtpIdentity;
+use lib_access_control::{AccessDomain, AccessOperation, AccessPolicy, SecurityPrincipal, SubjectRelation};
 use lib_crypto::keypair::KeyPair;
 use lib_crypto::types::{PublicKey, Signature};
 use serde::{Deserialize, Serialize};
@@ -37,6 +38,37 @@ pub struct DidDocument {
     #[serde(rename = "versionId")]
     pub version_id: u32,
     /// Registry of authorized device keys (Phase 1)
+    #[serde(default, rename = "deviceRegistry")]
+    pub device_registry: Vec<DeviceEntry>,
+}
+
+/// Access-controlled DID Document view.
+///
+/// This is the only DID document shape that may be returned across trust
+/// boundaries. It is constructed by filtering the full `DidDocument` according
+/// to the caller's principal.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DidDocumentView {
+    #[serde(rename = "@context")]
+    pub context: Vec<String>,
+    pub id: String,
+    #[serde(rename = "verificationMethod")]
+    pub verification_method: Vec<VerificationMethod>,
+    #[serde(rename = "authentication")]
+    pub authentication: Vec<String>,
+    #[serde(rename = "assertionMethod")]
+    pub assertion_method: Vec<String>,
+    #[serde(rename = "keyAgreement")]
+    pub key_agreement: Vec<String>,
+    #[serde(rename = "capabilityInvocation")]
+    pub capability_invocation: Vec<String>,
+    #[serde(rename = "capabilityDelegation")]
+    pub capability_delegation: Vec<String>,
+    pub service: Vec<ServiceEndpoint>,
+    pub created: String,
+    pub updated: String,
+    #[serde(rename = "versionId")]
+    pub version_id: u32,
     #[serde(default, rename = "deviceRegistry")]
     pub device_registry: Vec<DeviceEntry>,
 }
@@ -360,8 +392,181 @@ pub fn update_did_document(
 }
 
 /// Resolve DID to DID Document (in-memory registry)
+///
+/// # Security
+/// This returns the full, unfiltered DID document. It should only be used
+/// during internal consensus or DID update operations. All external reads
+/// must use `resolve_did_for_principal` instead.
 pub fn resolve_did(did: &str) -> Result<DidDocument, String> {
     storage::resolve_did_document(did)
+}
+
+/// Resolve DID to an access-controlled DID Document view.
+///
+/// This is the **only** resolution method that should be exposed across trust
+/// boundaries. It filters service endpoints and the device registry according
+/// to the caller's principal.
+pub fn resolve_did_for_principal(
+    did: &str,
+    principal: &SecurityPrincipal,
+    relation: SubjectRelation,
+) -> Result<DidDocumentView, String> {
+    let document = storage::resolve_did_document(did)?;
+    filter_did_document(document, principal, relation)
+}
+
+/// Generate a DID document for a specific principal.
+///
+/// Returns a filtered view containing only the verification methods,
+/// service endpoints, and device registry entries the principal is
+/// authorized to see.
+pub fn generate_did_document_for_principal(
+    identity: &ZhtpIdentity,
+    principal: &SecurityPrincipal,
+    relation: SubjectRelation,
+    base_url: Option<&str>,
+) -> Result<DidDocumentView, String> {
+    let document = generate_did_document(identity, base_url)?;
+    filter_did_document(document, principal, relation)
+}
+
+fn filter_did_document(
+    document: DidDocument,
+    principal: &SecurityPrincipal,
+    relation: SubjectRelation,
+) -> Result<DidDocumentView, String> {
+    let policy = AccessPolicy::default();
+
+    // Evaluate baseline access to CoreIdentity / Resolve.
+    let core_decision = policy.check_access(
+        principal,
+        relation,
+        AccessDomain::CoreIdentity,
+        AccessOperation::Resolve,
+    );
+    if !core_decision.is_allowed() {
+        return Err("Access denied to DID document".to_string());
+    }
+
+    // Filter service endpoints.
+    let filtered_services = filter_services(&document.service, principal, relation, &policy);
+
+    // Filter device registry.
+    let filtered_registry =
+        filter_device_registry(&document.device_registry, principal, relation, &policy);
+
+    Ok(DidDocumentView {
+        context: document.context,
+        id: document.id,
+        verification_method: document.verification_method,
+        authentication: document.authentication,
+        assertion_method: document.assertion_method,
+        key_agreement: document.key_agreement,
+        capability_invocation: document.capability_invocation,
+        capability_delegation: document.capability_delegation,
+        service: filtered_services,
+        created: document.created,
+        updated: document.updated,
+        version_id: document.version_id,
+        device_registry: filtered_registry,
+    })
+}
+
+fn filter_services(
+    services: &[ServiceEndpoint],
+    principal: &SecurityPrincipal,
+    relation: SubjectRelation,
+    policy: &AccessPolicy,
+) -> Vec<ServiceEndpoint> {
+    services
+        .iter()
+        .filter(|svc| service_visible(svc, principal, relation, policy))
+        .cloned()
+        .collect()
+}
+
+fn service_visible(
+    service: &ServiceEndpoint,
+    principal: &SecurityPrincipal,
+    relation: SubjectRelation,
+    _policy: &AccessPolicy,
+) -> bool {
+    use lib_access_control::Role;
+
+    let service_type = service.service_type.as_str();
+
+    // Identity verification is always public.
+    if service_type == "ZhtpIdentityVerification" {
+        return true;
+    }
+
+    // Self, system, and emergency see everything.
+    if matches!(relation, SubjectRelation::Self_)
+        || principal.role == Role::System
+        || principal.role == Role::Emergency
+    {
+        return true;
+    }
+
+    // Council sees most services except private ZK material.
+    if principal.role == Role::Council {
+        return !matches!(service_type, "ZhtpZKProofService");
+    }
+
+    // Device owner sees wallet and node-related endpoints.
+    if principal.role == Role::Device && matches!(relation, SubjectRelation::Owner) {
+        return matches!(
+            service_type,
+            "ZhtpQuantumWallet" | "ZhtpWeb4Access" | "ZhtpUBIService"
+        );
+    }
+
+    // Node roles: limited by tier.
+    if principal.role == Role::Node {
+        use lib_types::NodeType;
+        return match principal.node_type {
+            NodeType::Validator | NodeType::FullNode => matches!(
+                service_type,
+                "ZhtpUBIService" | "ZhtpDAOGovernance" | "ZhtpWeb4Access"
+            ),
+            NodeType::EdgeNode => {
+                matches!(service_type, "ZhtpWeb4Access" | "ZhtpIdentityVerification")
+            }
+            NodeType::Relay => service_type == "ZhtpIdentityVerification",
+        };
+    }
+
+    // Public / external: only verification and web4 discovery.
+    matches!(
+        service_type,
+        "ZhtpIdentityVerification" | "ZhtpWeb4Access"
+    )
+}
+
+fn filter_device_registry(
+    registry: &[DeviceEntry],
+    principal: &SecurityPrincipal,
+    relation: SubjectRelation,
+    _policy: &AccessPolicy,
+) -> Vec<DeviceEntry> {
+    use lib_access_control::Role;
+
+    // Full registry for self, owner, admin roles, council, system, emergency.
+    if matches!(relation, SubjectRelation::Self_ | SubjectRelation::Owner)
+        || matches!(
+            principal.role,
+            Role::InfraAdmin | Role::Council | Role::System | Role::Emergency
+        )
+    {
+        return registry.to_vec();
+    }
+
+    // Others: return only active devices (do not reveal removed ones).
+    registry
+        .iter()
+        .filter(|d| d.status == DeviceStatus::Active)
+        .cloned()
+        .collect()
 }
 
 /// Validate DID Document structure
@@ -863,6 +1068,102 @@ mod tests {
         store_did_document(doc.clone())?;
         let resolved = resolve_did(&doc.id)?;
         assert_eq!(resolved.id, doc.id);
+        Ok(())
+    }
+
+    #[test]
+    fn test_did_document_public_principal_filters_services() -> Result<(), String> {
+        let identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+
+        let principal = SecurityPrincipal::public();
+        let doc = generate_did_document_for_principal(
+            &identity,
+            &principal,
+            SubjectRelation::Public,
+            None,
+        )?;
+
+        let service_types: Vec<&str> =
+            doc.service.iter().map(|s| s.service_type.as_str()).collect();
+        // Visitor-level identity only gets public verification service.
+        assert!(service_types.contains(&"ZhtpIdentityVerification"));
+        assert!(!service_types.contains(&"ZhtpQuantumWallet"));
+        assert!(!service_types.contains(&"ZhtpCredentialIssuance"));
+        assert!(!service_types.contains(&"ZhtpZKProofService"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_did_document_self_principal_sees_all_services() -> Result<(), String> {
+        let identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+
+        let principal = SecurityPrincipal::new(
+            &identity.did,
+            lib_access_control::Role::Citizen,
+            lib_types::NodeType::FullNode,
+        );
+        let doc = generate_did_document_for_principal(
+            &identity,
+            &principal,
+            SubjectRelation::Self_,
+            None,
+        )?;
+
+        let service_types: Vec<&str> =
+            doc.service.iter().map(|s| s.service_type.as_str()).collect();
+        // Visitor-level identity generates wallet, verification, credentials and ZK services.
+        assert!(service_types.contains(&"ZhtpQuantumWallet"));
+        assert!(service_types.contains(&"ZhtpIdentityVerification"));
+        assert!(service_types.contains(&"ZhtpCredentialIssuance"));
+        assert!(service_types.contains(&"ZhtpZKProofService"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_did_document_council_filters_zk_service() -> Result<(), String> {
+        let identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+
+        let principal = SecurityPrincipal::new(
+            "did:zhtp:council",
+            lib_access_control::Role::Council,
+            lib_types::NodeType::FullNode,
+        )
+        .with_capability(lib_access_control::Capability::Investigate);
+        let doc = generate_did_document_for_principal(
+            &identity,
+            &principal,
+            SubjectRelation::External,
+            None,
+        )?;
+
+        let service_types: Vec<&str> =
+            doc.service.iter().map(|s| s.service_type.as_str()).collect();
+        // Council sees wallet, verification and credentials but not ZK proofs.
+        assert!(service_types.contains(&"ZhtpQuantumWallet"));
+        assert!(service_types.contains(&"ZhtpIdentityVerification"));
+        assert!(service_types.contains(&"ZhtpCredentialIssuance"));
+        assert!(!service_types.contains(&"ZhtpZKProofService"));
         Ok(())
     }
 }

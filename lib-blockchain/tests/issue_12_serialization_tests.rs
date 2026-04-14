@@ -38,16 +38,12 @@ fn test_token_contract_serialization_cycle() {
     // Mint some tokens
     let holder1 = test_public_key(2);
     let holder2 = test_public_key(3);
-    token.balances.insert(holder1.clone(), 500_000_000);
-    token.balances.insert(holder2.clone(), 300_000_000);
+    token.set_balance(&holder1, 500_000_000);
+    token.set_balance(&holder2, 300_000_000);
     token.total_supply = 800_000_000;
 
     // Add allowances
-    token
-        .allowances
-        .entry(holder1.clone())
-        .or_insert_with(std::collections::HashMap::new)
-        .insert(holder2.clone(), 100_000);
+    token.approve(&holder1, &holder2, 100_000);
 
     // Serialize
     let serialized = bincode::serialize(&token).expect("Failed to serialize token");
@@ -68,18 +64,12 @@ fn test_token_contract_serialization_cycle() {
     assert_eq!(deserialized.creator, token.creator);
 
     // Verify balances
-    assert_eq!(deserialized.balances.len(), 2);
-    assert_eq!(deserialized.balances.get(&holder1), Some(&500_000_000));
-    assert_eq!(deserialized.balances.get(&holder2), Some(&300_000_000));
+    assert_eq!(deserialized.balances_len(), 2);
+    assert_eq!(deserialized.balance_of(&holder1), 500_000_000);
+    assert_eq!(deserialized.balance_of(&holder2), 300_000_000);
 
     // Verify allowances
-    assert_eq!(
-        deserialized
-            .allowances
-            .get(&holder1)
-            .and_then(|m| m.get(&holder2)),
-        Some(&100_000)
-    );
+    assert_eq!(deserialized.allowance(&holder1, &holder2), 100_000);
 }
 
 // ============================================================================
@@ -106,8 +96,8 @@ fn test_token_contract_empty_serialization() {
         bincode::deserialize(&serialized).expect("Failed to deserialize empty token");
 
     assert_eq!(deserialized.total_supply, 0);
-    assert!(deserialized.balances.is_empty());
-    assert!(deserialized.allowances.is_empty());
+    assert!(deserialized.balances_is_empty());
+    assert_eq!(deserialized.allowance(&test_public_key(10), &test_public_key(10)), 0);
 }
 
 // ============================================================================
@@ -121,24 +111,21 @@ fn test_token_contract_large_numbers() {
         "Big Token".to_string(),
         "BIG".to_string(),
         18,
-        u64::MAX, // Maximum possible supply
+        u128::MAX, // Maximum possible supply
         false,
         0,
         test_public_key(20),
     );
 
-    token.total_supply = u64::MAX - 1;
-    token.balances.insert(test_public_key(21), u64::MAX / 2);
+    token.total_supply = u128::MAX - 1;
+    token.set_balance(&test_public_key(21), u128::MAX / 2);
 
     let serialized = bincode::serialize(&token).expect("Failed to serialize");
     let deserialized: TokenContract =
         bincode::deserialize(&serialized).expect("Failed to deserialize");
 
-    assert_eq!(deserialized.total_supply, u64::MAX - 1);
-    assert_eq!(
-        deserialized.balances.get(&test_public_key(21)),
-        Some(&(u64::MAX / 2))
-    );
+    assert_eq!(deserialized.total_supply, u128::MAX - 1);
+    assert_eq!(deserialized.balance_of(&test_public_key(21)), u128::MAX / 2);
 }
 
 // ============================================================================
@@ -159,7 +146,7 @@ fn test_token_unicode_strings() {
         test_public_key(40),
     );
 
-    token.balances.insert(test_public_key(41), 100_000);
+    token.set_balance(&test_public_key(41), 100_000);
 
     // Serialize and deserialize
     let serialized = bincode::serialize(&token).expect("Failed to serialize unicode");

@@ -22,6 +22,11 @@ use lib_economy::wallets::{
 };
 use lib_identity::{identity::ZhtpIdentity as Identity, IdentityManager};
 
+
+// Access control imports
+use crate::api::principal::extract_principal_from_request;
+use lib_access_control::{AccessDomain, AccessOperation, SecurityPrincipal};
+
 /// Helper function to create JSON responses correctly
 fn create_json_response(data: serde_json::Value) -> Result<ZhtpResponse> {
     let json_response = serde_json::to_vec(&data)?;
@@ -58,6 +63,13 @@ impl WalletHandler {
             blockchain,
         }
     }
+
+    /// Extract a SecurityPrincipal from an incoming request.
+    fn extract_principal(&self, request: &ZhtpRequest) -> SecurityPrincipal {
+        extract_principal_from_request(request)
+    }
+
+
 }
 
 #[async_trait::async_trait]
@@ -69,7 +81,7 @@ impl ZhtpRequestHandler for WalletHandler {
             // GET /api/v1/wallet/list/{identity_id}
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/wallet/list/") => {
                 let identity_id = path.strip_prefix("/api/v1/wallet/list/").unwrap_or("");
-                self.handle_list_wallets(identity_id).await
+                self.handle_list_wallets(identity_id, &request).await
             }
             // GET /api/v1/wallet/balance/{wallet_type}/{identity_id}
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/wallet/balance/") => {
@@ -79,7 +91,7 @@ impl ZhtpRequestHandler for WalletHandler {
                     .split('/')
                     .collect();
                 if path_parts.len() >= 2 {
-                    self.handle_get_balance(path_parts[0], path_parts[1]).await
+                    self.handle_get_balance(path_parts[0], path_parts[1], &request).await
                 } else {
                     Ok(create_error_response(
                         ZhtpStatus::BadRequest,
@@ -92,14 +104,14 @@ impl ZhtpRequestHandler for WalletHandler {
                 let identity_id = path
                     .strip_prefix("/api/v1/wallet/statistics/")
                     .unwrap_or("");
-                self.handle_get_statistics(identity_id).await
+                self.handle_get_statistics(identity_id, &request).await
             }
             // GET /api/v1/wallet/transactions/{identity_id}
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/wallet/transactions/") => {
                 let identity_id = path
                     .strip_prefix("/api/v1/wallet/transactions/")
                     .unwrap_or("");
-                self.handle_get_transactions(identity_id).await
+                self.handle_get_transactions(identity_id, &request).await
             }
             // POST /api/v1/wallet/send
             (ZhtpMethod::Post, "/api/v1/wallet/send") => self.handle_simple_send(request).await,
@@ -152,10 +164,10 @@ impl ZhtpRequestHandler for WalletHandler {
 struct WalletInfo {
     wallet_type: String,
     wallet_id: String,
-    available_balance: u64,
-    staked_balance: u64,
-    pending_rewards: u64,
-    total_balance: u64,
+    available_balance: u128,
+    staked_balance: u128,
+    pending_rewards: u128,
+    total_balance: u128,
     permissions: WalletPermissionsInfo,
     created_at: u64,
     description: String,
@@ -217,7 +229,11 @@ struct TransactionRecord {
 
 impl WalletHandler {
     /// List all wallets for an identity
-    async fn handle_list_wallets(&self, identity_id: &str) -> Result<ZhtpResponse> {
+    async fn handle_list_wallets(
+        &self,
+        identity_id: &str,
+        request: &ZhtpRequest,
+    ) -> Result<ZhtpResponse> {
         // Parse identity ID from hex string
         let identity_hash = hex::decode(identity_id)
             .map_err(|e| anyhow::anyhow!("Invalid hex for identity_id: {}", e))?;
@@ -231,6 +247,18 @@ impl WalletHandler {
 
         let mut identity_id_bytes = [0u8; 32];
         identity_id_bytes.copy_from_slice(&identity_hash);
+        let identity_hash = Hash(identity_id_bytes);
+
+        // Graph-traversal guard: WalletGraph / Read
+        let principal = self.extract_principal(request);
+        let identity_manager = self.identity_manager.read().await;
+        if !identity_manager.check_access(&principal, &identity_hash, AccessDomain::WalletGraph, AccessOperation::Read) {
+            drop(identity_manager);
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Access denied to wallet list".to_string(),
+            ));
+        }
 
         // Get the identity
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
@@ -260,7 +288,7 @@ impl WalletHandler {
         let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
 
         let mut wallets = Vec::new();
-        let mut total_balance_adjusted = 0u64;
+        let mut total_balance_adjusted = 0u128;
 
         if wallet_summaries.is_empty() {
             // Fallback: surface wallets from the on-chain registry that belong to this identity.
@@ -286,7 +314,7 @@ impl WalletHandler {
                                     kyber_pk: [0u8; 1568],
                                     key_id,
                                 };
-                            token.balances.get(&wallet_key).copied()
+                            Some(token.balance_of(&wallet_key))
                         })
                     })
                     .unwrap_or(0);
@@ -358,7 +386,7 @@ impl WalletHandler {
                                         kyber_pk: [0u8; 1568],
                                         key_id,
                                     };
-                                token.balances.get(&wallet_key).copied()
+                                Some(token.balance_of(&wallet_key))
                             })
                     })
                     .unwrap_or(0)
@@ -408,6 +436,7 @@ impl WalletHandler {
         &self,
         wallet_type_str: &str,
         identity_id: &str,
+        request: &ZhtpRequest,
     ) -> Result<ZhtpResponse> {
         // Parse wallet type to lib_identity::wallets::WalletType
         let wallet_type = match wallet_type_str.to_lowercase().as_str() {
@@ -442,6 +471,19 @@ impl WalletHandler {
 
         let mut identity_id_bytes = [0u8; 32];
         identity_id_bytes.copy_from_slice(&identity_hash);
+        let identity_hash = Hash(identity_id_bytes);
+
+        // Graph-traversal guard: WalletGraph / Read
+        let principal = self.extract_principal(request);
+        let identity_manager = self.identity_manager.read().await;
+        if !identity_manager.check_access(&principal, &identity_hash, AccessDomain::WalletGraph, AccessOperation::Read) {
+            drop(identity_manager);
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Access denied to wallet balance".to_string(),
+            ));
+        }
+        drop(identity_manager);
 
         // Get the identity from stored state
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
@@ -568,7 +610,11 @@ impl WalletHandler {
     }
 
     /// Get comprehensive wallet statistics
-    async fn handle_get_statistics(&self, identity_id: &str) -> Result<ZhtpResponse> {
+    async fn handle_get_statistics(
+        &self,
+        identity_id: &str,
+        request: &ZhtpRequest,
+    ) -> Result<ZhtpResponse> {
         // Parse identity ID
         let identity_hash = hex::decode(identity_id)
             .map_err(|e| anyhow::anyhow!("Invalid hex for identity_id: {}", e))?;
@@ -582,6 +628,19 @@ impl WalletHandler {
 
         let mut identity_id_bytes = [0u8; 32];
         identity_id_bytes.copy_from_slice(&identity_hash);
+        let identity_hash = Hash(identity_id_bytes);
+
+        // Graph-traversal guard: WalletGraph / Read
+        let principal = self.extract_principal(request);
+        let identity_manager = self.identity_manager.read().await;
+        if !identity_manager.check_access(&principal, &identity_hash, AccessDomain::WalletGraph, AccessOperation::Read) {
+            drop(identity_manager);
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Access denied to wallet statistics".to_string(),
+            ));
+        }
+        drop(identity_manager);
 
         // Get the identity from stored state
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
@@ -1187,7 +1246,11 @@ impl WalletHandler {
     }
 
     /// Get transaction history for an identity
-    async fn handle_get_transactions(&self, identity_id: &str) -> Result<ZhtpResponse> {
+    async fn handle_get_transactions(
+        &self,
+        identity_id: &str,
+        request: &ZhtpRequest,
+    ) -> Result<ZhtpResponse> {
         // Parse identity ID
         let identity_hash = hex::decode(identity_id)
             .map_err(|e| anyhow::anyhow!("Invalid hex for identity_id: {}", e))?;
@@ -1201,6 +1264,20 @@ impl WalletHandler {
 
         let mut identity_id_bytes = [0u8; 32];
         identity_id_bytes.copy_from_slice(&identity_hash);
+        let identity_hash = Hash(identity_id_bytes);
+
+        // Graph-traversal guard: WalletGraph / Read
+        let principal = self.extract_principal(request);
+        let identity_manager = self.identity_manager.read().await;
+        if !identity_manager.check_access(&principal, &identity_hash, AccessDomain::WalletGraph, AccessOperation::Read) {
+            drop(identity_manager);
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Access denied to wallet transactions".to_string(),
+            ));
+        }
+        drop(identity_manager);
+
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
             Some(identity) => identity,
             None => {
@@ -1357,7 +1434,7 @@ impl WalletHandler {
             .ok_or_else(|| anyhow::anyhow!("No primary wallet found"))?;
 
         // Check balance
-        if primary_wallet.balance < send_req.amount {
+        if primary_wallet.balance < send_req.amount as u128 {
             return Ok(create_error_response(
                 ZhtpStatus::PaymentRequired,
                 format!(

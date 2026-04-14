@@ -120,7 +120,7 @@ pub struct Disbursement {
     /// - For deflationary tokens: `token_burned > 0` (amount transferred + fee burned)
     /// - Total deducted from sender: `amount.get() + token_burned`
     /// - Invariant: `amount.get() + token_burned <= balance_deducted`
-    pub token_burned: u64,
+    pub token_burned: u128,
 }
 
 /// Error types for DevGrants contract

@@ -5,7 +5,9 @@ use crate::web4_manifest::{
 };
 use anyhow::anyhow;
 use base64::{engine::general_purpose, Engine as _};
-use lib_identity::ZhtpIdentity;
+use lib_identity::{types::IdentityView, ZhtpIdentity};
+use lib_access_control::{SecurityPrincipal, Role};
+use lib_types::NodeType;
 use lib_network::web4::{
     DomainEconomicSettings, DomainLookupResponse, DomainMetadata, DomainRegistrationRequest,
     PublicOwnerInfo,
@@ -125,14 +127,18 @@ pub struct ApiDomainReleaseRequest {
 impl Web4Handler {
     /// Register a domain using simplified format (for easy testing/deployment)
     /// Supports both manifest-based (from CLI deploy) and content-based formats
-    pub async fn register_domain_simple(&self, request_body: Vec<u8>) -> ZhtpResult<ZhtpResponse> {
+    pub async fn register_domain_simple(
+        &self,
+        request_body: Vec<u8>,
+        principal: &SecurityPrincipal,
+    ) -> ZhtpResult<ZhtpResponse> {
         info!("Processing Web4 domain registration request");
 
         // Try manifest-based request first (simpler format from CLI deploy)
         if let Ok(manifest_request) =
             serde_json::from_slice::<ManifestDomainRegistrationRequest>(&request_body)
         {
-            return self.register_domain_from_manifest(manifest_request).await;
+            return self.register_domain_from_manifest(manifest_request, principal).await;
         }
 
         // Fall back to simple request with inline content
@@ -158,12 +164,26 @@ impl Web4Handler {
         // Look up owner identity using boundary-safe DID API
         // This is the correct layer: accept DID, use get_identity_by_did()
         let identity_mgr = self.identity_manager.read().await;
+        let view = identity_mgr.get_identity_view_by_did(principal, &owner_did);
+
+        // Domain registration requires at least device-owner level access.
+        match view {
+            Some(IdentityView::Public(_)) | None => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::Forbidden,
+                    "Access denied: cannot register domain for this identity".to_string(),
+                ));
+            }
+            _ => {}
+        }
+
         let owner_identity = identity_mgr.get_identity_by_did(&owner_did)
             .ok_or_else(|| anyhow!(
                 "Owner identity not found: {}. Please register this identity first using /api/v1/identity/create",
                 owner_did
             ))?
             .clone();
+        drop(identity_mgr);
 
         // DEBUG: Check wallet state right after retrieval
         info!("  WALLET DEBUG (after IdentityManager retrieval):");
@@ -179,7 +199,6 @@ impl Web4Handler {
             );
         }
 
-        drop(identity_mgr);
         info!(
             " Using identity: {} (Display name: {})",
             owner_did,
@@ -190,25 +209,28 @@ impl Web4Handler {
                 .unwrap_or("no name")
         );
 
-        // Domain registration fee: fixed 10 SOV
-        const DOMAIN_REGISTRATION_FEE_SOV: u64 = 10;
+        // Domain registration fee: fixed 10 SOV (in whole tokens for display / signature).
+        // The actual on-chain transfer amount is in 18-decimal atomic units.
+        const DOMAIN_REGISTRATION_FEE_SOV_WHOLE: u64 = 10;
+        const DOMAIN_REGISTRATION_FEE_ATOMIC: u128 =
+            lib_types::sov::atoms(DOMAIN_REGISTRATION_FEE_SOV_WHOLE as u128);
 
         // Fee is fixed; if the client provides it explicitly, it must match.
-        let user_provided_fee = simple_request.fee.unwrap_or(DOMAIN_REGISTRATION_FEE_SOV);
-        if user_provided_fee != DOMAIN_REGISTRATION_FEE_SOV {
+        let user_provided_fee = simple_request.fee.unwrap_or(DOMAIN_REGISTRATION_FEE_SOV_WHOLE);
+        if user_provided_fee != DOMAIN_REGISTRATION_FEE_SOV_WHOLE {
             return Err(anyhow!(
                 "Invalid fee: provided {} SOV, required exactly {} SOV for domain registration",
                 user_provided_fee,
-                DOMAIN_REGISTRATION_FEE_SOV
+                DOMAIN_REGISTRATION_FEE_SOV_WHOLE
             ));
         }
 
         info!(
             " Domain registration fee: {} SOV",
-            DOMAIN_REGISTRATION_FEE_SOV
+            DOMAIN_REGISTRATION_FEE_SOV_WHOLE
         );
 
-        let registration_fee_sov = DOMAIN_REGISTRATION_FEE_SOV;
+        let registration_fee_sov = DOMAIN_REGISTRATION_FEE_ATOMIC;
 
         // ========== SECURITY: SIGNATURE VERIFICATION ==========
         // Verify that the request was signed by the owner's private key
@@ -662,6 +684,7 @@ impl Web4Handler {
     async fn register_domain_from_manifest(
         &self,
         request: ManifestDomainRegistrationRequest,
+        principal: &SecurityPrincipal,
     ) -> ZhtpResult<ZhtpResponse> {
         info!("Processing manifest-based domain registration");
         info!(" Domain: {}", request.domain);
@@ -682,6 +705,7 @@ impl Web4Handler {
 
         // Look up owner identity using boundary-safe DID API
         let identity_mgr = self.identity_manager.read().await;
+        let view = identity_mgr.get_identity_view_by_did(principal, &owner_did);
         let owner_identity = identity_mgr
             .get_identity_by_did(&owner_did)
             .ok_or_else(|| {
@@ -692,6 +716,17 @@ impl Web4Handler {
             })?
             .clone();
         drop(identity_mgr);
+
+        // Domain registration requires at least device-owner level access.
+        match view {
+            Some(IdentityView::Public(_)) | None => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::Forbidden,
+                    "Access denied: cannot register domain for this identity".to_string(),
+                ));
+            }
+            _ => {}
+        }
         info!(" Verified owner identity: {}", owner_did);
 
         if owner_identity.did != manifest.author_did {
@@ -702,26 +737,28 @@ impl Web4Handler {
             ));
         }
 
-        const DOMAIN_REGISTRATION_FEE_SOV: u64 = 10;
-        let user_provided_fee = request.fee.unwrap_or(DOMAIN_REGISTRATION_FEE_SOV);
-        if user_provided_fee != DOMAIN_REGISTRATION_FEE_SOV {
+        const DOMAIN_REGISTRATION_FEE_SOV_WHOLE: u64 = 10;
+        const DOMAIN_REGISTRATION_FEE_ATOMIC: u128 =
+            lib_types::sov::atoms(DOMAIN_REGISTRATION_FEE_SOV_WHOLE as u128);
+        let user_provided_fee = request.fee.unwrap_or(DOMAIN_REGISTRATION_FEE_SOV_WHOLE);
+        if user_provided_fee != DOMAIN_REGISTRATION_FEE_SOV_WHOLE {
             return Err(anyhow!(
                 "Invalid fee: provided {} SOV, required exactly {} SOV for domain registration",
                 user_provided_fee,
-                DOMAIN_REGISTRATION_FEE_SOV
+                DOMAIN_REGISTRATION_FEE_SOV_WHOLE
             ));
         }
         let fee_payment_tx_raw = request.fee_payment_tx.as_deref().ok_or_else(|| {
             anyhow!(
                 "fee_payment_tx is required. Submit a signed canonical TokenTransfer \
                  from owner Primary wallet to DAO treasury wallet for {} SOV.",
-                DOMAIN_REGISTRATION_FEE_SOV
+                DOMAIN_REGISTRATION_FEE_SOV_WHOLE
             )
         })?;
         let fee_tx_hash_hex = self
             .validate_and_submit_domain_fee_tx(
                 &owner_identity,
-                DOMAIN_REGISTRATION_FEE_SOV,
+                DOMAIN_REGISTRATION_FEE_ATOMIC,
                 fee_payment_tx_raw,
             )
             .await?;
@@ -831,7 +868,7 @@ impl Web4Handler {
             "deploy_manifest_cid": request.deploy_manifest_cid,
             "owner": owner_did,
             "registration_id": registration_result.registration_id,
-            "fees_charged": DOMAIN_REGISTRATION_FEE_SOV,
+            "fees_charged": DOMAIN_REGISTRATION_FEE_SOV_WHOLE,
             "fee_payment_tx_hash": fee_tx_hash_hex,
             "message": "Domain registered successfully"
         });
@@ -872,7 +909,7 @@ impl Web4Handler {
     async fn validate_and_submit_domain_fee_tx(
         &self,
         owner_identity: &ZhtpIdentity,
-        registration_fee_sov: u64,
+        registration_fee_sov: u128,
         fee_payment_tx_raw: &str,
     ) -> anyhow::Result<String> {
         let fee_payment_tx_bytes = hex::decode(fee_payment_tx_raw)
@@ -901,7 +938,7 @@ impl Web4Handler {
         if !is_sov {
             return Err(anyhow!("fee_payment_tx must transfer SOV token"));
         }
-        if fee_transfer.amount != registration_fee_sov as u128 {
+        if fee_transfer.amount != registration_fee_sov {
             return Err(anyhow!(
                 "fee_payment_tx amount mismatch: expected {} SOV, got {}",
                 registration_fee_sov,
@@ -2365,8 +2402,13 @@ mod tests {
         let request =
             simple_registration_request(&owner_identity, "valid-fee.zhtp", "<html>ok</html>", &tx)?;
 
+        let principal = SecurityPrincipal::new(
+            owner_identity.did.clone(),
+            Role::Citizen,
+            NodeType::FullNode,
+        );
         let response = handler
-            .register_domain_simple(serde_json::to_vec(&request)?)
+            .register_domain_simple(serde_json::to_vec(&request)?, &principal)
             .await?;
         assert_eq!(response.status, ZhtpStatus::Ok);
         let body: serde_json::Value = serde_json::from_slice(&response.body)?;
@@ -2406,8 +2448,13 @@ mod tests {
             &tx,
         )?;
 
+        let principal = SecurityPrincipal::new(
+            owner_identity.did.clone(),
+            Role::Citizen,
+            NodeType::FullNode,
+        );
         let result = handler
-            .register_domain_simple(serde_json::to_vec(&request)?)
+            .register_domain_simple(serde_json::to_vec(&request)?, &principal)
             .await;
         assert!(result.is_err(), "invalid fee tx amount should be rejected");
         let err = format!("{}", result.err().unwrap());

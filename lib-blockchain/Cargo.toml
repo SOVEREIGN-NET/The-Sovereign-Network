@@ -39,6 +39,7 @@ sled = "0.34"
 
 # Internal ZHTP dependencies (Foundation Layer Only)
 lib-types = { path = "../lib-types" }
+lib-access-control = { path = "../lib-access-control" }
 lib-fees = { path = "../lib-fees" }
 lib-crypto = { path = "../lib-crypto" }
 lib-proofs = { path = "../lib-proofs" }

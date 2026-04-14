@@ -283,7 +283,7 @@ export function calculateDomainRegistrationFee(domain: string, years: number = 1
   }
 
   // Convert to smallest unit (8 decimals)
-  return basePrice * 100_000_000n * BigInt(years);
+  return basePrice * 1_000_000_000_000_000_000n * BigInt(years);
 }
 
 /**
