@@ -321,8 +321,10 @@ impl IdentityManager {
             }));
         }
 
-        // Council view: investigation scope.
-        if principal.role == lib_access_control::Role::Council {
+        // Council view: investigation scope (requires Investigate capability).
+        if principal.role == lib_access_control::Role::Council
+            && principal.has_capability(&lib_access_control::Capability::Investigate)
+        {
             return Some(IdentityView::Council(CouncilView {
                 core: public_core,
                 age: identity.age,
@@ -372,6 +374,24 @@ impl IdentityManager {
         } else {
             SubjectRelation::External
         }
+    }
+
+    /// Check whether `principal` is allowed to perform `operation` on `domain`
+    /// with respect to the identity identified by `identity_id`.
+    pub fn check_access(
+        &self,
+        principal: &SecurityPrincipal,
+        identity_id: &lib_crypto::Hash,
+        domain: lib_access_control::AccessDomain,
+        operation: lib_access_control::AccessOperation,
+    ) -> bool {
+        let identity = match self.get_identity(identity_id) {
+            Some(id) => id,
+            None => return false,
+        };
+        let relation = self.determine_relation(principal, &identity);
+        let policy = lib_access_control::AccessPolicy::default();
+        policy.check_access(principal, relation, domain, operation).is_allowed()
     }
 
     /// Add an existing identity to the manager
@@ -1449,7 +1469,8 @@ mod access_control_tests {
         manager.add_identity(identity);
 
         let principal =
-            SecurityPrincipal::new("did:zhtp:council", Role::Council, NodeType::FullNode);
+            SecurityPrincipal::new("did:zhtp:council", Role::Council, NodeType::FullNode)
+                .with_capability(lib_access_control::Capability::Investigate);
         let view = manager.get_identity_view(&principal, &id);
         assert!(
             matches!(view, Some(IdentityView::Council(_))),

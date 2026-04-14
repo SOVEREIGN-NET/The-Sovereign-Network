@@ -26,7 +26,7 @@ use crate::config::Environment;
 
 // Access control imports
 use crate::api::principal::extract_principal_from_request;
-use lib_access_control::{AccessDomain, AccessOperation, AccessPolicy, SecurityPrincipal, SubjectRelation};
+use lib_access_control::{AccessDomain, AccessOperation, SecurityPrincipal};
 
 /// Clean blockchain handler implementation
 ///
@@ -57,43 +57,7 @@ impl BlockchainHandler {
         extract_principal_from_request(request)
     }
 
-    /// Check if the principal is allowed to read wallet graph data for the given identity.
-    async fn check_wallet_graph_access(
-        &self,
-        principal: &SecurityPrincipal,
-        identity_id: &lib_crypto::Hash,
-    ) -> Result<bool> {
-        let identity_manager = self.identity_manager.read().await;
-        let identity = match identity_manager.get_identity(identity_id) {
-            Some(id) => id,
-            None => return Ok(false),
-        };
 
-        let relation = if principal.did == identity.did {
-            SubjectRelation::Self_
-        } else if let Ok(principal_id) = lib_identity::did::parse_did_to_identity_id(&principal.did) {
-            if let Some(ref owner_id) = identity.owner_identity_id {
-                if principal_id == *owner_id {
-                    SubjectRelation::Owner
-                } else {
-                    SubjectRelation::External
-                }
-            } else {
-                SubjectRelation::External
-            }
-        } else {
-            if principal.role == lib_access_control::Role::Public {
-                SubjectRelation::Public
-            } else {
-                SubjectRelation::External
-            }
-        };
-
-        let policy = AccessPolicy::default();
-        Ok(policy
-            .check_access(principal, relation, AccessDomain::WalletGraph, AccessOperation::Read)
-            .is_allowed())
-    }
 
     /// Get the current shared blockchain instance
     /// This ensures we always see the latest state
@@ -1288,20 +1252,6 @@ impl BlockchainHandler {
             }))
         };
 
-        let resolve_identity = |did: &str| -> Option<serde_json::Value> {
-            let identity = blockchain.identity_registry.get(&did.to_string())?;
-            let is_public = principal.role == lib_access_control::Role::Public;
-            Some(serde_json::json!({
-                "did": identity.did,
-                "display_name": identity.display_name,
-                "identity_type": identity.identity_type,
-                "registration_fee": identity.registration_fee,
-                "created_at": identity.created_at,
-                "controlled_nodes": if is_public { None::<Vec<String>> } else { Some(identity.controlled_nodes.clone()) },
-                "owned_wallets": if is_public { None::<Vec<String>> } else { Some(identity.owned_wallets.clone()) },
-            }))
-        };
-
         if let Some(kind) = search_type.as_deref() {
             match kind {
                 "tx" => {
@@ -1323,9 +1273,29 @@ impl BlockchainHandler {
                     }
                 }
                 "did" => {
-                    result = resolve_identity(&value);
-                    if result.is_some() {
-                        result_type = Some("did".to_string());
+                    if let Some(identity) = blockchain.identity_registry.get(&value.to_string()) {
+                        let identity_mgr = self.identity_manager.read().await;
+                        let view = identity_mgr.get_identity_view_by_did(&principal, &identity.did);
+                        let (controlled_nodes, owned_wallets) = match view {
+                            Some(lib_identity::types::IdentityView::Full(_))
+                            | Some(lib_identity::types::IdentityView::Council(_))
+                            | Some(lib_identity::types::IdentityView::DeviceOwner(_)) => {
+                                (Some(identity.controlled_nodes.clone()), Some(identity.owned_wallets.clone()))
+                            }
+                            _ => (None::<Vec<String>>, None::<Vec<String>>),
+                        };
+                        result = Some(serde_json::json!({
+                            "did": identity.did,
+                            "display_name": identity.display_name,
+                            "identity_type": identity.identity_type,
+                            "registration_fee": identity.registration_fee,
+                            "created_at": identity.created_at,
+                            "controlled_nodes": controlled_nodes,
+                            "owned_wallets": owned_wallets,
+                        }));
+                        if result.is_some() {
+                            result_type = Some("did".to_string());
+                        }
                     }
                 }
                 _ => {
@@ -2986,12 +2956,15 @@ impl BlockchainHandler {
             let owner_id_hex = owner_filter.as_ref().unwrap();
             if let Ok(owner_hash) = lib_blockchain::types::Hash::from_hex(owner_id_hex) {
                 let crypto_hash = lib_crypto::Hash::from_bytes(owner_hash.as_bytes());
-                if !self.check_wallet_graph_access(&principal, &crypto_hash).await? {
+                let identity_manager = self.identity_manager.read().await;
+                if !identity_manager.check_access(&principal, &crypto_hash, AccessDomain::WalletGraph, AccessOperation::Read) {
+                    drop(identity_manager);
                     return Ok(ZhtpResponse::error(
                         ZhtpStatus::Forbidden,
                         "Access denied to wallet list for this owner".to_string(),
                     ));
                 }
+                drop(identity_manager);
             }
         }
 
