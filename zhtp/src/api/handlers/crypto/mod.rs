@@ -22,6 +22,11 @@ use lib_crypto::KeyPair;
 
 // Identity imports
 use lib_identity::IdentityManager;
+use lib_identity::types::IdentityView;
+
+// Access control imports
+use lib_access_control::{SecurityPrincipal, Role};
+use lib_types::NodeType;
 
 /// Crypto utilities handler for signing, verification, and key generation
 pub struct CryptoHandler {
@@ -31,6 +36,24 @@ pub struct CryptoHandler {
 impl CryptoHandler {
     pub fn new(identity_manager: Arc<RwLock<IdentityManager>>) -> Self {
         Self { identity_manager }
+    }
+
+    /// Extract a SecurityPrincipal from an incoming request.
+    fn extract_principal(&self, request: &ZhtpRequest) -> SecurityPrincipal {
+        if let Some(node_type_str) = request.headers.get("x-node-type") {
+            let node_type = NodeType::from_config(Some(&node_type_str));
+            return SecurityPrincipal::new("did:zhtp:node", Role::Node, node_type);
+        }
+        if let Some(auth) = request.headers.get("authorization") {
+            if auth.to_lowercase().starts_with("bearer ") {
+                return SecurityPrincipal::new(
+                    "did:zhtp:session",
+                    Role::Citizen,
+                    NodeType::FullNode,
+                );
+            }
+        }
+        SecurityPrincipal::new("did:zhtp:public", Role::Public, NodeType::Relay)
     }
 }
 
@@ -155,8 +178,22 @@ impl CryptoHandler {
             "utf8" | _ => sign_req.message.as_bytes().to_vec(),
         };
 
+        let principal = self.extract_principal(&request);
+
         // Get identity and sign the message
         let identity_mgr = self.identity_manager.read().await;
+
+        // Signing requires full self-access.
+        match identity_mgr.get_identity_view(&principal, &identity_id) {
+            Some(IdentityView::Full(_)) => {}
+            _ => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::Forbidden,
+                    "Access denied: can only sign messages for your own identity".to_string(),
+                ));
+            }
+        }
+
         let identity = match identity_mgr.get_identity(&identity_id) {
             Some(id) => id,
             None => {
