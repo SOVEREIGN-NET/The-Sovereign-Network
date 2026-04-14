@@ -1594,28 +1594,17 @@ impl IdentityHandler {
         // An "observed" identity from UHP handshake auto-registration has no wallets —
         // allow upgrading it to full citizen status.
         {
-            let blockchain_arc = match crate::runtime::blockchain_provider::get_global_blockchain().await
+            let has_wallets = if let Ok(blockchain_arc) =
+                crate::runtime::blockchain_provider::get_global_blockchain().await
             {
-                Ok(blockchain_arc) => blockchain_arc,
-                Err(err) => {
-                    tracing::error!(
-                        "Failed to access blockchain for wallet check during identity registration: {}",
-                        err
-                    );
-                    return Ok(ZhtpResponse::error(
-                        ZhtpStatus::ServiceUnavailable,
-                        "Unable to verify identity registration state".to_string(),
-                    ));
-                }
-            };
-
-            let has_wallets = {
                 let blockchain = blockchain_arc.read().await;
                 let id_hash = lib_blockchain::Hash::from_slice(&identity_id.0);
                 blockchain
                     .wallet_registry
                     .values()
                     .any(|w| w.owner_identity_id.as_ref() == Some(&id_hash))
+            } else {
+                false
             };
 
             if has_wallets {
