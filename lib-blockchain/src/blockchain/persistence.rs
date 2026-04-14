@@ -747,7 +747,12 @@ impl BlockchainStorageV8 {
     fn to_blockchain(self) -> Blockchain {
         let mut blockchain = self.v7.to_blockchain();
         blockchain.employment_registry = self.employment_registry;
-        // cbe_dao_id field removed from Blockchain — ignore V8's persisted value
+        // cbe_dao_id field removed from Blockchain — discard V8's persisted value
+        if self.cbe_dao_id.is_some() {
+            tracing::info!(
+                "V8 persistence: discarding non-None cbe_dao_id (field removed in Phase 1)"
+            );
+        }
         blockchain
     }
 }

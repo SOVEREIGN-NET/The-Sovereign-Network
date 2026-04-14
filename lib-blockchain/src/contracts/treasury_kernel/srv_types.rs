@@ -33,8 +33,8 @@ pub struct SRVState {
     /// Example: 109_000_000 = $1,090,000
     pub committed_value_usd: u64,
 
-    /// Circulating supply at time of last SRV calculation (8 decimals)
-    pub circulating_supply_sov: u64,
+    /// Circulating supply at time of last SRV calculation (atomic units)
+    pub circulating_supply_sov: u128,
 
     /// Stability multiplier in basis points (10000 = 1.0)
     pub stability_multiplier_bps: u16,
@@ -71,8 +71,8 @@ pub struct SRVUpdateRecord {
     pub previous_srv: u64,
     /// Committed value used
     pub committed_value_usd: u64,
-    /// Circulating supply used
-    pub circulating_supply_sov: u64,
+    /// Circulating supply used (atomic units)
+    pub circulating_supply_sov: u128,
     /// Proposal ID that authorized this update
     pub proposal_id: [u8; 32],
 }
@@ -120,7 +120,7 @@ impl SRVState {
     /// # Arguments
     /// * `initial_srv` - Initial SRV value (8 decimals)
     /// * `committed_value_usd` - Initial committed value in USD cents
-    /// * `circulating_supply_sov` - Initial circulating supply (8 decimals)
+    /// * `circulating_supply_sov` - Initial circulating supply (atomic units)
     /// * `stability_multiplier_bps` - Initial stability multiplier (basis points)
     ///
     /// # Returns
@@ -128,7 +128,7 @@ impl SRVState {
     pub fn new(
         initial_srv: u64,
         committed_value_usd: u64,
-        circulating_supply_sov: u64,
+        circulating_supply_sov: u128,
         stability_multiplier_bps: u16,
     ) -> Self {
         Self {
@@ -171,14 +171,14 @@ impl SRVState {
     ///
     /// # Arguments
     /// * `committed_value_usd` - Total committed value in USD cents
-    /// * `circulating_supply_sov` - Circulating SOV (8 decimals, atomic units)
+    /// * `circulating_supply_sov` - Circulating SOV (atomic units)
     /// * `multiplier_bps` - Stability multiplier in basis points
     ///
     /// # Returns
     /// SRV in USD per SOV (8 decimal precision)
     pub fn calculate_srv(
         committed_value_usd: u64,
-        circulating_supply_sov: u64,
+        circulating_supply_sov: u128,
         multiplier_bps: u16,
     ) -> Result<u64, SRVError> {
         // Prevent division by zero
@@ -206,7 +206,7 @@ impl SRVState {
         let base_srv = (committed_value_usd as u128)
             .checked_mul(10_000_000_000_000_00u128) // 10^14
             .ok_or(SRVError::Overflow)?
-            .checked_div(circulating_supply_sov as u128)
+            .checked_div(circulating_supply_sov)
             .ok_or(SRVError::Overflow)?;
 
         let srv = base_srv
@@ -270,7 +270,7 @@ impl SRVState {
     pub fn apply_update(
         &mut self,
         new_committed_value: u64,
-        circulating_supply: u64,
+        circulating_supply: u128,
         proposal_id: [u8; 32],
         height: u64,
         epoch: u64,
@@ -354,8 +354,8 @@ pub struct SRVGenesisConfig {
     pub initial_srv: u64,
     /// Initial committed value in USD cents
     pub initial_committed_value_usd: u64,
-    /// Initial circulating supply (8 decimals)
-    pub initial_circulating_supply: u64,
+    /// Initial circulating supply (atomic units)
+    pub initial_circulating_supply: u128,
     /// Initial stability multiplier (basis points)
     pub stability_multiplier_bps: u16,
     /// Maximum change per update (basis points)

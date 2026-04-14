@@ -1804,8 +1804,7 @@ impl<'a> StatefulTransactionValidator<'a> {
                 }
 
                 // CBE balance check: reject at mempool time if sender has insufficient CBE.
-                // Reads SledStore cbe_account_state. For legacy wallets (from != key_id),
-                // the CBE balance was credited to key_id by the executor.
+                // Phase 1B moved all CBE balances to token_balances; cbe_account_state is no longer used.
                 let cbe_token_id = crate::Blockchain::derive_cbe_token_id_pub();
                 if data.token_id == cbe_token_id {
                     if let Some(blockchain) = self.blockchain {
@@ -1815,19 +1814,9 @@ impl<'a> StatefulTransactionValidator<'a> {
                             data.from
                         };
                         let balance: u128 = if let Some(store) = &blockchain.store {
-                            let cbe_acc_bal = store
-                                .get_cbe_account_state(&effective_key)
-                                .ok()
-                                .flatten()
-                                .map(|a| a.balance_cbe)
-                                .unwrap_or(0);
-                            if cbe_acc_bal > 0 {
-                                cbe_acc_bal
-                            } else {
-                                let storage_token = crate::storage::TokenId(cbe_token_id);
-                                let addr = crate::storage::Address::new(effective_key);
-                                store.get_token_balance(&storage_token, &addr).unwrap_or(0)
-                            }
+                            let storage_token = crate::storage::TokenId(cbe_token_id);
+                            let addr = crate::storage::Address::new(effective_key);
+                            store.get_token_balance(&storage_token, &addr).unwrap_or(0)
                         } else {
                             0
                         };
