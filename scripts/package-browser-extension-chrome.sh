@@ -13,6 +13,7 @@ mkdir -p "${STAGE_DIR}"
 
 install -m 0644 "${ROOT_DIR}/browser-extension/manifest.json" "${STAGE_DIR}/manifest.json"
 install -m 0644 "${ROOT_DIR}/browser-extension/background.js" "${STAGE_DIR}/background.js"
+install -m 0644 "${ROOT_DIR}/browser-extension/compat.js" "${STAGE_DIR}/compat.js"
 install -m 0644 "${ROOT_DIR}/browser-extension/popup.html" "${STAGE_DIR}/popup.html"
 install -m 0644 "${ROOT_DIR}/browser-extension/popup.css" "${STAGE_DIR}/popup.css"
 install -m 0644 "${ROOT_DIR}/browser-extension/popup.js" "${STAGE_DIR}/popup.js"

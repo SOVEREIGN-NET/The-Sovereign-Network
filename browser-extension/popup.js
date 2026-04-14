@@ -1,19 +1,5 @@
 const DAEMON_STATUS_URL = "http://127.0.0.1:7840/api/v1/status";
 const DAEMON_DOMAINS_URL = "http://127.0.0.1:7840/api/v1/domains";
-const EXTENSION_VERSION = chrome.runtime.getManifest().version;
-const REQUIRED_DAEMON_API_VERSION = "1";
-
-function daemonCompatibilityError(status) {
-  if (!status || typeof status !== "object") {
-    return "daemon returned an invalid status payload";
-  }
-
-  if (status.api_version !== REQUIRED_DAEMON_API_VERSION) {
-    return `daemon API ${status.api_version || "unknown"} is incompatible with extension ${EXTENSION_VERSION}`;
-  }
-
-  return null;
-}
 
 function openViewer(domain, path = "/") {
   const viewerUrl = new URL(chrome.runtime.getURL("viewer.html"));
@@ -35,16 +21,7 @@ function shortenOwner(owner) {
 async function refreshStatus() {
   const statusEl = document.getElementById("status");
   try {
-    const response = await fetch(DAEMON_STATUS_URL);
-    if (!response.ok) {
-      throw new Error(`daemon returned ${response.status}`);
-    }
-
-    const status = await response.json();
-    const compatibilityError = daemonCompatibilityError(status);
-    if (compatibilityError) {
-      throw new Error(compatibilityError);
-    }
+    const status = await fetchCompatibleDaemonStatus(DAEMON_STATUS_URL);
 
     statusEl.textContent =
       `Daemon ${status.daemon_version}. API ${status.api_version}. ` +
@@ -57,19 +34,9 @@ async function refreshStatus() {
 async function refreshDomains() {
   const listEl = document.getElementById("domains");
   try {
-    const [statusResponse, response] = await Promise.all([
-      fetch(DAEMON_STATUS_URL),
-      fetch(DAEMON_DOMAINS_URL),
-    ]);
+    await fetchCompatibleDaemonStatus(DAEMON_STATUS_URL);
 
-    if (!statusResponse.ok) {
-      throw new Error(`daemon returned ${statusResponse.status}`);
-    }
-    const status = await statusResponse.json();
-    const compatibilityError = daemonCompatibilityError(status);
-    if (compatibilityError) {
-      throw new Error(compatibilityError);
-    }
+    const response = await fetch(DAEMON_DOMAINS_URL);
 
     if (!response.ok) {
       throw new Error(`daemon returned ${response.status}`);
