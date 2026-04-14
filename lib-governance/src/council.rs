@@ -93,26 +93,33 @@ pub fn validate_council_action(
                 ));
             }
 
-            // Map audit scope to access domain for additional validation.
-            let domain = match scope {
-                AuditScope::CoreIdentity => AccessDomain::CoreIdentity,
-                AuditScope::WalletGraph => AccessDomain::WalletGraph,
-                AuditScope::NodeGraph => AccessDomain::NodeGraph,
-                AuditScope::Governance => AccessDomain::Governance,
-                AuditScope::Full => AccessDomain::Governance,
+            // Validate read access for every domain implied by the requested scope.
+            let required_domains: &[AccessDomain] = match scope {
+                AuditScope::CoreIdentity => &[AccessDomain::CoreIdentity],
+                AuditScope::WalletGraph => &[AccessDomain::WalletGraph],
+                AuditScope::NodeGraph => &[AccessDomain::NodeGraph],
+                AuditScope::Governance => &[AccessDomain::Governance],
+                AuditScope::Full => &[
+                    AccessDomain::CoreIdentity,
+                    AccessDomain::WalletGraph,
+                    AccessDomain::NodeGraph,
+                    AccessDomain::Governance,
+                ],
             };
 
-            let decision = policy.check_access(
-                principal,
-                SubjectRelation::External,
-                domain,
-                AccessOperation::Read,
-            );
-            if !decision.is_allowed() {
-                return Err((
-                    ReasonCode::DenyInsufficientRole,
-                    "Council member lacks read access for the requested scope".to_string(),
-                ));
+            for domain in required_domains {
+                let decision = policy.check_access(
+                    principal,
+                    SubjectRelation::External,
+                    *domain,
+                    AccessOperation::Read,
+                );
+                if !decision.is_allowed() {
+                    return Err((
+                        ReasonCode::DenyInsufficientRole,
+                        "Council member lacks read access for the requested scope".to_string(),
+                    ));
+                }
             }
         }
         CouncilAction::FreezeIdentity { .. } | CouncilAction::UnfreezeIdentity { .. } => {
