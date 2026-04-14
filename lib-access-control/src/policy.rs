@@ -77,6 +77,8 @@ impl AccessPolicy {
                 (_, Governance, Read | Resolve | Traverse) => {
                     if principal.has_capability(&Capability::Investigate) {
                         Allow(AllowCouncilInvestigation)
+                    } else if principal.has_capability(&Capability::VoteGovernance) {
+                        Allow(AllowGovernanceRead)
                     } else {
                         Deny(DenyMissingCapability)
                     }
