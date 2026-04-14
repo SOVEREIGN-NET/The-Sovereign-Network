@@ -192,10 +192,10 @@ impl Blockchain {
                                     {
                                         let old_bal = token.balance_of(&old_sov_addr);
                                         if old_bal > 0 {
-                                            token.balances.insert(old_sov_addr.clone(), 0);
+                                            token.set_balance(&old_sov_addr, 0);
                                             let cur_new = token.balance_of(&new_sov_addr);
-                                            token.balances.insert(
-                                                new_sov_addr,
+                                            token.set_balance(
+                                                &new_sov_addr,
                                                 cur_new.saturating_add(old_bal),
                                             );
                                         }

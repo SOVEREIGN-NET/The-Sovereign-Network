@@ -213,8 +213,7 @@ fn load_from_file_does_not_mint_or_repair_sov_balances() {
             .get_mut(&sov_token_id)
             .expect("SOV token should exist");
         token
-            .balances
-            .insert(partial_recipient.clone(), partial_existing_balance);
+            .set_balance(&partial_recipient, partial_existing_balance);
         token.total_supply = partial_existing_balance;
     }
 
