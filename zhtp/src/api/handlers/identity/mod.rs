@@ -23,6 +23,7 @@ use lib_types::NodeType;
 
 // Identity management imports
 use lib_identity::{CitizenshipResult, IdentityManager, IdentityType, RecoveryPhraseManager};
+use lib_identity::types::IdentityView;
 
 // Identity and economic model imports
 use lib_identity::economics::EconomicModel as IdentityEconomicModel;
@@ -782,7 +783,20 @@ impl IdentityHandler {
         let identity_hash = lib_crypto::Hash::from_bytes(&identity_id_bytes);
 
         // Get identity and sign message
+        let principal = self.extract_principal(&request);
         let manager = self.identity_manager.read().await;
+
+        // Gate signing behind full identity view (self-access only).
+        match manager.get_identity_view(&principal, &identity_hash) {
+            Some(IdentityView::Full(_)) => {}
+            _ => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::Forbidden,
+                    "Access denied: can only sign messages for your own identity".to_string(),
+                ));
+            }
+        }
+
         let identity = match manager.get_identity(&identity_hash) {
             Some(id) => id,
             None => {
@@ -1069,8 +1083,13 @@ impl IdentityHandler {
         let identity_id = lib_crypto::Hash::from_hex(identity_id_str)
             .map_err(|e| anyhow::anyhow!("Invalid identity ID: {}", e))?;
 
+        let principal = self.extract_principal(&request);
         let identity_manager = self.identity_manager.read().await;
-        let exists = identity_manager.get_identity(&identity_id).is_some();
+
+        // Anti-enumeration: only reveal existence to principals with CoreIdentity access.
+        let exists = identity_manager
+            .get_identity_view(&principal, &identity_id)
+            .is_some();
 
         let response_body = json!({
             "identity_id": identity_id_str,
@@ -1191,11 +1210,15 @@ impl IdentityHandler {
 
         tracing::info!("✅ Verifying identity by DID: {}", did);
 
+        let principal = self.extract_principal(&request);
         let mut identity_manager = self.identity_manager.write().await;
 
-        // Get identity ID from DID
-        let identity_id = match identity_manager.get_identity_id_by_did(&did) {
-            Some(id) => id,
+        // Gate verification behind identity view access (anti-enumeration).
+        let identity_id = match identity_manager.get_identity_view_by_did(&principal, &did) {
+            Some(IdentityView::Full(ref v)) => v.core.id.clone(),
+            Some(IdentityView::Public(ref v)) => v.id.clone(),
+            Some(IdentityView::Council(ref v)) => v.core.id.clone(),
+            Some(IdentityView::DeviceOwner(ref v)) => v.core.id.clone(),
             None => {
                 let response_body = json!({
                     "status": "not_found",
@@ -1311,13 +1334,25 @@ impl IdentityHandler {
             ));
         }
 
+        let principal = self.extract_principal(&request);
+        let identity_manager = self.identity_manager.read().await;
+
+        // Seed phrases are strictly self-access only.
+        match identity_manager.get_identity_view(&principal, &identity_id) {
+            Some(IdentityView::Full(_)) => {}
+            _ => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::Forbidden,
+                    "Access denied to seed phrases".to_string(),
+                ));
+            }
+        }
+
         tracing::info!(
             "🔐 Retrieving seed phrases for identity: {}",
             &identity_id_str[..16.min(identity_id_str.len())]
         );
 
-        // Get identity and its wallets
-        let identity_manager = self.identity_manager.read().await;
         let identity = match identity_manager.get_identity(&identity_id) {
             Some(id) => id,
             None => {
