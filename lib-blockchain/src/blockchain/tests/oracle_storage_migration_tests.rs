@@ -105,16 +105,12 @@ fn load_legacy_v5_file_migrates_to_current_storage_layout() {
     let loaded = Blockchain::load_from_file(&path).expect("load legacy v5 file");
     assert_eq!(loaded.onramp_state, bc.onramp_state);
     assert!(loaded.entity_registry.is_none());
-    assert!(
-        loaded.cbe_token.is_initialized(),
-        "legacy v5 loads must backfill CBE state"
-    );
+    // cbe_token field removed from Blockchain (EPIC-001 Phase 1)
 }
 
 #[test]
 fn load_legacy_v6_file_migrates_to_current_storage_layout() {
-    let mut bc = Blockchain::new().unwrap();
-    bc.cbe_token = crate::contracts::tokens::CbeToken::new();
+    let bc = Blockchain::new().unwrap();
 
     let storage_v6 = BlockchainStorageV6 {
         v3: BlockchainStorageV3::from_blockchain(&bc),
@@ -142,10 +138,7 @@ fn load_legacy_v6_file_migrates_to_current_storage_layout() {
 
     #[allow(deprecated)]
     let loaded = Blockchain::load_from_file(&path).expect("load legacy v6 file");
-    assert!(
-        loaded.cbe_token.is_initialized(),
-        "legacy v6 loads must backfill CBE state"
-    );
+    // cbe_token field removed from Blockchain (EPIC-001 Phase 1)
 }
 
 #[test]

@@ -1804,13 +1804,11 @@ impl<'a> StatefulTransactionValidator<'a> {
                 }
 
                 // CBE balance check: reject at mempool time if sender has insufficient CBE.
-                // For legacy wallets (from != key_id), the CBE balance was credited to key_id
-                // by the executor (apply_buy_cbe uses tx.sender = key_id).  Check both
-                // cbe_account_state[key_id] and cbe_account_state[from] to handle both cases.
+                // Reads SledStore cbe_account_state. For legacy wallets (from != key_id),
+                // the CBE balance was credited to key_id by the executor.
                 let cbe_token_id = crate::Blockchain::derive_cbe_token_id_pub();
                 if data.token_id == cbe_token_id {
                     if let Some(blockchain) = self.blockchain {
-                        // For legacy wallets, CBE balance lives under key_id, not from.
                         let effective_key = if data.from != transaction.signature.public_key.key_id {
                             transaction.signature.public_key.key_id
                         } else {
@@ -1826,45 +1824,18 @@ impl<'a> StatefulTransactionValidator<'a> {
                             if cbe_acc_bal > 0 {
                                 cbe_acc_bal
                             } else {
-                                // Fallback: token_balance for legacy/migrated credits
                                 let storage_token = crate::storage::TokenId(cbe_token_id);
                                 let addr = crate::storage::Address::new(effective_key);
                                 store.get_token_balance(&storage_token, &addr).unwrap_or(0)
                             }
                         } else {
-                            u128::from(blockchain.cbe_token.balance_of_key_id(&effective_key))
+                            0
                         };
                         if balance < data.amount {
                             tracing::warn!(
                                 "[TOKEN_TRANSFER] insufficient CBE balance: from={} effective_key={} have={} need={}",
                                 hex::encode(&data.from[..8]),
                                 hex::encode(&effective_key[..8]),
-                                balance,
-                                data.amount
-                            );
-                            return Err(ValidationError::InvalidAmount);
-                        }
-                    }
-                }
-
-                // CBE balance check: reject at mempool time if sender has insufficient CBE.
-                // Mirrors the SOV balance check above. Reads SledStore when available (executor
-                // path), falls back to cbe_token in-memory (non-executor path or fresh restart
-                // before first CBE transfer in this session).
-                let cbe_token_id = crate::Blockchain::derive_cbe_token_id_pub();
-                if data.token_id == cbe_token_id {
-                    if let Some(blockchain) = self.blockchain {
-                        let storage_token = crate::storage::TokenId(cbe_token_id);
-                        let addr = crate::storage::Address::new(data.from);
-                        let balance: u128 = if let Some(store) = &blockchain.store {
-                            store.get_token_balance(&storage_token, &addr).unwrap_or(0)
-                        } else {
-                            u128::from(blockchain.cbe_token.balance_of_key_id(&data.from))
-                        };
-                        if balance < data.amount {
-                            tracing::warn!(
-                                "[TOKEN_TRANSFER] insufficient CBE balance: from={} have={} need={}",
-                                hex::encode(&data.from[..8]),
                                 balance,
                                 data.amount
                             );
@@ -2413,47 +2384,10 @@ impl<'a> StatefulTransactionValidator<'a> {
         Ok(())
     }
 
-    fn validate_init_cbe_token(&self, transaction: &Transaction) -> ValidationResult {
-        let data = transaction
-            .init_cbe_token_data()
-            .ok_or(ValidationError::MissingRequiredData)?;
-
-        if !transaction.inputs.is_empty() {
-            return Err(ValidationError::InvalidInputs);
-        }
-        if !transaction.outputs.is_empty() {
-            return Err(ValidationError::InvalidOutputs);
-        }
-        if transaction.fee != 0 {
-            return Err(ValidationError::InvalidFee);
-        }
-
-        // All 4 pool key_ids must be non-zero and mutually distinct
-        let keys = [
-            data.compensation_key_id,
-            data.operational_key_id,
-            data.performance_key_id,
-            data.strategic_key_id,
-        ];
-        if keys.iter().any(|k| k == &[0u8; 32]) {
-            return Err(ValidationError::InvalidPublicKey);
-        }
-        // Check all 4 keys are distinct
-        for i in 0..keys.len() {
-            for j in (i + 1)..keys.len() {
-                if keys[i] == keys[j] {
-                    return Err(ValidationError::InvalidPublicKey);
-                }
-            }
-        }
-
-        // One-time init: reject if CBE token is already initialized
-        let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
-        if blockchain.cbe_token.is_initialized() {
-            return Err(ValidationError::AlreadyInitialized);
-        }
-
-        Ok(())
+    fn validate_init_cbe_token(&self, _transaction: &Transaction) -> ValidationResult {
+        // InitCbeToken is no longer processed — always reject.
+        // CBE token state has been removed from the Blockchain struct (EPIC-001 Phase 1).
+        Err(ValidationError::AlreadyInitialized)
     }
 
     fn validate_create_employment_contract(&self, transaction: &Transaction) -> ValidationResult {
