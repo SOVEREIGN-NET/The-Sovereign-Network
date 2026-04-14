@@ -300,8 +300,13 @@ impl IdentityManager {
         };
 
         // Full view: self, system, or emergency.
+        let has_emergency_override = principal.role == lib_access_control::Role::Emergency
+            && principal
+                .capabilities
+                .contains(&lib_access_control::Capability::EmergencyOverride);
         if matches!(relation, SubjectRelation::Self_)
             || principal.role == lib_access_control::Role::System
+            || has_emergency_override
         {
             return Some(IdentityView::Full(FullIdentityView {
                 core: public_core,
