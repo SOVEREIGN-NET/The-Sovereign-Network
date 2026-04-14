@@ -26,9 +26,11 @@ nonprofit_treasury_key = ""
 
 [bootstrap_council]
 # Minimum number of council members required to authorize governance actions
-threshold = 3
-# Council members added at key ceremony — empty until then
-members = []
+threshold = 1
+# Bootstrap council for testnet
+members = [
+    { identity_id = "did:zhtp:94563acff1be7506bde97263611d03d53c5f1a78ba3712eb986e275a1592c821", wallet_id = "bb12668e4a979ac4f9bf97203cd95394b51ca9bf6da445f474a82823a541b57e", stake_amount = 0 }
+]
 
 [bonding_curve]
 # CBE public sale bonding curve parameters (legacy in-memory curve)
