@@ -618,13 +618,21 @@ impl BlockchainStore for SledStore {
         Ok(())
     }
 
-    fn get_token_supply(&self, token: &TokenId) -> StorageResult<Option<u64>> {
+    fn get_token_supply(&self, token: &TokenId) -> StorageResult<Option<u128>> {
         let key = keys::token_supply_key(token);
         match self.token_supply.get(key) {
             Ok(Some(bytes)) => {
-                let supply = u64::from_le_bytes(bytes.as_ref().try_into().map_err(|_| {
-                    StorageError::Serialization("Failed to deserialize supply".into())
-                })?);
+                // Support both legacy 8-byte (u64) and new 16-byte (u128) encodings
+                let supply = if bytes.len() == 8 {
+                    let val = u64::from_le_bytes(bytes.as_ref().try_into().map_err(|_| {
+                        StorageError::Serialization("Failed to deserialize supply (u64)".into())
+                    })?);
+                    val as u128
+                } else {
+                    u128::from_le_bytes(bytes.as_ref().try_into().map_err(|_| {
+                        StorageError::Serialization("Failed to deserialize supply (u128)".into())
+                    })?)
+                };
                 Ok(Some(supply))
             }
             Ok(None) => Ok(None),
@@ -632,7 +640,7 @@ impl BlockchainStore for SledStore {
         }
     }
 
-    fn put_token_supply(&self, token: &TokenId, supply: u64) -> StorageResult<()> {
+    fn put_token_supply(&self, token: &TokenId, supply: u128) -> StorageResult<()> {
         self.require_transaction()?;
 
         let key = keys::token_supply_key(token);
@@ -910,7 +918,7 @@ impl BlockchainStore for SledStore {
     fn backfill_token_balances_from_contract(
         &self,
         token_id: &TokenId,
-        entries: &[([u8; 32], u64)],
+        entries: &[([u8; 32], u128)],
     ) -> StorageResult<usize> {
         // Must only be called during startup, before block processing begins.
         if self.tx_active.load(Ordering::SeqCst) {
@@ -928,7 +936,7 @@ impl BlockchainStore for SledStore {
             match self.token_balances.get(&key) {
                 Ok(Some(_)) => {} // Already populated, skip
                 Ok(None) => {
-                    batch.insert(key.as_ref(), &(*balance as u128).to_be_bytes());
+                    batch.insert(key.as_ref(), &balance.to_be_bytes());
                     written += 1;
                 }
                 Err(e) => return Err(StorageError::Database(e.to_string())),

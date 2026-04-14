@@ -67,12 +67,12 @@ fn test_treasury_balance_uses_token_contract() {
 
     // Credit the treasury with SOV tokens
     let sov_token_id = generate_lib_token_id();
-    let treasury_amount: u64 = 1_000_000;
+    let treasury_amount: u128 = 1_000_000;
 
     if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
         token
             .balances
-            .insert(treasury_pubkey.clone(), treasury_amount as u128);
+            .insert(treasury_pubkey.clone(), treasury_amount);
     }
 
     // Query treasury balance - should reflect the credited amount
@@ -91,12 +91,12 @@ fn test_treasury_balance_not_placeholder() {
 
     // Credit treasury with specific amount
     let sov_token_id = generate_lib_token_id();
-    let expected_amount: u64 = 5_555_555;
+    let expected_amount: u128 = 5_555_555;
 
     if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
         token
             .balances
-            .insert(treasury_pubkey.clone(), expected_amount as u128);
+            .insert(treasury_pubkey.clone(), expected_amount);
     }
 
     // Query balance multiple times - should always return the exact amount

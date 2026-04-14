@@ -1183,10 +1183,10 @@ impl RuntimeOrchestrator {
             if let Some(store) = blockchain.store.as_ref() {
                 let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
                 if let Some(sov_contract) = blockchain.token_contracts.get(&sov_token_id) {
-                    let entries: Vec<([u8; 32], u64)> = sov_contract
+                    let entries: Vec<([u8; 32], u128)> = sov_contract
                         .balances
                         .iter()
-                        .map(|(pk, &bal)| (pk.key_id, bal as u64))
+                        .map(|(pk, &bal)| (pk.key_id, bal))
                         .collect();
                     let token_id = lib_blockchain::storage::TokenId(sov_token_id);
                     match store.backfill_token_balances_from_contract(&token_id, &entries) {

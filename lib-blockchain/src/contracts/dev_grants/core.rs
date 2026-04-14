@@ -289,7 +289,7 @@ impl DevGrants {
             recipient_key_id: grant.recipient_key_id,
             amount: grant.amount,
             executed_at: current_height,
-            token_burned: burned as u64,
+            token_burned: burned,
         };
 
         self.disbursements.push(disbursement);
