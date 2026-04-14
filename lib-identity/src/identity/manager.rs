@@ -327,7 +327,14 @@ impl IdentityManager {
 
     /// Remove an identity (used to clear observed stubs before upgrading to full citizen).
     pub fn remove_identity(&mut self, identity_id: &IdentityId) {
+        // Remove the primary identity record.
         self.identities.remove(identity_id);
+
+        // Clear all additional per-identity state to avoid leaving stale data behind.
+        self.private_data.remove(identity_id);
+        self.trusted_issuers.remove(identity_id);
+        self.verification_cache.remove(identity_id);
+        self.password_manager.remove_identity(identity_id);
     }
 
     /// Register an externally-created identity WITH full citizenship benefits (3 wallets)
