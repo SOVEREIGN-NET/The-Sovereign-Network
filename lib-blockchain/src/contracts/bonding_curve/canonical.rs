@@ -19,15 +19,15 @@ pub const CBE_SYMBOL: &str = "CBE";
 /// Token name used to derive the canonical CBE token ID.
 pub const CBE_NAME: &str = "CBE Equity";
 
-/// Number of decimal places for CBE display (1 CBE = 10^8 atoms in the legacy
-/// runtime; the bonding curve itself uses 18 decimals internally).
-pub const CBE_DECIMALS: u8 = 8;
+/// Number of decimal places for CBE (18 decimals, same as SOV).
+/// DAOs choose their own decimals — CBE chose 18.
+pub const CBE_DECIMALS: u8 = 18;
 
 /// Whole-token CBE total supply (100 billion).
-pub const CBE_TOTAL_SUPPLY_TOKENS: u64 = 100_000_000_000;
+pub const CBE_TOTAL_SUPPLY_TOKENS: u128 = 100_000_000_000;
 
-/// Total supply in legacy 8-decimal atoms (100B * 10^8).
-pub const CBE_TOTAL_SUPPLY: u64 = CBE_TOTAL_SUPPLY_TOKENS * 100_000_000;
+/// Total supply in 18-decimal atoms (100B × 10^18).
+pub const CBE_TOTAL_SUPPLY: u128 = CBE_TOTAL_SUPPLY_TOKENS * TOKEN_SCALE_18;
 
 // ── Immutable curve logic ────────────────────────────────────────────────────
 //
