@@ -51,9 +51,9 @@ pub struct TokenContract {
     /// Amount burned per transfer (if deflationary)
     pub burn_rate: u128,
     /// Account balances mapping
-    pub balances: HashMap<PublicKey, u128>,
+    balances: HashMap<PublicKey, u128>,
     /// Allowances for third-party transfers
-    pub allowances: HashMap<PublicKey, HashMap<PublicKey, u128>>,
+    allowances: HashMap<PublicKey, HashMap<PublicKey, u128>>,
     /// Token creator
     pub creator: PublicKey,
     /// Kernel minting authority (for UBI distribution)
@@ -64,7 +64,7 @@ pub struct TokenContract {
     /// Locked balances per account (non-transferable until released)
     /// Used by Treasury Kernel for staking, vesting, escrow
     #[serde(default)]
-    pub locked_balances: HashMap<PublicKey, u128>,
+    locked_balances: HashMap<PublicKey, u128>,
     /// When true, only Treasury Kernel (kernel_mint_authority) can call
     /// mint(), burn(), and transfer(). Defaults to false for backward compat.
     #[serde(default)]
@@ -498,6 +498,74 @@ impl TokenContract {
         let balance = self.balance_of(account);
         let locked = self.locked_balances.get(account).copied().unwrap_or(0);
         balance.saturating_sub(locked)
+    }
+
+    /// Set balance directly (for sled backfill, migration, and testing).
+    /// Prefer `mint()`, `credit_balance()`, or `debit_balance()` for normal operations.
+    pub fn set_balance(&mut self, account: &PublicKey, amount: u128) {
+        self.balances.insert(account.clone(), amount);
+    }
+
+    /// Remove an account's balance entry entirely (for migration/re-keying)
+    pub fn remove_balance(&mut self, account: &PublicKey) -> Option<u128> {
+        self.balances.remove(account)
+    }
+
+    /// Get the maximum balance across all holders
+    pub fn max_balance(&self) -> u128 {
+        self.balances.values().copied().max().unwrap_or(0)
+    }
+
+    /// Iterate over all (account, balance) entries
+    pub fn balances_iter(&self) -> impl Iterator<Item = (&PublicKey, &u128)> {
+        self.balances.iter()
+    }
+
+    /// Get the total number of balance entries (including zero balances)
+    pub fn balances_len(&self) -> usize {
+        self.balances.len()
+    }
+
+    /// Sum of all balances
+    pub fn total_balance_sum(&self) -> u128 {
+        self.balances.values().sum()
+    }
+
+    /// Find an account by key_id in balances
+    pub fn find_balance_by_key_id(&self, key_id: &[u8; 32]) -> Option<(&PublicKey, u128)> {
+        self.balances
+            .iter()
+            .find(|(pk, _)| &pk.key_id == key_id)
+            .map(|(pk, &bal)| (pk, bal))
+    }
+
+    /// Get all non-zero balances as a collected vector of (key_id, balance) pairs
+    pub fn non_zero_balance_entries(&self) -> Vec<(&PublicKey, u128)> {
+        self.balances
+            .iter()
+            .filter(|(_, &bal)| bal > 0)
+            .map(|(pk, &bal)| (pk, bal))
+            .collect()
+    }
+
+    /// Iterate over locked_balances keys
+    pub fn locked_balances_keys(&self) -> impl Iterator<Item = &PublicKey> {
+        self.locked_balances.keys()
+    }
+
+    /// Find an account by key_id in locked_balances
+    pub fn find_locked_balance_by_key_id(&self, key_id: &[u8; 32]) -> Option<&PublicKey> {
+        self.locked_balances.keys().find(|pk| &pk.key_id == key_id)
+    }
+
+    /// Get all allowances for a given owner
+    pub fn get_owner_allowances(&self, owner: &PublicKey) -> Option<&HashMap<PublicKey, u128>> {
+        self.allowances.get(owner)
+    }
+
+    /// Check if balances map is empty
+    pub fn balances_is_empty(&self) -> bool {
+        self.balances.is_empty()
     }
 
     /// Enable kernel-only mode (Phase C lockdown)

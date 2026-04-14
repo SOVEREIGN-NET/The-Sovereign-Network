@@ -160,11 +160,11 @@ fn main() -> Result<()> {
     let sov_id = lib_blockchain::contracts::utils::generate_lib_token_id();
     let sov_balance_count = bc.token_contracts
         .get(&sov_id)
-        .map(|t| t.balances.len())
+        .map(|t| t.balances_len())
         .unwrap_or(0);
     let sov_total: u128 = bc.token_contracts
         .get(&sov_id)
-        .map(|t| t.balances.values().sum())
+        .map(|t| t.total_balance_sum())
         .unwrap_or(0);
     println!("  SOV token balance entries:  {}", sov_balance_count);
     println!("  SOV total supply in memory: {} (raw), {} SOV", sov_total, sov_total / 100_000_000);

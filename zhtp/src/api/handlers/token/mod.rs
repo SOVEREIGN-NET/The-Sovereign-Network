@@ -523,10 +523,8 @@ impl TokenHandler {
             let pubkey = self.identity_to_pubkey(address)?;
             let target_key_id = pubkey.key_id;
             token
-                .balances
-                .iter()
-                .find(|(pk, _)| pk.key_id == target_key_id)
-                .map(|(_, bal)| *bal)
+                .find_balance_by_key_id(&target_key_id)
+                .map(|(_, bal)| bal)
                 .unwrap_or(0)
         };
 
@@ -695,10 +693,8 @@ impl TokenHandler {
                 }
             } else {
                 token
-                    .balances
-                    .iter()
-                    .find(|(pk, _)| pk.key_id == target_key_id)
-                    .map(|(_, bal)| *bal)
+                    .find_balance_by_key_id(&target_key_id)
+                    .map(|(_, bal)| bal)
                     .unwrap_or(0)
             };
 
@@ -706,7 +702,7 @@ impl TokenHandler {
                 "token/balances: token={} ({}) balance_count={} found_balance={}",
                 token.name,
                 token.symbol,
-                token.balances.len(),
+                token.balances_len(),
                 balance
             );
 

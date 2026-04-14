@@ -233,8 +233,7 @@ impl Blockchain {
 
         let mut migrated_total: u128 = 0;
         let balances: Vec<(PublicKey, u128)> = token
-            .balances
-            .iter()
+            .balances_iter()
             .map(|(k, v)| (k.clone(), *v))
             .collect();
         for (pk, bal) in balances {
@@ -246,12 +245,11 @@ impl Blockchain {
                 continue;
             }
             if let Some(wallet_id_bytes) = key_to_wallet.get(&pk.key_id) {
-                token.balances.remove(&pk);
+                token.remove_balance(&pk);
                 let wallet_key = Self::wallet_key_for_sov(wallet_id_bytes);
                 let existing = token.balance_of(&wallet_key);
                 token
-                    .balances
-                    .insert(wallet_key, existing.saturating_add(bal));
+                    .set_balance(&wallet_key, existing.saturating_add(bal));
                 migrated_total = migrated_total.saturating_add(bal);
             }
         }

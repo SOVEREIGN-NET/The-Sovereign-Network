@@ -286,7 +286,7 @@ impl WalletHandler {
                                     kyber_pk: [0u8; 1568],
                                     key_id,
                                 };
-                            token.balances.get(&wallet_key).copied()
+                            Some(token.balance_of(&wallet_key))
                         })
                     })
                     .unwrap_or(0);
@@ -358,7 +358,7 @@ impl WalletHandler {
                                         kyber_pk: [0u8; 1568],
                                         key_id,
                                     };
-                                token.balances.get(&wallet_key).copied()
+                                Some(token.balance_of(&wallet_key))
                             })
                     })
                     .unwrap_or(0)

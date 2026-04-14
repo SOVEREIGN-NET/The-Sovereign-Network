@@ -71,8 +71,7 @@ fn test_treasury_balance_uses_token_contract() {
 
     if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
         token
-            .balances
-            .insert(treasury_pubkey.clone(), treasury_amount);
+            .set_balance(&treasury_pubkey, treasury_amount);
     }
 
     // Query treasury balance - should reflect the credited amount
@@ -95,8 +94,7 @@ fn test_treasury_balance_not_placeholder() {
 
     if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
         token
-            .balances
-            .insert(treasury_pubkey.clone(), expected_amount);
+            .set_balance(&treasury_pubkey, expected_amount);
     }
 
     // Query balance multiple times - should always return the exact amount
@@ -156,7 +154,7 @@ fn test_treasury_balance_updates_after_transactions() {
 
     // Add some tokens
     if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
-        token.balances.insert(treasury_pubkey.clone(), 100_000);
+        token.set_balance(&treasury_pubkey, 100_000);
     }
 
     let balance2 = blockchain.get_dao_treasury_balance().unwrap();
@@ -164,7 +162,7 @@ fn test_treasury_balance_updates_after_transactions() {
 
     // Add more tokens
     if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
-        token.balances.insert(treasury_pubkey.clone(), 250_000);
+        token.set_balance(&treasury_pubkey, 250_000);
     }
 
     let balance3 = blockchain.get_dao_treasury_balance().unwrap();
@@ -172,7 +170,7 @@ fn test_treasury_balance_updates_after_transactions() {
 
     // Reduce tokens (simulating spending)
     if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
-        token.balances.insert(treasury_pubkey.clone(), 150_000);
+        token.set_balance(&treasury_pubkey, 150_000);
     }
 
     let balance4 = blockchain.get_dao_treasury_balance().unwrap();

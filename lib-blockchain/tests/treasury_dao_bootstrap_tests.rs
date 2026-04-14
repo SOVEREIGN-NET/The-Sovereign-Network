@@ -200,8 +200,7 @@ fn test_block_fees_credited_to_treasury() {
     if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
         let current = token.balance_of(&treasury_key);
         token
-            .balances
-            .insert(treasury_key, current.saturating_add(fee_amount));
+            .set_balance(&treasury_key, current.saturating_add(fee_amount));
     }
 
     // get_dao_treasury_balance must reflect the credited fees.
