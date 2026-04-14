@@ -571,6 +571,14 @@ impl<'a> StateMutator<'a> {
         Ok(balance_u64)
     }
 
+    /// Read the token balance as u128 for an address without mutating state.
+    /// Used by bonding curve operations which work with u128 amounts.
+    pub fn get_token_balance_u128(&self, token: &TokenId, addr: &Address) -> TxApplyResult<u128> {
+        self.store
+            .get_token_balance(token, addr)
+            .map_err(|e| TxApplyError::Storage(e.to_string()))
+    }
+
     /// Read token supply without mutating state.
     pub fn get_token_supply(&self, token: &TokenId) -> TxApplyResult<Option<u128>> {
         self.store
