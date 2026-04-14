@@ -39,6 +39,10 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 use uuid;
 
+// Access control imports
+use lib_access_control::{SecurityPrincipal, Role};
+use lib_types::NodeType;
+
 /// Standardized error response format (Issue #11)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorResponse {
@@ -108,6 +112,24 @@ impl Web4Handler {
     /// Get reference to the domain registry
     pub fn get_domain_registry(&self) -> Arc<DomainRegistry> {
         Arc::clone(&self.domain_registry)
+    }
+
+    /// Extract a SecurityPrincipal from an incoming request.
+    fn extract_principal(&self, request: &ZhtpRequest) -> SecurityPrincipal {
+        if let Some(node_type_str) = request.headers.get("x-node-type") {
+            let node_type = NodeType::from_config(Some(&node_type_str));
+            return SecurityPrincipal::new("did:zhtp:node", Role::Node, node_type);
+        }
+        if let Some(auth) = request.headers.get("authorization") {
+            if auth.to_lowercase().starts_with("bearer ") {
+                return SecurityPrincipal::new(
+                    "did:zhtp:session",
+                    Role::Citizen,
+                    NodeType::FullNode,
+                );
+            }
+        }
+        SecurityPrincipal::new("did:zhtp:public", Role::Public, NodeType::Relay)
     }
 
     /// Attach a POUW validator for emitting Web4 receipts on successful serves/resolves
@@ -674,7 +696,8 @@ impl ZhtpRequestHandler for Web4Handler {
 
             // Domain management endpoints
             path if path.starts_with("/api/v1/web4/domains/register") => {
-                self.register_domain_simple(request.body).await
+                let principal = self.extract_principal(&request);
+                self.register_domain_simple(request.body, &principal).await
             }
             path if path.starts_with("/api/v1/web4/domains?")
                 && request.method == lib_protocols::ZhtpMethod::Get =>
