@@ -1,6 +1,20 @@
 const STATUS_URL = "http://127.0.0.1:7840/api/v1/status";
 const RESOLVE_URL = "http://127.0.0.1:7840/api/v1/resolve";
 const RAW_CONTENT_BASE = "http://127.0.0.1:7840/web4/content";
+const EXTENSION_VERSION = chrome.runtime.getManifest().version;
+const REQUIRED_DAEMON_API_VERSION = "1";
+
+function daemonCompatibilityError(status) {
+  if (!status || typeof status !== "object") {
+    return "daemon returned an invalid status payload";
+  }
+
+  if (status.api_version !== REQUIRED_DAEMON_API_VERSION) {
+    return `daemon API ${status.api_version || "unknown"} is incompatible with extension ${EXTENSION_VERSION}`;
+  }
+
+  return null;
+}
 
 function query() {
   return new URLSearchParams(window.location.search);
@@ -56,9 +70,14 @@ async function loadViewer() {
     }
 
     const status = await statusResponse.json();
+    const compatibilityError = daemonCompatibilityError(status);
+    if (compatibilityError) {
+      throw new Error(compatibilityError);
+    }
     const resolved = await resolveResponse.json();
 
-    daemonStatus.textContent = `Daemon online. Backend ${status.active_backend || "pending"}.`;
+    daemonStatus.textContent =
+      `Daemon ${status.daemon_version}. Backend ${status.active_backend || "pending"}.`;
     inspector.textContent = `Owner ${resolved.owner || "unknown"} · Registered ${resolved.registered_at || "unknown"} · Expires ${resolved.expires_at || "unknown"}.`;
   } catch (error) {
     daemonStatus.textContent = "Daemon unavailable";

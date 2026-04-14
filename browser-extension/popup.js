@@ -1,5 +1,19 @@
 const DAEMON_STATUS_URL = "http://127.0.0.1:7840/api/v1/status";
 const DAEMON_DOMAINS_URL = "http://127.0.0.1:7840/api/v1/domains";
+const EXTENSION_VERSION = chrome.runtime.getManifest().version;
+const REQUIRED_DAEMON_API_VERSION = "1";
+
+function daemonCompatibilityError(status) {
+  if (!status || typeof status !== "object") {
+    return "daemon returned an invalid status payload";
+  }
+
+  if (status.api_version !== REQUIRED_DAEMON_API_VERSION) {
+    return `daemon API ${status.api_version || "unknown"} is incompatible with extension ${EXTENSION_VERSION}`;
+  }
+
+  return null;
+}
 
 function openViewer(domain, path = "/") {
   const viewerUrl = new URL(chrome.runtime.getURL("viewer.html"));
@@ -27,7 +41,14 @@ async function refreshStatus() {
     }
 
     const status = await response.json();
-    statusEl.textContent = `Daemon online. DID ${status.daemon_did}. Active backend ${status.active_backend || "not connected yet"}.`;
+    const compatibilityError = daemonCompatibilityError(status);
+    if (compatibilityError) {
+      throw new Error(compatibilityError);
+    }
+
+    statusEl.textContent =
+      `Daemon ${status.daemon_version}. API ${status.api_version}. ` +
+      `DID ${status.daemon_did}. Active backend ${status.active_backend || "not connected yet"}.`;
   } catch (error) {
     statusEl.textContent = `Daemon unavailable: ${error.message}`;
   }
@@ -36,7 +57,20 @@ async function refreshStatus() {
 async function refreshDomains() {
   const listEl = document.getElementById("domains");
   try {
-    const response = await fetch(DAEMON_DOMAINS_URL);
+    const [statusResponse, response] = await Promise.all([
+      fetch(DAEMON_STATUS_URL),
+      fetch(DAEMON_DOMAINS_URL),
+    ]);
+
+    if (!statusResponse.ok) {
+      throw new Error(`daemon returned ${statusResponse.status}`);
+    }
+    const status = await statusResponse.json();
+    const compatibilityError = daemonCompatibilityError(status);
+    if (compatibilityError) {
+      throw new Error(compatibilityError);
+    }
+
     if (!response.ok) {
       throw new Error(`daemon returned ${response.status}`);
     }
