@@ -152,7 +152,7 @@ impl Blockchain {
                 .credit(token, &caller, to, amount, reason)
                 .map_err(|e| e.to_string())
         } else {
-            token.credit_balance(to, amount)
+            token.credit_balance(to, amount as u128)
         }
     }
 
@@ -173,7 +173,7 @@ impl Blockchain {
                 .debit(token, &caller, from, amount, reason)
                 .map_err(|e| e.to_string())
         } else {
-            token.debit_balance(from, amount)
+            token.debit_balance(from, amount as u128)
         }
     }
 
@@ -231,8 +231,8 @@ impl Blockchain {
             }
         }
 
-        let mut migrated_total: u64 = 0;
-        let balances: Vec<(PublicKey, u64)> = token
+        let mut migrated_total: u128 = 0;
+        let balances: Vec<(PublicKey, u128)> = token
             .balances
             .iter()
             .map(|(k, v)| (k.clone(), *v))
@@ -318,12 +318,12 @@ impl Blockchain {
             };
 
             let recipient = Self::wallet_key_for_sov(&wallet_key);
-            let current_balance: u64 = if let Some(store) = self.get_store() {
+            let current_balance: u128 = if let Some(store) = self.get_store() {
                 let sov_storage_token_id = crate::storage::TokenId(sov_token_id);
                 let addr = crate::storage::Address::new(wallet_key);
                 store
                     .get_token_balance(&sov_storage_token_id, &addr)
-                    .unwrap_or(0) as u64
+                    .unwrap_or(0) as u128
             } else {
                 token_opt
                     .map(|token| token.balance_of(&recipient))
@@ -403,8 +403,8 @@ impl Blockchain {
             let wallet_key = Self::wallet_key_for_sov(bytes);
             if let Some(token) = self.token_contracts.get_mut(&sov_token_id) {
                 let bal = token.balance_of(&wallet_key);
-                if bal == WRONG_BONUS {
-                    if let Err(e) = token.burn(&wallet_key, WRONG_BONUS) {
+                if bal == WRONG_BONUS as u128 {
+                    if let Err(e) = token.burn(&wallet_key, WRONG_BONUS as u128) {
                         tracing::warn!(
                             "correct_ubi_savings_misbalances: burn failed for {}: {}",
                             &wallet_id_hex[..16.min(wallet_id_hex.len())],
@@ -574,7 +574,7 @@ impl Blockchain {
             let recipient_pk = Self::wallet_key_for_sov(&wallet_id_bytes_arr);
             if let Some(token) = self.token_contracts.get_mut(&sov_token_id) {
                 if token.balance_of(&recipient_pk) == 0 {
-                    if let Err(e) = token.mint(&recipient_pk, wallet_data.initial_balance) {
+                    if let Err(e) = token.mint(&recipient_pk, wallet_data.initial_balance as u128) {
                         warn!(
                             "register_wallet: failed to mint {} SOV for {}: {}",
                             wallet_data.initial_balance,
@@ -689,9 +689,8 @@ impl Blockchain {
                             .get(&sov_token_id)
                             .map(|token| token.balance_of(&recipient_pk))
                             .unwrap_or(0);
-                        let deficit = wallet_data
-                            .initial_balance
-                            .saturating_sub(current_balance);
+                        let target = wallet_data.initial_balance as u128;
+                        let deficit = target.saturating_sub(current_balance);
                         if deficit > 0 {
                             if let Some(token) = self.token_contracts.get_mut(&sov_token_id) {
                                 if let Err(e) = token.mint(&recipient_pk, deficit) {

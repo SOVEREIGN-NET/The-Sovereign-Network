@@ -349,7 +349,7 @@ impl Web4Handler {
                 user_sov_balance, registration_fee_sov
             );
 
-            if user_sov_balance < registration_fee_sov {
+            if user_sov_balance < registration_fee_sov as u128 {
                 return Err(anyhow!(
                     "Insufficient SOV balance. Required: {} SOV, Available: {} SOV. \
                     You need SOV tokens to register domains.",

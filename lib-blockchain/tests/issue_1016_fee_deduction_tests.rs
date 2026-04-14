@@ -94,7 +94,7 @@ fn test_fee_deduction_reduces_sender_balance() {
 
     // Setup sender with initial balance
     let sender = create_test_pubkey(1);
-    let initial_balance: u64 = 10_000;
+    let initial_balance: u128 = 10_000;
     let fee: u64 = 100;
 
     // Credit initial balance to sender
@@ -135,9 +135,9 @@ fn test_fee_deduction_reduces_sender_balance() {
 
     assert_eq!(
         balance_after,
-        initial_balance - fee,
+        initial_balance - fee as u128,
         "Expected balance {} after fee deduction, got {}",
-        initial_balance - fee,
+        initial_balance - fee as u128,
         balance_after
     );
 }
@@ -188,7 +188,7 @@ fn test_fee_deduction_handles_insufficient_balance() {
 
     // Setup sender with low balance (less than fee)
     let sender = create_test_pubkey(1);
-    let initial_balance: u64 = 50;
+    let initial_balance: u128 = 50;
     let fee: u64 = 100; // More than balance
 
     // Credit low balance to sender
@@ -241,7 +241,7 @@ fn test_fee_deduction_accumulates_multiple_transactions() {
     let sender1 = create_test_pubkey(1);
     let sender2 = create_test_pubkey(2);
     let sender3 = create_test_pubkey(3);
-    let initial_balance: u64 = 10_000;
+    let initial_balance: u128 = 10_000;
 
     // Credit initial balances
     if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
@@ -275,7 +275,7 @@ fn test_fee_deduction_accumulates_multiple_transactions() {
 
     // Verify: each sender's balance was reduced correctly
     let token = blockchain.token_contracts.get(&sov_token_id).unwrap();
-    assert_eq!(token.balance_of(&sender1), initial_balance - fee1);
-    assert_eq!(token.balance_of(&sender2), initial_balance - fee2);
-    assert_eq!(token.balance_of(&sender3), initial_balance - fee3);
+    assert_eq!(token.balance_of(&sender1), initial_balance - fee1 as u128);
+    assert_eq!(token.balance_of(&sender2), initial_balance - fee2 as u128);
+    assert_eq!(token.balance_of(&sender3), initial_balance - fee3 as u128);
 }

@@ -1488,7 +1488,7 @@ pub async fn handle_migrate_identity(
                             let new_pk = lib_crypto::PublicKey::new(new_pk_bytes);
                             if old_pk != new_pk {
                                 movable_balance_total =
-                                    movable_balance_total.saturating_add(token.balance_of(&old_pk));
+                                    movable_balance_total.saturating_add(token.balance_of(&old_pk) as u64);
                             }
                         }
                     }
@@ -1760,7 +1760,7 @@ pub async fn handle_migrate_identity(
                         if existing.initial_balance > 0 {
                             let token_opt = blockchain.token_contracts.get(&sov_token_id);
                             let current_balance =
-                                token_opt.map(|t| t.balance_of(&wallet_addr)).unwrap_or(0);
+                                token_opt.map(|t| t.balance_of(&wallet_addr) as u64).unwrap_or(0);
                             if current_balance < existing.initial_balance {
                                 let mint_amount = existing.initial_balance - current_balance;
                                 let memo =
@@ -1796,7 +1796,7 @@ pub async fn handle_migrate_identity(
                                 .unwrap_or([0u8; 2592]);
                             let old_pk = lib_crypto::PublicKey::new(old_pk_bytes);
                             if old_pk.key_id != wallet_addr.key_id {
-                                let old_balance = token.balance_of(&old_pk);
+                                let old_balance = token.balance_of(&old_pk) as u64;
                                 if old_balance > 0 {
                                     let memo = format!(
                                         "TOKEN_MIGRATE_V1:{}",

@@ -200,7 +200,7 @@ pub struct Web4Allocation {
 pub struct SovBalanceAllocation {
     pub wallet_id: String,
     pub public_key: String,
-    pub balance: u64,
+    pub balance: u128,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

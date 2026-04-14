@@ -824,7 +824,7 @@ fn test_wallet_registration_mints_initial_balance() {
     let token = blockchain.token_contracts.get(&sov_token_id).unwrap();
     let balance = token.balance_of(&wallet_key(&wallet_id));
     assert_eq!(
-        balance, initial_balance,
+        balance, initial_balance as u128,
         "Wallet should have initial balance minted via block processing"
     );
 }

@@ -162,7 +162,7 @@ fn main() -> Result<()> {
         .get(&sov_id)
         .map(|t| t.balances.len())
         .unwrap_or(0);
-    let sov_total: u64 = bc.token_contracts
+    let sov_total: u128 = bc.token_contracts
         .get(&sov_id)
         .map(|t| t.balances.values().sum())
         .unwrap_or(0);

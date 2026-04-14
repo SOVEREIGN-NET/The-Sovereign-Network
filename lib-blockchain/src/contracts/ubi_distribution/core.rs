@@ -361,7 +361,7 @@ impl UbiDistributor {
         } else {
             // Legacy direct path
             let _burned = token
-                .transfer(ctx, citizen, amount)
+                .transfer(ctx, citizen, amount as u128)
                 .map_err(|_| Error::TokenTransferFailed)?;
         }
 
@@ -1114,14 +1114,14 @@ mod tests {
             "Test Token".to_string(),
             "TTK".to_string(),
             8,
-            u64::MAX,
+            u128::MAX,
             false,
             0,
             creator.clone(),
         );
 
         // Mint a large balance to the contract address for transfers
-        let _ = token.mint(contract_address, u64::MAX / 2);
+        let _ = token.mint(contract_address, u128::MAX / 2);
         token
     }
 
@@ -1135,7 +1135,7 @@ mod tests {
             "Test Token".to_string(),
             "TTK".to_string(),
             8,
-            u64::MAX,
+            u128::MAX,
             false,
             0,
             creator.clone(),
