@@ -461,6 +461,7 @@ impl ZhtpUnifiedServer {
         let dht_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(DhtHandler::new_with_storage(
             mesh_router_arc.clone(),
             storage.clone(),
+            identity_manager.clone(),
         ));
         mesh_router_arc.set_dht_handler(dht_handler.clone()).await;
 

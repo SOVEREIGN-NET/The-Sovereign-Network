@@ -16,7 +16,7 @@ use crate::integration::dht_adapter::DhtIntegrationAdapter;
 use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 // Removed unused ZhtpHeaders, NetworkStatus
-use lib_identity::ZhtpIdentity;
+use lib_identity::{DhtPeerIdentity, IdentityManager, ZhtpIdentity};
 
 // Mesh router imports for peer querying
 use crate::unified_server::MeshRouter;
@@ -26,7 +26,13 @@ use crate::unified_server::MeshRouter;
 /// DHT API request types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DhtInitializeRequest {
-    pub identity: Option<ZhtpIdentity>,
+    /// Public peer identity for DHT initialization.
+    ///
+    /// # Security
+    /// Only public identity fields (DID, node_id, public_key, device_id) are
+    /// accepted. The full `ZhtpIdentity` with private keys must NEVER be sent
+    /// over the network. The server looks up the complete identity locally.
+    pub identity: Option<DhtPeerIdentity>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -189,6 +195,8 @@ pub struct DhtHandler {
     stats: Arc<RwLock<DhtHandlerStats>>,
     /// Storage system (where Web4 content is actually stored)
     storage_system: Arc<RwLock<Option<Arc<RwLock<lib_storage::PersistentStorageSystem>>>>>,
+    /// Identity manager for local identity lookups (security: never trust remote full identities)
+    identity_manager: Arc<RwLock<IdentityManager>>,
 }
 
 /// DHT handler internal statistics
@@ -222,11 +230,12 @@ impl std::fmt::Debug for DhtHandler {
 
 impl DhtHandler {
     /// Create a new DHT handler with mesh router access and optional storage system
-    pub fn new(_mesh_router: Arc<MeshRouter>) -> Self {
+    pub fn new(_mesh_router: Arc<MeshRouter>, identity_manager: Arc<RwLock<IdentityManager>>) -> Self {
         Self {
             dht_client: Arc::new(RwLock::new(None)),
             stats: Arc::new(RwLock::new(DhtHandlerStats::default())),
             storage_system: Arc::new(RwLock::new(None)),
+            identity_manager,
         }
     }
 
@@ -234,11 +243,13 @@ impl DhtHandler {
     pub fn new_with_storage(
         _mesh_router: Arc<MeshRouter>,
         storage: Arc<RwLock<lib_storage::PersistentStorageSystem>>,
+        identity_manager: Arc<RwLock<IdentityManager>>,
     ) -> Self {
         Self {
             dht_client: Arc::new(RwLock::new(None)),
             stats: Arc::new(RwLock::new(DhtHandlerStats::default())),
             storage_system: Arc::new(RwLock::new(Some(storage))),
+            identity_manager,
         }
     }
 
@@ -283,9 +294,21 @@ impl DhtHandler {
             }
         };
 
-        // Create identity for DHT operations
+        // Resolve full identity locally — never trust a full identity sent over the wire.
         let identity = match init_request.identity {
-            Some(id) => id,
+            Some(peer) => {
+                let identity_manager = self.identity_manager.read().await;
+                identity_manager
+                    .get_identity_by_did(&peer.did)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        warn!(
+                            "DHT init requested with unknown DID {}, using default identity",
+                            peer.did
+                        );
+                        self.create_default_dht_identity()
+                    })
+            }
             None => {
                 // Create a default identity for DHT operations
                 self.create_default_dht_identity()

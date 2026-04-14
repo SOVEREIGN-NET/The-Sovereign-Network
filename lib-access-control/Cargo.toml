@@ -1,0 +1,13 @@
+[package]
+name = "lib-access-control"
+version = "0.1.0"
+edition = "2021"
+description = "Sovereign Network access control layer — principals, domains, policies, and scoped views"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+lib-types = { path = "../lib-types" }
+
+[dev-dependencies]
+serde_json = "1.0"

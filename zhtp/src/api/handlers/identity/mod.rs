@@ -17,6 +17,10 @@ use tokio::sync::RwLock;
 use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 
+// Access control imports
+use lib_access_control::{SecurityPrincipal, Role};
+use lib_types::NodeType;
+
 // Identity management imports
 use lib_identity::{CitizenshipResult, IdentityManager, IdentityType, RecoveryPhraseManager};
 
@@ -67,6 +71,38 @@ impl IdentityHandler {
             storage_system,
         }
     }
+
+    fn extract_principal(&self, request: &ZhtpRequest) -> SecurityPrincipal {
+        extract_principal_from_request(request)
+    }
+}
+
+/// Extract a `SecurityPrincipal` from an incoming request.
+///
+/// This is the incremental integration point. In the future it will inspect
+/// bearer tokens, delegation certificates, and UHP auth context. For now it
+/// uses simple headers to distinguish public, node, and session callers.
+fn extract_principal_from_request(request: &ZhtpRequest) -> SecurityPrincipal {
+    // Node-to-node calls may declare their node type.
+    if let Some(node_type_str) = request.headers.get("x-node-type") {
+        let node_type = NodeType::from_config(Some(&node_type_str));
+        return SecurityPrincipal::new("did:zhtp:node", Role::Node, node_type);
+    }
+
+    // Authenticated sessions (placeholder: any bearer token is treated as
+    // a citizen session until full session-to-principal mapping is wired).
+    if let Some(auth) = request.headers.get("authorization") {
+        if auth.to_lowercase().starts_with("bearer ") {
+            return SecurityPrincipal::new(
+                "did:zhtp:session",
+                Role::Citizen,
+                NodeType::FullNode,
+            );
+        }
+    }
+
+    // Default: unauthenticated public caller.
+    SecurityPrincipal::public()
 }
 
 #[async_trait::async_trait]
@@ -495,36 +531,37 @@ impl IdentityHandler {
 
         let identity_id = lib_crypto::Hash::from_hex(identity_id_str)?;
 
+        let principal = self.extract_principal(&request);
         let identity_manager = self.identity_manager.read().await;
 
-        // Use identity manager to retrieve actual identity data
-        let response_data = match identity_manager.get_identity(&identity_id) {
-            Some(identity) => IdentityResponse {
-                status: "identity_found".to_string(),
-                identity_id: identity_id.to_string(),
-                identity_type: format!("{:?}", identity.identity_type),
-                access_level: format!("{:?}", identity.access_level),
-                created_at: identity.created_at,
-                last_active: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)?
-                    .as_secs(),
-            },
-            None => IdentityResponse {
-                status: "identity_not_found".to_string(),
-                identity_id: identity_id.to_string(),
-                identity_type: "unknown".to_string(),
-                access_level: "None".to_string(),
-                created_at: 0,
-                last_active: 0,
-            },
-        };
-
-        let json_response = serde_json::to_vec(&response_data)?;
-        Ok(ZhtpResponse::success_with_content_type(
-            json_response,
-            "application/json".to_string(),
-            None,
-        ))
+        // Use access-controlled view retrieval
+        match identity_manager.get_identity_view(&principal, &identity_id) {
+            Some(view) => {
+                let json_response = serde_json::to_vec(&view)?;
+                Ok(ZhtpResponse::success_with_content_type(
+                    json_response,
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
+            None => {
+                // Anti-enumeration: indistinguishable not-found.
+                let response_data = IdentityResponse {
+                    status: "identity_not_found".to_string(),
+                    identity_id: identity_id.to_string(),
+                    identity_type: "unknown".to_string(),
+                    access_level: "None".to_string(),
+                    created_at: 0,
+                    last_active: 0,
+                };
+                let json_response = serde_json::to_vec(&response_data)?;
+                Ok(ZhtpResponse::success_with_content_type(
+                    json_response,
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
+        }
     }
 
     /// Handle citizenship application
@@ -1100,21 +1137,13 @@ impl IdentityHandler {
 
         tracing::info!("🔍 Looking up identity by DID: {}", did);
 
+        let principal = self.extract_principal(&request);
         let identity_manager = self.identity_manager.read().await;
 
-        match identity_manager.get_identity_by_did(&did) {
-            Some(identity) => {
-                let response_body = json!({
-                    "status": "found",
-                    "identity_id": identity.did.replace("did:zhtp:", ""),
-                    "did": identity.did,
-                    "identity_type": format!("{:?}", identity.identity_type),
-                    "access_level": format!("{:?}", identity.access_level),
-                    "created_at": identity.created_at,
-                });
-                Ok(ZhtpResponse::json(&response_body, None)?)
-            }
+        match identity_manager.get_identity_view_by_did(&principal, &did) {
+            Some(view) => Ok(ZhtpResponse::json(&view, None)?),
             None => {
+                // Anti-enumeration: return indistinguishable not-found.
                 let response_body = json!({
                     "status": "not_found",
                     "did": did,
@@ -1877,5 +1906,67 @@ impl IdentityHandler {
         });
 
         Ok(ZhtpResponse::json(&response_body, None)?)
+    }
+}
+
+#[cfg(test)]
+mod principal_extraction_tests {
+    use super::*;
+    use lib_protocols::types::{ZhtpHeaders, ZhtpMethod};
+
+    fn request_with_header(key: &str, value: &str) -> ZhtpRequest {
+        ZhtpRequest {
+            method: ZhtpMethod::Get,
+            uri: "/test".to_string(),
+            version: "ZHTP/1.0".to_string(),
+            headers: ZhtpHeaders::new().with_custom_header(key.to_string(), value.to_string()),
+            body: vec![],
+            timestamp: 0,
+            requester: None,
+            auth_proof: None,
+        }
+    }
+
+    #[test]
+    fn test_extract_principal_no_auth_returns_public() {
+        let request = ZhtpRequest {
+            method: ZhtpMethod::Get,
+            uri: "/test".to_string(),
+            version: "ZHTP/1.0".to_string(),
+            headers: ZhtpHeaders::new(),
+            body: vec![],
+            timestamp: 0,
+            requester: None,
+            auth_proof: None,
+        };
+        let principal = extract_principal_from_request(&request);
+        assert_eq!(principal.role, Role::Public);
+        assert_eq!(principal.did, "did:zhtp:public");
+    }
+
+    #[test]
+    fn test_extract_principal_bearer_returns_citizen() {
+        let request = request_with_header("authorization", "Bearer token123");
+        let principal = extract_principal_from_request(&request);
+        assert_eq!(principal.role, Role::Citizen);
+        assert_eq!(principal.did, "did:zhtp:session");
+    }
+
+    #[test]
+    fn test_extract_principal_node_type_returns_node() {
+        let request = request_with_header("x-node-type", "validator");
+        let principal = extract_principal_from_request(&request);
+        assert_eq!(principal.role, Role::Node);
+        assert_eq!(principal.did, "did:zhtp:node");
+        assert_eq!(principal.node_type, NodeType::Validator);
+    }
+
+    #[test]
+    fn test_extract_principal_relay_node_type() {
+        let request = request_with_header("x-node-type", "relay");
+        let principal = extract_principal_from_request(&request);
+        assert_eq!(principal.role, Role::Node);
+        assert_eq!(principal.did, "did:zhtp:node");
+        assert_eq!(principal.node_type, NodeType::Relay);
     }
 }
