@@ -499,8 +499,8 @@ impl Blockchain {
                                     .get(&sov_token_id)
                                     .map(|t| t.balance_of(&recipient_pk))
                                     .unwrap_or(0);
-                                let deficit =
-                                    wallet_data.initial_balance.saturating_sub(current);
+                                let target = wallet_data.initial_balance as u128;
+                                let deficit = target.saturating_sub(current);
                                 if deficit > 0 {
                                     if let Some(token) =
                                         blockchain.token_contracts.get_mut(&sov_token_id)
@@ -633,7 +633,7 @@ impl Blockchain {
             let entries: Vec<([u8; 32], u64)> = sov_contract
                 .balances
                 .iter()
-                .map(|(pk, &bal)| (pk.key_id, bal))
+                .map(|(pk, &bal)| (pk.key_id, bal as u64))
                 .collect();
             let token_id = crate::storage::TokenId(sov_token_id);
             match store.backfill_token_balances_from_contract(&token_id, &entries) {
@@ -747,7 +747,7 @@ impl Blockchain {
                         if balance > 0 {
                             if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
                                 let pk = Self::wallet_key_for_sov(&wallet_bytes);
-                                token.balances.insert(pk, balance as u64);
+                                token.balances.insert(pk, balance as u128);
                                 synced += 1;
                             }
                         }
@@ -764,7 +764,7 @@ impl Blockchain {
             // Also sync total supply from sled
             if let Ok(Some(supply)) = store.get_token_supply(&storage_sov_id) {
                 if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
-                    token.total_supply = supply;
+                    token.total_supply = supply as u128;
                 }
             }
         }

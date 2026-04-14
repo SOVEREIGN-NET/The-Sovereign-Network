@@ -404,7 +404,7 @@ impl Blockchain {
         let sov_id = crate::contracts::utils::generate_lib_token_id();
         self.token_contracts
             .get(&sov_id)
-            .map(|t| t.total_supply)
+            .map(|t| t.total_supply as u64)
             .unwrap_or(0)
     }
 
@@ -477,7 +477,7 @@ impl Blockchain {
 
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
         if let Some(token) = self.token_contracts.get(&sov_token_id) {
-            Ok(token.balance_of(&treasury_key))
+            Ok(token.balance_of(&treasury_key) as u64)
         } else {
             tracing::debug!(
                 "SOV token contract not found, treasury balance query returning 0 during bootstrap"
@@ -659,10 +659,10 @@ impl Blockchain {
             .get_mut(&sov_id)
             .ok_or_else(|| anyhow::anyhow!("SOV token contract not found"))?;
         sov_token
-            .debit_balance(&treasury_pk, amount)
+            .debit_balance(&treasury_pk, amount as u128)
             .map_err(|e| anyhow::anyhow!("Treasury debit failed: {}", e))?;
         sov_token
-            .credit_balance(&recipient_pk, amount)
+            .credit_balance(&recipient_pk, amount as u128)
             .map_err(|e| anyhow::anyhow!("Recipient credit failed: {}", e))?;
 
         *self.treasury_epoch_spend.entry(epoch).or_insert(0) += amount;

@@ -926,7 +926,7 @@ impl Blockchain {
                                     seed_map
                                         .entry(data.token_id)
                                         .or_default()
-                                        .push((data.from, mem_balance));
+                                        .push((data.from, mem_balance as u64));
                                 }
                             }
                         } else if data.token_id == cbe_token_id {
@@ -1041,7 +1041,7 @@ impl Blockchain {
                             if let Ok(balance) = store.get_token_balance(&storage_sov_id, &addr) {
                                 if let Some(token) = self.token_contracts.get_mut(&sov_id) {
                                     let pk = Self::wallet_key_for_sov(&addr_bytes);
-                                    token.balances.insert(pk, balance as u64);
+                                    token.balances.insert(pk, balance as u128);
                                 }
                             }
                         }
@@ -1887,7 +1887,7 @@ impl Blockchain {
 
             // Check sender's balance before deduction
             let sender_balance = sov_token.balance_of(&fee_payer);
-            if sender_balance < tx.fee {
+            if sender_balance < tx.fee as u128 {
                 // This shouldn't happen if validation is working correctly
                 warn!(
                     "Fee deduction failed: sender {} has insufficient balance ({}) for fee ({})",
@@ -1903,7 +1903,7 @@ impl Blockchain {
             // Note: Direct balance mutation for backward compatibility.
             // SOV token operations go through TreasuryKernel for new transactions,
             // but this historical fee deduction maintains existing behavior.
-            let new_balance = sender_balance - tx.fee;
+            let new_balance = sender_balance - tx.fee as u128;
             sov_token.balances.insert(fee_payer.clone(), new_balance);
 
             total_fees = total_fees.saturating_add(tx.fee);
@@ -1929,7 +1929,7 @@ impl Blockchain {
                         let treasury_balance = sov_token.balance_of(&treasury_key);
                         sov_token
                             .balances
-                            .insert(treasury_key, treasury_balance.saturating_add(total_fees));
+                            .insert(treasury_key, treasury_balance.saturating_add(total_fees as u128));
                         debug!(
                             "Block {} fees credited to DAO treasury: {} SOV",
                             block.height(),
@@ -2478,7 +2478,7 @@ impl Blockchain {
             return Ok(());
         }
         let sender_bal = token.balance_of(sender);
-        if sender_bal < amount {
+        if sender_bal < amount as u128 {
             return Err(anyhow::anyhow!(
                 "TokenTransfer insufficient balance: have {}, need {}",
                 sender_bal,
@@ -2488,12 +2488,12 @@ impl Blockchain {
         let sender_bal_post = token.balance_of(sender);
         token
             .balances
-            .insert(sender.clone(), sender_bal_post.saturating_sub(fee_amount));
+            .insert(sender.clone(), sender_bal_post.saturating_sub(fee_amount as u128));
         if let Some(ref tpk) = treasury_key {
             let tbal = token.balance_of(tpk);
             token
                 .balances
-                .insert(tpk.clone(), tbal.saturating_add(fee_amount));
+                .insert(tpk.clone(), tbal.saturating_add(fee_amount as u128));
             debug!(
                 "TokenTransfer: {} SOV fee → DAO treasury (height {})",
                 fee_amount, height
@@ -4121,7 +4121,7 @@ impl Blockchain {
         let user_local_id = crate::types::hash::Hash::new(user_id.0);
 
         // Sum SOV balances across all wallets owned by this identity.
-        let sov_balance: u64 = self
+        let sov_balance: u128 = self
             .get_wallets_for_owner(&user_local_id)
             .iter()
             .filter_map(|w| {
@@ -4132,7 +4132,7 @@ impl Blockchain {
             .sum();
 
         // 1 SOV (1e8 atomic units) = 1 base vote unit
-        let base_power = sov_balance / 100_000_000;
+        let base_power = (sov_balance / 100_000_000) as u64;
 
         // Add power from identities that delegated directly to this user (non-transitive).
         // Keys and values in vote_delegations are 64-char hex-encoded identity IDs.
@@ -4146,14 +4146,14 @@ impl Blockchain {
                 let delegator_bytes: [u8; 32] = bytes.try_into().ok()?;
                 let delegator_local_id = crate::types::hash::Hash::new(delegator_bytes);
                 let delegator_wallets = self.get_wallets_for_owner(&delegator_local_id);
-                let bal: u64 = delegator_wallets
+                let bal: u128 = delegator_wallets
                     .iter()
                     .filter_map(|w| {
                         let pk = Self::wallet_key_for_sov(&w.wallet_id.as_array());
                         self.token_contracts.get(&sov_id).map(|t| t.balance_of(&pk))
                     })
                     .sum();
-                Some(bal / 100_000_000)
+                Some((bal / 100_000_000) as u64)
             })
             .sum();
 
@@ -6738,7 +6738,7 @@ impl Blockchain {
             key_id: recipient_key_id,
         };
         token
-            .mint(&recipient, amount)
+            .mint(&recipient, amount as u128)
             .map_err(|e| anyhow::anyhow!("POUW SOV mint failed: {}", e))?;
         Ok(())
     }

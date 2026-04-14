@@ -37,8 +37,9 @@ use std::collections::HashMap;
 // CRITICAL CONSTANTS - NEVER CHANGE
 // ============================================================================
 
-/// Whole-token CBE supply target shared with the canonical tokenomics constants.
-pub const CBE_TOTAL_SUPPLY_TOKENS: u64 = lib_types::CBE_TOTAL_SUPPLY_TOKENS as u64;
+/// Whole-token CBE supply target (100 billion CBE).
+/// CBE is a DAO token — its constants are self-contained here, not in lib-types.
+pub const CBE_TOTAL_SUPPLY_TOKENS: u64 = 100_000_000_000;
 
 /// Smallest unit of legacy runtime CBE accounting: 1 CBE = 10^8 atoms.
 /// All balances and supply values are stored in atoms in this `u64` contract.

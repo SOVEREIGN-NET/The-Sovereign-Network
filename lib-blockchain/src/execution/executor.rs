@@ -347,27 +347,26 @@ impl BlockExecutor {
         recipient: &Address,
         amount: u128,
     ) -> Result<(), TxApplyError> {
-        let amount_u64 = u64::try_from(amount).map_err(|_| {
-            TxApplyError::InvalidType("SOV mint amount exceeds u64".to_string())
-        })?;
         let token_id = Self::canonical_sov_token_id();
         let mut contract = mutator
             .get_token_contract(&token_id)?
             .unwrap_or_else(crate::contracts::TokenContract::new_sov_native);
-        let current_supply = mutator.get_token_supply(&token_id)?.unwrap_or(contract.total_supply);
-        let new_supply = current_supply.checked_add(amount_u64).ok_or_else(|| {
+        let current_supply_u64 = mutator.get_token_supply(&token_id)?.unwrap_or(contract.total_supply as u64);
+        let current_supply = current_supply_u64 as u128;
+        let amount_u128 = amount;
+        let new_supply = current_supply.checked_add(amount_u128).ok_or_else(|| {
             TxApplyError::InvalidType("SOV total supply overflow".to_string())
         })?;
-        let balance = mutator.get_token_balance(&token_id, recipient)?;
+        let balance = mutator.get_token_balance(&token_id, recipient)? as u128;
         let recipient_pk = lib_crypto::PublicKey {
             dilithium_pk: [0u8; 2592],
             kyber_pk: [0u8; 1568],
             key_id: recipient.0,
         };
         contract.total_supply = new_supply;
-        let new_balance = balance + amount_u64;
+        let new_balance = balance + amount_u128;
         contract.balances.insert(recipient_pk, new_balance);
-        mutator.put_token_supply(&token_id, new_supply)?;
+        mutator.put_token_supply(&token_id, new_supply as u64)?;
         mutator.put_token_contract(&contract)?;
         Ok(())
     }
@@ -2385,8 +2384,8 @@ impl BlockExecutor {
                 } else {
                     payload.decimals
                 };
-                token.max_supply = payload.initial_supply;
-                token.mint(&creator, creator_allocation).map_err(|e| {
+                token.max_supply = payload.initial_supply as u128;
+                token.mint(&creator, creator_allocation as u128).map_err(|e| {
                     TxApplyError::Internal(format!("TokenCreation mint failed: {e}"))
                 })?;
                 let treasury_pk = lib_crypto::PublicKey {
@@ -2394,7 +2393,7 @@ impl BlockExecutor {
                     kyber_pk: [0u8; 1568],
                     key_id: payload.treasury_recipient,
                 };
-                token.mint(&treasury_pk, treasury_allocation).map_err(|e| {
+                token.mint(&treasury_pk, treasury_allocation as u128).map_err(|e| {
                     TxApplyError::Internal(format!("TokenCreation treasury mint failed: {e}"))
                 })?;
 
