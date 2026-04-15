@@ -5257,8 +5257,8 @@ mod tests {
         );
     }
 
-    /// Epic E end-to-end integration: real Plonky2 transaction proof flows through
-    /// fee calculation and executor block application.
+    /// Epic E/F end-to-end integration: real Plonky2 transaction proof with
+    /// Merkle inclusion flows through fee calculation and executor block application.
     #[test]
     #[cfg(feature = "real-proofs")]
     fn test_real_zk_transaction_proof_end_to_end() {
@@ -5293,15 +5293,37 @@ mod tests {
         let receiver_blinding = [8u8; 32];
         let nullifier = [9u8; 32];
 
-        // 1. Generate a real ZK transaction proof
-        let zk_proof = ZkTransactionProof::prove_transaction(
+        // Derive secrets for Merkle leaf computation
+        let sender_secret =
+            u64::from_le_bytes(sender_blinding[0..8].try_into().unwrap_or([0u8; 8]));
+        let nullifier_seed = u64::from_le_bytes(nullifier[0..8].try_into().unwrap_or([0u8; 8]));
+
+        // Build a real Merkle tree for the UTXO set.
+        // The circuit leaf is [nullifier_seed, sender_secret, sender_balance].
+        let real_leaf_index = 5usize;
+        let leaves: Vec<Vec<u64>> = (0..16)
+            .map(|i| {
+                if i == real_leaf_index {
+                    vec![nullifier_seed, sender_secret, sender_balance]
+                } else {
+                    vec![i as u64, (i + 100) as u64, 0]
+                }
+            })
+            .collect();
+        let (merkle_root, siblings) =
+            lib_proofs::transaction::circuit::real::build_merkle_tree(&leaves, real_leaf_index)
+                .expect("Merkle tree build should succeed");
+
+        // 1. Generate a real ZK transaction proof with Merkle inclusion
+        let zk_proof = ZkTransactionProof::prove_transaction_with_merkle(
             sender_balance,
-            receiver_balance,
             amount,
             fee,
-            sender_blinding,
-            receiver_blinding,
-            nullifier,
+            sender_secret,
+            nullifier_seed,
+            merkle_root,
+            real_leaf_index as u32,
+            &siblings,
         )
         .expect("Real proof generation should succeed");
 

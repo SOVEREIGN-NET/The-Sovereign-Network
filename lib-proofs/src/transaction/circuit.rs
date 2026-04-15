@@ -255,6 +255,54 @@ pub mod real {
             .map_err(|e| anyhow::anyhow!("Plonky2 verification failed: {:?}", e))
     }
 
+    /// Build a Poseidon Merkle tree from leaf data and return the root + siblings
+    /// for the requested leaf index.  Leaves are automatically padded to the next
+    /// power of two up to `1 << MERKLE_DEPTH`.
+    pub fn build_merkle_tree(
+        leaves: &[Vec<u64>],
+        leaf_index: usize,
+    ) -> anyhow::Result<([u64; 4], Vec<[u64; 4]>)> {
+        use plonky2::hash::merkle_tree::MerkleTree;
+        use plonky2::hash::poseidon::PoseidonHash;
+        use plonky2::field::types::{Field, PrimeField64};
+
+        let max_leaves = 1usize << MERKLE_DEPTH;
+        if leaves.is_empty() || leaves.len() > max_leaves {
+            return Err(anyhow::anyhow!(
+                "Leaf count {} out of range [1, {}]",
+                leaves.len(),
+                max_leaves
+            ));
+        }
+        if leaf_index >= leaves.len() {
+            return Err(anyhow::anyhow!(
+                "leaf_index {} out of range [0, {})",
+                leaf_index,
+                leaves.len()
+            ));
+        }
+
+        let mut padded: Vec<Vec<F>> = leaves
+            .iter()
+            .map(|leaf| leaf.iter().map(|&v| F::from_canonical_u64(v)).collect())
+            .collect();
+        // Pad to next power of two
+        let target_len = padded.len().next_power_of_two();
+        while padded.len() < target_len {
+            padded.push(vec![F::ZERO]);
+        }
+
+        let tree = MerkleTree::<F, PoseidonHash>::new(padded, 0);
+        let proof = tree.prove(leaf_index);
+        let root = tree.cap.0[0].elements.map(|f| f.to_canonical_u64());
+
+        let mut siblings = Vec::with_capacity(proof.siblings.len());
+        for s in &proof.siblings {
+            siblings.push(s.elements.map(|f| f.to_canonical_u64()));
+        }
+        Ok((root, siblings))
+    }
+
     /// Compute the Merkle root from a leaf, leaf index, and sibling path.
     pub fn compute_merkle_root(
         leaf_data: &[F],
@@ -405,7 +453,7 @@ pub mod real {
 
             pw.set_target(t.sender_secret, sender_secret).unwrap();
             pw.set_target(t.nullifier_seed, nullifier_seed).unwrap();
-            for (i, bit_target) in t.leaf_index_bits.iter().enumerate() {
+            for (_i, bit_target) in t.leaf_index_bits.iter().enumerate() {
                 pw.set_bool_target(BoolTarget::new_unsafe(*bit_target), false).unwrap();
             }
             for sibling in &t.merkle_siblings {
