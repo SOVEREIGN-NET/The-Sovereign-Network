@@ -24,6 +24,10 @@ pub mod real {
     type C = PoseidonGoldilocksConfig;
     const D: usize = 2;
 
+    /// Magic header for transaction circuit cache files.
+    /// 8 bytes: "ZHTP_TX1" (version 1 of the tx circuit cache format)
+    const CACHE_MAGIC: &[u8; 8] = b"ZHTP_TX1";
+
     /// Load CircuitData from a cached file.
     pub fn load_circuit_data<P: AsRef<Path>>(path: P) -> anyhow::Result<CircuitData<F, C, D>> {
         let bytes = std::fs::read(path)?;
@@ -54,6 +58,7 @@ pub mod real {
     /// Load a full transaction circuit (data + targets) from a cached file.
     ///
     /// File format:
+    ///   [8 bytes: magic header "ZHTP_TX1"]
     ///   [8 bytes: targets bincode length (little-endian u64)]
     ///   [targets_len bytes: bincode-serialized TransactionTargets]
     ///   [remaining bytes: native Plonky2 CircuitData]
@@ -62,6 +67,16 @@ pub mod real {
     ) -> anyhow::Result<(CircuitData<F, C, D>, TransactionTargets)> {
         let bytes = std::fs::read(path)?;
         let mut cursor = std::io::Cursor::new(&bytes);
+
+        let mut magic_buf = [0u8; 8];
+        cursor.read_exact(&mut magic_buf)?;
+        if &magic_buf != CACHE_MAGIC {
+            return Err(anyhow::anyhow!(
+                "Cache file version mismatch (expected {:?}, got {:?}). Rebuilding circuit...",
+                CACHE_MAGIC,
+                magic_buf
+            ));
+        }
 
         let mut len_buf = [0u8; 8];
         cursor.read_exact(&mut len_buf)?;
@@ -98,6 +113,7 @@ pub mod real {
             .map_err(|e| anyhow::anyhow!("CircuitData serialization failed: {:?}", e))?;
 
         let mut file = std::fs::File::create(path)?;
+        file.write_all(CACHE_MAGIC)?;
         file.write_all(&(targets_bytes.len() as u64).to_le_bytes())?;
         file.write_all(&targets_bytes)?;
         file.write_all(&data_bytes)?;
@@ -167,6 +183,16 @@ pub mod real {
             let proof = loaded_data.prove(pw).unwrap();
             loaded_data.verify(proof).unwrap();
 
+            let _ = std::fs::remove_file(&tmp);
+        }
+
+        #[test]
+        fn test_transaction_circuit_cache_rejects_bad_magic() {
+            let tmp = std::env::temp_dir().join("zhtp_tx_circuit_bad_magic_test.bin");
+            // Write garbage bytes that don't match the expected magic
+            std::fs::write(&tmp, b"OLD_FMT_XX").unwrap();
+            let result = load_transaction_circuit(&tmp);
+            assert!(result.is_err(), "Should reject cache file with wrong magic header");
             let _ = std::fs::remove_file(&tmp);
         }
     }

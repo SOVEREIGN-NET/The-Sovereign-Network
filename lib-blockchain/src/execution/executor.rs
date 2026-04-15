@@ -1207,6 +1207,31 @@ impl BlockExecutor {
         }
 
         // =========================================================================
+        // ZK Proof Validation (Epic E)
+        // =========================================================================
+        // Verify real ZK transaction proofs when present.
+        // Empty/mock proofs are skipped for backward compatibility with test fixtures.
+        for input in &tx.inputs {
+            if !input.zk_proof.has_empty_proofs() {
+                match lib_proofs::transaction::ZkTransactionProof::verify_transaction(&input.zk_proof)
+                {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        return Err(TxApplyError::InvalidType(
+                            "Invalid ZK proof".to_string(),
+                        ))
+                    }
+                    Err(e) => {
+                        return Err(TxApplyError::InvalidType(format!(
+                            "ZK verification failed: {}",
+                            e
+                        )))
+                    }
+                }
+            }
+        }
+
+        // =========================================================================
         // Fee Validation (Phase 4: Fee Model v2)
         // =========================================================================
         // BlockExecutor MUST reject: tx.fee < compute_fee_v2(...)
