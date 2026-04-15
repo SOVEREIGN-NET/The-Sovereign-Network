@@ -139,7 +139,7 @@ pub fn set_fee_config_from_json_with_meta(json: &str) -> Result<FeeConfigMeta, S
 pub struct CreateTokenParams {
     pub name: String,
     pub symbol: String,
-    pub initial_supply: u64,
+    pub initial_supply: u128,
     pub decimals: u8,
 }
 
@@ -709,7 +709,7 @@ pub fn build_create_token_tx(
     identity: &Identity,
     name: &str,
     symbol: &str,
-    initial_supply: u64,
+    initial_supply: u128,
     decimals: u8,
     treasury_recipient: [u8; 32],
     chain_id: u8,
@@ -722,7 +722,7 @@ pub fn build_create_token_tx(
     let payload = TokenCreationPayloadV1 {
         name: name.to_string(),
         symbol: symbol.to_string(),
-        initial_supply,
+        initial_supply: initial_supply as u64, // TODO: widen TokenCreationPayloadV1 to u128
         decimals,
         treasury_allocation_bps: 2_000,
         treasury_recipient,

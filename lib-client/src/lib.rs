@@ -1457,7 +1457,7 @@ pub extern "C" fn zhtp_client_build_token_create(
     handle: *const IdentityHandle,
     name: *const std::ffi::c_char,
     symbol: *const std::ffi::c_char,
-    initial_supply: u64,
+    initial_supply: u128,
     decimals: u8,
     treasury_recipient: *const u8,
     chain_id: u8,
