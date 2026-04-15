@@ -19,9 +19,10 @@ use lib_blockchain::transaction::{
     ContractDeploymentPayloadV1, DecodedContractExecutionMemo, Transaction,
     CONTRACT_DEPLOYMENT_MEMO_PREFIX,
 };
+use lib_blockchain::storage::UtxoMerkleProof;
 use lib_blockchain::types::Hash;
 use lib_blockchain::types::{transaction_type::TransactionType, ContractType};
-use lib_blockchain::Blockchain;
+use lib_blockchain::{Blockchain, storage::{OutPoint, TxHash}};
 use crate::config::Environment;
 
 // Access control imports
@@ -185,6 +186,12 @@ impl ZhtpRequestHandler for BlockchainHandler {
             }
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/blockchain/balance/") => {
                 self.handle_get_balance(request).await
+            }
+            (ZhtpMethod::Get, path)
+                if path.starts_with("/api/v1/blockchain/utxo/")
+                    && path.ends_with("/merkle-proof") =>
+            {
+                self.handle_get_utxo_merkle_proof(request).await
             }
             (ZhtpMethod::Get, "/api/v1/blockchain/mempool") => {
                 self.handle_get_mempool_status(request).await
@@ -400,6 +407,16 @@ struct BalanceResponse {
     pending_balance: u64,
     transaction_count: u64,
     note: Option<String>,
+}
+
+#[derive(Serialize)]
+struct UtxoMerkleProofResponse {
+    status: String,
+    tx_hash: String,
+    output_index: u32,
+    leaf_index: u64,
+    merkle_root: String,
+    siblings: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -1703,6 +1720,78 @@ impl BlockchainHandler {
         };
 
         let json_response = serde_json::to_vec(&balance_info)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// Handle UTXO Merkle proof query for ZK transaction proofs.
+    ///
+    /// Path: /api/v1/blockchain/utxo/{tx_hash}/{output_index}/merkle-proof
+    async fn handle_get_utxo_merkle_proof(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        // Extract tx_hash and output_index from path
+        let path_parts: Vec<&str> = request.uri.split('/').collect();
+        let tx_hash_str = path_parts
+            .get(5)
+            .ok_or_else(|| anyhow::anyhow!("tx_hash required"))?;
+        let output_index_str = path_parts
+            .get(6)
+            .ok_or_else(|| anyhow::anyhow!("output_index required"))?;
+        let output_index: u32 = output_index_str
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Invalid output_index"))?;
+
+        let tx_hash_bytes = if tx_hash_str.len() == 64 {
+            hex::decode(tx_hash_str)
+                .map_err(|_| anyhow::anyhow!("Invalid tx_hash hex"))?
+        } else {
+            return Err(anyhow::anyhow!("tx_hash must be 64 hex chars"));
+        };
+
+        if tx_hash_bytes.len() != 32 {
+            return Err(anyhow::anyhow!("tx_hash must decode to 32 bytes"));
+        }
+
+        let mut tx_hash_arr = [0u8; 32];
+        tx_hash_arr.copy_from_slice(&tx_hash_bytes);
+        let outpoint = OutPoint::new(TxHash::new(tx_hash_arr), output_index);
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        let response = if let Some(ref store) = blockchain.store {
+            match store.get_utxo_merkle_proof(&outpoint)? {
+                Some(proof) => UtxoMerkleProofResponse {
+                    status: "ok".to_string(),
+                    tx_hash: tx_hash_str.to_string(),
+                    output_index,
+                    leaf_index: proof.leaf_index,
+                    merkle_root: hex::encode(&proof.root),
+                    siblings: proof.siblings.iter().map(|s| hex::encode(s)).collect(),
+                },
+                None => UtxoMerkleProofResponse {
+                    status: "not_found".to_string(),
+                    tx_hash: tx_hash_str.to_string(),
+                    output_index,
+                    leaf_index: 0,
+                    merkle_root: String::new(),
+                    siblings: vec![],
+                },
+            }
+        } else {
+            UtxoMerkleProofResponse {
+                status: "store_unavailable".to_string(),
+                tx_hash: tx_hash_str.to_string(),
+                output_index,
+                leaf_index: 0,
+                merkle_root: String::new(),
+                siblings: vec![],
+            }
+        };
+
+        let json_response = serde_json::to_vec(&response)?;
         Ok(ZhtpResponse::success_with_content_type(
             json_response,
             "application/json".to_string(),
@@ -3271,5 +3360,32 @@ mod tests {
         
         // Verify chain_id is sourced from environment
         assert_eq!(handler.chain_id(), Environment::Development.chain_id());
+    }
+
+    #[test]
+    fn handler_claims_utxo_merkle_proof_endpoint() {
+        use crate::config::Environment;
+        
+        let handler = BlockchainHandler::new(
+            Arc::new(RwLock::new(Blockchain::new().expect("Blockchain::new"))),
+            Environment::Development,
+            Arc::new(RwLock::new(lib_identity::IdentityManager::new())),
+        );
+
+        let merkle_proof_request = ZhtpRequest {
+            method: ZhtpMethod::Get,
+            uri: "/api/v1/blockchain/utxo/abcd1234/0/merkle-proof".to_string(),
+            version: "ZHTP/1.0".to_string(),
+            headers: ZhtpHeaders::default(),
+            body: Vec::new(),
+            timestamp: 0,
+            requester: None,
+            auth_proof: None,
+        };
+        
+        assert!(
+            handler.can_handle(&merkle_proof_request),
+            "handler must claim UTXO merkle-proof endpoint"
+        );
     }
 }

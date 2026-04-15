@@ -6,8 +6,44 @@
 //!   3. The UTXO leaf [nullifier_seed, sender_secret, sender_balance] is present
 //!      in the Merkle tree with root `merkle_root` at `leaf_index`.
 
+/// Fixed Merkle tree depth for the UTXO set.
+/// Production will use a larger depth (e.g. 32-40); 4 is used here
+/// to keep tests and benchmarks fast while proving the concept.
+pub const MERKLE_DEPTH: usize = 4;
+
+#[cfg(not(feature = "real-proofs"))]
+pub mod real {
+    use super::MERKLE_DEPTH;
+
+    /// Stub for non-real-proofs builds.
+    pub fn build_merkle_tree(
+        _leaves: &[Vec<u64>],
+        _leaf_index: usize,
+    ) -> anyhow::Result<([u64; 4], Vec<[u64; 4]>)> {
+        Ok(([0u64; 4], vec![[0u64; 4]; MERKLE_DEPTH]))
+    }
+
+    /// Stub for non-real-proofs builds.
+    pub fn compute_leaf_commitment(
+        _nullifier_seed: u64,
+        _sender_secret: u64,
+        _sender_balance: u64,
+    ) -> [u64; 4] {
+        [0u64; 4]
+    }
+
+    /// Stub for non-real-proofs builds.
+    pub fn build_merkle_tree_from_hashes(
+        _leaves: &[[u64; 4]],
+        _leaf_index: usize,
+    ) -> anyhow::Result<([u64; 4], Vec<[u64; 4]>)> {
+        Ok(([0u64; 4], vec![[0u64; 4]; MERKLE_DEPTH]))
+    }
+}
+
 #[cfg(feature = "real-proofs")]
 pub mod real {
+    use super::MERKLE_DEPTH;
     use plonky2::{
         field::{
             goldilocks_field::GoldilocksField,
@@ -39,10 +75,6 @@ pub mod real {
     /// We use 63-bit range checks because the Goldilocks prime is
     /// `p = 2^64 - 2^32 + 1`, which is slightly less than `2^64`.
     const NUM_BITS: usize = 63;
-    /// Fixed Merkle tree depth for the UTXO set.
-    /// Production will use a larger depth (e.g. 32-40); 4 is used here
-    /// to keep tests and benchmarks fast while proving the concept.
-    pub const MERKLE_DEPTH: usize = 4;
 
     /// Public inputs for a transaction proof.
     /// Order: [sender_balance, amount, fee, nullifier_seed_hash, merkle_root (4 elements)]

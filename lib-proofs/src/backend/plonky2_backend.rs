@@ -62,7 +62,7 @@ impl ProofBackend for Plonky2Backend {
         {
             use plonky2::field::goldilocks_field::GoldilocksField;
             use plonky2::field::types::Field;
-            use crate::transaction::circuit::real::MERKLE_DEPTH;
+            use crate::transaction::circuit::MERKLE_DEPTH;
 
             if merkle_siblings.len() != MERKLE_DEPTH {
                 return Err(anyhow::anyhow!(

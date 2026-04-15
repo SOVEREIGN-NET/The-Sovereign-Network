@@ -149,7 +149,7 @@ pub mod real {
             pw.set_target(t.sender_secret, GF::from_canonical_u64(42)).unwrap();
             pw.set_target(t.nullifier_seed, GF::from_canonical_u64(1)).unwrap();
 
-            let siblings = [[GF::ZERO; 4]; crate::transaction::circuit::real::MERKLE_DEPTH];
+            let siblings = [[GF::ZERO; 4]; crate::transaction::circuit::MERKLE_DEPTH];
             let merkle_root = crate::transaction::circuit::real::compute_merkle_root(
                 GF::from_canonical_u64(1),
                 GF::from_canonical_u64(42),
@@ -196,7 +196,7 @@ pub mod real {
             pw.set_target(loaded_targets.nullifier_seed, GF::from_canonical_u64(1))
                 .unwrap();
 
-            let siblings = [[GF::ZERO; 4]; crate::transaction::circuit::real::MERKLE_DEPTH];
+            let siblings = [[GF::ZERO; 4]; crate::transaction::circuit::MERKLE_DEPTH];
             let merkle_root = crate::transaction::circuit::real::compute_merkle_root(
                 GF::from_canonical_u64(1),
                 GF::from_canonical_u64(42),

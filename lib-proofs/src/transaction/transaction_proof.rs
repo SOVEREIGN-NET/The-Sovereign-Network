@@ -79,7 +79,7 @@ impl ZkTransactionProof {
         // Compute a consistent dummy Merkle proof so the circuit constraints
         // are satisfied even when no real UTXO tree is supplied.
         let leaf = vec![nullifier_seed, sender_secret, sender_balance];
-        let dummy_leaves: Vec<Vec<u64>> = (0..(1 << crate::transaction::circuit::real::MERKLE_DEPTH))
+        let dummy_leaves: Vec<Vec<u64>> = (0..(1 << crate::transaction::circuit::MERKLE_DEPTH))
             .map(|i| if i == 0 { leaf.clone() } else { vec![0u64] })
             .collect();
         let (merkle_root, siblings) =

@@ -264,7 +264,7 @@ impl ZkProof {
         let nullifier_seed = public_inputs.get(4).copied().unwrap_or(0);
 
         let leaf = vec![nullifier_seed, sender_secret, sender_balance];
-        let dummy_leaves: Vec<Vec<u64>> = (0..(1 << crate::transaction::circuit::real::MERKLE_DEPTH))
+        let dummy_leaves: Vec<Vec<u64>> = (0..(1 << crate::transaction::circuit::MERKLE_DEPTH))
             .map(|i| if i == 0 { leaf.clone() } else { vec![0u64] })
             .collect();
         let (merkle_root, merkle_siblings) =
