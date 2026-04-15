@@ -1053,6 +1053,7 @@ impl TransactionValidator {
             Ok(is_valid) => {
                 if !is_valid {
                     return Err(ValidationError::InvalidZkProof);
+
                 }
             }
             Err(e) => {
@@ -1080,6 +1081,7 @@ impl TransactionValidator {
                     println!(" DEBUG: Amount range proof INVALID - returning error");
                     log::error!("Amount range proof INVALID - returning error");
                     return Err(ValidationError::InvalidZkProof);
+
                 }
                 println!(" DEBUG: Amount range proof VALID");
                 log::info!("Amount range proof VALID");

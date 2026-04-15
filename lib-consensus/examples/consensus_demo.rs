@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
         //   consensus_key  (byte pattern i*3+0): BFT vote-signing key
         //   networking_key (byte pattern i*3+1): P2P transport identity key
         //   rewards_key    (byte pattern i*3+2): Rewards wallet public key
-        let consensus_key = vec![(i * 3) as u8; 32];
+        let consensus_key = [(i * 3) as u8; 2592];
         let networking_key = vec![(i * 3 + 1) as u8; 32];
         let rewards_key = vec![(i * 3 + 2) as u8; 32];
         let commission_rate = 5; // 5% commission

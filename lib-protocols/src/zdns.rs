@@ -595,6 +595,7 @@ impl ZdnsServer {
             return Ok(());
         }
 
+
         for record in records {
             let proof_bytes = base64::Engine::decode(
                 &base64::engine::general_purpose::STANDARD,
@@ -610,6 +611,7 @@ impl ZdnsServer {
             }
 
             if zk_proof.backend_proof.is_some() {
+
                 // NOTE: A dedicated DNS ownership proof circuit is required here.
                 // Using storage access circuit is semantically incorrect.
                 return Err(ProtocolError::ZkProofError(
@@ -618,6 +620,7 @@ impl ZdnsServer {
             } else {
                 return Err(ProtocolError::ZkProofError(
                     "Backend proof required".to_string(),
+
                 ));
             }
         }

@@ -844,6 +844,7 @@ impl<B: StorageBackend> DhtStorage<B> {
             return zk_proof
                 .verify()
                 .map_err(|e| anyhow!("ZK proof verification failed: {}", e));
+
         }
 
         // Fallback to traditional ZK proof verification

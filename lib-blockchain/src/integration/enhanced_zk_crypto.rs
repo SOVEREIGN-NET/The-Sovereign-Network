@@ -188,6 +188,7 @@ impl EnhancedTransactionValidator {
                     "Nullifier proof verification failed: {}",
                     e
                 ));
+
             }
         }
 
@@ -209,6 +210,7 @@ impl EnhancedTransactionValidator {
                     "Amount range proof verification failed: {}",
                     e
                 ));
+
             }
         }
 
@@ -229,6 +231,7 @@ impl EnhancedTransactionValidator {
                 return Err(anyhow::anyhow!(
                     "Spend authorization proof verification failed: {}",
                     e
+
                 ));
             }
         }

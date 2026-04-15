@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 // Use proper ZK types from lib-proofs module
 use lib_proofs::{TransactionVerifier, ZkProof, ZkTransactionProof};
 
+
 /// ZHTP cryptographic context
 #[derive(Debug, Clone)]
 pub struct ZhtpCrypto {
@@ -131,6 +132,7 @@ impl ZhtpCrypto {
         proof_data: &[u8],
         public_inputs: &[u8],
     ) -> Result<bool> {
+
         // Try to deserialize as ZkProof from lib-proofs
         let zk_proof = if let Ok(proof) = serde_json::from_slice::<ZkProof>(proof_data) {
             proof

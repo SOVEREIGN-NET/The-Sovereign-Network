@@ -1580,6 +1580,7 @@ impl ZhtpHandlers {
             Err(e) => {
                 tracing::debug!("Plonky2 verification failed: {}", e);
                 // Fall through to other verification methods
+
             }
         }
 

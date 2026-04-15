@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, Result};
 use lib_crypto::hash_blake3;
-use lib_proofs::{backend::{get_backend, BackendProof}, ZkProof};
+use lib_proofs::{backend::get_backend, ZkProof};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 

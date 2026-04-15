@@ -15,6 +15,7 @@ use std::collections::HashMap;
 // Import ZK proof types from lib-proofs module
 use lib_proofs::ZkProof;
 
+
 /// Validation configuration and rules
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationConfig {
@@ -599,6 +600,7 @@ impl ZhtpValidator {
             // Generate public inputs from request
             let public_inputs_hash = self.generate_public_inputs_from_request(request);
 
+
             // If this is a backend proof, use the verifier
             if zk_proof.backend_proof.is_some() {
                 match zk_proof.verify() {
@@ -606,6 +608,7 @@ impl ZhtpValidator {
                         if !is_valid {
                             return Err(ProtocolError::ZkProofError(
                                 "ZK proof verification failed".to_string(),
+
                             ));
                         }
                     }
