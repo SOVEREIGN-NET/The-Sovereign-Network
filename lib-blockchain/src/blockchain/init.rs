@@ -126,8 +126,48 @@ impl Blockchain {
     )]
     #[allow(dead_code)]
     pub(super) fn initialize_cbe_genesis(&mut self) {
-        // No-op: cbe_token field removed from Blockchain struct.
-        // CBE bonding curve entry is set up by GenesisConfig::build_block0().
+        use crate::contracts::bonding_curve::{
+            BondingCurveToken, CurveType, PiecewiseLinearCurve, Threshold,
+        };
+        use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
+
+        let token_id = Self::derive_cbe_token_id();
+        if self.bonding_curve_registry.contains(&token_id) {
+            return; // Already registered — idempotent
+        }
+
+        let genesis_creator = crate::integration::crypto_integration::PublicKey {
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
+            key_id: [0u8; 32],
+        };
+        let curve = CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default());
+        let threshold = Threshold::ReserveAmount(2_745_966_000);
+
+        match BondingCurveToken::deploy(
+            token_id,
+            CBE_NAME.to_string(),
+            CBE_SYMBOL.to_string(),
+            curve,
+            threshold,
+            true,
+            genesis_creator,
+            "did:zhtp:genesis".to_string(),
+            0,
+            self.get_genesis_timestamp(),
+        ) {
+            Ok(token) => {
+                if let Err(e) = self.bonding_curve_registry.register(token) {
+                    tracing::warn!("Failed to register CBE bonding curve: {}", e);
+                } else {
+                    tracing::info!(
+                        "CBE genesis bonding curve initialized: {}",
+                        hex::encode(&token_id[..8])
+                    );
+                }
+            }
+            Err(e) => tracing::warn!("Failed to deploy CBE bonding curve: {}", e),
+        }
     }
 
     #[deprecated(
