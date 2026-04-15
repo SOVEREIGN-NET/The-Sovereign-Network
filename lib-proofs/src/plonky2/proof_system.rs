@@ -233,42 +233,67 @@ impl ZkCircuit {
         }
     }
 
-    /// Generate a proof for given inputs
+    /// Generate a proof for given inputs.
+    ///
+    /// In production builds (without `fake-proofs` feature), this returns an error
+    /// because the stub proof generation has been disabled.
     pub fn prove(&self, inputs: &[u64], private_inputs: &[u64]) -> Result<Plonky2Proof> {
-        // Production proof generation would use actual Plonky2 here
-        let proof_data = hash_blake3(&format!("{:?}{:?}", inputs, private_inputs).as_bytes());
+        #[cfg(not(any(test, feature = "fake-proofs")))]
+        {
+            return Err(anyhow::anyhow!(
+                "ZkCircuit::prove() is disabled in production builds. \
+                 Real ZK backend not yet integrated."
+            ));
+        }
 
-        Ok(Plonky2Proof {
-            proof: proof_data.to_vec(),
-            public_inputs: inputs.to_vec(),
-            verification_key_hash: self.circuit_hash,
-            proof_system: "Plonky2".to_string(),
-            generated_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs(),
-            circuit_id: format!(
-                "{:x}",
-                u64::from_le_bytes(self.circuit_hash[0..8].try_into()?)
-            ),
-            private_input_commitment: hash_blake3(&format!("{:?}", private_inputs).as_bytes()),
-        })
+        #[cfg(any(test, feature = "fake-proofs"))]
+        {
+            let proof_data = hash_blake3(&format!("{:?}{:?}", inputs, private_inputs).as_bytes());
+
+            Ok(Plonky2Proof {
+                proof: proof_data.to_vec(),
+                public_inputs: inputs.to_vec(),
+                verification_key_hash: self.circuit_hash,
+                proof_system: "Plonky2".to_string(),
+                generated_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_secs(),
+                circuit_id: format!(
+                    "{:x}",
+                    u64::from_le_bytes(self.circuit_hash[0..8].try_into()?)
+                ),
+                private_input_commitment: hash_blake3(&format!("{:?}", private_inputs).as_bytes()),
+            })
+        }
     }
 
-    /// Verify a proof
+    /// Verify a proof.
+    ///
+    /// In production builds (without `fake-proofs` feature), this returns an error
+    /// because the stub verification has been disabled.
     pub fn verify(&self, proof: &Plonky2Proof) -> Result<bool> {
-        // Basic verification checks
-        if proof.verification_key_hash != self.circuit_hash {
-            return Ok(false);
-        }
-        if proof.proof_system != "Plonky2" {
-            return Ok(false);
-        }
-        if proof.public_inputs.len() != self.config.num_public_inputs {
-            return Ok(false);
+        #[cfg(not(any(test, feature = "fake-proofs")))]
+        {
+            return Err(anyhow::anyhow!(
+                "ZkCircuit::verify() is disabled in production builds. \
+                 Real ZK backend not yet integrated."
+            ));
         }
 
-        // In production, this would use actual Plonky2 verification
-        Ok(true)
+        #[cfg(any(test, feature = "fake-proofs"))]
+        {
+            if proof.verification_key_hash != self.circuit_hash {
+                return Ok(false);
+            }
+            if proof.proof_system != "Plonky2" {
+                return Ok(false);
+            }
+            if proof.public_inputs.len() != self.config.num_public_inputs {
+                return Ok(false);
+            }
+
+            Ok(true)
+        }
     }
 
     /// Get circuit statistics
@@ -358,6 +383,21 @@ impl ZkProofSystem {
             _verification_keys: verification_keys,
             proof_stats: ZkProofStats::default(),
         })
+    }
+
+    /// Guard: reject stub proof generation/verification in production builds.
+    fn ensure_stub_allowed() -> Result<()> {
+        #[cfg(not(any(test, feature = "fake-proofs")))]
+        {
+            return Err(anyhow::anyhow!(
+                "Stub ZK proof operations are disabled in production builds. \
+                 Real ZK backend not yet integrated."
+            ));
+        }
+        #[cfg(any(test, feature = "fake-proofs"))]
+        {
+            Ok(())
+        }
     }
 
     /// Setup transaction circuit with cryptographic constraints
@@ -515,6 +555,7 @@ impl ZkProofSystem {
         sender_secret: u64,
         nullifier_seed: u64,
     ) -> Result<Plonky2Proof> {
+        Self::ensure_stub_allowed()?;
         if !self.initialized {
             return Err(anyhow!("ZK system not initialized"));
         }
@@ -568,6 +609,7 @@ impl ZkProofSystem {
 
     /// Verify transaction proof (production-optimized)
     pub fn verify_transaction(&self, proof: &Plonky2Proof) -> Result<bool> {
+        Self::ensure_stub_allowed()?;
         log::info!("ZkProofSystem::verify_transaction starting");
 
         if !self.initialized {
@@ -769,6 +811,7 @@ impl ZkProofSystem {
         min_value: u64,
         max_value: u64,
     ) -> Result<Plonky2Proof> {
+        Self::ensure_stub_allowed()?;
         if !self.initialized {
             return Err(anyhow!("ZK system not initialized"));
         }
@@ -806,6 +849,7 @@ impl ZkProofSystem {
 
     /// Verify range proof (production-optimized)
     pub fn verify_range(&self, proof: &Plonky2Proof) -> Result<bool> {
+        Self::ensure_stub_allowed()?;
         if !self.initialized {
             return Ok(false);
         }
@@ -903,6 +947,7 @@ impl ZkProofSystem {
 
     /// Verify identity proof (production-optimized)
     pub fn verify_identity(&self, proof: &Plonky2Proof) -> Result<bool> {
+        Self::ensure_stub_allowed()?;
         if !self.initialized {
             return Ok(false);
         }
@@ -947,6 +992,7 @@ impl ZkProofSystem {
         permission_level: u64,
         required_permission: u64,
     ) -> Result<Plonky2Proof> {
+        Self::ensure_stub_allowed()?;
         if !self.initialized {
             return Err(anyhow!("ZK system not initialized"));
         }
@@ -980,6 +1026,7 @@ impl ZkProofSystem {
     /// Verify storage access proof (production-optimized)
     /// Exact implementation from original zk_plonky2.rs
     pub fn verify_storage_access(&self, proof: &Plonky2Proof) -> Result<bool> {
+        Self::ensure_stub_allowed()?;
         if !self.initialized {
             return Ok(false);
         }
@@ -1060,6 +1107,7 @@ impl ZkProofSystem {
     /// Verify zero-knowledge routing proof
     /// Exact implementation from original zk_plonky2.rs
     pub fn verify_routing(&self, proof: &Plonky2Proof) -> Result<bool> {
+        Self::ensure_stub_allowed()?;
         if !self.initialized {
             return Ok(false);
         }
@@ -1178,6 +1226,7 @@ impl ZkProofSystem {
     /// Verify zero-knowledge data integrity proof
     /// Exact implementation from original zk_plonky2.rs
     pub fn verify_data_integrity(&self, proof: &Plonky2Proof) -> Result<bool> {
+        Self::ensure_stub_allowed()?;
         if !self.initialized {
             return Ok(false);
         }
@@ -1293,12 +1342,73 @@ impl ZkProofSystem {
         self.verify_data_integrity(proof)
     }
 
+    /// Generate Merkle inclusion proof
+    pub fn prove_merkle(
+        &self,
+        leaf: [u8; 32],
+        path: &[[u8; 32]],
+        indices: &[bool],
+        root: [u8; 32],
+    ) -> Result<Plonky2Proof> {
+        Self::ensure_stub_allowed()?;
+        if !self.initialized {
+            return Err(anyhow!("ZK system not initialized"));
+        }
+
+        let mut proof_data = Vec::new();
+        proof_data.extend_from_slice(&leaf);
+        for node in path {
+            proof_data.extend_from_slice(node);
+        }
+        for &idx in indices {
+            proof_data.push(idx as u8);
+        }
+        proof_data.extend_from_slice(&root);
+
+        let proof_hash = hash_blake3(&proof_data);
+
+        Ok(Plonky2Proof {
+            proof: proof_data,
+            public_inputs: vec![path.len() as u64],
+            verification_key_hash: proof_hash,
+            proof_system: "ZHTP-Optimized-Merkle".to_string(),
+            generated_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs(),
+            circuit_id: "merkle_v1".to_string(),
+            private_input_commitment: proof_hash,
+        })
+    }
+
+    /// Verify Merkle inclusion proof
+    pub fn verify_merkle(&self, proof: &Plonky2Proof, root: [u8; 32]) -> Result<bool> {
+        Self::ensure_stub_allowed()?;
+        if !self.initialized {
+            return Ok(false);
+        }
+
+        if proof.proof_system != "ZHTP-Optimized-Merkle" {
+            return Ok(false);
+        }
+
+        if proof.proof.len() < 64 || proof.public_inputs.len() != 1 {
+            return Ok(false);
+        }
+
+        // Verify the embedded root matches the expected root
+        let embedded_root = &proof.proof[proof.proof.len() - 32..];
+        Ok(embedded_root == root.as_slice())
+    }
+
     /// Get ZK proof statistics
     pub fn get_stats(&self) -> ZkProofStats {
         self.proof_stats.clone()
     }
 
-    /// Create a default/placeholder proof for development
+    /// Create a default/placeholder proof for development.
+    ///
+    /// **TEST / FAKE-PROOFS ONLY.** Unavailable in production builds.
+    #[cfg(any(test, feature = "fake-proofs"))]
     pub fn create_default_proof(circuit_id: &str) -> Plonky2Proof {
         let dummy_data = vec![0u8; 64];
         let dummy_hash = hash_blake3(&dummy_data);

@@ -480,8 +480,8 @@ pub struct WalletTransactionData {
     pub registration_fee: u64,
     /// Wallet capabilities flags
     pub capabilities: u32,
-    /// Initial balance (if any)
-    pub initial_balance: u64,
+    /// Initial balance (if any) — u128 to hold 18-decimal SOV amounts
+    pub initial_balance: u128,
 }
 
 /// Minimal wallet reference for blockchain sync (sensitive data moved to DHT)
@@ -500,7 +500,7 @@ pub struct WalletReference {
     /// Registration fee paid
     pub registration_fee: u64,
     /// Initial balance (source of truth for wallet balances in UTXO/Pedersen system)
-    pub initial_balance: u64,
+    pub initial_balance: u128,
 }
 
 /// Sensitive wallet data stored in encrypted DHT
@@ -514,8 +514,8 @@ pub struct WalletPrivateData {
     pub seed_commitment: Hash,
     /// Wallet capabilities flags
     pub capabilities: u32,
-    /// Initial balance (if any)
-    pub initial_balance: u64,
+    /// Initial balance (if any) — u128 to hold 18-decimal SOV amounts
+    pub initial_balance: u128,
     /// Private transaction history
     pub transaction_history: Vec<Hash>,
     /// Private notes/metadata
@@ -1542,8 +1542,20 @@ impl Transaction {
         }
     }
 
-    pub fn new_process_payroll(chain_id: u8, contract_id: [u8; 32], signature: Signature) -> Self {
-        let data = ProcessPayrollData { contract_id };
+    pub fn new_process_payroll(
+        chain_id: u8,
+        contract_id: [u8; 32],
+        amount_cbe: u128,
+        collaborator_address: [u8; 32],
+        deliverable_hash: [u8; 32],
+        signature: Signature,
+    ) -> Self {
+        let data = ProcessPayrollData {
+            contract_id,
+            amount_cbe,
+            collaborator_address,
+            deliverable_hash,
+        };
         Transaction {
             version: TX_VERSION_V8,
             chain_id,
@@ -2146,14 +2158,25 @@ pub struct CreateEmploymentContractData {
     pub profit_share_percentage: u16,
 }
 
-/// Payroll disbursement trigger data
+/// Payroll mint as a synthetic CBE bonding curve event (CBE spec §6).
 ///
-/// The block processor calls `EmploymentRegistry::process_payroll(contract_id, current_height)`.
-/// All amounts are computed by the contract; this payload only identifies which contract to pay.
+/// Mints `amount_cbe` (X) to the collaborator and routes 0.25X to the SOV
+/// treasury, recording a PRE_BACKED entry for the full 1.25X gross.  No SOV
+/// enters the system — s_c does not change.  A governance-approved deliverable
+/// hash must be recorded on-chain before the mint fires (protocol invariant).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessPayrollData {
-    /// Contract to process payroll for (32-byte contract_id from CreateEmploymentContract)
+    /// Employment contract that authorises this payroll (32-byte contract_id).
     pub contract_id: [u8; 32],
+    /// CBE amount the collaborator earns (X, in 18-decimal atoms).
+    #[serde(default)]
+    pub amount_cbe: u128,
+    /// Collaborator wallet address that receives X CBE.
+    #[serde(default)]
+    pub collaborator_address: [u8; 32],
+    /// Blake3 hash of the governance-approved deliverable.
+    #[serde(default)]
+    pub deliverable_hash: [u8; 32],
 }
 
 /// SOV staking to a sector DAO wallet

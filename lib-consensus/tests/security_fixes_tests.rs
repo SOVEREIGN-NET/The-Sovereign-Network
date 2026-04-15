@@ -37,8 +37,8 @@ fn create_test_signature(nonce: u64) -> PostQuantumSignature {
     PostQuantumSignature {
         signature: sig_bytes,
         public_key: PublicKey {
-            dilithium_pk: vec![1u8; 32],
-            kyber_pk: vec![1u8; 32],
+            dilithium_pk: [1u8; 2592],
+            kyber_pk: [1u8; 1568],
             key_id: [1u8; 32],
         },
         algorithm: SignatureAlgorithm::DEFAULT,

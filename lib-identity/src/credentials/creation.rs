@@ -249,8 +249,8 @@ impl CredentialFactory {
             proof_data: proof_data.to_vec(),
             public_inputs: public_inputs.to_vec(),
             verification_key: verification_key.to_vec(),
-            plonky2_proof: None,
             proof: vec![],
+            ..lib_proofs::ZkProof::empty()
         })
     }
 
@@ -269,8 +269,8 @@ impl CredentialFactory {
             proof_data: proof_data.to_vec(),
             public_inputs: vec![18], // Minimum age
             verification_key: proof_data.to_vec(),
-            plonky2_proof: None,
             proof: vec![],
+            ..lib_proofs::ZkProof::empty()
         })
     }
 
@@ -289,8 +289,8 @@ impl CredentialFactory {
             proof_data: proof_data.to_vec(),
             public_inputs: score.to_le_bytes().to_vec(),
             verification_key: proof_data.to_vec(),
-            plonky2_proof: None,
             proof: vec![],
+            ..lib_proofs::ZkProof::empty()
         })
     }
 
@@ -314,8 +314,8 @@ impl CredentialFactory {
                 proof_data: vec![],
                 public_inputs: vec![],
                 verification_key: vec![],
-                plonky2_proof: None,
                 proof: vec![],
+                ..lib_proofs::ZkProof::empty()
             },
             issued_at: current_time,
             expires_at: None,

@@ -303,8 +303,8 @@ impl MeshMessageEnvelope {
             proof_data,
             public_inputs: Vec::new(),
             verification_key: Vec::new(),
-            plonky2_proof: None,
             proof: Vec::new(),
+            ..lib_proofs::ZkProof::empty()
         });
 
         // Extract version from headers if available, otherwise use default
@@ -1480,8 +1480,8 @@ mod tests {
             proof_data: vec![1, 2, 3, 4, 5],
             public_inputs: Vec::new(),
             verification_key: Vec::new(),
-            plonky2_proof: None,
             proof: Vec::new(),
+            ..lib_proofs::ZkProof::empty()
         };
 
         let original_request = ZhtpRequest {
@@ -1573,8 +1573,8 @@ mod tests {
             proof_data: vec![1, 2, 3, 4, 5],
             public_inputs: Vec::new(),
             verification_key: Vec::new(),
-            plonky2_proof: None,
             proof: Vec::new(),
+            ..lib_proofs::ZkProof::empty()
         };
 
         let payload = vec![b'X'; 1024]; // 1KB body

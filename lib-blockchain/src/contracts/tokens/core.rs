@@ -43,17 +43,17 @@ pub struct TokenContract {
     /// Number of decimal places
     pub decimals: u8,
     /// Current total supply in circulation
-    pub total_supply: u64,
+    pub total_supply: u128,
     /// Maximum supply that can ever exist
-    pub max_supply: u64,
+    pub max_supply: u128,
     /// Whether the token burns on transfer (deflationary)
     pub is_deflationary: bool,
     /// Amount burned per transfer (if deflationary)
-    pub burn_rate: u64,
+    pub burn_rate: u128,
     /// Account balances mapping
-    pub balances: HashMap<PublicKey, u64>,
+    balances: HashMap<PublicKey, u128>,
     /// Allowances for third-party transfers
-    pub allowances: HashMap<PublicKey, HashMap<PublicKey, u64>>,
+    allowances: HashMap<PublicKey, HashMap<PublicKey, u128>>,
     /// Token creator
     pub creator: PublicKey,
     /// Kernel minting authority (for UBI distribution)
@@ -64,7 +64,7 @@ pub struct TokenContract {
     /// Locked balances per account (non-transferable until released)
     /// Used by Treasury Kernel for staking, vesting, escrow
     #[serde(default)]
-    pub locked_balances: HashMap<PublicKey, u64>,
+    locked_balances: HashMap<PublicKey, u128>,
     /// When true, only Treasury Kernel (kernel_mint_authority) can call
     /// mint(), burn(), and transfer(). Defaults to false for backward compat.
     #[serde(default)]
@@ -84,9 +84,9 @@ impl TokenContract {
         name: String,
         symbol: String,
         decimals: u8,
-        max_supply: u64,
+        max_supply: u128,
         is_deflationary: bool,
-        burn_rate: u64,
+        burn_rate: u128,
         creator: PublicKey,
     ) -> Self {
         Self {
@@ -133,13 +133,14 @@ impl TokenContract {
     /// # Arguments
     /// * `kernel_authority` - The public key of the Treasury Kernel (only entity that can mint)
     pub fn new_sov_with_kernel_authority(kernel_authority: PublicKey) -> Self {
+        use super::constants::*;
         let creator = PublicKey::new([0u8; 2592]); // Mock creator for SOV
         let mut token = Self::new(
             crate::contracts::utils::generate_lib_token_id(),
             "SOV Token".to_string(),
             "SOV".to_string(),
-            8,
-            1_000_000_000 * 100_000_000, // 1B SOV with 8 decimals
+            SOV_TOKEN_DECIMALS,
+            SOV_TOKEN_MAX_SUPPLY,        // 18-decimal max supply
             false,                       // SOV is not deflationary
             0,                           // No burn rate for SOV
             creator,
@@ -160,28 +161,28 @@ impl TokenContract {
             token_id,
             name,
             symbol,
-            8,        // Default 8 decimals
-            u64::MAX, // Very large max supply
-            false,    // Not deflationary by default
-            0,        // No burn rate
+            8,                    // Default 8 decimals
+            u64::MAX as u128,     // Very large max supply
+            false,                // Not deflationary by default
+            0,                    // No burn rate
             creator.clone(),
         );
 
         // Mint initial supply to creator
         if initial_supply > 0 {
-            let _ = token.mint(&creator, initial_supply);
+            let _ = token.mint(&creator, initial_supply as u128);
         }
 
         token
     }
 
     /// Get balance of an account
-    pub fn balance_of(&self, account: &PublicKey) -> u64 {
+    pub fn balance_of(&self, account: &PublicKey) -> u128 {
         self.balances.get(account).copied().unwrap_or(0)
     }
 
     /// Get allowance for a spender
-    pub fn allowance(&self, owner: &PublicKey, spender: &PublicKey) -> u64 {
+    pub fn allowance(&self, owner: &PublicKey, spender: &PublicKey) -> u128 {
         self.allowances
             .get(owner)
             .and_then(|spenders| spenders.get(spender))
@@ -210,8 +211,8 @@ impl TokenContract {
         &mut self,
         ctx: &ExecutionContext,
         to: &PublicKey,
-        amount: u64,
-    ) -> Result<u64, Error> {
+        amount: u128,
+    ) -> Result<u128, Error> {
         // Phase C: kernel-only mode enforcement
         if self.kernel_only_mode {
             let caller_key = match ctx.call_origin {
@@ -279,8 +280,8 @@ impl TokenContract {
         ctx: &ExecutionContext,
         owner: &PublicKey,
         to: &PublicKey,
-        amount: u64,
-    ) -> Result<u64, Error> {
+        amount: u128,
+    ) -> Result<u128, Error> {
         // Determine the spender from execution context
         let spender = match ctx.call_origin {
             CallOrigin::User => ctx.caller.clone(),
@@ -326,7 +327,7 @@ impl TokenContract {
     }
 
     /// Approve spending allowance
-    pub fn approve(&mut self, owner: &PublicKey, spender: &PublicKey, amount: u64) {
+    pub fn approve(&mut self, owner: &PublicKey, spender: &PublicKey, amount: u128) {
         self.allowances
             .entry(owner.clone())
             .or_insert_with(HashMap::new)
@@ -334,7 +335,7 @@ impl TokenContract {
     }
 
     /// Mint new tokens
-    pub fn mint(&mut self, to: &PublicKey, amount: u64) -> Result<(), String> {
+    pub fn mint(&mut self, to: &PublicKey, amount: u128) -> Result<(), String> {
         if self.kernel_only_mode {
             return Err("Direct minting disabled: use Treasury Kernel".to_string());
         }
@@ -367,7 +368,7 @@ impl TokenContract {
         &mut self,
         caller: &PublicKey,
         to: &PublicKey,
-        amount: u64,
+        amount: u128,
     ) -> Result<(), String> {
         // Check kernel authority
         match &self.kernel_mint_authority {
@@ -392,7 +393,7 @@ impl TokenContract {
     }
 
     /// Burn tokens from an account
-    pub fn burn(&mut self, from: &PublicKey, amount: u64) -> Result<(), String> {
+    pub fn burn(&mut self, from: &PublicKey, amount: u128) -> Result<(), String> {
         if self.kernel_only_mode {
             return Err("Direct burning disabled: use Treasury Kernel".to_string());
         }
@@ -427,7 +428,7 @@ impl TokenContract {
     // (except where noted).
 
     /// Credit balance without supply change (for transfers, fee distribution)
-    pub(crate) fn credit_balance(&mut self, to: &PublicKey, amount: u64) -> Result<(), String> {
+    pub(crate) fn credit_balance(&mut self, to: &PublicKey, amount: u128) -> Result<(), String> {
         let balance = self.balance_of(to);
         let new_balance = balance
             .checked_add(amount)
@@ -438,7 +439,7 @@ impl TokenContract {
 
     /// Debit balance without supply change (for transfers, fee collection)
     /// Respects locked balances: only available (balance - locked) can be debited.
-    pub(crate) fn debit_balance(&mut self, from: &PublicKey, amount: u64) -> Result<(), String> {
+    pub(crate) fn debit_balance(&mut self, from: &PublicKey, amount: u128) -> Result<(), String> {
         let balance = self.balance_of(from);
         let locked = self.locked_balances.get(from).copied().unwrap_or(0);
         let available = balance.saturating_sub(locked);
@@ -453,7 +454,7 @@ impl TokenContract {
     }
 
     /// Lock tokens in an account (cannot be transferred until released)
-    pub(crate) fn lock_balance(&mut self, account: &PublicKey, amount: u64) -> Result<(), String> {
+    pub(crate) fn lock_balance(&mut self, account: &PublicKey, amount: u128) -> Result<(), String> {
         let balance = self.balance_of(account);
         let locked = self.locked_balances.get(account).copied().unwrap_or(0);
         let available = balance.saturating_sub(locked);
@@ -474,7 +475,7 @@ impl TokenContract {
     pub(crate) fn release_balance(
         &mut self,
         account: &PublicKey,
-        amount: u64,
+        amount: u128,
     ) -> Result<(), String> {
         let locked = self.locked_balances.get(account).copied().unwrap_or(0);
         if locked < amount {
@@ -493,10 +494,78 @@ impl TokenContract {
     }
 
     /// Get available (unlocked) balance for an account
-    pub fn available_balance(&self, account: &PublicKey) -> u64 {
+    pub fn available_balance(&self, account: &PublicKey) -> u128 {
         let balance = self.balance_of(account);
         let locked = self.locked_balances.get(account).copied().unwrap_or(0);
         balance.saturating_sub(locked)
+    }
+
+    /// Set balance directly (for sled backfill, migration, and testing).
+    /// Prefer `mint()`, `credit_balance()`, or `debit_balance()` for normal operations.
+    pub fn set_balance(&mut self, account: &PublicKey, amount: u128) {
+        self.balances.insert(account.clone(), amount);
+    }
+
+    /// Remove an account's balance entry entirely (for migration/re-keying)
+    pub fn remove_balance(&mut self, account: &PublicKey) -> Option<u128> {
+        self.balances.remove(account)
+    }
+
+    /// Get the maximum balance across all holders
+    pub fn max_balance(&self) -> u128 {
+        self.balances.values().copied().max().unwrap_or(0)
+    }
+
+    /// Iterate over all (account, balance) entries
+    pub fn balances_iter(&self) -> impl Iterator<Item = (&PublicKey, &u128)> {
+        self.balances.iter()
+    }
+
+    /// Get the total number of balance entries (including zero balances)
+    pub fn balances_len(&self) -> usize {
+        self.balances.len()
+    }
+
+    /// Sum of all balances
+    pub fn total_balance_sum(&self) -> u128 {
+        self.balances.values().sum()
+    }
+
+    /// Find an account by key_id in balances
+    pub fn find_balance_by_key_id(&self, key_id: &[u8; 32]) -> Option<(&PublicKey, u128)> {
+        self.balances
+            .iter()
+            .find(|(pk, _)| &pk.key_id == key_id)
+            .map(|(pk, &bal)| (pk, bal))
+    }
+
+    /// Get all non-zero balances as a collected vector of (key_id, balance) pairs
+    pub fn non_zero_balance_entries(&self) -> Vec<(&PublicKey, u128)> {
+        self.balances
+            .iter()
+            .filter(|(_, &bal)| bal > 0)
+            .map(|(pk, &bal)| (pk, bal))
+            .collect()
+    }
+
+    /// Iterate over locked_balances keys
+    pub fn locked_balances_keys(&self) -> impl Iterator<Item = &PublicKey> {
+        self.locked_balances.keys()
+    }
+
+    /// Find an account by key_id in locked_balances
+    pub fn find_locked_balance_by_key_id(&self, key_id: &[u8; 32]) -> Option<&PublicKey> {
+        self.locked_balances.keys().find(|pk| &pk.key_id == key_id)
+    }
+
+    /// Get all allowances for a given owner
+    pub fn get_owner_allowances(&self, owner: &PublicKey) -> Option<&HashMap<PublicKey, u128>> {
+        self.allowances.get(owner)
+    }
+
+    /// Check if balances map is empty
+    pub fn balances_is_empty(&self) -> bool {
+        self.balances.is_empty()
     }
 
     /// Enable kernel-only mode (Phase C lockdown)
@@ -513,12 +582,14 @@ impl TokenContract {
     // ─── End Treasury Kernel internal operations ─────────────────────────
 
     /// Check if supply can accommodate minting
-    pub fn can_mint(&self, amount: u64) -> bool {
-        self.total_supply + amount <= self.max_supply
+    pub fn can_mint(&self, amount: u128) -> bool {
+        self.total_supply
+            .checked_add(amount)
+            .map_or(false, |sum| sum <= self.max_supply)
     }
 
     /// Get remaining mintable supply
-    pub fn remaining_supply(&self) -> u64 {
+    pub fn remaining_supply(&self) -> u128 {
         self.max_supply.saturating_sub(self.total_supply)
     }
 
@@ -591,10 +662,10 @@ pub struct TokenInfo {
     pub name: String,
     pub symbol: String,
     pub decimals: u8,
-    pub total_supply: u64,
-    pub max_supply: u64,
+    pub total_supply: u128,
+    pub max_supply: u128,
     pub is_deflationary: bool,
-    pub burn_rate: u64,
+    pub burn_rate: u128,
     pub creator: PublicKey,
 }
 
@@ -640,11 +711,8 @@ mod tests {
 
         assert_eq!(token.name, "Sovereign");
         assert_eq!(token.symbol, "SOV");
-        assert_eq!(token.decimals, 8);
-        assert_eq!(
-            token.max_supply,
-            crate::contracts::tokens::constants::SOV_TOKEN_MAX_SUPPLY
-        );
+        assert_eq!(token.decimals, 18);
+        assert_eq!(token.max_supply, lib_types::SOV_MAX_SUPPLY);
         assert!(!token.is_deflationary);
         assert_eq!(token.burn_rate, 0);
     }
@@ -817,7 +885,7 @@ mod tests {
 
         assert_eq!(token.name, "SOV Token");
         assert_eq!(token.symbol, "SOV");
-        assert_eq!(token.decimals, 8);
+        assert_eq!(token.decimals, 18);
         assert!(!token.is_deflationary);
         assert_eq!(token.kernel_mint_authority, Some(kernel_addr));
     }

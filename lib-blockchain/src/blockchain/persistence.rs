@@ -86,6 +86,48 @@ impl BlockV1 {
     }
 }
 
+/// Legacy wallet data with u64 initial_balance (pre-18-decimal migration).
+/// Used only for deserializing old .dat persistence formats (V1–V9).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct WalletTransactionDataLegacy {
+    pub wallet_id: Hash,
+    pub wallet_type: String,
+    pub wallet_name: String,
+    pub alias: Option<String>,
+    pub public_key: Vec<u8>,
+    pub owner_identity_id: Option<Hash>,
+    pub seed_commitment: Hash,
+    pub created_at: u64,
+    pub registration_fee: u64,
+    pub capabilities: u32,
+    pub initial_balance: u64,
+}
+
+impl WalletTransactionDataLegacy {
+    /// Convert to the current WalletTransactionData, widening initial_balance to u128.
+    fn to_current(self) -> crate::transaction::WalletTransactionData {
+        crate::transaction::WalletTransactionData {
+            wallet_id: self.wallet_id,
+            wallet_type: self.wallet_type,
+            wallet_name: self.wallet_name,
+            alias: self.alias,
+            public_key: self.public_key,
+            owner_identity_id: self.owner_identity_id,
+            seed_commitment: self.seed_commitment,
+            created_at: self.created_at,
+            registration_fee: self.registration_fee,
+            capabilities: self.capabilities,
+            initial_balance: self.initial_balance as u128,
+        }
+    }
+}
+
+fn migrate_legacy_wallet_registry(
+    legacy: HashMap<String, WalletTransactionDataLegacy>,
+) -> HashMap<String, crate::transaction::WalletTransactionData> {
+    legacy.into_iter().map(|(k, v)| (k, v.to_current())).collect()
+}
+
 /// Blockchain V1 format (Dec 2025) - for backward compatibility migration
 /// This struct matches the format used by production nodes before the Phase 2 updates.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,7 +141,7 @@ pub(super) struct BlockchainV1 {
     pub pending_transactions: Vec<TransactionV1>,
     pub identity_registry: HashMap<String, IdentityTransactionData>,
     pub identity_blocks: HashMap<String, u64>,
-    pub wallet_registry: HashMap<String, crate::transaction::WalletTransactionData>,
+    pub wallet_registry: HashMap<String, WalletTransactionDataLegacy>,
     pub wallet_blocks: HashMap<String, u64>,
     pub economics_transactions: Vec<EconomicsTransaction>,
     pub token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
@@ -158,7 +200,7 @@ impl BlockchainV1 {
             pending_transactions,
             identity_registry: self.identity_registry,
             identity_blocks: self.identity_blocks,
-            wallet_registry: self.wallet_registry,
+            wallet_registry: migrate_legacy_wallet_registry(self.wallet_registry),
             wallet_blocks: self.wallet_blocks,
             economics_transactions: self.economics_transactions,
             token_contracts: self.token_contracts,
@@ -198,14 +240,12 @@ impl BlockchainV1 {
             executor: None,
             treasury_kernel: None,
             bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry::new(),
-            cbe_token: crate::contracts::tokens::CbeToken::new(),
             amm_pools: HashMap::new(),
             governance_phase: crate::dao::GovernancePhase::default(),
             council_members: Vec::new(),
             council_threshold: default_council_threshold(),
             entity_registry: None,
             employment_registry: crate::contracts::employment::EmploymentRegistry::new(),
-            cbe_dao_id: None,
             treasury_epoch_spend: HashMap::new(),
             treasury_epoch_length_blocks: default_treasury_epoch_length(),
             emergency_state: false,
@@ -261,7 +301,7 @@ pub(super) struct BlockchainStorageV3 {
     pub pending_transactions: Vec<Transaction>,
     pub identity_registry: HashMap<String, IdentityTransactionData>,
     pub identity_blocks: HashMap<String, u64>,
-    pub wallet_registry: HashMap<String, crate::transaction::WalletTransactionData>,
+    pub wallet_registry: HashMap<String, WalletTransactionDataLegacy>,
     pub wallet_blocks: HashMap<String, u64>,
     #[serde(default)]
     pub economics_transactions: Vec<EconomicsTransaction>,
@@ -388,7 +428,21 @@ impl BlockchainStorageV3 {
             pending_transactions: bc.pending_transactions.clone(),
             identity_registry: bc.identity_registry.clone(),
             identity_blocks: bc.identity_blocks.clone(),
-            wallet_registry: bc.wallet_registry.clone(),
+            wallet_registry: bc.wallet_registry.iter().map(|(k, v)| {
+                (k.clone(), WalletTransactionDataLegacy {
+                    wallet_id: v.wallet_id,
+                    wallet_type: v.wallet_type.clone(),
+                    wallet_name: v.wallet_name.clone(),
+                    alias: v.alias.clone(),
+                    public_key: v.public_key.clone(),
+                    owner_identity_id: v.owner_identity_id,
+                    seed_commitment: v.seed_commitment,
+                    created_at: v.created_at,
+                    registration_fee: v.registration_fee,
+                    capabilities: v.capabilities,
+                    initial_balance: v.initial_balance as u64,
+                })
+            }).collect(),
             wallet_blocks: bc.wallet_blocks.clone(),
             economics_transactions: bc.economics_transactions.clone(),
             token_contracts: bc.token_contracts.clone(),
@@ -461,7 +515,7 @@ impl BlockchainStorageV3 {
             pending_transactions: self.pending_transactions,
             identity_registry: self.identity_registry,
             identity_blocks: self.identity_blocks,
-            wallet_registry: self.wallet_registry,
+            wallet_registry: migrate_legacy_wallet_registry(self.wallet_registry),
             wallet_blocks: self.wallet_blocks,
             economics_transactions: self.economics_transactions,
             token_contracts: self.token_contracts,
@@ -501,14 +555,12 @@ impl BlockchainStorageV3 {
             executor: None,
             treasury_kernel: None,
             bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry::new(),
-            cbe_token: crate::contracts::tokens::CbeToken::new(),
             amm_pools: HashMap::new(),
             governance_phase: self.governance_phase,
             council_members: self.council_members,
             council_threshold: self.council_threshold,
             entity_registry: None,
             employment_registry: crate::contracts::employment::EmploymentRegistry::new(),
-            cbe_dao_id: None,
             treasury_epoch_spend: self.treasury_epoch_spend,
             treasury_epoch_length_blocks: self.treasury_epoch_length_blocks,
             emergency_state: self.emergency_state,
@@ -628,11 +680,82 @@ impl BlockchainStorageV6 {
     }
 }
 
+/// Stub type that matches the bincode serialization layout of the old CbeToken
+/// struct. Needed so that V7 `.dat` files can still be deserialized after the
+/// real CbeToken module was deleted (EPIC-001 Phase 1F). The value is never
+/// used — `to_blockchain()` ignores it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct LegacyCbeTokenStub {
+    token_id: [u8; 32],
+    balances: HashMap<[u8; 32], u64>,
+    vesting_schedules: HashMap<[u8; 32], Vec<LegacyVestingScheduleStub>>,
+    allowances: HashMap<[u8; 32], HashMap<[u8; 32], u64>>,
+    total_supply: u64,
+    distribution: LegacyDistributionStub,
+    pool_addresses: LegacyPoolAddressesStub,
+    initialized: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LegacyVestingScheduleStub {
+    total_amount: u64,
+    vested_amount: u64,
+    start_block: u64,
+    vesting_duration_blocks: u64,
+    cliff_blocks: u64,
+    pool: LegacyVestingPoolStub,
+}
+
+/// Mirrors the old VestingPool enum layout for bincode compat (u32 variant index).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+enum LegacyVestingPoolStub {
+    Compensation,
+    Operational,
+    Performance,
+    Strategic,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LegacyDistributionStub {
+    compensation: u64,
+    operational: u64,
+    performance: u64,
+    strategic: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct LegacyPoolAddressesStub {
+    compensation: Option<[u8; 32]>,
+    operational: Option<[u8; 32]>,
+    performance: Option<[u8; 32]>,
+    strategic: Option<[u8; 32]>,
+}
+
+impl Default for LegacyCbeTokenStub {
+    fn default() -> Self {
+        Self {
+            token_id: [0u8; 32],
+            balances: HashMap::new(),
+            vesting_schedules: HashMap::new(),
+            allowances: HashMap::new(),
+            total_supply: 0,
+            distribution: LegacyDistributionStub {
+                compensation: 0,
+                operational: 0,
+                performance: 0,
+                strategic: 0,
+            },
+            pool_addresses: LegacyPoolAddressesStub::default(),
+            initialized: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct BlockchainStorageV7 {
     pub v6: BlockchainStorageV6,
     #[serde(default)]
-    pub cbe_token: crate::contracts::tokens::CbeToken,
+    pub cbe_token: LegacyCbeTokenStub,
 }
 
 impl BlockchainStorageV7 {
@@ -649,14 +772,13 @@ impl BlockchainStorageV7 {
                 last_oracle_epoch_processed: bc.last_oracle_epoch_processed,
                 entity_registry: bc.entity_registry.clone(),
             },
-            cbe_token: bc.cbe_token.clone(),
+            cbe_token: LegacyCbeTokenStub::default(),
         }
     }
 
     pub(super) fn to_blockchain(self) -> Blockchain {
-        let mut blockchain = self.v6.to_blockchain();
-        blockchain.cbe_token = self.cbe_token;
-        blockchain
+        // cbe_token field removed from Blockchain — ignore V7's persisted value
+        self.v6.to_blockchain()
     }
 }
 
@@ -674,14 +796,19 @@ impl BlockchainStorageV8 {
         Self {
             v7: BlockchainStorageV7::from_blockchain(bc),
             employment_registry: bc.employment_registry.clone(),
-            cbe_dao_id: bc.cbe_dao_id,
+            cbe_dao_id: None,
         }
     }
 
     fn to_blockchain(self) -> Blockchain {
         let mut blockchain = self.v7.to_blockchain();
         blockchain.employment_registry = self.employment_registry;
-        blockchain.cbe_dao_id = self.cbe_dao_id;
+        // cbe_dao_id field removed from Blockchain — discard V8's persisted value
+        if self.cbe_dao_id.is_some() {
+            tracing::info!(
+                "V8 persistence: discarding non-None cbe_dao_id (field removed in Phase 1)"
+            );
+        }
         blockchain
     }
 }
@@ -709,9 +836,39 @@ impl BlockchainStorageV9 {
     }
 }
 
+/// V10: wallet_registry uses u128 initial_balance (18-decimal SOV migration).
+/// The nested V9 chain still reads old u64 data, so `to_blockchain()` first
+/// loads V9 (with u64→u128 widening in V3), then overwrites wallet_registry
+/// with the native u128 copy persisted here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct BlockchainStorageV10 {
+    pub v9: BlockchainStorageV9,
+    /// Wallet registry with u128 initial_balance — overwrites the u64-widened copy from V9.
+    #[serde(default)]
+    pub wallet_registry_u128: HashMap<String, crate::transaction::WalletTransactionData>,
+}
+
+impl BlockchainStorageV10 {
+    fn from_blockchain(bc: &Blockchain) -> Self {
+        Self {
+            v9: BlockchainStorageV9::from_blockchain(bc),
+            wallet_registry_u128: bc.wallet_registry.clone(),
+        }
+    }
+
+    fn to_blockchain(self) -> Blockchain {
+        let mut blockchain = self.v9.to_blockchain();
+        // Overwrite the u64-widened wallet_registry with the native u128 copy.
+        if !self.wallet_registry_u128.is_empty() {
+            blockchain.wallet_registry = self.wallet_registry_u128;
+        }
+        blockchain
+    }
+}
+
 impl Blockchain {
     pub(crate) const FILE_MAGIC: [u8; 4] = [0x5A, 0x48, 0x54, 0x50];
-    const FILE_VERSION: u16 = 9;
+    const FILE_VERSION: u16 = 10;
 
     #[deprecated(
         since = "0.2.0",
@@ -735,7 +892,7 @@ impl Blockchain {
             std::fs::create_dir_all(parent)?;
         }
 
-        let storage = BlockchainStorageV9::from_blockchain(self);
+        let storage = BlockchainStorageV10::from_blockchain(self);
         let serialized = bincode::serialize(&storage)
             .map_err(|e| anyhow::anyhow!("Failed to serialize blockchain: {}", e))?;
 
@@ -783,6 +940,14 @@ impl Blockchain {
             info!("📂 Detected versioned format v{}", version);
 
             match version {
+                10 => deserialize_or_err::<BlockchainStorageV10, _, _>(
+                    data,
+                    "v10 blockchain",
+                    |storage| {
+                    info!("📂 Loaded blockchain storage v10 (u128 wallet initial_balance)");
+                    storage.to_blockchain()
+                },
+                )?,
                 9 => deserialize_or_err::<BlockchainStorageV9, _, _>(
                     data,
                     "v9 blockchain",
@@ -924,12 +1089,11 @@ impl Blockchain {
 
         let elapsed = start.elapsed();
 
-        const SOV_ATOMIC_UNITS: u64 = 100_000_000;
         let mut migrated_count = 0usize;
         for wallet in blockchain.wallet_registry.values_mut() {
-            if wallet.initial_balance > 0 && wallet.initial_balance < SOV_ATOMIC_UNITS {
+            if wallet.initial_balance > 0 && wallet.initial_balance < lib_types::sov::SCALE {
                 let old = wallet.initial_balance;
-                wallet.initial_balance = old.saturating_mul(SOV_ATOMIC_UNITS);
+                wallet.initial_balance = old.saturating_mul(lib_types::sov::SCALE);
                 migrated_count += 1;
                 info!(
                     "Migrated wallet initial_balance: {} -> {} atomic units",
@@ -948,23 +1112,6 @@ impl Blockchain {
         blockchain.ensure_treasury_wallet();
         blockchain.migrate_sov_key_balances_to_wallets();
 
-        if !blockchain.cbe_token.is_initialized() {
-            info!("CBE token not found in storage — running one-time backfill from genesis allocation");
-            #[allow(deprecated)]
-            blockchain.initialize_cbe_token_genesis();
-        }
-
-        // bonding_curve_registry is never serialized to .dat — rebuild the CBE entry on every load.
-        let cbe_token_id = Self::derive_cbe_token_id_pub();
-        if !blockchain.bonding_curve_registry.contains(&cbe_token_id) {
-            #[allow(deprecated)]
-            blockchain.initialize_cbe_genesis();
-            if blockchain.bonding_curve_registry.contains(&cbe_token_id) {
-                info!("Restored CBE bonding curve registry entry from genesis parameters");
-            } else {
-                warn!("Failed to restore CBE bonding curve registry entry");
-            }
-        }
         let backfill_entries = blockchain.collect_sov_backfill_entries();
         if !backfill_entries.is_empty() {
             warn!(

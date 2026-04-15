@@ -27,10 +27,19 @@ const TOKEN_SCALE: u128 = SCALE;
 
 /// Graduation threshold in USD (whole dollars).
 ///
-/// $2,745,966 USD reserve value triggers graduation.
+/// Configuration B: $2,724,844 USD reserve value triggers graduation.
+///
+/// Derived from AMM crash analysis with 20B genesis CBE UNLOCKED:
+///   S_c at graduation ≈ 0.97B CBE, total circulating ≈ 20.97B CBE
+///   $2.7M reserve → AMM opens at ~40% of last curve price (60% discount)
+///   This is the survivable AMM open scenario.
+///
+/// If 20B genesis tokens are LOCKED, revert to $269,000.
+/// The two thresholds are paired to the lock decision.
+///
 /// This constant is the single source of truth — every graduation check
 /// must reference this value, never a hardcoded literal.
-pub const GRADUATION_THRESHOLD_USD: u128 = 2_745_966;
+pub const GRADUATION_THRESHOLD_USD: u128 = 2_724_844;
 
 /// Maximum acceptable age for oracle price data (in seconds).
 ///

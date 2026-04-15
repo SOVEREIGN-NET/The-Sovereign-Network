@@ -62,7 +62,7 @@ fn test_block(height: u64, transactions: Vec<Transaction>) -> Block {
 fn wallet_registration_tx(
     wallet_id: [u8; 32],
     owner_pubkey: &PublicKey,
-    initial_balance: u64,
+    initial_balance: u128,
 ) -> Transaction {
     Transaction {
         version: 2,
@@ -184,7 +184,7 @@ fn register_wallet(
     blockchain: &mut Blockchain,
     wallet_id: [u8; 32],
     owner: &PublicKey,
-    initial_balance: u64,
+    initial_balance: u128,
 ) {
     let wallet_id_hex = hex::encode(wallet_id);
     blockchain.wallet_registry.insert(

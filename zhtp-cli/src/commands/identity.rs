@@ -7,7 +7,7 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Output trait injection for testing
 
-use crate::argument_parsing::{format_output, IdentityAction, IdentityArgs, ZhtpCli};
+use crate::argument_parsing::{IdentityAction, IdentityArgs, ZhtpCli};
 use crate::error::{CliError, CliResult};
 use crate::logic;
 use crate::output::Output;
@@ -32,6 +32,7 @@ pub enum IdentityOperation {
     CreateWithType,
     Verify,
     List,
+    Import,
     Unsupported,
 }
 
@@ -43,6 +44,7 @@ impl IdentityOperation {
             IdentityOperation::CreateWithType => "Create identity with specific type",
             IdentityOperation::Verify => "Verify identity on blockchain",
             IdentityOperation::List => "List blockchain identities",
+            IdentityOperation::Import => "Import identity from backup",
             IdentityOperation::Unsupported => "Run identity operation",
         }
     }
@@ -55,8 +57,10 @@ pub fn action_to_operation(action: &IdentityAction) -> IdentityOperation {
     match action {
         IdentityAction::Create { .. } => IdentityOperation::Create,
         IdentityAction::CreateDid { .. } => IdentityOperation::CreateWithType,
+        IdentityAction::Register { .. } => IdentityOperation::Create,
         IdentityAction::Verify { .. } => IdentityOperation::Verify,
         IdentityAction::List => IdentityOperation::List,
+        IdentityAction::Import { .. } => IdentityOperation::Import,
         IdentityAction::SimulateMessage { .. }
         | IdentityAction::Pending { .. }
         | IdentityAction::Ack { .. } => IdentityOperation::Unsupported,
@@ -107,6 +111,20 @@ async fn handle_identity_command_impl(
             // Imperative: File I/O
             create_identity_with_type_impl(&name, &identity_type, output).await
         }
+        IdentityAction::Register {
+            display_name,
+            device_id,
+            keystore,
+        } => {
+            register_identity_on_chain(
+                &display_name,
+                &device_id,
+                keystore.as_deref(),
+                cli,
+                output,
+            )
+            .await
+        }
         IdentityAction::Verify { identity_id } => {
             // Pure validation
             logic::validate_did(&identity_id)?;
@@ -117,6 +135,9 @@ async fn handle_identity_command_impl(
         IdentityAction::List => {
             // Imperative: QUIC communication
             list_identities_impl(cli, output).await
+        }
+        IdentityAction::Import { file, keystore } => {
+            import_identity_impl(&file, keystore.as_deref(), output).await
         }
         IdentityAction::SimulateMessage { .. }
         | IdentityAction::Pending { .. }
@@ -131,6 +152,228 @@ fn get_default_keystore_path() -> CliResult<PathBuf> {
     dirs::home_dir()
         .ok_or_else(|| CliError::IdentityError("Could not determine home directory".to_string()))
         .map(|home| home.join(".zhtp").join("keystore"))
+}
+
+/// Import identity from a .zkdid backup file
+///
+/// The .zkdid file is JSON with a `keystore_base64` field containing a base64-encoded
+/// tar.gz archive with `keystore/user_identity.json` and `keystore/user_private_key.json`.
+///
+/// The private key JSON from the export uses JSON number arrays for byte fields,
+/// which must be converted to hex-encoded format for `KeystorePrivateKey` compatibility.
+async fn import_identity_impl(
+    file_path: &str,
+    keystore_path: Option<&str>,
+    output: &dyn Output,
+) -> CliResult<()> {
+    use base64::Engine;
+    use flate2::read::GzDecoder;
+    use std::io::Read as IoRead;
+    use tar::Archive;
+
+    output.header("Import Identity from .zkdid Backup")?;
+    output.info(&format!("Reading backup file: {}", file_path))?;
+
+    // 1. Read .zkdid JSON file
+    let zkdid_content = std::fs::read_to_string(file_path).map_err(|e| {
+        CliError::IdentityError(format!("Failed to read .zkdid file '{}': {}", file_path, e))
+    })?;
+    let zkdid: serde_json::Value = serde_json::from_str(&zkdid_content).map_err(|e| {
+        CliError::IdentityError(format!("Failed to parse .zkdid JSON: {}", e))
+    })?;
+
+    let keystore_b64 = zkdid
+        .get("keystore_base64")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            CliError::IdentityError("Missing 'keystore_base64' field in .zkdid file".to_string())
+        })?;
+
+    // 2. Decode base64 -> gzip -> tar
+    let archive_bytes = base64::engine::general_purpose::STANDARD
+        .decode(keystore_b64)
+        .map_err(|e| CliError::IdentityError(format!("Failed to decode base64: {}", e)))?;
+
+    let decoder = GzDecoder::new(&archive_bytes[..]);
+    let mut archive = Archive::new(decoder);
+
+    let mut identity_json: Option<String> = None;
+    let mut private_key_json: Option<String> = None;
+
+    for entry_result in archive.entries().map_err(|e| {
+        CliError::IdentityError(format!("Failed to read tar archive: {}", e))
+    })? {
+        let mut entry = entry_result.map_err(|e| {
+            CliError::IdentityError(format!("Failed to read tar entry: {}", e))
+        })?;
+        let path = entry
+            .path()
+            .map_err(|e| CliError::IdentityError(format!("Failed to read entry path: {}", e)))?
+            .to_string_lossy()
+            .to_string();
+
+        let mut content = String::new();
+        entry.read_to_string(&mut content).map_err(|e| {
+            CliError::IdentityError(format!("Failed to read entry content: {}", e))
+        })?;
+
+        if path.ends_with("user_identity.json") {
+            identity_json = Some(content);
+        } else if path.ends_with("user_private_key.json") {
+            private_key_json = Some(content);
+        }
+    }
+
+    let identity_json = identity_json.ok_or_else(|| {
+        CliError::IdentityError(
+            "Backup archive missing keystore/user_identity.json".to_string(),
+        )
+    })?;
+    let private_key_json = private_key_json.ok_or_else(|| {
+        CliError::IdentityError(
+            "Backup archive missing keystore/user_private_key.json".to_string(),
+        )
+    })?;
+
+    // 3. Parse identity to extract DID and public key
+    let identity_value: serde_json::Value =
+        serde_json::from_str(&identity_json).map_err(|e| {
+            CliError::IdentityError(format!("Failed to parse identity JSON: {}", e))
+        })?;
+
+    let did = identity_value
+        .get("did")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    output.info(&format!("DID: {}", did))?;
+
+    // 4. Convert private key from JSON array format to hex format for KeystorePrivateKey
+    let pk_value: serde_json::Value = serde_json::from_str(&private_key_json).map_err(|e| {
+        CliError::IdentityError(format!("Failed to parse private key JSON: {}", e))
+    })?;
+
+    let extract_bytes = |value: &serde_json::Value, field: &str| -> CliResult<Vec<u8>> {
+        let arr = value.get(field).ok_or_else(|| {
+            CliError::IdentityError(format!("Private key missing field '{}'", field))
+        })?;
+        // Handle both hex string and JSON array formats
+        if let Some(hex_str) = arr.as_str() {
+            hex::decode(hex_str).map_err(|e| {
+                CliError::IdentityError(format!("Invalid hex in '{}': {}", field, e))
+            })
+        } else if let Some(arr) = arr.as_array() {
+            Ok(arr
+                .iter()
+                .map(|v| v.as_u64().unwrap_or(0) as u8)
+                .collect())
+        } else {
+            Err(CliError::IdentityError(format!(
+                "Field '{}' must be hex string or byte array",
+                field
+            )))
+        }
+    };
+
+    let dilithium_sk_raw = extract_bytes(&pk_value, "dilithium_sk")?;
+    let kyber_sk_raw = extract_bytes(&pk_value, "kyber_sk")?;
+    let master_seed_raw = extract_bytes(&pk_value, "master_seed")?;
+
+    // Pad dilithium_sk to 4896 bytes if needed (crystals-dilithium raw is 4864)
+    let mut dilithium_sk = [0u8; 4896];
+    let copy_len = dilithium_sk_raw.len().min(4896);
+    dilithium_sk[..copy_len].copy_from_slice(&dilithium_sk_raw[..copy_len]);
+
+    // Kyber SK must be 3168 bytes
+    let mut kyber_sk = [0u8; 3168];
+    let copy_len = kyber_sk_raw.len().min(3168);
+    kyber_sk[..copy_len].copy_from_slice(&kyber_sk_raw[..copy_len]);
+
+    // Handle master_seed padding: if 32 bytes, pad to 64
+    let mut master_seed = [0u8; 64];
+    let copy_len = master_seed_raw.len().min(64);
+    master_seed[..copy_len].copy_from_slice(&master_seed_raw[..copy_len]);
+
+    // Get dilithium_pk from identity public_key or from the private key file
+    let dilithium_pk_raw = if pk_value.get("dilithium_pk").is_some() {
+        extract_bytes(&pk_value, "dilithium_pk")?
+    } else {
+        // Fall back to identity's public_key
+        let pk_obj = identity_value.get("public_key").ok_or_else(|| {
+            CliError::IdentityError("Identity missing public_key".to_string())
+        })?;
+        if let Some(arr) = pk_obj.get("dilithium_pk") {
+            if let Some(hex_str) = arr.as_str() {
+                hex::decode(hex_str).map_err(|e| {
+                    CliError::IdentityError(format!("Invalid dilithium_pk hex: {}", e))
+                })?
+            } else if let Some(arr) = arr.as_array() {
+                arr.iter().map(|v| v.as_u64().unwrap_or(0) as u8).collect()
+            } else {
+                return Err(CliError::IdentityError(
+                    "Cannot extract dilithium_pk".to_string(),
+                ));
+            }
+        } else {
+            return Err(CliError::IdentityError(
+                "Neither private key nor identity contains dilithium_pk".to_string(),
+            ));
+        }
+    };
+
+    let mut dilithium_pk = [0u8; 2592];
+    let copy_len = dilithium_pk_raw.len().min(2592);
+    dilithium_pk[..copy_len].copy_from_slice(&dilithium_pk_raw[..copy_len]);
+
+    // 5. Build KeystorePrivateKey in hex format and save
+    let keystore_private_key =
+        zhtp::keyfile_names::KeystorePrivateKey {
+            dilithium_sk,
+            dilithium_pk,
+            kyber_sk,
+            master_seed,
+        };
+
+    let keystore_dir = match keystore_path {
+        Some(p) => PathBuf::from(p),
+        None => get_default_keystore_path()?,
+    };
+
+    std::fs::create_dir_all(&keystore_dir).map_err(|e| {
+        CliError::IdentityError(format!("Failed to create keystore directory: {}", e))
+    })?;
+
+    // Save identity JSON (already in correct format from the archive)
+    let identity_file = keystore_dir.join(USER_IDENTITY_FILENAME);
+    std::fs::write(&identity_file, &identity_json).map_err(|e| {
+        CliError::IdentityError(format!("Failed to write {}: {}", USER_IDENTITY_FILENAME, e))
+    })?;
+    output.success(&format!("Saved: {:?}", identity_file))?;
+
+    // Save private key in hex-encoded KeystorePrivateKey format
+    let private_key_file = keystore_dir.join(USER_PRIVATE_KEY_FILENAME);
+    let pk_json = serde_json::to_string_pretty(&keystore_private_key).map_err(|e| {
+        CliError::IdentityError(format!("Failed to serialize private key: {}", e))
+    })?;
+    std::fs::write(&private_key_file, &pk_json).map_err(|e| {
+        CliError::IdentityError(format!(
+            "Failed to write {}: {}",
+            USER_PRIVATE_KEY_FILENAME, e
+        ))
+    })?;
+    // Set restrictive permissions on private key file
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&private_key_file, std::fs::Permissions::from_mode(0o600));
+    }
+    output.success(&format!("Saved: {:?}", private_key_file))?;
+
+    output.success(&format!("Identity imported successfully: {}", did))?;
+    output.print(&format!("Keystore: {:?}", keystore_dir))?;
+
+    Ok(())
 }
 
 /// Create a new identity locally and save to keystore
@@ -195,6 +438,140 @@ async fn create_identity_impl(
     output.success(&format!("Identity saved to: {:?}", identity_file))?;
     output.success(&format!("Private key saved to: {:?}", private_key_file))?;
     output.warning("Keep your identity secure! It contains cryptographic material.")?;
+
+    Ok(())
+}
+
+/// Register identity on-chain: generates keys (if needed), then calls
+/// POST /api/v1/identity/register to create identity + 3 wallets + SOV welcome bonus.
+/// This matches the app's identity creation flow — the single canonical path.
+async fn register_identity_on_chain(
+    display_name: &str,
+    device_id: &str,
+    keystore_path: Option<&str>,
+    cli: &ZhtpCli,
+    output: &dyn Output,
+) -> CliResult<()> {
+    let keystore = match keystore_path {
+        Some(path) => PathBuf::from(path),
+        None => get_default_keystore_path()?,
+    };
+
+    let identity_file = keystore.join(USER_IDENTITY_FILENAME);
+    let private_key_file = keystore.join(USER_PRIVATE_KEY_FILENAME);
+
+    // Generate keys if no local identity exists
+    if identity_file.exists() {
+        output.info("Using existing identity from keystore...")?;
+    } else {
+        output.info("Generating cryptographic keys (Dilithium5 + Kyber1024)...")?;
+        std::fs::create_dir_all(&keystore).map_err(|e| {
+            CliError::IdentityError(format!("Failed to create keystore directory: {}", e))
+        })?;
+        let id = ZhtpIdentity::new_unified(
+            lib_identity::IdentityType::Device,
+            None,
+            None,
+            display_name,
+            None,
+        )
+        .map_err(|e| CliError::IdentityError(format!("Failed to generate identity: {}", e)))?;
+
+        // Save private key
+        let pk = id
+            .private_key
+            .as_ref()
+            .ok_or_else(|| CliError::IdentityError("Missing private key".to_string()))?;
+        save_private_key_to_file(pk, &private_key_file)?;
+
+        // Save identity
+        let json = serde_json::to_string_pretty(&id)
+            .map_err(|e| CliError::IdentityError(format!("Failed to serialize: {}", e)))?;
+        std::fs::write(&identity_file, &json).map_err(|e| {
+            CliError::IdentityError(format!("Failed to write identity: {}", e))
+        })?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(
+                &private_key_file,
+                std::fs::Permissions::from_mode(0o600),
+            );
+        }
+
+        output.success(&format!("DID: {}", id.did))?;
+        output.success(&format!("Keys saved to: {:?}", keystore))?;
+    }
+
+    // Load keypair for signing (this works with both hex and array formats)
+    let loaded = load_identity_from_keystore(&keystore)?;
+    output.info(&format!("DID: {}", loaded.identity.did))?;
+    output.info("Registering on-chain (identity + wallets + SOV welcome bonus)...")?;
+
+    // Build registration proof: sign "ZHTP_REGISTER:{timestamp}"
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| CliError::ConfigError(format!("Time error: {}", e)))?
+        .as_secs();
+    let proof_message = format!("ZHTP_REGISTER:{}", timestamp);
+    let proof_sig = lib_crypto::sign_message(&loaded.keypair, proof_message.as_bytes())
+        .map_err(|e| CliError::IdentityError(format!("Failed to sign proof: {}", e)))?;
+
+    // Base64-encode public keys
+    let dilithium_pk_b64 = base64::engine::general_purpose::STANDARD
+        .encode(&loaded.keypair.public_key.dilithium_pk);
+    let kyber_pk_b64 = base64::engine::general_purpose::STANDARD
+        .encode(&loaded.keypair.public_key.kyber_pk);
+    let proof_b64 =
+        base64::engine::general_purpose::STANDARD.encode(&proof_sig.signature);
+
+    let body = serde_json::json!({
+        "public_key": dilithium_pk_b64,
+        "kyber_public_key": kyber_pk_b64,
+        "device_id": device_id,
+        "display_name": display_name,
+        "identity_type": "human",
+        "registration_proof": proof_b64,
+        "timestamp": timestamp,
+    });
+
+    // Connect and POST
+    let trust_config = build_trust_config(None, None, false, true)?;
+    let client = connect_client(loaded.identity.clone(), trust_config, &cli.server).await?;
+    let response = client
+        .post_json("/api/v1/identity/register", &body)
+        .await
+        .map_err(|e| CliError::ConfigError(format!("Registration failed: {}", e)))?;
+
+    let result: serde_json::Value = ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::ConfigError(format!("Failed to parse response: {}", e)))?;
+
+    if result.get("status").and_then(|s| s.as_str()) == Some("success") {
+        output.success("Identity registered on-chain")?;
+        if let Some(did) = result.get("did").and_then(|d| d.as_str()) {
+            output.print(&format!("DID: {}", did))?;
+        }
+        if let Some(primary) = result.get("primary_wallet_id").and_then(|w| w.as_str()) {
+            output.print(&format!("Primary wallet: {}", primary))?;
+        }
+        if let Some(ubi) = result.get("ubi_wallet_id").and_then(|w| w.as_str()) {
+            output.print(&format!("UBI wallet: {}", ubi))?;
+        }
+        if let Some(savings) = result.get("savings_wallet_id").and_then(|w| w.as_str()) {
+            output.print(&format!("Savings wallet: {}", savings))?;
+        }
+    } else {
+        let err = result
+            .get("message")
+            .or_else(|| result.get("error"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("Unknown error");
+        return Err(CliError::IdentityError(format!(
+            "On-chain registration failed: {}",
+            err
+        )));
+    }
 
     Ok(())
 }
@@ -299,315 +676,6 @@ async fn list_identities_impl(cli: &ZhtpCli, output: &dyn Output) -> CliResult<(
     Ok(())
 }
 
-#[allow(dead_code)]
-async fn migrate_identity_impl(
-    display_name: &str,
-    device_id: &str,
-    phrase: Option<&str>,
-    phrase_file: Option<&str>,
-    keystore: Option<&str>,
-    pin_spki: Option<&str>,
-    node_did: Option<&str>,
-    tofu: bool,
-    trust_node: bool,
-    server: &str,
-    format: &str,
-    output: &dyn Output,
-) -> CliResult<()> {
-    if phrase.is_some() && phrase_file.is_some() {
-        return Err(CliError::ConfigError(
-            "Use only one of --phrase or --phrase-file".to_string(),
-        ));
-    }
-
-    // Load QUIC client identity from keystore (this is transport/auth only).
-    let keystore_path = match keystore {
-        Some(p) => PathBuf::from(p),
-        None => get_default_keystore_path()?,
-    };
-    let loaded = load_identity_from_keystore(&keystore_path)?;
-    let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
-    let client = connect_client(loaded.identity.clone(), trust_config, server).await?;
-
-    // Build NEW seed-derived identity (used ONLY to sign migration payload).
-    let phrase = if let Some(file) = phrase_file {
-        let s = std::fs::read_to_string(file).map_err(|e| {
-            CliError::ConfigError(format!("Failed to read --phrase-file {}: {}", file, e))
-        })?;
-        Some(s.trim().to_string())
-    } else {
-        phrase.map(|s| s.to_string())
-    };
-
-    let new_identity = if let Some(phrase) = &phrase {
-        zhtp_client::restore_identity_from_phrase(phrase, device_id.to_string()).map_err(|e| {
-            CliError::IdentityError(format!("Failed to derive identity from phrase: {}", e))
-        })?
-    } else {
-        let id = zhtp_client::generate_identity(device_id.to_string()).map_err(|e| {
-            CliError::IdentityError(format!("Failed to generate new identity: {}", e))
-        })?;
-        let generated_phrase = zhtp_client::get_seed_phrase(&id)
-            .map_err(|e| CliError::IdentityError(format!("Failed to render seed phrase: {}", e)))?;
-        output.header("Generated Recovery Phrase (NEW DID)")?;
-        output.warning(
-            "This phrase is the ONLY way to recover the migrated identity. Store it offline.",
-        )?;
-        output.print(&generated_phrase)?;
-        id
-    };
-
-    let body_json =
-        zhtp_client::build_migrate_identity_request_json(&new_identity, display_name.to_string())
-            .map_err(|e| {
-            CliError::ConfigError(format!("Failed to build migrate payload JSON: {}", e))
-        })?;
-    let body_value: serde_json::Value = serde_json::from_str(&body_json).map_err(|e| {
-        CliError::ConfigError(format!(
-            "Failed to parse migrate payload JSON (internal): {}",
-            e
-        ))
-    })?;
-
-    output.info(&format!(
-        "Submitting migration request for display_name='{}' to {} ...",
-        display_name, server
-    ))?;
-
-    let response = client
-        .post_json("/api/v1/identity/migrate", &body_value)
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/identity/migrate".to_string(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
-
-    let result: serde_json::Value =
-        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/identity/migrate".to_string(),
-            status: 0,
-            reason: format!("Failed to parse response: {}", e),
-        })?;
-
-    output.header("Identity Migration Result")?;
-    output.print(&format_output(&result, format)?)?;
-
-    // If migration succeeded, verify wallet transfer by listing wallets for old/new identity IDs.
-    let status = result.get("status").and_then(|v| v.as_str()).unwrap_or("");
-    if status == "success" {
-        let old_did = result.get("old_did").and_then(|v| v.as_str()).unwrap_or("");
-        let new_did = result.get("new_did").and_then(|v| v.as_str()).unwrap_or("");
-
-        let old_id = old_did.strip_prefix("did:zhtp:").unwrap_or(old_did);
-        let new_id = new_did.strip_prefix("did:zhtp:").unwrap_or(new_did);
-
-        // Wallet list endpoint expects the 32-byte hex identity id (same as DID suffix).
-        let old_wallets_resp = client
-            .get(&format!("/api/v1/wallet/list/{}", old_id))
-            .await
-            .map_err(|e| CliError::ApiCallFailed {
-                endpoint: "/api/v1/wallet/list/{old}".to_string(),
-                status: 0,
-                reason: e.to_string(),
-            })?;
-        let new_wallets_resp = client
-            .get(&format!("/api/v1/wallet/list/{}", new_id))
-            .await
-            .map_err(|e| CliError::ApiCallFailed {
-                endpoint: "/api/v1/wallet/list/{new}".to_string(),
-                status: 0,
-                reason: e.to_string(),
-            })?;
-
-        let old_wallets_json: serde_json::Value = ZhtpClient::parse_json(&old_wallets_resp)
-            .map_err(|e| {
-                CliError::ConfigError(format!("Failed to parse old wallet list: {}", e))
-            })?;
-        let new_wallets_json: serde_json::Value = ZhtpClient::parse_json(&new_wallets_resp)
-            .map_err(|e| {
-                CliError::ConfigError(format!("Failed to parse new wallet list: {}", e))
-            })?;
-
-        output.header("Wallet Transfer Check")?;
-        output.print(&format!(
-            "Old identity wallets: total_wallets={} total_balance={}",
-            old_wallets_json
-                .get("total_wallets")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0),
-            old_wallets_json
-                .get("total_balance")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0),
-        ))?;
-        output.print(&format!(
-            "New identity wallets: total_wallets={} total_balance={}",
-            new_wallets_json
-                .get("total_wallets")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0),
-            new_wallets_json
-                .get("total_balance")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0),
-        ))?;
-
-        // Chain-level check: wallet registry owner bindings.
-        let chain_old_resp = client
-            .get(&format!(
-                "/api/v1/blockchain/wallets?owner_identity={}",
-                old_id
-            ))
-            .await
-            .map_err(|e| CliError::ApiCallFailed {
-                endpoint: "/api/v1/blockchain/wallets?owner_identity={old}".to_string(),
-                status: 0,
-                reason: e.to_string(),
-            })?;
-        let chain_new_resp = client
-            .get(&format!(
-                "/api/v1/blockchain/wallets?owner_identity={}",
-                new_id
-            ))
-            .await
-            .map_err(|e| CliError::ApiCallFailed {
-                endpoint: "/api/v1/blockchain/wallets?owner_identity={new}".to_string(),
-                status: 0,
-                reason: e.to_string(),
-            })?;
-
-        let chain_old_json: serde_json::Value =
-            ZhtpClient::parse_json(&chain_old_resp).map_err(|e| {
-                CliError::ConfigError(format!("Failed to parse chain wallet list (old): {}", e))
-            })?;
-        let chain_new_json: serde_json::Value =
-            ZhtpClient::parse_json(&chain_new_resp).map_err(|e| {
-                CliError::ConfigError(format!("Failed to parse chain wallet list (new): {}", e))
-            })?;
-
-        output.header("Chain Wallet Registry Check")?;
-        output.print(&format!(
-            "Old owner wallet_count={}",
-            chain_old_json
-                .get("wallet_count")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0),
-        ))?;
-        output.print(&format!(
-            "New owner wallet_count={}",
-            chain_new_json
-                .get("wallet_count")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0),
-        ))?;
-    }
-
-    Ok(())
-}
-
-#[allow(dead_code)]
-async fn register_identity_impl(
-    display_name: &str,
-    device_id: &str,
-    identity_type: &str,
-    keystore: Option<&str>,
-    pin_spki: Option<&str>,
-    node_did: Option<&str>,
-    tofu: bool,
-    trust_node: bool,
-    server: &str,
-    format: &str,
-    output: &dyn Output,
-) -> CliResult<()> {
-    // Load QUIC client identity from keystore (transport/auth only).
-    let keystore_path = match keystore {
-        Some(p) => PathBuf::from(p),
-        None => get_default_keystore_path()?,
-    };
-    let loaded = load_identity_from_keystore(&keystore_path)?;
-    let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
-    let client = connect_client(loaded.identity.clone(), trust_config, server).await?;
-
-    // Create a new identity locally (client-side keygen), then register it on the node.
-    let identity = zhtp_client::generate_identity(device_id.to_string())
-        .map_err(|e| CliError::IdentityError(format!("Failed to generate identity: {}", e)))?;
-
-    // Print the recovery phrase for the registered identity.
-    let phrase = zhtp_client::get_seed_phrase(&identity)
-        .map_err(|e| CliError::IdentityError(format!("Failed to render seed phrase: {}", e)))?;
-    output.header("Recovery Phrase (REGISTERED IDENTITY)")?;
-    output.warning("This phrase controls the registered identity. Store it offline.")?;
-    output.print(&phrase)?;
-
-    // Server expects signature over: "ZHTP_REGISTER:{timestamp}" (no DID).
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| CliError::IdentityError(format!("Clock error: {}", e)))?
-        .as_secs();
-    let signed_message = format!("ZHTP_REGISTER:{}", timestamp);
-    let sig =
-        zhtp_client::identity::sign_message(&identity, signed_message.as_bytes()).map_err(|e| {
-            CliError::IdentityError(format!("Failed to sign registration proof: {}", e))
-        })?;
-
-    let body_value = serde_json::json!({
-        "public_key": base64::engine::general_purpose::STANDARD.encode(&identity.public_key),
-        "kyber_public_key": base64::engine::general_purpose::STANDARD.encode(&identity.kyber_public_key),
-        "device_id": device_id,
-        "display_name": display_name,
-        "identity_type": identity_type,
-        "registration_proof": base64::engine::general_purpose::STANDARD.encode(sig),
-        "timestamp": timestamp,
-    });
-
-    output.info(&format!(
-        "Registering display_name='{}' on {} ...",
-        display_name, server
-    ))?;
-
-    let response = client
-        .post_json("/api/v1/identity/register", &body_value)
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/identity/register".to_string(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
-
-    let result: serde_json::Value =
-        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/identity/register".to_string(),
-            status: 0,
-            reason: format!("Failed to parse response: {}", e),
-        })?;
-
-    output.header("Identity Register Result")?;
-    output.print(&format_output(&result, format)?)?;
-
-    // Convenience: fetch wallet list right away, so we have a baseline before migration.
-    let did = result
-        .get("did")
-        .and_then(|v| v.as_str())
-        .unwrap_or(&identity.did);
-    let id = did.strip_prefix("did:zhtp:").unwrap_or(did);
-
-    let wallets_resp = client
-        .get(&format!("/api/v1/wallet/list/{}", id))
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/wallet/list/{id}".to_string(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
-    let wallets_json: serde_json::Value = ZhtpClient::parse_json(&wallets_resp)
-        .map_err(|e| CliError::ConfigError(format!("Failed to parse wallet list: {}", e)))?;
-
-    output.header("Registered Wallets (Baseline)")?;
-    output.print(&format_output(&wallets_json, format)?)?;
-
-    Ok(())
-}
 
 // ============================================================================
 // TESTS - Pure logic is testable without mocks or side effects

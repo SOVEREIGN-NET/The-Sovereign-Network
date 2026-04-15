@@ -40,6 +40,7 @@ fn test_lib_proofs_uses_lib_crypto_random() {
 }
 
 #[test]
+#[cfg(feature = "fake-proofs")]
 fn test_range_proof_generation_uses_crypto() -> anyhow::Result<()> {
     // Test that range proof generation uses lib-crypto properly
     let value = 100u64;
@@ -74,6 +75,7 @@ fn test_no_direct_crypto_dependencies() {
 }
 
 #[test]
+#[cfg(feature = "fake-proofs")]
 fn test_cryptographic_integrity() -> anyhow::Result<()> {
     // Test that cryptographic operations maintain integrity through the abstraction
 

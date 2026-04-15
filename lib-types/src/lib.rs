@@ -12,6 +12,7 @@ pub mod errors;
 pub mod fees;
 pub mod mempool;
 pub mod node_id;
+pub mod node_type;
 pub mod peer;
 pub mod primitives;
 pub mod storage;
@@ -22,7 +23,8 @@ pub use primitives::{Address, Amount, BlockHash, BlockHeight, Bps, TokenId, TxHa
 
 pub use bonding_curve::{
     BondingCurveAccountState, BondingCurveBand, BondingCurveBuyReceipt, BondingCurveBuyTx,
-    BondingCurveEconomicState, BondingCurveSellReceipt, BondingCurveSellTx, Nonce48,
+    BondingCurveEconomicState, BondingCurveSellReceipt, BondingCurveSellTx, DebtState, Nonce48,
+    PoolState, PreBackedEntry,
 };
 pub use chunk::*;
 pub use consensus::{
@@ -45,9 +47,9 @@ pub use economy::{
 pub use errors::*;
 pub use fees::{FeeDeficit, FeeInput, FeeParams, SigScheme, TxKind};
 pub use node_id::NodeId;
+pub use node_type::NodeType;
 pub use peer::PeerId;
 pub use storage::ProtocolStorageStats;
 pub use tokenomics::{
-    CBE_DECIMALS, CBE_MAX_SUPPLY, CBE_TOTAL_SUPPLY_TOKENS, SOV_DECIMALS, SOV_MAX_SUPPLY,
-    SOV_TOTAL_SUPPLY_TOKENS, TOKEN_SCALE_18,
+    sov, SOV_DECIMALS, SOV_MAX_SUPPLY, SOV_TOTAL_SUPPLY_TOKENS, TOKEN_SCALE_18,
 };

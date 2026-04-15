@@ -15,14 +15,14 @@ fn register_test_validator(
     identity: IdentityId,
     stake: u64,
     storage: u64,
-    consensus_key: Vec<u8>,
+    consensus_key_seed: u8,
     commission_rate: u8,
 ) -> Result<()> {
     manager.register_validator(
         identity,
         stake,
         storage,
-        consensus_key,
+        [consensus_key_seed; 2592],
         vec![0xEEu8; 32],
         vec![0xFFu8; 32],
         commission_rate,
@@ -57,7 +57,7 @@ fn test_basic_validation_rewards() -> Result<()> {
             identity,
             *stake,
             *storage,
-            vec![(i + 1) as u8; 32],
+            (i + 1) as u8,
             5,
         )?;
     }
@@ -91,7 +91,7 @@ fn test_stake_proportional_rewards() -> Result<()> {
         alice_id.clone(),
         alice_stake,
         200 * 1024 * 1024 * 1024,
-        vec![1u8; 32],
+        1u8,
         5,
     )?;
 
@@ -100,7 +100,7 @@ fn test_stake_proportional_rewards() -> Result<()> {
         bob_id.clone(),
         bob_stake,
         200 * 1024 * 1024 * 1024,
-        vec![2u8; 32],
+        2u8,
         5,
     )?;
 
@@ -139,7 +139,7 @@ fn test_reputation_bonus_rewards() -> Result<()> {
         alice_id.clone(),
         2000 * 1_000_000,
         200 * 1024 * 1024 * 1024,
-        vec![1u8; 32],
+        1u8,
         5,
     )?;
 
@@ -148,7 +148,7 @@ fn test_reputation_bonus_rewards() -> Result<()> {
         bob_id.clone(),
         2000 * 1_000_000,
         200 * 1024 * 1024 * 1024,
-        vec![2u8; 32],
+        2u8,
         5,
     )?;
 
@@ -195,7 +195,7 @@ fn test_storage_provision_rewards() -> Result<()> {
         alice_id.clone(),
         2000 * 1_000_000,
         500 * 1024 * 1024 * 1024, // 500 GB - high storage
-        vec![1u8; 32],
+        1u8,
         5,
     )?;
 
@@ -204,7 +204,7 @@ fn test_storage_provision_rewards() -> Result<()> {
         bob_id.clone(),
         2000 * 1_000_000,
         100 * 1024 * 1024 * 1024, // 100 GB - minimum storage
-        vec![2u8; 32],
+        2u8,
         5,
     )?;
 
@@ -242,7 +242,7 @@ fn test_commission_rate_impact() -> Result<()> {
         alice_id.clone(),
         2000 * 1_000_000,
         200 * 1024 * 1024 * 1024,
-        vec![1u8; 32],
+        1u8,
         5, // 5% commission
     )?;
 
@@ -251,7 +251,7 @@ fn test_commission_rate_impact() -> Result<()> {
         bob_id.clone(),
         2000 * 1_000_000,
         200 * 1024 * 1024 * 1024,
-        vec![2u8; 32],
+        2u8,
         15, // 15% commission
     )?;
 
@@ -308,7 +308,7 @@ fn test_reward_round_structure() -> Result<()> {
         alice_id.clone(),
         2000 * 1_000_000,
         200 * 1024 * 1024 * 1024,
-        vec![1u8; 32],
+        1u8,
         5,
     )?;
 
@@ -368,7 +368,7 @@ fn test_reward_consistency() -> Result<()> {
         alice_id.clone(),
         2000 * 1_000_000,
         200 * 1024 * 1024 * 1024,
-        vec![1u8; 32],
+        1u8,
         5,
     )?;
 

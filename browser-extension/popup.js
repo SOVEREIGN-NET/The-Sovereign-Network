@@ -21,13 +21,11 @@ function shortenOwner(owner) {
 async function refreshStatus() {
   const statusEl = document.getElementById("status");
   try {
-    const response = await fetch(DAEMON_STATUS_URL);
-    if (!response.ok) {
-      throw new Error(`daemon returned ${response.status}`);
-    }
+    const status = await fetchCompatibleDaemonStatus(DAEMON_STATUS_URL);
 
-    const status = await response.json();
-    statusEl.textContent = `Daemon online. DID ${status.daemon_did}. Active backend ${status.active_backend || "not connected yet"}.`;
+    statusEl.textContent =
+      `Daemon ${status.daemon_version}. API ${status.api_version}. ` +
+      `DID ${status.daemon_did}. Active backend ${status.active_backend || "not connected yet"}.`;
   } catch (error) {
     statusEl.textContent = `Daemon unavailable: ${error.message}`;
   }
@@ -36,7 +34,10 @@ async function refreshStatus() {
 async function refreshDomains() {
   const listEl = document.getElementById("domains");
   try {
+    await fetchCompatibleDaemonStatus(DAEMON_STATUS_URL);
+
     const response = await fetch(DAEMON_DOMAINS_URL);
+
     if (!response.ok) {
       throw new Error(`daemon returned ${response.status}`);
     }

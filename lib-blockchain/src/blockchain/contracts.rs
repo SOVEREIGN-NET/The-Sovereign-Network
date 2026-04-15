@@ -97,7 +97,6 @@ impl Blockchain {
                     }
 
                     let is_sov = Self::is_sov_token_id(&transfer.token_id);
-                    let is_cbe = transfer.token_id == self.cbe_token.token_id();
                     let token_id = if is_sov {
                         sov_token_id
                     } else {
@@ -193,10 +192,10 @@ impl Blockchain {
                                     {
                                         let old_bal = token.balance_of(&old_sov_addr);
                                         if old_bal > 0 {
-                                            token.balances.insert(old_sov_addr.clone(), 0);
+                                            token.set_balance(&old_sov_addr, 0);
                                             let cur_new = token.balance_of(&new_sov_addr);
-                                            token.balances.insert(
-                                                new_sov_addr,
+                                            token.set_balance(
+                                                &new_sov_addr,
                                                 cur_new.saturating_add(old_bal),
                                             );
                                         }
@@ -213,7 +212,7 @@ impl Blockchain {
                                 // This handles wallets from a previous chain without requiring
                                 // users to re-register. All nodes execute this at the same block
                                 // height so state stays consistent across the network.
-                                const SOV_WELCOME_BONUS: u64 = 5_000 * 100_000_000;
+                                const SOV_WELCOME_BONUS: u128 = lib_types::sov::atoms(5_000);
                                 let wallet_data = crate::transaction::WalletTransactionData {
                                     wallet_id: Hash::new(transfer.from),
                                     owner_identity_id: None,
@@ -234,7 +233,7 @@ impl Blockchain {
                                         info!(
                                             "🔄 Transparent migration: auto-registered wallet {} with {} SOV at block execution",
                                             &from_wallet_id[..16],
-                                            SOV_WELCOME_BONUS / 100_000_000,
+                                            SOV_WELCOME_BONUS / lib_types::sov::SCALE,
                                         );
                                     }
                                     Err(e) => {
@@ -287,7 +286,7 @@ impl Blockchain {
                             .get_mut(&token_id)
                             .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
                         let from_bal = token.balance_of(&from_wallet_addr);
-                        if from_bal < amount_u64 {
+                        if from_bal < amount_u64 as u128 {
                             return Err(anyhow::anyhow!(
                                 "TokenTransfer insufficient balance: have {}, need {}",
                                 from_bal,
@@ -295,7 +294,7 @@ impl Blockchain {
                             ));
                         }
                         token
-                            .transfer(&ctx, &to_wallet_addr, net_amount)
+                            .transfer(&ctx, &to_wallet_addr, net_amount as u128)
                             .map_err(|e| anyhow::anyhow!("TokenTransfer failed: {}", e))?;
                         Self::apply_token_transfer_with_fee(
                             token,
@@ -305,33 +304,6 @@ impl Blockchain {
                             &treasury_pk_opt,
                             block.height(),
                         )?;
-                    } else if is_cbe {
-                        if sender_pk.key_id != transfer.from {
-                            return Err(anyhow::anyhow!(
-                                "TokenTransfer CBE sender key_id mismatch"
-                            ));
-                        }
-
-                        let recipient_pk_bytes = self
-                            .resolve_public_key_by_key_id(&transfer.to)
-                            .ok_or_else(|| {
-                                anyhow::anyhow!("TokenTransfer CBE recipient not found")
-                            })?;
-                        let recipient_pk = PublicKey::new(
-                            recipient_pk_bytes.as_slice().try_into().unwrap_or([0u8; 2592])
-                        );
-
-                        let ctx = crate::contracts::executor::ExecutionContext::new(
-                            sender_pk.clone(),
-                            block.height(),
-                            block.header.timestamp,
-                            0,
-                            tx_hash,
-                        );
-
-                        self.cbe_token
-                            .transfer(&ctx, &recipient_pk, amount_u64, block.height())
-                            .map_err(|e| anyhow::anyhow!("CBE TokenTransfer failed: {}", e))?;
                     } else {
                         if sender_pk.key_id != transfer.from {
                             return Err(anyhow::anyhow!("TokenTransfer sender key_id mismatch"));
@@ -357,7 +329,7 @@ impl Blockchain {
                             .get_mut(&token_id)
                             .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
                         let sender_bal = token.balance_of(&sender_pk);
-                        if sender_bal < amount_u64 {
+                        if sender_bal < amount_u64 as u128 {
                             return Err(anyhow::anyhow!(
                                 "TokenTransfer insufficient balance: have {}, need {}",
                                 sender_bal,
@@ -365,7 +337,7 @@ impl Blockchain {
                             ));
                         }
                         token
-                            .transfer(&ctx, &recipient_pk, net_amount)
+                            .transfer(&ctx, &recipient_pk, net_amount as u128)
                             .map_err(|e| anyhow::anyhow!("TokenTransfer failed: {}", e))?;
                         Self::apply_token_transfer_with_fee(
                             token,
@@ -380,9 +352,10 @@ impl Blockchain {
                     *self.token_nonces.entry(nonce_key).or_insert(0) += 1;
 
                     if tracing::enabled!(tracing::Level::INFO) {
+                        let cbe_token_id = Self::derive_cbe_token_id_pub();
                         let token_label: std::borrow::Cow<'_, str> = if is_sov {
                             "SOV".into()
-                        } else if is_cbe {
+                        } else if token_id == cbe_token_id {
                             "CBE".into()
                         } else {
                             hex::encode(&token_id[..4]).into()
@@ -479,11 +452,7 @@ impl Blockchain {
                                 new_remainder %= 30;
                             }
 
-                            let amount_u64: u64 = mint
-                                .amount
-                                .try_into()
-                                .map_err(|_| anyhow::anyhow!("TokenMint amount exceeds u64"))?;
-                            if amount_u64 != expected_payout {
+                            if mint.amount != expected_payout {
                                 return Err(anyhow::anyhow!("UBI mint amount mismatch"));
                             }
 
@@ -567,7 +536,7 @@ impl Blockchain {
                                 .token_contracts
                                 .get_mut(&token_id)
                                 .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
-                            token.burn(&from_pk, amount_u64).map_err(|e| {
+                            token.burn(&from_pk, amount_u64 as u128).map_err(|e| {
                                 anyhow::anyhow!("Token migration burn failed: {}", e)
                             })?;
                         }
@@ -600,7 +569,7 @@ impl Blockchain {
                             .get_mut(&token_id)
                             .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
                         token
-                            .mint(&recipient_pk, amount_u64)
+                            .mint(&recipient_pk, amount_u64 as u128)
                             .map_err(|e| anyhow::anyhow!("TokenMint failed: {}", e))?;
                     }
 
@@ -649,16 +618,16 @@ impl Blockchain {
                     } else {
                         payload.decimals
                     };
-                    token.max_supply = payload.initial_supply;
+                    token.max_supply = payload.initial_supply as u128;
                     token
-                        .mint(&creator, creator_allocation)
+                        .mint(&creator, creator_allocation as u128)
                         .map_err(|e| anyhow::anyhow!("TokenCreation mint failed: {}", e))?;
                     let treasury_pk = lib_crypto::types::keys::PublicKey {
                         dilithium_pk: [0u8; 2592],
                         kyber_pk: [0u8; 1568],
                         key_id: payload.treasury_recipient,
                     };
-                    token.mint(&treasury_pk, treasury_allocation).map_err(|e| {
+                    token.mint(&treasury_pk, treasury_allocation as u128).map_err(|e| {
                         anyhow::anyhow!("TokenCreation treasury mint failed: {}", e)
                     })?;
 

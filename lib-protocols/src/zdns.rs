@@ -595,9 +595,6 @@ impl ZdnsServer {
             return Ok(());
         }
 
-        let _zk_system = lib_proofs::plonky2::ZkProofSystem::new().map_err(|e| {
-            ProtocolError::ZkProofError(format!("Failed to initialize ZK system: {}", e))
-        })?;
 
         for record in records {
             let proof_bytes = base64::Engine::decode(
@@ -613,7 +610,8 @@ impl ZdnsServer {
                 return Err(ProtocolError::ZkProofError("Proof data empty".to_string()));
             }
 
-            if let Some(_plonky2_proof) = &zk_proof.plonky2_proof {
+            if zk_proof.backend_proof.is_some() {
+
                 // NOTE: A dedicated DNS ownership proof circuit is required here.
                 // Using storage access circuit is semantically incorrect.
                 return Err(ProtocolError::ZkProofError(
@@ -621,7 +619,8 @@ impl ZdnsServer {
                 ));
             } else {
                 return Err(ProtocolError::ZkProofError(
-                    "Plonky2 proof required".to_string(),
+                    "Backend proof required".to_string(),
+
                 ));
             }
         }

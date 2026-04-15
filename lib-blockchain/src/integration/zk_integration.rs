@@ -33,8 +33,8 @@ pub fn is_valid_proof_structure(proof: &ZkTransactionProof) -> bool {
         proof.amount_proof.proof_system
     );
     println!(
-        "DEBUG: amount_proof.plonky2_proof.is_some() = {}",
-        proof.amount_proof.plonky2_proof.is_some()
+        "DEBUG: amount_proof.backend_proof.is_some() = {}",
+        proof.amount_proof.backend_proof.is_some()
     );
 
     // Check if the proof has the required fields
@@ -62,7 +62,7 @@ pub fn generate_proofs_transaction_proof(
         vec![1, 2, 3, 4],              // proof_data
         vec![amount as u8, fee as u8], // public_inputs
         vec![5, 6, 7, 8],              // verification_key
-        None,                          // plonky2_proof
+        None,                          // backend_proof
     );
 
     Ok(ZkTransactionProof::new(
@@ -93,7 +93,7 @@ pub fn generate_identity_proof_for_transaction(
         vec![9, 10, 11, 12],                            // proof_data
         vec![transaction_hash[0], transaction_hash[1]], // public_inputs
         vec![13, 14, 15, 16],                           // verification_key
-        None,                                           // plonky2_proof
+        None,                                           // backend_proof
     ))
 }
 
@@ -104,7 +104,7 @@ pub fn generate_simple_transaction_proof(amount: u64, hash: [u8; 32]) -> Result<
         vec![17, 18, 19, 20],        // proof_data
         vec![amount as u8, hash[0]], // public_inputs
         vec![21, 22, 23, 24],        // verification_key
-        None,                        // plonky2_proof
+        None,                        // backend_proof
     ))
 }
 

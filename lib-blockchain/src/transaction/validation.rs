@@ -376,7 +376,8 @@ impl TransactionValidator {
                 // Threshold approval; full validation deferred to stateful validator
             }
             TransactionType::InitCbeToken => {
-                // Full validation deferred to stateful validator
+                // Deprecated — always reject at syntactic level (EPIC-001 Phase 1D).
+                return Err(ValidationError::AlreadyInitialized);
             }
             TransactionType::CreateEmploymentContract => {
                 // Full validation deferred to stateful validator
@@ -423,7 +424,6 @@ impl TransactionValidator {
                     | TransactionType::TokenMint
                     | TransactionType::TokenCreation
                     | TransactionType::InitEntityRegistry
-                    | TransactionType::InitCbeToken
             );
         let has_nonempty_sig = !transaction.signature.signature.is_empty();
         // Skip tx-level sig validation for threshold-approval-only types
@@ -626,7 +626,8 @@ impl TransactionValidator {
                 // Threshold approval; full validation deferred to stateful validator
             }
             TransactionType::InitCbeToken => {
-                // Full validation deferred to stateful validator
+                // Deprecated — always reject (EPIC-001 Phase 1D).
+                return Err(ValidationError::AlreadyInitialized);
             }
             TransactionType::CreateEmploymentContract => {
                 // Full validation deferred to stateful validator
@@ -672,7 +673,6 @@ impl TransactionValidator {
                     | TransactionType::TokenMint
                     | TransactionType::TokenCreation
                     | TransactionType::InitEntityRegistry
-                    | TransactionType::InitCbeToken
             );
         let has_nonempty_sig = !transaction.signature.signature.is_empty();
         let is_threshold_only_sflag = matches!(
@@ -1049,31 +1049,20 @@ impl TransactionValidator {
 
     /// Validate nullifier proof to prevent double spending
     fn validate_nullifier_proof(&self, input: &TransactionInput) -> ValidationResult {
-        // Verify that the nullifier proof is cryptographically sound
-        if let Some(plonky2_proof) = &input.zk_proof.nullifier_proof.plonky2_proof {
-            // Use Plonky2 verification if available
-            if let Ok(zk_system) = lib_proofs::ZkProofSystem::new() {
-                // FIX: Nullifier proof is generated with prove_transaction, so use verify_transaction
-                match zk_system.verify_transaction(plonky2_proof) {
-                    Ok(is_valid) => {
-                        if !is_valid {
-                            return Err(ValidationError::InvalidZkProof);
-                        }
-                    }
-                    Err(e) => {
-                        // NO FALLBACKS - fail hard if ZK verification fails
-                        log::error!(
-                            "Nullifier ZK verification failed - no fallbacks allowed: {:?}",
-                            e
-                        );
-                        return Err(ValidationError::InvalidZkProof);
-                    }
+        match input.zk_proof.nullifier_proof.verify() {
+            Ok(is_valid) => {
+                if !is_valid {
+                    return Err(ValidationError::InvalidZkProof);
+
                 }
             }
-        } else {
-            // NO FALLBACKS - require Plonky2 proofs only
-            log::error!("Nullifier proof missing Plonky2 verification - no fallbacks allowed");
-            return Err(ValidationError::InvalidZkProof);
+            Err(e) => {
+                log::error!(
+                    "Nullifier ZK verification failed - no fallbacks allowed: {:?}",
+                    e
+                );
+                return Err(ValidationError::InvalidZkProof);
+            }
         }
 
         Ok(())
@@ -1084,91 +1073,24 @@ impl TransactionValidator {
         println!(" DEBUG: validate_amount_range_proof starting");
         log::info!("validate_amount_range_proof starting");
 
-        // Verify that the amount is within valid range (positive, not exceeding max supply)
-        if let Some(plonky2_proof) = &input.zk_proof.amount_proof.plonky2_proof {
-            println!(" DEBUG: Found Plonky2 amount proof for range validation");
-            println!(
-                " DEBUG: Amount proof system: '{}'",
-                plonky2_proof.proof_system
-            );
-            log::info!("Found Plonky2 amount proof for range validation");
-            log::info!("Amount proof system: '{}'", plonky2_proof.proof_system);
+        match input.zk_proof.amount_proof.verify() {
+            Ok(is_valid) => {
+                println!(" DEBUG: Amount range verification result: {}", is_valid);
+                log::info!("Amount range verification result: {}", is_valid);
+                if !is_valid {
+                    println!(" DEBUG: Amount range proof INVALID - returning error");
+                    log::error!("Amount range proof INVALID - returning error");
+                    return Err(ValidationError::InvalidZkProof);
 
-            // Use Plonky2 verification if available
-            if let Ok(zk_system) = lib_proofs::ZkProofSystem::new() {
-                println!(" DEBUG: ZkProofSystem initialized for range validation");
-                log::info!("ZkProofSystem initialized for range validation");
-
-                // Check if this is a transaction proof or range proof and use appropriate verification
-                match plonky2_proof.proof_system.as_str() {
-                    "ZHTP-Optimized-Range" => {
-                        println!(" DEBUG: Using verify_range for range proof");
-                        log::info!("Using verify_range for range proof");
-
-                        match zk_system.verify_range(plonky2_proof) {
-                            Ok(is_valid) => {
-                                println!(" DEBUG: Range verification result: {}", is_valid);
-                                log::info!("Range verification result: {}", is_valid);
-
-                                if !is_valid {
-                                    println!(" DEBUG: Range proof INVALID - returning error");
-                                    log::error!("Range proof INVALID - returning error");
-                                    return Err(ValidationError::InvalidZkProof);
-                                } else {
-                                    println!(" DEBUG: Range proof VALID");
-                                    log::info!("Range proof VALID");
-                                }
-                            }
-                            Err(e) => {
-                                println!(" DEBUG: Range verification error: {:?}", e);
-                                log::error!("Range verification error: {:?}", e);
-                                return Err(ValidationError::InvalidZkProof);
-                            }
-                        }
-                    }
-                    "ZHTP-Optimized-Transaction" | "Plonky2" => {
-                        println!(" DEBUG: Using verify_transaction for transaction proof");
-                        log::info!("Using verify_transaction for transaction proof");
-
-                        match zk_system.verify_transaction(plonky2_proof) {
-                            Ok(is_valid) => {
-                                println!(" DEBUG: Transaction verification result: {}", is_valid);
-                                log::info!("Transaction verification result: {}", is_valid);
-
-                                if !is_valid {
-                                    println!(" DEBUG: Transaction proof INVALID - returning error");
-                                    log::error!("Transaction proof INVALID - returning error");
-                                    return Err(ValidationError::InvalidZkProof);
-                                } else {
-                                    println!(" DEBUG: Transaction proof VALID");
-                                    log::info!("Transaction proof VALID");
-                                }
-                            }
-                            Err(e) => {
-                                println!(" DEBUG: Transaction verification error: {:?}", e);
-                                log::error!("Transaction verification error: {:?}", e);
-                                return Err(ValidationError::InvalidZkProof);
-                            }
-                        }
-                    }
-                    _ => {
-                        println!(
-                            " DEBUG: Unknown proof system: '{}'",
-                            plonky2_proof.proof_system
-                        );
-                        log::error!("Unknown proof system: '{}'", plonky2_proof.proof_system);
-                        return Err(ValidationError::InvalidZkProof);
-                    }
                 }
-            } else {
-                println!(" DEBUG: Failed to initialize ZkProofSystem");
-                log::error!("Failed to initialize ZkProofSystem");
+                println!(" DEBUG: Amount range proof VALID");
+                log::info!("Amount range proof VALID");
+            }
+            Err(e) => {
+                println!(" DEBUG: Amount range verification error: {:?}", e);
+                log::error!("Amount range verification error: {:?}", e);
                 return Err(ValidationError::InvalidZkProof);
             }
-        } else {
-            println!(" DEBUG: No Plonky2 proof found - NO FALLBACKS ALLOWED");
-            log::error!("Amount proof missing Plonky2 verification - no fallbacks allowed");
-            return Err(ValidationError::InvalidZkProof);
         }
 
         println!(" DEBUG: validate_amount_range_proof completed successfully");
@@ -1804,67 +1726,27 @@ impl<'a> StatefulTransactionValidator<'a> {
                 }
 
                 // CBE balance check: reject at mempool time if sender has insufficient CBE.
-                // For legacy wallets (from != key_id), the CBE balance was credited to key_id
-                // by the executor (apply_buy_cbe uses tx.sender = key_id).  Check both
-                // cbe_account_state[key_id] and cbe_account_state[from] to handle both cases.
+                // Phase 1B moved all CBE balances to token_balances; cbe_account_state is no longer used.
                 let cbe_token_id = crate::Blockchain::derive_cbe_token_id_pub();
                 if data.token_id == cbe_token_id {
                     if let Some(blockchain) = self.blockchain {
-                        // For legacy wallets, CBE balance lives under key_id, not from.
                         let effective_key = if data.from != transaction.signature.public_key.key_id {
                             transaction.signature.public_key.key_id
                         } else {
                             data.from
                         };
                         let balance: u128 = if let Some(store) = &blockchain.store {
-                            let cbe_acc_bal = store
-                                .get_cbe_account_state(&effective_key)
-                                .ok()
-                                .flatten()
-                                .map(|a| a.balance_cbe)
-                                .unwrap_or(0);
-                            if cbe_acc_bal > 0 {
-                                cbe_acc_bal
-                            } else {
-                                // Fallback: token_balance for legacy/migrated credits
-                                let storage_token = crate::storage::TokenId(cbe_token_id);
-                                let addr = crate::storage::Address::new(effective_key);
-                                store.get_token_balance(&storage_token, &addr).unwrap_or(0)
-                            }
+                            let storage_token = crate::storage::TokenId(cbe_token_id);
+                            let addr = crate::storage::Address::new(effective_key);
+                            store.get_token_balance(&storage_token, &addr).unwrap_or(0)
                         } else {
-                            u128::from(blockchain.cbe_token.balance_of_key_id(&effective_key))
+                            0
                         };
                         if balance < data.amount {
                             tracing::warn!(
                                 "[TOKEN_TRANSFER] insufficient CBE balance: from={} effective_key={} have={} need={}",
                                 hex::encode(&data.from[..8]),
                                 hex::encode(&effective_key[..8]),
-                                balance,
-                                data.amount
-                            );
-                            return Err(ValidationError::InvalidAmount);
-                        }
-                    }
-                }
-
-                // CBE balance check: reject at mempool time if sender has insufficient CBE.
-                // Mirrors the SOV balance check above. Reads SledStore when available (executor
-                // path), falls back to cbe_token in-memory (non-executor path or fresh restart
-                // before first CBE transfer in this session).
-                let cbe_token_id = crate::Blockchain::derive_cbe_token_id_pub();
-                if data.token_id == cbe_token_id {
-                    if let Some(blockchain) = self.blockchain {
-                        let storage_token = crate::storage::TokenId(cbe_token_id);
-                        let addr = crate::storage::Address::new(data.from);
-                        let balance: u128 = if let Some(store) = &blockchain.store {
-                            store.get_token_balance(&storage_token, &addr).unwrap_or(0)
-                        } else {
-                            u128::from(blockchain.cbe_token.balance_of_key_id(&data.from))
-                        };
-                        if balance < data.amount {
-                            tracing::warn!(
-                                "[TOKEN_TRANSFER] insufficient CBE balance: from={} have={} need={}",
-                                hex::encode(&data.from[..8]),
                                 balance,
                                 data.amount
                             );
@@ -1932,7 +1814,8 @@ impl<'a> StatefulTransactionValidator<'a> {
                 self.validate_treasury_allocation(transaction)?;
             }
             TransactionType::InitCbeToken => {
-                self.validate_init_cbe_token(transaction)?;
+                // Deprecated — always reject (EPIC-001 Phase 1D).
+                return Err(ValidationError::AlreadyInitialized);
             }
             TransactionType::CreateEmploymentContract => {
                 self.validate_create_employment_contract(transaction)?;
@@ -2413,49 +2296,6 @@ impl<'a> StatefulTransactionValidator<'a> {
         Ok(())
     }
 
-    fn validate_init_cbe_token(&self, transaction: &Transaction) -> ValidationResult {
-        let data = transaction
-            .init_cbe_token_data()
-            .ok_or(ValidationError::MissingRequiredData)?;
-
-        if !transaction.inputs.is_empty() {
-            return Err(ValidationError::InvalidInputs);
-        }
-        if !transaction.outputs.is_empty() {
-            return Err(ValidationError::InvalidOutputs);
-        }
-        if transaction.fee != 0 {
-            return Err(ValidationError::InvalidFee);
-        }
-
-        // All 4 pool key_ids must be non-zero and mutually distinct
-        let keys = [
-            data.compensation_key_id,
-            data.operational_key_id,
-            data.performance_key_id,
-            data.strategic_key_id,
-        ];
-        if keys.iter().any(|k| k == &[0u8; 32]) {
-            return Err(ValidationError::InvalidPublicKey);
-        }
-        // Check all 4 keys are distinct
-        for i in 0..keys.len() {
-            for j in (i + 1)..keys.len() {
-                if keys[i] == keys[j] {
-                    return Err(ValidationError::InvalidPublicKey);
-                }
-            }
-        }
-
-        // One-time init: reject if CBE token is already initialized
-        let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
-        if blockchain.cbe_token.is_initialized() {
-            return Err(ValidationError::AlreadyInitialized);
-        }
-
-        Ok(())
-    }
-
     fn validate_create_employment_contract(&self, transaction: &Transaction) -> ValidationResult {
         let data = transaction
             .create_employment_contract_data()
@@ -2511,6 +2351,21 @@ impl<'a> StatefulTransactionValidator<'a> {
 
         // contract_id must be non-zero
         if data.contract_id == [0u8; 32] {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // amount_cbe must be positive
+        if data.amount_cbe == 0 {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // collaborator_address must be non-zero
+        if data.collaborator_address == [0u8; 32] {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // deliverable_hash must be non-zero (protocol invariant: no deliverable = no mint)
+        if data.deliverable_hash == [0u8; 32] {
             return Err(ValidationError::InvalidTransaction);
         }
 

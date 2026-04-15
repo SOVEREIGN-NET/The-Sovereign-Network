@@ -112,9 +112,9 @@ impl CitizenshipResult {
 pub struct CitizenBenefitsSummary {
     pub identity_id: IdentityId,
     pub wallet_count: u32,
-    pub monthly_ubi_amount: u64,
-    pub daily_ubi_amount: u64,
-    pub welcome_bonus_amount: u64,
+    pub monthly_ubi_amount: u128,
+    pub daily_ubi_amount: u128,
+    pub welcome_bonus_amount: u128,
     pub dao_voting_power: u64,
     pub web4_service_count: usize,
     pub access_level: AccessLevel,

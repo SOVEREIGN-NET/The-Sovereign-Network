@@ -12,8 +12,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 use tracing::warn;
 
+pub const DAEMON_API_VERSION: &str = "1";
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ServiceStatus {
+    pub daemon_version: String,
+    pub api_version: String,
     pub daemon_did: String,
     pub active_backend: Option<String>,
     pub configured_backends: Vec<String>,
@@ -51,6 +55,8 @@ impl ZhtpDaemonService {
     pub async fn status(&self) -> ServiceStatus {
         let active_backend = self.session.lock().await.active_backend.clone();
         ServiceStatus {
+            daemon_version: env!("CARGO_PKG_VERSION").to_string(),
+            api_version: DAEMON_API_VERSION.to_string(),
             daemon_did: self.identity.did.clone(),
             active_backend,
             configured_backends: self.config.backend_nodes.clone(),

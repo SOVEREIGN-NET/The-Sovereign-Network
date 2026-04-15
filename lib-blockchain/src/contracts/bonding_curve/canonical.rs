@@ -1,10 +1,33 @@
 pub use lib_types::{
     BondingCurveBand as Band, BondingCurveBuyReceipt, BondingCurveBuyTx, BondingCurveSellReceipt,
-    BondingCurveSellTx, CBE_MAX_SUPPLY, TOKEN_SCALE_18,
+    BondingCurveSellTx, TOKEN_SCALE_18,
 };
 use primitive_types::U256;
 
 use crate::contracts::utils::{integer_sqrt_u256, mul_div_floor_u128, u256_to_u128, MathError};
+
+// ── CBE economic identity constants ─────────────────────────────────────────
+//
+// These constants define the CBE token's identity and economic parameters.
+// They were originally in `contracts/tokens/cbe_token.rs` and were moved here
+// (EPIC-001 Phase 1F) because the bonding curve is the canonical home for CBE
+// economics after the CbeToken struct was removed from the protocol layer.
+
+/// Token symbol used by the bonding curve registry and oracle checks.
+pub const CBE_SYMBOL: &str = "CBE";
+
+/// Token name used to derive the canonical CBE token ID.
+pub const CBE_NAME: &str = "CBE Equity";
+
+/// Number of decimal places for CBE (18 decimals, same as SOV).
+/// DAOs choose their own decimals — CBE chose 18.
+pub const CBE_DECIMALS: u8 = 18;
+
+/// Whole-token CBE total supply (100 billion).
+pub const CBE_TOTAL_SUPPLY_TOKENS: u128 = 100_000_000_000;
+
+/// Total supply in 18-decimal atoms (100B × 10^18).
+pub const CBE_TOTAL_SUPPLY: u128 = CBE_TOTAL_SUPPLY_TOKENS * TOKEN_SCALE_18;
 
 // ── Immutable curve logic ────────────────────────────────────────────────────
 //
@@ -19,7 +42,12 @@ use crate::contracts::utils::{integer_sqrt_u256, mul_div_floor_u128, u256_to_u12
 pub const SCALE: u128 = TOKEN_SCALE_18;
 pub const SLOPE_DEN: u128 = 100_000_000_000_000;
 
-/// Graduation threshold (atomic SOV units).  Locked by team decision.
+/// Graduation threshold — reserve balance in atomic SOV units.
+///
+/// This is the executor-side check (SOV atoms in the locked reserve).
+/// The oracle-gate graduation check uses GRADUATION_THRESHOLD_USD in types.rs.
+/// Both must agree economically — GRAD_THRESHOLD ≈ GRADUATION_THRESHOLD_USD / SOV_price.
+///
 /// Changing this value is a hard fork.
 pub const GRAD_THRESHOLD: u128 = 2_745_966 * SCALE;
 
@@ -31,7 +59,10 @@ pub const MAX_GROSS_SOV_PER_TX: u128 = 1_000_000_000_000_000_000_000_000;
 /// Per-transaction minted-supply cap.  Changing this value is a hard fork.
 pub const MAX_DELTA_S_PER_TX: u128 = 100_000_000_000 * SCALE;
 
-pub const MAX_SUPPLY: u128 = CBE_MAX_SUPPLY;
+/// CBE max supply in 18-decimal bonding curve atoms (100B tokens × 10^18).
+/// This is the bonding curve's internal accounting unit, independent of CBE's
+/// 8-decimal display convention. Immutable — changing is a hard fork.
+pub const MAX_SUPPLY: u128 = 100_000_000_000 * SCALE;
 
 /// Band price anchors — part of the immutable curve shape.
 pub const P_START_0: u128 = 313_345_700_000_000;
@@ -39,6 +70,70 @@ pub const P_START_1: u128 = 413_345_700_000_000;
 pub const P_START_2: u128 = 813_345_700_000_000;
 pub const P_START_3: u128 = 1_713_345_700_000_000;
 pub const P_START_4: u128 = 2_713_345_700_000_000;
+
+// ── Pool ceilings (Feature #2126) ──────────────────────────────────────────
+//
+// Five named pools, each with a maximum ever-mintable ceiling.  No pool is
+// pre-minted at genesis.  Changing any ceiling is a hard fork.
+
+pub const COMPENSATION_POOL_CEILING: u128 = 400_000_000 * SCALE; // 400M CBE
+pub const TREASURY_POOL_CEILING: u128 = 200_000_000 * SCALE; // 200M CBE
+pub const LIQUIDITY_POOL_CEILING: u128 = 200_000_000 * SCALE; // 200M CBE
+pub const INCENTIVE_POOL_CEILING: u128 = 100_000_000 * SCALE; // 100M CBE
+pub const STRATEGIC_RESERVE_CEILING: u128 = 100_000_000 * SCALE; // 100M CBE
+
+// ── Debt ceiling and safety valves (Feature #2125) ─────────────────────────
+//
+// Maximum genesis payroll debt in CBE atoms (71M × 10^18).
+// Protocol invariant — cannot be raised by governance.
+
+pub const DEBT_CEILING: u128 = 71_000_000 * SCALE;
+
+/// Genesis treasury allocation — 20B CBE minted off-curve to SOV treasury.
+///
+/// Per spec §3.2 (Configuration B): this allocation is off-curve (does NOT
+/// increment S_c) and is UNLOCKED (tradeable when the AMM opens).
+/// Changing this value is a hard fork.
+pub const GENESIS_TREASURY_ALLOCATION: u128 = 20_000_000_000 * SCALE; // 20B CBE
+
+/// Debt state thresholds (fraction of ceiling)
+pub const DEBT_GREEN_MAX: u128 = DEBT_CEILING / 4; // 0-25%
+pub const DEBT_YELLOW_MAX: u128 = DEBT_CEILING / 2; // 25-50%
+pub const DEBT_ORANGE_MAX: u128 = DEBT_CEILING * 3 / 4; // 50-75%
+// RED: 75-100% of DEBT_CEILING
+
+/// Compute the debt state from outstanding pre-backed amount.
+pub fn compute_debt_state(outstanding: u128) -> lib_types::DebtState {
+    use lib_types::DebtState;
+    if outstanding <= DEBT_GREEN_MAX {
+        DebtState::Green
+    } else if outstanding <= DEBT_YELLOW_MAX {
+        DebtState::Yellow
+    } else if outstanding <= DEBT_ORANGE_MAX {
+        DebtState::Orange
+    } else {
+        DebtState::Red
+    }
+}
+
+// ── On-ramp split percentages (must sum to 100) ────────────────────────────
+//
+// Immutable protocol constants that define how incoming SOV is split on a
+// BUY_CBE transaction.  Changing any of these requires a protocol upgrade.
+
+/// Fraction of gross SOV directed to the SOV treasury.
+pub const SOV_TREASURY_SHARE_PCT: u128 = 20;
+/// Fraction of gross SOV directed to the CBE strategic reserve.
+pub const RESERVE_SHARE_PCT: u128 = 32;
+// Liquidity gets the remainder: 100 - 20 - 32 = 48
+
+/// Payroll mint multiplier: gross = amount_cbe * PAYROLL_GROSS_NUM / PAYROLL_GROSS_DEN (1.25X).
+pub const PAYROLL_GROSS_NUM: u128 = 125;
+pub const PAYROLL_GROSS_DEN: u128 = 100;
+/// Payroll SOV treasury share: 1/5 of gross (= 0.25X of the base).
+pub const PAYROLL_SOV_TREASURY_DIVISOR: u128 = 5;
+/// Payroll liquidity share: 60% of the base amount for SOVRN audit.
+pub const PAYROLL_LIQUIDITY_PCT: u128 = 60;
 
 // ── Upgrade-gated curve parameters ──────────────────────────────────────────
 //
@@ -61,6 +156,12 @@ pub const P_START_4: u128 = 2_713_345_700_000_000;
 /// the P_START_* anchors) are part of the immutable curve shape defined
 /// above.  Changing any of these values is a hard fork and requires an
 /// explicit protocol upgrade transaction.
+///
+/// This array is intentionally spelled out rather than derived at compile time.
+/// The band widths are non-uniform (10B, 20B, 30B, 25B, 15B) and the
+/// slope_num values (1..5) are chosen for economic policy reasons, not by
+/// formula.  An explicit table makes the protocol constants reviewable at a
+/// glance without running mental arithmetic.
 pub const BANDS: [Band; BAND_COUNT] = [
     Band {
         index: 0,
@@ -584,5 +685,106 @@ mod tests {
         .unwrap()
             + cost_single_band(BANDS[1].start_supply, current_supply, &BANDS[1]).unwrap();
         assert_eq!(payout_for_burn(amount, current_supply).unwrap(), expected);
+    }
+}
+
+// ── Floor price computation ─────────────────────────────────────────────────
+
+/// Compute the CBE floor price from on-chain state.
+///
+/// Floor = locked_reserve / circulating_supply (both in SCALE units).
+/// Returns the price in SCALE units (1e18 = 1 SOV per CBE).
+/// Returns 0 if circulating supply is zero (no deposits yet).
+pub fn floor_price(econ: &lib_types::BondingCurveEconomicState) -> u128 {
+    if econ.s_c == 0 {
+        return 0;
+    }
+    // Use U256 to avoid overflow: (reserve * SCALE) / s_c
+    let result = U256::from(econ.reserve_balance)
+        .checked_mul(U256::from(SCALE))
+        .unwrap_or(U256::zero())
+        / U256::from(econ.s_c);
+    u256_to_u128(result).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod floor_tests {
+    use super::*;
+    use lib_types::BondingCurveEconomicState;
+
+    #[test]
+    fn floor_zero_supply_returns_zero() {
+        let econ = BondingCurveEconomicState::default();
+        assert_eq!(floor_price(&econ), 0);
+    }
+
+    #[test]
+    fn floor_rises_monotonically_with_deposits() {
+        let mut econ = BondingCurveEconomicState::default();
+
+        // Simulate 3 deposits of 1000 SCALE SOV each (20/32/48 split)
+        let mut prev_floor = 0u128;
+        for _ in 0..3 {
+            let deposit = 1000 * SCALE;
+            let reserve_credit = deposit * 32 / 100;
+            let delta_s = mint_with_reserve(reserve_credit, econ.s_c).unwrap();
+            econ.s_c += delta_s;
+            econ.reserve_balance += reserve_credit;
+
+            let f = floor_price(&econ);
+            assert!(f > prev_floor, "floor must rise: prev={prev_floor}, now={f}");
+            prev_floor = f;
+        }
+    }
+}
+
+#[cfg(test)]
+mod debt_state_tests {
+    use super::*;
+    use lib_types::DebtState;
+
+    #[test]
+    fn debt_state_green_at_zero() {
+        assert_eq!(compute_debt_state(0), DebtState::Green);
+    }
+
+    #[test]
+    fn debt_state_green_at_boundary() {
+        assert_eq!(compute_debt_state(DEBT_GREEN_MAX), DebtState::Green);
+    }
+
+    #[test]
+    fn debt_state_yellow_just_above_green() {
+        assert_eq!(compute_debt_state(DEBT_GREEN_MAX + 1), DebtState::Yellow);
+    }
+
+    #[test]
+    fn debt_state_yellow_at_boundary() {
+        assert_eq!(compute_debt_state(DEBT_YELLOW_MAX), DebtState::Yellow);
+    }
+
+    #[test]
+    fn debt_state_orange_just_above_yellow() {
+        assert_eq!(compute_debt_state(DEBT_YELLOW_MAX + 1), DebtState::Orange);
+    }
+
+    #[test]
+    fn debt_state_orange_at_boundary() {
+        assert_eq!(compute_debt_state(DEBT_ORANGE_MAX), DebtState::Orange);
+    }
+
+    #[test]
+    fn debt_state_red_just_above_orange() {
+        assert_eq!(compute_debt_state(DEBT_ORANGE_MAX + 1), DebtState::Red);
+    }
+
+    #[test]
+    fn debt_state_red_at_ceiling() {
+        assert_eq!(compute_debt_state(DEBT_CEILING), DebtState::Red);
+    }
+
+    #[test]
+    fn debt_state_red_above_ceiling() {
+        assert_eq!(compute_debt_state(DEBT_CEILING + 1), DebtState::Red);
     }
 }

@@ -100,7 +100,9 @@ impl CbeHandler {
         // Reject if CBE token is already initialized
         {
             let bc = self.blockchain.read().await;
-            if bc.cbe_token.is_initialized() {
+            // CBE token state removed from Blockchain struct (EPIC-001).
+            // InitCbeToken transactions are always rejected now.
+            if true {
                 return Ok(err(
                     ZhtpStatus::Conflict,
                     "CBE token is already initialized".to_string(),

@@ -3,7 +3,7 @@
 use anyhow::{anyhow, Result};
 use lib_crypto::PublicKey;
 use lib_identity::IdentityManager;
-use lib_proofs::plonky2::ZkProofSystem;
+
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info, warn};
 
@@ -13,9 +13,6 @@ pub async fn generate_ubi_proof(recipient: &PublicKey, amount: u64, round: u64) 
         "🎁 Generating UBI distribution proof for recipient, amount: {}, round: {}",
         amount, round
     );
-
-    // Create ZK proof system
-    let zk_system = ZkProofSystem::new()?;
 
     // Verify recipient eligibility through identity system
     let _identity_manager = IdentityManager::new();
@@ -33,8 +30,8 @@ pub async fn generate_ubi_proof(recipient: &PublicKey, amount: u64, round: u64) 
             .map_err(|_| anyhow!("Invalid recipient public key"))?,
     );
 
-    // Generate UBI distribution proof using Plonky2
-    match zk_system.prove_identity(
+    // Generate UBI distribution proof using active backend
+    match lib_proofs::backend::get_backend().prove_identity(
         recipient_id,
         amount,
         round,
@@ -43,16 +40,17 @@ pub async fn generate_ubi_proof(recipient: &PublicKey, amount: u64, round: u64) 
         0,  // no jurisdiction requirement
         1,  // default verification level
     ) {
-        Ok(plonky2_proof) => {
+        Ok(backend_proof) => {
             // Create ZeroKnowledgeProof for UBI distribution
             let ubi_proof = lib_proofs::ZeroKnowledgeProof {
                 proof_system: "ZHTP-UBI-Distribution".to_string(),
-                proof_data: plonky2_proof.proof.clone(),
+                proof_data: backend_proof.data.clone(),
                 public_inputs: vec![amount.to_le_bytes().to_vec(), round.to_le_bytes().to_vec()]
                     .concat(),
                 verification_key: vec![], // Simplified for now
-                plonky2_proof: Some(plonky2_proof),
+                backend_proof: Some(backend_proof),
                 proof: vec![], // Legacy field
+                ..lib_proofs::ZkProof::empty()
             };
 
             // Serialize the proof
@@ -85,9 +83,6 @@ pub async fn verify_ubi_proof(proof: &[u8]) -> Result<bool> {
         return Err(anyhow!("Invalid proof system for UBI verification"));
     }
 
-    // Create ZK proof system for verification
-    let zk_system = ZkProofSystem::new()?;
-
     // Parse public inputs to extract amount and round
     if zk_proof.public_inputs.len() < 16 {
         // 8 bytes each for amount and round
@@ -106,10 +101,9 @@ pub async fn verify_ubi_proof(proof: &[u8]) -> Result<bool> {
             .map_err(|_| anyhow!("Invalid round in UBI proof"))?,
     );
 
-    // Use the plonky2 proof if available
-    if let Some(plonky2_proof) = &zk_proof.plonky2_proof {
-        // Verify the proof using the ZK system
-        match zk_system.verify_identity(plonky2_proof) {
+    // Verify using the active backend
+    if zk_proof.backend_proof.is_some() {
+        match zk_proof.verify() {
             Ok(is_valid) => {
                 if is_valid {
                     info!(
@@ -132,7 +126,7 @@ pub async fn verify_ubi_proof(proof: &[u8]) -> Result<bool> {
             }
         }
     } else {
-        warn!("No plonky2 proof found in UBI proof");
+        warn!("No backend proof found in UBI proof");
         Ok(false)
     }
 }

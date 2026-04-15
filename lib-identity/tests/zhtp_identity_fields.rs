@@ -337,8 +337,8 @@ fn test_deterministic_derivation_golden_vector() {
         proof_data: vec![],
         public_inputs: vec![],
         verification_key: vec![],
-        plonky2_proof: None,
         proof: vec![],
+        ..lib_proofs::ZkProof::empty()
     };
 
     let identity_zeros = ZhtpIdentity::new(
@@ -487,8 +487,8 @@ fn test_dao_voting_power_rules() {
         proof_data: vec![],
         public_inputs: vec![],
         verification_key: vec![],
-        plonky2_proof: None,
         proof: vec![],
+        ..lib_proofs::ZkProof::empty()
     };
 
     // Verified citizen: voting power = 10

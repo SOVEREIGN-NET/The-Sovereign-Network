@@ -265,7 +265,7 @@ impl DevGrants {
         // Capability-bound: source is derived from ctx, not from parameter
         // ====================================================================
         let burned = token
-            .transfer(ctx, recipient, amt)
+            .transfer(ctx, recipient, amt as u128)
             .map_err(|_| Error::TokenTransferFailed)?;
 
         // ====================================================================

@@ -23,12 +23,21 @@ path = "testnet_reset.rs"
 name = "generate_test_data"
 path = "generate_test_data.rs"
 
+[[bin]]
+name = "cbe_scan"
+path = "cbe_scan.rs"
+
+[[bin]]
+name = "testnet_snapshot"
+path = "testnet_snapshot.rs"
+
 [dependencies]
 lib-identity = { path = "../lib-identity" }
 lib-protocols = { path = "../lib-protocols" }
 lib-network = { path = "../lib-network" }
 lib-crypto = { path = "../lib-crypto" }
 lib-blockchain = { path = "../lib-blockchain" }
+lib-types = { path = "../lib-types" }
 hex = "0.4"
 anyhow = "1"
 sled = "0.34"
@@ -37,3 +46,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 blake3 = "1"
 rand = "0.8"
+
+[[bin]]
+name = "domain_snapshot"
+path = "domain_snapshot.rs"

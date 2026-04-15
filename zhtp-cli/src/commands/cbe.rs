@@ -272,13 +272,27 @@ pub async fn handle_cbe_command_with_output<O: Output>(
             post_tx(cli, output, "/api/v1/cbe/employment/create", tx_hex).await
         }
 
-        CbeAction::Payroll { contract_id } => {
+        CbeAction::Payroll {
+            contract_id,
+            amount_cbe,
+            collaborator,
+            deliverable_hash,
+        } => {
             let identity = load_identity()?;
             let contract_id_bytes = parse_hex32(&contract_id, "--contract-id")?;
+            let collaborator_bytes = parse_hex32(&collaborator, "--collaborator")?;
+            let deliverable_bytes = parse_hex32(&deliverable_hash, "--deliverable-hash")?;
 
-            output.info("Building ProcessPayroll transaction...")?;
-            let tx_hex = build_process_payroll_tx(&identity, contract_id_bytes, 3) // chain_id = 3
-                .map_err(|e| CliError::ConfigError(e))?;
+            output.info("Building ProcessPayroll transaction (synthetic curve event)...")?;
+            let tx_hex = build_process_payroll_tx(
+                &identity,
+                contract_id_bytes,
+                amount_cbe,
+                collaborator_bytes,
+                deliverable_bytes,
+                3, // chain_id = 3 (testnet)
+            )
+            .map_err(|e| CliError::ConfigError(e))?;
 
             output.info("Submitting to node...")?;
             post_tx(cli, output, "/api/v1/cbe/payroll/process", tx_hex).await

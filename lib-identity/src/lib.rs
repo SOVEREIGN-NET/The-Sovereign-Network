@@ -106,10 +106,12 @@ pub use did::{
     create_device_add_update,    // ✓ Create device add update
     create_device_remove_update, // ✓ Create device remove update
     decode_public_key_multibase, // ✓ Decode multibase key
+    generate_did_document_for_principal, // ✓ Principal-aware DID document generation
     get_device_entry,            // ✓ Get device entry
     get_device_keys,             // ✓ Get device keys
     list_active_devices,         // ✓ List active devices
     resolve_did,                 // ✓ Resolve DID document
+    resolve_did_for_principal,   // ✓ Principal-aware DID resolution
     set_did_store_dir,           // ✓ Configure filesystem DID store
     set_did_store_memory,        // ✓ Configure in-memory DID store
     store_did_document,          // ✓ Store DID document
@@ -119,6 +121,7 @@ pub use did::{
     DeviceStatus,                // ✓ Device status
     DidDocument,                 // ✓ DID document structure
     DidDocumentUpdate,           // ✓ DID document signed update
+    DidDocumentView,             // ✓ Access-controlled DID document view
     ServiceEndpoint,             // ✓ Service endpoints
     VerificationMethod,          // ✓ Verification methods
 };
@@ -248,8 +251,8 @@ pub async fn create_user_identity_with_wallet(
             proof_data: vec![0u8; 32],
             public_inputs: public_key.to_vec(),
             verification_key: vec![0u8; 32],
-            plonky2_proof: None,
             proof: vec![],
+            ..lib_proofs::ZkProof::empty()
         },
         WalletManager::new(identity_id.clone()),
     )?;
@@ -365,8 +368,8 @@ pub async fn create_node_device_identity(
             proof_data: vec![0u8; 32],
             public_inputs: public_key.to_vec(),
             verification_key: vec![0u8; 32],
-            plonky2_proof: None,
             proof: vec![],
+            ..lib_proofs::ZkProof::empty()
         },
         WalletManager::new(node_identity_id.clone()),
     )?;

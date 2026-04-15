@@ -145,7 +145,7 @@ struct WalletMigrationCandidateReport {
     wallet_id: String,
     wallet_type: String,
     owner_identity_id: Option<String>,
-    initial_balance: u64,
+    initial_balance: u128,
     canonical_in_history: bool,
     registrable_via_existing_wallet_tx: bool,
     migration_tx_hex: Option<String>,

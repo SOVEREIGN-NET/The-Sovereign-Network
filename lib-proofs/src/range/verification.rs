@@ -3,7 +3,6 @@
 //! Provides verification functions for range proofs with full cryptographic
 //! validation including commitment verification and range checking.
 
-use crate::range::{AggregatedBulletproof, BulletproofRangeProof};
 use crate::types::VerificationResult;
 use crate::ZkRangeProof;
 use anyhow::Result;
@@ -35,103 +34,6 @@ pub fn verify_range_proof(proof: &ZkRangeProof) -> Result<VerificationResult> {
     }
 }
 
-/// Verify a bulletproof range proof with advanced cryptographic validation
-pub fn verify_bulletproof(proof: &BulletproofRangeProof) -> Result<VerificationResult> {
-    let start_time = std::time::Instant::now();
-
-    // Validate basic structure
-    if proof.l_vec.is_empty() {
-        return Ok(VerificationResult::Invalid(
-            "No L vectors provided".to_string(),
-        ));
-    }
-
-    // Verify L and R vectors have proper structure (logarithmic proof size)
-    if proof.l_vec.len() != proof.r_vec.len() {
-        return Ok(VerificationResult::Invalid(
-            "L and R vector length mismatch".to_string(),
-        ));
-    }
-
-    // For bulletproofs, the vector size should be logarithmic, not linear
-    // Reasonable range: 1 to 64 bits = 1 to 6 log rounds
-    if proof.l_vec.len() > 6 {
-        return Ok(VerificationResult::Invalid(
-            "Invalid L vector size - too large".to_string(),
-        ));
-    }
-
-    // Verify commitment structure
-    for commitment in &proof.l_vec {
-        if commitment.iter().all(|&b| b == 0) {
-            return Ok(VerificationResult::Invalid(
-                "Invalid zero commitment".to_string(),
-            ));
-        }
-    }
-
-    // Verify inner product proof elements
-    if proof.a == [0u8; 32] || proof.b == [0u8; 32] {
-        return Ok(VerificationResult::Invalid(
-            "Invalid inner product values".to_string(),
-        ));
-    }
-
-    let verification_time = start_time.elapsed();
-    Ok(VerificationResult::Valid {
-        circuit_id: "bulletproof_range_v1".to_string(),
-        verification_time_ms: verification_time.as_millis() as u64,
-        public_inputs: vec![proof.n_bits as u64],
-    })
-}
-
-/// Verify aggregated bulletproof for multiple range proofs
-pub fn verify_aggregated_bulletproof(proof: &AggregatedBulletproof) -> Result<VerificationResult> {
-    let start_time = std::time::Instant::now();
-
-    // Validate aggregation structure
-    if proof.commitments.is_empty() {
-        return Ok(VerificationResult::Invalid(
-            "No commitments in aggregation".to_string(),
-        ));
-    }
-
-    if proof.num_proofs > 64 {
-        return Ok(VerificationResult::Invalid(
-            "Too many proofs in aggregation".to_string(),
-        ));
-    }
-
-    // Verify L and R vectors have proper structure
-    if proof.l_vec.len() != proof.r_vec.len() {
-        return Ok(VerificationResult::Invalid(
-            "L and R vector length mismatch in aggregation".to_string(),
-        ));
-    }
-
-    // Verify aggregation proof elements
-    if proof.a == [0u8; 32] || proof.b == [0u8; 32] {
-        return Ok(VerificationResult::Invalid(
-            "Invalid aggregated inner product values".to_string(),
-        ));
-    }
-
-    // Verify aggregation-specific properties
-    if proof.l_vec.len() < 6 {
-        // Minimum for reasonable security
-        return Ok(VerificationResult::Invalid(
-            "Invalid aggregation structure".to_string(),
-        ));
-    }
-
-    let verification_time = start_time.elapsed();
-    Ok(VerificationResult::Valid {
-        circuit_id: "aggregated_bulletproof_v1".to_string(),
-        verification_time_ms: verification_time.as_millis() as u64,
-        public_inputs: vec![proof.num_proofs as u64],
-    })
-}
-
 /// Batch verify multiple range proofs with optimization
 pub fn batch_verify_range_proofs(proofs: &[ZkRangeProof]) -> Result<Vec<VerificationResult>> {
     if proofs.is_empty() {
@@ -144,23 +46,6 @@ pub fn batch_verify_range_proofs(proofs: &[ZkRangeProof]) -> Result<Vec<Verifica
     // In a production implementation, this would use proper batch verification algorithms
     for proof in proofs {
         results.push(verify_range_proof(proof)?);
-    }
-
-    Ok(results)
-}
-
-/// Batch verify multiple bulletproofs
-pub fn batch_verify_bulletproofs(
-    proofs: &[BulletproofRangeProof],
-) -> Result<Vec<VerificationResult>> {
-    if proofs.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut results = Vec::with_capacity(proofs.len());
-
-    for proof in proofs {
-        results.push(verify_bulletproof(proof)?);
     }
 
     Ok(results)
@@ -278,17 +163,6 @@ mod tests {
         // Test 2: Invalid range (min > max) should fail during generation
         let result2 = ZkRangeProof::generate(100, 2000, 1000, [1u8; 32]);
         assert!(result2.is_err());
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_bulletproof_verification() -> Result<()> {
-        let proof = BulletproofRangeProof::generate(100, 32, [1u8; 32])?;
-        let result = verify_bulletproof(&proof)?;
-
-        assert!(result.is_valid());
-        assert_eq!(result.proof_type(), ZkProofType::Range);
 
         Ok(())
     }
