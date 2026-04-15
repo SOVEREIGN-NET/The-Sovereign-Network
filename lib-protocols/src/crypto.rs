@@ -15,7 +15,8 @@ use lib_crypto::{
 use serde::{Deserialize, Serialize};
 
 // Use proper ZK types from lib-proofs module
-use lib_proofs::{initialize_zk_system, TransactionVerifier, ZkProof, ZkTransactionProof};
+use lib_proofs::{TransactionVerifier, ZkProof, ZkTransactionProof};
+
 
 /// ZHTP cryptographic context
 #[derive(Debug, Clone)]
@@ -131,10 +132,6 @@ impl ZhtpCrypto {
         proof_data: &[u8],
         public_inputs: &[u8],
     ) -> Result<bool> {
-        // Initialize the ZK proof system from lib-proofs
-        let zk_system = initialize_zk_system().map_err(|e| {
-            ProtocolError::ZkProofError(format!("Failed to initialize ZK system: {}", e))
-        })?;
 
         // Try to deserialize as ZkProof from lib-proofs
         let zk_proof = if let Ok(proof) = serde_json::from_slice::<ZkProof>(proof_data) {
@@ -146,18 +143,16 @@ impl ZhtpCrypto {
                 proof_data.to_vec(),
                 public_inputs.to_vec(),
                 vec![], // Empty verification key for now
-                None,   // No Plonky2 proof structure
+                None,   // No backend proof structure
             )
         };
 
-        // If this is a Plonky2 proof with the actual proof structure, use the verifier
-        if let Some(plonky2_proof) = &zk_proof.plonky2_proof {
-            match zk_system.verify_transaction(plonky2_proof) {
-                Ok(is_valid) => return Ok(is_valid),
-                Err(e) => {
-                    tracing::debug!("Plonky2 verification failed: {}", e);
-                    // Fall through to legacy verification
-                }
+        // Verify using the active backend
+        match zk_proof.verify() {
+            Ok(is_valid) => return Ok(is_valid),
+            Err(e) => {
+                tracing::debug!("Plonky2 verification failed: {}", e);
+                // Fall through to legacy verification
             }
         }
 

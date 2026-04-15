@@ -10,9 +10,9 @@ fn create_test_identity(name: &str) -> IdentityId {
     Hash::from_bytes(&hash_blake3(name.as_bytes()))
 }
 
-fn validator_keys(seed: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+fn validator_keys(seed: u8) -> ([u8; 2592], Vec<u8>, Vec<u8>) {
     (
-        vec![seed; 32],
+        [seed; 2592],
         vec![seed.wrapping_add(64); 32],
         vec![seed.wrapping_add(128); 32],
     )

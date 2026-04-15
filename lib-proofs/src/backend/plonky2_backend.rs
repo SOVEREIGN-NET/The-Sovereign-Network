@@ -1,0 +1,154 @@
+//! Plonky2-specific implementation of `ProofBackend`.
+//!
+//! This is a thin wrapper around the legacy `ZkProofSystem` that serializes
+//! `Plonky2Proof` into the opaque `BackendProof.data` blob.
+
+use super::{BackendProof, ProofBackend};
+use crate::plonky2::{Plonky2Proof, ZkProofSystem};
+use anyhow::Result;
+
+/// Plonky2 backend wrapper.
+pub struct Plonky2Backend {
+    inner: ZkProofSystem,
+}
+
+impl Plonky2Backend {
+    /// Create a new Plonky2 backend.
+    pub fn new() -> Result<Self> {
+        Ok(Self {
+            inner: ZkProofSystem::new()?,
+        })
+    }
+
+    fn encode(proof: &Plonky2Proof) -> Result<Vec<u8>> {
+        Ok(bincode::serialize(proof)?)
+    }
+
+    fn decode(data: &[u8]) -> Result<Plonky2Proof> {
+        Ok(bincode::deserialize(data)?)
+    }
+}
+
+impl ProofBackend for Plonky2Backend {
+    fn name(&self) -> &str {
+        "plonky2"
+    }
+
+    fn prove_transaction(
+        &self,
+        sender_balance: u64,
+        amount: u64,
+        fee: u64,
+        sender_secret: u64,
+        nullifier_seed: u64,
+    ) -> Result<BackendProof> {
+        let plonky2_proof = self
+            .inner
+            .prove_transaction(sender_balance, amount, fee, sender_secret, nullifier_seed)?;
+        Ok(BackendProof {
+            proof_system: plonky2_proof.proof_system.clone(),
+            data: Self::encode(&plonky2_proof)?,
+        })
+    }
+
+    fn verify_transaction(&self, proof: &BackendProof) -> Result<bool> {
+        let plonky2_proof = Self::decode(&proof.data)?;
+        self.inner.verify_transaction(&plonky2_proof)
+    }
+
+    fn prove_identity(
+        &self,
+        identity_secret: u64,
+        age: u64,
+        jurisdiction_hash: u64,
+        credential_hash: u64,
+        min_age: u64,
+        required_jurisdiction: u64,
+        verification_level: u64,
+    ) -> Result<BackendProof> {
+        let plonky2_proof = self.inner.prove_identity(
+            identity_secret,
+            age,
+            jurisdiction_hash,
+            credential_hash,
+            min_age,
+            required_jurisdiction,
+            verification_level,
+        )?;
+        Ok(BackendProof {
+            proof_system: plonky2_proof.proof_system.clone(),
+            data: Self::encode(&plonky2_proof)?,
+        })
+    }
+
+    fn verify_identity(&self, proof: &BackendProof) -> Result<bool> {
+        let plonky2_proof = Self::decode(&proof.data)?;
+        self.inner.verify_identity(&plonky2_proof)
+    }
+
+    fn prove_range(
+        &self,
+        value: u64,
+        blinding_factor: u64,
+        min_value: u64,
+        max_value: u64,
+    ) -> Result<BackendProof> {
+        let plonky2_proof = self
+            .inner
+            .prove_range(value, blinding_factor, min_value, max_value)?;
+        Ok(BackendProof {
+            proof_system: plonky2_proof.proof_system.clone(),
+            data: Self::encode(&plonky2_proof)?,
+        })
+    }
+
+    fn verify_range(&self, proof: &BackendProof) -> Result<bool> {
+        let plonky2_proof = Self::decode(&proof.data)?;
+        self.inner.verify_range(&plonky2_proof)
+    }
+
+    fn prove_storage_access(
+        &self,
+        access_key: u64,
+        requester_secret: u64,
+        data_hash: u64,
+        permission_level: u64,
+        required_permission: u64,
+    ) -> Result<BackendProof> {
+        let plonky2_proof = self.inner.prove_storage_access(
+            access_key,
+            requester_secret,
+            data_hash,
+            permission_level,
+            required_permission,
+        )?;
+        Ok(BackendProof {
+            proof_system: plonky2_proof.proof_system.clone(),
+            data: Self::encode(&plonky2_proof)?,
+        })
+    }
+
+    fn verify_storage_access(&self, proof: &BackendProof) -> Result<bool> {
+        let plonky2_proof = Self::decode(&proof.data)?;
+        self.inner.verify_storage_access(&plonky2_proof)
+    }
+
+    fn prove_merkle(
+        &self,
+        leaf: [u8; 32],
+        path: &[[u8; 32]],
+        indices: &[bool],
+        root: [u8; 32],
+    ) -> Result<BackendProof> {
+        let plonky2_proof = self.inner.prove_merkle(leaf, path, indices, root)?;
+        Ok(BackendProof {
+            proof_system: plonky2_proof.proof_system.clone(),
+            data: Self::encode(&plonky2_proof)?,
+        })
+    }
+
+    fn verify_merkle(&self, proof: &BackendProof, root: [u8; 32]) -> Result<bool> {
+        let plonky2_proof = Self::decode(&proof.data)?;
+        self.inner.verify_merkle(&plonky2_proof, root)
+    }
+}

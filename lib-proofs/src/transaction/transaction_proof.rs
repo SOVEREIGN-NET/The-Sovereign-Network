@@ -122,51 +122,33 @@ mod tests {
 
     #[test]
     fn test_transaction_proof_creation() {
-        let amount_proof = ZkProof::new(
-            "Plonky2".to_string(),
-            vec![1, 2, 3],
-            vec![4, 5],
-            vec![6, 7],
-            Some(crate::plonky2::Plonky2Proof {
-                circuit_id: "amount".to_string(),
-                proof: vec![1, 2, 3],
-                public_inputs: vec![4, 5],
-                verification_key_hash: [6u8; 32],
-                proof_system: "Plonky2".to_string(),
-                generated_at: 1000,
-                private_input_commitment: [7u8; 32],
-            }),
-        );
-        let balance_proof = ZkProof::new(
-            "Plonky2".to_string(),
-            vec![8, 9, 10],
-            vec![11, 12],
-            vec![13, 14],
-            Some(crate::plonky2::Plonky2Proof {
-                circuit_id: "balance".to_string(),
-                proof: vec![8, 9, 10],
-                public_inputs: vec![11, 12],
-                verification_key_hash: [13u8; 32],
-                proof_system: "Plonky2".to_string(),
-                generated_at: 2000,
-                private_input_commitment: [14u8; 32],
-            }),
-        );
-        let nullifier_proof = ZkProof::new(
-            "Plonky2".to_string(),
-            vec![15, 16, 17],
-            vec![18, 19],
-            vec![20, 21],
-            Some(crate::plonky2::Plonky2Proof {
-                circuit_id: "nullifier".to_string(),
-                proof: vec![15, 16, 17],
-                public_inputs: vec![18, 19],
-                verification_key_hash: [20u8; 32],
-                proof_system: "Plonky2".to_string(),
-                generated_at: 3000,
-                private_input_commitment: [21u8; 32],
-            }),
-        );
+        let amount_proof = ZkProof::from_plonky2(crate::plonky2::Plonky2Proof {
+            circuit_id: "amount".to_string(),
+            proof: vec![1, 2, 3],
+            public_inputs: vec![4, 5],
+            verification_key_hash: [6u8; 32],
+            proof_system: "Plonky2".to_string(),
+            generated_at: 1000,
+            private_input_commitment: [7u8; 32],
+        });
+        let balance_proof = ZkProof::from_plonky2(crate::plonky2::Plonky2Proof {
+            circuit_id: "balance".to_string(),
+            proof: vec![8, 9, 10],
+            public_inputs: vec![11, 12],
+            verification_key_hash: [13u8; 32],
+            proof_system: "Plonky2".to_string(),
+            generated_at: 2000,
+            private_input_commitment: [14u8; 32],
+        });
+        let nullifier_proof = ZkProof::from_plonky2(crate::plonky2::Plonky2Proof {
+            circuit_id: "nullifier".to_string(),
+            proof: vec![15, 16, 17],
+            public_inputs: vec![18, 19],
+            verification_key_hash: [20u8; 32],
+            proof_system: "Plonky2".to_string(),
+            generated_at: 3000,
+            private_input_commitment: [21u8; 32],
+        });
 
         let tx_proof = ZkTransactionProof::new(amount_proof, balance_proof, nullifier_proof);
 

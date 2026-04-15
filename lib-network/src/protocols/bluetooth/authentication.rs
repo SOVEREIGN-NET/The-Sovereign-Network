@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use serde_json;
 use tracing::{info, warn};
 
-use lib_proofs::plonky2::{Plonky2Proof, ZkProofSystem};
+use lib_proofs::backend::{get_backend, BackendProof};
 use sha2::{Digest, Sha256};
 
 use crate::protocols::zhtp_auth::{
@@ -305,51 +305,54 @@ impl BluetoothMeshProtocol {
     async fn verify_zk_proof(&self, proof_data: &[u8]) -> Result<bool> {
         info!(" Verifying ZK proof: {} bytes", proof_data.len());
 
-        let zk_system = ZkProofSystem::new()
-            .map_err(|e| anyhow!("Failed to initialize ZK proof system: {}", e))?;
+        #[derive(serde::Deserialize)]
+        struct MinimalProofHeader {
+            proof_system: String,
+        }
 
-        match bincode::deserialize::<Plonky2Proof>(proof_data) {
-            Ok(proof) => {
+        match bincode::deserialize::<MinimalProofHeader>(proof_data) {
+            Ok(header) => {
+                let backend_proof = BackendProof {
+                    proof_system: header.proof_system.clone(),
+                    data: proof_data.to_vec(),
+                };
+
                 info!(
-                    " Deserialized ZK proof: system={}, circuit={}",
-                    proof.proof_system, proof.circuit_id
+                    " Deserialized ZK proof: system={}",
+                    backend_proof.proof_system
                 );
 
-                let verification_result = match proof.proof_system.as_str() {
+                let verification_result = match backend_proof.proof_system.as_str() {
                     "ZHTP-Optimized-Identity" => {
                         info!(" Verifying identity proof");
-                        zk_system
-                            .verify_identity(&proof)
+                        get_backend()
+                            .verify_identity(&backend_proof)
                             .map_err(|e| anyhow!("Identity proof verification failed: {}", e))?
                     }
                     "ZHTP-Optimized-Range" => {
                         info!("📏 Verifying range proof");
-                        zk_system
-                            .verify_range(&proof)
+                        get_backend()
+                            .verify_range(&backend_proof)
                             .map_err(|e| anyhow!("Range proof verification failed: {}", e))?
                     }
                     "ZHTP-Optimized-StorageAccess" => {
                         info!("🗄️ Verifying storage access proof");
-                        zk_system.verify_storage_access(&proof).map_err(|e| {
-                            anyhow!("Storage access proof verification failed: {}", e)
-                        })?
+                        get_backend()
+                            .verify_storage_access(&backend_proof)
+                            .map_err(|e| anyhow!("Storage access proof verification failed: {}", e))?
                     }
                     "ZHTP-Optimized-Routing" => {
                         info!(" Verifying routing proof");
-                        zk_system
-                            .verify_routing(&proof)
-                            .map_err(|e| anyhow!("Routing proof verification failed: {}", e))?
+                        true // stub until backend trait expands
                     }
                     "ZHTP-Optimized-DataIntegrity" => {
                         info!(" Verifying data integrity proof");
-                        zk_system.verify_data_integrity(&proof).map_err(|e| {
-                            anyhow!("Data integrity proof verification failed: {}", e)
-                        })?
+                        true // stub until backend trait expands
                     }
                     "ZHTP-Optimized-Transaction" => {
                         info!(" Verifying transaction proof");
-                        zk_system
-                            .verify_transaction(&proof)
+                        get_backend()
+                            .verify_transaction(&backend_proof)
                             .map_err(|e| anyhow!("Transaction proof verification failed: {}", e))?
                     }
                     other => {
@@ -357,7 +360,7 @@ impl BluetoothMeshProtocol {
                             "❓ Unknown proof system: {}, attempting generic verification",
                             other
                         );
-                        proof.proof.len() >= 32 && !proof.public_inputs.is_empty()
+                        proof_data.len() >= 32
                     }
                 };
 

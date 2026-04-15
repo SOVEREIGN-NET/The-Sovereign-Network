@@ -3,39 +3,13 @@
 //! Provides PURE ZK verification functions for transaction proofs using
 //! Plonky2 circuits only. NO FALLBACKS ALLOWED.
 
-use crate::plonky2::ZkProofSystem;
 use crate::transaction::ZkTransactionProof;
 use crate::types::VerificationResult;
 use anyhow::Result;
 
-/// Verify a transaction proof using PURE ZK verification only
+/// Verify a transaction proof using the active backend.
 pub fn verify_transaction(proof: &ZkTransactionProof) -> Result<bool> {
-    // REQUIRE Plonky2 proofs - NO FALLBACKS ALLOWED
-    let zk_system = ZkProofSystem::new()
-        .map_err(|e| anyhow::anyhow!("Failed to initialize ZK system: {:?}", e))?;
-
-    // Verify amount proof - MUST be Plonky2 (return false if missing)
-    let plonky2_amount_proof = match proof.amount_proof.plonky2_proof.as_ref() {
-        Some(p) => p,
-        None => return Ok(false), // Invalid proof structure
-    };
-    let amount_valid = zk_system.verify_transaction(plonky2_amount_proof)?;
-
-    // Verify balance proof - MUST be Plonky2 (return false if missing)
-    let plonky2_balance_proof = match proof.balance_proof.plonky2_proof.as_ref() {
-        Some(p) => p,
-        None => return Ok(false), // Invalid proof structure
-    };
-    let balance_valid = zk_system.verify_range(plonky2_balance_proof)?;
-
-    // Verify nullifier proof - MUST be Plonky2 (return false if missing)
-    let plonky2_nullifier_proof = match proof.nullifier_proof.plonky2_proof.as_ref() {
-        Some(p) => p,
-        None => return Ok(false), // Invalid proof structure
-    };
-    let nullifier_valid = zk_system.verify_range(plonky2_nullifier_proof)?;
-
-    Ok(amount_valid && balance_valid && nullifier_valid)
+    proof.verify()
 }
 
 /// Verify transaction proof with detailed results
@@ -54,43 +28,19 @@ pub fn verify_transaction_detailed(proof: &ZkTransactionProof) -> VerificationRe
 /// REMOVED: Fallback verification - pure ZK only
 /// This function is no longer used as we enforce ZK-only verification
 
-/// Verify amount proof component using PURE ZK verification only
+/// Verify amount proof component using the active backend.
 pub fn verify_amount_proof(proof: &ZkTransactionProof) -> Result<bool> {
-    let zk_system = ZkProofSystem::new()
-        .map_err(|e| anyhow::anyhow!("Failed to initialize ZK system: {:?}", e))?;
-
-    let plonky2_proof = match proof.amount_proof.plonky2_proof.as_ref() {
-        Some(p) => p,
-        None => return Ok(false), // Invalid proof structure
-    };
-
-    zk_system.verify_transaction(plonky2_proof)
+    proof.amount_proof.verify()
 }
 
-/// Verify balance proof component using PURE ZK verification only
+/// Verify balance proof component using the active backend.
 pub fn verify_balance_proof(proof: &ZkTransactionProof) -> Result<bool> {
-    let zk_system = ZkProofSystem::new()
-        .map_err(|e| anyhow::anyhow!("Failed to initialize ZK system: {:?}", e))?;
-
-    let plonky2_proof = match proof.balance_proof.plonky2_proof.as_ref() {
-        Some(p) => p,
-        None => return Ok(false), // Invalid proof structure
-    };
-
-    zk_system.verify_range(plonky2_proof)
+    proof.balance_proof.verify()
 }
 
-/// Verify nullifier proof component using PURE ZK verification only
+/// Verify nullifier proof component using the active backend.
 pub fn verify_nullifier_proof(proof: &ZkTransactionProof) -> Result<bool> {
-    let zk_system = ZkProofSystem::new()
-        .map_err(|e| anyhow::anyhow!("Failed to initialize ZK system: {:?}", e))?;
-
-    let plonky2_proof = match proof.nullifier_proof.plonky2_proof.as_ref() {
-        Some(p) => p,
-        None => return Ok(false), // Invalid proof structure
-    };
-
-    zk_system.verify_range(plonky2_proof)
+    proof.nullifier_proof.verify()
 }
 
 /// Batch verify multiple transaction proofs
@@ -181,13 +131,7 @@ mod tests {
                 private_input_commitment: [8; 32],
             };
 
-            ZkProof::new(
-                "Plonky2".to_string(),
-                vec![1, 2, 3],
-                vec![4, 5, 6],
-                vec![7, 8, 9],
-                Some(plonky2),
-            )
+            ZkProof::from_plonky2(plonky2)
         };
 
         let valid_proof = ZkTransactionProof::new(

@@ -198,7 +198,6 @@ mod tests {
                 proof_data: vec![1, 2, 3],
                 public_inputs: vec![4, 5, 6],
                 verification_key: vec![7, 8, 9],
-                plonky2_proof: None,
                 proof: vec![],
             },
             issued_at: std::time::SystemTime::now()

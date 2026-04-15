@@ -18,7 +18,7 @@
 //!
 //! ## Example
 //!
-//! ```rust
+//! ```rust,no_run
 //! use lib_proofs::{ZkProof, ZkTransactionProof, ZkRangeProof};
 //!
 //! # #[tokio::main]
@@ -36,8 +36,11 @@
 use anyhow::Result;
 
 // Re-export core types for unified ZK system
+pub use backend::{get_backend, BackendProof, ProofBackend};
 pub use identity::identity_proof::ZkIdentityProof;
 pub use merkle::{proof_generation::*, tree::*, verification::*};
+#[doc(hidden)]
+#[deprecated(since = "0.2.0", note = "Use lib_proofs::backend::get_backend() instead")]
 pub use plonky2::proof_system::ZkProofSystem;
 pub use range::range_proof::ZkRangeProof;
 pub use transaction::transaction_proof::ZkTransactionProof;
@@ -62,10 +65,11 @@ pub use state::*;
 pub use recursive::*;
 
 // Module declarations
+pub mod backend;
 pub mod circuits;
 pub mod identity;
 pub mod merkle;
-pub mod plonky2;
+pub(crate) mod plonky2;
 pub mod provers;
 pub mod range;
 pub mod transaction;
@@ -86,11 +90,16 @@ pub use types::zk_proof::ZkProof as ZeroKnowledgeProof;
 pub use types::MerkleProof;
 
 /// Initialize the unified ZK proof system
+#[deprecated(since = "0.2.0", note = "Use lib_proofs::backend::get_backend() instead")]
 pub fn initialize_zk_system() -> Result<ZkProofSystem> {
+    #[allow(deprecated)]
     ZkProofSystem::new()
 }
 
-/// Create a default proof for development/testing using unified system
+/// Create a default proof for development/testing using unified system.
+///
+/// **TEST / FAKE-PROOFS ONLY.** Unavailable in production builds.
+#[cfg(feature = "fake-proofs")]
 pub fn create_default_proof() -> ZkProof {
     ZkProof::default()
 }
@@ -106,8 +115,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "fake-proofs")]
     fn test_default_proof_creation() {
         let proof = create_default_proof();
         assert!(proof.is_empty());
+        assert!(proof.is_mock);
     }
 }

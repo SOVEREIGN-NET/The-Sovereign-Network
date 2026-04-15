@@ -251,8 +251,8 @@ pub async fn create_user_identity_with_wallet(
             proof_data: vec![0u8; 32],
             public_inputs: public_key.to_vec(),
             verification_key: vec![0u8; 32],
-            plonky2_proof: None,
             proof: vec![],
+            ..lib_proofs::ZkProof::empty()
         },
         WalletManager::new(identity_id.clone()),
     )?;
@@ -368,8 +368,8 @@ pub async fn create_node_device_identity(
             proof_data: vec![0u8; 32],
             public_inputs: public_key.to_vec(),
             verification_key: vec![0u8; 32],
-            plonky2_proof: None,
             proof: vec![],
+            ..lib_proofs::ZkProof::empty()
         },
         WalletManager::new(node_identity_id.clone()),
     )?;
