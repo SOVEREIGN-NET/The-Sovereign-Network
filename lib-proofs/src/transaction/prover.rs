@@ -81,33 +81,9 @@ impl ZkTransactionProver {
                 zk_system.prove_range(sender_balance - amount - fee, sender_secret, 0, u64::MAX)?;
 
             return Ok(ZkTransactionProof {
-                amount_proof: ZkProof {
-                    proof_system: "Plonky2".to_string(),
-                    proof_data: vec![],
-                    public_inputs: vec![],
-                    verification_key: vec![],
-                    plonky2_proof: Some(tx_proof),
-                    proof: vec![],
-                    ..ZkProof::empty()
-                },
-                balance_proof: ZkProof {
-                    proof_system: "Plonky2".to_string(),
-                    proof_data: vec![],
-                    public_inputs: vec![],
-                    verification_key: vec![],
-                    plonky2_proof: Some(amount_range_proof),
-                    proof: vec![],
-                    ..ZkProof::empty()
-                },
-                nullifier_proof: ZkProof {
-                    proof_system: "Plonky2".to_string(),
-                    proof_data: vec![],
-                    public_inputs: vec![],
-                    verification_key: vec![],
-                    plonky2_proof: Some(balance_range_proof),
-                    proof: vec![],
-                    ..ZkProof::empty()
-                },
+                amount_proof: ZkProof::from_plonky2(tx_proof),
+                balance_proof: ZkProof::from_plonky2(amount_range_proof),
+                nullifier_proof: ZkProof::from_plonky2(balance_range_proof),
             });
         }
 
@@ -195,38 +171,9 @@ impl ZkTransactionProver {
         let nullifier_commitment = hash_blake3(&nullifier);
 
         Ok(ZkTransactionProof {
-            amount_proof: ZkProof {
-                proof_system: "Plonky2".to_string(),
-                proof_data: vec![],
-                public_inputs: vec![
-                    amount as u8,
-                    (amount >> 8) as u8,
-                    (amount >> 16) as u8,
-                    (amount >> 24) as u8,
-                ],
-                verification_key: vec![0x01, 0x02, 0x03, 0x04], // verification keys would be generated
-                plonky2_proof: Some(amount_plonky2_proof),
-                proof: vec![],
-                ..ZkProof::empty()
-            },
-            balance_proof: ZkProof {
-                proof_system: "Plonky2".to_string(),
-                proof_data: vec![],
-                public_inputs: vec![remaining_balance as u8, (remaining_balance >> 8) as u8],
-                verification_key: vec![0x05, 0x06, 0x07, 0x08], // verification keys would be generated
-                plonky2_proof: Some(balance_plonky2_proof),
-                proof: vec![],
-                ..ZkProof::empty()
-            },
-            nullifier_proof: ZkProof {
-                proof_system: "Plonky2".to_string(),
-                proof_data: vec![],
-                public_inputs: nullifier_commitment.to_vec(),
-                verification_key: vec![0x09, 0x0A, 0x0B, 0x0C], // verification keys would be generated
-                plonky2_proof: Some(nullifier_plonky2_proof),
-                proof: vec![],
-                ..ZkProof::empty()
-            },
+            amount_proof: ZkProof::from_plonky2(amount_plonky2_proof),
+            balance_proof: ZkProof::from_plonky2(balance_plonky2_proof),
+            nullifier_proof: ZkProof::from_plonky2(nullifier_plonky2_proof),
         })
     }
 
@@ -293,72 +240,10 @@ impl ZkTransactionProver {
         Ok(results)
     }
 
-    /// Verify a transaction proof (prioritizes Plonky2)
-    /// Exact implementation from original zk.rs
+    /// Verify a transaction proof using the active backend.
     pub fn verify_transaction(proof: &ZkTransactionProof) -> Result<bool> {
         log::info!("ZkTransactionProver::verify_transaction starting");
-
-        // Check if we have Plonky2 proofs
-        if let Some(plonky2_proof) = &proof.amount_proof.plonky2_proof {
-            log::info!("Found Plonky2 amount proof");
-            if let Ok(zk_system) = ZkProofSystem::new() {
-                log::info!("ZkProofSystem initialized successfully");
-
-                let amount_valid = zk_system.verify_transaction(plonky2_proof)?;
-                log::info!("Amount proof verification result: {}", amount_valid);
-
-                if let Some(range_proof) = &proof.balance_proof.plonky2_proof {
-                    log::info!("Found Plonky2 balance proof");
-                    let balance_valid = zk_system.verify_range(range_proof)?;
-                    log::info!("Balance proof verification result: {}", balance_valid);
-
-                    if let Some(nullifier_range_proof) = &proof.nullifier_proof.plonky2_proof {
-                        log::info!("Found Plonky2 nullifier proof");
-                        let nullifier_valid = zk_system.verify_range(nullifier_range_proof)?;
-                        log::info!("Nullifier proof verification result: {}", nullifier_valid);
-
-                        let final_result = amount_valid && balance_valid && nullifier_valid;
-                        log::info!("Final verification result: {} (amount: {}, balance: {}, nullifier: {})", 
-                                  final_result, amount_valid, balance_valid, nullifier_valid);
-                        return Ok(final_result);
-                    } else {
-                        log::error!("Missing Plonky2 nullifier proof");
-                    }
-                } else {
-                    log::error!("Missing Plonky2 balance proof");
-                }
-            } else {
-                log::error!("Failed to initialize ZkProofSystem");
-            }
-        } else {
-            log::error!("Missing Plonky2 amount proof");
-        }
-
-        log::info!(" Falling back to cryptographic verification");
-        // Fallback to cryptographic verification
-        // Verify all three proof components have valid structure
-        if proof.amount_proof.proof_system != "Plonky2"
-            || proof.balance_proof.proof_system != "Plonky2"
-            || proof.nullifier_proof.proof_system != "Plonky2"
-        {
-            log::error!(
-                "Invalid proof system identifiers: amount='{}', balance='{}', nullifier='{}'",
-                proof.amount_proof.proof_system,
-                proof.balance_proof.proof_system,
-                proof.nullifier_proof.proof_system
-            );
-            return Ok(false);
-        }
-
-        // Verify all three proof components
-        let amount_valid = !proof.amount_proof.public_inputs.is_empty()
-            && !proof.amount_proof.verification_key.is_empty();
-        let balance_valid = !proof.balance_proof.public_inputs.is_empty()
-            && !proof.balance_proof.verification_key.is_empty();
-        let nullifier_valid = !proof.nullifier_proof.public_inputs.is_empty()
-            && !proof.nullifier_proof.verification_key.is_empty();
-
-        Ok(amount_valid && balance_valid && nullifier_valid)
+        proof.verify()
     }
 }
 

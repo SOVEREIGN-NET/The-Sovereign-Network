@@ -518,7 +518,6 @@ impl ZhtpIdentity {
             proof_data: pop_signature.signature,
             public_inputs: did.as_bytes().to_vec(),
             verification_key: public_key.dilithium_pk.to_vec(),
-            plonky2_proof: None,
             proof: vec![],
             ..lib_proofs::ZkProof::empty()
         };

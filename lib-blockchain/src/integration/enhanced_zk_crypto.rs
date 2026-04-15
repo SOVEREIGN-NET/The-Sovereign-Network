@@ -177,34 +177,17 @@ impl EnhancedTransactionValidator {
     fn validate_nullifier_proof(&self, input: &TransactionInput) -> Result<bool> {
         let nullifier_proof = &input.zk_proof.nullifier_proof;
 
-        // Check if we have a Plonky2 proof
-        if let Some(plonky2_proof) = &nullifier_proof.plonky2_proof {
-            match self.zk_system.verify_range(plonky2_proof) {
-                Ok(is_valid) => {
-                    if !is_valid {
-                        return Err(anyhow::anyhow!("Invalid nullifier proof"));
-                    }
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "Nullifier proof verification failed: {}",
-                        e
-                    ));
+        match nullifier_proof.verify() {
+            Ok(is_valid) => {
+                if !is_valid {
+                    return Err(anyhow::anyhow!("Invalid nullifier proof"));
                 }
             }
-        } else {
-            // Fallback verification for non-Plonky2 proofs
-            if nullifier_proof.public_inputs.is_empty() {
-                return Err(anyhow::anyhow!("Empty nullifier proof public inputs"));
-            }
-
-            // Verify nullifier commitment structure
-            let expected_commitment = hash_blake3(&input.nullifier.as_bytes());
-            if nullifier_proof.public_inputs.len() >= 32 {
-                let proof_commitment = &nullifier_proof.public_inputs[..32];
-                if proof_commitment != expected_commitment {
-                    return Err(anyhow::anyhow!("Nullifier commitment mismatch"));
-                }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Nullifier proof verification failed: {}",
+                    e
+                ));
             }
         }
 
@@ -215,30 +198,17 @@ impl EnhancedTransactionValidator {
     fn validate_amount_range_proof(&self, input: &TransactionInput) -> Result<bool> {
         let amount_proof = &input.zk_proof.amount_proof;
 
-        // Check if we have a Plonky2 proof
-        if let Some(plonky2_proof) = &amount_proof.plonky2_proof {
-            match self.zk_system.verify_range(plonky2_proof) {
-                Ok(is_valid) => {
-                    if !is_valid {
-                        return Err(anyhow::anyhow!("Invalid amount range proof"));
-                    }
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "Amount range proof verification failed: {}",
-                        e
-                    ));
+        match amount_proof.verify() {
+            Ok(is_valid) => {
+                if !is_valid {
+                    return Err(anyhow::anyhow!("Invalid amount range proof"));
                 }
             }
-        } else {
-            // Fallback verification for non-Plonky2 proofs
-            if amount_proof.proof.is_empty() {
-                return Err(anyhow::anyhow!("Empty amount proof"));
-            }
-
-            // Basic structural validation
-            if amount_proof.public_inputs.is_empty() || amount_proof.verification_key.is_empty() {
-                return Err(anyhow::anyhow!("Invalid amount proof structure"));
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Amount range proof verification failed: {}",
+                    e
+                ));
             }
         }
 
@@ -249,30 +219,16 @@ impl EnhancedTransactionValidator {
     fn validate_spend_authorization_proof(&self, input: &TransactionInput) -> Result<bool> {
         let balance_proof = &input.zk_proof.balance_proof;
 
-        // Check if we have a Plonky2 proof
-        if let Some(plonky2_proof) = &balance_proof.plonky2_proof {
-            match self.zk_system.verify_range(plonky2_proof) {
-                Ok(is_valid) => {
-                    if !is_valid {
-                        return Err(anyhow::anyhow!("Invalid spend authorization proof"));
-                    }
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "Spend authorization proof verification failed: {}",
-                        e
-                    ));
+        match balance_proof.verify() {
+            Ok(is_valid) => {
+                if !is_valid {
+                    return Err(anyhow::anyhow!("Invalid spend authorization proof"));
                 }
             }
-        } else {
-            // Fallback verification
-            if balance_proof.proof.is_empty() {
-                return Err(anyhow::anyhow!("Empty spend authorization proof"));
-            }
-
-            if balance_proof.public_inputs.is_empty() {
+            Err(e) => {
                 return Err(anyhow::anyhow!(
-                    "Invalid spend authorization proof structure"
+                    "Spend authorization proof verification failed: {}",
+                    e
                 ));
             }
         }

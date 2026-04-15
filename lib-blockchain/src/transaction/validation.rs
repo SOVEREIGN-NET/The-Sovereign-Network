@@ -1049,31 +1049,19 @@ impl TransactionValidator {
 
     /// Validate nullifier proof to prevent double spending
     fn validate_nullifier_proof(&self, input: &TransactionInput) -> ValidationResult {
-        // Verify that the nullifier proof is cryptographically sound
-        if let Some(plonky2_proof) = &input.zk_proof.nullifier_proof.plonky2_proof {
-            // Use Plonky2 verification if available
-            if let Ok(zk_system) = lib_proofs::ZkProofSystem::new() {
-                // FIX: Nullifier proof is generated with prove_transaction, so use verify_transaction
-                match zk_system.verify_transaction(plonky2_proof) {
-                    Ok(is_valid) => {
-                        if !is_valid {
-                            return Err(ValidationError::InvalidZkProof);
-                        }
-                    }
-                    Err(e) => {
-                        // NO FALLBACKS - fail hard if ZK verification fails
-                        log::error!(
-                            "Nullifier ZK verification failed - no fallbacks allowed: {:?}",
-                            e
-                        );
-                        return Err(ValidationError::InvalidZkProof);
-                    }
+        match input.zk_proof.nullifier_proof.verify() {
+            Ok(is_valid) => {
+                if !is_valid {
+                    return Err(ValidationError::InvalidZkProof);
                 }
             }
-        } else {
-            // NO FALLBACKS - require Plonky2 proofs only
-            log::error!("Nullifier proof missing Plonky2 verification - no fallbacks allowed");
-            return Err(ValidationError::InvalidZkProof);
+            Err(e) => {
+                log::error!(
+                    "Nullifier ZK verification failed - no fallbacks allowed: {:?}",
+                    e
+                );
+                return Err(ValidationError::InvalidZkProof);
+            }
         }
 
         Ok(())
@@ -1084,91 +1072,23 @@ impl TransactionValidator {
         println!(" DEBUG: validate_amount_range_proof starting");
         log::info!("validate_amount_range_proof starting");
 
-        // Verify that the amount is within valid range (positive, not exceeding max supply)
-        if let Some(plonky2_proof) = &input.zk_proof.amount_proof.plonky2_proof {
-            println!(" DEBUG: Found Plonky2 amount proof for range validation");
-            println!(
-                " DEBUG: Amount proof system: '{}'",
-                plonky2_proof.proof_system
-            );
-            log::info!("Found Plonky2 amount proof for range validation");
-            log::info!("Amount proof system: '{}'", plonky2_proof.proof_system);
-
-            // Use Plonky2 verification if available
-            if let Ok(zk_system) = lib_proofs::ZkProofSystem::new() {
-                println!(" DEBUG: ZkProofSystem initialized for range validation");
-                log::info!("ZkProofSystem initialized for range validation");
-
-                // Check if this is a transaction proof or range proof and use appropriate verification
-                match plonky2_proof.proof_system.as_str() {
-                    "ZHTP-Optimized-Range" => {
-                        println!(" DEBUG: Using verify_range for range proof");
-                        log::info!("Using verify_range for range proof");
-
-                        match zk_system.verify_range(plonky2_proof) {
-                            Ok(is_valid) => {
-                                println!(" DEBUG: Range verification result: {}", is_valid);
-                                log::info!("Range verification result: {}", is_valid);
-
-                                if !is_valid {
-                                    println!(" DEBUG: Range proof INVALID - returning error");
-                                    log::error!("Range proof INVALID - returning error");
-                                    return Err(ValidationError::InvalidZkProof);
-                                } else {
-                                    println!(" DEBUG: Range proof VALID");
-                                    log::info!("Range proof VALID");
-                                }
-                            }
-                            Err(e) => {
-                                println!(" DEBUG: Range verification error: {:?}", e);
-                                log::error!("Range verification error: {:?}", e);
-                                return Err(ValidationError::InvalidZkProof);
-                            }
-                        }
-                    }
-                    "ZHTP-Optimized-Transaction" | "Plonky2" => {
-                        println!(" DEBUG: Using verify_transaction for transaction proof");
-                        log::info!("Using verify_transaction for transaction proof");
-
-                        match zk_system.verify_transaction(plonky2_proof) {
-                            Ok(is_valid) => {
-                                println!(" DEBUG: Transaction verification result: {}", is_valid);
-                                log::info!("Transaction verification result: {}", is_valid);
-
-                                if !is_valid {
-                                    println!(" DEBUG: Transaction proof INVALID - returning error");
-                                    log::error!("Transaction proof INVALID - returning error");
-                                    return Err(ValidationError::InvalidZkProof);
-                                } else {
-                                    println!(" DEBUG: Transaction proof VALID");
-                                    log::info!("Transaction proof VALID");
-                                }
-                            }
-                            Err(e) => {
-                                println!(" DEBUG: Transaction verification error: {:?}", e);
-                                log::error!("Transaction verification error: {:?}", e);
-                                return Err(ValidationError::InvalidZkProof);
-                            }
-                        }
-                    }
-                    _ => {
-                        println!(
-                            " DEBUG: Unknown proof system: '{}'",
-                            plonky2_proof.proof_system
-                        );
-                        log::error!("Unknown proof system: '{}'", plonky2_proof.proof_system);
-                        return Err(ValidationError::InvalidZkProof);
-                    }
+        match input.zk_proof.amount_proof.verify() {
+            Ok(is_valid) => {
+                println!(" DEBUG: Amount range verification result: {}", is_valid);
+                log::info!("Amount range verification result: {}", is_valid);
+                if !is_valid {
+                    println!(" DEBUG: Amount range proof INVALID - returning error");
+                    log::error!("Amount range proof INVALID - returning error");
+                    return Err(ValidationError::InvalidZkProof);
                 }
-            } else {
-                println!(" DEBUG: Failed to initialize ZkProofSystem");
-                log::error!("Failed to initialize ZkProofSystem");
+                println!(" DEBUG: Amount range proof VALID");
+                log::info!("Amount range proof VALID");
+            }
+            Err(e) => {
+                println!(" DEBUG: Amount range verification error: {:?}", e);
+                log::error!("Amount range verification error: {:?}", e);
                 return Err(ValidationError::InvalidZkProof);
             }
-        } else {
-            println!(" DEBUG: No Plonky2 proof found - NO FALLBACKS ALLOWED");
-            log::error!("Amount proof missing Plonky2 verification - no fallbacks allowed");
-            return Err(ValidationError::InvalidZkProof);
         }
 
         println!(" DEBUG: validate_amount_range_proof completed successfully");

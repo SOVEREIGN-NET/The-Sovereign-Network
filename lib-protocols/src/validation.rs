@@ -13,7 +13,7 @@ use sha3::{Digest, Sha3_256};
 use std::collections::HashMap;
 
 // Import ZK proof types from lib-proofs module
-use lib_proofs::{initialize_zk_system, ZkProof};
+use lib_proofs::ZkProof;
 
 /// Validation configuration and rules
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -596,50 +596,43 @@ impl ZhtpValidator {
 
         // Try to parse as ZkProof from lib-proofs and validate with proper verifier
         if let Ok(zk_proof) = serde_json::from_slice::<ZkProof>(proof_bytes) {
-            // Use lib-proofs verification system
-            if let Ok(zk_system) = initialize_zk_system() {
-                // Generate public inputs from request
-                let public_inputs_hash = self.generate_public_inputs_from_request(request);
+            // Generate public inputs from request
+            let public_inputs_hash = self.generate_public_inputs_from_request(request);
 
-                // If this is a Plonky2 proof, use the verifier
-                if let Some(plonky2_proof) = &zk_proof.plonky2_proof {
-                    match zk_system.verify_transaction(plonky2_proof) {
-                        Ok(is_valid) => {
-                            if !is_valid {
-                                return Err(ProtocolError::ZkProofError(
-                                    "ZK proof verification failed".to_string(),
-                                ));
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!("Plonky2 verification failed: {}", e);
-                            // Fall through to legacy validation
-                        }
-                    }
-                } else {
-                    // For non-Plonky2 proofs, check if proof contains commitment to request
-                    if !zk_proof.public_inputs.is_empty() {
-                        let contains_commitment =
-                            zk_proof.public_inputs.windows(32).any(|window| {
-                                window
-                                    .iter()
-                                    .zip(public_inputs_hash.iter())
-                                    .filter(|(a, b)| a == b)
-                                    .count()
-                                    >= 8 // At least 1/4 of the hash should match
-                            });
-
-                        if !contains_commitment {
+            // If this is a backend proof, use the verifier
+            if zk_proof.backend_proof.is_some() {
+                match zk_proof.verify() {
+                    Ok(is_valid) => {
+                        if !is_valid {
                             return Err(ProtocolError::ZkProofError(
-                                "ZK proof does not contain valid request commitment".to_string(),
+                                "ZK proof verification failed".to_string(),
                             ));
                         }
                     }
+                    Err(e) => {
+                        tracing::warn!("ZK proof verification failed: {}", e);
+                        // Fall through to legacy validation
+                    }
                 }
             } else {
-                // Fallback to basic validation if lib-proofs system fails
-                tracing::warn!("ZK system initialization failed, using fallback validation");
-                self.validate_proof_context_fallback(request, proof_bytes)?;
+                // For non-backend proofs, check if proof contains commitment to request
+                if !zk_proof.public_inputs.is_empty() {
+                    let contains_commitment =
+                        zk_proof.public_inputs.windows(32).any(|window| {
+                            window
+                                .iter()
+                                .zip(public_inputs_hash.iter())
+                                .filter(|(a, b)| a == b)
+                                .count()
+                                >= 8 // At least 1/4 of the hash should match
+                        });
+
+                    if !contains_commitment {
+                        return Err(ProtocolError::ZkProofError(
+                            "ZK proof does not contain valid request commitment".to_string(),
+                        ));
+                    }
+                }
             }
         } else {
             // For raw proof bytes, use fallback validation

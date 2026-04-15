@@ -1280,6 +1280,64 @@ impl ZkProofSystem {
         Ok(false)
     }
 
+    /// Generate Merkle inclusion proof
+    pub fn prove_merkle(
+        &self,
+        leaf: [u8; 32],
+        path: &[[u8; 32]],
+        indices: &[bool],
+        root: [u8; 32],
+    ) -> Result<Plonky2Proof> {
+        Self::ensure_stub_allowed()?;
+        if !self.initialized {
+            return Err(anyhow!("ZK system not initialized"));
+        }
+
+        let mut proof_data = Vec::new();
+        proof_data.extend_from_slice(&leaf);
+        for node in path {
+            proof_data.extend_from_slice(node);
+        }
+        for &idx in indices {
+            proof_data.push(idx as u8);
+        }
+        proof_data.extend_from_slice(&root);
+
+        let proof_hash = hash_blake3(&proof_data);
+
+        Ok(Plonky2Proof {
+            proof: proof_data,
+            public_inputs: vec![path.len() as u64],
+            verification_key_hash: proof_hash,
+            proof_system: "ZHTP-Optimized-Merkle".to_string(),
+            generated_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs(),
+            circuit_id: "merkle_v1".to_string(),
+            private_input_commitment: proof_hash,
+        })
+    }
+
+    /// Verify Merkle inclusion proof
+    pub fn verify_merkle(&self, proof: &Plonky2Proof, root: [u8; 32]) -> Result<bool> {
+        Self::ensure_stub_allowed()?;
+        if !self.initialized {
+            return Ok(false);
+        }
+
+        if proof.proof_system != "ZHTP-Optimized-Merkle" {
+            return Ok(false);
+        }
+
+        if proof.proof.len() < 64 || proof.public_inputs.len() != 1 {
+            return Ok(false);
+        }
+
+        // Verify the embedded root matches the expected root
+        let embedded_root = &proof.proof[proof.proof.len() - 32..];
+        Ok(embedded_root == root.as_slice())
+    }
+
     /// Get ZK proof statistics
     pub fn get_stats(&self) -> ZkProofStats {
         self.proof_stats.clone()

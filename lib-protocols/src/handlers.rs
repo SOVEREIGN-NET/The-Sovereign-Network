@@ -1560,32 +1560,26 @@ impl ZhtpHandlers {
         zk_proof: &ZkProof,
         request: &ZhtpRequest,
     ) -> Result<VerificationResult> {
-        // Initialize ZK system from lib-proofs
-        let zk_system = initialize_zk_system()
-            .map_err(|e| anyhow::anyhow!("Failed to initialize ZK system: {}", e))?;
-
-        // If this is a Plonky2 proof, use the verifier
-        if let Some(plonky2_proof) = &zk_proof.plonky2_proof {
-            match zk_system.verify_transaction(plonky2_proof) {
-                Ok(is_valid) => {
-                    return Ok(if is_valid {
-                        VerificationResult::Valid {
-                            circuit_id: "plonky2_transaction".to_string(),
-                            verification_time_ms: 50,
-                            public_inputs: zk_proof
-                                .public_inputs
-                                .iter()
-                                .map(|&b| b as u64)
-                                .collect(),
-                        }
-                    } else {
-                        VerificationResult::Invalid("Plonky2 verification failed".to_string())
-                    });
-                }
-                Err(e) => {
-                    tracing::debug!("Plonky2 verification failed: {}", e);
-                    // Fall through to other verification methods
-                }
+        // Verify using the active backend
+        match zk_proof.verify() {
+            Ok(is_valid) => {
+                return Ok(if is_valid {
+                    VerificationResult::Valid {
+                        circuit_id: "plonky2_transaction".to_string(),
+                        verification_time_ms: 50,
+                        public_inputs: zk_proof
+                            .public_inputs
+                            .iter()
+                            .map(|&b| b as u64)
+                            .collect(),
+                    }
+                } else {
+                    VerificationResult::Invalid("Plonky2 verification failed".to_string())
+                });
+            }
+            Err(e) => {
+                tracing::debug!("Plonky2 verification failed: {}", e);
+                // Fall through to other verification methods
             }
         }
 

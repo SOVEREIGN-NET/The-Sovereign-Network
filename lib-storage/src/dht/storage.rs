@@ -738,7 +738,7 @@ impl<B: StorageBackend> DhtStorage<B> {
             zk_proof.proof_data.clone(),
             zk_proof.public_inputs.clone(),
             zk_proof.verification_key.clone(),
-            zk_proof.plonky2_proof.clone(),
+            zk_proof.backend_proof.clone(),
         );
 
         Ok(converted_proof)
@@ -839,40 +839,11 @@ impl<B: StorageBackend> DhtStorage<B> {
         let zk_system = lib_proofs::initialize_zk_system()
             .map_err(|e| anyhow!("Failed to initialize ZK system: {}", e))?;
 
-        // Check if this is a Plonky2 proof (preferred verification method)
-        if let Some(plonky2_proof) = &zk_proof.plonky2_proof {
-            // Determine proof type based on the proof system identifier
-            match plonky2_proof.proof_system.as_str() {
-                "ZHTP-Optimized-StorageAccess" => {
-                    return zk_system
-                        .verify_storage_access(plonky2_proof)
-                        .map_err(|e| anyhow!("Storage access proof verification failed: {}", e));
-                }
-                "ZHTP-Optimized-DataIntegrity" => {
-                    return zk_system
-                        .verify_data_integrity(plonky2_proof)
-                        .map_err(|e| anyhow!("Data integrity proof verification failed: {}", e));
-                }
-                "ZHTP-Optimized-Range" => {
-                    return zk_system
-                        .verify_range(plonky2_proof)
-                        .map_err(|e| anyhow!("Range proof verification failed: {}", e));
-                }
-                "ZHTP-Optimized-Identity" => {
-                    return zk_system
-                        .verify_identity(plonky2_proof)
-                        .map_err(|e| anyhow!("Identity proof verification failed: {}", e));
-                }
-                _ => {
-                    // [DB-002] Reject unknown proof types for security
-                    warn!(
-                        proof_system = %plonky2_proof.proof_system,
-                        proof_len = plonky2_proof.proof.len(),
-                        "Unknown proof system type - rejecting for security"
-                    );
-                    return Ok(false);
-                }
-            }
+        // Verify using the active backend if backend data is present
+        if zk_proof.backend_proof.is_some() {
+            return zk_proof
+                .verify()
+                .map_err(|e| anyhow!("ZK proof verification failed: {}", e));
         }
 
         // Fallback to traditional ZK proof verification
@@ -966,16 +937,10 @@ impl<B: StorageBackend> DhtStorage<B> {
         }
 
         // Verify proof against expected cryptographic parameters
-        if let Some(plonky2_proof) = &zk_proof.plonky2_proof {
-            // Compare critical proof components with the expected proof
-            if plonky2_proof.public_inputs != expected_proof.public_inputs {
-                debug!("Proof rejected: public inputs mismatch");
-                return Ok(false);
-            }
-
-            // Verify proof validity using ZK system
-            return zk_system
-                .verify_storage_access(plonky2_proof)
+        if zk_proof.backend_proof.is_some() {
+            // Verify proof validity using active backend
+            return zk_proof
+                .verify()
                 .map_err(|e| anyhow!("Storage access proof verification failed: {}", e));
         }
 
@@ -1426,34 +1391,7 @@ impl<B: StorageBackend> DhtStorage<B> {
             return Ok(false);
         }
 
-        // Use ZK system for cryptographic proof verification
-        if let Some(plonky2_proof) = &proof.plonky2_proof {
-            // Verify using specific proof type
-            match plonky2_proof.proof_system.as_str() {
-                "ZHTP-Optimized-StorageAccess" => {
-                    return zk_system
-                        .verify_storage_access(plonky2_proof)
-                        .map_err(|e| anyhow!("Storage access proof verification failed: {}", e));
-                }
-                "ZHTP-Optimized-DataIntegrity" => {
-                    return zk_system
-                        .verify_data_integrity(plonky2_proof)
-                        .map_err(|e| anyhow!("Data integrity proof verification failed: {}", e));
-                }
-                _ => {
-                    // Generic verification for unknown proof types
-                    debug!(
-                        proof_system = %plonky2_proof.proof_system,
-                        "Using generic Plonky2 proof verification for unknown type"
-                    );
-                    return Ok(
-                        self.verify_generic_plonky2_proof(plonky2_proof, &expected_public_inputs)?
-                    );
-                }
-            }
-        }
-
-        // Fallback to generic ZK proof verification
+        // Use active backend for cryptographic proof verification
         proof
             .verify()
             .map_err(|e| anyhow!("ZK proof verification error: {}", e))
@@ -1755,10 +1693,9 @@ impl<B: StorageBackend> DhtStorage<B> {
         // Validate proof system type
         match proof.proof_system.as_str() {
             "plonky2" => {
-                // Validate Plonky2 proof if present
-                if let Some(ref plonky2_proof) = proof.plonky2_proof {
-                    // In a implementation, this would verify the Plonky2 proof
-                    return Ok(!plonky2_proof.proof.is_empty());
+                // Validate backend proof if present
+                if let Some(ref backend_proof) = proof.backend_proof {
+                    return Ok(!backend_proof.data.is_empty());
                 }
             }
             "groth16" | "nova" | "stark" => {
@@ -3282,7 +3219,6 @@ mod tests {
             proof_data: vec![1, 2, 3, 4],
             public_inputs: vec![5, 6, 7, 8],
             verification_key: vec![9, 10, 11, 12],
-            plonky2_proof: None,
             proof: vec![], // Deprecated field
             ..lib_proofs::ZkProof::empty()
         };
@@ -3299,7 +3235,6 @@ mod tests {
                 proof_data: vec![],
                 public_inputs: vec![],
                 verification_key: vec![],
-                plonky2_proof: None,
                 proof: vec![],
                 ..lib_proofs::ZkProof::empty()
             },

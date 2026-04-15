@@ -765,7 +765,6 @@ mod tests {
             proof_data: vec![1, 2, 3, 4],
             public_inputs: vec![5, 6, 7, 8],
             verification_key: vec![9, 10, 11, 12],
-            plonky2_proof: None,
             proof: vec![],
             ..lib_proofs::ZkProof::empty()
         };

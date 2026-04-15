@@ -303,7 +303,6 @@ impl MeshMessageEnvelope {
             proof_data,
             public_inputs: Vec::new(),
             verification_key: Vec::new(),
-            plonky2_proof: None,
             proof: Vec::new(),
             ..lib_proofs::ZkProof::empty()
         });
@@ -1481,7 +1480,6 @@ mod tests {
             proof_data: vec![1, 2, 3, 4, 5],
             public_inputs: Vec::new(),
             verification_key: Vec::new(),
-            plonky2_proof: None,
             proof: Vec::new(),
             ..lib_proofs::ZkProof::empty()
         };
@@ -1575,7 +1573,6 @@ mod tests {
             proof_data: vec![1, 2, 3, 4, 5],
             public_inputs: Vec::new(),
             verification_key: Vec::new(),
-            plonky2_proof: None,
             proof: Vec::new(),
             ..lib_proofs::ZkProof::empty()
         };
