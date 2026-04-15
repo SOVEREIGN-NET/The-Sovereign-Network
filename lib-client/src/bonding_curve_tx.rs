@@ -382,8 +382,8 @@ pub fn build_add_liquidity_tx(
     identity: &crate::Identity,
     token_id: &[u8; 32],
     pool_id: &[u8; 32],
-    token_amount: u64,
-    sov_amount: u64,
+    token_amount: u128,
+    sov_amount: u128,
     chain_id: u8,
     nonce: u64,
 ) -> Result<String, String> {

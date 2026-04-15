@@ -126,7 +126,7 @@ pub fn build_treasury_allocation_tx(
     chain_id: u8,
     source_treasury_key_id: [u8; 32],
     destination_key_id: [u8; 32],
-    amount: u64,
+    amount: u128,
     spending_category: String,
     proposal_id: [u8; 32],
     council_approvals: Vec<(Vec<u8>, Vec<u8>)>,
@@ -136,7 +136,7 @@ pub fn build_treasury_allocation_tx(
     let data = TreasuryAllocationData {
         source_treasury_key_id,
         destination_key_id,
-        amount,
+        amount: amount as u64,
         spending_category,
         proposal_id,
         approvals,

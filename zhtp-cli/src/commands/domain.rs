@@ -345,9 +345,7 @@ async fn build_domain_fee_payment_tx(
 ) -> CliResult<String> {
     use lib_blockchain::contracts::utils::generate_lib_token_id;
 
-    const DOMAIN_FEE_SOV_WHOLE: u64 = 10;
-    // 10 SOV in 18-decimal atoms = 10 * 10^18
-    let fee_amount_atoms: u64 = DOMAIN_FEE_SOV_WHOLE * 1_000_000_000_000_000_000;
+    let fee_amount_atoms: u128 = 10 * 1_000_000_000_000_000_000u128; // 10 SOV in 18-decimal atoms
 
     // 1. Find user's Primary wallet
     let identity_id_hex = hex::encode(loaded.identity.id.0);
@@ -437,15 +435,14 @@ async fn build_domain_fee_payment_tx(
         &identity,
         &primary_wallet_id_bytes,
         &treasury_wallet_id,
-        fee_amount_atoms as u64,
+        fee_amount_atoms,
         3, // chain_id = 0x03 (testnet/mainnet)
         nonce,
     )
     .map_err(|e| CliError::ConfigError(format!("Failed to build fee payment tx: {}", e)))?;
 
     output.success(&format!(
-        "Fee payment tx built: {} SOV transfer",
-        DOMAIN_FEE_SOV_WHOLE
+        "Fee payment tx built: 10 SOV transfer"
     ))?;
 
     Ok(tx_hex)

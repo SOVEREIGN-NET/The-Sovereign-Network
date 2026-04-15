@@ -365,7 +365,7 @@ pub struct SRVGenesisConfig {
 impl Default for SRVGenesisConfig {
     fn default() -> Self {
         Self {
-            initial_srv: 2_180_000,                             // $0.0218
+            initial_srv: 1_000_000,                             // $0.01 (spec genesis price)
             initial_committed_value_usd: 109_000_000,           // $1,090,000
             initial_circulating_supply: 50_000_000_000_000_000, // 50M SOV
             stability_multiplier_bps: 10_000,                   // 1.0

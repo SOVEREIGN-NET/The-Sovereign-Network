@@ -148,7 +148,7 @@ pub struct CreateTokenParams {
 pub struct MintParams {
     pub token_id: [u8; 32],
     pub to: Vec<u8>, // PublicKey bytes
-    pub amount: u64,
+    pub amount: u128,
 }
 
 /// Parameters for transferring tokens
@@ -156,14 +156,14 @@ pub struct MintParams {
 pub struct TransferParams {
     pub token_id: [u8; 32],
     pub to: Vec<u8>, // PublicKey bytes or key_id (32 bytes)
-    pub amount: u64,
+    pub amount: u128,
 }
 
 /// Parameters for burning tokens
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BurnParams {
     pub token_id: [u8; 32],
-    pub amount: u64,
+    pub amount: u128,
 }
 
 // ============================================================================
@@ -385,7 +385,7 @@ pub fn build_transfer_tx(
     identity: &Identity,
     token_id: &[u8; 32],
     to_pubkey: &[u8],
-    amount: u64,
+    amount: u128,
     chain_id: u8,
     nonce: u64,
 ) -> Result<String, String> {
@@ -461,7 +461,7 @@ pub fn build_sov_wallet_transfer_tx(
     identity: &Identity,
     from_wallet_id: &[u8; 32],
     to_wallet_id: &[u8; 32],
-    amount: u64,
+    amount: u128,
     chain_id: u8,
     nonce: u64,
 ) -> Result<String, String> {
@@ -526,7 +526,7 @@ pub fn build_token_wallet_transfer_tx(
     token_id: &[u8; 32],
     _from_wallet_id: &[u8; 32],
     to_wallet_id: &[u8; 32],
-    amount: u64,
+    amount: u128,
     chain_id: u8,
     nonce: u64,
 ) -> Result<String, String> {
@@ -649,7 +649,7 @@ pub fn build_mint_tx(
     identity: &Identity,
     token_id: &[u8; 32],
     to_pubkey: &[u8],
-    amount: u64,
+    amount: u128,
     chain_id: u8,
 ) -> Result<String, String> {
     let to_key_id = if to_pubkey.len() == 32 {
@@ -820,7 +820,7 @@ mod tests {
 pub fn build_burn_tx(
     _identity: &Identity,
     token_id: &[u8; 32],
-    amount: u64,
+    amount: u128,
     _chain_id: u8,
 ) -> Result<String, String> {
     let _ = (token_id, amount);
