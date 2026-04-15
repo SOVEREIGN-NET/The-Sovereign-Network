@@ -503,7 +503,8 @@ impl Blockchain {
             recipient: crate::integration::crypto_integration::PublicKey::new(
                 treasury_wallet.public_key.as_slice().try_into().unwrap_or([0u8; 2592]),
             ),
-        };
+                        merkle_leaf: Hash::default(),
+};
 
         Ok(Transaction::new(
             vec![],

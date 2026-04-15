@@ -243,6 +243,12 @@ pub mod meta {
 
     /// Key for canonical CBE curve economic state (single global record).
     pub const CBE_ECONOMIC_STATE: &[u8] = b"cbe_economic_state";
+
+    /// Key for UTXO Merkle tree: next leaf index to assign.
+    pub const UTXO_MERKLE_NEXT_INDEX: &[u8] = b"utxo_merkle_next_index";
+
+    /// Key for UTXO Merkle tree: current root hash ([u8; 32]).
+    pub const UTXO_MERKLE_ROOT: &[u8] = b"utxo_merkle_root";
 }
 
 // =============================================================================

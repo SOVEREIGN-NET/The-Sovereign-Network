@@ -11,7 +11,7 @@ pub mod real {
     use plonky2::{
         field::{
             goldilocks_field::GoldilocksField,
-            types::Field,
+            types::{Field, PrimeField64},
         },
         hash::{
             hashing::hash_n_to_hash_no_pad,
@@ -134,11 +134,15 @@ pub mod real {
                 builder.hash_n_to_hash_no_pad::<PoseidonHash>(vec![nullifier_seed]);
             builder.connect(nullifier_seed_hash, computed_hash.elements[0]);
 
-            // Constraint 3: Merkle inclusion of the UTXO leaf.
-            // The leaf is the hash of [nullifier_seed, sender_secret, sender_balance].
-            let leaf_data = vec![nullifier_seed, sender_secret, sender_balance];
+            // Constraint 3: Merkle inclusion of the UTXO commitment.
+            // The leaf commitment is Poseidon(nullifier_seed, sender_secret, sender_balance).
+            let leaf_commitment = builder.hash_n_to_hash_no_pad::<PoseidonHash>(vec![
+                nullifier_seed,
+                sender_secret,
+                sender_balance,
+            ]);
             builder.verify_merkle_proof::<PoseidonHash>(
-                leaf_data,
+                leaf_commitment.elements.to_vec(),
                 &leaf_index_bits,
                 merkle_root,
                 &merkle_siblings,
@@ -168,7 +172,7 @@ pub mod real {
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join(".zhtp")
             .join("cache")
-            .join("tx_circuit_v3.bin")
+            .join("tx_circuit_v4.bin")
     }
 
     /// Lazy-initialized circuit so we only build once per process.
@@ -255,13 +259,73 @@ pub mod real {
             .map_err(|e| anyhow::anyhow!("Plonky2 verification failed: {:?}", e))
     }
 
-    /// Build a Poseidon Merkle tree from leaf data and return the root + siblings
-    /// for the requested leaf index.  Leaves are automatically padded to the next
-    /// power of two up to `1 << MERKLE_DEPTH`.
+    /// Build a Poseidon Merkle tree from raw UTXO leaf data.
+    ///
+    /// Each leaf in `leaves` must be `[nullifier_seed, sender_secret, sender_balance]`.
+    /// The function computes the Poseidon commitment for each leaf, builds the tree,
+    /// and returns (root, siblings) for the requested leaf index.
     pub fn build_merkle_tree(
         leaves: &[Vec<u64>],
         leaf_index: usize,
     ) -> anyhow::Result<([u64; 4], Vec<[u64; 4]>)> {
+        use plonky2::hash::hashing::hash_n_to_hash_no_pad;
+        use plonky2::hash::merkle_tree::MerkleTree;
+        use plonky2::hash::poseidon::{PoseidonHash, PoseidonPermutation};
+        use plonky2::field::types::{Field, PrimeField64};
+        use plonky2::hash::hash_types::HashOut;
+
+        let max_leaves = 1usize << MERKLE_DEPTH;
+        if leaves.is_empty() || leaves.len() > max_leaves {
+            return Err(anyhow::anyhow!(
+                "Leaf count {} out of range [1, {}]",
+                leaves.len(),
+                max_leaves
+            ));
+        }
+        if leaf_index >= leaves.len() {
+            return Err(anyhow::anyhow!(
+                "leaf_index {} out of range [0, {})",
+                leaf_index,
+                leaves.len()
+            ));
+        }
+
+        let mut padded: Vec<Vec<F>> = leaves
+            .iter()
+            .map(|leaf| {
+                let commitment = hash_n_to_hash_no_pad::<F, PoseidonPermutation<F>>(
+                    &leaf.iter().map(|&v| F::from_canonical_u64(v)).collect::<Vec<_>>()
+                );
+                commitment.elements.to_vec()
+            })
+            .collect();
+        // Pad to next power of two with empty commitments
+        let target_len = padded.len().next_power_of_two();
+        while padded.len() < target_len {
+            padded.push(HashOut::from([F::ZERO; NUM_HASH_OUT_ELTS]).elements.to_vec());
+        }
+
+        let tree = MerkleTree::<F, PoseidonHash>::new(padded, 0);
+        let proof = tree.prove(leaf_index);
+        let root = tree.cap.0[0].elements.map(|f| f.to_canonical_u64());
+
+        let mut siblings = Vec::with_capacity(proof.siblings.len());
+        for s in &proof.siblings {
+            siblings.push(s.elements.map(|f| f.to_canonical_u64()));
+        }
+        Ok((root, siblings))
+    }
+
+    /// Build a Poseidon Merkle tree from already-hashed leaf commitments.
+    ///
+    /// Each leaf in `leaves` must be a 4-element Poseidon hash output (already committed).
+    /// Pads to the next power of two up to `1 << MERKLE_DEPTH` with zero hashes,
+    /// builds the tree, and returns (root, siblings) for the requested leaf index.
+    pub fn build_merkle_tree_from_hashes(
+        leaves: &[[u64; NUM_HASH_OUT_ELTS]],
+        leaf_index: usize,
+    ) -> anyhow::Result<([u64; NUM_HASH_OUT_ELTS], Vec<[u64; NUM_HASH_OUT_ELTS]>)> {
+        use plonky2::hash::hash_types::HashOut;
         use plonky2::hash::merkle_tree::MerkleTree;
         use plonky2::hash::poseidon::PoseidonHash;
         use plonky2::field::types::{Field, PrimeField64};
@@ -286,10 +350,13 @@ pub mod real {
             .iter()
             .map(|leaf| leaf.iter().map(|&v| F::from_canonical_u64(v)).collect())
             .collect();
-        // Pad to next power of two
         let target_len = padded.len().next_power_of_two();
         while padded.len() < target_len {
-            padded.push(vec![F::ZERO]);
+            padded.push(HashOut::from([F::ZERO; NUM_HASH_OUT_ELTS]).elements.to_vec());
+        }
+        // Pad up to max_leaves if needed so the tree height matches MERKLE_DEPTH.
+        while padded.len() < max_leaves {
+            padded.push(HashOut::from([F::ZERO; NUM_HASH_OUT_ELTS]).elements.to_vec());
         }
 
         let tree = MerkleTree::<F, PoseidonHash>::new(padded, 0);
@@ -303,15 +370,25 @@ pub mod real {
         Ok((root, siblings))
     }
 
-    /// Compute the Merkle root from a leaf, leaf index, and sibling path.
+    /// Compute the Merkle root from raw UTXO data, leaf index, and sibling path.
+    /// The leaf commitment is computed as Poseidon(nullifier_seed, sender_secret, sender_balance).
     pub fn compute_merkle_root(
-        leaf_data: &[F],
+        nullifier_seed: F,
+        sender_secret: F,
+        sender_balance: F,
         leaf_index: u32,
         siblings: &[[F; NUM_HASH_OUT_ELTS]],
     ) -> [F; NUM_HASH_OUT_ELTS] {
         use plonky2::hash::hash_types::HashOut;
+        use plonky2::hash::hashing::hash_n_to_hash_no_pad;
+        use plonky2::hash::poseidon::PoseidonPermutation;
         use plonky2::plonk::config::Hasher;
-        let mut state = PoseidonHash::hash_or_noop(leaf_data);
+        let leaf_commitment = hash_n_to_hash_no_pad::<F, PoseidonPermutation<F>>(&[
+            nullifier_seed,
+            sender_secret,
+            sender_balance,
+        ]);
+        let mut state = leaf_commitment;
         let mut index = leaf_index as usize;
         for sibling in siblings {
             let bit = index & 1;
@@ -324,6 +401,25 @@ pub mod real {
             };
         }
         state.elements
+    }
+
+    /// Compute the Poseidon leaf commitment for raw UTXO data.
+    ///
+    /// Returns the 4-element hash as `[u64; 4]` suitable for the persistent
+    /// UTXO Merkle tree or for conversion to `[u8; 32]`.
+    pub fn compute_leaf_commitment(
+        nullifier_seed: u64,
+        sender_secret: u64,
+        sender_balance: u64,
+    ) -> [u64; 4] {
+        use plonky2::hash::hashing::hash_n_to_hash_no_pad;
+        use plonky2::hash::poseidon::PoseidonPermutation;
+        let hash = hash_n_to_hash_no_pad::<F, PoseidonPermutation<F>>(&[
+            F::from_canonical_u64(nullifier_seed),
+            F::from_canonical_u64(sender_secret),
+            F::from_canonical_u64(sender_balance),
+        ]);
+        hash.elements.map(|e| e.to_canonical_u64())
     }
 
     #[cfg(test)]
@@ -357,7 +453,7 @@ pub mod real {
             let nullifier_seed = 67890u64;
             let leaf = make_leaf(nullifier_seed, sender_secret, sender_balance);
             let siblings = dummy_merkle_siblings();
-            let merkle_root = compute_merkle_root(&leaf, 0, &siblings);
+            let merkle_root = compute_merkle_root(leaf[0], leaf[1], leaf[2], 0, &siblings);
             let proof = prove_transaction(
                 sender_balance, amount, fee, sender_secret, nullifier_seed,
                 merkle_root, 0, &siblings
@@ -374,7 +470,7 @@ pub mod real {
             let nullifier_seed = 67890u64;
             let leaf = make_leaf(nullifier_seed, sender_secret, sender_balance);
             let siblings = dummy_merkle_siblings();
-            let merkle_root = compute_merkle_root(&leaf, 0, &siblings);
+            let merkle_root = compute_merkle_root(leaf[0], leaf[1], leaf[2], 0, &siblings);
             let result = prove_transaction(
                 sender_balance, amount, fee, sender_secret, nullifier_seed,
                 merkle_root, 0, &siblings
@@ -390,10 +486,19 @@ pub mod real {
         #[test]
         fn test_merkle_inclusion_with_real_tree() {
             // Build a tree with 16 leaves so the height (4) matches MERKLE_DEPTH.
+            // The circuit uses Poseidon commitment leaves, so we must hash each
+            // raw leaf [nullifier, secret, balance] into a commitment before
+            // constructing the Merkle tree.
             let rebuild_leaves: Vec<Vec<F>> = (0..16u64)
                 .map(|i| vec![F::from_canonical_u64(i), F::from_canonical_u64(i + 10), F::from_canonical_u64(1000)])
                 .collect();
-            let tree = MerkleTree::<F, PoseidonHash>::new(rebuild_leaves.clone(), 0);
+            let commitment_leaves: Vec<Vec<F>> = rebuild_leaves
+                .iter()
+                .map(|leaf| {
+                    hash_n_to_hash_no_pad::<F, PoseidonPermutation<F>>(leaf).elements.to_vec()
+                })
+                .collect();
+            let tree = MerkleTree::<F, PoseidonHash>::new(commitment_leaves, 0);
             let leaf_index = 5usize;
             let proof = tree.prove(leaf_index);
             let merkle_root: [F; NUM_HASH_OUT_ELTS] = tree.cap.0[0].elements;
@@ -446,9 +551,14 @@ pub mod real {
                 hash_n_to_hash_no_pad::<F, PoseidonPermutation<F>>(&[nullifier_seed]);
             pw.set_target(t.nullifier_seed_hash, nullifier_hash.elements[0]).unwrap();
 
-            let leaf = vec![nullifier_seed, sender_secret, sender_balance];
             let siblings = dummy_merkle_siblings();
-            let merkle_root = compute_merkle_root(&leaf, 0, &siblings);
+            let merkle_root = compute_merkle_root(
+                nullifier_seed,
+                sender_secret,
+                sender_balance,
+                0,
+                &siblings,
+            );
             pw.set_target_arr(&t.merkle_root, &merkle_root).unwrap();
 
             pw.set_target(t.sender_secret, sender_secret).unwrap();

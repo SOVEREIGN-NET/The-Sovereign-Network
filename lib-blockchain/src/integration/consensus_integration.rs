@@ -1094,7 +1094,8 @@ impl BlockchainConsensusCoordinator {
                     recipient: crate::integration::crypto_integration::PublicKey::new(
                         citizen_id.as_bytes().iter().cycle().take(2592).copied().collect::<Vec<_>>().try_into().unwrap_or([0u8; 2592]),
                     ),
-                }],
+                                        merkle_leaf: BlockchainHash::default(),
+}],
                 10, // UBI transaction fee
                 crate::integration::crypto_integration::Signature {
                     signature: vec![0u8; 64], // System signature
@@ -1174,7 +1175,8 @@ impl BlockchainConsensusCoordinator {
                     recipient: crate::integration::crypto_integration::PublicKey::new(
                         service_address.iter().cycle().take(2592).copied().collect::<Vec<_>>().try_into().unwrap_or([0u8; 2592]),
                     ),
-                }],
+                                        merkle_leaf: BlockchainHash::default(),
+}],
                 25, // Welfare transaction fee
                 crate::integration::crypto_integration::Signature {
                     signature: vec![0u8; 64], // System signature
@@ -1560,7 +1562,8 @@ impl BlockchainConsensusCoordinator {
                     recipient: crate::integration::crypto_integration::PublicKey::new(
                         [0u8; 2592], // Use empty dilithium key for system transaction
                     ),
-                };
+                                        merkle_leaf: BlockchainHash::default(),
+};
 
                 let signature = crate::integration::crypto_integration::Signature {
                     signature: hash_blake3(b"system_reward").to_vec(),

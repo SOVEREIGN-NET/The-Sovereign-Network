@@ -77,7 +77,8 @@ impl TransactionBuilder {
                 &format!("note_{}", hex::encode(economics_tx.tx_id)).as_bytes(),
             ),
             recipient: PublicKey::new([0u8; 2592]),
-        }];
+                    merkle_leaf: lib_blockchain::Hash::default(),
+}];
 
         // Map economics transaction type to blockchain transaction type
         let blockchain_tx_type = match economics_tx.tx_type {

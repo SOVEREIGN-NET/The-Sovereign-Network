@@ -149,9 +149,14 @@ pub mod real {
             pw.set_target(t.sender_secret, GF::from_canonical_u64(42)).unwrap();
             pw.set_target(t.nullifier_seed, GF::from_canonical_u64(1)).unwrap();
 
-            let leaf = vec![GF::from_canonical_u64(1), GF::from_canonical_u64(42), GF::from_canonical_u64(1000)];
             let siblings = [[GF::ZERO; 4]; crate::transaction::circuit::real::MERKLE_DEPTH];
-            let merkle_root = crate::transaction::circuit::real::compute_merkle_root(&leaf, 0, &siblings);
+            let merkle_root = crate::transaction::circuit::real::compute_merkle_root(
+                GF::from_canonical_u64(1),
+                GF::from_canonical_u64(42),
+                GF::from_canonical_u64(1000),
+                0,
+                &siblings,
+            );
             pw.set_target_arr(&t.merkle_root, &merkle_root).unwrap();
             for bit_target in &t.leaf_index_bits {
                 pw.set_bool_target(plonky2::iop::target::BoolTarget::new_unsafe(*bit_target), false).unwrap();
@@ -191,9 +196,14 @@ pub mod real {
             pw.set_target(loaded_targets.nullifier_seed, GF::from_canonical_u64(1))
                 .unwrap();
 
-            let leaf = vec![GF::from_canonical_u64(1), GF::from_canonical_u64(42), GF::from_canonical_u64(1000)];
             let siblings = [[GF::ZERO; 4]; crate::transaction::circuit::real::MERKLE_DEPTH];
-            let merkle_root = crate::transaction::circuit::real::compute_merkle_root(&leaf, 0, &siblings);
+            let merkle_root = crate::transaction::circuit::real::compute_merkle_root(
+                GF::from_canonical_u64(1),
+                GF::from_canonical_u64(42),
+                GF::from_canonical_u64(1000),
+                0,
+                &siblings,
+            );
             pw.set_target_arr(&loaded_targets.merkle_root, &merkle_root).unwrap();
             for bit_target in &loaded_targets.leaf_index_bits {
                 pw.set_bool_target(plonky2::iop::target::BoolTarget::new_unsafe(*bit_target), false).unwrap();

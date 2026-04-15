@@ -1533,7 +1533,8 @@ impl BlockchainHandler {
             commitment: lib_blockchain::Hash::from_slice(&req_data.amount.to_le_bytes()),
             note: lib_blockchain::Hash::from_slice(&recipient_pubkey),
             recipient: lib_blockchain::integration::crypto_integration::PublicKey::new(recipient_pubkey),
-        };
+                    merkle_leaf: Hash::default(),
+};
 
         // Use the provided signature (client must sign with their private key)
         let signature = lib_crypto::Signature {
@@ -3037,8 +3038,9 @@ mod tests {
             commitment: Hash::from_slice(b"test-commitment"),
             note: Hash::from_slice(b"test-note"),
             recipient,
+            merkle_leaf: Hash::default(),
         }
-    }
+}
 
     fn build_contract_tx(
         tx_type: TransactionType,
