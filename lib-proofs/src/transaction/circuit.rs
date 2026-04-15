@@ -31,7 +31,11 @@ pub mod real {
     type F = GoldilocksField;
     type C = PoseidonGoldilocksConfig;
     const D: usize = 2;
-    const NUM_BITS: usize = 64;
+    /// We use 63-bit range checks because the Goldilocks prime is
+    /// `p = 2^64 - 2^32 + 1`, which is slightly less than `2^64`.
+    /// Enforcing `< 2^63` on the difference prevents field wrap-around
+    /// from being mistaken for a valid non-negative result.
+    const NUM_BITS: usize = 63;
 
     /// Public inputs for a transaction proof.
     /// Order: [sender_balance, amount, fee, nullifier_seed_hash]
@@ -70,7 +74,12 @@ pub mod real {
             let nullifier_seed = builder.add_virtual_target();
 
             // Constraint 1: amount + fee <= sender_balance
+            // Range-check all inputs to 63 bits to stay safely below the Goldilocks prime.
+            builder.range_check(sender_balance, NUM_BITS);
+            builder.range_check(amount, NUM_BITS);
+            builder.range_check(fee, NUM_BITS);
             let total = builder.add(amount, fee);
+            builder.range_check(total, NUM_BITS);
             let diff = builder.sub(sender_balance, total);
             builder.range_check(diff, NUM_BITS);
             let recomposed = builder.add(total, diff);
@@ -175,6 +184,34 @@ pub mod real {
         #[test]
         fn test_transaction_circuit_builds() {
             let _circuit = TransactionCircuit::build();
+        }
+
+        #[test]
+        #[should_panic(expected = "Integer too large to fit in given number of limbs")]
+        fn test_overspend_fails_plonky2_verification() {
+            // Bypass the prove_transaction pre-check and feed invalid
+            // inputs directly into the circuit.
+            let circuit = TransactionCircuit::build();
+            let mut pw = PartialWitness::new();
+            let t = &circuit.targets;
+
+            // Public inputs: sender_balance = 100, amount = 1000, fee = 10
+            // This violates amount + fee <= sender_balance
+            pw.set_target(t.sender_balance, F::from_canonical_u64(100)).unwrap();
+            pw.set_target(t.amount, F::from_canonical_u64(1000)).unwrap();
+            pw.set_target(t.fee, F::from_canonical_u64(10)).unwrap();
+
+            let nullifier_hash =
+                hash_n_to_hash_no_pad::<F, PoseidonPermutation<F>>(&[F::from_canonical_u64(1)]);
+            pw.set_target(t.nullifier_seed_hash, nullifier_hash.elements[0]).unwrap();
+
+            // Private inputs
+            pw.set_target(t.sender_secret, F::from_canonical_u64(42)).unwrap();
+            pw.set_target(t.nullifier_seed, F::from_canonical_u64(1)).unwrap();
+
+            // Plonky2 prove() panics when the range-check witness is out of bounds,
+            // which is the expected behavior for an invalid transaction.
+            let _ = circuit.data.prove(pw);
         }
     }
 }
