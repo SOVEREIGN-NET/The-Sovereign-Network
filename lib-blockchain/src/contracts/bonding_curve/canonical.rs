@@ -116,6 +116,25 @@ pub fn compute_debt_state(outstanding: u128) -> lib_types::DebtState {
     }
 }
 
+// ── On-ramp split percentages (must sum to 100) ────────────────────────────
+//
+// Immutable protocol constants that define how incoming SOV is split on a
+// BUY_CBE transaction.  Changing any of these requires a protocol upgrade.
+
+/// Fraction of gross SOV directed to the SOV treasury.
+pub const SOV_TREASURY_SHARE_PCT: u128 = 20;
+/// Fraction of gross SOV directed to the CBE strategic reserve.
+pub const RESERVE_SHARE_PCT: u128 = 32;
+// Liquidity gets the remainder: 100 - 20 - 32 = 48
+
+/// Payroll mint multiplier: gross = amount_cbe * PAYROLL_GROSS_NUM / PAYROLL_GROSS_DEN (1.25X).
+pub const PAYROLL_GROSS_NUM: u128 = 125;
+pub const PAYROLL_GROSS_DEN: u128 = 100;
+/// Payroll SOV treasury share: 1/5 of gross (= 0.25X of the base).
+pub const PAYROLL_SOV_TREASURY_DIVISOR: u128 = 5;
+/// Payroll liquidity share: 60% of the base amount for SOVRN audit.
+pub const PAYROLL_LIQUIDITY_PCT: u128 = 60;
+
 // ── Upgrade-gated curve parameters ──────────────────────────────────────────
 //
 // The following parameters CAN change via a protocol upgrade transaction but
@@ -137,6 +156,12 @@ pub fn compute_debt_state(outstanding: u128) -> lib_types::DebtState {
 /// the P_START_* anchors) are part of the immutable curve shape defined
 /// above.  Changing any of these values is a hard fork and requires an
 /// explicit protocol upgrade transaction.
+///
+/// This array is intentionally spelled out rather than derived at compile time.
+/// The band widths are non-uniform (10B, 20B, 30B, 25B, 15B) and the
+/// slope_num values (1..5) are chosen for economic policy reasons, not by
+/// formula.  An explicit table makes the protocol constants reviewable at a
+/// glance without running mental arithmetic.
 pub const BANDS: [Band; BAND_COUNT] = [
     Band {
         index: 0,
