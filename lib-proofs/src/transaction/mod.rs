@@ -4,6 +4,7 @@
 //! balance verification, amount validation, and nullifier proofs to prevent
 //! double-spending while preserving privacy.
 
+pub mod circuit;
 pub mod prover;
 pub mod transaction_proof;
 pub mod verification;

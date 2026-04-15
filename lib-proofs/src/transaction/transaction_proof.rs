@@ -72,17 +72,13 @@ impl ZkTransactionProof {
         _receiver_blinding: [u8; 32],
         nullifier: [u8; 32],
     ) -> anyhow::Result<Self> {
-        // Use ZK system to generate transaction proofs with correct parameter order
-        let zk_system = crate::plonky2::ZkProofSystem::new()?;
-
         // Extract sender_secret and nullifier_seed from the blinding factors
         let sender_secret =
             u64::from_le_bytes(sender_blinding[0..8].try_into().unwrap_or([0u8; 8]));
         let nullifier_seed = u64::from_le_bytes(nullifier[0..8].try_into().unwrap_or([0u8; 8]));
 
-        // Generate the main transaction proof
-        // prove_transaction(sender_balance, amount, fee, sender_secret, nullifier_seed)
-        let plonky2_proof = zk_system.prove_transaction(
+        // Use the active backend to generate the transaction proof
+        let backend_proof = crate::backend::get_backend().prove_transaction(
             sender_balance,
             amount,
             fee,
@@ -90,10 +86,10 @@ impl ZkTransactionProof {
             nullifier_seed,
         )?;
 
-        // Create ZkProofs from the Plonky2 proof
-        let amount_proof = ZkProof::from_plonky2(plonky2_proof.clone());
-        let balance_proof = ZkProof::from_plonky2(plonky2_proof.clone());
-        let nullifier_proof = ZkProof::from_plonky2(plonky2_proof);
+        // Create ZkProofs from the backend proof
+        let amount_proof = ZkProof::from_backend_proof_rich(backend_proof.clone());
+        let balance_proof = ZkProof::from_backend_proof_rich(backend_proof.clone());
+        let nullifier_proof = ZkProof::from_backend_proof_rich(backend_proof);
 
         Ok(Self::new(amount_proof, balance_proof, nullifier_proof))
     }

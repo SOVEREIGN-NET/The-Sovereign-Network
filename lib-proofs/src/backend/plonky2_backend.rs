@@ -2,6 +2,9 @@
 //!
 //! This is a thin wrapper around the legacy `ZkProofSystem` that serializes
 //! `Plonky2Proof` into the opaque `BackendProof.data` blob.
+//!
+//! Transaction proofs (Epic E) bypass the legacy stub and use a real Plonky2
+//! circuit when the `real-proofs` feature is enabled.
 
 use super::{BackendProof, ProofBackend};
 use crate::plonky2::{Plonky2Proof, ZkProofSystem};
@@ -27,6 +30,16 @@ impl Plonky2Backend {
     fn decode(data: &[u8]) -> Result<Plonky2Proof> {
         Ok(bincode::deserialize(data)?)
     }
+
+    #[cfg(feature = "real-proofs")]
+    fn encode_tx_proof(proof: &crate::transaction::circuit::real::TxProof) -> Result<Vec<u8>> {
+        Ok(bincode::serialize(proof)?)
+    }
+
+    #[cfg(feature = "real-proofs")]
+    fn decode_tx_proof(data: &[u8]) -> Result<crate::transaction::circuit::real::TxProof> {
+        Ok(bincode::deserialize(data)?)
+    }
 }
 
 impl ProofBackend for Plonky2Backend {
@@ -42,18 +55,50 @@ impl ProofBackend for Plonky2Backend {
         sender_secret: u64,
         nullifier_seed: u64,
     ) -> Result<BackendProof> {
-        let plonky2_proof = self
-            .inner
-            .prove_transaction(sender_balance, amount, fee, sender_secret, nullifier_seed)?;
-        Ok(BackendProof {
-            proof_system: plonky2_proof.proof_system.clone(),
-            data: Self::encode(&plonky2_proof)?,
-        })
+        #[cfg(feature = "real-proofs")]
+        {
+            let proof = crate::transaction::circuit::real::prove_transaction(
+                sender_balance,
+                amount,
+                fee,
+                sender_secret,
+                nullifier_seed,
+            )?;
+            Ok(BackendProof {
+                proof_system: "plonky2-real-transaction".to_string(),
+                data: Self::encode_tx_proof(&proof)?,
+            })
+        }
+        #[cfg(not(feature = "real-proofs"))]
+        {
+            let plonky2_proof = self
+                .inner
+                .prove_transaction(sender_balance, amount, fee, sender_secret, nullifier_seed)?;
+            Ok(BackendProof {
+                proof_system: plonky2_proof.proof_system.clone(),
+                data: Self::encode(&plonky2_proof)?,
+            })
+        }
     }
 
     fn verify_transaction(&self, proof: &BackendProof) -> Result<bool> {
-        let plonky2_proof = Self::decode(&proof.data)?;
-        self.inner.verify_transaction(&plonky2_proof)
+        #[cfg(feature = "real-proofs")]
+        {
+            if proof.proof_system == "plonky2-real-transaction" {
+                let tx_proof = Self::decode_tx_proof(&proof.data)?;
+                crate::transaction::circuit::real::verify_transaction(&tx_proof)
+                    .map(|_| true)
+            } else {
+                // Fallback: old stub proof format
+                let plonky2_proof = Self::decode(&proof.data)?;
+                self.inner.verify_transaction(&plonky2_proof)
+            }
+        }
+        #[cfg(not(feature = "real-proofs"))]
+        {
+            let plonky2_proof = Self::decode(&proof.data)?;
+            self.inner.verify_transaction(&plonky2_proof)
+        }
     }
 
     fn prove_identity(
