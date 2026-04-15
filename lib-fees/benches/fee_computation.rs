@@ -19,6 +19,7 @@ fn benchmark_native_transfer(c: &mut Criterion) {
         state_reads: 2,
         state_writes: 2,
         state_write_bytes: 32,
+        zk_verify_units: 0,
     };
 
     let mut group = c.benchmark_group("native_transfer");
@@ -43,6 +44,7 @@ fn benchmark_contract_call(c: &mut Criterion) {
         state_reads: 10,
         state_writes: 5,
         state_write_bytes: 256,
+        zk_verify_units: 0,
     };
 
     let mut group = c.benchmark_group("contract_call");
@@ -67,6 +69,7 @@ fn benchmark_data_upload(c: &mut Criterion) {
         state_reads: 5,
         state_writes: 10,
         state_write_bytes: 1024,
+        zk_verify_units: 0,
     };
 
     let mut group = c.benchmark_group("data_upload");
@@ -108,6 +111,7 @@ fn benchmark_all_tx_kinds(c: &mut Criterion) {
             state_reads: 2,
             state_writes: 2,
             state_write_bytes: 64,
+            zk_verify_units: 0,
         };
 
         group.bench_function(name, |b| {
@@ -143,6 +147,7 @@ fn benchmark_all_sig_schemes(c: &mut Criterion) {
             state_reads: 2,
             state_writes: 2,
             state_write_bytes: 32,
+            zk_verify_units: 0,
         };
 
         group.bench_function(name, |b| {

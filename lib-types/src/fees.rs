@@ -67,6 +67,8 @@ pub struct FeeInput {
     pub state_writes: u32,
     /// Total bytes written to state
     pub state_write_bytes: u32,
+    /// ZK proof verification units (derived from benchmarked verifier latency)
+    pub zk_verify_units: u32,
 }
 
 /// Fee calculation parameters (set by governance)
@@ -86,6 +88,8 @@ pub struct FeeParams {
     pub fee_per_state_write_byte: u64,
     /// Fee per signature verification
     pub fee_per_signature: u64,
+    /// Fee per ZK proof verification unit
+    pub fee_per_zk_verify_unit: u64,
     /// Minimum fee for any transaction
     pub minimum_fee: u64,
     /// Maximum fee (sanity cap)
@@ -101,6 +105,7 @@ impl Default for FeeParams {
             fee_per_state_write: 500,
             fee_per_state_write_byte: 10,
             fee_per_signature: 1_000,
+            fee_per_zk_verify_unit: 0,
             minimum_fee: 1_000,
             maximum_fee: 1_000_000_000, // 1 billion units max
         }
@@ -154,6 +159,7 @@ impl FeeParams {
             fee_per_state_write: 500,
             fee_per_state_write_byte: 10,
             fee_per_signature: 1_000,
+            fee_per_zk_verify_unit: 0,
             minimum_fee: 1_000,
             maximum_fee: 100_000_000,
         }
@@ -186,6 +192,7 @@ impl FeeParams {
         if self.fee_per_exec_unit == 0 {
             return Err(FeeParamsError::ZeroFeePerExecUnit);
         }
+        // fee_per_zk_verify_unit is u64 so cannot be negative; no explicit check needed
         Ok(())
     }
 }
@@ -259,6 +266,7 @@ mod tests {
         assert_eq!(params.fee_per_state_read, 100);
         assert_eq!(params.fee_per_state_write, 500);
         assert_eq!(params.fee_per_signature, 1_000);
+        assert_eq!(params.fee_per_zk_verify_unit, 0);
     }
 
     #[test]
@@ -359,6 +367,7 @@ mod tests {
             state_reads: 2,
             state_writes: 2,
             state_write_bytes: 32,
+            zk_verify_units: 0,
         };
 
         let json = serde_json::to_string(&input).unwrap();

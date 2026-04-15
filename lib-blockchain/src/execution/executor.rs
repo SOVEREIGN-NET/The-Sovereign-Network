@@ -170,6 +170,11 @@ impl FeeModelV2 {
         // Witness is based on signature size, not ZK proof internals
         let witness_bytes = (tx.inputs.len() as u32) * sig_scheme.signature_size();
 
+        // ZK verification units: ~1.66 ms per proof verification (tx_benchmark).
+        // Each input carries one ZkTransactionProof (currently 3 sub-proofs).
+        // We charge 50 units per input as a conservative first approximation.
+        let zk_verify_units = (tx.inputs.len() as u32).saturating_mul(50);
+
         FeeInput {
             kind,
             sig_scheme,
@@ -181,6 +186,7 @@ impl FeeModelV2 {
             state_reads: (tx.inputs.len() + tx.outputs.len()) as u32,
             state_writes: tx.outputs.len() as u32,
             state_write_bytes: (tx.outputs.len() * 64) as u32, // Estimate per output
+            zk_verify_units,
         }
     }
 }

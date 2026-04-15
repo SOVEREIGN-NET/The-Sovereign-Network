@@ -149,6 +149,7 @@ pub fn admit(
         state_reads: tx.state_reads,
         state_writes: tx.state_writes,
         state_write_bytes: tx.state_write_bytes,
+        zk_verify_units: 0,
     };
 
     let min_fee = compute_fee_v2(&fee_input, fee_params);

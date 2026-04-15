@@ -169,6 +169,7 @@ impl FeeInputExt for FeeInput {
             state_reads: 2,        // sender + recipient balance
             state_writes: 2,       // sender + recipient balance
             state_write_bytes: 32, // two u128 balances
+            zk_verify_units: 0,
         }
     }
 
@@ -254,11 +255,16 @@ pub fn compute_fee_v2(input: &FeeInput, params: &FeeParams) -> u64 {
     // sig_fee = sig_base_fee * multiplier / 10000
     let sig_fee: u128 = sig_base_fee.saturating_mul(sig_multiplier) / 10_000;
 
+    // 5a. ZK verification fee
+    let zk_verify_fee: u128 =
+        (input.zk_verify_units as u128).saturating_mul(params.fee_per_zk_verify_unit as u128);
+
     // 6. Base fee (sum of all components)
     let base_fee: u128 = byte_fee
         .saturating_add(exec_fee)
         .saturating_add(state_fee)
-        .saturating_add(sig_fee);
+        .saturating_add(sig_fee)
+        .saturating_add(zk_verify_fee);
 
     // 7. Apply kind multiplier
     let kind_multiplier: u128 = input.kind.base_multiplier_bps() as u128;
@@ -340,6 +346,7 @@ pub fn estimate_contract_call_fee(
         state_reads: 5,
         state_writes: 3,
         state_write_bytes: 128,
+        zk_verify_units: 0,
     };
     compute_fee_v2(&input, params)
 }
@@ -366,6 +373,7 @@ pub fn estimate_fee_range(kind: TxKind, sig_scheme: SigScheme, params: &FeeParam
         state_reads: 2,
         state_writes: 2,
         state_write_bytes: 32,
+        zk_verify_units: 0,
     };
 
     let max_input = FeeInput {
@@ -383,6 +391,7 @@ pub fn estimate_fee_range(kind: TxKind, sig_scheme: SigScheme, params: &FeeParam
         state_reads: 10,
         state_writes: 5,
         state_write_bytes: 256,
+        zk_verify_units: 0,
     };
 
     let min_fee = compute_fee_v2(&min_input, params);
@@ -480,6 +489,7 @@ mod tests {
             state_reads: 2,
             state_writes: 2,
             state_write_bytes: 32,
+            zk_verify_units: 0,
         };
 
         let mut contract = transfer.clone();
@@ -557,6 +567,7 @@ mod tests {
             state_reads: 0,
             state_writes: 0,
             state_write_bytes: 0,
+            zk_verify_units: 0,
         };
 
         let fee = compute_fee_v2(&input, &params);
@@ -580,6 +591,7 @@ mod tests {
             state_reads: u32::MAX,
             state_writes: u32::MAX,
             state_write_bytes: u32::MAX,
+            zk_verify_units: 0,
         };
 
         let fee = compute_fee_v2(&input, &params);
@@ -624,6 +636,7 @@ mod tests {
             fee_per_state_write: u64::MAX,
             fee_per_state_write_byte: u64::MAX,
             fee_per_signature: u64::MAX,
+            fee_per_zk_verify_unit: u64::MAX,
             minimum_fee: 0,
             maximum_fee: u64::MAX,
         };
@@ -639,6 +652,7 @@ mod tests {
             state_reads: u32::MAX,
             state_writes: u32::MAX,
             state_write_bytes: u32::MAX,
+            zk_verify_units: 0,
         };
 
         // Should not panic
@@ -756,6 +770,7 @@ mod tests {
                 state_reads: 2,
                 state_writes: 2,
                 state_write_bytes: 32,
+                zk_verify_units: 0,
             };
             let fee = compute_fee_v2(&input, &params);
             assert!(
@@ -786,6 +801,7 @@ mod tests {
                 state_reads: 2,
                 state_writes: 2,
                 state_write_bytes: 32,
+                zk_verify_units: 0,
             };
             let fee = compute_fee_v2(&input, &params);
             assert!(
@@ -816,6 +832,7 @@ mod tests {
                 state_reads,
                 state_writes: 2,
                 state_write_bytes: 32,
+                zk_verify_units: 0,
             };
             let fee = compute_fee_v2(&input, &params);
             assert!(
@@ -846,6 +863,7 @@ mod tests {
                 state_reads: 2,
                 state_writes: 2,
                 state_write_bytes: 32,
+                zk_verify_units: 0,
             };
             let fee = compute_fee_v2(&input, &params);
             assert!(
