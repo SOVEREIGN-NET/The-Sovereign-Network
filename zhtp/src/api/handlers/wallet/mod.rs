@@ -164,9 +164,13 @@ impl ZhtpRequestHandler for WalletHandler {
 struct WalletInfo {
     wallet_type: String,
     wallet_id: String,
+    #[serde(serialize_with = "crate::api::handlers::token::u128_as_string::serialize")]
     available_balance: u128,
+    #[serde(serialize_with = "crate::api::handlers::token::u128_as_string::serialize")]
     staked_balance: u128,
+    #[serde(serialize_with = "crate::api::handlers::token::u128_as_string::serialize")]
     pending_rewards: u128,
+    #[serde(serialize_with = "crate::api::handlers::token::u128_as_string::serialize")]
     total_balance: u128,
     permissions: WalletPermissionsInfo,
     created_at: u64,
@@ -420,7 +424,7 @@ impl WalletHandler {
             "status": "success",
             "identity_id": identity_id,
             "total_wallets": wallets.len(),
-            "total_balance": total_balance,
+            "total_balance": total_balance.to_string(),
             "wallets": wallets
         });
         let json_response = serde_json::to_vec(&response_data)?;

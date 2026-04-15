@@ -614,6 +614,11 @@ impl Blockchain {
             info!("💰 FeeRouter initialized with sector DAO wallet addresses");
         }
 
+        // Ensure CBE bonding curve is registered (idempotent — skips if already present).
+        // This is needed when loading from sled after a binary upgrade that added the
+        // bonding curve, or when the original genesis didn't include it.
+        blockchain.initialize_cbe_genesis();
+
         info!(
             "📂 Loaded blockchain from SledStore: height={}, identities={}, wallets={}, tokens={}",
             blockchain.height,
