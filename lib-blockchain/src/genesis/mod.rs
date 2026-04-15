@@ -171,8 +171,39 @@ pub struct Web4Allocation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SovBalanceAllocation {
     pub wallet_id: String,
+    #[serde(default)]
     pub public_key: String,
+    /// SOV balance in atomic units (18 decimals). Accepts both integer and string
+    /// in TOML because u128 values > i64::MAX cannot be represented as TOML integers.
+    #[serde(deserialize_with = "deserialize_u128_flexible")]
     pub balance: u128,
+}
+
+fn deserialize_u128_flexible<'de, D>(deserializer: D) -> Result<u128, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct U128Visitor;
+    impl<'de> serde::de::Visitor<'de> for U128Visitor {
+        type Value = u128;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a u128 as integer or string")
+        }
+        fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<u128, E> {
+            Ok(v as u128)
+        }
+        fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<u128, E> {
+            if v < 0 { return Err(E::custom("negative balance")); }
+            Ok(v as u128)
+        }
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<u128, E> {
+            v.parse::<u128>().map_err(E::custom)
+        }
+        fn visit_string<E: serde::de::Error>(self, v: String) -> Result<u128, E> {
+            v.parse::<u128>().map_err(E::custom)
+        }
+    }
+    deserializer.deserialize_any(U128Visitor)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

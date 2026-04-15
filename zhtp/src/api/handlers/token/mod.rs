@@ -70,6 +70,23 @@ pub struct BurnTokenRequest {
     pub signed_tx: String,
 }
 
+/// Serialize u128 as string to avoid JSON number overflow (u128 > Number.MAX_SAFE_INTEGER).
+pub mod u128_as_string {
+    use serde::Serializer;
+    pub fn serialize<S: Serializer>(v: &u128, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&v.to_string())
+    }
+}
+pub mod option_u128_as_string {
+    use serde::Serializer;
+    pub fn serialize<S: Serializer>(v: &Option<u128>, s: S) -> Result<S::Ok, S::Error> {
+        match v {
+            Some(n) => s.serialize_str(&n.to_string()),
+            None => s.serialize_none(),
+        }
+    }
+}
+
 /// Token info response
 #[derive(Debug, Serialize)]
 pub struct TokenInfoResponse {
@@ -77,7 +94,9 @@ pub struct TokenInfoResponse {
     pub name: String,
     pub symbol: String,
     pub decimals: u8,
+    #[serde(serialize_with = "u128_as_string::serialize")]
     pub total_supply: u128,
+    #[serde(serialize_with = "option_u128_as_string::serialize")]
     pub max_supply: Option<u128>,
     pub creator: String,
     pub is_deflationary: bool,
@@ -91,6 +110,7 @@ pub struct TokenListItem {
     pub name: String,
     pub symbol: String,
     pub decimals: u8,
+    #[serde(serialize_with = "u128_as_string::serialize")]
     pub total_supply: u128,
 }
 
@@ -373,7 +393,7 @@ impl TokenHandler {
             "success": true,
             "token_id": token_id_hex,
             "to": recipient_hex,
-            "amount": amount,
+            "amount": amount.to_string(),
             "tx_status": "submitted_to_mempool"
         }))
     }
@@ -489,7 +509,7 @@ impl TokenHandler {
             return create_json_response(json!({
                 "token_id": token_id_hex,
                 "address": address,
-                "balance": balance,
+                "balance": balance.to_string(),
                 "symbol": "CBE"
             }));
         }
@@ -531,7 +551,7 @@ impl TokenHandler {
         create_json_response(json!({
             "token_id": token_id_hex,
             "address": address,
-            "balance": balance,
+            "balance": balance.to_string().to_string(),
             "symbol": token.symbol.clone()
         }))
     }
@@ -713,7 +733,7 @@ impl TokenHandler {
                     "name": token.name.clone(),
                     "symbol": token.symbol.clone(),
                     "decimals": token.decimals,
-                    "balance": balance,
+                    "balance": balance.to_string(),
                     "is_creator": is_creator
                 }));
             }
@@ -744,7 +764,7 @@ impl TokenHandler {
                     "name": "CBE Equity",
                     "symbol": "CBE",
                     "decimals": lib_blockchain::contracts::bonding_curve::canonical::CBE_DECIMALS,
-                    "balance": cbe_balance,
+                    "balance": cbe_balance.to_string(),
                     "is_creator": false
                 }));
             }

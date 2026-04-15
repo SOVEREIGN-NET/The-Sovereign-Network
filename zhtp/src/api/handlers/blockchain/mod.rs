@@ -449,7 +449,9 @@ struct ExplorerStatsResponse {
     latest_block_time: Option<u64>,
     total_transactions: u64,
     avg_block_time_secs: Option<u64>,
+    #[serde(serialize_with = "crate::api::handlers::token::u128_as_string::serialize")]
     total_supply: u128,
+    #[serde(serialize_with = "crate::api::handlers::token::u128_as_string::serialize")]
     total_ubi_distributed: u128,
     active_validators: usize,
     mempool_size: usize,
