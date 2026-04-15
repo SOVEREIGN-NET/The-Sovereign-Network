@@ -77,13 +77,41 @@ impl ZkTransactionProof {
             u64::from_le_bytes(sender_blinding[0..8].try_into().unwrap_or([0u8; 8]));
         let nullifier_seed = u64::from_le_bytes(nullifier[0..8].try_into().unwrap_or([0u8; 8]));
 
-        // Use the active backend to generate the transaction proof
+        // Compute a consistent dummy Merkle proof so the circuit constraints
+        // are satisfied even when no real UTXO tree is supplied.
+        #[cfg(feature = "real-proofs")]
+        let (merkle_root, merkle_siblings) = {
+            use plonky2::field::types::{Field, PrimeField64};
+            type F = plonky2::field::goldilocks_field::GoldilocksField;
+            let leaf = vec![
+                F::from_canonical_u64(nullifier_seed),
+                F::from_canonical_u64(sender_secret),
+                F::from_canonical_u64(sender_balance),
+            ];
+            let siblings = [[F::ZERO; 4]; crate::transaction::circuit::real::MERKLE_DEPTH];
+            let root = crate::transaction::circuit::real::compute_merkle_root(&leaf, 0, &siblings);
+            let root_u64: [u64; 4] = root.map(|f| f.to_canonical_u64());
+            let siblings_u64: Vec<[u64; 4]> = siblings
+                .iter()
+                .map(|s| s.map(|f| f.to_canonical_u64()))
+                .collect();
+            (root_u64, siblings_u64)
+        };
+        #[cfg(not(feature = "real-proofs"))]
+        let (merkle_root, merkle_siblings) = {
+            let siblings = vec![[0u64; 4]; crate::transaction::circuit::real::MERKLE_DEPTH];
+            ([0u64; 4], siblings)
+        };
+
         let backend_proof = crate::backend::get_backend().prove_transaction(
             sender_balance,
             amount,
             fee,
             sender_secret,
             nullifier_seed,
+            merkle_root,
+            0,
+            &merkle_siblings,
         )?;
 
         // Create ZkProofs from the backend proof

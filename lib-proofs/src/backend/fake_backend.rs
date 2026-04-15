@@ -35,6 +35,9 @@ impl ProofBackend for FakeBackend {
         _fee: u64,
         _sender_secret: u64,
         _nullifier_seed: u64,
+        _merkle_root: [u64; 4],
+        _leaf_index: u32,
+        _merkle_siblings: &[[u64; 4]],
     ) -> Result<BackendProof> {
         Ok(Self::empty_proof("ZHTP-Optimized-Transaction"))
     }

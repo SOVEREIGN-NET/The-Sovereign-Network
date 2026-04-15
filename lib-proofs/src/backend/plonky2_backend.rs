@@ -54,15 +54,42 @@ impl ProofBackend for Plonky2Backend {
         fee: u64,
         sender_secret: u64,
         nullifier_seed: u64,
+        merkle_root: [u64; 4],
+        leaf_index: u32,
+        merkle_siblings: &[[u64; 4]],
     ) -> Result<BackendProof> {
         #[cfg(feature = "real-proofs")]
         {
+            use plonky2::field::goldilocks_field::GoldilocksField;
+            use plonky2::field::types::Field;
+            use crate::transaction::circuit::real::MERKLE_DEPTH;
+
+            if merkle_siblings.len() != MERKLE_DEPTH {
+                return Err(anyhow::anyhow!(
+                    "Expected {} Merkle siblings, got {}",
+                    MERKLE_DEPTH,
+                    merkle_siblings.len()
+                ));
+            }
+
+            let f = |v: u64| GoldilocksField::from_canonical_u64(v);
+            let root: [GoldilocksField; 4] = [
+                f(merkle_root[0]), f(merkle_root[1]), f(merkle_root[2]), f(merkle_root[3]),
+            ];
+            let mut siblings = [[GoldilocksField::ZERO; 4]; MERKLE_DEPTH];
+            for (i, s) in merkle_siblings.iter().enumerate() {
+                siblings[i] = [f(s[0]), f(s[1]), f(s[2]), f(s[3])];
+            }
+
             let proof = crate::transaction::circuit::real::prove_transaction(
                 sender_balance,
                 amount,
                 fee,
                 sender_secret,
                 nullifier_seed,
+                root,
+                leaf_index,
+                &siblings,
             )?;
             Ok(BackendProof {
                 proof_system: "plonky2-real-transaction".to_string(),

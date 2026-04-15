@@ -257,12 +257,45 @@ impl ZkProof {
     /// Create a ZkProof from public inputs (generates proof internally)
     pub fn from_public_inputs(public_inputs: Vec<u64>) -> anyhow::Result<Self> {
         let backend = crate::backend::get_backend();
+        let sender_balance = public_inputs.get(0).copied().unwrap_or(0);
+        let amount = public_inputs.get(1).copied().unwrap_or(0);
+        let fee = public_inputs.get(2).copied().unwrap_or(0);
+        let sender_secret = public_inputs.get(3).copied().unwrap_or(0);
+        let nullifier_seed = public_inputs.get(4).copied().unwrap_or(0);
+
+        #[cfg(feature = "real-proofs")]
+        let (merkle_root, merkle_siblings) = {
+            use plonky2::field::types::{Field, PrimeField64};
+            type F = plonky2::field::goldilocks_field::GoldilocksField;
+            let leaf = vec![
+                F::from_canonical_u64(nullifier_seed),
+                F::from_canonical_u64(sender_secret),
+                F::from_canonical_u64(sender_balance),
+            ];
+            let siblings = [[F::ZERO; 4]; crate::transaction::circuit::real::MERKLE_DEPTH];
+            let root = crate::transaction::circuit::real::compute_merkle_root(&leaf, 0, &siblings);
+            let root_u64: [u64; 4] = root.map(|f| f.to_canonical_u64());
+            let siblings_u64: Vec<[u64; 4]> = siblings
+                .iter()
+                .map(|s| s.map(|f| f.to_canonical_u64()))
+                .collect();
+            (root_u64, siblings_u64)
+        };
+        #[cfg(not(feature = "real-proofs"))]
+        let (merkle_root, merkle_siblings) = {
+            let siblings = vec![[0u64; 4]; crate::transaction::circuit::real::MERKLE_DEPTH];
+            ([0u64; 4], siblings)
+        };
+
         let bp = backend.prove_transaction(
-            public_inputs.get(0).copied().unwrap_or(0),
-            public_inputs.get(1).copied().unwrap_or(0),
-            public_inputs.get(2).copied().unwrap_or(0),
-            public_inputs.get(3).copied().unwrap_or(0),
-            public_inputs.get(4).copied().unwrap_or(0),
+            sender_balance,
+            amount,
+            fee,
+            sender_secret,
+            nullifier_seed,
+            merkle_root,
+            0,
+            &merkle_siblings,
         )?;
         Ok(Self::from_backend_proof(bp))
     }
