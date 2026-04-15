@@ -10,6 +10,9 @@ use std::sync::OnceLock;
 
 mod plonky2_backend;
 
+#[cfg(feature = "real-proofs")]
+pub mod plonky2_spike;
+
 #[cfg(any(test, feature = "fake-proofs"))]
 mod fake_backend;
 
