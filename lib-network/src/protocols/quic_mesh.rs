@@ -1477,6 +1477,54 @@ impl QuicMeshProtocol {
             .collect()
     }
 
+    /// Find a connected peer by its socket address and send a raw request/response
+    /// over a QUIC bidirectional stream with session-key encryption.
+    ///
+    /// This enables request/response protocols (like shard fetch) over the mesh.
+    /// Returns the decrypted response bytes, or an error if no peer is connected
+    /// at the given address.
+    pub async fn send_request_to_addr(
+        &self,
+        peer_addr: SocketAddr,
+        request: &[u8],
+        max_response_bytes: usize,
+    ) -> Result<Vec<u8>> {
+        // Look up peer connection by address (linear scan — connection count is small)
+        let (quic_conn, session_key) = {
+            let mut found = None;
+            for entry in self.connections.iter() {
+                if entry.peer_addr == peer_addr {
+                    let key = entry.session_key
+                        .ok_or_else(|| anyhow!("Peer at {} has no session key", peer_addr))?;
+                    found = Some((entry.quic_conn.clone(), key));
+                    entry.touch();
+                    break;
+                }
+            }
+            found.ok_or_else(|| anyhow!("No active connection to peer at {}", peer_addr))?
+        };
+
+        // Encrypt the request
+        let encrypted_req = encrypt_data(request, &session_key)?;
+
+        // Open a BI stream: send request, then read response
+        let (mut send, mut recv) = quic_conn.open_bi().await
+            .context("Failed to open BI stream for shard request")?;
+
+        send.write_all(&encrypted_req).await
+            .context("Failed to write request to BI stream")?;
+        send.finish()
+            .context("Failed to finish BI send stream")?;
+
+        // Read encrypted response
+        let encrypted_resp = recv.read_to_end(max_response_bytes).await
+            .context("Failed to read response from BI stream")?;
+
+        // Decrypt response
+        let decrypted = decrypt_data(&encrypted_resp, &session_key)?;
+        Ok(decrypted)
+    }
+
     /// Get local endpoint address
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr

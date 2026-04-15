@@ -1230,6 +1230,68 @@ impl ZkProofSystem {
 
         Ok(false)
     }
+    
+    /// Prove file ownership using data integrity circuit
+    /// 
+    /// Convenience wrapper for proving file ownership without revealing:
+    /// - File content (only commitment via root hash)
+    /// - Shard IDs or locations
+    /// - Internal file structure
+    /// 
+    /// # Arguments
+    /// * `root_hash` - Blake3 hash of entire file content
+    /// * `shard_count` - Number of shards/chunks
+    /// * `file_size` - Total file size in bytes
+    /// * `owner_secret` - Owner's secret for binding proof to identity
+    /// 
+    /// # Returns
+    /// Production zkSNARK proof of file ownership
+    pub fn prove_file_ownership(
+        &self,
+        root_hash: &[u8; 32],
+        shard_count: u64,
+        file_size: u64,
+        owner_secret: u64,
+    ) -> Result<Plonky2Proof> {
+        // Convert root hash to u64 for circuit input
+        let data_hash = u64::from_le_bytes(root_hash[0..8].try_into().unwrap_or([0u8; 8]));
+        
+        // Generate checksum from shard count for additional integrity
+        let checksum = u64::from_le_bytes(
+            lib_crypto::hashing::hash_blake3(&shard_count.to_le_bytes())[0..8]
+                .try_into()
+                .unwrap_or([0u8; 8])
+        );
+        
+        // Current timestamp
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        
+        // Set reasonable bounds
+        let max_chunk_count = 1_000_000; // Support up to 1M shards
+        let max_size = u64::MAX / 2; // Support large files
+        
+        // Use data integrity circuit for file ownership proof
+        self.prove_data_integrity(
+            data_hash,
+            shard_count,
+            file_size,
+            checksum,
+            owner_secret,
+            timestamp,
+            max_chunk_count,
+            max_size,
+        )
+    }
+    
+    /// Verify file ownership proof
+    /// 
+    /// Verifies zkSNARK proof of file ownership created with `prove_file_ownership`
+    pub fn verify_file_ownership(&self, proof: &Plonky2Proof) -> Result<bool> {
+        self.verify_data_integrity(proof)
+    }
 
     /// Get ZK proof statistics
     pub fn get_stats(&self) -> ZkProofStats {

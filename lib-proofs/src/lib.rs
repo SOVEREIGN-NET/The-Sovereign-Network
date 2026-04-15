@@ -38,7 +38,7 @@ use anyhow::Result;
 // Re-export core types for unified ZK system
 pub use identity::identity_proof::ZkIdentityProof;
 pub use merkle::{proof_generation::*, tree::*, verification::*};
-pub use plonky2::proof_system::ZkProofSystem;
+pub use plonky2::proof_system::{ZkProofSystem, Plonky2Proof};
 pub use range::range_proof::ZkRangeProof;
 pub use transaction::transaction_proof::ZkTransactionProof;
 pub use types::zk_proof::ZkProof;

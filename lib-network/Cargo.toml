@@ -96,6 +96,9 @@ socket2 = "0.5"
 # Async utilities
 futures = "0.3"
 
+# Bytes for efficient binary data handling
+bytes = { version = "1.9", features = ["serde"] }
+
 # REQUIRED for LoRaWAN hardware communication (optional for mobile builds)
 serialport = { version = "4.2", optional = true }  # USB LoRaWAN modules
 

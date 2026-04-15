@@ -1,0 +1,2081 @@
+{
+  "id_length_bytes": 20,
+  "k_bucket_size": 8,
+  "local_node": {
+    "address": "189.228.248.239:45672",
+    "total_queries": 899402,
+    "total_stored_values": 31932,
+    "uid": "f1d5f99e1e5c0745f15e6da98190cf9bbfb71d6f",
+    "uptime_seconds": 495978
+  },
+  "pending_operations": [
+    {
+      "closest_nodes": [],
+      "operation_id": 4217,
+      "operation_type": "Ping",
+      "responses_received": 0,
+      "started_at": 1735689654,
+      "target": "50047ad15fdf8b02efb24ceaedb33dcdd183c0c2",
+      "timeout_ms": 23245
+    },
+    {
+      "closest_nodes": [
+        "9d92d50d65f5ed03c4cdd9963124a8522c400d0c"
+      ],
+      "operation_id": 6879,
+      "operation_type": "Store",
+      "responses_received": 1,
+      "started_at": 1735689639,
+      "target": "77509a3ce20e3e8cd63adb40a83d523fed40afae",
+      "timeout_ms": 16449
+    },
+    {
+      "closest_nodes": [],
+      "operation_id": 9823,
+      "operation_type": "FindValue",
+      "responses_received": 4,
+      "started_at": 1735689609,
+      "target": "a8bd7165d5a74c023a5c39b01cb89db9902a79bd",
+      "timeout_ms": 27536
+    },
+    {
+      "closest_nodes": [
+        "167b4fd33086b0b76a34c1e6fd2acafec5381f44"
+      ],
+      "operation_id": 1473,
+      "operation_type": "Ping",
+      "responses_received": 3,
+      "started_at": 1735689645,
+      "target": "f4641058281ec6abae008e8029af3745f5d2b6d9",
+      "timeout_ms": 25996
+    },
+    {
+      "closest_nodes": [
+        "3bb43628d355f2c46da0e24821da63079724e5c4",
+        "2ceca3b58e5fd90aa380c44b6fe5dbfb4df802d2"
+      ],
+      "operation_id": 2875,
+      "operation_type": "FindValue",
+      "responses_received": 7,
+      "started_at": 1735689640,
+      "target": "6d1ae0144491fef08cfa30b3533b249f6fbb3698",
+      "timeout_ms": 9239
+    },
+    {
+      "closest_nodes": [
+        "0223a9e2be0b8da1778673f8a1f37a9505dbceab",
+        "3e55dc1db2c0a9bb86f094c1739779fb6bf8f48a"
+      ],
+      "operation_id": 7432,
+      "operation_type": "FindNode",
+      "responses_received": 0,
+      "started_at": 1735689630,
+      "target": "5c6261c687601f954d257530487ae6bbabb1b299",
+      "timeout_ms": 24269
+    }
+  ],
+  "routing_table": {
+    "active_buckets": 38,
+    "bucket_type": "Kademlia",
+    "buckets": [
+      {
+        "bucket_index": 0,
+        "entries": [
+          {
+            "address": {
+              "ip": "66.209.120.18:36870",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735696437150,
+            "rtt_ms": 185,
+            "stale": 1,
+            "uid": "eecac2d9fc49bb251c157aaa64c496bb5edd6562",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "81.240.90.148:8494",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735720986878,
+            "rtt_ms": 428,
+            "stale": 2,
+            "uid": "40d959fd68e69b56319f9a3d76d27a10d69bdc1b",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "193.157.149.166:22998",
+              "transport": "Quic"
+            },
+            "last_seen": 1735737080927,
+            "rtt_ms": 65,
+            "stale": 0,
+            "uid": "fe6472fd2db030dc3be053771a748d88b93f65fa",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "194.156.153.227:10422",
+              "transport": "Udp"
+            },
+            "last_seen": 1735731164818,
+            "rtt_ms": 26,
+            "stale": 3,
+            "uid": "e402c8cd13d9d7454adedb3fe877042a98b2012a",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "106.134.52.15:23997",
+              "transport": "Udp"
+            },
+            "last_seen": 1735764901960,
+            "rtt_ms": 78,
+            "stale": 2,
+            "uid": "a322f7ba5e169d901a03426348fc2778be8062dc",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "161.185.79.142:11402",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735709142214,
+            "rtt_ms": 400,
+            "stale": 1,
+            "uid": "e25bdeb19b4228bd8340690bd417edf44a137b43",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "194.56.155.108:31936",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735700115257,
+            "rtt_ms": 305,
+            "stale": 1,
+            "uid": "8f29556e7e476a24388a742c4131030ea5f40435",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "202.127.102.92:54877",
+              "transport": "Quic"
+            },
+            "last_seen": 1735763156134,
+            "rtt_ms": 464,
+            "stale": 3,
+            "uid": "b72f52bedaef4ed96aee11edbaa84de496605474",
+            "verified": true
+          }
+        ],
+        "entry_count": 8,
+        "last_updated": 1735691545,
+        "prefix_length": 0
+      },
+      {
+        "bucket_index": 2,
+        "entries": [
+          {
+            "address": {
+              "ip": "251.192.199.83:38705",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735736320379,
+            "rtt_ms": 416,
+            "stale": 3,
+            "uid": "f8c4ae629152484c4d12893879a7e35ef24154c5",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "172.128.93.199:31501",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735741729070,
+            "rtt_ms": 275,
+            "stale": 4,
+            "uid": "ba7df3678a22fb099dae32c4240f1e6a9a23bd97",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "150.21.54.119:15872",
+              "transport": "Quic"
+            },
+            "last_seen": 1735691659320,
+            "rtt_ms": 276,
+            "stale": 1,
+            "uid": "614d548c577e013ce0940f89de780570b468e42f",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "21.23.105.179:58091",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735752184507,
+            "rtt_ms": 44,
+            "stale": 2,
+            "uid": "14997938d1ea85cd2125af66ce5d8f37e10be95b",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "29.83.104.102:17282",
+              "transport": "Quic"
+            },
+            "last_seen": 1735747498756,
+            "rtt_ms": 69,
+            "stale": 3,
+            "uid": "8df025618299ea38ca8e2b1f9ded1ec1484f96ef",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "227.1.248.151:22095",
+              "transport": "Quic"
+            },
+            "last_seen": 1735701611121,
+            "rtt_ms": 70,
+            "stale": 4,
+            "uid": "1fa6555f3199968caa116cf34bb53f5a3bd60e6b",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "96.223.199.86:8410",
+              "transport": "Quic"
+            },
+            "last_seen": 1735728521270,
+            "rtt_ms": 392,
+            "stale": 2,
+            "uid": "d6bec02af8fcde487d7d3f6eee6c482f0de61337",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "60.7.163.183:28389",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735774783428,
+            "rtt_ms": 304,
+            "stale": 2,
+            "uid": "63ca86fce2b60f5bbf4ddf6f19444b0a5ae1d6f9",
+            "verified": true
+          }
+        ],
+        "entry_count": 8,
+        "last_updated": 1735691833,
+        "prefix_length": 2
+      },
+      {
+        "bucket_index": 3,
+        "entries": [
+          {
+            "address": {
+              "ip": "109.96.44.221:41127",
+              "transport": "Quic"
+            },
+            "last_seen": 1735713376592,
+            "rtt_ms": 394,
+            "stale": 2,
+            "uid": "52fd50feb4ffb883fa642547e46dfe54e2bb5aab",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "235.26.221.154:45872",
+              "transport": "Quic"
+            },
+            "last_seen": 1735761412829,
+            "rtt_ms": 234,
+            "stale": 2,
+            "uid": "7cf973c83079eec8f555b45bff9779734e35eed3",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "67.114.89.134:59998",
+              "transport": "Quic"
+            },
+            "last_seen": 1735731262814,
+            "rtt_ms": 255,
+            "stale": 4,
+            "uid": "058ee87ccda6958a13eb6a5cf73ce3cbdb42f4a0",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "183.54.194.71:21273",
+              "transport": "Quic"
+            },
+            "last_seen": 1735694614378,
+            "rtt_ms": 452,
+            "stale": 2,
+            "uid": "eeac46e14eb2b4be6fd0e2eb95bb5055697ccd1e",
+            "verified": true
+          }
+        ],
+        "entry_count": 4,
+        "last_updated": 1735689788,
+        "prefix_length": 3
+      },
+      {
+        "bucket_index": 4,
+        "entries": [
+          {
+            "address": {
+              "ip": "79.177.29.56:42506",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735737180055,
+            "rtt_ms": 361,
+            "stale": 3,
+            "uid": "5568c5da1ac783a232890c844d8509b0e4ce0379",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "69.219.5.64:23473",
+              "transport": "Udp"
+            },
+            "last_seen": 1735767497704,
+            "rtt_ms": 361,
+            "stale": 1,
+            "uid": "19188f8caaa14e18f74759a4c5f2190b3576a6d4",
+            "verified": true
+          }
+        ],
+        "entry_count": 2,
+        "last_updated": 1735690885,
+        "prefix_length": 4
+      },
+      {
+        "bucket_index": 5,
+        "entries": [
+          {
+            "address": {
+              "ip": "135.16.10.23:30408",
+              "transport": "Quic"
+            },
+            "last_seen": 1735712051079,
+            "rtt_ms": 453,
+            "stale": 2,
+            "uid": "2c1aacf96f457dabeb0504b5e46ce79ee24e47a4",
+            "verified": true
+          }
+        ],
+        "entry_count": 1,
+        "last_updated": 1735692071,
+        "prefix_length": 5
+      },
+      {
+        "bucket_index": 6,
+        "entries": [
+          {
+            "address": {
+              "ip": "76.79.158.53:24219",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735695134256,
+            "rtt_ms": 319,
+            "stale": 2,
+            "uid": "e65464f48939934e870c62a0547696964676e0e2",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "20.135.143.59:36620",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735744578170,
+            "rtt_ms": 88,
+            "stale": 1,
+            "uid": "a9fd9e4d9c8daaa6569f788b9321f5a95f379e6a",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "222.166.212.156:13821",
+              "transport": "Quic"
+            },
+            "last_seen": 1735762792350,
+            "rtt_ms": 212,
+            "stale": 2,
+            "uid": "856d2e5905ea69e9d7143a14adebb05eecdde25e",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "131.213.134.80:44759",
+              "transport": "Quic"
+            },
+            "last_seen": 1735710692218,
+            "rtt_ms": 140,
+            "stale": 4,
+            "uid": "6ff812c8f7049c578f0d88c13bdb83d9d9e24a44",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "72.56.182.220:62026",
+              "transport": "Udp"
+            },
+            "last_seen": 1735703725378,
+            "rtt_ms": 46,
+            "stale": 4,
+            "uid": "398ffeb961eb18305328cf8c6ca5f6ec0f84b54d",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "125.47.143.92:54047",
+              "transport": "Udp"
+            },
+            "last_seen": 1735726874435,
+            "rtt_ms": 463,
+            "stale": 3,
+            "uid": "fff90b98472ff45f582156b49d447e0079ddab11",
+            "verified": false
+          }
+        ],
+        "entry_count": 6,
+        "last_updated": 1735692965,
+        "prefix_length": 6
+      },
+      {
+        "bucket_index": 7,
+        "entries": [
+          {
+            "address": {
+              "ip": "39.173.10.216:26491",
+              "transport": "Udp"
+            },
+            "last_seen": 1735767907844,
+            "rtt_ms": 428,
+            "stale": 0,
+            "uid": "26d4e533a72b28b7e4d6fdcd170f786934fdcb9e",
+            "verified": false
+          }
+        ],
+        "entry_count": 1,
+        "last_updated": 1735692442,
+        "prefix_length": 7
+      },
+      {
+        "bucket_index": 9,
+        "entries": [
+          {
+            "address": {
+              "ip": "49.194.230.249:59154",
+              "transport": "Udp"
+            },
+            "last_seen": 1735712000452,
+            "rtt_ms": 281,
+            "stale": 0,
+            "uid": "b2aae4988fe6b5e1be5aea158b74594b1aa14684",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "91.52.13.13:35475",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735739789003,
+            "rtt_ms": 224,
+            "stale": 0,
+            "uid": "fc54b8fc23a0b05ebcfabf087911393bb6c6dbdf",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "212.104.158.225:43833",
+              "transport": "Quic"
+            },
+            "last_seen": 1735760243910,
+            "rtt_ms": 22,
+            "stale": 3,
+            "uid": "9be09b38f4ab13e4f12a7d5f9ac1b910a3d1e54a",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "182.71.170.47:57765",
+              "transport": "Quic"
+            },
+            "last_seen": 1735733107798,
+            "rtt_ms": 17,
+            "stale": 1,
+            "uid": "2410a06c1b31bc2a122047faa602cc61b7a5ade3",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "155.94.113.247:50199",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735753569859,
+            "rtt_ms": 266,
+            "stale": 4,
+            "uid": "2fad4d58f0b5656a967310e5c5172ffdebeff4d2",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "64.38.167.23:39383",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735729799327,
+            "rtt_ms": 255,
+            "stale": 2,
+            "uid": "e56d3b60cf64578a1bf7e3a450d3e292a3cab643",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "198.175.1.223:30538",
+              "transport": "Udp"
+            },
+            "last_seen": 1735758760471,
+            "rtt_ms": 418,
+            "stale": 3,
+            "uid": "74728f6af5162b217c14d7fe5abd6d4d88bc125e",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "241.93.153.56:13747",
+              "transport": "Quic"
+            },
+            "last_seen": 1735725308977,
+            "rtt_ms": 44,
+            "stale": 0,
+            "uid": "d8284325b4044cce82c4c9313daf0c91a0e26fcb",
+            "verified": true
+          }
+        ],
+        "entry_count": 8,
+        "last_updated": 1735691927,
+        "prefix_length": 9
+      },
+      {
+        "bucket_index": 11,
+        "entries": [
+          {
+            "address": {
+              "ip": "64.129.202.78:54609",
+              "transport": "Quic"
+            },
+            "last_seen": 1735771028838,
+            "rtt_ms": 431,
+            "stale": 3,
+            "uid": "c82c9512577030b8f99294fabf43a753b18824cc",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "214.120.28.85:34203",
+              "transport": "Quic"
+            },
+            "last_seen": 1735702016010,
+            "rtt_ms": 128,
+            "stale": 4,
+            "uid": "3accc783d82068315bac177e51e70d1bad3fb89e",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "129.59.176.194:18622",
+              "transport": "Udp"
+            },
+            "last_seen": 1735706218545,
+            "rtt_ms": 323,
+            "stale": 2,
+            "uid": "5d908fa791ce10d9ec663e8fae06c0f96b85c5ff",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "153.179.75.94:51179",
+              "transport": "Quic"
+            },
+            "last_seen": 1735697800447,
+            "rtt_ms": 115,
+            "stale": 0,
+            "uid": "bb771689ebb6df10d66eb01c11724283944c4fa9",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "76.79.123.86:35283",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735719508864,
+            "rtt_ms": 42,
+            "stale": 4,
+            "uid": "4f77c9709f1d9e1ac93ce1ed79876a6aa4adde0c",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "224.181.61.147:17148",
+              "transport": "Udp"
+            },
+            "last_seen": 1735775446761,
+            "rtt_ms": 342,
+            "stale": 2,
+            "uid": "ea461c38e5dd8cc05640918aae6bfcc3a672c9b3",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "82.251.2.115:12895",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735748047405,
+            "rtt_ms": 179,
+            "stale": 1,
+            "uid": "03a5d3108d0dcf7cc0ed7be9cc7d0b8b36a6da02",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "219.191.52.216:32952",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735714069709,
+            "rtt_ms": 452,
+            "stale": 2,
+            "uid": "e185e7c4ab2031895dd0f4d302ca7ffafb7f06bd",
+            "verified": true
+          }
+        ],
+        "entry_count": 8,
+        "last_updated": 1735692439,
+        "prefix_length": 11
+      },
+      {
+        "bucket_index": 13,
+        "entries": [
+          {
+            "address": {
+              "ip": "118.231.248.189:10141",
+              "transport": "Udp"
+            },
+            "last_seen": 1735708300548,
+            "rtt_ms": 411,
+            "stale": 4,
+            "uid": "45e6e99db67a9d70e6f063c40e4e8524af542f6c",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "150.90.174.57:38810",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735712879027,
+            "rtt_ms": 159,
+            "stale": 4,
+            "uid": "5424306c8c1ac74e0e78ceef2f27450f079b1865",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "129.95.240.51:22957",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735740172525,
+            "rtt_ms": 165,
+            "stale": 4,
+            "uid": "6b4376e755f514d679520a57b9ce2a48f906e042",
+            "verified": true
+          }
+        ],
+        "entry_count": 3,
+        "last_updated": 1735692743,
+        "prefix_length": 13
+      },
+      {
+        "bucket_index": 14,
+        "entries": [
+          {
+            "address": {
+              "ip": "25.238.43.85:32490",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735774731641,
+            "rtt_ms": 18,
+            "stale": 3,
+            "uid": "c3c0aab471024700b216bba52485032c0baac8bf",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "111.133.223.139:9331",
+              "transport": "Quic"
+            },
+            "last_seen": 1735747807731,
+            "rtt_ms": 480,
+            "stale": 1,
+            "uid": "384abf412db10098d003685a1fc129f5ab177075",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "37.44.189.168:12382",
+              "transport": "Quic"
+            },
+            "last_seen": 1735768640929,
+            "rtt_ms": 182,
+            "stale": 1,
+            "uid": "3d4d71f4e2481934e1de1ddca2514f24f95b4bf3",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "95.110.132.13:16807",
+              "transport": "Udp"
+            },
+            "last_seen": 1735738410079,
+            "rtt_ms": 390,
+            "stale": 0,
+            "uid": "9479cd638cea67174bc3492738b10aa724c271d1",
+            "verified": true
+          }
+        ],
+        "entry_count": 4,
+        "last_updated": 1735690420,
+        "prefix_length": 14
+      },
+      {
+        "bucket_index": 15,
+        "entries": [
+          {
+            "address": {
+              "ip": "146.203.231.132:59104",
+              "transport": "Quic"
+            },
+            "last_seen": 1735691231408,
+            "rtt_ms": 430,
+            "stale": 4,
+            "uid": "7e37ec4e7ae1fdb73d24005f818c0c0da7aa89dc",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "108.223.98.252:48907",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735722849836,
+            "rtt_ms": 218,
+            "stale": 2,
+            "uid": "6992a702c0c56b6465c3b070f45ff7cb76765ec1",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "154.70.68.211:13661",
+              "transport": "Udp"
+            },
+            "last_seen": 1735728189044,
+            "rtt_ms": 181,
+            "stale": 0,
+            "uid": "3a3fee6c0b9290bbd55ff1b42af3155f91f4a04c",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "49.95.106.242:23110",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735692019172,
+            "rtt_ms": 44,
+            "stale": 3,
+            "uid": "893adf012f2766429d6f2a8ff367b9a6aca118d0",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "143.24.135.47:43013",
+              "transport": "Quic"
+            },
+            "last_seen": 1735729200651,
+            "rtt_ms": 204,
+            "stale": 1,
+            "uid": "c04fc291b2b75e5276f5b44297a1dacf754462e2",
+            "verified": true
+          }
+        ],
+        "entry_count": 5,
+        "last_updated": 1735689990,
+        "prefix_length": 15
+      },
+      {
+        "bucket_index": 17,
+        "entries": [
+          {
+            "address": {
+              "ip": "28.196.31.229:64259",
+              "transport": "Quic"
+            },
+            "last_seen": 1735767907160,
+            "rtt_ms": 387,
+            "stale": 4,
+            "uid": "222ad91647564a2b6749f17799ba78b27c0ef572",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "105.93.23.254:63022",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735726199749,
+            "rtt_ms": 423,
+            "stale": 4,
+            "uid": "acb9a32e764f3abd7ef94b3a7d861babf352a0a7",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "143.242.196.20:14256",
+              "transport": "Udp"
+            },
+            "last_seen": 1735716732084,
+            "rtt_ms": 41,
+            "stale": 2,
+            "uid": "54f26e7e7696ee1a2ca20adf17fe52a2ba0f71a4",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "46.140.167.103:52097",
+              "transport": "Udp"
+            },
+            "last_seen": 1735722016221,
+            "rtt_ms": 55,
+            "stale": 1,
+            "uid": "d1e8ee0e2949f5724a091ff61643e3972cda4942",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "148.40.131.206:40622",
+              "transport": "Quic"
+            },
+            "last_seen": 1735692394551,
+            "rtt_ms": 302,
+            "stale": 2,
+            "uid": "477ecc24f0d12146e2332c62d94d2500848ca133",
+            "verified": true
+          }
+        ],
+        "entry_count": 5,
+        "last_updated": 1735690609,
+        "prefix_length": 17
+      },
+      {
+        "bucket_index": 18,
+        "entries": [
+          {
+            "address": {
+              "ip": "85.244.114.199:59663",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735739340175,
+            "rtt_ms": 85,
+            "stale": 4,
+            "uid": "b24d81a97d6235350b7b06e300faf19b33bb5f7a",
+            "verified": false
+          }
+        ],
+        "entry_count": 1,
+        "last_updated": 1735691975,
+        "prefix_length": 18
+      },
+      {
+        "bucket_index": 20,
+        "entries": [
+          {
+            "address": {
+              "ip": "227.126.145.205:59073",
+              "transport": "Udp"
+            },
+            "last_seen": 1735756918622,
+            "rtt_ms": 399,
+            "stale": 0,
+            "uid": "aed67dbeff386f1984d6bc51b78dd86241040c45",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "145.186.241.75:60600",
+              "transport": "Quic"
+            },
+            "last_seen": 1735763146401,
+            "rtt_ms": 391,
+            "stale": 0,
+            "uid": "34465dcb7817dbf7cf34a914564c2ab57d1d525b",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "63.82.205.222:16203",
+              "transport": "Quic"
+            },
+            "last_seen": 1735706379819,
+            "rtt_ms": 43,
+            "stale": 1,
+            "uid": "0f3d615ccc5f922bf30a075a326b67bb862090b9",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "125.44.220.210:43356",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735697874241,
+            "rtt_ms": 129,
+            "stale": 1,
+            "uid": "f8b0b8f07821de046ce8b39d36c6f6d4948b3741",
+            "verified": true
+          }
+        ],
+        "entry_count": 4,
+        "last_updated": 1735690115,
+        "prefix_length": 20
+      },
+      {
+        "bucket_index": 21,
+        "entries": [
+          {
+            "address": {
+              "ip": "66.102.20.197:41524",
+              "transport": "Quic"
+            },
+            "last_seen": 1735732101513,
+            "rtt_ms": 251,
+            "stale": 1,
+            "uid": "2c46531773205c86a780ccc4f9382130de4292c2",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "119.136.21.64:57032",
+              "transport": "Udp"
+            },
+            "last_seen": 1735745441510,
+            "rtt_ms": 233,
+            "stale": 4,
+            "uid": "4bd1af8297f4f0d4425927a7e753731cb532eefb",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "223.80.105.39:25648",
+              "transport": "Quic"
+            },
+            "last_seen": 1735734938706,
+            "rtt_ms": 257,
+            "stale": 2,
+            "uid": "bed338c688364180d2ec27b45926be2ca874c090",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "167.161.40.95:35463",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735695643394,
+            "rtt_ms": 154,
+            "stale": 1,
+            "uid": "fba6e77016653739ec8dd71c6d34ea7fd7ed1680",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "25.162.201.144:49890",
+              "transport": "Udp"
+            },
+            "last_seen": 1735705941417,
+            "rtt_ms": 196,
+            "stale": 4,
+            "uid": "b84e81fc73178fdb51405dbee9bb5f7a8078d0be",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "105.243.210.16:12006",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735736852747,
+            "rtt_ms": 12,
+            "stale": 0,
+            "uid": "3c942043289bcbb2371e19463918cde821794bfb",
+            "verified": true
+          }
+        ],
+        "entry_count": 6,
+        "last_updated": 1735690179,
+        "prefix_length": 21
+      },
+      {
+        "bucket_index": 25,
+        "entries": [
+          {
+            "address": {
+              "ip": "116.7.36.127:45858",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735711226703,
+            "rtt_ms": 146,
+            "stale": 1,
+            "uid": "7f41b71367130fcf24d564dafbfc6d93b66bb0cf",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "84.12.126.162:13345",
+              "transport": "Udp"
+            },
+            "last_seen": 1735730287278,
+            "rtt_ms": 329,
+            "stale": 3,
+            "uid": "b82eb2536b24aa1816b1f755381d76d078b2cc51",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "233.17.119.33:61446",
+              "transport": "Udp"
+            },
+            "last_seen": 1735691370041,
+            "rtt_ms": 27,
+            "stale": 3,
+            "uid": "a420c67246f39b3755745e8b37eb878f6876588a",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "133.10.249.234:43998",
+              "transport": "Udp"
+            },
+            "last_seen": 1735698254241,
+            "rtt_ms": 113,
+            "stale": 2,
+            "uid": "868a55df512302c0f0063531095816e991333c7c",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "95.210.99.220:39254",
+              "transport": "Udp"
+            },
+            "last_seen": 1735755336079,
+            "rtt_ms": 337,
+            "stale": 4,
+            "uid": "3deb15daa3222e6abf0f62c9b6728948122cea1c",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "151.111.100.16:12263",
+              "transport": "Quic"
+            },
+            "last_seen": 1735754384265,
+            "rtt_ms": 220,
+            "stale": 2,
+            "uid": "794df3a66fdbcb945d4406f216b36255180d758a",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "54.131.232.201:25761",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735732869995,
+            "rtt_ms": 442,
+            "stale": 2,
+            "uid": "f811389ddb7fcb79d1fe202dc4d69ff3c8be6078",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "42.191.221.125:32509",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735741738954,
+            "rtt_ms": 363,
+            "stale": 1,
+            "uid": "070f7395aeeff1db9c483503a56e08725cbc5811",
+            "verified": true
+          }
+        ],
+        "entry_count": 8,
+        "last_updated": 1735693082,
+        "prefix_length": 25
+      },
+      {
+        "bucket_index": 26,
+        "entries": [
+          {
+            "address": {
+              "ip": "232.4.173.114:61134",
+              "transport": "Udp"
+            },
+            "last_seen": 1735711953099,
+            "rtt_ms": 153,
+            "stale": 3,
+            "uid": "f3f9416d0a0e79ae90893bb4997d0d63fd3002ec",
+            "verified": true
+          }
+        ],
+        "entry_count": 1,
+        "last_updated": 1735690822,
+        "prefix_length": 26
+      },
+      {
+        "bucket_index": 27,
+        "entries": [
+          {
+            "address": {
+              "ip": "177.155.21.227:42332",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735726316169,
+            "rtt_ms": 299,
+            "stale": 1,
+            "uid": "a2bfbc1e07cc100915b42da9f3bd689526a647f1",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "200.44.133.64:11750",
+              "transport": "Udp"
+            },
+            "last_seen": 1735731986565,
+            "rtt_ms": 349,
+            "stale": 0,
+            "uid": "9ed369f889802c4360fd17630c9ad9043e46dd9f",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "191.199.247.5:36347",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735758910490,
+            "rtt_ms": 296,
+            "stale": 3,
+            "uid": "98522409249da2dceada3595ec43270d647b6603",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "55.92.234.88:46689",
+              "transport": "Udp"
+            },
+            "last_seen": 1735749446723,
+            "rtt_ms": 57,
+            "stale": 3,
+            "uid": "d1d60b0be6e7df865173f092f44a8b913269f89c",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "194.60.194.41:13850",
+              "transport": "Quic"
+            },
+            "last_seen": 1735716561703,
+            "rtt_ms": 328,
+            "stale": 4,
+            "uid": "d9c65bc1c236471085336281ef57a2a66b80e014",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "54.65.138.221:60540",
+              "transport": "Udp"
+            },
+            "last_seen": 1735755096382,
+            "rtt_ms": 318,
+            "stale": 3,
+            "uid": "178b6aad3085b640a6f4fc96f39e376ae0ed85e5",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "87.210.78.153:9199",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735693322739,
+            "rtt_ms": 235,
+            "stale": 1,
+            "uid": "052da030d4a8d8095883b6ee65577ca8957f05e1",
+            "verified": false
+          }
+        ],
+        "entry_count": 7,
+        "last_updated": 1735693034,
+        "prefix_length": 27
+      },
+      {
+        "bucket_index": 28,
+        "entries": [
+          {
+            "address": {
+              "ip": "96.101.31.186:54647",
+              "transport": "Quic"
+            },
+            "last_seen": 1735764642233,
+            "rtt_ms": 87,
+            "stale": 1,
+            "uid": "e55cc72545f961339c5f3846ef1976c343590ccb",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "78.253.118.191:30011",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735720631990,
+            "rtt_ms": 426,
+            "stale": 4,
+            "uid": "5f1a7b1f4d4666e27bf41ca78cc5dc1bf97a189f",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "164.18.209.117:12687",
+              "transport": "Quic"
+            },
+            "last_seen": 1735728146646,
+            "rtt_ms": 312,
+            "stale": 3,
+            "uid": "2eda304a0c067514393b938f1e0631ffbdb85ac0",
+            "verified": true
+          }
+        ],
+        "entry_count": 3,
+        "last_updated": 1735691377,
+        "prefix_length": 28
+      },
+      {
+        "bucket_index": 30,
+        "entries": [
+          {
+            "address": {
+              "ip": "22.145.203.167:13104",
+              "transport": "Quic"
+            },
+            "last_seen": 1735720371753,
+            "rtt_ms": 186,
+            "stale": 3,
+            "uid": "8b715289b4ab9610a7f08ffafe62cda8bf82a23d",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "28.73.198.219:27889",
+              "transport": "Quic"
+            },
+            "last_seen": 1735692472826,
+            "rtt_ms": 470,
+            "stale": 3,
+            "uid": "cf5d509ff1657a562bd6aab9336cee44a663e6a6",
+            "verified": true
+          }
+        ],
+        "entry_count": 2,
+        "last_updated": 1735690974,
+        "prefix_length": 30
+      },
+      {
+        "bucket_index": 31,
+        "entries": [
+          {
+            "address": {
+              "ip": "154.88.236.162:47786",
+              "transport": "Quic"
+            },
+            "last_seen": 1735745860702,
+            "rtt_ms": 224,
+            "stale": 0,
+            "uid": "639654aad9ce161a45a3beb1b5ded3212e612984",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "253.1.15.87:30480",
+              "transport": "Udp"
+            },
+            "last_seen": 1735747017113,
+            "rtt_ms": 424,
+            "stale": 3,
+            "uid": "508985ed85ebefd33509a7f7c7232b802398ce61",
+            "verified": true
+          }
+        ],
+        "entry_count": 2,
+        "last_updated": 1735692309,
+        "prefix_length": 31
+      },
+      {
+        "bucket_index": 32,
+        "entries": [
+          {
+            "address": {
+              "ip": "237.60.194.188:13716",
+              "transport": "Udp"
+            },
+            "last_seen": 1735726379962,
+            "rtt_ms": 98,
+            "stale": 3,
+            "uid": "6e8f039e846236d5692149f7f8d85407c0c9d031",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "175.131.30.86:61843",
+              "transport": "Udp"
+            },
+            "last_seen": 1735751108340,
+            "rtt_ms": 127,
+            "stale": 3,
+            "uid": "d7c18756a16f720b2e9b4f84183f1a20ad56c907",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "127.236.106.153:24314",
+              "transport": "Udp"
+            },
+            "last_seen": 1735719814324,
+            "rtt_ms": 228,
+            "stale": 4,
+            "uid": "16ef575557323b47f3b2c33abbaf1f8014adf3cc",
+            "verified": true
+          }
+        ],
+        "entry_count": 3,
+        "last_updated": 1735689600,
+        "prefix_length": 32
+      },
+      {
+        "bucket_index": 33,
+        "entries": [
+          {
+            "address": {
+              "ip": "245.220.80.173:56072",
+              "transport": "Udp"
+            },
+            "last_seen": 1735758877675,
+            "rtt_ms": 426,
+            "stale": 1,
+            "uid": "b77bd6b742a3066b449cb72c435773625af0b318",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "45.242.149.46:43145",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735747431933,
+            "rtt_ms": 221,
+            "stale": 0,
+            "uid": "7fa393fb9f23a7f5454e27803bdcc3c161edf1a9",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "151.252.87.185:43567",
+              "transport": "Quic"
+            },
+            "last_seen": 1735737846898,
+            "rtt_ms": 477,
+            "stale": 0,
+            "uid": "36b339764639e8768c5e75dee15a515609a859d8",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "196.8.30.2:25517",
+              "transport": "Quic"
+            },
+            "last_seen": 1735721601711,
+            "rtt_ms": 107,
+            "stale": 4,
+            "uid": "9922f602116325635c8a64bdae282b646829e353",
+            "verified": true
+          }
+        ],
+        "entry_count": 4,
+        "last_updated": 1735690673,
+        "prefix_length": 33
+      },
+      {
+        "bucket_index": 34,
+        "entries": [
+          {
+            "address": {
+              "ip": "162.227.99.37:20452",
+              "transport": "Quic"
+            },
+            "last_seen": 1735714327703,
+            "rtt_ms": 405,
+            "stale": 3,
+            "uid": "1b70227dda29d9dd5ac081439cb02054b27c6490",
+            "verified": false
+          }
+        ],
+        "entry_count": 1,
+        "last_updated": 1735690758,
+        "prefix_length": 34
+      },
+      {
+        "bucket_index": 35,
+        "entries": [
+          {
+            "address": {
+              "ip": "121.221.115.1:41066",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735698368851,
+            "rtt_ms": 334,
+            "stale": 2,
+            "uid": "907f0e5b6decb48c4da16cc3b6de70168213525c",
+            "verified": false
+          }
+        ],
+        "entry_count": 1,
+        "last_updated": 1735690575,
+        "prefix_length": 35
+      },
+      {
+        "bucket_index": 36,
+        "entries": [
+          {
+            "address": {
+              "ip": "145.170.143.209:34967",
+              "transport": "Quic"
+            },
+            "last_seen": 1735741482224,
+            "rtt_ms": 15,
+            "stale": 4,
+            "uid": "1c0dcd9c52d16335f80b740709c3760eb0438617",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "211.87.179.19:39615",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735716133398,
+            "rtt_ms": 218,
+            "stale": 2,
+            "uid": "d59f5685ba624f437f1b08523974f62a5beb86f8",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "184.176.110.78:58921",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735735067170,
+            "rtt_ms": 421,
+            "stale": 2,
+            "uid": "aa4ab3a7fec188d97ec2061879e76c7bacb24887",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "126.128.28.88:37606",
+              "transport": "Udp"
+            },
+            "last_seen": 1735717071092,
+            "rtt_ms": 347,
+            "stale": 1,
+            "uid": "ea7aed477aaeeee31a0022e951bdf3b4ac0ef74a",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "131.0.155.68:33073",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735768520048,
+            "rtt_ms": 9,
+            "stale": 0,
+            "uid": "4d7e980a5b0ecfaa52d82543bf4ef179075c1d46",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "164.57.71.174:27641",
+              "transport": "Quic"
+            },
+            "last_seen": 1735730795338,
+            "rtt_ms": 479,
+            "stale": 3,
+            "uid": "576b921216eccc85e09641de860bb8393655e0eb",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "238.0.17.226:23379",
+              "transport": "Quic"
+            },
+            "last_seen": 1735763036622,
+            "rtt_ms": 79,
+            "stale": 2,
+            "uid": "41323bbb3f04f296d41f298d4c8eced10c1a75fa",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "15.170.115.33:31058",
+              "transport": "Udp"
+            },
+            "last_seen": 1735727132629,
+            "rtt_ms": 169,
+            "stale": 4,
+            "uid": "5a0b846d7d186b58eb3acd8afed2991b39c8b74c",
+            "verified": true
+          }
+        ],
+        "entry_count": 8,
+        "last_updated": 1735692994,
+        "prefix_length": 36
+      },
+      {
+        "bucket_index": 42,
+        "entries": [
+          {
+            "address": {
+              "ip": "123.201.249.118:56917",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735766409242,
+            "rtt_ms": 76,
+            "stale": 1,
+            "uid": "a0cce65604c461129f27cf0bb9701964b8822ebb",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "162.167.156.27:63968",
+              "transport": "Quic"
+            },
+            "last_seen": 1735724798694,
+            "rtt_ms": 80,
+            "stale": 0,
+            "uid": "9cd4aaa3e3e6ddac3fc85c0877d7137fa827e1ec",
+            "verified": true
+          }
+        ],
+        "entry_count": 2,
+        "last_updated": 1735690716,
+        "prefix_length": 42
+      },
+      {
+        "bucket_index": 44,
+        "entries": [
+          {
+            "address": {
+              "ip": "119.113.162.135:34838",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735742540351,
+            "rtt_ms": 69,
+            "stale": 3,
+            "uid": "3ec86cbcdf4e7e0808f3fa55a5de8663bac707af",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "169.246.132.249:25797",
+              "transport": "Udp"
+            },
+            "last_seen": 1735705846660,
+            "rtt_ms": 227,
+            "stale": 2,
+            "uid": "66d04176a9b3804b5a664ebe52eddf18e4b313b0",
+            "verified": true
+          }
+        ],
+        "entry_count": 2,
+        "last_updated": 1735690737,
+        "prefix_length": 44
+      },
+      {
+        "bucket_index": 47,
+        "entries": [
+          {
+            "address": {
+              "ip": "106.114.208.86:54286",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735766386783,
+            "rtt_ms": 265,
+            "stale": 1,
+            "uid": "dffc7489a7ab349095432e0624635f094a218e56",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "72.8.171.213:22735",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735711949477,
+            "rtt_ms": 259,
+            "stale": 4,
+            "uid": "905ffe55155e0db82bb3ada78ecb26d75f6d4e71",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "245.106.109.234:21269",
+              "transport": "Quic"
+            },
+            "last_seen": 1735697746991,
+            "rtt_ms": 348,
+            "stale": 1,
+            "uid": "61b368ee538585db8555c2946530dc37bd256966",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "135.144.48.215:57711",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735701392902,
+            "rtt_ms": 197,
+            "stale": 2,
+            "uid": "7772e447873878bbf9fdca32d87d9afd3f51e57d",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "68.121.16.229:58142",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735753104313,
+            "rtt_ms": 117,
+            "stale": 1,
+            "uid": "4c534f260d9aeedf0fc6d93edea4bdefd6db13e5",
+            "verified": false
+          }
+        ],
+        "entry_count": 5,
+        "last_updated": 1735690351,
+        "prefix_length": 47
+      },
+      {
+        "bucket_index": 49,
+        "entries": [
+          {
+            "address": {
+              "ip": "124.149.132.114:14127",
+              "transport": "Udp"
+            },
+            "last_seen": 1735708716504,
+            "rtt_ms": 38,
+            "stale": 3,
+            "uid": "3ccf1725b66a6512de51c534dfa2182763caf4f7",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "71.133.196.6:39832",
+              "transport": "Udp"
+            },
+            "last_seen": 1735733472857,
+            "rtt_ms": 66,
+            "stale": 1,
+            "uid": "e5f3ca3968f480b75785b55ea796d54915abac67",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "48.147.83.23:29841",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735744659624,
+            "rtt_ms": 86,
+            "stale": 1,
+            "uid": "47a07b6dcd1bfc10dd19af999ef44a988a50f5ab",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "121.239.181.48:64189",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735720077513,
+            "rtt_ms": 312,
+            "stale": 0,
+            "uid": "a28f530b0f26066dbfc5867318038e3d06b9db7f",
+            "verified": true
+          }
+        ],
+        "entry_count": 4,
+        "last_updated": 1735692304,
+        "prefix_length": 49
+      },
+      {
+        "bucket_index": 54,
+        "entries": [
+          {
+            "address": {
+              "ip": "238.215.73.142:11646",
+              "transport": "Quic"
+            },
+            "last_seen": 1735772278733,
+            "rtt_ms": 84,
+            "stale": 4,
+            "uid": "9acc5efb10578c3bebf948abb1e275c9df0f117c",
+            "verified": false
+          }
+        ],
+        "entry_count": 1,
+        "last_updated": 1735690766,
+        "prefix_length": 54
+      },
+      {
+        "bucket_index": 61,
+        "entries": [
+          {
+            "address": {
+              "ip": "53.79.108.246:42566",
+              "transport": "Quic"
+            },
+            "last_seen": 1735745709316,
+            "rtt_ms": 280,
+            "stale": 0,
+            "uid": "7d357bd355c325498a84d105aa3f1898b2d579fc",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "172.230.79.109:8270",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735725527412,
+            "rtt_ms": 237,
+            "stale": 4,
+            "uid": "a99d5833465e89399b2fa2064d993cee8af0cd4f",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "33.159.106.251:44145",
+              "transport": "Udp"
+            },
+            "last_seen": 1735720560184,
+            "rtt_ms": 68,
+            "stale": 2,
+            "uid": "94191c0ed47601b843c9e873e7fb8cb506bf40c3",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "145.223.129.245:53577",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735731483189,
+            "rtt_ms": 414,
+            "stale": 0,
+            "uid": "ecc08c119ee2a288d9076076df85f07fbb1b2929",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "95.16.65.27:31634",
+              "transport": "Udp"
+            },
+            "last_seen": 1735735994539,
+            "rtt_ms": 181,
+            "stale": 4,
+            "uid": "7f2a5d194c785c8ad8d4d4b04fc934adf07a28a3",
+            "verified": true
+          }
+        ],
+        "entry_count": 5,
+        "last_updated": 1735690923,
+        "prefix_length": 61
+      },
+      {
+        "bucket_index": 66,
+        "entries": [
+          {
+            "address": {
+              "ip": "23.240.35.141:35503",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735714748343,
+            "rtt_ms": 23,
+            "stale": 4,
+            "uid": "99e9739bfd3678cf3e830df12747bb7dd8a32f06",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "85.132.76.186:63528",
+              "transport": "Udp"
+            },
+            "last_seen": 1735709637290,
+            "rtt_ms": 107,
+            "stale": 0,
+            "uid": "a6f27da42e4670e57f6d4e57dcaf01bc0bcb2a77",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "85.207.70.127:16200",
+              "transport": "Quic"
+            },
+            "last_seen": 1735764704565,
+            "rtt_ms": 106,
+            "stale": 0,
+            "uid": "c50d8d7779502cd15575561c4ea8af705f950887",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "166.238.180.62:26674",
+              "transport": "Quic"
+            },
+            "last_seen": 1735735864640,
+            "rtt_ms": 394,
+            "stale": 4,
+            "uid": "efefe86d3a1c6057bbce1e315b0b58e154a3dba4",
+            "verified": true
+          }
+        ],
+        "entry_count": 4,
+        "last_updated": 1735691987,
+        "prefix_length": 66
+      },
+      {
+        "bucket_index": 69,
+        "entries": [
+          {
+            "address": {
+              "ip": "177.19.19.1:56815",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735699619295,
+            "rtt_ms": 171,
+            "stale": 4,
+            "uid": "37c2498b5e7458e3a540eaf894cd01d445e1a13d",
+            "verified": true
+          }
+        ],
+        "entry_count": 1,
+        "last_updated": 1735691815,
+        "prefix_length": 69
+      },
+      {
+        "bucket_index": 71,
+        "entries": [
+          {
+            "address": {
+              "ip": "129.55.7.97:31870",
+              "transport": "Quic"
+            },
+            "last_seen": 1735747807261,
+            "rtt_ms": 441,
+            "stale": 0,
+            "uid": "5fd800a6990f5c1ae0bb2d6dff26b7f27a0dd911",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "96.13.78.107:17989",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735693326278,
+            "rtt_ms": 108,
+            "stale": 2,
+            "uid": "1fd0f418e00b5cde42d40fcd3c9ed8a97d629dcb",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "70.123.84.43:58392",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735728709493,
+            "rtt_ms": 473,
+            "stale": 3,
+            "uid": "c7b73732f8acb07144d6f77dc8919d21ea324493",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "120.95.226.27:24232",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735769997211,
+            "rtt_ms": 388,
+            "stale": 2,
+            "uid": "f0acc2ba3531d097200c181290f3f566a54412f8",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "217.100.2.178:35670",
+              "transport": "Quic"
+            },
+            "last_seen": 1735755839038,
+            "rtt_ms": 471,
+            "stale": 3,
+            "uid": "5874cc2f82f1c95bf3f83d5de57b2b870e5363ef",
+            "verified": true
+          }
+        ],
+        "entry_count": 5,
+        "last_updated": 1735691219,
+        "prefix_length": 71
+      },
+      {
+        "bucket_index": 78,
+        "entries": [
+          {
+            "address": {
+              "ip": "142.227.92.237:47045",
+              "transport": "Udp"
+            },
+            "last_seen": 1735774946497,
+            "rtt_ms": 10,
+            "stale": 2,
+            "uid": "7eb74bb7ab0be6b86d76e5d928c5c17449cc8d9b",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "71.44.92.134:8843",
+              "transport": "Quic"
+            },
+            "last_seen": 1735760222779,
+            "rtt_ms": 213,
+            "stale": 1,
+            "uid": "e72a84e1791f71eca86064ed8c65cb099497f709",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "120.248.39.104:53585",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735733584724,
+            "rtt_ms": 312,
+            "stale": 1,
+            "uid": "d1b8e7287f02435791f7dea442baa64683e06b08",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "55.3.84.200:44486",
+              "transport": "Quic"
+            },
+            "last_seen": 1735769052953,
+            "rtt_ms": 140,
+            "stale": 3,
+            "uid": "89d55176460412c388ff5f376305f566d99a6bea",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "125.206.172.164:34100",
+              "transport": "Tcp"
+            },
+            "last_seen": 1735769151019,
+            "rtt_ms": 399,
+            "stale": 2,
+            "uid": "0b81830ab0f44d9bb7d46d24d14de2f8e98de35e",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "188.126.160.184:16969",
+              "transport": "Udp"
+            },
+            "last_seen": 1735753414440,
+            "rtt_ms": 228,
+            "stale": 1,
+            "uid": "6ed2ed56b62b130ad4916d94ad443ad70f04a4b7",
+            "verified": false
+          },
+          {
+            "address": {
+              "ip": "239.107.199.24:38893",
+              "transport": "Quic"
+            },
+            "last_seen": 1735723953560,
+            "rtt_ms": 466,
+            "stale": 0,
+            "uid": "a169c4840831f018bc7a506ccab721c6aa1020ac",
+            "verified": false
+          }
+        ],
+        "entry_count": 7,
+        "last_updated": 1735691568,
+        "prefix_length": 78
+      },
+      {
+        "bucket_index": 93,
+        "entries": [
+          {
+            "address": {
+              "ip": "56.245.66.228:17294",
+              "transport": "Udp"
+            },
+            "last_seen": 1735709327852,
+            "rtt_ms": 340,
+            "stale": 0,
+            "uid": "035f841c720ee704789a67f3e50fe16b91622e41",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "199.111.137.70:46113",
+              "transport": "Udp"
+            },
+            "last_seen": 1735756808277,
+            "rtt_ms": 154,
+            "stale": 0,
+            "uid": "71183dff9c27bc8f64bc7ed74b42d425b11d9200",
+            "verified": true
+          },
+          {
+            "address": {
+              "ip": "244.92.11.172:54765",
+              "transport": "Quic"
+            },
+            "last_seen": 1735767733163,
+            "rtt_ms": 224,
+            "stale": 2,
+            "uid": "933145c4814f734ed324b114f1585dc83437449d",
+            "verified": true
+          }
+        ],
+        "entry_count": 3,
+        "last_updated": 1735693054,
+        "prefix_length": 93
+      }
+    ],
+    "total_buckets": 160,
+    "total_nodes": 153
+  },
+  "routing_type": "Kademlia",
+  "statistics": {
+    "avg_lookup_hops": "5.45",
+    "avg_lookup_ms": 259,
+    "queries_per_second": 223,
+    "refresh_interval_ms": 3600000,
+    "replication_factor": 3
+  },
+  "version": "sovereign-dht-v1"
+}

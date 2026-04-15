@@ -1,0 +1,1147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sovereign Network - File Compression</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 800px;
+            width: 100%;
+            padding: 40px;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+        }
+        
+        .drop-zone {
+            border: 3px dashed #667eea;
+            border-radius: 15px;
+            padding: 60px 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: #f8f9ff;
+        }
+        
+        .drop-zone:hover {
+            border-color: #764ba2;
+            background: #f0f2ff;
+            transform: scale(1.02);
+        }
+        
+        .drop-zone.dragover {
+            border-color: #764ba2;
+            background: #e8ebff;
+            transform: scale(1.05);
+        }
+        
+        .drop-icon {
+            font-size: 4em;
+            margin-bottom: 20px;
+        }
+        
+        .drop-text {
+            font-size: 1.2em;
+            color: #667eea;
+            font-weight: 600;
+        }
+        
+        .drop-subtext {
+            color: #999;
+            margin-top: 10px;
+        }
+        
+        #fileInput {
+            display: none;
+        }
+        
+        .processing {
+            display: none;
+            text-align: center;
+            padding: 40px;
+        }
+        
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .results {
+            display: none;
+            animation: fadeIn 0.5s ease;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .result-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .result-header h2 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        
+        .filename {
+            color: #666;
+            font-size: 0.9em;
+        }
+        
+        .weismann-score {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 15px;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .score-value {
+            font-size: 3.5em;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        
+        .score-rating {
+            font-size: 1.2em;
+            margin-top: 10px;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .stat-box {
+            background: #f8f9ff;
+            padding: 20px;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .stat-label {
+            color: #999;
+            font-size: 0.9em;
+            margin-bottom: 5px;
+        }
+        
+        .stat-value {
+            color: #333;
+            font-size: 1.5em;
+            font-weight: 600;
+        }
+        
+        .stat-unit {
+            color: #666;
+            font-size: 0.8em;
+        }
+        
+        .progress-bar {
+            background: #f3f3f3;
+            border-radius: 10px;
+            height: 30px;
+            margin: 20px 0;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 600;
+            transition: width 1s ease;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            border-radius: 10px;
+            font-size: 1.1em;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+            display: block;
+            width: 100%;
+            margin-top: 20px;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .verified {
+            text-align: center;
+            color: #10b981;
+            font-weight: 600;
+            margin-top: 20px;
+        }
+        
+        .verified::before {
+            content: "✓ ";
+            font-size: 1.2em;
+        }
+        
+        .decompress-section {
+            margin-top: 60px;
+            padding-top: 40px;
+            border-top: 2px solid #e5e7eb;
+        }
+        
+        .decompress-section h2 {
+            color: #667eea;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        
+        .network-potential {
+            margin-top: 40px;
+            padding: 30px;
+            background: linear-gradient(135deg, #f8f9ff 0%, #e8ebff 100%);
+            border-radius: 15px;
+            border: 2px solid #667eea;
+        }
+        
+        .network-potential h3 {
+            color: #667eea;
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 1.8em;
+        }
+        
+        .network-potential .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 0.95em;
+        }
+        
+        .scale-projections {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            margin-top: 20px;
+        }
+        
+        .projection-card {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            border-top: 4px solid #667eea;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .projection-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 24px rgba(102, 126, 234, 0.3);
+        }
+        
+        .projection-card.scale-10 {
+            border-top-color: #10b981;
+        }
+        
+        .projection-card.scale-100 {
+            border-top-color: #f59e0b;
+        }
+        
+        .projection-card.scale-1000 {
+            border-top-color: #ef4444;
+        }
+        
+        .projection-header {
+            text-align: center;
+            font-size: 1.4em;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 15px;
+        }
+        
+        .projection-metric {
+            margin: 12px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        
+        .projection-metric:last-child {
+            border-bottom: none;
+        }
+        
+        .metric-label {
+            color: #666;
+            font-size: 0.85em;
+        }
+        
+        .metric-value {
+            color: #333;
+            font-weight: 600;
+            font-size: 0.95em;
+        }
+        
+        .highlight-metric {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            margin: 15px 0;
+        }
+        
+        .highlight-metric .value {
+            font-size: 2em;
+            font-weight: bold;
+            margin: 5px 0;
+        }
+        
+        .highlight-metric .label {
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+        
+        .neural-status {
+            margin-top: 30px;
+            padding: 24px;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            border-radius: 16px;
+            border: 2px solid #10b981;
+            color: #e2e8f0;
+        }
+        
+        .neural-status h4 {
+            color: #10b981;
+            text-align: center;
+            margin-bottom: 20px;
+            font-size: 1.15em;
+        }
+        
+        .neural-metrics {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
+        
+        .neural-metric {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 14px;
+            background: rgba(255,255,255,0.06);
+            border-radius: 8px;
+            border-left: 3px solid transparent;
+            transition: border-color 0.2s;
+        }
+
+        .neural-metric span {
+            color: #94a3b8;
+            font-size: 0.9em;
+        }
+
+        .neural-metric strong {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .neural-metric.active {
+            border-left-color: #10b981;
+        }
+
+        .neural-metric.warn {
+            border-left-color: #f59e0b;
+        }
+
+        .neural-metric.danger {
+            border-left-color: #ef4444;
+        }
+
+        .neural-subsection {
+            margin-top: 16px;
+            padding-top: 14px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .neural-subsection h5 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 0.95em;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .neural-pulse {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #10b981;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+            50% { opacity: 0.7; box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+        }
+        
+        .comparison-box {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            margin-top: 20px;
+            border-left: 4px solid #f59e0b;
+        }
+        
+        .comparison-box h4 {
+            color: #f59e0b;
+            margin-bottom: 10px;
+        }
+        
+        @media (max-width: 768px) {
+            .scale-projections {
+                grid-template-columns: 1fr;
+            }
+            
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🗜️ Sovereign Network</h1>
+        <p class="subtitle">Zero Knowledge Compression (ZKC) with Network-Learning Patterns</p>
+        
+        <div id="uploadArea">
+            <div class="drop-zone" id="dropZone">
+                <div class="drop-icon">📁</div>
+                <div class="drop-text">Drag & Drop Your File Here</div>
+                <div class="drop-subtext">or click to browse</div>
+            </div>
+            <input type="file" id="fileInput" accept="*/*">
+        </div>
+        
+        <div class="processing" id="processing">
+            <div class="spinner"></div>
+            <p>Compressing your file with zkSNARK proofs...</p>
+        </div>
+        
+        <div class="results" id="results">
+            <div class="result-header">
+                <h2>✅ Compression Complete!</h2>
+                <p class="filename" id="filename"></p>
+            </div>
+            
+            <div class="weismann-score">
+                <div>🏆 WEISSMAN SCORE</div>
+                <div class="score-value" id="scoreValue">0</div>
+                <div class="score-rating" id="scoreRating"></div>
+                <div style="margin-top: 12px; font-size: 0.75em; opacity: 0.85;">
+                    W = α × (r / r̄) × (ln T̄ / ln T) — Stanford formula vs gzip baseline
+                </div>
+                <div id="gzipComparison" style="margin-top: 10px; font-size: 0.85em; opacity: 0.9;"></div>
+            </div>
+            
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill" style="width: 0%">
+                    <span id="savedPercent">0%</span>
+                </div>
+            </div>
+            
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <div class="stat-label">Original Size</div>
+                    <div class="stat-value" id="originalSize">0 <span class="stat-unit">bytes</span></div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Witness Size (.zkw)</div>
+                    <div class="stat-value" id="witnessSize">0 <span class="stat-unit">bytes</span></div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Compressed Shards (.zkc)</div>
+                    <div class="stat-value" id="compressedShardsSize">0 <span class="stat-unit">bytes</span></div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Total Storage</div>
+                    <div class="stat-value" id="totalStorage">0 <span class="stat-unit">bytes</span></div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">ZKC Compression</div>
+                    <div class="stat-value" id="zkcRatio">0:1</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Total Ratio</div>
+                    <div class="stat-value" id="ratio">0:1</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Shards Created</div>
+                    <div class="stat-value" id="shards">0</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Shards Compressed</div>
+                    <div class="stat-value" id="shardsCompressed">0</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Compression Time</div>
+                    <div class="stat-value" id="compressTime">0 <span class="stat-unit">ms</span></div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Decompression Time</div>
+                    <div class="stat-value" id="decompressTime">0 <span class="stat-unit">ms</span></div>
+                </div>
+            </div>
+            
+            <div class="verified" id="verified">Data Integrity Verified</div>
+            
+            <button class="btn" id="downloadBtn" onclick="downloadWitness()">💾 Download Witness File (.zkw)</button>
+            
+            <!-- Network Potential Section -->
+            <div class="network-potential" id="networkPotential">
+                <h3>🌐 Network-Scale Potential</h3>
+                <p class="subtitle">Projected compression benefits through deduplication at scale</p>
+                
+                <div class="comparison-box">
+                    <h4>💡 Key Insight</h4>
+                    <p style="color: #666; font-size: 0.95em; margin: 10px 0;">
+                        Shards are stored <strong>ONCE</strong> on the network DHT and shared. 
+                        Each user only stores a tiny witness (~<span id="witnessBytes">0</span> bytes).
+                        As duplicate content spreads, compression improves exponentially!
+                    </p>
+                </div>
+                
+                <div class="scale-projections">
+                    <!-- 10x Scale -->
+                    <div class="projection-card scale-10">
+                        <div class="projection-header">10x Duplicates</div>
+                        <div class="highlight-metric" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+                            <div class="label">Compression Ratio</div>
+                            <div class="value" id="ratio10x">0:1</div>
+                        </div>
+                        <div class="projection-metric">
+                            <span class="metric-label">Total Original</span>
+                            <span class="metric-value" id="original10x">0 KB</span>
+                        </div>
+                        <div class="projection-metric">
+                            <span class="metric-label">Network Storage</span>
+                            <span class="metric-value" id="storage10x">0 KB</span>
+                        </div>
+                        <div class="projection-metric">
+                            <span class="metric-label">Space Saved</span>
+                            <span class="metric-value" id="saved10x" style="color: #10b981;">0%</span>
+                        </div>
+                        <div class="projection-metric">
+                            <span class="metric-label">Weismann Score</span>
+                            <span class="metric-value" id="weismann10x" style="color: #10b981;">0</span>
+                        </div>
+                        <div class="projection-metric">
+                            <span class="metric-label">vs Isolated</span>
+                            <span class="metric-value" id="efficiency10x" style="color: #667eea;">0% better</span>
+                        </div>
+                    </div>
+                    
+                    <!-- 100x Scale -->
+                    <div class="projection-card scale-100">
+                        <div class="projection-header">100x Duplicates</div>
+                        <div class="highlight-metric" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">
+                            <div class="label">Compression Ratio</div>
+                            <div class="value" id="ratio100x">0:1</div>
+                        </div>
+                        <div class="projection-metric">
+                            <span class="metric-label">Total Original</span>
+                            <span class="metric-value" id="original100x">0 MB</span>
+                        </div>
+                        <div class="projection-metric">
+                            <span class="metric-label">Network Storage</span>
+                            <span class="metric-value" id="storage100x">0 KB</span>
+                        </div>
+                        <div class="projection-metric">
+                            <span class="metric-label">Space Saved</span>
+                            <span class="metric-value" id="saved100x" style="color: #f59e0b;">0%</span>
+                        </div>
+                        <div class="projection-metric">
+                            <span class="metric-label">Weismann Score</span>
+                            <span class="metric-value" id="weismann100x" style="color: #f59e0b;">0</span>
+                        </div>
+                        <div class="projection-metric">
+                            <span class="metric-label">vs Isolated</span>
+                            <span class="metric-value" id="efficiency100x" style="color: #667eea;">0% better</span>
+                        </div>
+                    </div>
+                    
+                    <!-- 1000x Scale -->
+                    <div class="projection-card scale-1000">
+                        <div class="projection-header">1000x Duplicates</div>
+                        <div class="highlight-metric" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);">
+                            <div class="label">Compression Ratio</div>
+                            <div class="value" id="ratio1000x">0:1</div>
+                        </div>
+                        <div class="projection-metric">
+                            <span class="metric-label">Total Original</span>
+                            <span class="metric-value" id="original1000x">0 MB</span>
+                        </div>
+                        <div class="projection-metric">
+                            <span class="metric-label">Network Storage</span>
+                            <span class="metric-value" id="storage1000x">0 KB</span>
+                        </div>
+                        <div class="projection-metric">
+                            <span class="metric-label">Space Saved</span>
+                            <span class="metric-value" id="saved1000x" style="color: #ef4444;">0%</span>
+                        </div>
+                        <div class="projection-metric">
+                            <span class="metric-label">Weismann Score</span>
+                            <span class="metric-value" id="weismann1000x" style="color: #ef4444;">0</span>
+                        </div>
+                        <div class="projection-metric">
+                            <span class="metric-label">vs Isolated</span>
+                            <span class="metric-value" id="efficiency1000x" style="color: #667eea;">0% better</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Neural Mesh Status -->
+                <div class="neural-status" id="neuralStatusBox">
+                    <h4><span class="neural-pulse"></span> Neural Mesh — Live Learning Engine</h4>
+                    
+                    <!-- Semantic Dedup Section -->
+                    <div class="neural-subsection" style="margin-top:0; padding-top:0; border-top:none;">
+                        <h5>🧬 Semantic Deduplication</h5>
+                        <div class="neural-metrics">
+                            <div class="neural-metric" id="nmDedupMetric">
+                                <span>Duplicate Detected:</span>
+                                <strong id="neuralSemanticDedup" style="color: #999;">No</strong>
+                            </div>
+                            <div class="neural-metric">
+                                <span>Dedup Saves:</span>
+                                <strong id="neuralDedupSaves" style="color: #667eea;">0</strong>
+                            </div>
+                            <div class="neural-metric">
+                                <span>Embedding Cache:</span>
+                                <strong id="neuralCacheSize" style="color: #667eea;">0 vectors</strong>
+                            </div>
+                            <div class="neural-metric">
+                                <span>Dedup Efficiency:</span>
+                                <strong id="neuralOptScore" style="color: #667eea;">0.0%</strong>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- RL Router Section -->
+                    <div class="neural-subsection">
+                        <h5>🎯 PPO Reinforcement Learning Router</h5>
+                        <div class="neural-metrics">
+                            <div class="neural-metric" id="nmRlMetric">
+                                <span>Strategy Action:</span>
+                                <strong id="neuralRlAction" style="color: #667eea;">—</strong>
+                            </div>
+                            <div class="neural-metric">
+                                <span>Confidence:</span>
+                                <strong id="neuralRlConfidence" style="color: #667eea;">—</strong>
+                            </div>
+                            <div class="neural-metric">
+                                <span>Training Iterations:</span>
+                                <strong id="neuralRlIterations" style="color: #667eea;">0</strong>
+                            </div>
+                            <div class="neural-metric">
+                                <span>Avg Learned Ratio:</span>
+                                <strong id="neuralRlAvgRatio" style="color: #667eea;">—</strong>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Anomaly Sentry Section -->
+                    <div class="neural-subsection">
+                        <h5>🛡️ Isolation Forest Anomaly Sentry</h5>
+                        <div class="neural-metrics">
+                            <div class="neural-metric" id="nmAnomalyMetric">
+                                <span>Status:</span>
+                                <strong id="neuralAnomalyStatus" style="color: #10b981;">Normal</strong>
+                            </div>
+                            <div class="neural-metric">
+                                <span>Anomaly Score:</span>
+                                <strong id="neuralAnomalyScore" style="color: #667eea;">0.000</strong>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <button class="btn" onclick="resetForm()" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">Compress Another File</button>
+        </div>
+        
+        <div class="decompress-section" id="decompressSection">
+            <h2>🔓 Decompress & Verify</h2>
+            <p class="subtitle">Upload a .zkw witness file to decompress and verify integrity</p>
+            
+            <div class="drop-zone" id="decompressZone">
+                <div class="drop-icon">📤</div>
+                <div class="drop-text">Upload Witness File (.zkw)</div>
+                <div class="drop-subtext">Drag & drop or click to browse</div>
+            </div>
+            <input type="file" id="witnessInput" accept=".zkw">
+            
+            <div class="processing" id="decompressProcessing">
+                <div class="spinner"></div>
+                <p>Decompressing and verifying witness...</p>
+            </div>
+            
+            <div class="results" id="decompressResults">
+                <div class="result-header">
+                    <h2>✅ Decompression Complete!</h2>
+                    <p class="filename" id="decompressFilename"></p>
+                </div>
+                
+                <div class="stats-grid">
+                    <div class="stat-box">
+                        <div class="stat-label">Original Filename</div>
+                        <div class="stat-value" id="origFilename" style="font-size: 1.2em; word-break: break-all;"></div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Reconstructed Size</div>
+                        <div class="stat-value" id="reconstructedSize">0 <span class="stat-unit">bytes</span></div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Shards Reassembled</div>
+                        <div class="stat-value" id="shardCount">0</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Integrity Check</div>
+                        <div class="stat-value" id="integrityStatus" style="color: #10b981;">✓ PASSED</div>
+                    </div>
+                </div>
+                
+                <div class="verified" id="decompressVerified">File reconstructed successfully</div>
+                
+                <button class="btn" id="downloadOrigBtn" onclick="downloadReconstructed()">💾 Download Original File</button>
+                <button class="btn" onclick="resetDecompress()" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">Decompress Another File</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const uploadArea = document.getElementById('uploadArea');
+        const processing = document.getElementById('processing');
+        const results = document.getElementById('results');
+        
+        const decompressZone = document.getElementById('decompressZone');
+        const witnessInput = document.getElementById('witnessInput');
+        const decompressProcessing = document.getElementById('decompressProcessing');
+        const decompressResults = document.getElementById('decompressResults');
+        
+        let currentWitnessData = null;
+        let currentReconstructedData = null;
+        let currentOriginalFilename = 'file';
+        
+        // Click to browse
+        dropZone.addEventListener('click', () => fileInput.click());
+        
+        // Drag and drop
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+        
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file) uploadFile(file);
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) uploadFile(file);
+        });
+        
+        async function uploadFile(file) {
+            uploadArea.style.display = 'none';
+            processing.style.display = 'block';
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            try {
+                const response = await fetch('/compress', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                // Check if response contains error
+                if (!response.ok || result.error) {
+                    const errorMsg = result.message || result.error || 'Unknown error occurred';
+                    alert('Error compressing file: ' + errorMsg);
+                    resetForm();
+                    return;
+                }
+                
+                displayResults(result);
+            } catch (error) {
+                alert('Error compressing file: ' + error.message);
+                resetForm();
+            }
+        }
+        
+        function displayResults(data) {
+            processing.style.display = 'none';
+            results.style.display = 'block';
+            
+            currentWitnessData = data.witness_bytes;
+            currentOriginalFilename = data.filename || 'unknown';
+            
+            document.getElementById('filename').textContent = data.filename || 'unknown';
+            document.getElementById('scoreValue').textContent = (data.weismann_score || 0).toFixed(2);
+            document.getElementById('scoreRating').textContent = getRating(data.weismann_score || 0);
+            
+            // Display gzip baseline comparison
+            if (data.gzip_ratio) {
+                const gzipInfo = `SFC: ${(data.total_compression_ratio || 0).toFixed(2)}:1 vs Gzip: ${data.gzip_ratio.toFixed(2)}:1 — ` +
+                    `${data.vs_gzip_ratio_improvement.toFixed(2)}× better ratio`;
+                document.getElementById('gzipComparison').textContent = gzipInfo;
+            }
+            
+            setTimeout(() => {
+                const spaceSaved = data.space_saved_percent || 0;
+                document.getElementById('progressFill').style.width = Math.abs(spaceSaved).toFixed(1) + '%';
+                
+                // Handle negative savings (file got bigger)
+                if (spaceSaved < 0) {
+                    document.getElementById('savedPercent').textContent = 'File Expanded ' + Math.abs(spaceSaved).toFixed(1) + '%';
+                    document.getElementById('progressFill').style.background = 'linear-gradient(90deg, #ef4444 0%, #dc2626 100%)';
+                } else {
+                    document.getElementById('savedPercent').textContent = spaceSaved.toFixed(1) + '% Saved';
+                    document.getElementById('progressFill').style.background = 'linear-gradient(90deg, #667eea 0%, #764ba2 100%)';
+                }
+            }, 100);
+            
+            const originalSize = data.original_size || 0;
+            const witnessSize = data.witness_size || 0;
+            const compressedShardsSize = data.compressed_shards_size || 0;
+            const totalStorage = data.total_storage || 0;
+            
+            document.getElementById('originalSize').innerHTML = formatBytes(originalSize) + ' <span class="stat-unit">(' + originalSize.toLocaleString() + ' bytes)</span>';
+            document.getElementById('witnessSize').innerHTML = formatBytes(witnessSize) + ' <span class="stat-unit">(' + witnessSize.toLocaleString() + ' bytes)</span>';
+            document.getElementById('compressedShardsSize').innerHTML = formatBytes(compressedShardsSize) + ' <span class="stat-unit">(' + compressedShardsSize.toLocaleString() + ' bytes)</span>';
+            document.getElementById('totalStorage').innerHTML = formatBytes(totalStorage) + ' <span class="stat-unit">(' + totalStorage.toLocaleString() + ' bytes)</span>';
+            document.getElementById('zkcRatio').textContent = (data.zkc_compression_ratio || 0).toFixed(2) + ':1';
+            document.getElementById('ratio').textContent = (data.total_compression_ratio || 0).toFixed(2) + ':1';
+            document.getElementById('shards').textContent = data.shard_count || 0;
+            document.getElementById('shardsCompressed').textContent = data.shards_compressed || 0;
+            document.getElementById('compressTime').innerHTML = (data.compress_time_ms || 0) + ' <span class="stat-unit">ms</span>';
+            document.getElementById('decompressTime').innerHTML = (data.decompress_time_ms || 0) + ' <span class="stat-unit">ms</span>';
+            
+            if (!data.integrity_verified) {
+                document.getElementById('verified').style.color = '#ef4444';
+                document.getElementById('verified').textContent = '⚠ Integrity Check Failed';
+            }
+            
+            // Display Network Potential
+            if (data.network_potential) {
+                displayNetworkPotential(data.network_potential, witnessSize);
+            }
+            
+            // Display Neural Mesh Status
+            if (data.neural_enabled !== undefined) {
+                // Semantic Dedup
+                const dedupUsed = data.semantic_dedup_used;
+                document.getElementById('neuralSemanticDedup').textContent = dedupUsed ? 'Yes ✓' : 'No';
+                document.getElementById('neuralSemanticDedup').style.color = dedupUsed ? '#10b981' : '#94a3b8';
+                const dedupMetric = document.getElementById('nmDedupMetric');
+                if (dedupUsed) dedupMetric.classList.add('active');
+                
+                document.getElementById('neuralDedupSaves').textContent = data.semantic_dedup_saves || 0;
+                document.getElementById('neuralDedupSaves').style.color = (data.semantic_dedup_saves > 0) ? '#10b981' : '#667eea';
+                
+                document.getElementById('neuralCacheSize').textContent = (data.embedding_cache_size || 0) + ' vectors';
+                
+                const optScore = (data.neural_optimization_score || 0).toFixed(1);
+                document.getElementById('neuralOptScore').textContent = optScore + '%';
+                document.getElementById('neuralOptScore').style.color = optScore > 0 ? '#10b981' : '#94a3b8';
+                
+                // RL Router
+                if (data.rl_router_action !== null && data.rl_router_action !== undefined) {
+                    const actionNames = ['SFC-Low0','SFC-Low1','SFC-Low2','SFC-BW3','SFC-BW4','SFC-BW5','SFC-E6','SFC-E7','SFC-E8','SFC-Bal'];
+                    const actionId = data.rl_router_action;
+                    const actionLabel = actionNames[actionId] || ('Action ' + actionId);
+                    document.getElementById('neuralRlAction').textContent = '#' + actionId + ' (' + actionLabel + ')';
+                    document.getElementById('neuralRlAction').style.color = '#10b981';
+                    document.getElementById('nmRlMetric').classList.add('active');
+                    
+                    const conf = (data.rl_router_confidence * 100).toFixed(1);
+                    document.getElementById('neuralRlConfidence').textContent = conf + '%';
+                    document.getElementById('neuralRlConfidence').style.color = conf >= 90 ? '#10b981' : conf >= 70 ? '#f59e0b' : '#ef4444';
+                } else {
+                    document.getElementById('neuralRlAction').textContent = 'Warming up…';
+                    document.getElementById('neuralRlConfidence').textContent = '—';
+                }
+                
+                document.getElementById('neuralRlIterations').textContent = data.rl_total_compressions || 0;
+                
+                const avgRatio = data.rl_avg_ratio;
+                if (avgRatio && avgRatio > 0) {
+                    document.getElementById('neuralRlAvgRatio').textContent = avgRatio.toFixed(2) + ':1';
+                    document.getElementById('neuralRlAvgRatio').style.color = '#10b981';
+                }
+                
+                // Anomaly Sentry
+                const isAnomaly = data.anomaly_detected;
+                const anomalyEl = document.getElementById('neuralAnomalyStatus');
+                const anomalyMetric = document.getElementById('nmAnomalyMetric');
+                if (isAnomaly) {
+                    anomalyEl.textContent = '⚠ ANOMALY';
+                    anomalyEl.style.color = '#ef4444';
+                    anomalyMetric.classList.add('danger');
+                } else {
+                    anomalyEl.textContent = '✓ Normal';
+                    anomalyEl.style.color = '#10b981';
+                    anomalyMetric.classList.add('active');
+                }
+                
+                const aScore = (data.anomaly_score || 0).toFixed(3);
+                document.getElementById('neuralAnomalyScore').textContent = aScore;
+                document.getElementById('neuralAnomalyScore').style.color = 
+                    data.anomaly_score > 0.7 ? '#ef4444' : data.anomaly_score > 0.4 ? '#f59e0b' : '#10b981';
+            }
+        }
+        
+        function displayNetworkPotential(potential, witnessSize) {
+            // Update witness size in comparison box
+            document.getElementById('witnessBytes').textContent = witnessSize.toLocaleString();
+            
+            // 10x Scale
+            const scale10 = potential.scale_10;
+            document.getElementById('ratio10x').textContent = scale10.network_compression_ratio.toFixed(2) + ':1';
+            document.getElementById('original10x').textContent = formatBytes(scale10.total_original_size);
+            document.getElementById('storage10x').textContent = formatBytes(scale10.network_storage_total);
+            document.getElementById('saved10x').textContent = scale10.network_space_saved_percent.toFixed(1) + '%';
+            document.getElementById('weismann10x').textContent = scale10.network_weismann_score.toFixed(2);
+            document.getElementById('efficiency10x').textContent = scale10.storage_efficiency_vs_single.toFixed(1) + '% better';
+            
+            // 100x Scale
+            const scale100 = potential.scale_100;
+            document.getElementById('ratio100x').textContent = scale100.network_compression_ratio.toFixed(2) + ':1';
+            document.getElementById('original100x').textContent = formatBytes(scale100.total_original_size);
+            document.getElementById('storage100x').textContent = formatBytes(scale100.network_storage_total);
+            document.getElementById('saved100x').textContent = scale100.network_space_saved_percent.toFixed(1) + '%';
+            document.getElementById('weismann100x').textContent = scale100.network_weismann_score.toFixed(2);
+            document.getElementById('efficiency100x').textContent = scale100.storage_efficiency_vs_single.toFixed(1) + '% better';
+            
+            // 1000x Scale
+            const scale1000 = potential.scale_1000;
+            document.getElementById('ratio1000x').textContent = scale1000.network_compression_ratio.toFixed(2) + ':1';
+            document.getElementById('original1000x').textContent = formatBytes(scale1000.total_original_size);
+            document.getElementById('storage1000x').textContent = formatBytes(scale1000.network_storage_total);
+            document.getElementById('saved1000x').textContent = scale1000.network_space_saved_percent.toFixed(1) + '%';
+            document.getElementById('weismann1000x').textContent = scale1000.network_weismann_score.toFixed(2);
+            document.getElementById('efficiency1000x').textContent = scale1000.storage_efficiency_vs_single.toFixed(1) + '% better';
+        }
+        
+        function formatBytes(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+        }
+        
+        function getRating(score) {
+            // Real Weissman Score: >1.0 means better than gzip baseline
+            if (score >= 6.0) return '🌟 LEGENDARY — Destroys Industry Standard!';
+            if (score >= 4.0) return '🌟 EXCEPTIONAL — Far Beyond Gzip!';
+            if (score >= 2.5) return '⭐ EXCELLENT — Massively Beats Gzip';
+            if (score >= 1.5) return '⭐ VERY GOOD — Significantly Beats Gzip';
+            if (score >= 1.0) return '✓ GOOD — Beats Gzip';
+            if (score >= 0.8) return '○ COMPETITIVE — Near Gzip Level';
+            return '△ BELOW GZIP — Needs Improvement';
+        }
+        
+        function resetForm() {
+            uploadArea.style.display = 'block';
+            processing.style.display = 'none';
+            results.style.display = 'none';
+            fileInput.value = '';
+            document.getElementById('progressFill').style.width = '0%';
+            currentWitnessData = null;
+            currentOriginalFilename = 'file';
+        }
+        
+        function downloadWitness() {
+            if (!currentWitnessData) {
+                alert('No witness data available');
+                return;
+            }
+            
+            // Convert base64 to bytes
+            const bytes = Uint8Array.from(atob(currentWitnessData), c => c.charCodeAt(0));
+            const blob = new Blob([bytes], { type: 'application/octet-stream' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = currentOriginalFilename.replace(/\.[^/.]+$/, '') + '.zkw';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+        
+        // Decompression section
+        decompressZone.addEventListener('click', () => witnessInput.click());
+        
+        decompressZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            decompressZone.classList.add('dragover');
+        });
+        
+        decompressZone.addEventListener('dragleave', () => {
+            decompressZone.classList.remove('dragover');
+        });
+        
+        decompressZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            decompressZone.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file) decompressWitness(file);
+        });
+        
+        witnessInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) decompressWitness(file);
+        });
+        
+        async function decompressWitness(file) {
+            document.getElementById('decompressSection').scrollIntoView({ behavior: 'smooth' });
+            decompressProcessing.style.display = 'block';
+            decompressResults.style.display = 'none';
+            
+            const formData = new FormData();
+            formData.append('witness', file);
+            
+            try {
+                const response = await fetch('/decompress', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                // Check if response contains error
+                if (!response.ok || result.error) {
+                    const errorMsg = result.message || result.error || 'Unknown error occurred';
+                    alert('Error decompressing witness: ' + errorMsg);
+                    decompressProcessing.style.display = 'none';
+                    return;
+                }
+                
+                displayDecompressResults(result);
+            } catch (error) {
+                alert('Error decompressing witness: ' + error.message);
+                decompressProcessing.style.display = 'none';
+            }
+        }
+        
+        function displayDecompressResults(data) {
+            decompressProcessing.style.display = 'none';
+            decompressResults.style.display = 'block';
+            
+            currentReconstructedData = data.reconstructed_bytes;
+            currentOriginalFilename = data.original_filename || 'unknown';
+            
+            document.getElementById('decompressFilename').textContent = data.witness_filename || 'unknown';
+            document.getElementById('origFilename').textContent = data.original_filename || 'unknown';
+            
+            // Safe handling of reconstructed_size with null checks
+            const reconstructedSize = data.reconstructed_size || 0;
+            document.getElementById('reconstructedSize').innerHTML = formatBytes(reconstructedSize) + ' <span class="stat-unit">(' + reconstructedSize.toLocaleString() + ' bytes)</span>';
+            document.getElementById('shardCount').textContent = data.shard_count || 0;
+            
+            if (data.integrity_verified) {
+                document.getElementById('integrityStatus').innerHTML = '<span style="color: #10b981;">✓ PASSED</span>';
+                document.getElementById('decompressVerified').textContent = 'File reconstructed successfully - Hash verified!';
+            } else {
+                document.getElementById('integrityStatus').innerHTML = '<span style="color: #ef4444;">✗ FAILED</span>';
+                document.getElementById('decompressVerified').textContent = '⚠ Warning: Integrity check failed!';
+            }
+        }
+        
+        function downloadReconstructed() {
+            if (!currentReconstructedData) {
+                alert('No reconstructed data available');
+                return;
+            }
+            
+            // Convert base64 to bytes
+            const bytes = Uint8Array.from(atob(currentReconstructedData), c => c.charCodeAt(0));
+            const blob = new Blob([bytes], { type: 'application/octet-stream' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = currentOriginalFilename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+        
+        function resetDecompress() {
+            decompressProcessing.style.display = 'none';
+            decompressResults.style.display = 'none';
+            witnessInput.value = '';
+            currentReconstructedData = null;
+        }
+    </script>
+</body>
+</html>

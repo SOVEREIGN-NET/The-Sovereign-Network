@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
+use crate::constants::BLE_MESH_SERVICE_UUID;
 use super::device;
 use super::device::{BleDevice, MeshPeer};
 use super::BluetoothMeshProtocol;

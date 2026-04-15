@@ -1,0 +1,3348 @@
+{
+  "config_fields": [
+    "TransferFeeBps",
+    "BurnFeeBps",
+    "FeeCap",
+    "MinFee",
+    "TransferPolicy",
+    "FeeRecipient",
+    "TreasuryAddress",
+    "MaxSupply",
+    "AuthorityAdd",
+    "AuthorityRemove",
+    "BlockSizeLimit",
+    "TxCountLimit",
+    "BaseFeePerByte"
+  ],
+  "pending_changes": [
+    {
+      "activates_at": 497488,
+      "field": "FeeCap",
+      "new_value_hash": "76e7824ad8b6f95865f3bc780f968382c4b9205e89e3597ad1ca58d2ae64736b",
+      "submitted_at": 375280,
+      "target": "57085fc26998991c60d4000b0802b07d27ff9afe704692246176d7a83fef9f53",
+      "tx_hash": "1a3a75697fa19367850c6bec5bf16f0db35f4961bb879ab10b9a4e473b5c35f7"
+    },
+    {
+      "activates_at": 551165,
+      "field": "AuthorityAdd",
+      "new_value_hash": "5108a43cf79c5a8c9f20ad15961003a6c4f73d1a65e02e5f3266421e851d5617",
+      "submitted_at": 307893,
+      "target": "4ca0c16cd9b9669cbbef3377e9d8c21286c740f7dff0e329686a58acb468aad9",
+      "tx_hash": "1f84c88c274f72e0612d726972b7d5b7b0e8e7f16fc5dfc725e9aca094cb686d"
+    },
+    {
+      "activates_at": 561849,
+      "field": "AuthorityAdd",
+      "new_value_hash": "a6fe2937dfee44d04c79633736255988df2ef70080312cdc44780e6d8116ff77",
+      "submitted_at": 388292,
+      "target": "e39def191cec710292879218c04845f6bc947422cc33878ba233ab091eed7cec",
+      "tx_hash": "03d278b9d3b81c3158babcb20eb484293b2b180bd622cedca85d589a35c2197f"
+    },
+    {
+      "activates_at": 516558,
+      "field": "AuthorityAdd",
+      "new_value_hash": "70b62e9b51efa5219936aa7370050cd847846aeb604017b017f2a4377a8a7164",
+      "submitted_at": 274919,
+      "target": "f5333a037a954bd6201c63b610e646dc6541e32140ba3bfac17e1a387f0a3d92",
+      "tx_hash": "0c03f03bd7ea1e6cc051400c45675180d8767411e09449082187fe9a2d0408e6"
+    },
+    {
+      "activates_at": 401850,
+      "field": "BurnFeeBps",
+      "new_value_hash": "2340752381a5a8899e67e4ad1ab94cc13a107339d255d7ecdcf05435acb6c0af",
+      "submitted_at": 313234,
+      "target": "66fec1b81258d181ad679f186f7470eef1ea8fd85a47098feac00d49ccb2bf8d",
+      "tx_hash": "a24b6675eb401f554de61b36420c953a8122925c75e6e6f620187a83e6f5d6d6"
+    },
+    {
+      "activates_at": 502714,
+      "field": "FeeCap",
+      "new_value_hash": "45d6ebbebcb3b0522e76f289ccaa959c2a29bc66276c9edfad85f98fb68bd65f",
+      "submitted_at": 315059,
+      "target": "d4d10d192901c6612b842d0333000f7f4837ec39b3229f6c0ea34f3dcbf6e36b",
+      "tx_hash": "419444846273d2f721c4e9e831a4e13b09d0f9dbfac4681e65e04791fd8ef7f2"
+    },
+    {
+      "activates_at": 557597,
+      "field": "FeeRecipient",
+      "new_value_hash": "ae09f5935ab0729078afa10b01051881f67c82c49e8f7c59c534aba22f002e2e",
+      "submitted_at": 380019,
+      "target": "4716e84b3e8958be8be8f9628540f2fd93c70d8b4fd72eb8375af25c959f0f31",
+      "tx_hash": "2f2ea1c6b5f556a4e24ea5a325a018d8dd5b34fb112ab8870c69b6299f2f78df"
+    }
+  ],
+  "proposal_count": 30,
+  "proposals": [
+    {
+      "created_at": 1735689600,
+      "created_at_height": 266182,
+      "description": "Reduce base transaction fee from 100 to 50 SOV This change was proposed to address concerns about network throughput. Implementation requires 60817 blocks for activation after approval. Estimated impact: 39192 active nodes affected.",
+      "execution_params": "53f01fad80eba16500602855dec33949c6c8a25a5e83a015b2f1af57fe41315c0de18173542dcb43fb85ecf0ab3bc3083b83842d56ab3c5b7696990dcbeab074623d1b6f3f3311d5f99b20c65d2fb4ed189b665c60964ef87e34dd84",
+      "proposal_id": "1a150ce716fc697f83188cddd9e2a40930224c34f9da38e3704797efc255ed8a",
+      "proposal_type": "ConfigUpdate",
+      "proposer": "did:zhtp:472ff6a30dc20a6fd2680c7d9a52e15903662118999b0b57",
+      "quorum_required": 60,
+      "status": "Executed",
+      "title": "Reduce base transaction fee from 100 to 50 SOV",
+      "voting_period_blocks": 19813,
+      "voting_summary": {
+        "participation_rate": "11.88%",
+        "quorum_met": true,
+        "total_voting_power": 48939,
+        "votes_abstain": 2677,
+        "votes_against": 15405,
+        "votes_for": 30857
+      }
+    },
+    {
+      "created_at": 1735776000,
+      "created_at_height": 265387,
+      "description": "Increase maximum block size to 2MB This change was proposed to address concerns about cross-shard latency. Implementation requires 91432 blocks for activation after approval. Estimated impact: 44136 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "00d008f91c6bab096ecf148dec6869b78932f773e9a8f99d4e70166541c11010",
+      "proposal_type": "Emergency",
+      "proposer": "did:zhtp:52aeea838b07d5164ef13662372586e8a99ea616639eee1a",
+      "quorum_required": 63,
+      "status": "Active",
+      "title": "Increase maximum block size to 2MB",
+      "voting_period_blocks": 17720,
+      "voting_summary": {
+        "participation_rate": "22.77%",
+        "quorum_met": true,
+        "total_voting_power": 96298,
+        "votes_abstain": 795,
+        "votes_against": 25269,
+        "votes_for": 70234
+      }
+    },
+    {
+      "created_at": 1735862400,
+      "created_at_height": 354253,
+      "description": "Enable cross-shard atomic swap protocol This change was proposed to address concerns about validator incentives. Implementation requires 26617 blocks for activation after approval. Estimated impact: 48908 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "8a7cdccfac1d416b391d8008f297653e1aa842de7016a5b7a8ef74cf569eb94d",
+      "proposal_type": "TreasurySpend",
+      "proposer": "did:zhtp:1198bceb357b7fcb576f3892f098d263d51c634d2862bd5f",
+      "quorum_required": 63,
+      "status": "Pending",
+      "title": "Enable cross-shard atomic swap protocol",
+      "voting_period_blocks": 82862,
+      "voting_summary": {
+        "participation_rate": "32.50%",
+        "quorum_met": false,
+        "total_voting_power": 111625,
+        "votes_abstain": 2392,
+        "votes_against": 35264,
+        "votes_for": 73969
+      }
+    },
+    {
+      "created_at": 1735948800,
+      "created_at_height": 337969,
+      "description": "Deploy decentralized price oracle committee This change was proposed to address concerns about network throughput. Implementation requires 48775 blocks for activation after approval. Estimated impact: 26779 active nodes affected.",
+      "execution_params": "96f65c578f6f53782ad1babd7301f746901a32d79294ba4f299f3a16ae3b0fbb8baa77f97b911c2eafc7e7",
+      "proposal_id": "8fc183feb3c8988c3c7c10a465a8d159e4d1eef41e4a7f85c2ec01974c65fcda",
+      "proposal_type": "ProtocolUpgrade",
+      "proposer": "did:zhtp:7b8c621abb00626be62d6ec1c0c2759973285b3a9a239e7f",
+      "quorum_required": 60,
+      "status": "Executed",
+      "title": "Deploy decentralized price oracle committee",
+      "voting_period_blocks": 82200,
+      "voting_summary": {
+        "participation_rate": "10.59%",
+        "quorum_met": true,
+        "total_voting_power": 60235,
+        "votes_abstain": 1844,
+        "votes_against": 28686,
+        "votes_for": 29705
+      }
+    },
+    {
+      "created_at": 1736035200,
+      "created_at_height": 297424,
+      "description": "Implement privacy-preserving UBI verification This change was proposed to address concerns about fee fairness. Implementation requires 94009 blocks for activation after approval. Estimated impact: 16352 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "534d973222641540acae6a4065f9e4f65c384c04328af8778d39207b6c108902",
+      "proposal_type": "Emergency",
+      "proposer": "did:zhtp:49ca456a3cbe86901bff0629b8b4d6f547e4ba660de7506a",
+      "quorum_required": 69,
+      "status": "Active",
+      "title": "Implement privacy-preserving UBI verification",
+      "voting_period_blocks": 11737,
+      "voting_summary": {
+        "participation_rate": "18.80%",
+        "quorum_met": true,
+        "total_voting_power": 53550,
+        "votes_abstain": 1608,
+        "votes_against": 21355,
+        "votes_for": 30587
+      }
+    },
+    {
+      "created_at": 1736121600,
+      "created_at_height": 209228,
+      "description": "Upgrade consensus threshold to 75% BFT This change was proposed to address concerns about cross-shard latency. Implementation requires 60469 blocks for activation after approval. Estimated impact: 22938 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "f415c790048511257318eb486cf722e8d28aa5ee0e4143b8fef9c48c8c21fb14",
+      "proposal_type": "TreasurySpend",
+      "proposer": "did:zhtp:f532bdcacec7c8c993f3033191a63e8c0b96eceb446038ad",
+      "quorum_required": 61,
+      "status": "Active",
+      "title": "Upgrade consensus threshold to 75% BFT",
+      "voting_period_blocks": 81459,
+      "voting_summary": {
+        "participation_rate": "4.08%",
+        "quorum_met": true,
+        "total_voting_power": 32867,
+        "votes_abstain": 2371,
+        "votes_against": 3943,
+        "votes_for": 26553
+      }
+    },
+    {
+      "created_at": 1736208000,
+      "created_at_height": 322110,
+      "description": "Add Bluetooth mesh routing for edge nodes This change was proposed to address concerns about cross-shard latency. Implementation requires 27526 blocks for activation after approval. Estimated impact: 3440 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "15b9fa5d9e9867f335d6c8f801fa24e15e5124ea9eda351ba5ea53bd86fc5ec7",
+      "proposal_type": "ConfigUpdate",
+      "proposer": "did:zhtp:ae9ed04581b986ae36e5630b31130f60c8df3acdf2424d09",
+      "quorum_required": 53,
+      "status": "Pending",
+      "title": "Add Bluetooth mesh routing for edge nodes",
+      "voting_period_blocks": 71238,
+      "voting_summary": {
+        "participation_rate": "21.71%",
+        "quorum_met": true,
+        "total_voting_power": 175206,
+        "votes_abstain": 5861,
+        "votes_against": 79770,
+        "votes_for": 89575
+      }
+    },
+    {
+      "created_at": 1736294400,
+      "created_at_height": 133247,
+      "description": "Migrate ZK proofs to Plonky3 system This change was proposed to address concerns about validator incentives. Implementation requires 99736 blocks for activation after approval. Estimated impact: 14495 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "fbfff86e1d567fc38a7bf86c22855ccb114d6fcae3a5d872e164e53104490a8f",
+      "proposal_type": "Emergency",
+      "proposer": "did:zhtp:82d83a8e8b5fc9b878d8aa0f26cfd053678c76031b8b262f",
+      "quorum_required": 69,
+      "status": "Passed",
+      "title": "Migrate ZK proofs to Plonky3 system",
+      "voting_period_blocks": 13580,
+      "voting_summary": {
+        "participation_rate": "9.68%",
+        "quorum_met": true,
+        "total_voting_power": 20222,
+        "votes_abstain": 727,
+        "votes_against": 9183,
+        "votes_for": 10312
+      }
+    },
+    {
+      "created_at": 1736380800,
+      "created_at_height": 315033,
+      "description": "Increase validator minimum stake to 500K SOV This change was proposed to address concerns about network throughput. Implementation requires 40569 blocks for activation after approval. Estimated impact: 34290 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "d8de57069f8b3d3e3e3a31ec63f26f1e74387b554dd4ea40d764fd6d1e6682a7",
+      "proposal_type": "TreasurySpend",
+      "proposer": "did:zhtp:1e20d72980256f445e53d9549773f25a5906dc5ae91b1a00",
+      "quorum_required": 60,
+      "status": "Rejected",
+      "title": "Increase validator minimum stake to 500K SOV",
+      "voting_period_blocks": 36716,
+      "voting_summary": {
+        "participation_rate": "26.02%",
+        "quorum_met": false,
+        "total_voting_power": 194583,
+        "votes_abstain": 6471,
+        "votes_against": 89809,
+        "votes_for": 98303
+      }
+    },
+    {
+      "created_at": 1736467200,
+      "created_at_height": 108563,
+      "description": "Enable bonding curve token launches This change was proposed to address concerns about cross-shard latency. Implementation requires 80559 blocks for activation after approval. Estimated impact: 47466 active nodes affected.",
+      "execution_params": "408f5d0a88548f457b1062e4e1f9c67fe2b6930fd158973ed72733a256d0a0b5cf83f22646328ea09006fe080e1a17f7891b2c141598f1190c68b8960be70124335c340f724673de1a44fea32cb96fd55e479411",
+      "proposal_id": "c3e132b23ea7c9cf7a0b7fc2c581046caabc5984f6cf44e621193a561ad29005",
+      "proposal_type": "TreasurySpend",
+      "proposer": "did:zhtp:0ddb885752b4e28152b9c74d00da51c05094e66a7e9ec8f2",
+      "quorum_required": 55,
+      "status": "Executed",
+      "title": "Enable bonding curve token launches",
+      "voting_period_blocks": 57960,
+      "voting_summary": {
+        "participation_rate": "19.56%",
+        "quorum_met": true,
+        "total_voting_power": 105213,
+        "votes_abstain": 4919,
+        "votes_against": 12878,
+        "votes_for": 87416
+      }
+    },
+    {
+      "created_at": 1736553600,
+      "created_at_height": 274879,
+      "description": "Add LoRaWAN long-range mesh support This change was proposed to address concerns about network throughput. Implementation requires 70089 blocks for activation after approval. Estimated impact: 29357 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "48baacf59465251eb4bf569959cb994bc9042ee1a3ae6748d87b7684871e1cd6",
+      "proposal_type": "ParameterChange",
+      "proposer": "did:zhtp:739e5ca67141d628d53badad64fc16ae45d7bc8af5300c6b",
+      "quorum_required": 52,
+      "status": "Pending",
+      "title": "Add LoRaWAN long-range mesh support",
+      "voting_period_blocks": 79055,
+      "voting_summary": {
+        "participation_rate": "43.92%",
+        "quorum_met": false,
+        "total_voting_power": 143077,
+        "votes_abstain": 6900,
+        "votes_against": 66215,
+        "votes_for": 69962
+      }
+    },
+    {
+      "created_at": 1736640000,
+      "created_at_height": 350127,
+      "description": "Implement progressive tax on profit declarations This change was proposed to address concerns about validator incentives. Implementation requires 60351 blocks for activation after approval. Estimated impact: 25552 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "e885d9a83aa0af13af0eb6bf896daad84f309da3f7f04fe3be9a1f92c33ffea6",
+      "proposal_type": "ParameterChange",
+      "proposer": "did:zhtp:8dce57e4718e7c22f30a4fb14830cd05df1800c336576a4e",
+      "quorum_required": 64,
+      "status": "Rejected",
+      "title": "Implement progressive tax on profit declarations",
+      "voting_period_blocks": 21577,
+      "voting_summary": {
+        "participation_rate": "14.25%",
+        "quorum_met": true,
+        "total_voting_power": 96806,
+        "votes_abstain": 7420,
+        "votes_against": 6148,
+        "votes_for": 83238
+      }
+    },
+    {
+      "created_at": 1736726400,
+      "created_at_height": 136690,
+      "description": "Deploy automated treasury rebalancing This change was proposed to address concerns about validator incentives. Implementation requires 73592 blocks for activation after approval. Estimated impact: 16153 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "7d7e54e35502cfe3b12927814a1475e8269fcf0d1b9e2b249ef6421d03e72baf",
+      "proposal_type": "ConfigUpdate",
+      "proposer": "did:zhtp:3c049e3c57967a49a4929f5f40a81da02851cb0b33d72fa2",
+      "quorum_required": 65,
+      "status": "Active",
+      "title": "Deploy automated treasury rebalancing",
+      "voting_period_blocks": 32885,
+      "voting_summary": {
+        "participation_rate": "8.44%",
+        "quorum_met": true,
+        "total_voting_power": 80245,
+        "votes_abstain": 4449,
+        "votes_against": 10943,
+        "votes_for": 64853
+      }
+    },
+    {
+      "created_at": 1736812800,
+      "created_at_height": 398767,
+      "description": "Add multi-signature wallet support This change was proposed to address concerns about fee fairness. Implementation requires 73963 blocks for activation after approval. Estimated impact: 19432 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "364916db942a8bb25878c9c0a944ba2010d62d0cd0ae0f192e10dd0188c3a282",
+      "proposal_type": "ParameterChange",
+      "proposer": "did:zhtp:ae6d8b90236f2a62acefafbda07760eacfc2235b14849975",
+      "quorum_required": 59,
+      "status": "Active",
+      "title": "Add multi-signature wallet support",
+      "voting_period_blocks": 36572,
+      "voting_summary": {
+        "participation_rate": "20.69%",
+        "quorum_met": true,
+        "total_voting_power": 170936,
+        "votes_abstain": 6513,
+        "votes_against": 76830,
+        "votes_for": 87593
+      }
+    },
+    {
+      "created_at": 1736899200,
+      "created_at_height": 156953,
+      "description": "Enable encrypted memo field for privacy This change was proposed to address concerns about fee fairness. Implementation requires 23902 blocks for activation after approval. Estimated impact: 2636 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "4008111b7540d69fdd9439bb13425c5512c5ededbc846217e7bf93b0105aa37c",
+      "proposal_type": "TreasurySpend",
+      "proposer": "did:zhtp:952d874724cc877c77a3bc1db2d81a1cbaee6e58f43a8f3c",
+      "quorum_required": 61,
+      "status": "Active",
+      "title": "Enable encrypted memo field for privacy",
+      "voting_period_blocks": 31300,
+      "voting_summary": {
+        "participation_rate": "2.82%",
+        "quorum_met": true,
+        "total_voting_power": 12702,
+        "votes_abstain": 66,
+        "votes_against": 6189,
+        "votes_for": 6447
+      }
+    },
+    {
+      "created_at": 1736985600,
+      "created_at_height": 157877,
+      "description": "Reduce block time to 10 seconds This change was proposed to address concerns about network throughput. Implementation requires 29728 blocks for activation after approval. Estimated impact: 26214 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "2f96c2497a0db6f770ae8e28ac64c4b5aa25638e6349d7498519ff5fad8204ce",
+      "proposal_type": "ConfigUpdate",
+      "proposer": "did:zhtp:857dbeac05fc091524f20ae8d272451c6358620332664283",
+      "quorum_required": 71,
+      "status": "Passed",
+      "title": "Reduce block time to 10 seconds",
+      "voting_period_blocks": 82215,
+      "voting_summary": {
+        "participation_rate": "27.31%",
+        "quorum_met": true,
+        "total_voting_power": 146870,
+        "votes_abstain": 4744,
+        "votes_against": 59313,
+        "votes_for": 82813
+      }
+    },
+    {
+      "created_at": 1737072000,
+      "created_at_height": 198885,
+      "description": "Implement fee burning mechanism (50% burn) This change was proposed to address concerns about validator incentives. Implementation requires 62449 blocks for activation after approval. Estimated impact: 667 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "056912755c61f30ef220cebb96780ea1ed3a0b30529ccbb43bbed58caff4d3e9",
+      "proposal_type": "ConfigUpdate",
+      "proposer": "did:zhtp:137fd3249a58032a091998623f5a2e0da8dd0ab5f04a2f01",
+      "quorum_required": 64,
+      "status": "Rejected",
+      "title": "Implement fee burning mechanism (50% burn)",
+      "voting_period_blocks": 59616,
+      "voting_summary": {
+        "participation_rate": "16.89%",
+        "quorum_met": true,
+        "total_voting_power": 60667,
+        "votes_abstain": 893,
+        "votes_against": 16544,
+        "votes_for": 43230
+      }
+    },
+    {
+      "created_at": 1737158400,
+      "created_at_height": 346405,
+      "description": "Add identity recovery via social attestation This change was proposed to address concerns about cross-shard latency. Implementation requires 78956 blocks for activation after approval. Estimated impact: 26368 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "4ae5ce79fca5f1d8b2ad5df88f069226349aed03151b66f7428669ebdfe5de99",
+      "proposal_type": "TreasurySpend",
+      "proposer": "did:zhtp:3dcaad62a498ea8c5740c2ee839f1eb3f56e5c2f7cf8e4d6",
+      "quorum_required": 53,
+      "status": "Rejected",
+      "title": "Add identity recovery via social attestation",
+      "voting_period_blocks": 56268,
+      "voting_summary": {
+        "participation_rate": "4.01%",
+        "quorum_met": false,
+        "total_voting_power": 10309,
+        "votes_abstain": 910,
+        "votes_against": 261,
+        "votes_for": 9138
+      }
+    },
+    {
+      "created_at": 1737244800,
+      "created_at_height": 180369,
+      "description": "Deploy on-chain employment contract system This change was proposed to address concerns about validator incentives. Implementation requires 56903 blocks for activation after approval. Estimated impact: 42259 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "3f9f129209594ef9a30ca9a2c84029698708a4731812948d8180cc6304cb13c7",
+      "proposal_type": "ProtocolUpgrade",
+      "proposer": "did:zhtp:bf1c1205c60fdf28a313701cb0eba8439bc50a6854e149c5",
+      "quorum_required": 53,
+      "status": "Active",
+      "title": "Deploy on-chain employment contract system",
+      "voting_period_blocks": 43462,
+      "voting_summary": {
+        "participation_rate": "3.00%",
+        "quorum_met": true,
+        "total_voting_power": 9174,
+        "votes_abstain": 84,
+        "votes_against": 2923,
+        "votes_for": 6167
+      }
+    },
+    {
+      "created_at": 1737331200,
+      "created_at_height": 251571,
+      "description": "Enable WiFi-Direct peer discovery protocol This change was proposed to address concerns about fee fairness. Implementation requires 47352 blocks for activation after approval. Estimated impact: 9723 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "d6e0aa1d9453489f903fc036f329ba608da86eaa6483325c195771280695a6a7",
+      "proposal_type": "ParameterChange",
+      "proposer": "did:zhtp:5e2dfeca30ab4891cfcc919f71c4d4a14bb2307a8dae2418",
+      "quorum_required": 61,
+      "status": "Rejected",
+      "title": "Enable WiFi-Direct peer discovery protocol",
+      "voting_period_blocks": 75227,
+      "voting_summary": {
+        "participation_rate": "10.37%",
+        "quorum_met": true,
+        "total_voting_power": 46063,
+        "votes_abstain": 1360,
+        "votes_against": 7297,
+        "votes_for": 37406
+      }
+    },
+    {
+      "created_at": 1737417600,
+      "created_at_height": 258262,
+      "description": "Increase UBI base amount to 750 SOV/month This change was proposed to address concerns about fee fairness. Implementation requires 61095 blocks for activation after approval. Estimated impact: 15923 active nodes affected.",
+      "execution_params": "52c1691eacd6474728afaea4b41e87b835f095f014a8a019833ea72793496b1052fa76be8ed62db0ddfe59f19cbff86f0b6908aba5f46a2b4b4c9c",
+      "proposal_id": "f1d490b439d6bf8262769dec1c2f455c28b3663482428d0c8ca5f456d1c39ef5",
+      "proposal_type": "ProtocolUpgrade",
+      "proposer": "did:zhtp:6b26c68dd785d52afd539b883a4c0c287ce993314981ef37",
+      "quorum_required": 51,
+      "status": "Executed",
+      "title": "Increase UBI base amount to 750 SOV/month",
+      "voting_period_blocks": 63976,
+      "voting_summary": {
+        "participation_rate": "30.64%",
+        "quorum_met": false,
+        "total_voting_power": 151468,
+        "votes_abstain": 7857,
+        "votes_against": 56433,
+        "votes_for": 87178
+      }
+    },
+    {
+      "created_at": 1737504000,
+      "created_at_height": 276725,
+      "description": "Add cross-chain bridge to Sovereign L2 This change was proposed to address concerns about cross-shard latency. Implementation requires 70896 blocks for activation after approval. Estimated impact: 20873 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "de56925d646de342c0a0b4370ee6f6ff8e47fb03a42808e358f471bb8f308d55",
+      "proposal_type": "ConfigUpdate",
+      "proposer": "did:zhtp:b6c8048de5ee2e3801e86b2b1116327a95eebab1f9d79b3a",
+      "quorum_required": 58,
+      "status": "Passed",
+      "title": "Add cross-chain bridge to Sovereign L2",
+      "voting_period_blocks": 25445,
+      "voting_summary": {
+        "participation_rate": "7.04%",
+        "quorum_met": true,
+        "total_voting_power": 29142,
+        "votes_abstain": 632,
+        "votes_against": 5573,
+        "votes_for": 22937
+      }
+    },
+    {
+      "created_at": 1737590400,
+      "created_at_height": 296835,
+      "description": "Implement reputation-weighted voting This change was proposed to address concerns about cross-shard latency. Implementation requires 66813 blocks for activation after approval. Estimated impact: 33958 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "2fd8022ae7c638c2eae81a83234c60aff565a1f63b160890fa60fc4318a25e14",
+      "proposal_type": "ProtocolUpgrade",
+      "proposer": "did:zhtp:bee993f1d8b7aca65f5d58753a3ef2b4430548c6fd867438",
+      "quorum_required": 68,
+      "status": "Rejected",
+      "title": "Implement reputation-weighted voting",
+      "voting_period_blocks": 33198,
+      "voting_summary": {
+        "participation_rate": "30.30%",
+        "quorum_met": true,
+        "total_voting_power": 170042,
+        "votes_abstain": 7969,
+        "votes_against": 74707,
+        "votes_for": 87366
+      }
+    },
+    {
+      "created_at": 1737676800,
+      "created_at_height": 399755,
+      "description": "Deploy shard compression with ZK witnesses This change was proposed to address concerns about identity privacy. Implementation requires 66600 blocks for activation after approval. Estimated impact: 23621 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "2ecda248ef272ab47d418f70af0e46de71c1235bd3901f4935e0c617aa7ae7fe",
+      "proposal_type": "ProtocolUpgrade",
+      "proposer": "did:zhtp:720876c7d0ca8448ff11ae678d4eff613d9f754e1ad9a145",
+      "quorum_required": 56,
+      "status": "Rejected",
+      "title": "Deploy shard compression with ZK witnesses",
+      "voting_period_blocks": 44030,
+      "voting_summary": {
+        "participation_rate": "12.46%",
+        "quorum_met": false,
+        "total_voting_power": 84698,
+        "votes_abstain": 2891,
+        "votes_against": 25135,
+        "votes_for": 56672
+      }
+    },
+    {
+      "created_at": 1737763200,
+      "created_at_height": 283770,
+      "description": "Enable quantum-resistant key rotation This change was proposed to address concerns about network throughput. Implementation requires 37169 blocks for activation after approval. Estimated impact: 45631 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "a6e09396422d7d646c0b57a66557b008eeaab14e2b8ff5fd1136a34f63775396",
+      "proposal_type": "Emergency",
+      "proposer": "did:zhtp:e7d1112db85af54aeff57690172e2760660cbbae50b13630",
+      "quorum_required": 51,
+      "status": "Active",
+      "title": "Enable quantum-resistant key rotation",
+      "voting_period_blocks": 80044,
+      "voting_summary": {
+        "participation_rate": "20.21%",
+        "quorum_met": true,
+        "total_voting_power": 42138,
+        "votes_abstain": 1943,
+        "votes_against": 11840,
+        "votes_for": 28355
+      }
+    },
+    {
+      "created_at": 1737849600,
+      "created_at_height": 189213,
+      "description": "Add decentralized DNS resolver This change was proposed to address concerns about identity privacy. Implementation requires 87702 blocks for activation after approval. Estimated impact: 44964 active nodes affected.",
+      "execution_params": "53c6e6402f865844ae1b4f93885991a75fb5bd56b768604a1f541d2543f87ea3128baa509d22a5f7b7790b23b37df3e9d6de70a9eac48c4aa0c54f42ba4df07709c0789cd9dc2b1f7918fcee8858a452018947e3c6ab6333c94c62bcdbd6de29b62daab31653f831a598",
+      "proposal_id": "07169156b8daf792be62531e221f6690750d3c9c14a5395394b59bb47eccf72c",
+      "proposal_type": "ProtocolUpgrade",
+      "proposer": "did:zhtp:9867e046c4c216985415ffb864d7413103642ad6a5965dfa",
+      "quorum_required": 67,
+      "status": "Executed",
+      "title": "Add decentralized DNS resolver",
+      "voting_period_blocks": 13975,
+      "voting_summary": {
+        "participation_rate": "16.08%",
+        "quorum_met": false,
+        "total_voting_power": 80954,
+        "votes_abstain": 850,
+        "votes_against": 31948,
+        "votes_for": 48156
+      }
+    },
+    {
+      "created_at": 1737936000,
+      "created_at_height": 211644,
+      "description": "Implement storage pruning protocol This change was proposed to address concerns about cross-shard latency. Implementation requires 91598 blocks for activation after approval. Estimated impact: 38894 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "2221eaa753b15c7dd17645531dd641392164abc6f55299c9fcb6470a403e639b",
+      "proposal_type": "ParameterChange",
+      "proposer": "did:zhtp:d5c9cdbfe7279f87a6342f999ca9b4ef8ec62ebfa34ae019",
+      "quorum_required": 54,
+      "status": "Pending",
+      "title": "Implement storage pruning protocol",
+      "voting_period_blocks": 23081,
+      "voting_summary": {
+        "participation_rate": "23.42%",
+        "quorum_met": true,
+        "total_voting_power": 124468,
+        "votes_abstain": 1135,
+        "votes_against": 54393,
+        "votes_for": 68940
+      }
+    },
+    {
+      "created_at": 1738022400,
+      "created_at_height": 307067,
+      "description": "Deploy neural mesh optimization layer This change was proposed to address concerns about validator incentives. Implementation requires 92784 blocks for activation after approval. Estimated impact: 24290 active nodes affected.",
+      "execution_params": "18ce0836db950d2da2cae8e5e24020db17943c1586847038faf3a7ceba1d006ddf07a5b64dca61406d2e7d54472a75d397",
+      "proposal_id": "11424cc734a16ba619c7ed1b8898e0127a855de1ca41559a35d3f25cc575ce96",
+      "proposal_type": "TreasurySpend",
+      "proposer": "did:zhtp:8befffb0251ce5e2ee185b4fd19286fe5cba8c450801bede",
+      "quorum_required": 54,
+      "status": "Executed",
+      "title": "Deploy neural mesh optimization layer",
+      "voting_period_blocks": 67446,
+      "voting_summary": {
+        "participation_rate": "18.09%",
+        "quorum_met": false,
+        "total_voting_power": 167883,
+        "votes_abstain": 3356,
+        "votes_against": 74369,
+        "votes_for": 90158
+      }
+    },
+    {
+      "created_at": 1738108800,
+      "created_at_height": 395352,
+      "description": "Add community governance veto mechanism This change was proposed to address concerns about validator incentives. Implementation requires 92287 blocks for activation after approval. Estimated impact: 43033 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "5d000d6a92c1917f2855aac8ed0acb197ff106df79e9ca9eeb02ec792ff24733",
+      "proposal_type": "TreasurySpend",
+      "proposer": "did:zhtp:4843d210502947c8d389574622d327550f9cb286c19c1bd4",
+      "quorum_required": 69,
+      "status": "Active",
+      "title": "Add community governance veto mechanism",
+      "voting_period_blocks": 50406,
+      "voting_summary": {
+        "participation_rate": "17.00%",
+        "quorum_met": true,
+        "total_voting_power": 143135,
+        "votes_abstain": 1720,
+        "votes_against": 53136,
+        "votes_for": 88279
+      }
+    },
+    {
+      "created_at": 1738195200,
+      "created_at_height": 364597,
+      "description": "Enable dynamic difficulty adjustment This change was proposed to address concerns about identity privacy. Implementation requires 95178 blocks for activation after approval. Estimated impact: 37213 active nodes affected.",
+      "execution_params": null,
+      "proposal_id": "0e31164ac5a404ff1d5dc8b721d990db69253e70396da863d131b89333409440",
+      "proposal_type": "ProtocolUpgrade",
+      "proposer": "did:zhtp:67a4cf5bbd2c30333d547a32cccb052a849e7d180cac71e7",
+      "quorum_required": 69,
+      "status": "Active",
+      "title": "Enable dynamic difficulty adjustment",
+      "voting_period_blocks": 76465,
+      "voting_summary": {
+        "participation_rate": "16.60%",
+        "quorum_met": true,
+        "total_voting_power": 129076,
+        "votes_abstain": 2177,
+        "votes_against": 60601,
+        "votes_for": 66298
+      }
+    }
+  ],
+  "version": "sovereign-governance-v1",
+  "vote_records": [
+    {
+      "justification": null,
+      "proposal_id": "1a150ce716fc697f83188cddd9e2a40930224c34f9da38e3704797efc255ed8a",
+      "timestamp": 1735689600,
+      "vote_choice": "Abstain",
+      "vote_id": "4716d3a78458aceca07301deeaffae07cc78a1530cd9851f31763d0356179493",
+      "voter": "did:zhtp:dcbabfd6cd4c890a9fb9faa04e74cb6817e1b59d1a346360",
+      "voting_power": 16807
+    },
+    {
+      "justification": null,
+      "proposal_id": "1a150ce716fc697f83188cddd9e2a40930224c34f9da38e3704797efc255ed8a",
+      "timestamp": 1735693200,
+      "vote_choice": "Abstain",
+      "vote_id": "5cec58ceea7576e4c449e25dea9716bff75b6263a8a2ad7d49125088461ae2dd",
+      "voter": "did:zhtp:e7d4f4be31b5972101d3fb3e99ab447da9270420ab18f4d5",
+      "voting_power": 46332
+    },
+    {
+      "justification": "This proposal strengthens the network's economic model and should be approved.",
+      "proposal_id": "1a150ce716fc697f83188cddd9e2a40930224c34f9da38e3704797efc255ed8a",
+      "timestamp": 1735696800,
+      "vote_choice": "Abstain",
+      "vote_id": "be8742ece98a8f448c45b1084bfcf08a52aa3ad7b6aaa4fad5c098603cb3c958",
+      "voter": "did:zhtp:5f4c0889e8c0c149bd33b44ee0d2353bb4a31283402efe96",
+      "voting_power": 38895
+    },
+    {
+      "justification": "This proposal maintains the network's decentralization and should be amended.",
+      "proposal_id": "1a150ce716fc697f83188cddd9e2a40930224c34f9da38e3704797efc255ed8a",
+      "timestamp": 1735700400,
+      "vote_choice": "Reject",
+      "vote_id": "1ff65929c33d210a1cbccd428fa0575d63c0568011a047f8f8876f96269cf7c0",
+      "voter": "did:zhtp:a35d9c1d3c327edbf4206a22ae9047e082e094624d107c0b",
+      "voting_power": 23351
+    },
+    {
+      "justification": null,
+      "proposal_id": "1a150ce716fc697f83188cddd9e2a40930224c34f9da38e3704797efc255ed8a",
+      "timestamp": 1735704000,
+      "vote_choice": "Reject",
+      "vote_id": "2fd35645579aed11ae8a06419267e198342b77ee9b398e2022e5ad12eb14023d",
+      "voter": "did:zhtp:1340b6ac974f4e4dcd80b22c6e04bdaf704044df2fe9f393",
+      "voting_power": 10699
+    },
+    {
+      "justification": null,
+      "proposal_id": "1a150ce716fc697f83188cddd9e2a40930224c34f9da38e3704797efc255ed8a",
+      "timestamp": 1735707600,
+      "vote_choice": "Approve",
+      "vote_id": "0793635883144980d663ad6f35e0c19c7b77af8f9d8e4d5b5dc696ecd21bfc55",
+      "voter": "did:zhtp:b9ade583ff9c435a7299c8856655c328487b7ebc79088457",
+      "voting_power": 45253
+    },
+    {
+      "justification": null,
+      "proposal_id": "1a150ce716fc697f83188cddd9e2a40930224c34f9da38e3704797efc255ed8a",
+      "timestamp": 1735711200,
+      "vote_choice": "Abstain",
+      "vote_id": "dad3edaa7fff0a3445960e17906398edac77e2a412c54cbe88c575d854930a09",
+      "voter": "did:zhtp:054a2ff84d8ae8b50b0cb0f3424c4ec828e057a762b3de68",
+      "voting_power": 24834
+    },
+    {
+      "justification": null,
+      "proposal_id": "1a150ce716fc697f83188cddd9e2a40930224c34f9da38e3704797efc255ed8a",
+      "timestamp": 1735714800,
+      "vote_choice": "Approve",
+      "vote_id": "9db52ddbbdac19c7eded71f414e7e729fddda8a132231b98a8c3846ffc12cc1c",
+      "voter": "did:zhtp:06af1a881e9d0fbc84553771c7aff3627bdf924710cf5503",
+      "voting_power": 35154
+    },
+    {
+      "justification": null,
+      "proposal_id": "1a150ce716fc697f83188cddd9e2a40930224c34f9da38e3704797efc255ed8a",
+      "timestamp": 1735718400,
+      "vote_choice": "Approve",
+      "vote_id": "24436146a9c99b744aaf604c0ca442d22c0922bead733e816e968c65cfa37c4b",
+      "voter": "did:zhtp:340d7d5589a0438491fe5bc89e89ee055d098df77b3873d3",
+      "voting_power": 41907
+    },
+    {
+      "justification": null,
+      "proposal_id": "1a150ce716fc697f83188cddd9e2a40930224c34f9da38e3704797efc255ed8a",
+      "timestamp": 1735722000,
+      "vote_choice": "Abstain",
+      "vote_id": "2ffac239d9e79f8046e89e64fe3b9cd55a5ee44330db50f63f87508fbc854317",
+      "voter": "did:zhtp:8f775c2d9e365e00c05e3fd8394c769b1c6cb3179f149af6",
+      "voting_power": 33096
+    },
+    {
+      "justification": null,
+      "proposal_id": "1a150ce716fc697f83188cddd9e2a40930224c34f9da38e3704797efc255ed8a",
+      "timestamp": 1735725600,
+      "vote_choice": "Approve",
+      "vote_id": "7782bc4e64439c6e4bc2939f54f8f4245c973206d722e9edcfbfeaa9502f921d",
+      "voter": "did:zhtp:c58abd35b0d858a893ce078ad052b39ce6230dbef56c0076",
+      "voting_power": 15893
+    },
+    {
+      "justification": null,
+      "proposal_id": "1a150ce716fc697f83188cddd9e2a40930224c34f9da38e3704797efc255ed8a",
+      "timestamp": 1735729200,
+      "vote_choice": "Reject",
+      "vote_id": "8b98c1a355e88b16eb78fb7c3926ed4c101ba34453cf777203a7c87813ac3dd2",
+      "voter": "did:zhtp:76e505673c634243f19d15bcc0be4aba06cccb301556e1a0",
+      "voting_power": 7200
+    },
+    {
+      "justification": null,
+      "proposal_id": "1a150ce716fc697f83188cddd9e2a40930224c34f9da38e3704797efc255ed8a",
+      "timestamp": 1735732800,
+      "vote_choice": "Approve",
+      "vote_id": "024f9dc7c45a4092013835d38145ace91912d2b7e638343ff2516aa33194a3ae",
+      "voter": "did:zhtp:ba4a001e0cdc50270dbc88af727932038102c2e25101392f",
+      "voting_power": 9735
+    },
+    {
+      "justification": "This proposal threatens the network's user privacy and should be amended.",
+      "proposal_id": "1a150ce716fc697f83188cddd9e2a40930224c34f9da38e3704797efc255ed8a",
+      "timestamp": 1735736400,
+      "vote_choice": "Reject",
+      "vote_id": "62ab6685a0f3eecae55071831145943e548a430e35ee63104b741a6faaecd9d8",
+      "voter": "did:zhtp:757953a03f6acf620f1cf1a8821032db34f922819976da0e",
+      "voting_power": 15343
+    },
+    {
+      "justification": null,
+      "proposal_id": "00d008f91c6bab096ecf148dec6869b78932f773e9a8f99d4e70166541c11010",
+      "timestamp": 1735776000,
+      "vote_choice": "Reject",
+      "vote_id": "4cf80f4c820ee80be1ac0589f349f478c586c51ff8cd15f3ce750ef422654cd9",
+      "voter": "did:zhtp:19ced15e9b4c435d04448ebefe31ec60a9116c687d4a3c06",
+      "voting_power": 22150
+    },
+    {
+      "justification": null,
+      "proposal_id": "00d008f91c6bab096ecf148dec6869b78932f773e9a8f99d4e70166541c11010",
+      "timestamp": 1735779600,
+      "vote_choice": "Abstain",
+      "vote_id": "8b7c8d5ce2a3732cfe68f5c143dc099e9555b50e6b490ff5355ff2060b588bd1",
+      "voter": "did:zhtp:fe7ee7b557be6ecc25a4db0aa5daca9b993f64cc0bffb2ab",
+      "voting_power": 40396
+    },
+    {
+      "justification": null,
+      "proposal_id": "00d008f91c6bab096ecf148dec6869b78932f773e9a8f99d4e70166541c11010",
+      "timestamp": 1735783200,
+      "vote_choice": "Reject",
+      "vote_id": "ed8748e29a6dfc5d6e31539200e7756da7fc2108e7a9591fb0b5c0d87f76b6e7",
+      "voter": "did:zhtp:e1b11a1ca28f1600aefb29046a776c3fa20c9cdeb3e90464",
+      "voting_power": 49370
+    },
+    {
+      "justification": null,
+      "proposal_id": "00d008f91c6bab096ecf148dec6869b78932f773e9a8f99d4e70166541c11010",
+      "timestamp": 1735786800,
+      "vote_choice": "Reject",
+      "vote_id": "446f6ef767a872fd5b4ddaec522201c74df3e72568e0713cd867869f88f2f7ab",
+      "voter": "did:zhtp:bef4be63323cc76264d0d07a26fbb2779f0ad318474d5591",
+      "voting_power": 19859
+    },
+    {
+      "justification": null,
+      "proposal_id": "00d008f91c6bab096ecf148dec6869b78932f773e9a8f99d4e70166541c11010",
+      "timestamp": 1735790400,
+      "vote_choice": "Reject",
+      "vote_id": "017aab43773c185315b05a9d9f6ed40898173a3270f5091b73262c07f96aaa4f",
+      "voter": "did:zhtp:e4f667f000cfb0de4d457ba21e865ef7b6db11ea49820707",
+      "voting_power": 26793
+    },
+    {
+      "justification": null,
+      "proposal_id": "00d008f91c6bab096ecf148dec6869b78932f773e9a8f99d4e70166541c11010",
+      "timestamp": 1735794000,
+      "vote_choice": "Reject",
+      "vote_id": "2f76514339eec2969efbcbbcec652d159483ce7ee797466799ff4cd20c9911b2",
+      "voter": "did:zhtp:4e63c1f83d6545e10b01bbafc8b8ea370467a978ce5a3253",
+      "voting_power": 14937
+    },
+    {
+      "justification": null,
+      "proposal_id": "00d008f91c6bab096ecf148dec6869b78932f773e9a8f99d4e70166541c11010",
+      "timestamp": 1735797600,
+      "vote_choice": "Reject",
+      "vote_id": "72f98812f50b77a4d56092d7894c18a48c65ef4dcc21aa9bb63b7771cbee1c9f",
+      "voter": "did:zhtp:db39bdb0404eeb1d8804cdea0b8c5d7beb70b2a4deab9d68",
+      "voting_power": 2666
+    },
+    {
+      "justification": "This proposal threatens the network's validator incentives and should be approved.",
+      "proposal_id": "00d008f91c6bab096ecf148dec6869b78932f773e9a8f99d4e70166541c11010",
+      "timestamp": 1735801200,
+      "vote_choice": "Approve",
+      "vote_id": "b40d9047304e57df1b1e0f9af63d0df563bc58bc146f3b663540e668ae43883d",
+      "voter": "did:zhtp:a7cdb33bd84cfcf8bc321c65fc5262e21b91d0ec84a8a83c",
+      "voting_power": 36667
+    },
+    {
+      "justification": "This proposal strengthens the network's user privacy and should be approved.",
+      "proposal_id": "00d008f91c6bab096ecf148dec6869b78932f773e9a8f99d4e70166541c11010",
+      "timestamp": 1735804800,
+      "vote_choice": "Approve",
+      "vote_id": "762d4b995080442efed18768310cf44ea03da60bff0eed1a920ec8a9cd8a0c7e",
+      "voter": "did:zhtp:8383a5ac106aef2133a107daa4940871c031c337f9e4620f",
+      "voting_power": 38311
+    },
+    {
+      "justification": null,
+      "proposal_id": "00d008f91c6bab096ecf148dec6869b78932f773e9a8f99d4e70166541c11010",
+      "timestamp": 1735808400,
+      "vote_choice": "Abstain",
+      "vote_id": "b270a95c5e10555d2e08352bb3808d2edb2fda4b1def10b04438dc5915d93a9d",
+      "voter": "did:zhtp:8a3ec6bf3760e165c0db9e830a9747320848d583870456d7",
+      "voting_power": 39049
+    },
+    {
+      "justification": null,
+      "proposal_id": "8a7cdccfac1d416b391d8008f297653e1aa842de7016a5b7a8ef74cf569eb94d",
+      "timestamp": 1735862400,
+      "vote_choice": "Approve",
+      "vote_id": "98b891056fa5c5539997b37cc942c8c0fe3ffc3ca284aab8de21685d5378df02",
+      "voter": "did:zhtp:5d9672b9f7483fbaee965d154723c9be9d5ba90aba6f59cd",
+      "voting_power": 35324
+    },
+    {
+      "justification": null,
+      "proposal_id": "8a7cdccfac1d416b391d8008f297653e1aa842de7016a5b7a8ef74cf569eb94d",
+      "timestamp": 1735866000,
+      "vote_choice": "Reject",
+      "vote_id": "40983be38aedd20a925d515cff2d697e11a4249705636d258c597f57836de37a",
+      "voter": "did:zhtp:3ea5dba1bd5287f1c0d05ae96cef7ac0a429992f517a5978",
+      "voting_power": 27271
+    },
+    {
+      "justification": "This proposal strengthens the network's security posture and should be rejected.",
+      "proposal_id": "8a7cdccfac1d416b391d8008f297653e1aa842de7016a5b7a8ef74cf569eb94d",
+      "timestamp": 1735869600,
+      "vote_choice": "Abstain",
+      "vote_id": "f7a2c3d624090da6da3c310025e36ba26267fd0faabc18ef2f3ef15a909a9e74",
+      "voter": "did:zhtp:d6dd0dd13c28fefd7791d766f83e6635cab08d8491bd1ea4",
+      "voting_power": 5420
+    },
+    {
+      "justification": "This proposal maintains the network's validator incentives and should be amended.",
+      "proposal_id": "8a7cdccfac1d416b391d8008f297653e1aa842de7016a5b7a8ef74cf569eb94d",
+      "timestamp": 1735873200,
+      "vote_choice": "Reject",
+      "vote_id": "d1b0b298cc4e084b1e142375a8291c428e99aa6142a77c62d26178a0d4ddd2f0",
+      "voter": "did:zhtp:9a9306a57b42d87792557ee3d2ee896e0ee43d5d5de95c58",
+      "voting_power": 12912
+    },
+    {
+      "justification": null,
+      "proposal_id": "8a7cdccfac1d416b391d8008f297653e1aa842de7016a5b7a8ef74cf569eb94d",
+      "timestamp": 1735876800,
+      "vote_choice": "Reject",
+      "vote_id": "396ec15727a6fdf3fe4cdd539370c3945f23af9b4e623010b50559d0796712a5",
+      "voter": "did:zhtp:71812e540e1b94897c43d63118a524e7c3d1a579eeda49bd",
+      "voting_power": 18752
+    },
+    {
+      "justification": null,
+      "proposal_id": "8fc183feb3c8988c3c7c10a465a8d159e4d1eef41e4a7f85c2ec01974c65fcda",
+      "timestamp": 1735948800,
+      "vote_choice": "Approve",
+      "vote_id": "6fdcb17e2e8d729c5e71df5d39f7d5cd7ad03f30f2675b6439a4e506a09fb992",
+      "voter": "did:zhtp:97cdb9039d8715031d55da8de435c3bf191a488507d9c81b",
+      "voting_power": 30401
+    },
+    {
+      "justification": null,
+      "proposal_id": "8fc183feb3c8988c3c7c10a465a8d159e4d1eef41e4a7f85c2ec01974c65fcda",
+      "timestamp": 1735952400,
+      "vote_choice": "Approve",
+      "vote_id": "2ebf94d8a9c38e1006fe7f6e3cc89eae82a391eea10012eb7d392c4c2303efef",
+      "voter": "did:zhtp:92454b97ef200681c4310630a401de74bcd013e9f1d4a644",
+      "voting_power": 34562
+    },
+    {
+      "justification": null,
+      "proposal_id": "8fc183feb3c8988c3c7c10a465a8d159e4d1eef41e4a7f85c2ec01974c65fcda",
+      "timestamp": 1735956000,
+      "vote_choice": "Reject",
+      "vote_id": "5525b174150d0ac421962fdd0911f7e5680a14f02922203fbb68722e035c3166",
+      "voter": "did:zhtp:27d1683f326c7d11c6907fc7f0840d9158f0fb6ea95e58ad",
+      "voting_power": 12895
+    },
+    {
+      "justification": null,
+      "proposal_id": "8fc183feb3c8988c3c7c10a465a8d159e4d1eef41e4a7f85c2ec01974c65fcda",
+      "timestamp": 1735959600,
+      "vote_choice": "Approve",
+      "vote_id": "4dd1cca5c3ba8b57e37eb0d2db8487222baec535ffc69d6a684b0b1d130eef40",
+      "voter": "did:zhtp:70664fd1c94d854361f6fcdbc47080956552a52cf71203d2",
+      "voting_power": 45001
+    },
+    {
+      "justification": "This proposal maintains the network's user privacy and should be amended.",
+      "proposal_id": "8fc183feb3c8988c3c7c10a465a8d159e4d1eef41e4a7f85c2ec01974c65fcda",
+      "timestamp": 1735963200,
+      "vote_choice": "Reject",
+      "vote_id": "348c272e5f495a21e16cf14a3725abcce5379a641cb601b77842c08e268ab87c",
+      "voter": "did:zhtp:8bbb966674da21df9057257ac4a244af5c714539074549c9",
+      "voting_power": 49551
+    },
+    {
+      "justification": "This proposal improves the network's security posture and should be approved.",
+      "proposal_id": "534d973222641540acae6a4065f9e4f65c384c04328af8778d39207b6c108902",
+      "timestamp": 1736035200,
+      "vote_choice": "Approve",
+      "vote_id": "18eee1f0ea5e6067cadf49d40a133da41112d4e1b43a7cd4dc11a17da483b454",
+      "voter": "did:zhtp:04d3bcfaa5a294f1446305a7190e633aecc09403ffcd8a3e",
+      "voting_power": 30220
+    },
+    {
+      "justification": null,
+      "proposal_id": "534d973222641540acae6a4065f9e4f65c384c04328af8778d39207b6c108902",
+      "timestamp": 1736038800,
+      "vote_choice": "Approve",
+      "vote_id": "06e9d85d7764b40ced54a2261957adfa1dad47e245f4ed529120f530e6d69c98",
+      "voter": "did:zhtp:d5fff6228674ca72316f09befdb66cf454f94bca7a95484d",
+      "voting_power": 22051
+    },
+    {
+      "justification": "This proposal improves the network's validator incentives and should be approved.",
+      "proposal_id": "534d973222641540acae6a4065f9e4f65c384c04328af8778d39207b6c108902",
+      "timestamp": 1736042400,
+      "vote_choice": "Abstain",
+      "vote_id": "e36ed7a3f3b300e43fd1c176607877b0726ce255616776c6bfd04f821251b234",
+      "voter": "did:zhtp:0073a081886a4a882addc4a593e3890496831a80370c8cb0",
+      "voting_power": 25298
+    },
+    {
+      "justification": "This proposal improves the network's user privacy and should be amended.",
+      "proposal_id": "534d973222641540acae6a4065f9e4f65c384c04328af8778d39207b6c108902",
+      "timestamp": 1736046000,
+      "vote_choice": "Approve",
+      "vote_id": "19481df2d12ab23bbd68d3187ff2b58436dde994d401ec90716e02aee427572a",
+      "voter": "did:zhtp:1d3dd7f4c928efe595a1d52ff4a40f3ce0b0d090cf5e12cb",
+      "voting_power": 33600
+    },
+    {
+      "justification": null,
+      "proposal_id": "534d973222641540acae6a4065f9e4f65c384c04328af8778d39207b6c108902",
+      "timestamp": 1736049600,
+      "vote_choice": "Approve",
+      "vote_id": "361a1a1c05a2c7d8bcfcb5090dc9a4a53061bfa57fa82b24027d7714f1d0ee40",
+      "voter": "did:zhtp:07457305a11316486b1e041f67f6a9471edbe30d4df1b2a4",
+      "voting_power": 7904
+    },
+    {
+      "justification": "This proposal threatens the network's validator incentives and should be rejected.",
+      "proposal_id": "534d973222641540acae6a4065f9e4f65c384c04328af8778d39207b6c108902",
+      "timestamp": 1736053200,
+      "vote_choice": "Reject",
+      "vote_id": "78f03144078a56c172ad1a9ca75a0e0221998468117a8f38b6ccb814abae4c4c",
+      "voter": "did:zhtp:7fffc0a9b01c32687b39193b5497144d24598ab8f7027d0d",
+      "voting_power": 30013
+    },
+    {
+      "justification": null,
+      "proposal_id": "534d973222641540acae6a4065f9e4f65c384c04328af8778d39207b6c108902",
+      "timestamp": 1736056800,
+      "vote_choice": "Approve",
+      "vote_id": "fb3585bbd9515769f99e1a5c5a3d2bdcdac23119834d684d415a4b9988c7aecc",
+      "voter": "did:zhtp:051211558513775a40e113b0b8d671bf58ed47283ea618c4",
+      "voting_power": 21037
+    },
+    {
+      "justification": null,
+      "proposal_id": "534d973222641540acae6a4065f9e4f65c384c04328af8778d39207b6c108902",
+      "timestamp": 1736060400,
+      "vote_choice": "Approve",
+      "vote_id": "3b1bd71d45ccded25d18ae68f62daae6576c475cf2c017bae5dfaba8807a88f0",
+      "voter": "did:zhtp:a41c287a2ca1ea46040ea92dfe7f8411e76cdc76d7b5bc92",
+      "voting_power": 49642
+    },
+    {
+      "justification": null,
+      "proposal_id": "534d973222641540acae6a4065f9e4f65c384c04328af8778d39207b6c108902",
+      "timestamp": 1736064000,
+      "vote_choice": "Approve",
+      "vote_id": "e81ab11ae598627d54c3869772508c3b0032960aa6198b41859a541f54accd48",
+      "voter": "did:zhtp:baacef8a3ea1113e769b8c4ac9465b5d2819baa1f5b59430",
+      "voting_power": 8613
+    },
+    {
+      "justification": null,
+      "proposal_id": "534d973222641540acae6a4065f9e4f65c384c04328af8778d39207b6c108902",
+      "timestamp": 1736067600,
+      "vote_choice": "Reject",
+      "vote_id": "cd1514ebd9952b054bd158ea73c499d787674c2f7026de4801e9402085a24fcb",
+      "voter": "did:zhtp:aa32af2f3cd142a72a517f42e846c4cc3056c1faaad61b96",
+      "voting_power": 22513
+    },
+    {
+      "justification": "This proposal improves the network's validator incentives and should be rejected.",
+      "proposal_id": "534d973222641540acae6a4065f9e4f65c384c04328af8778d39207b6c108902",
+      "timestamp": 1736071200,
+      "vote_choice": "Abstain",
+      "vote_id": "3eb57788b9dde073148ff2eaca41a8bd7ba7ec1cb1d4100cf625cf3ee1645cc9",
+      "voter": "did:zhtp:4f20459065e7d5c9945e52d6e057267df1bfe389cb78a47d",
+      "voting_power": 16126
+    },
+    {
+      "justification": "This proposal strengthens the network's economic model and should be approved.",
+      "proposal_id": "534d973222641540acae6a4065f9e4f65c384c04328af8778d39207b6c108902",
+      "timestamp": 1736074800,
+      "vote_choice": "Approve",
+      "vote_id": "db9c7fa987339f6678f7297012d5a9f7f920394f070318153e425dd34b333ed9",
+      "voter": "did:zhtp:635f69aa0e4d952ba666e5995aa26daaaa5a3e0c30568d1f",
+      "voting_power": 47039
+    },
+    {
+      "justification": "This proposal threatens the network's security posture and should be rejected.",
+      "proposal_id": "f415c790048511257318eb486cf722e8d28aa5ee0e4143b8fef9c48c8c21fb14",
+      "timestamp": 1736121600,
+      "vote_choice": "Approve",
+      "vote_id": "db35fcdbb6e68fae6fa4ea663b7c209bb25398ed89dd211a016121b6c9dfdafe",
+      "voter": "did:zhtp:f1ee64e9f862899ca6b0b8869b00b28b6d2bf755ac20087c",
+      "voting_power": 5198
+    },
+    {
+      "justification": null,
+      "proposal_id": "f415c790048511257318eb486cf722e8d28aa5ee0e4143b8fef9c48c8c21fb14",
+      "timestamp": 1736125200,
+      "vote_choice": "Abstain",
+      "vote_id": "d882a04001db7cd103d02cf071fc6e44e3f23a7d05289a4a87fb32da968f7cd6",
+      "voter": "did:zhtp:1e9e0898538847323b8a20e82ee70a7c770d7fa259d3abea",
+      "voting_power": 9542
+    },
+    {
+      "justification": null,
+      "proposal_id": "f415c790048511257318eb486cf722e8d28aa5ee0e4143b8fef9c48c8c21fb14",
+      "timestamp": 1736128800,
+      "vote_choice": "Abstain",
+      "vote_id": "67a0f21a42c8d4c4185f5ddf6f11938aab50b85b5b54d0ac2331d4260de2bb70",
+      "voter": "did:zhtp:422add695b0fb466706c4db90420443808ceda28a9afae68",
+      "voting_power": 35184
+    },
+    {
+      "justification": null,
+      "proposal_id": "f415c790048511257318eb486cf722e8d28aa5ee0e4143b8fef9c48c8c21fb14",
+      "timestamp": 1736132400,
+      "vote_choice": "Reject",
+      "vote_id": "046eb24c2b6e3046c3e6212e266e86f3c88d94daf508dfe63834a1237bdb2d9e",
+      "voter": "did:zhtp:f14ac76c0a4ab0111d1719d21c9ed911d728cb48666eb105",
+      "voting_power": 24298
+    },
+    {
+      "justification": null,
+      "proposal_id": "f415c790048511257318eb486cf722e8d28aa5ee0e4143b8fef9c48c8c21fb14",
+      "timestamp": 1736136000,
+      "vote_choice": "Reject",
+      "vote_id": "a3765e6bc4db1218173b644ae76ce8555a58dea93af67ce963bacbb0aadbda9f",
+      "voter": "did:zhtp:38a415948ff380e542f968b51932d256f4373b75ce489ab3",
+      "voting_power": 44615
+    },
+    {
+      "justification": null,
+      "proposal_id": "f415c790048511257318eb486cf722e8d28aa5ee0e4143b8fef9c48c8c21fb14",
+      "timestamp": 1736139600,
+      "vote_choice": "Reject",
+      "vote_id": "e7d0d28c250f525077cd2ccf1158fa9791f9b510dfb0c75900c06798a52fdf6a",
+      "voter": "did:zhtp:2281a5a593d644c5e1b41b810be98f4b3ddd05921d4e737a",
+      "voting_power": 31571
+    },
+    {
+      "justification": null,
+      "proposal_id": "f415c790048511257318eb486cf722e8d28aa5ee0e4143b8fef9c48c8c21fb14",
+      "timestamp": 1736143200,
+      "vote_choice": "Abstain",
+      "vote_id": "9f382f050c31ad602b578a7d5af2b81c91682eaa629c666826240d895ff5749d",
+      "voter": "did:zhtp:d2eb9f12f9533d8211fa5dfcd3f7b014fcf8e03dbc946b09",
+      "voting_power": 28744
+    },
+    {
+      "justification": "This proposal maintains the network's economic model and should be amended.",
+      "proposal_id": "f415c790048511257318eb486cf722e8d28aa5ee0e4143b8fef9c48c8c21fb14",
+      "timestamp": 1736146800,
+      "vote_choice": "Abstain",
+      "vote_id": "b2cf8fa68fc0b4ef03fe8cd6992ca8890da8627fdb058d229392ea22f4ab6a13",
+      "voter": "did:zhtp:ad8d473786f9c3a8e30445a7ba52cde66731d224f3b1be56",
+      "voting_power": 12660
+    },
+    {
+      "justification": null,
+      "proposal_id": "f415c790048511257318eb486cf722e8d28aa5ee0e4143b8fef9c48c8c21fb14",
+      "timestamp": 1736150400,
+      "vote_choice": "Approve",
+      "vote_id": "ffd6f8ee0a71ccf492fd4351dc894698f392ea671c165189fabe26a661762128",
+      "voter": "did:zhtp:fe345aac1fe0e3f2a665609302c81098e22cf3d31c8a6f25",
+      "voting_power": 1258
+    },
+    {
+      "justification": "This proposal threatens the network's security posture and should be rejected.",
+      "proposal_id": "f415c790048511257318eb486cf722e8d28aa5ee0e4143b8fef9c48c8c21fb14",
+      "timestamp": 1736154000,
+      "vote_choice": "Reject",
+      "vote_id": "cfb0d70426457b58ac1403dbbc8ee38f4cdb2ff203961d48e1bcd2c81eff6915",
+      "voter": "did:zhtp:6fb2190159819bd272251e3e93b7e39ad26cee7427c8c73b",
+      "voting_power": 24979
+    },
+    {
+      "justification": null,
+      "proposal_id": "15b9fa5d9e9867f335d6c8f801fa24e15e5124ea9eda351ba5ea53bd86fc5ec7",
+      "timestamp": 1736208000,
+      "vote_choice": "Reject",
+      "vote_id": "952bf5fe7708f0d82b93a5df249cd37a67f9f96da539f2e2eeffc9e2b1cb7cb4",
+      "voter": "did:zhtp:1bd3bb7a49ea9dcd0e0792aa4dd0b000871b3c5d36c0db63",
+      "voting_power": 25818
+    },
+    {
+      "justification": "This proposal threatens the network's validator incentives and should be approved.",
+      "proposal_id": "15b9fa5d9e9867f335d6c8f801fa24e15e5124ea9eda351ba5ea53bd86fc5ec7",
+      "timestamp": 1736211600,
+      "vote_choice": "Approve",
+      "vote_id": "5174f2196f027fb2611b5df3094bc504a2449c52c7bdc6341e507b6301b6cb6e",
+      "voter": "did:zhtp:c24a5ed03477efc261f4aeb0aefb4be6510da75aa4566d3b",
+      "voting_power": 4079
+    },
+    {
+      "justification": null,
+      "proposal_id": "15b9fa5d9e9867f335d6c8f801fa24e15e5124ea9eda351ba5ea53bd86fc5ec7",
+      "timestamp": 1736215200,
+      "vote_choice": "Approve",
+      "vote_id": "fe20970f82860510547dd52f1bb77611a274706e11dbe38cb8266121fa9e6097",
+      "voter": "did:zhtp:6f3174afe68994c53c859d99d4143df6a07475163457ff65",
+      "voting_power": 33635
+    },
+    {
+      "justification": null,
+      "proposal_id": "15b9fa5d9e9867f335d6c8f801fa24e15e5124ea9eda351ba5ea53bd86fc5ec7",
+      "timestamp": 1736218800,
+      "vote_choice": "Reject",
+      "vote_id": "ad803cf13931c9e9bdc3985bc8b274a52528d0aa5f9e7095b34a0a98f69827fd",
+      "voter": "did:zhtp:80c96acf1e34215773f82233ea036870170ec1c17e61479b",
+      "voting_power": 42519
+    },
+    {
+      "justification": "This proposal strengthens the network's security posture and should be amended.",
+      "proposal_id": "15b9fa5d9e9867f335d6c8f801fa24e15e5124ea9eda351ba5ea53bd86fc5ec7",
+      "timestamp": 1736222400,
+      "vote_choice": "Approve",
+      "vote_id": "5eed48f876cf1e1d0dfd9b415d6f0e2d1c33f9a456b69f96485906923691148d",
+      "voter": "did:zhtp:1217dd35c4451690078029a2bdba986f9a9e3adbb949e2f9",
+      "voting_power": 37382
+    },
+    {
+      "justification": null,
+      "proposal_id": "15b9fa5d9e9867f335d6c8f801fa24e15e5124ea9eda351ba5ea53bd86fc5ec7",
+      "timestamp": 1736226000,
+      "vote_choice": "Reject",
+      "vote_id": "66ac8d6a77dd50dc123994613eddadb18882be49a96584bf592bf558d0f90843",
+      "voter": "did:zhtp:5e7cc6a8e6894f4fc120a5e62d004554ec500a70cb9c4651",
+      "voting_power": 49401
+    },
+    {
+      "justification": "This proposal improves the network's economic model and should be approved.",
+      "proposal_id": "15b9fa5d9e9867f335d6c8f801fa24e15e5124ea9eda351ba5ea53bd86fc5ec7",
+      "timestamp": 1736229600,
+      "vote_choice": "Reject",
+      "vote_id": "f4f3ec9542e84af9cd96d1725c1f92de573e8707a7850b88b81abf5b5ef5298e",
+      "voter": "did:zhtp:65ddf74cad908bd3a69552368c4fc9398b6973a721446f7f",
+      "voting_power": 15430
+    },
+    {
+      "justification": "This proposal maintains the network's user privacy and should be approved.",
+      "proposal_id": "15b9fa5d9e9867f335d6c8f801fa24e15e5124ea9eda351ba5ea53bd86fc5ec7",
+      "timestamp": 1736233200,
+      "vote_choice": "Abstain",
+      "vote_id": "377815ab527728078dc9b8f1519c9907a8992001de89ba9eac877169ea69f39c",
+      "voter": "did:zhtp:7cc2636fd1a38cb46e55251ce78ad7066775bcca29f5bdf9",
+      "voting_power": 44783
+    },
+    {
+      "justification": null,
+      "proposal_id": "15b9fa5d9e9867f335d6c8f801fa24e15e5124ea9eda351ba5ea53bd86fc5ec7",
+      "timestamp": 1736236800,
+      "vote_choice": "Approve",
+      "vote_id": "5a424990393fa6c25b81fdd27b534e2b0706a24424bccca2dc4a0edbb704192c",
+      "voter": "did:zhtp:12587d6ccfc2c6cf8c3e37a11607776e470ce00db3020b31",
+      "voting_power": 19977
+    },
+    {
+      "justification": "This proposal strengthens the network's security posture and should be amended.",
+      "proposal_id": "15b9fa5d9e9867f335d6c8f801fa24e15e5124ea9eda351ba5ea53bd86fc5ec7",
+      "timestamp": 1736240400,
+      "vote_choice": "Reject",
+      "vote_id": "296bde91a28df803192742316f97fba6048ad68a59ed40d1e4cd9efb71186d61",
+      "voter": "did:zhtp:0653f349e1880e3444d5aebf166eb5de0369a424a7839f46",
+      "voting_power": 31565
+    },
+    {
+      "justification": null,
+      "proposal_id": "15b9fa5d9e9867f335d6c8f801fa24e15e5124ea9eda351ba5ea53bd86fc5ec7",
+      "timestamp": 1736244000,
+      "vote_choice": "Approve",
+      "vote_id": "cf81a8ee999c1f0955634d3c7c22cf40df8383e045825debdde645766383235f",
+      "voter": "did:zhtp:e71746fd6beff2a784a63bb966a3218048640bde336351b0",
+      "voting_power": 7637
+    },
+    {
+      "justification": null,
+      "proposal_id": "fbfff86e1d567fc38a7bf86c22855ccb114d6fcae3a5d872e164e53104490a8f",
+      "timestamp": 1736294400,
+      "vote_choice": "Approve",
+      "vote_id": "547aec81283f1ed812535f90941d123aff451758ca84e6939377d0c21d6ecec5",
+      "voter": "did:zhtp:17827889c1fa19d75c268726abe7e860cc7c1756e83c7f69",
+      "voting_power": 33131
+    },
+    {
+      "justification": "This proposal threatens the network's economic model and should be approved.",
+      "proposal_id": "fbfff86e1d567fc38a7bf86c22855ccb114d6fcae3a5d872e164e53104490a8f",
+      "timestamp": 1736298000,
+      "vote_choice": "Approve",
+      "vote_id": "69e8e3f7bee65cd50007c0b8999242f81ac22641699dbd6462242c1affc1dcad",
+      "voter": "did:zhtp:c0b8a2434d69aa8c6e8fa1c710d07d9102e252fb1b9b9b41",
+      "voting_power": 34789
+    },
+    {
+      "justification": "This proposal maintains the network's security posture and should be approved.",
+      "proposal_id": "fbfff86e1d567fc38a7bf86c22855ccb114d6fcae3a5d872e164e53104490a8f",
+      "timestamp": 1736301600,
+      "vote_choice": "Approve",
+      "vote_id": "bac9b541f8d76e73a843f780154f14066d04a6e408e193cbd659359592f2607c",
+      "voter": "did:zhtp:043fc671e9d7fe86a1d7df769e1d266c8a9d5031faf2c351",
+      "voting_power": 26052
+    },
+    {
+      "justification": null,
+      "proposal_id": "fbfff86e1d567fc38a7bf86c22855ccb114d6fcae3a5d872e164e53104490a8f",
+      "timestamp": 1736305200,
+      "vote_choice": "Reject",
+      "vote_id": "e59e69ec4d1b83b035d561e55c61a51cb67a752c379dc2b55a0ae8972c8db764",
+      "voter": "did:zhtp:714c28d43636da33820389538e4acfe75016ee38320f8bce",
+      "voting_power": 16544
+    },
+    {
+      "justification": "This proposal threatens the network's decentralization and should be rejected.",
+      "proposal_id": "fbfff86e1d567fc38a7bf86c22855ccb114d6fcae3a5d872e164e53104490a8f",
+      "timestamp": 1736308800,
+      "vote_choice": "Reject",
+      "vote_id": "283929d6b7e6e205ab34a44386059341a7bdb9d63c612cc4a638f796f7c583ab",
+      "voter": "did:zhtp:c4e16c8f3f739b94a5c16e5d1d809b2e4731d69836d2b7f7",
+      "voting_power": 4181
+    },
+    {
+      "justification": null,
+      "proposal_id": "fbfff86e1d567fc38a7bf86c22855ccb114d6fcae3a5d872e164e53104490a8f",
+      "timestamp": 1736312400,
+      "vote_choice": "Approve",
+      "vote_id": "924352326cd2563ae06a70911219b3a230cc8029ab2c531134c62e9d2cd35371",
+      "voter": "did:zhtp:9e500f12acc1a45b29485994bae0f5680c8f765a8395a5ff",
+      "voting_power": 44297
+    },
+    {
+      "justification": null,
+      "proposal_id": "fbfff86e1d567fc38a7bf86c22855ccb114d6fcae3a5d872e164e53104490a8f",
+      "timestamp": 1736316000,
+      "vote_choice": "Reject",
+      "vote_id": "0a668bdf0abeddbcf51b24a6935b4021885972d2e6ed4f594a9ce047372996d9",
+      "voter": "did:zhtp:4c8133dd590b47dd4626c6aa27b0904536d59725b70bd5f8",
+      "voting_power": 23890
+    },
+    {
+      "justification": null,
+      "proposal_id": "fbfff86e1d567fc38a7bf86c22855ccb114d6fcae3a5d872e164e53104490a8f",
+      "timestamp": 1736319600,
+      "vote_choice": "Approve",
+      "vote_id": "0fd4648b2b08581adbdd18a0a2aee8ee50e56109119e8eb54ce9ef3b0682e65c",
+      "voter": "did:zhtp:27b43780707d5e144c4fd1565b1c5410c9c6cf3f1bd28af6",
+      "voting_power": 17288
+    },
+    {
+      "justification": null,
+      "proposal_id": "fbfff86e1d567fc38a7bf86c22855ccb114d6fcae3a5d872e164e53104490a8f",
+      "timestamp": 1736323200,
+      "vote_choice": "Approve",
+      "vote_id": "c47caa9ede28f82f4e2d38b7b4f5cec24ccc425c97bff0864746896622fdd381",
+      "voter": "did:zhtp:50eeb292907ced9e0d3cfd11adc9bf6dd63bbad7c83d0e0c",
+      "voting_power": 2424
+    },
+    {
+      "justification": null,
+      "proposal_id": "fbfff86e1d567fc38a7bf86c22855ccb114d6fcae3a5d872e164e53104490a8f",
+      "timestamp": 1736326800,
+      "vote_choice": "Reject",
+      "vote_id": "8da5a090a92a1ae458b9d0d94b41966ae9721771ed98e97c64703640773e1802",
+      "voter": "did:zhtp:19131f9096a84eabb9191975826b1a13fd99d6d00dba2d00",
+      "voting_power": 12523
+    },
+    {
+      "justification": null,
+      "proposal_id": "fbfff86e1d567fc38a7bf86c22855ccb114d6fcae3a5d872e164e53104490a8f",
+      "timestamp": 1736330400,
+      "vote_choice": "Abstain",
+      "vote_id": "039a0a53ca9b83ff112d2bc44e5ac5f94fa751a04f9c5fd4f278a074ccb58119",
+      "voter": "did:zhtp:8da7cd09ed2b78d101d7482adc1363fbf902eeace2044a56",
+      "voting_power": 34342
+    },
+    {
+      "justification": null,
+      "proposal_id": "fbfff86e1d567fc38a7bf86c22855ccb114d6fcae3a5d872e164e53104490a8f",
+      "timestamp": 1736334000,
+      "vote_choice": "Reject",
+      "vote_id": "747f2bc05abb8397a6a211d51037e6ebef7f3394fde310df691bda17e67c3374",
+      "voter": "did:zhtp:c010e38ff8f960e44dc35317f26c86336a8b9fe41f97837e",
+      "voting_power": 34310
+    },
+    {
+      "justification": null,
+      "proposal_id": "fbfff86e1d567fc38a7bf86c22855ccb114d6fcae3a5d872e164e53104490a8f",
+      "timestamp": 1736337600,
+      "vote_choice": "Approve",
+      "vote_id": "323797451d716d4aa69456fd45cfef2796b7a85034f56810b29f432c0cf2b77b",
+      "voter": "did:zhtp:e91065186ee35b39f6806666a533c00d40e0e9e729cef388",
+      "voting_power": 25043
+    },
+    {
+      "justification": null,
+      "proposal_id": "fbfff86e1d567fc38a7bf86c22855ccb114d6fcae3a5d872e164e53104490a8f",
+      "timestamp": 1736341200,
+      "vote_choice": "Approve",
+      "vote_id": "74ccca63e97e9ca7774af09106019d323ac752feec9ee3c7e4cca6474ce11126",
+      "voter": "did:zhtp:00ec9045dce1dadcabc85e4b3afca74162297e32a18219cf",
+      "voting_power": 26743
+    },
+    {
+      "justification": null,
+      "proposal_id": "d8de57069f8b3d3e3e3a31ec63f26f1e74387b554dd4ea40d764fd6d1e6682a7",
+      "timestamp": 1736380800,
+      "vote_choice": "Abstain",
+      "vote_id": "f6fa7df2f512cb9767dfee616e5360e0b3b585c2ad9f60d518f373550c19d4d3",
+      "voter": "did:zhtp:e8a366529681c76afac85798d82d43aa4d835a72d321c927",
+      "voting_power": 10588
+    },
+    {
+      "justification": "This proposal maintains the network's validator incentives and should be approved.",
+      "proposal_id": "d8de57069f8b3d3e3e3a31ec63f26f1e74387b554dd4ea40d764fd6d1e6682a7",
+      "timestamp": 1736384400,
+      "vote_choice": "Reject",
+      "vote_id": "52d1a74f7211313505a85386841f42da985a41f2cf18a6a13aa2f01671425913",
+      "voter": "did:zhtp:047466b9d76625c9076d7dbd8e6c4cb9cf1db0af692e6483",
+      "voting_power": 32469
+    },
+    {
+      "justification": null,
+      "proposal_id": "d8de57069f8b3d3e3e3a31ec63f26f1e74387b554dd4ea40d764fd6d1e6682a7",
+      "timestamp": 1736388000,
+      "vote_choice": "Reject",
+      "vote_id": "0f7e655a0ddcdbd978a1bfd0ba91fbd50d87f3488f7a3a253ef68d5111326aee",
+      "voter": "did:zhtp:7574d4937b8a5e69fd0f4cebe569acfce8c8f9fa01e2f14f",
+      "voting_power": 44063
+    },
+    {
+      "justification": null,
+      "proposal_id": "d8de57069f8b3d3e3e3a31ec63f26f1e74387b554dd4ea40d764fd6d1e6682a7",
+      "timestamp": 1736391600,
+      "vote_choice": "Approve",
+      "vote_id": "62b58bc0bee1014379d61ecbbc39630bcd85585a2aabc6aaa2dc8c78c808b7e0",
+      "voter": "did:zhtp:32a6c037788ebe89f73ffa45907e195f97a25693a012d524",
+      "voting_power": 49170
+    },
+    {
+      "justification": null,
+      "proposal_id": "d8de57069f8b3d3e3e3a31ec63f26f1e74387b554dd4ea40d764fd6d1e6682a7",
+      "timestamp": 1736395200,
+      "vote_choice": "Reject",
+      "vote_id": "f362957a13d575f7a1f85e74ae0c960292f3ef9f81a81e4337b50df66acfba42",
+      "voter": "did:zhtp:635d89daa243b82d0a87d0d118028f6cf8be932789e9af07",
+      "voting_power": 4247
+    },
+    {
+      "justification": "This proposal improves the network's decentralization and should be rejected.",
+      "proposal_id": "d8de57069f8b3d3e3e3a31ec63f26f1e74387b554dd4ea40d764fd6d1e6682a7",
+      "timestamp": 1736398800,
+      "vote_choice": "Reject",
+      "vote_id": "4d02bb9396cfafb7cae4ddeeb7ed67e2b78191db49e16173959d5ad374e60a22",
+      "voter": "did:zhtp:b8b8575e13d677fcc8867e76824bc8a296fffc4715eef206",
+      "voting_power": 42034
+    },
+    {
+      "justification": null,
+      "proposal_id": "c3e132b23ea7c9cf7a0b7fc2c581046caabc5984f6cf44e621193a561ad29005",
+      "timestamp": 1736467200,
+      "vote_choice": "Abstain",
+      "vote_id": "a2c187db8994941485d51b000dfeecdc9f8c060b5104b0d3b48176e10dd2a620",
+      "voter": "did:zhtp:32e241e42bb51d2381a8739b75d4b52fce66d6ad8bf46a07",
+      "voting_power": 26783
+    },
+    {
+      "justification": "This proposal threatens the network's security posture and should be rejected.",
+      "proposal_id": "c3e132b23ea7c9cf7a0b7fc2c581046caabc5984f6cf44e621193a561ad29005",
+      "timestamp": 1736470800,
+      "vote_choice": "Abstain",
+      "vote_id": "0246cb9786a82d54c0cc27a72dc2c06aa0865a08b382cfdd8838c6151ef3d7e9",
+      "voter": "did:zhtp:c3325ba88e6e2fcc6ce5d4aca6cb8f62911376776b5b1c98",
+      "voting_power": 32266
+    },
+    {
+      "justification": null,
+      "proposal_id": "c3e132b23ea7c9cf7a0b7fc2c581046caabc5984f6cf44e621193a561ad29005",
+      "timestamp": 1736474400,
+      "vote_choice": "Reject",
+      "vote_id": "0545dcedf2629b0aabcc6ecfa31c78cc445d440de9e236f01456d508156444b7",
+      "voter": "did:zhtp:129e0f6ee1d8919e2a165834707461f2515f1d6393e83b8f",
+      "voting_power": 48795
+    },
+    {
+      "justification": "This proposal strengthens the network's economic model and should be amended.",
+      "proposal_id": "c3e132b23ea7c9cf7a0b7fc2c581046caabc5984f6cf44e621193a561ad29005",
+      "timestamp": 1736478000,
+      "vote_choice": "Approve",
+      "vote_id": "947caacf5a5fe9d99f6ff54fe9b471f882a37a94947d85b4e132ebc97689675c",
+      "voter": "did:zhtp:47e74308e28be38a0162332eca3d07e1a5c0cb7fe8660c68",
+      "voting_power": 16996
+    },
+    {
+      "justification": null,
+      "proposal_id": "c3e132b23ea7c9cf7a0b7fc2c581046caabc5984f6cf44e621193a561ad29005",
+      "timestamp": 1736481600,
+      "vote_choice": "Approve",
+      "vote_id": "f9fa94fd42dd10be3dd8d1834ed1a5c860f5426639402c8557503ab9c00de769",
+      "voter": "did:zhtp:0b1ffc5e67f9f1b6ec20e7b820c103623f8e769e5fedda89",
+      "voting_power": 15652
+    },
+    {
+      "justification": "This proposal maintains the network's user privacy and should be approved.",
+      "proposal_id": "c3e132b23ea7c9cf7a0b7fc2c581046caabc5984f6cf44e621193a561ad29005",
+      "timestamp": 1736485200,
+      "vote_choice": "Approve",
+      "vote_id": "aa422b5094335272faed8a6dfe60c402801941ac91091d8a3472acb71bbc4ee0",
+      "voter": "did:zhtp:01de51c9c45a7209c49d3339edf094c9b3e62a26b8248472",
+      "voting_power": 49013
+    },
+    {
+      "justification": null,
+      "proposal_id": "48baacf59465251eb4bf569959cb994bc9042ee1a3ae6748d87b7684871e1cd6",
+      "timestamp": 1736553600,
+      "vote_choice": "Reject",
+      "vote_id": "65e5738d886be51cba8a2227bed3c9212e4db4f2ae2a36db07a8c06e8871de2d",
+      "voter": "did:zhtp:ee940963fe96d0dc0182b60207ae9f99510b787bfa1486f2",
+      "voting_power": 13721
+    },
+    {
+      "justification": null,
+      "proposal_id": "48baacf59465251eb4bf569959cb994bc9042ee1a3ae6748d87b7684871e1cd6",
+      "timestamp": 1736557200,
+      "vote_choice": "Approve",
+      "vote_id": "83299175db6fbfe809fe2c4674b87dc5de8fce82d10e3565b5767da18efcdeda",
+      "voter": "did:zhtp:55f9fd97459a6dbedac256f7bd7f8c83bb907280261efff0",
+      "voting_power": 563
+    },
+    {
+      "justification": null,
+      "proposal_id": "48baacf59465251eb4bf569959cb994bc9042ee1a3ae6748d87b7684871e1cd6",
+      "timestamp": 1736560800,
+      "vote_choice": "Reject",
+      "vote_id": "f270813d434abca9c7799e7dd78ea893b14c0bcc780307780a2683ab8c8369b5",
+      "voter": "did:zhtp:661fdfe018c5c7d39781d3ee9e8bfcb8736eed1ea7705b1f",
+      "voting_power": 13356
+    },
+    {
+      "justification": null,
+      "proposal_id": "48baacf59465251eb4bf569959cb994bc9042ee1a3ae6748d87b7684871e1cd6",
+      "timestamp": 1736564400,
+      "vote_choice": "Reject",
+      "vote_id": "f05732cf042143e88055e0ea29ff8fb831d62dd554dacf993ea1af0e7c4ae30c",
+      "voter": "did:zhtp:bf883c08a733ba42c5b30600a846cd645f32f6324535cb70",
+      "voting_power": 18611
+    },
+    {
+      "justification": "This proposal strengthens the network's user privacy and should be rejected.",
+      "proposal_id": "48baacf59465251eb4bf569959cb994bc9042ee1a3ae6748d87b7684871e1cd6",
+      "timestamp": 1736568000,
+      "vote_choice": "Abstain",
+      "vote_id": "6df350d7b4b0167920eac2690d4315394301b5e13acb724e5185745d454fd437",
+      "voter": "did:zhtp:9d823fb63ed49c798c439d8051a7c9f5983968f78c939e59",
+      "voting_power": 36247
+    },
+    {
+      "justification": null,
+      "proposal_id": "48baacf59465251eb4bf569959cb994bc9042ee1a3ae6748d87b7684871e1cd6",
+      "timestamp": 1736571600,
+      "vote_choice": "Reject",
+      "vote_id": "5096b61d6f2eda1aa105bd482445bc983f8507fe19dbfe11fe77672445c76b4e",
+      "voter": "did:zhtp:251190212ffa7e3539d6b2c5d5fb1cae6653af8ca4937100",
+      "voting_power": 4827
+    },
+    {
+      "justification": "This proposal improves the network's validator incentives and should be approved.",
+      "proposal_id": "48baacf59465251eb4bf569959cb994bc9042ee1a3ae6748d87b7684871e1cd6",
+      "timestamp": 1736575200,
+      "vote_choice": "Reject",
+      "vote_id": "5652a8c2e2cf030e1e4339c0df92b60b120925cf6c7d83e6f638788e520d243a",
+      "voter": "did:zhtp:169db2339b529b0560c030c150a3ffbb915c0a4b122f130f",
+      "voting_power": 36476
+    },
+    {
+      "justification": "This proposal threatens the network's user privacy and should be approved.",
+      "proposal_id": "48baacf59465251eb4bf569959cb994bc9042ee1a3ae6748d87b7684871e1cd6",
+      "timestamp": 1736578800,
+      "vote_choice": "Reject",
+      "vote_id": "fd434cb65311ac17215f4671a3d429171a1714f267ca020ff48db206b2d9b81a",
+      "voter": "did:zhtp:6af4459111f7499ed45be0de262d77895435da84b1b6d5f4",
+      "voting_power": 28410
+    },
+    {
+      "justification": null,
+      "proposal_id": "48baacf59465251eb4bf569959cb994bc9042ee1a3ae6748d87b7684871e1cd6",
+      "timestamp": 1736582400,
+      "vote_choice": "Abstain",
+      "vote_id": "cd18c314645d0b5a916982a2492d0faa517f260f78e72d4e8ae8b7f9d79c420e",
+      "voter": "did:zhtp:dc7f11905ec6dd7d3dbde6e02b59b9790aef8f610c649e8a",
+      "voting_power": 24165
+    },
+    {
+      "justification": null,
+      "proposal_id": "48baacf59465251eb4bf569959cb994bc9042ee1a3ae6748d87b7684871e1cd6",
+      "timestamp": 1736586000,
+      "vote_choice": "Reject",
+      "vote_id": "d40180dcda9434cc23ac756f7efcc32b802738b3b3e946ab75a95831c14fb1bc",
+      "voter": "did:zhtp:7fe4030b39a4186c7686f4877cea4870dd3c5bfdc3200133",
+      "voting_power": 14810
+    },
+    {
+      "justification": null,
+      "proposal_id": "48baacf59465251eb4bf569959cb994bc9042ee1a3ae6748d87b7684871e1cd6",
+      "timestamp": 1736589600,
+      "vote_choice": "Reject",
+      "vote_id": "46533786afaff533c7653375bd25962cc1ba53224890defb4e3e7200accb117d",
+      "voter": "did:zhtp:1af31a5743599ecd4245f44275d6a58e2616cb44c6d889af",
+      "voting_power": 2882
+    },
+    {
+      "justification": null,
+      "proposal_id": "48baacf59465251eb4bf569959cb994bc9042ee1a3ae6748d87b7684871e1cd6",
+      "timestamp": 1736593200,
+      "vote_choice": "Approve",
+      "vote_id": "46fcc6bb38768da99d89cee66b145e8c08f9c5f67b51a87e03f6e189b5d31cd4",
+      "voter": "did:zhtp:eaa92f3687cabab2185d40e4fe30b03c4745dee7a46b9eba",
+      "voting_power": 45532
+    },
+    {
+      "justification": "This proposal strengthens the network's economic model and should be approved.",
+      "proposal_id": "e885d9a83aa0af13af0eb6bf896daad84f309da3f7f04fe3be9a1f92c33ffea6",
+      "timestamp": 1736640000,
+      "vote_choice": "Reject",
+      "vote_id": "2b8ef332fe1f5b1835cd190ea9b8baf18ff171ab0fb5b2e1caafb5cfd4e8f6a8",
+      "voter": "did:zhtp:69480e88e0dc93eed91c1e68f30a9e0c686b090fa93effc2",
+      "voting_power": 24588
+    },
+    {
+      "justification": null,
+      "proposal_id": "e885d9a83aa0af13af0eb6bf896daad84f309da3f7f04fe3be9a1f92c33ffea6",
+      "timestamp": 1736643600,
+      "vote_choice": "Approve",
+      "vote_id": "37d259f97f86d0e40b550a21eadaaa4f21197e724d3da7eec00d892a5c5a7f7f",
+      "voter": "did:zhtp:dd380511d25ace314dcaa266d8b7daa9d54d270e263e5070",
+      "voting_power": 34938
+    },
+    {
+      "justification": null,
+      "proposal_id": "e885d9a83aa0af13af0eb6bf896daad84f309da3f7f04fe3be9a1f92c33ffea6",
+      "timestamp": 1736647200,
+      "vote_choice": "Abstain",
+      "vote_id": "35ddd1b98e897c0f06b89900369000c0d1e867d4255bda19705703afed19c6fb",
+      "voter": "did:zhtp:1f539cbf514630974cbc4c549f22ab9682db62c3fa38a5f1",
+      "voting_power": 47490
+    },
+    {
+      "justification": "This proposal threatens the network's security posture and should be rejected.",
+      "proposal_id": "e885d9a83aa0af13af0eb6bf896daad84f309da3f7f04fe3be9a1f92c33ffea6",
+      "timestamp": 1736650800,
+      "vote_choice": "Reject",
+      "vote_id": "669f4bafffc983c05e66992da8de0d0d535070ae19ab362917e4b5d6c78aeff7",
+      "voter": "did:zhtp:50b3b2e33b3b45809aced218034471eabad3ca761e96f182",
+      "voting_power": 20258
+    },
+    {
+      "justification": null,
+      "proposal_id": "e885d9a83aa0af13af0eb6bf896daad84f309da3f7f04fe3be9a1f92c33ffea6",
+      "timestamp": 1736654400,
+      "vote_choice": "Approve",
+      "vote_id": "eec48dee7363b017619cb1359c6382827193a68ffbaeabe0b54c9e0ee46f62a4",
+      "voter": "did:zhtp:0c06c2f0d0f55bfe8fa39f2b396fbf66af4c541f689e46a3",
+      "voting_power": 30857
+    },
+    {
+      "justification": null,
+      "proposal_id": "e885d9a83aa0af13af0eb6bf896daad84f309da3f7f04fe3be9a1f92c33ffea6",
+      "timestamp": 1736658000,
+      "vote_choice": "Reject",
+      "vote_id": "44f735a027e41c197067a6cf672083db593c40643e10e5f1a873d1a111fc7422",
+      "voter": "did:zhtp:08189a5eb5e0b75d012c364fa19d6dc78ffe1c04c3e17b88",
+      "voting_power": 16283
+    },
+    {
+      "justification": null,
+      "proposal_id": "e885d9a83aa0af13af0eb6bf896daad84f309da3f7f04fe3be9a1f92c33ffea6",
+      "timestamp": 1736661600,
+      "vote_choice": "Approve",
+      "vote_id": "809e76627654f8448fe0a5573277828eff097af703b2bfc721f1e5e76b86d9b0",
+      "voter": "did:zhtp:8ca01e0286d7c1fa400986fb92c0ad0aa676e48a21868cd4",
+      "voting_power": 109
+    },
+    {
+      "justification": "This proposal threatens the network's validator incentives and should be amended.",
+      "proposal_id": "e885d9a83aa0af13af0eb6bf896daad84f309da3f7f04fe3be9a1f92c33ffea6",
+      "timestamp": 1736665200,
+      "vote_choice": "Approve",
+      "vote_id": "3effceddd7a67d7abb179793a863b8bf9c86e328d538138e442bc9eac95af753",
+      "voter": "did:zhtp:955cdac70844c85b21c1f023b3152f0434847c5a25c8bccf",
+      "voting_power": 32478
+    },
+    {
+      "justification": null,
+      "proposal_id": "e885d9a83aa0af13af0eb6bf896daad84f309da3f7f04fe3be9a1f92c33ffea6",
+      "timestamp": 1736668800,
+      "vote_choice": "Abstain",
+      "vote_id": "d9ab14604a0d3b2b6716cd90455758d9aedfdcd7f41d17017dc02422c902bca0",
+      "voter": "did:zhtp:8e172a0d849e0098f660666f58651e76e630d6f6b693ad39",
+      "voting_power": 22482
+    },
+    {
+      "justification": "This proposal improves the network's validator incentives and should be amended.",
+      "proposal_id": "e885d9a83aa0af13af0eb6bf896daad84f309da3f7f04fe3be9a1f92c33ffea6",
+      "timestamp": 1736672400,
+      "vote_choice": "Abstain",
+      "vote_id": "e2c58d3f8e6960225597ebaf7765280e5c24efb8221ecc9ce27cddf904af572b",
+      "voter": "did:zhtp:57859b9c66b973528e71ed665f5f4297ed0b18a8b77384ed",
+      "voting_power": 23185
+    },
+    {
+      "justification": "This proposal strengthens the network's user privacy and should be amended.",
+      "proposal_id": "7d7e54e35502cfe3b12927814a1475e8269fcf0d1b9e2b249ef6421d03e72baf",
+      "timestamp": 1736726400,
+      "vote_choice": "Approve",
+      "vote_id": "b6d5526924ff405fba959087f3da8b2721adc1054857ec5a969aa5af4ecbb3bf",
+      "voter": "did:zhtp:0e66b110e5c1cc6c72fd25b3aa46704071321c12261725a0",
+      "voting_power": 22336
+    },
+    {
+      "justification": null,
+      "proposal_id": "7d7e54e35502cfe3b12927814a1475e8269fcf0d1b9e2b249ef6421d03e72baf",
+      "timestamp": 1736730000,
+      "vote_choice": "Abstain",
+      "vote_id": "2bce8c207a4ced1526b96d6388b74f1860b78907d4ca4e75d88dbf67769edd17",
+      "voter": "did:zhtp:a2b253a3f282463c2bd257c4d9d2746493c7014222dc18eb",
+      "voting_power": 33860
+    },
+    {
+      "justification": null,
+      "proposal_id": "7d7e54e35502cfe3b12927814a1475e8269fcf0d1b9e2b249ef6421d03e72baf",
+      "timestamp": 1736733600,
+      "vote_choice": "Reject",
+      "vote_id": "e7c1db86392423e13235b8bb2de04783b50d1157bbeace8954c13ed56c43a4a9",
+      "voter": "did:zhtp:e0cfca48b2b2c790b5142e8fe3d7d5fee4b59b782a79da58",
+      "voting_power": 26077
+    },
+    {
+      "justification": "This proposal strengthens the network's user privacy and should be approved.",
+      "proposal_id": "7d7e54e35502cfe3b12927814a1475e8269fcf0d1b9e2b249ef6421d03e72baf",
+      "timestamp": 1736737200,
+      "vote_choice": "Approve",
+      "vote_id": "d845bc537427914b93de1f4dd7ebdc1448796b3562a5d3658873301c7e8f5d0e",
+      "voter": "did:zhtp:93bba2d380c1fbe46ab458783358de2388a465fd324f84d9",
+      "voting_power": 16975
+    },
+    {
+      "justification": null,
+      "proposal_id": "7d7e54e35502cfe3b12927814a1475e8269fcf0d1b9e2b249ef6421d03e72baf",
+      "timestamp": 1736740800,
+      "vote_choice": "Approve",
+      "vote_id": "a533e1cdc82739b8e2f613859b7d9a792d23eca0954a7e3a6673d76619220fa0",
+      "voter": "did:zhtp:f335a358b3309a0334a1ea446cc6ec3c804a3451e05b40a2",
+      "voting_power": 35251
+    },
+    {
+      "justification": null,
+      "proposal_id": "7d7e54e35502cfe3b12927814a1475e8269fcf0d1b9e2b249ef6421d03e72baf",
+      "timestamp": 1736744400,
+      "vote_choice": "Approve",
+      "vote_id": "177c0dbd2d060a5eadf7ee0a14c5b7fc7bc58bd1995538d7b904e517d8b0abe5",
+      "voter": "did:zhtp:8664bcd7a5b2fa6f4f65bee5a6e3df3434ea521d49897548",
+      "voting_power": 32240
+    },
+    {
+      "justification": null,
+      "proposal_id": "7d7e54e35502cfe3b12927814a1475e8269fcf0d1b9e2b249ef6421d03e72baf",
+      "timestamp": 1736748000,
+      "vote_choice": "Approve",
+      "vote_id": "29140d0372643badcc0aa427edd7d01820efb414f4d49d7665f25874197ffddf",
+      "voter": "did:zhtp:19935d612b8e8f6abba224f593172a009a351feff834682b",
+      "voting_power": 6429
+    },
+    {
+      "justification": "This proposal threatens the network's security posture and should be approved.",
+      "proposal_id": "7d7e54e35502cfe3b12927814a1475e8269fcf0d1b9e2b249ef6421d03e72baf",
+      "timestamp": 1736751600,
+      "vote_choice": "Abstain",
+      "vote_id": "b1b154e42c2c5016751e2e0c0e5915a1768e4965b5b3ee8802f02c5dca38ae72",
+      "voter": "did:zhtp:44a430ea4745bd5c570879ab6c7316e121440412c6f43f03",
+      "voting_power": 15149
+    },
+    {
+      "justification": "This proposal threatens the network's user privacy and should be approved.",
+      "proposal_id": "7d7e54e35502cfe3b12927814a1475e8269fcf0d1b9e2b249ef6421d03e72baf",
+      "timestamp": 1736755200,
+      "vote_choice": "Approve",
+      "vote_id": "5615bd65d7473b6d1e996ac492c7132cc6818e8397557707df5dd4fc2a26b320",
+      "voter": "did:zhtp:9df0b65b1ea5eef76f04c2df62081f337fc39070868965c1",
+      "voting_power": 46920
+    },
+    {
+      "justification": null,
+      "proposal_id": "7d7e54e35502cfe3b12927814a1475e8269fcf0d1b9e2b249ef6421d03e72baf",
+      "timestamp": 1736758800,
+      "vote_choice": "Abstain",
+      "vote_id": "00481bfa3b61a2f1df3fb4ecdcaf2c5b626714d32d6c359f5387950681dfa9bc",
+      "voter": "did:zhtp:2dc3776bb56b6c633a4406a334bdd2e255937336ca440bc5",
+      "voting_power": 9911
+    },
+    {
+      "justification": null,
+      "proposal_id": "7d7e54e35502cfe3b12927814a1475e8269fcf0d1b9e2b249ef6421d03e72baf",
+      "timestamp": 1736762400,
+      "vote_choice": "Abstain",
+      "vote_id": "ecbd4df0329e21ef09278a14b89887beebd83bbabde4b57bf166b30a94c7a157",
+      "voter": "did:zhtp:96c583171ad8b0d095f18ac8976d9564e192e0ff8d05a7a2",
+      "voting_power": 35428
+    },
+    {
+      "justification": null,
+      "proposal_id": "7d7e54e35502cfe3b12927814a1475e8269fcf0d1b9e2b249ef6421d03e72baf",
+      "timestamp": 1736766000,
+      "vote_choice": "Approve",
+      "vote_id": "8a00b78f07eb5bb63cc2f6ec7dfd6bd01fb3631958d8f317ef8aa5ccb2ea1a18",
+      "voter": "did:zhtp:d9edf5637ed229655f76ea354150a209fe86e157ccabace6",
+      "voting_power": 22028
+    },
+    {
+      "justification": "This proposal strengthens the network's security posture and should be rejected.",
+      "proposal_id": "7d7e54e35502cfe3b12927814a1475e8269fcf0d1b9e2b249ef6421d03e72baf",
+      "timestamp": 1736769600,
+      "vote_choice": "Approve",
+      "vote_id": "b43bbb6cc40279af3c40fdaf6c55ea573efdbf4e849cbf282b947e68ced49ae2",
+      "voter": "did:zhtp:65d312b916e2087dde076edbf4f1578d2dbfcbe3cef84789",
+      "voting_power": 28144
+    },
+    {
+      "justification": null,
+      "proposal_id": "364916db942a8bb25878c9c0a944ba2010d62d0cd0ae0f192e10dd0188c3a282",
+      "timestamp": 1736812800,
+      "vote_choice": "Abstain",
+      "vote_id": "3170637a035671ab573b485f754e10ad96c1b6f1503414a419c89da7b05ea1ee",
+      "voter": "did:zhtp:7c471283a7fc6272a4a66abf7bc6c1da1aabf79a1f6fb934",
+      "voting_power": 7098
+    },
+    {
+      "justification": null,
+      "proposal_id": "364916db942a8bb25878c9c0a944ba2010d62d0cd0ae0f192e10dd0188c3a282",
+      "timestamp": 1736816400,
+      "vote_choice": "Reject",
+      "vote_id": "c23928eab4dae26d2fd72388f7cb162a9f7dac6747eddcb88e961ff8f68b526b",
+      "voter": "did:zhtp:dc04fa4221e550e45932707ea5a09d6e0e4ae4d12f4b850c",
+      "voting_power": 1150
+    },
+    {
+      "justification": null,
+      "proposal_id": "364916db942a8bb25878c9c0a944ba2010d62d0cd0ae0f192e10dd0188c3a282",
+      "timestamp": 1736820000,
+      "vote_choice": "Abstain",
+      "vote_id": "25af71bc7a22d20c469ba976de6dd3a5e284c9a1b7d1298cc6315d3eaa2cfea4",
+      "voter": "did:zhtp:d0fef171ade1f25b3b86518aa2d29dad9020b027c6ed1b3f",
+      "voting_power": 24231
+    },
+    {
+      "justification": null,
+      "proposal_id": "364916db942a8bb25878c9c0a944ba2010d62d0cd0ae0f192e10dd0188c3a282",
+      "timestamp": 1736823600,
+      "vote_choice": "Abstain",
+      "vote_id": "c692a2a68bd82951ac99a810ba1e82ee31011d0be38a34d8a247ebf632dad225",
+      "voter": "did:zhtp:11f327a4d7b66fbc760e4869be6ac952af21343dae35b102",
+      "voting_power": 36372
+    },
+    {
+      "justification": null,
+      "proposal_id": "364916db942a8bb25878c9c0a944ba2010d62d0cd0ae0f192e10dd0188c3a282",
+      "timestamp": 1736827200,
+      "vote_choice": "Reject",
+      "vote_id": "b132286cd7b91d4fe74cbbb2dea0f42c2be92b960cb8ab9a2509a36081f6181e",
+      "voter": "did:zhtp:ef9c9cf9dc3473174bc2b6660b349ea119458444d7704228",
+      "voting_power": 45491
+    },
+    {
+      "justification": "This proposal maintains the network's user privacy and should be approved.",
+      "proposal_id": "4008111b7540d69fdd9439bb13425c5512c5ededbc846217e7bf93b0105aa37c",
+      "timestamp": 1736899200,
+      "vote_choice": "Reject",
+      "vote_id": "2c3bcf4f0c667bed24289ba6db5e87b18b90fd52f1a515343649392fcd1bae30",
+      "voter": "did:zhtp:7488f5b3d2077e33cd22e3792df2b13a083a97c824460703",
+      "voting_power": 8484
+    },
+    {
+      "justification": null,
+      "proposal_id": "4008111b7540d69fdd9439bb13425c5512c5ededbc846217e7bf93b0105aa37c",
+      "timestamp": 1736902800,
+      "vote_choice": "Approve",
+      "vote_id": "b55cf7e734d5b35c5e61b92da6c85069429a444899b08f4887276171bdba417b",
+      "voter": "did:zhtp:3195bac7128d5f3ab4d9d1ab944120c0ba2c90c4249a1c20",
+      "voting_power": 12792
+    },
+    {
+      "justification": "This proposal threatens the network's user privacy and should be amended.",
+      "proposal_id": "4008111b7540d69fdd9439bb13425c5512c5ededbc846217e7bf93b0105aa37c",
+      "timestamp": 1736906400,
+      "vote_choice": "Reject",
+      "vote_id": "875378a6078bdebcd91aea71a732e797bd568bfa82001f700a68071f545c3596",
+      "voter": "did:zhtp:e618792d445114ef99dbffc22adea9c344fb6096986cc60a",
+      "voting_power": 38274
+    },
+    {
+      "justification": "This proposal maintains the network's user privacy and should be approved.",
+      "proposal_id": "4008111b7540d69fdd9439bb13425c5512c5ededbc846217e7bf93b0105aa37c",
+      "timestamp": 1736910000,
+      "vote_choice": "Reject",
+      "vote_id": "d18744af8b8ee70bc07ac1abd7d234443f3d23fb92143afb32bccf74651fb037",
+      "voter": "did:zhtp:3b0511399f2c8d55d0bd23a0eaab6ab01d1d04185b80f821",
+      "voting_power": 19299
+    },
+    {
+      "justification": null,
+      "proposal_id": "4008111b7540d69fdd9439bb13425c5512c5ededbc846217e7bf93b0105aa37c",
+      "timestamp": 1736913600,
+      "vote_choice": "Approve",
+      "vote_id": "521e253cf0950accf1702b51ff207fe97374f92e815ae230a6e4aaed6ec33f83",
+      "voter": "did:zhtp:0fb72bc42a3aa4bf19b9b318d73c84604d91269f43eee479",
+      "voting_power": 36753
+    },
+    {
+      "justification": null,
+      "proposal_id": "4008111b7540d69fdd9439bb13425c5512c5ededbc846217e7bf93b0105aa37c",
+      "timestamp": 1736917200,
+      "vote_choice": "Approve",
+      "vote_id": "d1aa514e14bdf818188f39e0c8d7e7214d4fc538f943b6c799bb0ab3e72e4cb1",
+      "voter": "did:zhtp:7e7431c9bd15bc52fcd95d3d40164038d543e44a3dfb22b7",
+      "voting_power": 15962
+    },
+    {
+      "justification": null,
+      "proposal_id": "4008111b7540d69fdd9439bb13425c5512c5ededbc846217e7bf93b0105aa37c",
+      "timestamp": 1736920800,
+      "vote_choice": "Reject",
+      "vote_id": "5e82e0cbf15cee654071bd56a25feb1a50d4439a5f8450780780ce2dfc8b8bd7",
+      "voter": "did:zhtp:c1baddb2418ddc30e598407f1406fdca2c7e3aeff38e7ce9",
+      "voting_power": 19300
+    },
+    {
+      "justification": null,
+      "proposal_id": "4008111b7540d69fdd9439bb13425c5512c5ededbc846217e7bf93b0105aa37c",
+      "timestamp": 1736924400,
+      "vote_choice": "Approve",
+      "vote_id": "624614caf91ccaeb25b5e556348b6a94d7504a425abf8eed8435360d180b42ca",
+      "voter": "did:zhtp:64868ebf015bb43c47fc3e447efb0e618eae854df2c84946",
+      "voting_power": 6575
+    },
+    {
+      "justification": null,
+      "proposal_id": "4008111b7540d69fdd9439bb13425c5512c5ededbc846217e7bf93b0105aa37c",
+      "timestamp": 1736928000,
+      "vote_choice": "Reject",
+      "vote_id": "4855eb6d3c83f69dc70a1142a64ef93ba66e829ac6a093c0f6a4c53f1c7e251a",
+      "voter": "did:zhtp:ecdb917abd7b81d5d6edcb6ca9022782d4730734ac04ef47",
+      "voting_power": 21715
+    },
+    {
+      "justification": null,
+      "proposal_id": "4008111b7540d69fdd9439bb13425c5512c5ededbc846217e7bf93b0105aa37c",
+      "timestamp": 1736931600,
+      "vote_choice": "Reject",
+      "vote_id": "2a01ef55ebac0213940e3cc3d36537edd4ee561f30485d2eb90d73207ec199a4",
+      "voter": "did:zhtp:0f6bf018265d30e51826f21f110c08968026c1ae63460c26",
+      "voting_power": 46117
+    },
+    {
+      "justification": "This proposal strengthens the network's economic model and should be amended.",
+      "proposal_id": "4008111b7540d69fdd9439bb13425c5512c5ededbc846217e7bf93b0105aa37c",
+      "timestamp": 1736935200,
+      "vote_choice": "Approve",
+      "vote_id": "9efeb2a97b1f6f631eca4c761aa912b12190aa7bde911b1630e17c6867ce81cb",
+      "voter": "did:zhtp:4d60522aa5d7699c31738e28543382e6438acdf0dee0b82e",
+      "voting_power": 7503
+    },
+    {
+      "justification": null,
+      "proposal_id": "4008111b7540d69fdd9439bb13425c5512c5ededbc846217e7bf93b0105aa37c",
+      "timestamp": 1736938800,
+      "vote_choice": "Reject",
+      "vote_id": "36e34a461a3bb5ba6809812c75ecad26a50b22b6b6a25de2624e4dc5e73f6466",
+      "voter": "did:zhtp:bc6fe91b235d8bedb162acd2ae3d01cbd3ca6b32775197b5",
+      "voting_power": 6625
+    },
+    {
+      "justification": null,
+      "proposal_id": "4008111b7540d69fdd9439bb13425c5512c5ededbc846217e7bf93b0105aa37c",
+      "timestamp": 1736942400,
+      "vote_choice": "Reject",
+      "vote_id": "f27ff32f52f2057ce8c1ad5f8a35221d0e8c1f06958405d7bc95a633686e4665",
+      "voter": "did:zhtp:bb1acfbb8cf1a7ee65733a0cb418027912aa840903e7d491",
+      "voting_power": 23620
+    },
+    {
+      "justification": null,
+      "proposal_id": "4008111b7540d69fdd9439bb13425c5512c5ededbc846217e7bf93b0105aa37c",
+      "timestamp": 1736946000,
+      "vote_choice": "Approve",
+      "vote_id": "013d50f502df78adc3b7c1f9c43554803e0384f87d348c9fbe62527d49bf85ed",
+      "voter": "did:zhtp:04d97636aa2a9ce3a449f5c22b2c26d0d0b3e544235b7459",
+      "voting_power": 1904
+    },
+    {
+      "justification": "This proposal threatens the network's security posture and should be amended.",
+      "proposal_id": "2f96c2497a0db6f770ae8e28ac64c4b5aa25638e6349d7498519ff5fad8204ce",
+      "timestamp": 1736985600,
+      "vote_choice": "Approve",
+      "vote_id": "e9604c77624e4466da8eccbd3d75edd5373b9e915d82371a0e54e70577351f10",
+      "voter": "did:zhtp:f899136b7ca9d4fc86ae92292f21a6cc10c437dfbc428784",
+      "voting_power": 32374
+    },
+    {
+      "justification": "This proposal threatens the network's economic model and should be amended.",
+      "proposal_id": "2f96c2497a0db6f770ae8e28ac64c4b5aa25638e6349d7498519ff5fad8204ce",
+      "timestamp": 1736989200,
+      "vote_choice": "Reject",
+      "vote_id": "17afa0a05e53478d1722074176d2282aa3db8144f58f82fa4df2874f3eaec9f2",
+      "voter": "did:zhtp:aee0d180363c310c776e0ea4273ac4234d7a800481d70584",
+      "voting_power": 46402
+    },
+    {
+      "justification": "This proposal maintains the network's security posture and should be amended.",
+      "proposal_id": "2f96c2497a0db6f770ae8e28ac64c4b5aa25638e6349d7498519ff5fad8204ce",
+      "timestamp": 1736992800,
+      "vote_choice": "Abstain",
+      "vote_id": "224cd7fa0a013891a926dc59731c4c6292d7e2183773f10b02749d30aaab73bf",
+      "voter": "did:zhtp:ad50ee673cd212eaee857fb3c6a35792ba2268f3fe5727c4",
+      "voting_power": 25539
+    },
+    {
+      "justification": "This proposal strengthens the network's validator incentives and should be amended.",
+      "proposal_id": "2f96c2497a0db6f770ae8e28ac64c4b5aa25638e6349d7498519ff5fad8204ce",
+      "timestamp": 1736996400,
+      "vote_choice": "Reject",
+      "vote_id": "5d52fa4c85b9b8073715f16d7bfc18edeb2baab26cba4ea06b15f4500460ca2f",
+      "voter": "did:zhtp:b88e8716f8cab72937714065c9d744a3fcfbc9ede73fba39",
+      "voting_power": 36919
+    },
+    {
+      "justification": null,
+      "proposal_id": "2f96c2497a0db6f770ae8e28ac64c4b5aa25638e6349d7498519ff5fad8204ce",
+      "timestamp": 1737000000,
+      "vote_choice": "Abstain",
+      "vote_id": "98fada7a91af44f0d2adcb4bd5f565f3c977898ddd102958ee068e48fd38842c",
+      "voter": "did:zhtp:b230271d5875013859da8dd39121a5925d2b06b302dcfe19",
+      "voting_power": 29561
+    },
+    {
+      "justification": null,
+      "proposal_id": "2f96c2497a0db6f770ae8e28ac64c4b5aa25638e6349d7498519ff5fad8204ce",
+      "timestamp": 1737003600,
+      "vote_choice": "Approve",
+      "vote_id": "57893555b41970d0f67c07d803ffff31a98e6ad919d85f5593fed8177141f718",
+      "voter": "did:zhtp:0da03fefde6222dcc96924aa9e020fede6a2ac570fd5df1c",
+      "voting_power": 32020
+    },
+    {
+      "justification": "This proposal improves the network's economic model and should be rejected.",
+      "proposal_id": "2f96c2497a0db6f770ae8e28ac64c4b5aa25638e6349d7498519ff5fad8204ce",
+      "timestamp": 1737007200,
+      "vote_choice": "Reject",
+      "vote_id": "72a31d1ed40c9b496b972a070f727cd3429c34b48fed28e889790724f3deb986",
+      "voter": "did:zhtp:0fbd4e9f7f2bb3039020480950aa8547f6c365c392cb17b1",
+      "voting_power": 9430
+    },
+    {
+      "justification": null,
+      "proposal_id": "2f96c2497a0db6f770ae8e28ac64c4b5aa25638e6349d7498519ff5fad8204ce",
+      "timestamp": 1737010800,
+      "vote_choice": "Approve",
+      "vote_id": "f6a98de331aa0dc67aed6c1b87cc943263bf71ac202623fe1b45c78d40fb4cd1",
+      "voter": "did:zhtp:c12d513445ad49c2e69884860bbcb7947eb34e75b6e5b6b8",
+      "voting_power": 14749
+    },
+    {
+      "justification": null,
+      "proposal_id": "2f96c2497a0db6f770ae8e28ac64c4b5aa25638e6349d7498519ff5fad8204ce",
+      "timestamp": 1737014400,
+      "vote_choice": "Abstain",
+      "vote_id": "559fec9800aeefb04bffa1754e50f41433d75eb0335bef9fd98b1de2e1fc3262",
+      "voter": "did:zhtp:ae1de3511ba1e708d5cac6bf9ee2650d606f2fddeceb01bc",
+      "voting_power": 23209
+    },
+    {
+      "justification": null,
+      "proposal_id": "2f96c2497a0db6f770ae8e28ac64c4b5aa25638e6349d7498519ff5fad8204ce",
+      "timestamp": 1737018000,
+      "vote_choice": "Abstain",
+      "vote_id": "20606ec85f8ec437778d7b2cc51e4ca916ef072532bbb8c87fdb169b1e6382e9",
+      "voter": "did:zhtp:842ca052f2e9a49021d13a2e3a4ce5bb1afe0a639fee70aa",
+      "voting_power": 40091
+    },
+    {
+      "justification": null,
+      "proposal_id": "2f96c2497a0db6f770ae8e28ac64c4b5aa25638e6349d7498519ff5fad8204ce",
+      "timestamp": 1737021600,
+      "vote_choice": "Approve",
+      "vote_id": "dbc0ed1ce960bdfdbc1dc980f042c97fbd6b88bf9e34ab0b0d93f3f58683c3d8",
+      "voter": "did:zhtp:5cd9fa76d48fa683b5274d73676898a2d9b4c15f5768eb2f",
+      "voting_power": 20653
+    },
+    {
+      "justification": null,
+      "proposal_id": "2f96c2497a0db6f770ae8e28ac64c4b5aa25638e6349d7498519ff5fad8204ce",
+      "timestamp": 1737025200,
+      "vote_choice": "Abstain",
+      "vote_id": "e8c916d9c47839c58bda2ebddf0f5cc29f3a16907a48acd316701972f1d3830d",
+      "voter": "did:zhtp:032dc9d7d916d630cfea41ce1a90496c7c49957a354101dd",
+      "voting_power": 14318
+    },
+    {
+      "justification": null,
+      "proposal_id": "2f96c2497a0db6f770ae8e28ac64c4b5aa25638e6349d7498519ff5fad8204ce",
+      "timestamp": 1737028800,
+      "vote_choice": "Abstain",
+      "vote_id": "6630added5325b44908319363cafcabe483a216a8a363e2d5631a687a13faf88",
+      "voter": "did:zhtp:7c8aa0fefa22ad29a95970940c34df8ddc1865024037b580",
+      "voting_power": 38439
+    },
+    {
+      "justification": null,
+      "proposal_id": "2f96c2497a0db6f770ae8e28ac64c4b5aa25638e6349d7498519ff5fad8204ce",
+      "timestamp": 1737032400,
+      "vote_choice": "Abstain",
+      "vote_id": "d4b4d1f6b3b612268e0fa0dbc067cbf737e6268e3fe1eb5e34e675ecadf0daba",
+      "voter": "did:zhtp:98fba6bbdd70724fd1d00bdfd60a0082e9a7c6b3759ef61b",
+      "voting_power": 3001
+    },
+    {
+      "justification": null,
+      "proposal_id": "056912755c61f30ef220cebb96780ea1ed3a0b30529ccbb43bbed58caff4d3e9",
+      "timestamp": 1737072000,
+      "vote_choice": "Abstain",
+      "vote_id": "7afec575f63ad49a44ab63915c40acb07a926774f7cfb207df0cf958b4c28da5",
+      "voter": "did:zhtp:67b6d9208082ce0f7fcacbbc134e729c02313bab9fcd1ed7",
+      "voting_power": 11847
+    },
+    {
+      "justification": "This proposal maintains the network's decentralization and should be approved.",
+      "proposal_id": "056912755c61f30ef220cebb96780ea1ed3a0b30529ccbb43bbed58caff4d3e9",
+      "timestamp": 1737075600,
+      "vote_choice": "Approve",
+      "vote_id": "053d49b02126d4bdee1dceea0b79f00f506d4633e3c30a023a67f9ae10ece7e8",
+      "voter": "did:zhtp:ace609b1f911731f43dc8014223492f4960d49a3e975be89",
+      "voting_power": 49272
+    },
+    {
+      "justification": null,
+      "proposal_id": "056912755c61f30ef220cebb96780ea1ed3a0b30529ccbb43bbed58caff4d3e9",
+      "timestamp": 1737079200,
+      "vote_choice": "Reject",
+      "vote_id": "defecd8027beaf4f18839dabf1ce44ca9d924cee5376b55ec10440cdfbcd5905",
+      "voter": "did:zhtp:db58fd2b4f2d5435ab4e6b6d7d02c60485c12661b22f2456",
+      "voting_power": 3886
+    },
+    {
+      "justification": "This proposal maintains the network's security posture and should be approved.",
+      "proposal_id": "056912755c61f30ef220cebb96780ea1ed3a0b30529ccbb43bbed58caff4d3e9",
+      "timestamp": 1737082800,
+      "vote_choice": "Abstain",
+      "vote_id": "79bf11becb62d10368d1c1c7b9a5d61a4808a5a4cf6eb8b39c96db33ff04a15e",
+      "voter": "did:zhtp:9cdcb52da5a56467e92b5eabf412518051a49f5653f34763",
+      "voting_power": 40481
+    },
+    {
+      "justification": null,
+      "proposal_id": "056912755c61f30ef220cebb96780ea1ed3a0b30529ccbb43bbed58caff4d3e9",
+      "timestamp": 1737086400,
+      "vote_choice": "Approve",
+      "vote_id": "be82b2ff22b61747e3832c6dd0a53386ae00b9503662e4fdedfb5239367c2a46",
+      "voter": "did:zhtp:d8534200fe2c0de7c7b774bd38d385b5433a3c26ca7704a7",
+      "voting_power": 10138
+    },
+    {
+      "justification": "This proposal threatens the network's security posture and should be rejected.",
+      "proposal_id": "056912755c61f30ef220cebb96780ea1ed3a0b30529ccbb43bbed58caff4d3e9",
+      "timestamp": 1737090000,
+      "vote_choice": "Abstain",
+      "vote_id": "b0239667ed56473617dc305c7479b35a4651ed865a35ccfc6eae98996bcd2810",
+      "voter": "did:zhtp:4d1a384b781002e44f46f0606fa87524013404341b2c9680",
+      "voting_power": 21732
+    },
+    {
+      "justification": null,
+      "proposal_id": "056912755c61f30ef220cebb96780ea1ed3a0b30529ccbb43bbed58caff4d3e9",
+      "timestamp": 1737093600,
+      "vote_choice": "Reject",
+      "vote_id": "1f2fafe4fadf19f65d118d5dc0551eba20f2285d2f1edc64db8e0076ab7c5459",
+      "voter": "did:zhtp:6fd6b2856da5ed70f7201963bf4a5f1e062253a872614d43",
+      "voting_power": 18025
+    },
+    {
+      "justification": null,
+      "proposal_id": "056912755c61f30ef220cebb96780ea1ed3a0b30529ccbb43bbed58caff4d3e9",
+      "timestamp": 1737097200,
+      "vote_choice": "Reject",
+      "vote_id": "cfcbca34e5df8a689eef24d9fb22e04a11d245d8287d83f2c79c80d41522dbcc",
+      "voter": "did:zhtp:7d87d0c5d76b9422d886437f75033d6f977e0d3df22356e8",
+      "voting_power": 47986
+    },
+    {
+      "justification": null,
+      "proposal_id": "056912755c61f30ef220cebb96780ea1ed3a0b30529ccbb43bbed58caff4d3e9",
+      "timestamp": 1737100800,
+      "vote_choice": "Reject",
+      "vote_id": "1cf24ade67549f39191be248efab5e2c4ad3175c72a51acec434aa2a512499b6",
+      "voter": "did:zhtp:77a98f71cbb226052e6bd735fea384d97a0d26829b983929",
+      "voting_power": 18021
+    },
+    {
+      "justification": "This proposal strengthens the network's security posture and should be rejected.",
+      "proposal_id": "056912755c61f30ef220cebb96780ea1ed3a0b30529ccbb43bbed58caff4d3e9",
+      "timestamp": 1737104400,
+      "vote_choice": "Abstain",
+      "vote_id": "d3eda24c50daba3f85dcf140cbcec947f63b719e5e82ff3270ff8de354199b15",
+      "voter": "did:zhtp:05a48fe13fd3049e63cd6fbd6ab94fb10714e50edc5a2b86",
+      "voting_power": 23442
+    },
+    {
+      "justification": "This proposal strengthens the network's security posture and should be approved.",
+      "proposal_id": "056912755c61f30ef220cebb96780ea1ed3a0b30529ccbb43bbed58caff4d3e9",
+      "timestamp": 1737108000,
+      "vote_choice": "Approve",
+      "vote_id": "8b2367f46c869bd8c3ea800b1b8e5c3b06db0d894c8ed8fb62f46936fe2d44fe",
+      "voter": "did:zhtp:f5f6dbc723cc18dcb4271b7759b9c84b921c9ab74ac62b3c",
+      "voting_power": 28902
+    },
+    {
+      "justification": null,
+      "proposal_id": "056912755c61f30ef220cebb96780ea1ed3a0b30529ccbb43bbed58caff4d3e9",
+      "timestamp": 1737111600,
+      "vote_choice": "Abstain",
+      "vote_id": "4edf7cfdd0509e60e793d6aec6eae5b979531d18b98281527e6e8a4275cc5f22",
+      "voter": "did:zhtp:df35b346cbbe280e8bc1fb7edd5b34225c4d36ae1f8e310a",
+      "voting_power": 38912
+    },
+    {
+      "justification": null,
+      "proposal_id": "056912755c61f30ef220cebb96780ea1ed3a0b30529ccbb43bbed58caff4d3e9",
+      "timestamp": 1737115200,
+      "vote_choice": "Reject",
+      "vote_id": "f38a9d4516bba244fa7e2e3dc6e8bdb9651ca17490af27169d656da99d2867fc",
+      "voter": "did:zhtp:48ab904bbc7995df1f51583ebd260f9f716a5d46005a57a8",
+      "voting_power": 39166
+    },
+    {
+      "justification": null,
+      "proposal_id": "4ae5ce79fca5f1d8b2ad5df88f069226349aed03151b66f7428669ebdfe5de99",
+      "timestamp": 1737158400,
+      "vote_choice": "Reject",
+      "vote_id": "a982e4e6cffe3e0c4e67ba572a79743f881d91a945612ccfe4603caf2f2ade06",
+      "voter": "did:zhtp:0ca66b6a14938dd90c121480d752a1172522ca60cdad7134",
+      "voting_power": 42500
+    },
+    {
+      "justification": null,
+      "proposal_id": "4ae5ce79fca5f1d8b2ad5df88f069226349aed03151b66f7428669ebdfe5de99",
+      "timestamp": 1737162000,
+      "vote_choice": "Approve",
+      "vote_id": "1f7b341af861db204774a701dc2059cbb72b6f0f15a60665b633fa905f1399d0",
+      "voter": "did:zhtp:d0ad986ff62cb9bf139ae6988ca64a774c1eaa1ce5385758",
+      "voting_power": 1659
+    },
+    {
+      "justification": null,
+      "proposal_id": "4ae5ce79fca5f1d8b2ad5df88f069226349aed03151b66f7428669ebdfe5de99",
+      "timestamp": 1737165600,
+      "vote_choice": "Abstain",
+      "vote_id": "71dd816a009b98f7899104a84ee72ef8e8022d5db6057872943d142686ff50d5",
+      "voter": "did:zhtp:39b21c947486a007e36b8cf2723bcb6bf01b6bcb9c87a6a5",
+      "voting_power": 26800
+    },
+    {
+      "justification": null,
+      "proposal_id": "4ae5ce79fca5f1d8b2ad5df88f069226349aed03151b66f7428669ebdfe5de99",
+      "timestamp": 1737169200,
+      "vote_choice": "Abstain",
+      "vote_id": "1193d1d4dc866bc384e13cf5cd944034ae73752c82e9d99b4a1b138da8c7cf26",
+      "voter": "did:zhtp:843ccd981313ca08e87256b732252cd4858b03ab5585b444",
+      "voting_power": 8736
+    },
+    {
+      "justification": null,
+      "proposal_id": "4ae5ce79fca5f1d8b2ad5df88f069226349aed03151b66f7428669ebdfe5de99",
+      "timestamp": 1737172800,
+      "vote_choice": "Abstain",
+      "vote_id": "534313b235c418f7924c94961e9f07789af6e003ff765063784f2ba2220f92f1",
+      "voter": "did:zhtp:d6480a3fcae9aa71aa14d0f26ea3a1d0249f549ce64b0f8a",
+      "voting_power": 14906
+    },
+    {
+      "justification": null,
+      "proposal_id": "3f9f129209594ef9a30ca9a2c84029698708a4731812948d8180cc6304cb13c7",
+      "timestamp": 1737244800,
+      "vote_choice": "Abstain",
+      "vote_id": "07aab6708c6db52b0e156c490c4f148a319ddc02a58240fe10086bc5ec92dcfd",
+      "voter": "did:zhtp:5542cbd4ad462e98941d6810f7b98d519c695f3450b0b27e",
+      "voting_power": 9223
+    },
+    {
+      "justification": null,
+      "proposal_id": "3f9f129209594ef9a30ca9a2c84029698708a4731812948d8180cc6304cb13c7",
+      "timestamp": 1737248400,
+      "vote_choice": "Approve",
+      "vote_id": "1f411e4d817f81c28d06a7f62477b49cdf057643e90626007d5bbca85531233f",
+      "voter": "did:zhtp:6b04e361472796db3d1f868164ac6213e3225b44b364366c",
+      "voting_power": 8056
+    },
+    {
+      "justification": "This proposal maintains the network's security posture and should be approved.",
+      "proposal_id": "3f9f129209594ef9a30ca9a2c84029698708a4731812948d8180cc6304cb13c7",
+      "timestamp": 1737252000,
+      "vote_choice": "Approve",
+      "vote_id": "bb2dbaec279d0153e118b8f000850da1bc0a5bbef51593066826a6f2527b5401",
+      "voter": "did:zhtp:28e777a1afdfdab10cfa6c9fc820ac9faeda6f0cae178389",
+      "voting_power": 32427
+    },
+    {
+      "justification": null,
+      "proposal_id": "3f9f129209594ef9a30ca9a2c84029698708a4731812948d8180cc6304cb13c7",
+      "timestamp": 1737255600,
+      "vote_choice": "Approve",
+      "vote_id": "c5ff0937c57969a67992430641f3d78f487fd93374b4ae31787b2947ee84cd43",
+      "voter": "did:zhtp:c182c3c4c9aeb3fe1ff6f08b4103b23c9e03fdc9aa4ca681",
+      "voting_power": 20747
+    },
+    {
+      "justification": null,
+      "proposal_id": "3f9f129209594ef9a30ca9a2c84029698708a4731812948d8180cc6304cb13c7",
+      "timestamp": 1737259200,
+      "vote_choice": "Reject",
+      "vote_id": "cca49d05491f968f71eb63b3d87dbb02882937b98f448875324f40e253361a84",
+      "voter": "did:zhtp:e19e58c36818d5baa77afbf82ba6b13ec5b07b042e889774",
+      "voting_power": 47234
+    },
+    {
+      "justification": null,
+      "proposal_id": "3f9f129209594ef9a30ca9a2c84029698708a4731812948d8180cc6304cb13c7",
+      "timestamp": 1737262800,
+      "vote_choice": "Abstain",
+      "vote_id": "c18f63ac5e273f219c9c707d1d6fa1c4d70e2d271579d3e3b48e1f5f7405b9df",
+      "voter": "did:zhtp:510ca9a4f4cffea0e6893320fea5a0bb9faeb373e0f10665",
+      "voting_power": 3828
+    },
+    {
+      "justification": null,
+      "proposal_id": "3f9f129209594ef9a30ca9a2c84029698708a4731812948d8180cc6304cb13c7",
+      "timestamp": 1737266400,
+      "vote_choice": "Abstain",
+      "vote_id": "1a6d78bbb84fe31dfed5b7dd5a38527dada241a563b1f25f22e88ee5cf09886a",
+      "voter": "did:zhtp:200eba03a44be8ad155d9431152a1004f02e5dec8664a8bf",
+      "voting_power": 25739
+    },
+    {
+      "justification": "This proposal strengthens the network's security posture and should be amended.",
+      "proposal_id": "3f9f129209594ef9a30ca9a2c84029698708a4731812948d8180cc6304cb13c7",
+      "timestamp": 1737270000,
+      "vote_choice": "Reject",
+      "vote_id": "619b33c4e35b4c5c05b783aa1b479379c88a756e922e9d6df7316fb737806676",
+      "voter": "did:zhtp:9f619022131be90893d5dd5a27419186e502559a3ef1d7f5",
+      "voting_power": 43204
+    },
+    {
+      "justification": null,
+      "proposal_id": "3f9f129209594ef9a30ca9a2c84029698708a4731812948d8180cc6304cb13c7",
+      "timestamp": 1737273600,
+      "vote_choice": "Approve",
+      "vote_id": "ba2dacc8e5af49bfbaa6a0087ccfaed320d9d72eea293dcfff136a9e8f5cdeb8",
+      "voter": "did:zhtp:784ecac022f5d3a9f109e8ea8ae2e86e53dd2b594db3b90d",
+      "voting_power": 36749
+    },
+    {
+      "justification": null,
+      "proposal_id": "3f9f129209594ef9a30ca9a2c84029698708a4731812948d8180cc6304cb13c7",
+      "timestamp": 1737277200,
+      "vote_choice": "Approve",
+      "vote_id": "8bf83c70556c5eabebf4816fc15c53669d0b05efe4ff94cc6da321a47ee8a117",
+      "voter": "did:zhtp:a9ca497bbc22e763060bce7244241c06a4eb5cdf77738056",
+      "voting_power": 34057
+    },
+    {
+      "justification": null,
+      "proposal_id": "3f9f129209594ef9a30ca9a2c84029698708a4731812948d8180cc6304cb13c7",
+      "timestamp": 1737280800,
+      "vote_choice": "Reject",
+      "vote_id": "caf96ab760e81d69b564c4a4aaa8907cab8096d67382f508832923ba009a8630",
+      "voter": "did:zhtp:93a9335fcce7557c1061e5ced4fed0010d340c93312f9b80",
+      "voting_power": 44189
+    },
+    {
+      "justification": null,
+      "proposal_id": "d6e0aa1d9453489f903fc036f329ba608da86eaa6483325c195771280695a6a7",
+      "timestamp": 1737331200,
+      "vote_choice": "Reject",
+      "vote_id": "587945352334b1f7afb302c41ab6cd6065e1c45e488bde075ff4b7d4272e75f6",
+      "voter": "did:zhtp:945b32ef78aade8c6ed36c2d0055082cc1d094a6a6d95b7b",
+      "voting_power": 7431
+    },
+    {
+      "justification": "This proposal threatens the network's economic model and should be approved.",
+      "proposal_id": "d6e0aa1d9453489f903fc036f329ba608da86eaa6483325c195771280695a6a7",
+      "timestamp": 1737334800,
+      "vote_choice": "Reject",
+      "vote_id": "6c0c2a4abf57df1f33002d4236201b244a0b4520166a6aa29b6fef7b9cbba890",
+      "voter": "did:zhtp:4b66acca5a79f502de8041ce2d077594b078d0474abe198a",
+      "voting_power": 11506
+    },
+    {
+      "justification": null,
+      "proposal_id": "d6e0aa1d9453489f903fc036f329ba608da86eaa6483325c195771280695a6a7",
+      "timestamp": 1737338400,
+      "vote_choice": "Abstain",
+      "vote_id": "2877c7144924928596363735a25784b8174652cbda02d25057e8036c3108a3f5",
+      "voter": "did:zhtp:e10b0412e7755b80de5ec891a823a11481232070328cd47e",
+      "voting_power": 44869
+    },
+    {
+      "justification": null,
+      "proposal_id": "d6e0aa1d9453489f903fc036f329ba608da86eaa6483325c195771280695a6a7",
+      "timestamp": 1737342000,
+      "vote_choice": "Approve",
+      "vote_id": "07c10ef74ea7d920b4e9d282f6d9f21e384a4a6e58cc237c68a9110cff4c1afb",
+      "voter": "did:zhtp:bb4614f2232da0ecd9406e3ceed65b77e25305a0dc28d341",
+      "voting_power": 48252
+    },
+    {
+      "justification": null,
+      "proposal_id": "d6e0aa1d9453489f903fc036f329ba608da86eaa6483325c195771280695a6a7",
+      "timestamp": 1737345600,
+      "vote_choice": "Reject",
+      "vote_id": "8b5792b53634dc013c23fff36c669866cb81ad31178150248bbb1c3ed22ef323",
+      "voter": "did:zhtp:1d4945abd6807b17f98d3715ba39e0b85e821efdfa261cfb",
+      "voting_power": 5582
+    },
+    {
+      "justification": null,
+      "proposal_id": "d6e0aa1d9453489f903fc036f329ba608da86eaa6483325c195771280695a6a7",
+      "timestamp": 1737349200,
+      "vote_choice": "Approve",
+      "vote_id": "8c0945aae11276f4fc995654622d8cc8dcca60f303bf118c5f8b86ce62b46939",
+      "voter": "did:zhtp:3b0e514b77b825ce9916c1a2a8a704601c1c80a3f44e252c",
+      "voting_power": 17284
+    },
+    {
+      "justification": null,
+      "proposal_id": "d6e0aa1d9453489f903fc036f329ba608da86eaa6483325c195771280695a6a7",
+      "timestamp": 1737352800,
+      "vote_choice": "Reject",
+      "vote_id": "582b5eb5da6fbdf2c7039d0f4aebdc359bdf67227c837e7acd8d8a64541e60cf",
+      "voter": "did:zhtp:2ff5960a11c993ce9f7b96dca11c1a6423bd5b6e49470fde",
+      "voting_power": 25418
+    },
+    {
+      "justification": "This proposal strengthens the network's decentralization and should be rejected.",
+      "proposal_id": "d6e0aa1d9453489f903fc036f329ba608da86eaa6483325c195771280695a6a7",
+      "timestamp": 1737356400,
+      "vote_choice": "Approve",
+      "vote_id": "6eaad0b65ec48875ce4e2ce89475e736a056fe5aae89eb460005b343ae77c061",
+      "voter": "did:zhtp:4d25d0c2f0a9980f65ea9f2f7de63a977279234e939dff43",
+      "voting_power": 1940
+    },
+    {
+      "justification": null,
+      "proposal_id": "d6e0aa1d9453489f903fc036f329ba608da86eaa6483325c195771280695a6a7",
+      "timestamp": 1737360000,
+      "vote_choice": "Abstain",
+      "vote_id": "6a3ffb476c5047ca9cd4d04ce9d1d590703ebed6f136cec2ffa2470663709a9d",
+      "voter": "did:zhtp:9ff5f3c5c7ee0b902c692f6f0f9f0911c07ea044430ae3d2",
+      "voting_power": 1723
+    },
+    {
+      "justification": "This proposal maintains the network's user privacy and should be approved.",
+      "proposal_id": "f1d490b439d6bf8262769dec1c2f455c28b3663482428d0c8ca5f456d1c39ef5",
+      "timestamp": 1737417600,
+      "vote_choice": "Reject",
+      "vote_id": "ce79d467cff70f434f092cc234a0e80b0f77345d2b5fbd9dedc2485d4e8c178d",
+      "voter": "did:zhtp:3a9b93e0960ce2f76f43da677b4aaa8379d7ea301822c3c1",
+      "voting_power": 42185
+    },
+    {
+      "justification": null,
+      "proposal_id": "f1d490b439d6bf8262769dec1c2f455c28b3663482428d0c8ca5f456d1c39ef5",
+      "timestamp": 1737421200,
+      "vote_choice": "Abstain",
+      "vote_id": "1e47ab4fea281c51b202faadf7e25d44649ece82b65861dc3004a713f4a2516d",
+      "voter": "did:zhtp:827595c99c98f428067834b9bcd142f9970d4b5059bbb71d",
+      "voting_power": 8543
+    },
+    {
+      "justification": null,
+      "proposal_id": "f1d490b439d6bf8262769dec1c2f455c28b3663482428d0c8ca5f456d1c39ef5",
+      "timestamp": 1737424800,
+      "vote_choice": "Approve",
+      "vote_id": "5d0130f42c5bef055c2bb2437d76ddd480e3b86158b5647bd01960c2217022f3",
+      "voter": "did:zhtp:d4c737da3f6d672612a60220be050a96bb7d7d663d4a80e5",
+      "voting_power": 40190
+    },
+    {
+      "justification": "This proposal maintains the network's security posture and should be amended.",
+      "proposal_id": "f1d490b439d6bf8262769dec1c2f455c28b3663482428d0c8ca5f456d1c39ef5",
+      "timestamp": 1737428400,
+      "vote_choice": "Reject",
+      "vote_id": "b32a02ebd0282475e4a6bd05b49dcef037c9b54cd148983e45bf556f2a0f918b",
+      "voter": "did:zhtp:c98327ec4b8c0e2a1d37c7eda35d01bbe41413d41865aeca",
+      "voting_power": 23142
+    },
+    {
+      "justification": "This proposal improves the network's economic model and should be approved.",
+      "proposal_id": "f1d490b439d6bf8262769dec1c2f455c28b3663482428d0c8ca5f456d1c39ef5",
+      "timestamp": 1737432000,
+      "vote_choice": "Abstain",
+      "vote_id": "7382440a1e851b0774f714c57db6bc02b0993b1f5e9f28a09b48ab8fdd6b1ac2",
+      "voter": "did:zhtp:01c92d325b9bfb1de8af8b0c7f867507723c17d9f8e8784a",
+      "voting_power": 26282
+    },
+    {
+      "justification": "This proposal threatens the network's economic model and should be amended.",
+      "proposal_id": "de56925d646de342c0a0b4370ee6f6ff8e47fb03a42808e358f471bb8f308d55",
+      "timestamp": 1737504000,
+      "vote_choice": "Reject",
+      "vote_id": "a33bb44b4c85a1ea9875a5d3212e2c0bdd91ae98d25392226ec08be2feaedb16",
+      "voter": "did:zhtp:ba87a132484f1bbb9319a4a246e016258b890b062285c750",
+      "voting_power": 30584
+    },
+    {
+      "justification": null,
+      "proposal_id": "de56925d646de342c0a0b4370ee6f6ff8e47fb03a42808e358f471bb8f308d55",
+      "timestamp": 1737507600,
+      "vote_choice": "Reject",
+      "vote_id": "ed57b790ed7c88133ee5baaa4c0eab02ce11d305ea5758257a7a84bd2b3b57d3",
+      "voter": "did:zhtp:c371e02534e86507da9c52683608a5409df5e7d8503d1775",
+      "voting_power": 41306
+    },
+    {
+      "justification": "This proposal threatens the network's economic model and should be rejected.",
+      "proposal_id": "de56925d646de342c0a0b4370ee6f6ff8e47fb03a42808e358f471bb8f308d55",
+      "timestamp": 1737511200,
+      "vote_choice": "Reject",
+      "vote_id": "0f1d3a8305ca4c137ed7ce6bb7738ca28a1033eaa553bf40b0b614d1c109f9df",
+      "voter": "did:zhtp:80d67ef38c1c24b71cf0fd1f6bbb3c171b63354f3ef83e5b",
+      "voting_power": 28113
+    },
+    {
+      "justification": null,
+      "proposal_id": "de56925d646de342c0a0b4370ee6f6ff8e47fb03a42808e358f471bb8f308d55",
+      "timestamp": 1737514800,
+      "vote_choice": "Approve",
+      "vote_id": "e1fc385dded4e26f5cf4619c26532f39d73b9760b9d6476f06f6af9ed7961a77",
+      "voter": "did:zhtp:ceef62f3646cae6ff526abe1cfe8ce728c8e8b7fc85d75ff",
+      "voting_power": 12335
+    },
+    {
+      "justification": null,
+      "proposal_id": "de56925d646de342c0a0b4370ee6f6ff8e47fb03a42808e358f471bb8f308d55",
+      "timestamp": 1737518400,
+      "vote_choice": "Abstain",
+      "vote_id": "8c14c863546ea09721369a9da34f22c8994c91404f528fbebfa38c5d77bfde8a",
+      "voter": "did:zhtp:7148ea21b2d9f8ef09fceabeeac1f33d87d27f5fdd41aab7",
+      "voting_power": 5673
+    },
+    {
+      "justification": "This proposal improves the network's security posture and should be rejected.",
+      "proposal_id": "de56925d646de342c0a0b4370ee6f6ff8e47fb03a42808e358f471bb8f308d55",
+      "timestamp": 1737522000,
+      "vote_choice": "Abstain",
+      "vote_id": "7de5afece3de0c959ae38b79d808a06a4b327e89f3892c4c8fff90be4e9120b2",
+      "voter": "did:zhtp:ecbda7a224b15e0e76cf25f20057ebaf2a7d59629b1fd648",
+      "voting_power": 41241
+    },
+    {
+      "justification": null,
+      "proposal_id": "de56925d646de342c0a0b4370ee6f6ff8e47fb03a42808e358f471bb8f308d55",
+      "timestamp": 1737525600,
+      "vote_choice": "Approve",
+      "vote_id": "0c4ed6d6ff83ab727aff3c43f195b406f1054affda08c7ba4516695848d16598",
+      "voter": "did:zhtp:e062fb59b6017d492bec1c39d257ce6fd3d9b7237f3ddcd4",
+      "voting_power": 49299
+    },
+    {
+      "justification": "This proposal threatens the network's security posture and should be rejected.",
+      "proposal_id": "2fd8022ae7c638c2eae81a83234c60aff565a1f63b160890fa60fc4318a25e14",
+      "timestamp": 1737590400,
+      "vote_choice": "Reject",
+      "vote_id": "5fc5c417d6bb3eab01087c0a51630594d88f4d67428b36e360aad1b39dd2c525",
+      "voter": "did:zhtp:8288a1955dd39ff8c1a2191ebcaab976c15fcaacd9d69b22",
+      "voting_power": 34706
+    },
+    {
+      "justification": null,
+      "proposal_id": "2fd8022ae7c638c2eae81a83234c60aff565a1f63b160890fa60fc4318a25e14",
+      "timestamp": 1737594000,
+      "vote_choice": "Reject",
+      "vote_id": "17df63f0a98b833af1e52de59651719539e5183334a13108a824fc2ac88a23fb",
+      "voter": "did:zhtp:ed66be8cd696a4a0d7caba05ab556da566f5e3bdafc62081",
+      "voting_power": 29273
+    },
+    {
+      "justification": "This proposal strengthens the network's decentralization and should be amended.",
+      "proposal_id": "2fd8022ae7c638c2eae81a83234c60aff565a1f63b160890fa60fc4318a25e14",
+      "timestamp": 1737597600,
+      "vote_choice": "Reject",
+      "vote_id": "d1ebb1df30499aeac59fb4b3636fe1fbccc439edd25155836eef24a0a60ba067",
+      "voter": "did:zhtp:3f9c3c6e0a60fbac7f19afb7c96ef2c4e621c5538bf8b529",
+      "voting_power": 22818
+    },
+    {
+      "justification": null,
+      "proposal_id": "2fd8022ae7c638c2eae81a83234c60aff565a1f63b160890fa60fc4318a25e14",
+      "timestamp": 1737601200,
+      "vote_choice": "Abstain",
+      "vote_id": "53c3314b498bf63bc094395bb4ddaae63da3659a053865c26e6204126fb28524",
+      "voter": "did:zhtp:c72f8adbf0e1d8219ff39ead340ebee6280ba4c5b0e2f7af",
+      "voting_power": 27284
+    },
+    {
+      "justification": null,
+      "proposal_id": "2fd8022ae7c638c2eae81a83234c60aff565a1f63b160890fa60fc4318a25e14",
+      "timestamp": 1737604800,
+      "vote_choice": "Abstain",
+      "vote_id": "afc908a866e2a78818ce77b6830a527161b7002a1bcd497aba6f91e2fd46f102",
+      "voter": "did:zhtp:95aac1219b7530e8c6fba45282c13a9da2b49a5e7563e7fb",
+      "voting_power": 1177
+    },
+    {
+      "justification": null,
+      "proposal_id": "2ecda248ef272ab47d418f70af0e46de71c1235bd3901f4935e0c617aa7ae7fe",
+      "timestamp": 1737676800,
+      "vote_choice": "Abstain",
+      "vote_id": "33ae02e469bc57e4e949ea42d468c00bd645f14cb16a664b9b23b1214b831e82",
+      "voter": "did:zhtp:75138ab2e18171e28de628666c051b607e97fadb85a44b33",
+      "voting_power": 41579
+    },
+    {
+      "justification": null,
+      "proposal_id": "2ecda248ef272ab47d418f70af0e46de71c1235bd3901f4935e0c617aa7ae7fe",
+      "timestamp": 1737680400,
+      "vote_choice": "Approve",
+      "vote_id": "c07aa5698aea455e612e3ae95c8106c4ce9aa2d98a0cbcfb3656b50f38e3ecb5",
+      "voter": "did:zhtp:3bb14e080659ab7e5b8483cc839ac72b5b8dfc29b0fdfaae",
+      "voting_power": 39604
+    },
+    {
+      "justification": "This proposal improves the network's economic model and should be amended.",
+      "proposal_id": "2ecda248ef272ab47d418f70af0e46de71c1235bd3901f4935e0c617aa7ae7fe",
+      "timestamp": 1737684000,
+      "vote_choice": "Reject",
+      "vote_id": "c3832b713be4e11e33bbc51699a159339bd201a0f0dea4959d26dbbd2f8358b8",
+      "voter": "did:zhtp:e7a2ee45683b30334acbceec925563d716b604b29cf77654",
+      "voting_power": 24472
+    },
+    {
+      "justification": null,
+      "proposal_id": "2ecda248ef272ab47d418f70af0e46de71c1235bd3901f4935e0c617aa7ae7fe",
+      "timestamp": 1737687600,
+      "vote_choice": "Reject",
+      "vote_id": "b139dcc9a87cba36a2b81cc9d86a36116785faaddfb3ca82c723b9497176979b",
+      "voter": "did:zhtp:8d28f5e9fae8c5513796dfa64c7148b0c14721192bc93735",
+      "voting_power": 34655
+    },
+    {
+      "justification": null,
+      "proposal_id": "2ecda248ef272ab47d418f70af0e46de71c1235bd3901f4935e0c617aa7ae7fe",
+      "timestamp": 1737691200,
+      "vote_choice": "Approve",
+      "vote_id": "e2a0c8d9d3f8e05e591958ff6521ded48f204fba684310e124bfa1bc2fd8ec57",
+      "voter": "did:zhtp:f606782665c766c8216ba9c72278d412d6ebde3db7d0286a",
+      "voting_power": 26716
+    },
+    {
+      "justification": null,
+      "proposal_id": "2ecda248ef272ab47d418f70af0e46de71c1235bd3901f4935e0c617aa7ae7fe",
+      "timestamp": 1737694800,
+      "vote_choice": "Abstain",
+      "vote_id": "883bc5e7f8f71b63f30488dbde1ae19751df0c75c8393726a1207b62936be975",
+      "voter": "did:zhtp:9f98563fbbe11e20b96a7d234d3b5fa7b7a84ebe1579ba20",
+      "voting_power": 35445
+    },
+    {
+      "justification": null,
+      "proposal_id": "2ecda248ef272ab47d418f70af0e46de71c1235bd3901f4935e0c617aa7ae7fe",
+      "timestamp": 1737698400,
+      "vote_choice": "Approve",
+      "vote_id": "cb9712b366ea894e368113bfb2cf37c7af90bdcd7a2399f76cfbcbb3a55518fb",
+      "voter": "did:zhtp:ec26d83c441b5377ff6edcd31a6d3a312b59d0f8b3d26210",
+      "voting_power": 25072
+    },
+    {
+      "justification": null,
+      "proposal_id": "2ecda248ef272ab47d418f70af0e46de71c1235bd3901f4935e0c617aa7ae7fe",
+      "timestamp": 1737702000,
+      "vote_choice": "Reject",
+      "vote_id": "d886420b143b9f010f2ace85a44cc24b7d5a612ff53b91e40f4cabf5396b90a9",
+      "voter": "did:zhtp:a5119c004c3e545c190dfd2520dc03988afd3f86535fca80",
+      "voting_power": 927
+    },
+    {
+      "justification": "This proposal threatens the network's economic model and should be amended.",
+      "proposal_id": "2ecda248ef272ab47d418f70af0e46de71c1235bd3901f4935e0c617aa7ae7fe",
+      "timestamp": 1737705600,
+      "vote_choice": "Abstain",
+      "vote_id": "a83fb406aeffcd6ede53c9958f44a1a073802b9e98fbbae8771e171a45e53c82",
+      "voter": "did:zhtp:676acb08ef8e6bc62f007c8d6d4fb079da320fbd0ad22baf",
+      "voting_power": 2990
+    },
+    {
+      "justification": "This proposal strengthens the network's security posture and should be rejected.",
+      "proposal_id": "2ecda248ef272ab47d418f70af0e46de71c1235bd3901f4935e0c617aa7ae7fe",
+      "timestamp": 1737709200,
+      "vote_choice": "Abstain",
+      "vote_id": "a7a363e983e47ba161d04cc65bfa0f25b559fe9e340346804abc62f0e681b92f",
+      "voter": "did:zhtp:b53d1c3d27d6f0da3fb6eb66efca7562884b4157ea269298",
+      "voting_power": 10084
+    },
+    {
+      "justification": "This proposal maintains the network's validator incentives and should be rejected.",
+      "proposal_id": "2ecda248ef272ab47d418f70af0e46de71c1235bd3901f4935e0c617aa7ae7fe",
+      "timestamp": 1737712800,
+      "vote_choice": "Approve",
+      "vote_id": "e6c7f3c320233e74768bcc98f13fbdb817ca9d1bd2e03e840f97b383f837fe6b",
+      "voter": "did:zhtp:f0a0a1bcdcaa3d64539e3397ce348e04be59373609ef5bcd",
+      "voting_power": 40246
+    },
+    {
+      "justification": null,
+      "proposal_id": "2ecda248ef272ab47d418f70af0e46de71c1235bd3901f4935e0c617aa7ae7fe",
+      "timestamp": 1737716400,
+      "vote_choice": "Reject",
+      "vote_id": "d39a903f1e7db34373b803474298d7d56a64bb37cb6f358dca57f7b3611e1a7b",
+      "voter": "did:zhtp:634a24ce385960a4cfa1d11d90a6d56896da5be474d46ea0",
+      "voting_power": 39338
+    },
+    {
+      "justification": "This proposal maintains the network's economic model and should be amended.",
+      "proposal_id": "2ecda248ef272ab47d418f70af0e46de71c1235bd3901f4935e0c617aa7ae7fe",
+      "timestamp": 1737720000,
+      "vote_choice": "Abstain",
+      "vote_id": "a0470d4594c8becae3fb86e0c416daf7193138f3b9d2f8a526df071f0f3fcf38",
+      "voter": "did:zhtp:9b793b69f954473599f8ec884d78e687cbd29b43d9814d7c",
+      "voting_power": 2254
+    },
+    {
+      "justification": null,
+      "proposal_id": "2ecda248ef272ab47d418f70af0e46de71c1235bd3901f4935e0c617aa7ae7fe",
+      "timestamp": 1737723600,
+      "vote_choice": "Abstain",
+      "vote_id": "899dd21e4fa7964852eb8665f408f9118cf021a6b135755cbed01f5f7ef04811",
+      "voter": "did:zhtp:2612b28f6cec5a8ea7811cd02a4661cc5144cfab2ed50292",
+      "voting_power": 9931
+    },
+    {
+      "justification": null,
+      "proposal_id": "a6e09396422d7d646c0b57a66557b008eeaab14e2b8ff5fd1136a34f63775396",
+      "timestamp": 1737763200,
+      "vote_choice": "Reject",
+      "vote_id": "bba5338571091e50498d943bd58733e956e30ebd1575f2d8ea187282f9c5835b",
+      "voter": "did:zhtp:d4225b5f70e743d3e3c63796291ededf01e9af2bb1c12df8",
+      "voting_power": 30554
+    },
+    {
+      "justification": null,
+      "proposal_id": "a6e09396422d7d646c0b57a66557b008eeaab14e2b8ff5fd1136a34f63775396",
+      "timestamp": 1737766800,
+      "vote_choice": "Reject",
+      "vote_id": "84adf1d6c41a2f8fbd4355bedb0772308b36098eb6dfe6c99c3ed0e17c4219de",
+      "voter": "did:zhtp:122d3eeb6ba77fe0b4e755e28e61ccf7e68b229f595920c9",
+      "voting_power": 32970
+    },
+    {
+      "justification": null,
+      "proposal_id": "a6e09396422d7d646c0b57a66557b008eeaab14e2b8ff5fd1136a34f63775396",
+      "timestamp": 1737770400,
+      "vote_choice": "Approve",
+      "vote_id": "d1df0f7a5560bc0c9c8f673434cb7377818a70eff0ddab03202c15dbc36083be",
+      "voter": "did:zhtp:7eb334217eb187f7cc25ae408e33345fdf67dace0c7ce918",
+      "voting_power": 8458
+    },
+    {
+      "justification": null,
+      "proposal_id": "a6e09396422d7d646c0b57a66557b008eeaab14e2b8ff5fd1136a34f63775396",
+      "timestamp": 1737774000,
+      "vote_choice": "Abstain",
+      "vote_id": "81089fbf968de45a84f0fb9368d79b09a4a32cf43f41a5992a4c8d2cebf770cd",
+      "voter": "did:zhtp:be31de650e7e021b555b19f4a1ad56dbb7c7cd1b601b756a",
+      "voting_power": 40501
+    },
+    {
+      "justification": "This proposal threatens the network's decentralization and should be amended.",
+      "proposal_id": "a6e09396422d7d646c0b57a66557b008eeaab14e2b8ff5fd1136a34f63775396",
+      "timestamp": 1737777600,
+      "vote_choice": "Approve",
+      "vote_id": "e1dc60a4564707fbd167b912cd61adbc40d01cc2f3f6cd8d1331524328974543",
+      "voter": "did:zhtp:f0406d937946bc027a23129a6e3ef2128ac958bb2c6bc40f",
+      "voting_power": 4266
+    },
+    {
+      "justification": null,
+      "proposal_id": "a6e09396422d7d646c0b57a66557b008eeaab14e2b8ff5fd1136a34f63775396",
+      "timestamp": 1737781200,
+      "vote_choice": "Reject",
+      "vote_id": "23123930c46dc3c8d13a21cd50c8007329817dadf8820dad5e798382acb2fb8d",
+      "voter": "did:zhtp:07840a9cb5af0b7f263170dc0a8d8c8599f8853af24606e5",
+      "voting_power": 36601
+    },
+    {
+      "justification": "This proposal maintains the network's economic model and should be amended.",
+      "proposal_id": "a6e09396422d7d646c0b57a66557b008eeaab14e2b8ff5fd1136a34f63775396",
+      "timestamp": 1737784800,
+      "vote_choice": "Reject",
+      "vote_id": "9491da4f44e84439a9f1463d0ed83cfc93d650c964bdce47a0a6d29d66092cd9",
+      "voter": "did:zhtp:97308b29708bf08bb1216034e0d8db7e0b7bfc7e13ec2e47",
+      "voting_power": 11650
+    },
+    {
+      "justification": "This proposal maintains the network's decentralization and should be rejected.",
+      "proposal_id": "a6e09396422d7d646c0b57a66557b008eeaab14e2b8ff5fd1136a34f63775396",
+      "timestamp": 1737788400,
+      "vote_choice": "Abstain",
+      "vote_id": "830b5448e10dd9cf2fd849c3db787c736852e05d7c7aa5f367b1b3d6b37e693d",
+      "voter": "did:zhtp:9cf54b9caf567e32b32aa4dbaea3566446b189febcf2e818",
+      "voting_power": 3184
+    },
+    {
+      "justification": "This proposal maintains the network's decentralization and should be approved.",
+      "proposal_id": "a6e09396422d7d646c0b57a66557b008eeaab14e2b8ff5fd1136a34f63775396",
+      "timestamp": 1737792000,
+      "vote_choice": "Abstain",
+      "vote_id": "799010e67e03fb776435cc7b8d44d70f0062bdfca5f73bd86b306bf21fff131d",
+      "voter": "did:zhtp:c6cd17699c284027cf2632127f3bbf77a8a31dcc0903891f",
+      "voting_power": 16361
+    },
+    {
+      "justification": "This proposal threatens the network's validator incentives and should be rejected.",
+      "proposal_id": "a6e09396422d7d646c0b57a66557b008eeaab14e2b8ff5fd1136a34f63775396",
+      "timestamp": 1737795600,
+      "vote_choice": "Approve",
+      "vote_id": "d25aeadd8327b3b44ea316c487441b1b0f99cd41efa09891816f0d5fc12b454e",
+      "voter": "did:zhtp:f4b4266b768198544a9b6d6bd6c3c9b60a31b952972e5651",
+      "voting_power": 16712
+    },
+    {
+      "justification": null,
+      "proposal_id": "07169156b8daf792be62531e221f6690750d3c9c14a5395394b59bb47eccf72c",
+      "timestamp": 1737849600,
+      "vote_choice": "Abstain",
+      "vote_id": "340b31e2cadf8ff83329de79a5024958b9d346401dffa031f0ef2d69d7bdac28",
+      "voter": "did:zhtp:b8f5624b569bcbd135216e3a9abcb5e146bebe21835a2dd0",
+      "voting_power": 26095
+    },
+    {
+      "justification": "This proposal threatens the network's decentralization and should be approved.",
+      "proposal_id": "07169156b8daf792be62531e221f6690750d3c9c14a5395394b59bb47eccf72c",
+      "timestamp": 1737853200,
+      "vote_choice": "Approve",
+      "vote_id": "81d61137a9d578e69aa4661b1eefc988c42193aa6b4e246167fa2ff4d724edd2",
+      "voter": "did:zhtp:1bf34575372ae27650d0ae2b7e8f64accfb8c7ad1920a22a",
+      "voting_power": 18645
+    },
+    {
+      "justification": null,
+      "proposal_id": "07169156b8daf792be62531e221f6690750d3c9c14a5395394b59bb47eccf72c",
+      "timestamp": 1737856800,
+      "vote_choice": "Approve",
+      "vote_id": "1c4141d3d7e01dbf11a7fd666b13a8c1c289db1b2d461f54f01bb8c0388b9950",
+      "voter": "did:zhtp:a5fdf2dea30e587d61372ad2c33c70102866e85037086d97",
+      "voting_power": 24125
+    },
+    {
+      "justification": "This proposal strengthens the network's user privacy and should be amended.",
+      "proposal_id": "07169156b8daf792be62531e221f6690750d3c9c14a5395394b59bb47eccf72c",
+      "timestamp": 1737860400,
+      "vote_choice": "Reject",
+      "vote_id": "f9deaeb678f060394286716b38376ada9dc2036c9f12fe8fdd343f0acba339d9",
+      "voter": "did:zhtp:e145dbb3f3ac418b45fec96d7f4a570ba23094346d7cc15b",
+      "voting_power": 23755
+    },
+    {
+      "justification": null,
+      "proposal_id": "07169156b8daf792be62531e221f6690750d3c9c14a5395394b59bb47eccf72c",
+      "timestamp": 1737864000,
+      "vote_choice": "Abstain",
+      "vote_id": "519ecc4ea053b10f6c84f45e09ab949252f9aa2ac0d4ba61754dd36e52cc14b5",
+      "voter": "did:zhtp:be9d6f86f76d15d61a9c0158f87b1474f77f94145f326b0e",
+      "voting_power": 6828
+    },
+    {
+      "justification": "This proposal improves the network's security posture and should be approved.",
+      "proposal_id": "2221eaa753b15c7dd17645531dd641392164abc6f55299c9fcb6470a403e639b",
+      "timestamp": 1737936000,
+      "vote_choice": "Abstain",
+      "vote_id": "1f0224c4ba41b89ae1b627bb0c608100def600c8ce51ab592d721e97353fd3ce",
+      "voter": "did:zhtp:6e7822a481e3cd8d9957979c365de5c6883f67271039c375",
+      "voting_power": 33438
+    },
+    {
+      "justification": null,
+      "proposal_id": "2221eaa753b15c7dd17645531dd641392164abc6f55299c9fcb6470a403e639b",
+      "timestamp": 1737939600,
+      "vote_choice": "Abstain",
+      "vote_id": "75560b4ec7ab0d8e65779e238e68cde0c36d03e6f5afe8439acb036e030ee852",
+      "voter": "did:zhtp:4ed43b7229b4c1b7362acfb0c246df7d3531fd4280630f7a",
+      "voting_power": 38920
+    },
+    {
+      "justification": null,
+      "proposal_id": "2221eaa753b15c7dd17645531dd641392164abc6f55299c9fcb6470a403e639b",
+      "timestamp": 1737943200,
+      "vote_choice": "Approve",
+      "vote_id": "d03a7857257a0019ac2b9049410741d08cfb3ace79ec2ec0472c8080764617d8",
+      "voter": "did:zhtp:5c0b0d9a1b534631763a23deb4fe22e80766a5eb4f4d01d5",
+      "voting_power": 23380
+    },
+    {
+      "justification": null,
+      "proposal_id": "2221eaa753b15c7dd17645531dd641392164abc6f55299c9fcb6470a403e639b",
+      "timestamp": 1737946800,
+      "vote_choice": "Approve",
+      "vote_id": "d452709244c263477c9ea57bd70e48917d14d8389d18f31548cacac66660a9d5",
+      "voter": "did:zhtp:fa21b2764c0f5dfe0502672b368de620b19d783d6a562a4b",
+      "voting_power": 9733
+    },
+    {
+      "justification": null,
+      "proposal_id": "2221eaa753b15c7dd17645531dd641392164abc6f55299c9fcb6470a403e639b",
+      "timestamp": 1737950400,
+      "vote_choice": "Reject",
+      "vote_id": "8599f7b206991112b90e653bd3f7cd83c2bf5966860909d27c1599ab0b0a8746",
+      "voter": "did:zhtp:8b35e18cfb90209abe68ce0e8b55b9959c4fbbd4bdf19ffd",
+      "voting_power": 42230
+    },
+    {
+      "justification": null,
+      "proposal_id": "2221eaa753b15c7dd17645531dd641392164abc6f55299c9fcb6470a403e639b",
+      "timestamp": 1737954000,
+      "vote_choice": "Reject",
+      "vote_id": "eba3304fc1d631a482d336168375dc27d4ca1ce9c6ffa774baabd3cccb891a46",
+      "voter": "did:zhtp:dad183d26da23b8aa17c51917f7e28c63b9b8117f6caaccc",
+      "voting_power": 1021
+    },
+    {
+      "justification": "This proposal threatens the network's decentralization and should be amended.",
+      "proposal_id": "2221eaa753b15c7dd17645531dd641392164abc6f55299c9fcb6470a403e639b",
+      "timestamp": 1737957600,
+      "vote_choice": "Reject",
+      "vote_id": "d28051875ae3d0bc74cb52c84e868848aff1b79a795867312097f194f32ec4d1",
+      "voter": "did:zhtp:c168aa7f7c9d5018417b65fe84b005627bcf2dc20725182f",
+      "voting_power": 37214
+    },
+    {
+      "justification": null,
+      "proposal_id": "2221eaa753b15c7dd17645531dd641392164abc6f55299c9fcb6470a403e639b",
+      "timestamp": 1737961200,
+      "vote_choice": "Approve",
+      "vote_id": "77ed3bd8e9026caac1861bfc4226c0181515cd01f4c720aca6379677ab649fe8",
+      "voter": "did:zhtp:54ef34cc3be42dfd34ec63ee8f1f86cbe9f1214b3af1acc5",
+      "voting_power": 14449
+    },
+    {
+      "justification": "This proposal maintains the network's user privacy and should be amended.",
+      "proposal_id": "2221eaa753b15c7dd17645531dd641392164abc6f55299c9fcb6470a403e639b",
+      "timestamp": 1737964800,
+      "vote_choice": "Abstain",
+      "vote_id": "3fb02fe2fe3aa3d8d0c22474ffce97a1b084f993421a4009b527a122f958f134",
+      "voter": "did:zhtp:8ab6ceb8331986bfc04469ac2f18ef967b3949de9da2cd7f",
+      "voting_power": 9602
+    },
+    {
+      "justification": null,
+      "proposal_id": "2221eaa753b15c7dd17645531dd641392164abc6f55299c9fcb6470a403e639b",
+      "timestamp": 1737968400,
+      "vote_choice": "Approve",
+      "vote_id": "50aaac45613651472bd9cbe72ae213f6810b3e686fde4dfabd2c07ef0f1da66c",
+      "voter": "did:zhtp:c6e400ad4a0944648cc835088bad8e3bf7c908ce13b14c13",
+      "voting_power": 23428
+    },
+    {
+      "justification": null,
+      "proposal_id": "2221eaa753b15c7dd17645531dd641392164abc6f55299c9fcb6470a403e639b",
+      "timestamp": 1737972000,
+      "vote_choice": "Reject",
+      "vote_id": "3ceb736aee6ed07d04e9c6a0d0fe0da48e766e6520c3629807d96fda4ce34d93",
+      "voter": "did:zhtp:d709993c301e99ef720106231d2084d01dbeff07ca1facb3",
+      "voting_power": 39294
+    },
+    {
+      "justification": null,
+      "proposal_id": "2221eaa753b15c7dd17645531dd641392164abc6f55299c9fcb6470a403e639b",
+      "timestamp": 1737975600,
+      "vote_choice": "Reject",
+      "vote_id": "64f0e2c5613d6b551dcf374bdc21d097d150704b5b425863d2b94abcaa3fa1bc",
+      "voter": "did:zhtp:aa1e474b858257e55e237f74e253aa5491dbb9bbaa90b386",
+      "voting_power": 35828
+    },
+    {
+      "justification": null,
+      "proposal_id": "2221eaa753b15c7dd17645531dd641392164abc6f55299c9fcb6470a403e639b",
+      "timestamp": 1737979200,
+      "vote_choice": "Abstain",
+      "vote_id": "8abdf16e3233957bdbd09f67374d2df4ede5c384ceeb27e1e9f0a4407dfd91fd",
+      "voter": "did:zhtp:57475fcf94b888d5b4d134f4d935fcba0243ce78bad8414e",
+      "voting_power": 28855
+    },
+    {
+      "justification": null,
+      "proposal_id": "2221eaa753b15c7dd17645531dd641392164abc6f55299c9fcb6470a403e639b",
+      "timestamp": 1737982800,
+      "vote_choice": "Approve",
+      "vote_id": "05a7b67d69ad9a2bdfaad34f88c924c2631811626ba60968dc2f5a80fd394e7b",
+      "voter": "did:zhtp:a504ea3c6b552e01382ff9cce1a63cd127e3dd81729e46e1",
+      "voting_power": 22998
+    },
+    {
+      "justification": null,
+      "proposal_id": "11424cc734a16ba619c7ed1b8898e0127a855de1ca41559a35d3f25cc575ce96",
+      "timestamp": 1738022400,
+      "vote_choice": "Approve",
+      "vote_id": "df4258273278c22a705fd63af1143527efbf8caa5f57cc2dd113543f17f14542",
+      "voter": "did:zhtp:f021bc27c66d11623eef285af4904a3a2540f46b2acdee75",
+      "voting_power": 3732
+    },
+    {
+      "justification": null,
+      "proposal_id": "11424cc734a16ba619c7ed1b8898e0127a855de1ca41559a35d3f25cc575ce96",
+      "timestamp": 1738026000,
+      "vote_choice": "Abstain",
+      "vote_id": "04be528b795e561dd1e209ac1d33ea3785268707debc1d66131b472527416359",
+      "voter": "did:zhtp:8711d2911aecef86f130ab2af1b90bea65b8f3f22dbfaa52",
+      "voting_power": 5150
+    },
+    {
+      "justification": null,
+      "proposal_id": "11424cc734a16ba619c7ed1b8898e0127a855de1ca41559a35d3f25cc575ce96",
+      "timestamp": 1738029600,
+      "vote_choice": "Abstain",
+      "vote_id": "c294595e41b336c789c0908c1b96765ca267f6a441ef0de6491c758e45891040",
+      "voter": "did:zhtp:9538cd6dbcb3e66410cf05609aa61dfb5a3ce88043179c7b",
+      "voting_power": 1467
+    },
+    {
+      "justification": "This proposal improves the network's economic model and should be amended.",
+      "proposal_id": "11424cc734a16ba619c7ed1b8898e0127a855de1ca41559a35d3f25cc575ce96",
+      "timestamp": 1738033200,
+      "vote_choice": "Approve",
+      "vote_id": "2da3b4076d6def0fd9059bb1c54f099e740b0e92ed15bf0190d574eed6245348",
+      "voter": "did:zhtp:61db84eda0c013980d6ca998a954c9d40f66a607b7fb2414",
+      "voting_power": 23033
+    },
+    {
+      "justification": null,
+      "proposal_id": "11424cc734a16ba619c7ed1b8898e0127a855de1ca41559a35d3f25cc575ce96",
+      "timestamp": 1738036800,
+      "vote_choice": "Abstain",
+      "vote_id": "73af52d52b758955c5465c1af5c49cae925c2ed1e3566c4ee42e0a023c4c244a",
+      "voter": "did:zhtp:699d3e9ae73ee4c0f636cd9dfa62b758dd6e6fea2fdde0e5",
+      "voting_power": 16276
+    },
+    {
+      "justification": null,
+      "proposal_id": "11424cc734a16ba619c7ed1b8898e0127a855de1ca41559a35d3f25cc575ce96",
+      "timestamp": 1738040400,
+      "vote_choice": "Reject",
+      "vote_id": "920a954d987b6c98da1ea96976210fc4fcbf433e2a80e874954d8ec622c2a5e7",
+      "voter": "did:zhtp:b463e6d1cea9db975124d5ab8182f0a2b3b6cd419b54577b",
+      "voting_power": 16119
+    },
+    {
+      "justification": null,
+      "proposal_id": "11424cc734a16ba619c7ed1b8898e0127a855de1ca41559a35d3f25cc575ce96",
+      "timestamp": 1738044000,
+      "vote_choice": "Abstain",
+      "vote_id": "b28a3f21627decd77fdccd69291e92b4b5c2863dfa07091e3e521ab1f7434b62",
+      "voter": "did:zhtp:d2d0963168aee33fb1fcfcfd7337a79487ef94c56558b0b1",
+      "voting_power": 49844
+    },
+    {
+      "justification": "This proposal threatens the network's security posture and should be rejected.",
+      "proposal_id": "11424cc734a16ba619c7ed1b8898e0127a855de1ca41559a35d3f25cc575ce96",
+      "timestamp": 1738047600,
+      "vote_choice": "Reject",
+      "vote_id": "d90b0c8ef6db1e9eb664bf40a897ba599b60ae223ac9eb6484a29d0aa35734c3",
+      "voter": "did:zhtp:6d13dc329df009ea6a318ce643563e5937d7d47866a15a9c",
+      "voting_power": 36063
+    },
+    {
+      "justification": "This proposal maintains the network's user privacy and should be rejected.",
+      "proposal_id": "11424cc734a16ba619c7ed1b8898e0127a855de1ca41559a35d3f25cc575ce96",
+      "timestamp": 1738051200,
+      "vote_choice": "Reject",
+      "vote_id": "ed24898b422e2e03f2bbbd0df5b91a0f2faf4f17d9d14f8ce26a065209e0d49c",
+      "voter": "did:zhtp:8a8c19ff8b33d2bd748377b8f96ac090da4e89e7e06c6630",
+      "voting_power": 46389
+    },
+    {
+      "justification": null,
+      "proposal_id": "11424cc734a16ba619c7ed1b8898e0127a855de1ca41559a35d3f25cc575ce96",
+      "timestamp": 1738054800,
+      "vote_choice": "Abstain",
+      "vote_id": "3b7a3c544ae1bd11f2e6dba6022ead3fb4cef721b7a4c745e82146e3ee275700",
+      "voter": "did:zhtp:db2dd8146d156cd54b5831482897d6b0427869b7cf4ff085",
+      "voting_power": 32074
+    },
+    {
+      "justification": null,
+      "proposal_id": "11424cc734a16ba619c7ed1b8898e0127a855de1ca41559a35d3f25cc575ce96",
+      "timestamp": 1738058400,
+      "vote_choice": "Abstain",
+      "vote_id": "d7ce65759ad2f81e630c67ffe59bd65ba2590005b1c023e5283f9af3caaa7815",
+      "voter": "did:zhtp:7a1629c0a9d7d8c5f1af559d9db0dd2850b00b4ef9a41aa9",
+      "voting_power": 6099
+    },
+    {
+      "justification": null,
+      "proposal_id": "11424cc734a16ba619c7ed1b8898e0127a855de1ca41559a35d3f25cc575ce96",
+      "timestamp": 1738062000,
+      "vote_choice": "Approve",
+      "vote_id": "8ea0ce72181374bac1ff9363f480bbfd7a27030294b391d720f113054761e6b0",
+      "voter": "did:zhtp:114de1b7245b586a099251bfb4b69944f1f0afda1cc5bf88",
+      "voting_power": 30799
+    },
+    {
+      "justification": "This proposal improves the network's user privacy and should be rejected.",
+      "proposal_id": "5d000d6a92c1917f2855aac8ed0acb197ff106df79e9ca9eeb02ec792ff24733",
+      "timestamp": 1738108800,
+      "vote_choice": "Approve",
+      "vote_id": "f53707d40749e054ca818f57c5056587df372ee0ed21414169187892fbbc77d8",
+      "voter": "did:zhtp:bd727d291b7dcd46d8ffbe947a3f2474e6f88a458cf52b8c",
+      "voting_power": 35520
+    },
+    {
+      "justification": "This proposal maintains the network's security posture and should be amended.",
+      "proposal_id": "5d000d6a92c1917f2855aac8ed0acb197ff106df79e9ca9eeb02ec792ff24733",
+      "timestamp": 1738112400,
+      "vote_choice": "Reject",
+      "vote_id": "103c8782b4946de32ca36589bc2d79afbb68676562db9f2bc96ff7dbf82e42d4",
+      "voter": "did:zhtp:89a92489ddebe2f8ff0aac06bf6b20c018b8177ba46194bd",
+      "voting_power": 26533
+    },
+    {
+      "justification": null,
+      "proposal_id": "5d000d6a92c1917f2855aac8ed0acb197ff106df79e9ca9eeb02ec792ff24733",
+      "timestamp": 1738116000,
+      "vote_choice": "Reject",
+      "vote_id": "c631bd4b65c712533353db727e2c30a709fa8b62b829e20ce293c7780ab04f4f",
+      "voter": "did:zhtp:16a134fa15bfcf098f03800902ee38c88e698d3ca67f4070",
+      "voting_power": 7639
+    },
+    {
+      "justification": null,
+      "proposal_id": "5d000d6a92c1917f2855aac8ed0acb197ff106df79e9ca9eeb02ec792ff24733",
+      "timestamp": 1738119600,
+      "vote_choice": "Abstain",
+      "vote_id": "9185254ec916415c50044683c596ba94f539175e84f2572840a8a1bf4a018af8",
+      "voter": "did:zhtp:b27b09d1d1eab3d91e48515ea81a2b53eefd7b85e4d69339",
+      "voting_power": 1241
+    },
+    {
+      "justification": "This proposal maintains the network's economic model and should be amended.",
+      "proposal_id": "5d000d6a92c1917f2855aac8ed0acb197ff106df79e9ca9eeb02ec792ff24733",
+      "timestamp": 1738123200,
+      "vote_choice": "Abstain",
+      "vote_id": "d1e2d173b6e331671d99d8420a52b4cc2ebec2f3021bce5c0b7f144c6267a552",
+      "voter": "did:zhtp:361a96e74253b2bd6e8355dfd857a259a3cfafd61b7c4075",
+      "voting_power": 3074
+    },
+    {
+      "justification": null,
+      "proposal_id": "5d000d6a92c1917f2855aac8ed0acb197ff106df79e9ca9eeb02ec792ff24733",
+      "timestamp": 1738126800,
+      "vote_choice": "Reject",
+      "vote_id": "c20d06aa97e46e01cfcc4ea8db1fe3ff94a4a26533ce962e10da1487e078d810",
+      "voter": "did:zhtp:5ebca485e72e1ecaa63f226a4eb5cce4b21b930e66add424",
+      "voting_power": 34436
+    },
+    {
+      "justification": null,
+      "proposal_id": "5d000d6a92c1917f2855aac8ed0acb197ff106df79e9ca9eeb02ec792ff24733",
+      "timestamp": 1738130400,
+      "vote_choice": "Reject",
+      "vote_id": "df88cc5a4edafbbd4ac9c238aa4416121c58e6af28cf34aa3f294a2040f81048",
+      "voter": "did:zhtp:c7a3c51f83f59dfcee6a37d3f476ca512b4e53be36967561",
+      "voting_power": 44956
+    },
+    {
+      "justification": null,
+      "proposal_id": "5d000d6a92c1917f2855aac8ed0acb197ff106df79e9ca9eeb02ec792ff24733",
+      "timestamp": 1738134000,
+      "vote_choice": "Reject",
+      "vote_id": "d9955e5ce9b1091b8e449077e28d0df3e88034c3caeaf2f0b09a7a62c73ba98a",
+      "voter": "did:zhtp:8a475b08492f820690b43e78313744099b41774efc557e06",
+      "voting_power": 24660
+    },
+    {
+      "justification": null,
+      "proposal_id": "0e31164ac5a404ff1d5dc8b721d990db69253e70396da863d131b89333409440",
+      "timestamp": 1738195200,
+      "vote_choice": "Approve",
+      "vote_id": "928bfeb5022c126f8fa4278cb4c1f30c8b06a37bb11813f803ca1caed334303f",
+      "voter": "did:zhtp:de8462e160c95247653afd9e276b7f0eb1a16b947df637fd",
+      "voting_power": 34360
+    },
+    {
+      "justification": null,
+      "proposal_id": "0e31164ac5a404ff1d5dc8b721d990db69253e70396da863d131b89333409440",
+      "timestamp": 1738198800,
+      "vote_choice": "Abstain",
+      "vote_id": "e985597bd468b14ea8d02e992f54d47432b36d4d461accc5dddd92a8131d6d24",
+      "voter": "did:zhtp:fc8d6a2ffc56813ccdd74ab48ccee2b8e6e7583b774b10df",
+      "voting_power": 14738
+    },
+    {
+      "justification": null,
+      "proposal_id": "0e31164ac5a404ff1d5dc8b721d990db69253e70396da863d131b89333409440",
+      "timestamp": 1738202400,
+      "vote_choice": "Reject",
+      "vote_id": "b268fe9db7996eb589d6cf737288dba5dfc960b8a20d1a8a694012cbb684b188",
+      "voter": "did:zhtp:8a87f79c30936ed908fac14a68ec6448c2f92e159eeaf2c0",
+      "voting_power": 12400
+    },
+    {
+      "justification": "This proposal strengthens the network's user privacy and should be amended.",
+      "proposal_id": "0e31164ac5a404ff1d5dc8b721d990db69253e70396da863d131b89333409440",
+      "timestamp": 1738206000,
+      "vote_choice": "Approve",
+      "vote_id": "692753a8cc3b49f1732d57e103d0f936e02a6263a373bb22dc6d8f0c2171ebb1",
+      "voter": "did:zhtp:abda7ed628030f5e335e2404688def538d20c0a051242225",
+      "voting_power": 49633
+    },
+    {
+      "justification": null,
+      "proposal_id": "0e31164ac5a404ff1d5dc8b721d990db69253e70396da863d131b89333409440",
+      "timestamp": 1738209600,
+      "vote_choice": "Reject",
+      "vote_id": "ae6066eb3d68a56bf67dc946fb09dc704c8ee20a7b74146ce12c2ee6a574e38a",
+      "voter": "did:zhtp:cd6d79e8b06a61de063fa5b6f8abb2618b874b620a21003e",
+      "voting_power": 27239
+    },
+    {
+      "justification": null,
+      "proposal_id": "0e31164ac5a404ff1d5dc8b721d990db69253e70396da863d131b89333409440",
+      "timestamp": 1738213200,
+      "vote_choice": "Approve",
+      "vote_id": "3a72385f99d94b90930c9a54331fcb6ca32e0316046a067511beeed921202078",
+      "voter": "did:zhtp:5baecdf3600449195243b4670f324982dfb3672d9786e107",
+      "voting_power": 32711
+    },
+    {
+      "justification": null,
+      "proposal_id": "0e31164ac5a404ff1d5dc8b721d990db69253e70396da863d131b89333409440",
+      "timestamp": 1738216800,
+      "vote_choice": "Abstain",
+      "vote_id": "25e98e5de809d0fd331ad9d426759453c7039b108091ba52bfb7b3a639fe7b16",
+      "voter": "did:zhtp:df1edea45203b1bf39247479c133b20775cee3439f28482d",
+      "voting_power": 18809
+    },
+    {
+      "justification": "This proposal threatens the network's economic model and should be approved.",
+      "proposal_id": "0e31164ac5a404ff1d5dc8b721d990db69253e70396da863d131b89333409440",
+      "timestamp": 1738220400,
+      "vote_choice": "Approve",
+      "vote_id": "0561eed9274d8590e6af3df177d67964679e490133b8765dfdc7ae743af129da",
+      "voter": "did:zhtp:9faee6c9c6fce3ef69c51179e177118859fd14d8c255fee4",
+      "voting_power": 8155
+    },
+    {
+      "justification": null,
+      "proposal_id": "0e31164ac5a404ff1d5dc8b721d990db69253e70396da863d131b89333409440",
+      "timestamp": 1738224000,
+      "vote_choice": "Approve",
+      "vote_id": "43c3233c3244ac37ecf38e4129f4b882d436ebff200034a8842ed69b587caed7",
+      "voter": "did:zhtp:c925f95c567612cf30220f8daedf98c78ed847fe248bba96",
+      "voting_power": 7855
+    },
+    {
+      "justification": null,
+      "proposal_id": "0e31164ac5a404ff1d5dc8b721d990db69253e70396da863d131b89333409440",
+      "timestamp": 1738227600,
+      "vote_choice": "Abstain",
+      "vote_id": "1de25327230570dedc6a923adcc268c2ffd457837924b9015de092d26ed82a63",
+      "voter": "did:zhtp:8237827bfa9aa333d0c244512124c52215c2b76125ea7f5d",
+      "voting_power": 21125
+    },
+    {
+      "justification": null,
+      "proposal_id": "0e31164ac5a404ff1d5dc8b721d990db69253e70396da863d131b89333409440",
+      "timestamp": 1738231200,
+      "vote_choice": "Reject",
+      "vote_id": "ef739f60ae91cb0ef482e51c45bccd56424829396d5fd3e73b3c59857d152325",
+      "voter": "did:zhtp:5dece27de80c0969f5b0edbe12d6dc9a4c35f32aba0bd0cf",
+      "voting_power": 35438
+    },
+    {
+      "justification": null,
+      "proposal_id": "0e31164ac5a404ff1d5dc8b721d990db69253e70396da863d131b89333409440",
+      "timestamp": 1738234800,
+      "vote_choice": "Abstain",
+      "vote_id": "389af59193eb4c877951fb9fc99bd47e6cc37d0c942c3c9b769f53d28d62c488",
+      "voter": "did:zhtp:c116b8d90fd5d58fba8e8a4bd932e62c726fbfa31623fff2",
+      "voting_power": 23975
+    },
+    {
+      "justification": null,
+      "proposal_id": "0e31164ac5a404ff1d5dc8b721d990db69253e70396da863d131b89333409440",
+      "timestamp": 1738238400,
+      "vote_choice": "Approve",
+      "vote_id": "ba0704e995b854d6f254a982fbf6ecc670b347660a821401b849f7f5226f5ab6",
+      "voter": "did:zhtp:47bfedb7ae352a95454defdeaabe9fbe87b5596e07fb2390",
+      "voting_power": 12961
+    },
+    {
+      "justification": null,
+      "proposal_id": "0e31164ac5a404ff1d5dc8b721d990db69253e70396da863d131b89333409440",
+      "timestamp": 1738242000,
+      "vote_choice": "Approve",
+      "vote_id": "426c80eabce0a0baa35feb2d0f278331507326fcd745a7fac47a934213cd7062",
+      "voter": "did:zhtp:cdca0ad2b9ff4d127e18b8262ad8de0b8dfc683d0ed8f5cf",
+      "voting_power": 7475
+    }
+  ]
+}

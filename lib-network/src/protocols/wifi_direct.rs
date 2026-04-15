@@ -8,7 +8,7 @@ use lib_crypto::symmetric::chacha20::encrypt_data;
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 

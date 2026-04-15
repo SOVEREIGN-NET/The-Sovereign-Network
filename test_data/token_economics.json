@@ -1,0 +1,2936 @@
+{
+  "bonding_curves": [
+    {
+      "created_at_height": 99657,
+      "creator": "did:zhtp:8f506a85f69ece6238063928fe2ef584c2f6970bff1c92e6",
+      "current_price": 7518,
+      "curve_type": "LinearBonding",
+      "graduated": false,
+      "initial_price": 44,
+      "market_cap": 183445159,
+      "name": "Community Token A",
+      "symbol": "CTA",
+      "token_id": "c9130ed76387641fbb5836d631c16ec26a013f603723c36839d98b85fba6f90e",
+      "total_supply": 22847889
+    },
+    {
+      "created_at_height": 182406,
+      "creator": "did:zhtp:227da1bbbfa8827b51811c12c55cb15ce687c9838afc6f3d",
+      "current_price": 7170,
+      "curve_type": "LinearBonding",
+      "graduated": false,
+      "initial_price": 25,
+      "market_cap": 39697836,
+      "name": "Community Token B",
+      "symbol": "CTB",
+      "token_id": "b1f808de7b3531a4236ae8666a55ac5a53a035a0310afa2422ec7bb58e2ae35c",
+      "total_supply": 73205581
+    },
+    {
+      "created_at_height": 116795,
+      "creator": "did:zhtp:b28b33b9eaec995cf2e4b94aab95e63127cecee4f2fd15c0",
+      "current_price": 1139,
+      "curve_type": "LinearBonding",
+      "graduated": false,
+      "initial_price": 90,
+      "market_cap": 903110393,
+      "name": "Community Token C",
+      "symbol": "CTC",
+      "token_id": "b4b9b204e3221035c1895e75d230680e4fc6124300ac946047401e6ace39ed80",
+      "total_supply": 64279078
+    },
+    {
+      "created_at_height": 114469,
+      "creator": "did:zhtp:3f25b4699cec2e1e3dbbbe108447c367e4264036e3719294",
+      "current_price": 1522,
+      "curve_type": "LinearBonding",
+      "graduated": false,
+      "initial_price": 16,
+      "market_cap": 45049587,
+      "name": "Community Token D",
+      "symbol": "CTD",
+      "token_id": "5714aefb9686dd6b8d6de1e8aea60bc786c95ada640d984a7b828abe44b4fbfd",
+      "total_supply": 73441064
+    },
+    {
+      "created_at_height": 100663,
+      "creator": "did:zhtp:61a34b0ec28e68551ad0e1ba9ff060ecdb0587dc7ab7d96c",
+      "current_price": 3164,
+      "curve_type": "LinearBonding",
+      "graduated": false,
+      "initial_price": 97,
+      "market_cap": 835387739,
+      "name": "Community Token E",
+      "symbol": "CTE",
+      "token_id": "35925f424f6a84cfb0799c8055e069dc7027cab1724450bb32baadda646b440d",
+      "total_supply": 39008222
+    }
+  ],
+  "cbe_ledger": {
+    "cbe_token": {
+      "allocation_buckets": {
+        "Compensation": {
+          "allocated": 40000000000,
+          "bucket_id": 1,
+          "description": "Employee and contributor compensation (40%)",
+          "distributed": 1875067050,
+          "remaining": 0
+        },
+        "Performance": {
+          "allocated": 20000000000,
+          "bucket_id": 3,
+          "description": "Performance incentives for validators and nodes (20%)",
+          "distributed": 442217452,
+          "remaining": 0
+        },
+        "Reserves": {
+          "allocated": 10000000000,
+          "bucket_id": 4,
+          "description": "Strategic reserves for emergency and growth (10%)",
+          "distributed": 287027870,
+          "remaining": 0
+        },
+        "Treasury": {
+          "allocated": 30000000000,
+          "bucket_id": 2,
+          "description": "Operational treasury for network development (30%)",
+          "distributed": 608432001,
+          "remaining": 0
+        }
+      },
+      "initialized": true,
+      "name": "Sovereign Network CBE Token",
+      "symbol": "CBE",
+      "total_supply": 100000000000
+    }
+  },
+  "sov_token": {
+    "sov_token": {
+      "decimals": 9,
+      "fee_config": {
+        "base_fee": 100,
+        "bytes_per_sov": 100,
+        "token_creation_fee": 1000,
+        "witness_cap": 500
+      },
+      "max_supply": "18_446_744_073_709_551_615",
+      "name": "Sovereign",
+      "symbol": "SOV",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  "token_transfers": [
+    {
+      "amount": 5617057,
+      "block_height": 101598,
+      "fee": 128,
+      "from": "2c8c09ff9f58bc859b07c15061d1424476e54bcda6e96374bf3dbeedc5a580e4",
+      "nonce": 381,
+      "timestamp": 1735689600,
+      "to": "3f56fec8e390120fa6c75cc285545ee3c091ecd800bec10f15c760cc83653207",
+      "token_id": "f85d27141c71ed6f367a81b9856818eff140b2d60855eef51a73d4eb0e216bf3",
+      "tx_hash": "4eb558960fcfcca31c2c43f6861fbeaaae7103e542ec326fd9a9178921c0d07b"
+    },
+    {
+      "amount": 3731930,
+      "block_height": 370698,
+      "fee": 143,
+      "from": "da14cfb107197175f640274fec265e2ce2ae88c621c679b27200592f1f226acd",
+      "nonce": 3029,
+      "timestamp": 1735692540,
+      "to": "fdc4739c307030ecbe1bb1366c876d6e00cf39202a7600bc289df15f9d9f9812",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "7e2031c6bdf7d617d94b727e73ddb3e0299687c033b07ea7d42a0cdc8efce9d2"
+    },
+    {
+      "amount": 3107933,
+      "block_height": 115742,
+      "fee": 109,
+      "from": "064b769f21820f787e8c115ba475445435ff79f5ef0fc4fc97304d47d9d9d136",
+      "nonce": 1023,
+      "timestamp": 1735691586,
+      "to": "629f05effeb169c7d98d02557eaf7356fad8882340f39f87ab2593d2fef73ac1",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "07fa55df3d8d9df91c6cf8da076ca0de98aa1402777b5117a200dabf771c7bd6"
+    },
+    {
+      "amount": 7701631,
+      "block_height": 138630,
+      "fee": 159,
+      "from": "7c0124056dccd6c7e38b744f6983836e6238aa47f9d3a284512b628550266a3a",
+      "nonce": 9824,
+      "timestamp": 1735695417,
+      "to": "aec7b719aeb1659a8b78da993eb011754ec58721487ad6f3aef9615b65cd85e6",
+      "token_id": "f287eeb762c400c7d66dd53d00b6f4929c422f0f8d25b50e7cc8e86b9dc198eb",
+      "tx_hash": "ef6c9b377ee55542c3b1a81d9bf9f443d3cf6166c91d209b3b3231eb9cfcb931"
+    },
+    {
+      "amount": 6694302,
+      "block_height": 417992,
+      "fee": 219,
+      "from": "c0cf70677149dc697edbc259c60027da3592496fab394e82ec6a2af03b0b5863",
+      "nonce": 4565,
+      "timestamp": 1735701144,
+      "to": "a47e98a5489e757fbb928c1eb3827e9f48db2a46397f3118501bd883e9ab6c40",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "ddb62526d2affe509510c3fb6b735e631824acbda380a32040507052679c3c42"
+    },
+    {
+      "amount": 1598435,
+      "block_height": 391816,
+      "fee": 154,
+      "from": "c7fd57fbae6304a38ccd4aed7a9d9d3d5ddc7f61d2a1d508b0dcc1d707068a75",
+      "nonce": 6611,
+      "timestamp": 1735699050,
+      "to": "7af389fe79e573e7b1612c56254a1093fe13cd54bb2d1d8074ae5dc02a632a5c",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "065cafe31f77e6193662dc4f0099929f98c2c01730631aa2d86be9dbf72b5400"
+    },
+    {
+      "amount": 7578482,
+      "block_height": 143496,
+      "fee": 119,
+      "from": "b1df7e50eba63355439f29b04cec68ce81f94ba2b9f6571e8b19ea39ad36bd9d",
+      "nonce": 8598,
+      "timestamp": 1735699716,
+      "to": "190d844e4f1518fa87d4e869a15e86aff54faf4701e55014c4d7b529492d7661",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "320dc8f5a6ec5dc4193179827109251e62d1ef7eec5e631d4f4250278430ae5d"
+    },
+    {
+      "amount": 8517716,
+      "block_height": 467101,
+      "fee": 154,
+      "from": "6c33507a70f60fe36258734514163da078f150d362d0e9df7c1a1d83c7d9c9c8",
+      "nonce": 4985,
+      "timestamp": 1735706253,
+      "to": "8c5cee0db4d2b3e109547183c407df5f5756e8f3b57db04cab0c0a017bb8e2de",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "58afbc05b13baf09c610678aa582805d290562f1d062e463330948ce183fa460"
+    },
+    {
+      "amount": 4717576,
+      "block_height": 167361,
+      "fee": 166,
+      "from": "2d1dc54cc138ec671137f10673ec47fbf2a149ae4e9ad7ca7068bacaf2cff5f7",
+      "nonce": 5242,
+      "timestamp": 1735703048,
+      "to": "a6f9f16344c9b7cae463d8fe31a5902a448ff42e60195daa1b519e5846dd9281",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "af9781c5cc94ae198e9ff057a8c74bfbdd63da3b811f332abfefd58714b64046"
+    },
+    {
+      "amount": 8985290,
+      "block_height": 309886,
+      "fee": 182,
+      "from": "29160bacba36b1b89c6df7dc65d18820709320440a92c39d19a0662fdbd7e665",
+      "nonce": 3361,
+      "timestamp": 1735699923,
+      "to": "5880b501a448135673951adbf6cfd4c45f9d6d04dd24a68485fa79466b9d1a8c",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "f23cac9c45bc0ef7f5dd2b9d756e358d1d68136f4dd001a429175b2bb33468c7"
+    },
+    {
+      "amount": 970595,
+      "block_height": 203983,
+      "fee": 238,
+      "from": "509ac92c77163c9e9c64c975cef77e848262a986ae255fdac5f4176b6d40db0c",
+      "nonce": 2728,
+      "timestamp": 1735702740,
+      "to": "041c38e1964fba1d8ffc9687dbe9b0032794d36b7f41b101702e4e3f586b10c2",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "0607bba1d3cca0f9f5831d78b7dfe80f5685c2d5cf662cd9dbcdb34c2046e907"
+    },
+    {
+      "amount": 9072024,
+      "block_height": 425583,
+      "fee": 169,
+      "from": "fdfff05489a5fbe203ef2e352104f2566e9809e1c242397843377f08675fa1a2",
+      "nonce": 487,
+      "timestamp": 1735719146,
+      "to": "db1ee41ecaaa40139c27b0e17118c1691632f29792f3b3649ab9a3ca7575152c",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "a27abd74a064310ba3b9671e9081bed97f76ae24186a0a074e4940b307de39af"
+    },
+    {
+      "amount": 2205693,
+      "block_height": 253219,
+      "fee": 268,
+      "from": "97dffd933f54ac03831e1baa77e6de934ed6c1c331fee7a1aba4a57330457080",
+      "nonce": 5780,
+      "timestamp": 1735707240,
+      "to": "678a1d63aa3c2c5966c3413d94e960c267d02c4184b6acfe0e261a2f34723df3",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "4f93a5703d51a21582e7726515f5102199d9615725c04f03015a2d809b73ecf9"
+    },
+    {
+      "amount": 5836063,
+      "block_height": 210864,
+      "fee": 259,
+      "from": "634131109058943a248a0972ea4fcbce304fdbd7455ff4095d9ef278143aadd2",
+      "nonce": 1989,
+      "timestamp": 1735702314,
+      "to": "0417f5b7130ed502c257e22fecdfd04d45cb5ea4957a4fb674c38abf1fd94b39",
+      "token_id": "1b4f37ffa315d178f845d3507ea6b974b40ec7b4e27061458b8ed8647aaa2599",
+      "tx_hash": "1734e9ad8f7816be8670acd0f5820f0a9c558b386f50d11082aabfc59de6018c"
+    },
+    {
+      "amount": 4819616,
+      "block_height": 115637,
+      "fee": 187,
+      "from": "97db601540c119dbdf5a8b0e4b5839d10b7e4b62e233bca948b38c611bd455cd",
+      "nonce": 4594,
+      "timestamp": 1735735450,
+      "to": "ca8e2e8e8d2b74ce714d08c65a57cd5ee09ef723ff76bf162c622995564ae1f0",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "37caf8aa4c323c2450f6ff36c938f9aff3fc2e25cfd52dea6476c39f11f6a44e"
+    },
+    {
+      "amount": 9825673,
+      "block_height": 446914,
+      "fee": 287,
+      "from": "0474824c4908b60fc50c9cdffba23371dbafc0572edbb1d1918f40a11d209221",
+      "nonce": 8967,
+      "timestamp": 1735719255,
+      "to": "a9da6fcfca7dca34a14376c1d40a8c97031ccbf68308d79bbae72e9cdd219795",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "3bafabd55b1bbf93edde660e3c8e7ee55655e8c82733fce6adfd93cbdc8090c4"
+    },
+    {
+      "amount": 8484231,
+      "block_height": 298447,
+      "fee": 249,
+      "from": "cadc3d6fe7a577e39643cbe7e62a5876fc68d7715639883f11cdd40e26668477",
+      "nonce": 477,
+      "timestamp": 1735732752,
+      "to": "443248815ccc959d9a5774be3548df07c3e0c05a2c313d3aaaf25d8cb0c3c16f",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "0f21cbcb6ac1d22379d6498e991ac3310ad291f1e813c93a22c0ab0fddba8a04"
+    },
+    {
+      "amount": 5217505,
+      "block_height": 175569,
+      "fee": 282,
+      "from": "388345ec8cce35897f30f74c54e9db9724a22eda443909478e37f147957ddb3e",
+      "nonce": 513,
+      "timestamp": 1735730655,
+      "to": "deaab6b857623ed81649c7eb1048b829b72e7c79f1c8eeb240cd88b600c2b33e",
+      "token_id": "d4c1f4b2129b54c9a01c07ba1563fa676b5095dbd355ca69190aec0d7f42284e",
+      "tx_hash": "ad9a512969195f7b9cbf25e390b351903e19c96b158d0723cdccccddc9f95be0"
+    },
+    {
+      "amount": 969212,
+      "block_height": 283550,
+      "fee": 198,
+      "from": "56b040df2549fd0f06435ba677bd6eb7631a4a3a500c4d98cb38f3370ac4cd19",
+      "nonce": 619,
+      "timestamp": 1735710210,
+      "to": "cebb0daf8bfea9bb5061aad59c8d3a9281582845d4b905ffbf8840196c778de9",
+      "token_id": "3fac09c426d483b30900266af2650abe4011fa81f7adca2c2189ca95b624c6ee",
+      "tx_hash": "9b76d8fe90a979caaf52035ffbd42dba4e8d5e784efed5f3a8e41c78a5915416"
+    },
+    {
+      "amount": 2922342,
+      "block_height": 155866,
+      "fee": 288,
+      "from": "cc05f72fa78177be432341d507a9196ffc916b24fad295bb0f994879cca5ab05",
+      "nonce": 1619,
+      "timestamp": 1735727771,
+      "to": "7d0241145fd15a466a95f1b3c28a1372a8a9068f7d9746429dff892dc8f69361",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "cfe8cd221cae2d81fad12570b1cfeda9887632023a645790d64d986ff11d72ff"
+    },
+    {
+      "amount": 4548490,
+      "block_height": 301620,
+      "fee": 215,
+      "from": "0abdbfe98380a2232ac23d787bdaeccca32df7b0e4d692b5d87da908aeb797cc",
+      "nonce": 1019,
+      "timestamp": 1735719480,
+      "to": "0525758188100b982183dde830007a950877f7a05aadadfc0de8c14e4527a273",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "5a103b1264f3874435a98eaa40dd18ef20cd789febfff08f43693bc3c80d4446"
+    },
+    {
+      "amount": 5272759,
+      "block_height": 304012,
+      "fee": 268,
+      "from": "e81229671527f9fc3e44b8283a2f81b513037770d915062f8cc93e7c55913cbf",
+      "nonce": 5019,
+      "timestamp": 1735712469,
+      "to": "1e12de85418abd69ab3a8d4974b06be686c73f7b323db19755107ceebde0afc9",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "f527db01805783532ea595108577b1e448e470a7b406e01676c39129c11d1cf1"
+    },
+    {
+      "amount": 9872198,
+      "block_height": 455512,
+      "fee": 257,
+      "from": "0ea38a7079e79b1dcbb8c660749b5eb85d32b0c10a49585ad0d03e53ddc59f7f",
+      "nonce": 387,
+      "timestamp": 1735698928,
+      "to": "dcae49af5684eb0bfddfdbc5c221b3ab1599f28aaf987079827788f55e0b4d60",
+      "token_id": "14e2b5b704dde19c31700830abde7558eaa4bc25a1ee2b3c914c2b6a97f4751a",
+      "tx_hash": "6c7eb52460931f47c115073abde31e01f12c48c398fef5599edb6025323f9d17"
+    },
+    {
+      "amount": 6406994,
+      "block_height": 492489,
+      "fee": 200,
+      "from": "ed28ab20847b14b89262311a6231c51cd76bc81ef2ae48deb5e38cb93a0ce786",
+      "nonce": 9117,
+      "timestamp": 1735758002,
+      "to": "92bad8e99636ecd991711560ada03a5e7fe9dabadfbe066cc13add094dbdeebc",
+      "token_id": "d2bf2035f1fe8b3fbb47786953e71d23432e820f5834e03ef38d9ea7b008778a",
+      "tx_hash": "f4144b14bc053531ba3f9776c25a605d95ae7e3bd64753759b9cc01ef164f379"
+    },
+    {
+      "amount": 3878896,
+      "block_height": 200149,
+      "fee": 134,
+      "from": "6d1161ee6dc8d8baee8151cbfa2a07925228d2eb6573db43f4decdf24d2d97c9",
+      "nonce": 5213,
+      "timestamp": 1735747200,
+      "to": "44098ae6818d826c7b0be9386ec60f6088e7daced77d2ea7728a383fb42b403f",
+      "token_id": "07f9ad8e18a468271f3ff1af52a4d7bd69ee82d65852a8c9acc361a45a450c28",
+      "tx_hash": "3c6101f3ce98d80d1a34db0dd8392c64baf5cfc859412a28d854987ff8705792"
+    },
+    {
+      "amount": 7396755,
+      "block_height": 277425,
+      "fee": 299,
+      "from": "e1f984a78ddf29fe533ea91ab9cb7e989da523c322640d0209593ac5332b00b6",
+      "nonce": 7875,
+      "timestamp": 1735747400,
+      "to": "6690ea2e7ce01eb161869ee7d684b1570659cc230f520f5ba7e052505fc9b66b",
+      "token_id": "be9e0cc8eeaa380b5e8de5f5eb34e5462517c34aae93cb1128f0742ac8469a8a",
+      "tx_hash": "b54bdc3772f9dc3aa63e7efe9ba720f545b2ccae37d9f57df85282b49c7387fc"
+    },
+    {
+      "amount": 4261927,
+      "block_height": 382819,
+      "fee": 198,
+      "from": "2bd0c119775264f301f71a9d72d68b34172f4df03aac8b9061a54634c637ee16",
+      "nonce": 2261,
+      "timestamp": 1735744356,
+      "to": "d06f75df6eac4c5aa7c5cdbae07049b1a4006983438fc90449bd82444b7fdcf6",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "8a7d4674051ad1a22c25831fdcac4bcec442887981fd4e1078a05dd71969f334"
+    },
+    {
+      "amount": 5799866,
+      "block_height": 211110,
+      "fee": 289,
+      "from": "01e73734cc53990119b04985d0b0cb87b25130b85ae25381a74680a0fbbfad7b",
+      "nonce": 6316,
+      "timestamp": 1735731720,
+      "to": "4b7fa0c6990dd839b638547933ed81c89d1e61e1f80e97c7eb73d2b181062816",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "a407ad65404832e06869d9946800ef8cb5be826e51189a4cfa360376cdd3a5c8"
+    },
+    {
+      "amount": 6477476,
+      "block_height": 352738,
+      "fee": 104,
+      "from": "9b571668f59a4e7595eaea9381ef9da1d3a6659b93c2dcba60b7215fad85f6ad",
+      "nonce": 2230,
+      "timestamp": 1735731572,
+      "to": "64d1ba05b102ce2183ae002e56e1d4bb8efbb6a4949108f4663a608edf657a06",
+      "token_id": "5459820b25b79a6b060988e01452ccf6b0c19f9cb3a737cf4c6b304ee5b58e29",
+      "tx_hash": "3ec03c08099c85efc51adcd21774d7df83017ad28ad4762224f8272bf421230c"
+    },
+    {
+      "amount": 4796514,
+      "block_height": 392833,
+      "fee": 120,
+      "from": "559b4406e3693815df9c4db40ccf99f131f4b7b556f7d05133e2977321088ab7",
+      "nonce": 4601,
+      "timestamp": 1735761288,
+      "to": "c0e215ef44cb5acdb076f817b19057e9dd2dc4c4f2f7a142c91bf0e0bc9045e7",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "a0acf69292d6121dc9e0a46c03e89e3a010ffd07298010760554ab8f904b989b"
+    },
+    {
+      "amount": 4512793,
+      "block_height": 365290,
+      "fee": 152,
+      "from": "80872779da1433a7a3dd9ce08a3bfbc5d2d35cf52bbf7d1b200f22da9d7b5cb4",
+      "nonce": 4224,
+      "timestamp": 1735769850,
+      "to": "e3ebfce646e45fad91494d5da0eac9b1d98547ca6fa9569ce189d4408c680448",
+      "token_id": "2d5e3b7383bea886ce7179def31d978460aaee681e41d28f4dceabf10cd6f24c",
+      "tx_hash": "b674b38698cd54a03d09a3a8505261548e7ff854e4bd16d517b191880cc6f6fb"
+    },
+    {
+      "amount": 6307155,
+      "block_height": 341447,
+      "fee": 190,
+      "from": "44d7ea2512f2a8c89899ce4652e5422f28635d1b4db9e71061b709e7f9fd9fbd",
+      "nonce": 9386,
+      "timestamp": 1735747756,
+      "to": "4b522c3fde251703ce1cd22a364e5c00f8fc655e4631187274cf99dda0558914",
+      "token_id": "0c89b5fc8ed7e463ff4e9fc6367d14d90d0feb746b099200cfca468cb2817e7d",
+      "tx_hash": "6b3ed85beacc1765b38986a552b205cc79109421e25239138039728491b072fa"
+    },
+    {
+      "amount": 9193246,
+      "block_height": 136777,
+      "fee": 180,
+      "from": "4649cf7967c86c32d6632abf59020bc3e9820eab34a8fdc060768e0cd32c24c4",
+      "nonce": 8568,
+      "timestamp": 1735709696,
+      "to": "fafc909f23beefd15b8fc63035f125f679caf2f753b036863e04fa958a0dca98",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "fc699f54429a250c981901b7c72e6ba70cd053b29a2363cd0a1ab996453d37bd"
+    },
+    {
+      "amount": 9067424,
+      "block_height": 171737,
+      "fee": 223,
+      "from": "134c7f174b98a9536c73c02c38cdfc812c47ad0898c1655c761223e47af5a9a8",
+      "nonce": 8472,
+      "timestamp": 1735710951,
+      "to": "0170f3b94b69b5c1f97ce8b09ff9c0bca1450d35fff796c54c6de3833f2c93ae",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "21f2d9b9e598f5bf5148898cd4f716782f5ceec8f52fbb1c7b78378a69d33a65"
+    },
+    {
+      "amount": 7960415,
+      "block_height": 301817,
+      "fee": 292,
+      "from": "c28bbc059bad6814fffce12c16e799d38de944cefbdfaebc15ec776a58113e1b",
+      "nonce": 2989,
+      "timestamp": 1735707654,
+      "to": "8d5a817a6ba704ace6abb99d4a3d7e2edfbf39c40084ab4a8cb438df068a5148",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "7e74a843b491a486f62670c267213e22fadaa9d4dd17e44fdd6b2c665085f8e3"
+    },
+    {
+      "amount": 9359775,
+      "block_height": 198140,
+      "fee": 252,
+      "from": "dc31cb7967ac7c36a5c56f6a8965c8c7d44dd97eb282dd6e3264b92aff51667d",
+      "nonce": 9344,
+      "timestamp": 1735726000,
+      "to": "4bc956205e3444eaf26f16613fb5148170bb729bca4eb1e56d92fd25accf00e8",
+      "token_id": "f40e12518cfa1539cdb75e22fd68339e3a0427fac14e39390734454d8c0761ec",
+      "tx_hash": "8d6a8c455ffb837ee7166e8580ed056c6b84f536260e638355b5a4734aeac757"
+    },
+    {
+      "amount": 6216630,
+      "block_height": 272593,
+      "fee": 182,
+      "from": "aff6da688df45358114ae4cfd73a324d37a119cddd6fb13687b064de5ca84ce3",
+      "nonce": 1044,
+      "timestamp": 1735692732,
+      "to": "2c3a7b97fa908658626736f58a1c73d0fe87461fa7f285b7e2d2b03d1fa8bccc",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "9547a425dff9a115f77ebaea0a4c9d3e3131854b04ae98feac1d4fe4ad115caa"
+    },
+    {
+      "amount": 9835582,
+      "block_height": 401506,
+      "fee": 164,
+      "from": "0fa0b523d8a72cee0a47db8238b27d268d5d9ac0006cbee9ce5f257601ec8443",
+      "nonce": 4583,
+      "timestamp": 1735709506,
+      "to": "5a589ffe7625b1bc0bd345b1eec1499c971987cb434b163270451961068968d6",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "f9228ac016bc53c9a662744dc0e680315cda5ab42dc46aa3bf7aea59d188da75"
+    },
+    {
+      "amount": 8381208,
+      "block_height": 145676,
+      "fee": 169,
+      "from": "bd27ebd34c06ce9586022a673c082bb322f066da33942904ee70b9be7e593225",
+      "nonce": 9581,
+      "timestamp": 1735824804,
+      "to": "b2ff698ecbcc2e63db5114cb9b74bcd1d3828ca668d074a2ee20c23c1696dcfa",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "d7d1a5516a05009858c2c87f02de9138f2f189fa7ec2b0d2d180812b2a7b576e"
+    },
+    {
+      "amount": 6286699,
+      "block_height": 262241,
+      "fee": 216,
+      "from": "9c06282ea60001b6ddd43947c580debacd8ef07e5e916fe345492539784e794b",
+      "nonce": 8313,
+      "timestamp": 1735772163,
+      "to": "7b3c38dd5845068ca6811019c2f69fd69ce79d1871a75256c89b6386ce9b89bc",
+      "token_id": "a5a05b0518ad640a773fb523abf16d94aaa6ca97d58d3b01853fd60ec4946871",
+      "tx_hash": "d7709e9b8bb2fc4bdd7a902f443b4f0b66023740d925adae147c9db09498ccdf"
+    },
+    {
+      "amount": 1408740,
+      "block_height": 456563,
+      "fee": 264,
+      "from": "1314d4f9d3e0d35bfe6af80e10f80fcc1f7b13f954a2564925a7545fde1e0a76",
+      "nonce": 1159,
+      "timestamp": 1735832720,
+      "to": "107f587577cba872d42dceec112e11ebaffe93ceb8163b31ca18a3f45f7c0912",
+      "token_id": "0487e630cc1f52304f8869802eb1ef8de233f1a5a62b89d7c2449d1ddf1ed509",
+      "tx_hash": "49308ba876aadd8f35af4a95763d37ce4e743f0130a42e316b88721492f76728"
+    },
+    {
+      "amount": 8747750,
+      "block_height": 358554,
+      "fee": 172,
+      "from": "c3c8422a12de7fea051bce94b87bce5fd38a1d75400e97fe5cdec2a0dcb26994",
+      "nonce": 4836,
+      "timestamp": 1735783941,
+      "to": "106fa77e38406f42913510e9a0dd08ccd8e19ed61c69554af2d7630a233d8033",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "d07f95f6af9d88ead42086a6b8a494dc80eddda3e29993b84e0c66964e63ab71"
+    },
+    {
+      "amount": 2158302,
+      "block_height": 390905,
+      "fee": 290,
+      "from": "0c0546deadefc2c05c509e0493be2747346598cea4199d6545549f74b7fa68e6",
+      "nonce": 4462,
+      "timestamp": 1735780488,
+      "to": "ec5786f4cb06fc52422b938d6fd8fd18e14380b5662edf7dd94518617febe3ec",
+      "token_id": "6fdeb910e6c544c90c0e8c5496dc494d3f48062ae46d7b99415d2cc2f3dd5df2",
+      "tx_hash": "964d8ab6893729c5071cfa21ced4c3cb982bf9d0056ae22a7689e4c6dfb96fed"
+    },
+    {
+      "amount": 8512361,
+      "block_height": 363976,
+      "fee": 155,
+      "from": "f8f98935db454fb59ee847a81a46a27be0a23d92a0732976809336b235d6fe1e",
+      "nonce": 7887,
+      "timestamp": 1735761582,
+      "to": "0d65a37ebdeaeb6433f133be7f26bbdacfae081889ac0b33621b009415606199",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "00dba140210637da7b81b3d9772f8fcbbb0da397960798fbc8273397a115559c"
+    },
+    {
+      "amount": 4629264,
+      "block_height": 288419,
+      "fee": 118,
+      "from": "67c1971d459c551a28af117b90292b3dd56743b7f6f62324ad864aa9bbc621c2",
+      "nonce": 2730,
+      "timestamp": 1735773948,
+      "to": "0ec8a53e1fb8e61923a6a1f8dc24e7a50f5ffaae59e19a4917fa13815b36b9e8",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "aaf555252475a70bb1dfb7e1ba1bb495ffbec75bec3c6562159cff0715b8d0d5"
+    },
+    {
+      "amount": 7558022,
+      "block_height": 385426,
+      "fee": 256,
+      "from": "06895dde668919f478cf2936816d97c0005cfaf50fab746fd1505a574c11ef7d",
+      "nonce": 3304,
+      "timestamp": 1735747200,
+      "to": "9abe40686024f10a4e9f8ad82ffc60f0bd27a1c4aad61e30d0b57198ed06938d",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "dd2d75b901b20b42b8e7bd9b49e52f2c9a4db6b8c46746821f18173e5459533e"
+    },
+    {
+      "amount": 8772137,
+      "block_height": 475344,
+      "fee": 212,
+      "from": "9b0787d9419cf364b7cc56b622591aac875096157ba4e6116eb89014e92c8f67",
+      "nonce": 8582,
+      "timestamp": 1735763890,
+      "to": "cf1ced987fd6c3067b65df81d853a31c5cd7dba148b2c626460961581dbbd0b5",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "6b3c94fa38ba7fa3273382c742c0ae16485362868e2583be0fac2c5dd51de90a"
+    },
+    {
+      "amount": 1574513,
+      "block_height": 273585,
+      "fee": 219,
+      "from": "e89e5a29b1c6859e60ac77655042ef1d64b3c23e4b5bced8b310c535b320a817",
+      "nonce": 6854,
+      "timestamp": 1735810484,
+      "to": "2ef7f5d1cbf62369888833985a325c190233fdbd719a4e042b632d32bf72cafa",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "e2b0e1129f1960865f38f072ed6acd4e17bee6480736b783a1d5c06770a4eaa5"
+    },
+    {
+      "amount": 127385,
+      "block_height": 345431,
+      "fee": 282,
+      "from": "e58a62fd50461fdb9bd888c3646c18c3df9097c70e00f7c3e56fc9b5334c37b5",
+      "nonce": 4079,
+      "timestamp": 1735695120,
+      "to": "57cbf798c30c1cf01e5085ce86dd86aa3891605562b8b85f5944b64e5258be4c",
+      "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tx_hash": "919e9b45c384a665b2e1979dec84e8ecb510924d6b4cfb8e0ea1977857ad0827"
+    },
+    {
+      "amount": 7465151,
+      "block_height": 340591,
+      "fee": 199,
+      "from": "5a83ff884a32c4f5eed156cec18b0400368bb76b6351efbf42ba2c7b0a16d53c",
+      "nonce": 8476,
+      "timestamp": 1735794705,
+      "to": "03c4163dee88a49a688caf75e6f853399e31cf40ccfe149981aa7157b9710bae",
+      "token_id": "70206eff50a8da90fb881c974214043e3601d6be379e2def99983810a8524ccb",
+      "tx_hash": "f197e508fd8591c7c6a4186f9865d00d34490b5b224d8ecca1dcc85c475d2e3f"
+    }
+  ],
+  "ubi_distribution": {
+    "base_amount_per_month": 500000000,
+    "monthly_records": [
+      {
+        "month_index": 0,
+        "month_label": "2025-01",
+        "sample_claims": [
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "dd6f85b00c86293da9750a246abf11ff52494837c30df7e29f7b7ad0b1d3e92d",
+            "claimant": "did:zhtp:de7b09896385bbfac9d201c0704204aa96195c302b0d3be3",
+            "claimed_at_height": 182211,
+            "month_index": 0,
+            "recipient_wallet": "d1a9715101e685fc8cca10098372c01c047934bd28a33f140897ae6c8b074364"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "723f03aa725e64516c72d5448b2ad424d3e5ff861e673866a004f6b4ac929865",
+            "claimant": "did:zhtp:4472e2960eed5685855f2832513ae34125dbea13cff4f69a",
+            "claimed_at_height": 488988,
+            "month_index": 0,
+            "recipient_wallet": "285fca83c17a4918b67af1f9a1d2627e4bb053eb16c980dfd6b416ae5aaf1ee9"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "8f3027429c93b11dcd2dcd1c31a344b9e3acdf50015b455c6da016730bc30c79",
+            "claimant": "did:zhtp:0b45d7c513e35875206792190cc7ff80e98d4f7ffa7ef65d",
+            "claimed_at_height": 347409,
+            "month_index": 0,
+            "recipient_wallet": "5033d98afdb90149ae09b81f5b13243ada4baf6d63891bb8cd8c3ab117274295"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "2997d0a822db51ccdcc41e0b449a5e4b34a0927f9a526f77a7f0cef2fed554b7",
+            "claimant": "did:zhtp:56a84d4030b73f01e55dee379b44dd4a1acc72c1329a78e6",
+            "claimed_at_height": 359611,
+            "month_index": 0,
+            "recipient_wallet": "aa6a825ed555ecd44a28827292b59a2a4e7e2872fd448cc0bf67942b16d46dbf"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "4c0f72f0c3e7816df77796a4bc19f14459088c3abc5b4d22575510daafa08352",
+            "claimant": "did:zhtp:e65b87f69e5fc72ee4ea24da35d68a5cb55a98f0b1f10488",
+            "claimed_at_height": 166156,
+            "month_index": 0,
+            "recipient_wallet": "ed7d1ddfce010e7963d40a942fdac5c7c716b6ff54f655bd9a11b771bd65c085"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "485a1ac55abf115490c5ad3197d5492746acf75d6e6e05713b3e97dfb8bcc75e",
+            "claimant": "did:zhtp:107e2829c6113e7fa177b6ef045303d180d811310d212bc5",
+            "claimed_at_height": 456651,
+            "month_index": 0,
+            "recipient_wallet": "2d20f2410d1ebabf1c17e45a1762ed6abbb31385e5d5a102b15b8923448b8f8e"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "03ffae8d47e18821eef0dc83789e81f207cbb6180fe68685efd8b0d0dee9823e",
+            "claimant": "did:zhtp:8c8dcd54d326accb8070ad8660704edb53f26cf9fe279577",
+            "claimed_at_height": 378434,
+            "month_index": 0,
+            "recipient_wallet": "c3c1c4ccfcb762ecb2df9202a052c7b0ead13b7019cda67be64fec045bc79177"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "3b4f9eeb26d65b5b8a8e5c8fd9911fa04844eaccb4256598026544eae05a2cf9",
+            "claimant": "did:zhtp:ea54c08f25331b21e9b3bd153d0f9e87cebe6660af9fb5e9",
+            "claimed_at_height": 355820,
+            "month_index": 0,
+            "recipient_wallet": "5afd4d87ae8b3c40bc45f8644edbe9bcdd4414bc5d566d87dc9acb92f3e54170"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "6dd8c2705af0baa309ee23968dbd7a590c3e7cbc37c591764e829138f088e77d",
+            "claimant": "did:zhtp:45305fe8274198870de6bbc0dd11a6702e1823a023695fbb",
+            "claimed_at_height": 258478,
+            "month_index": 0,
+            "recipient_wallet": "9c331c50c68a55aafb184d3576d1f1d0a1f34892bfed0843fb394217207bf909"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "0024d4cd8fb471d58d64773c9ea3c4b3bf85e5456e74b319062d95fa38a1c3fd",
+            "claimant": "did:zhtp:c62ee40d820334ebf6c7336b838708c8ec997bc0fbac95b1",
+            "claimed_at_height": 139191,
+            "month_index": 0,
+            "recipient_wallet": "c01fc4974b52a86e6b961ea3032b52f46ad870909387d66be840eca3c87a3210"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "7083883570a7fa2fd4cfe04616e6c8910ab360f1e8d7253f648d439939e531f5",
+            "claimant": "did:zhtp:e9a5d5429c7934ecb27cfbd280f62cb1f8012202131e3997",
+            "claimed_at_height": 186837,
+            "month_index": 0,
+            "recipient_wallet": "175e4b73cfb2f7feae78b8aead97495b1914919649130ede93f99b13d1f436fd"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "14b11a5d7c51fdb2e25fa314140f6a438fc3ae3981870e726488cfc06d8021f9",
+            "claimant": "did:zhtp:19b58eb1e231ef47b77a6866e7d581cf1339c9f2f97c403a",
+            "claimed_at_height": 448662,
+            "month_index": 0,
+            "recipient_wallet": "268b897ad188218e16d46c6cea12116478de0111814cc7402ba88e2bf27cf625"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "78eb731d8ed64ee703f714a35d54768db45668eaef6bd4a69cc4eb986da19573",
+            "claimant": "did:zhtp:8422f1c2ebdeb37e537a497d9a73f79387789e7ca0cd1b91",
+            "claimed_at_height": 450453,
+            "month_index": 0,
+            "recipient_wallet": "ba4c232aaee2b739d618132ab8af9a92352e100b7fc2414b6f643570936d5cd3"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "55c4043e77e98010fc9ae95623a9243920aeea89ec36233b782d18dd56ad47f6",
+            "claimant": "did:zhtp:2b1c73e3c63562cd70b1f47930ad63fbcd6c6d128eb33b27",
+            "claimed_at_height": 357151,
+            "month_index": 0,
+            "recipient_wallet": "ce83f67dd8e2169320ad802e2b42817a623821108fd3b828356e6d9fbad49b1d"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "233169b44f313467b5e211e819e4e57be5d5d3dc9b6d2f76364942216e114495",
+            "claimant": "did:zhtp:0e47edff5c0ee8545c31d0298f4cac10241d8e11482c9915",
+            "claimed_at_height": 226460,
+            "month_index": 0,
+            "recipient_wallet": "58bf9e59eb06e1eaebcd586e2e01ac907fbe8cdcc1038a68b2a61b303d9f7bc8"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "ded478974849c18c3613f96d9f81b0fae96afc1a2f15dd904a74683b401be107",
+            "claimant": "did:zhtp:c59deb5b3a5ab88c0450bff01a9cd818cef39712cb97dab1",
+            "claimed_at_height": 443696,
+            "month_index": 0,
+            "recipient_wallet": "71c81224435be73170343656ea2aaa318de24a6cf6e5778cafd8c4487c5734c4"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": false,
+            "claim_id": "500cbf17455c27504dd0636b7839b7292c77772caa26f3eb00832a31554df022",
+            "claimant": "did:zhtp:c2d4a51c3843fcab61191387779a8e48291c51d3fb6fb535",
+            "claimed_at_height": 175764,
+            "month_index": 0,
+            "recipient_wallet": "11f19be321ef1bb55d1b83491d9f5052b1cfb81343068ea9aab856e5a78c5a5d"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "e97263a5d8bb90b043d895d628ebba44573e9a74314392c7dbf23dd75c072bfd",
+            "claimant": "did:zhtp:0d3f6afa1a85f8aec8138a0a8b5cd86a31b65d783bae3232",
+            "claimed_at_height": 269132,
+            "month_index": 0,
+            "recipient_wallet": "ce00ca54c6690f55b1657a7cb2d812f8c304ce923627abd224709eaec0ca3371"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "d8c75ffc205140414afdacf052f2870e3ae1d629857a77300738a2a29dc8ea63",
+            "claimant": "did:zhtp:e0947f11fb7553c0b693d1d2963e5978fd92ce35fd2d44ef",
+            "claimed_at_height": 240660,
+            "month_index": 0,
+            "recipient_wallet": "ff3c3c66dcca10c1c779bf7e26a8d20790c61a00a08dd0a2c25151e484da9266"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "f4b52bba0edaabfb8ff1226b0fdde02e04381e00f6f28a7809c4281deee8fb21",
+            "claimant": "did:zhtp:e05615ea6d513edeb31ec6402a3364ff84100cb48f08a2f6",
+            "claimed_at_height": 344666,
+            "month_index": 0,
+            "recipient_wallet": "ac323435921b6561ca8bd73b0c8476cac0a30136d49b37855dc8e3b56067a553"
+          }
+        ],
+        "total_claims": 321,
+        "total_distributed": 160500000000
+      },
+      {
+        "month_index": 1,
+        "month_label": "2025-02",
+        "sample_claims": [
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "89450c0c3ca170df2caef343b35f1ba86bc024a3efaf6b984828440581eec277",
+            "claimant": "did:zhtp:17ffe6063fef7a80d97cfb45bdce750e516955cae643fed1",
+            "claimed_at_height": 331462,
+            "month_index": 1,
+            "recipient_wallet": "cfbe71f34d586f18139dc09b4ef2e61730e17565f2bb0a96bc57eba561601873"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "fdbbb709a4ff015ff85963ad3988e3a40985eeac5ff45d3b7cb60ae23b12d61f",
+            "claimant": "did:zhtp:d5328729fa2de623c07bd92d1b16d73033cac3ea49da8cde",
+            "claimed_at_height": 299874,
+            "month_index": 1,
+            "recipient_wallet": "1c01c2e33056af77ce357076512959a9fcc0ddc6c30ea5fb7a2664593741d187"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "b218a06421aca6422eb87d1bdc6fd28b01bc18fceddfb2a9d48806bc7ec685ce",
+            "claimant": "did:zhtp:1f689bc0cf65a1d3693d2d2f626fb865c075b6535142da84",
+            "claimed_at_height": 277221,
+            "month_index": 1,
+            "recipient_wallet": "7439d34c4d7934eb0d73b71ddd24f1ff3fd9ff2b0135d3cad9f85bed913ff46d"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "7f23ca6f03a6dfe6266083090430358b7066624488d0b5c2ddb101a9043d2690",
+            "claimant": "did:zhtp:a840c3d4913afc0e1e9ab8d7858dfda073d69908dd3873a6",
+            "claimed_at_height": 399196,
+            "month_index": 1,
+            "recipient_wallet": "b0545a94d5dc7c3d9c48766a6d58fae26ad08c361543ce5b58b102d5945f675f"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "41775ccdfdb29cd371ebf12bd417b67add9a3288c04767fe14746a9ee97cd751",
+            "claimant": "did:zhtp:d7686ac759688a36364b2243e9f2a23795e117172b49a3fa",
+            "claimed_at_height": 151364,
+            "month_index": 1,
+            "recipient_wallet": "32ea9ddba049210962ac4ae936753cace949de668f7390d88db40382131ee930"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "5f349ce1f6033329c0743d8945d9ea3e11f373681d3bfaa5c0350de4a93cc9d2",
+            "claimant": "did:zhtp:b8e666d6e77e279df557e8b41c4233cbf5aa8b9f52ae481a",
+            "claimed_at_height": 393665,
+            "month_index": 1,
+            "recipient_wallet": "512f18e273b0e18f24dc5555a5f54790603970b819833abd7c83cf6953cefd47"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "76597e3a3159d8bc9a473d7f2e06bf9da6ad7c06989b7eb472f3835f4c68ae5e",
+            "claimant": "did:zhtp:bf9b09144d1e2c809ffb3939959959582161c07ce10ad1fd",
+            "claimed_at_height": 106614,
+            "month_index": 1,
+            "recipient_wallet": "3fecc9b779e2ef1c69013acf88d8e25039ef8740d307c951578a28f3e2a5f0df"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "ce507ebcdbc2a98f1236301eba10ebba14c0b4a7d5e67ceed7249dcaff217952",
+            "claimant": "did:zhtp:cc49211568c535c454962340553b55776a731104e69e189c",
+            "claimed_at_height": 387260,
+            "month_index": 1,
+            "recipient_wallet": "48fc597a5e561b2ac21bcd7e7acc313a6aae2b834f7d0d0106758e95def18342"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "c5728e9399cd13f9d438e0f432c5b26bd95e1aa542eb34449c80cfac36a5baa8",
+            "claimant": "did:zhtp:f75219d02f4c121a30816be5d3d81f2bd86d128692227427",
+            "claimed_at_height": 387371,
+            "month_index": 1,
+            "recipient_wallet": "69ddd6e3dc1057d65a03f0ff57e07dd38f18157c11ff907541f2e07800d6e9fd"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "43cfcab9742f2dd339667d3ff7d8b0338fb85496fe6d150e888bcf997b4cd25e",
+            "claimant": "did:zhtp:2b56ab9488783a35c5858794d4c2f068a503a4e7390e015b",
+            "claimed_at_height": 261002,
+            "month_index": 1,
+            "recipient_wallet": "ac03bfbd0868d5c2836c6fbb1321885bdff2c7408d6efefa3b62f40f09a23abb"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "683e801b3f7af74b777dbeb4c78c7b4733316e46f1bb116062925bcee3827057",
+            "claimant": "did:zhtp:3dd45e85b909d31602fe813514a868b27aa23164f286363b",
+            "claimed_at_height": 119729,
+            "month_index": 1,
+            "recipient_wallet": "d59defe47b5db5a56114d8db98aeb1ca08a4dc4c8aba41b24c2c736ca3ae86bd"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "8b6d1c29796e31e9156ac657c7e96089342883eb17772a95d7aaf63ef0a97833",
+            "claimant": "did:zhtp:1590ce4f8e14385120d0f1c07555af648c4ba2cdfeba9bef",
+            "claimed_at_height": 426017,
+            "month_index": 1,
+            "recipient_wallet": "670154c9ace717ab88f0a53909deb073e7054240eb25bda2f2b89a4aaae15deb"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "671c36d7a305e1f184d7a28810facf427a8bf0401eb7cd68d9adfd7ef66ae49e",
+            "claimant": "did:zhtp:446f7fa8df4d3443cd86d3b7b56d8274b51194ca21e7c337",
+            "claimed_at_height": 357689,
+            "month_index": 1,
+            "recipient_wallet": "2fa38a8cf2bb65ea6e87f38a8b9fedb4e20ef133ed24b996ce71f72ffa5f046d"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": false,
+            "claim_id": "0bb6d51d78374d58f0b4d7c0967f58dc47f1e7eba42e155bea2eaa018222d4ed",
+            "claimant": "did:zhtp:21e3b8c39b7b1b5c1480c7c87a269444daf0db133f792ddf",
+            "claimed_at_height": 404969,
+            "month_index": 1,
+            "recipient_wallet": "c00916b8e91326a0a46b1e5b27aff590cd8a27c2c523059573ecdf3a729bb446"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "2699df9f6885b11134e69d9fa4aa3534e9000ea4a4f2618535784f6cdd42ea41",
+            "claimant": "did:zhtp:c44a12bd3059e77eebb7d07b3e11384654b23ffb08a174eb",
+            "claimed_at_height": 445509,
+            "month_index": 1,
+            "recipient_wallet": "6c693cd25f1073222bd2c2bc5cffb9350a38eea40560e28499ff5cd9de5aba52"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "76da07a39e0313453faaeed6605a278a2722683d7b86c3db5ee85482d00185a2",
+            "claimant": "did:zhtp:0b1058fa59700087b46c42b1c99da5871c971abb7a839943",
+            "claimed_at_height": 496300,
+            "month_index": 1,
+            "recipient_wallet": "3dfe7dc18f466ff805395492393de2a34142df68952575418c6b85c5a2d132b9"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "9b37ff2c97b47aaa19d06908a189fbf7dfeebe83b43ec2a4b27cfc9fd5dc6c74",
+            "claimant": "did:zhtp:e0810807568435fe09e2dc1da3645f16ba704f69f2505508",
+            "claimed_at_height": 395381,
+            "month_index": 1,
+            "recipient_wallet": "67cc024099ad1f1611ee557e746fa563316ca6cb651ffaa93f204083e9c80a8b"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "a21280f6793d7902a795af9bdd7aae7376eeaad9f3f3a10c4e7c5a32a8329687",
+            "claimant": "did:zhtp:fe10ff49515c8c529ab330081119cfd2b581b2e5c63703aa",
+            "claimed_at_height": 474117,
+            "month_index": 1,
+            "recipient_wallet": "ff8a2c381a12bdd37d776ac2f270faa38af07868718f9d11fe1bb09a7071cf13"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "3017fbb6f37c3d6f6e16e9b9e86d38cce9faad9caeb6f2f4bdb611aa560e37fa",
+            "claimant": "did:zhtp:2fdb071cb9a7213717fbda4a403e48192761c67f4bb71e1f",
+            "claimed_at_height": 242269,
+            "month_index": 1,
+            "recipient_wallet": "d5a853234fa5307cc9aa0e87bc7bc8d46d75070ee7bcc7029ee8ddb3dd10828a"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "877f4797e243306ac847f3d2ef18c0c5680de88005993585c67eff752db53747",
+            "claimant": "did:zhtp:7e885e2df792142df6d9f796ba0991c1c126735f9996f0f8",
+            "claimed_at_height": 211610,
+            "month_index": 1,
+            "recipient_wallet": "85866d24b1cdb6434724a3e538b10eab5eb9b0869677b9f1564276630c139ba6"
+          }
+        ],
+        "total_claims": 211,
+        "total_distributed": 105500000000
+      },
+      {
+        "month_index": 2,
+        "month_label": "2025-03",
+        "sample_claims": [
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "faa111c4bd157a84c2dc0b871af0f3d5bc38ca84f267c6cc4d7b53f5e29aeb77",
+            "claimant": "did:zhtp:e05eccf32c7e021af5697beeb829733ea50fb74fc25eb37f",
+            "claimed_at_height": 324049,
+            "month_index": 2,
+            "recipient_wallet": "66b2ad6318bea057561899392395de4affa622bbb9fa533ca294696042c96b69"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "4c0dbb7be9d79819b2728d2a4e73b9e92f73f52aa49d7d90463aed3e4a22ddbd",
+            "claimant": "did:zhtp:7711ab934627355cc1a9a849b32f56c2284d2830c53155d7",
+            "claimed_at_height": 416928,
+            "month_index": 2,
+            "recipient_wallet": "74bd5e7348e66e8258ddcd2374a08b5dc4895ef32ae316603501ee5b290d64e4"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "3fedb6b1de9ba9e8cce48b2aecd12f49ab63fd9b7e59a91657c122412dce07fb",
+            "claimant": "did:zhtp:922980a5ea162bf607d3d524bb3476d715321b583bbd4f0b",
+            "claimed_at_height": 425475,
+            "month_index": 2,
+            "recipient_wallet": "ea43e584bdcd20de6ae3633151565d650528aac8157ee004d8cd6521dd134c08"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "37ed755e0aac6272bc1e7da688c3730e497a54b82419826179b9a804ac5fd3ad",
+            "claimant": "did:zhtp:853cb8414b7c0b1cc20d4023ca0ccb8fa9cbd50e05622fb2",
+            "claimed_at_height": 182835,
+            "month_index": 2,
+            "recipient_wallet": "44ec51d05cd9ac3d69bd561fcec126727720ddfc2c6c59fc6bf455c99c737f9f"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "e566bd865df2e09f41d0334be1acb8f04b85f2479586daba978e360e62df3df3",
+            "claimant": "did:zhtp:c29e38149c644a6f3346c453302c1c988698b37d5c45714e",
+            "claimed_at_height": 282831,
+            "month_index": 2,
+            "recipient_wallet": "9252b80af9917e76cb20b9dd6815406ea7af25811b8030f2cb53495562c1b275"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "842ab097c823dc90fa27151562f669575a727accd3bbf94587abf59a913e8805",
+            "claimant": "did:zhtp:76ef87c963172f34f2f55d93b629b28bcee3b0c4aaf5cf3f",
+            "claimed_at_height": 415208,
+            "month_index": 2,
+            "recipient_wallet": "3092a38f9e3f7b8ba990ac2aaf26a9ea5551787227ec7c548b9daa30f76d12f3"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "601f66fd06a7c06b73c58e057b34d71be9740d69c01bc39e7f5c9a104f4f8235",
+            "claimant": "did:zhtp:48047d18950d86f4c5d02064222c7912169b31ba7ca121ef",
+            "claimed_at_height": 435485,
+            "month_index": 2,
+            "recipient_wallet": "284abc110e5b31d975405d52e96c58144a346d92e66f8041f1df7c51b5e098c9"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "72bf8ad104f5b04a3a8dcbbddc6c575acca8d8a92dc40aa4adeaccc0114fdc15",
+            "claimant": "did:zhtp:098016d376af21671bac9055cfe4500cfba4ade47564c003",
+            "claimed_at_height": 436396,
+            "month_index": 2,
+            "recipient_wallet": "0917d3d306a593607a6f56dd664e662237fd5dfeb96afda14a252ceac2feedad"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "260edec8736ed868a407fdf810f96f89560e850c72037bfd06ebdfa4234f293c",
+            "claimant": "did:zhtp:e64b0b10e5237948b47235e2cb875a6056da315d434221ba",
+            "claimed_at_height": 432856,
+            "month_index": 2,
+            "recipient_wallet": "d844d28d3767b23e3f07964bab5505a8ae8e049e8fd823ad9a32267bb9468f06"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "1e8b5770911d47ab8cca9e5a99b0c7865b673e51d31664204c6d6f6764a97603",
+            "claimant": "did:zhtp:c18d1717c37be5e5952093b2eb0bf30da67dd638b81b3b62",
+            "claimed_at_height": 491143,
+            "month_index": 2,
+            "recipient_wallet": "c64bf799c5a1d86861ff34e5ea67d6e25aa4bd589c27619e42aeb5843182e4fe"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "151dcd612fc54c904b9a1c7195f7a54976d5a5a500443cce337ac96fe2b88388",
+            "claimant": "did:zhtp:a22101834db46e842acb29e02a98a4c7859baa7cfaec31fd",
+            "claimed_at_height": 488446,
+            "month_index": 2,
+            "recipient_wallet": "69c2e31f647901674be78d47e7a79faac16faf06d21822c06b183447f76050cc"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "b6b6c85e8dbd5d92f5a3a9108130312c343b59cc679d79cb7c6682692b521621",
+            "claimant": "did:zhtp:c17440cbc37f2db850cdc427cc867e5f25f600d330d8a27b",
+            "claimed_at_height": 319182,
+            "month_index": 2,
+            "recipient_wallet": "ded2f9b0284f526a7b59a31eaf84162e20faf57e09bd4093e13b45cc7ce4043e"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "939ee669bb103f63d15475c4e68b38e44eed4450a14c864b6c247b3ad7797ae3",
+            "claimant": "did:zhtp:5026fd12735c79ef47d4a14470fbb51a10b13bd2dcc887c9",
+            "claimed_at_height": 108850,
+            "month_index": 2,
+            "recipient_wallet": "5dc7159482cf1beb289520a4d18305c46c76e6a588a8a8cad1b574942bcdedbd"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "dc43487bbcb92fe289b87cb8f6657292822442d7421a6c10e697749042a00be0",
+            "claimant": "did:zhtp:388ce3ea503377b03bf3e9acb659eba02c4eb12af16f661f",
+            "claimed_at_height": 317109,
+            "month_index": 2,
+            "recipient_wallet": "5e2cbd079c1dedc80cb9d0820e033e321c580d9e9c13e8d64d2bab7b44e0066f"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "ce188eb306966a278ac08571f8d745b821a229094299fef504a442addbfa8540",
+            "claimant": "did:zhtp:578ded52b4d7a1d9255998e52f8bfcba21c149836dae44b3",
+            "claimed_at_height": 360861,
+            "month_index": 2,
+            "recipient_wallet": "f235dce34a63e25f817ec42fda002ba7fa9449fa118e1c01e1dd0f69be7d26ec"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "6d6591573bfd37b70179f3805e5b4ffc44eb0693470dcac139be67926c07cd9c",
+            "claimant": "did:zhtp:4ab492b0609e54ac4861b14c698bbea4d26e2019bbfe6c1b",
+            "claimed_at_height": 306643,
+            "month_index": 2,
+            "recipient_wallet": "9c8e63e4aaec751e7548e155a0055901908175cb04204e07e213a6f9f085fc4c"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "120b24e40c5d20a908bef29af73ae830b4871d73b1e69643a6dbf9ded27af7b4",
+            "claimant": "did:zhtp:f97a5e8eab791c5d4da209fe0785905637fe325556752230",
+            "claimed_at_height": 432311,
+            "month_index": 2,
+            "recipient_wallet": "482617c55b290da436f251561f8fca40d29ee08bcfc417cb2b28c6361b1bef2f"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "05d907f25dd3773a62079e55a48d700eba6c4bf4edee9d2f7475d94e221aec7a",
+            "claimant": "did:zhtp:42effc6c4dd89374ce7517dd24e193ad671e75143b029628",
+            "claimed_at_height": 144769,
+            "month_index": 2,
+            "recipient_wallet": "7308ae62ef2774fea2d81e11c30d1d351cd6c140ddc9da178be7c75771fc8387"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "27e5e518f9a7e13889a55b89da6e4c2936e874a690e28b8f88d8d8265bed858f",
+            "claimant": "did:zhtp:8c34453ac7d468cf60d41c3eed749f14a690e913138b322b",
+            "claimed_at_height": 117548,
+            "month_index": 2,
+            "recipient_wallet": "ad04d82484bbddfa5d436b02c9e4f4e3cd78ca60abbbbddbb491da61793a7f28"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "b9bbfb6e9a9cd6328c6c79b7b7897bc0878edc3bd36091ee2f215f82c8a615bf",
+            "claimant": "did:zhtp:96152b8d1035e39f242de96838b356857687a92edae1007f",
+            "claimed_at_height": 336577,
+            "month_index": 2,
+            "recipient_wallet": "e3f7fec9aec8d12b419f427d099dd75e287b5d345b1e6137a4a57eb486456011"
+          }
+        ],
+        "total_claims": 282,
+        "total_distributed": 141000000000
+      },
+      {
+        "month_index": 3,
+        "month_label": "2025-04",
+        "sample_claims": [
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "7fa23bde788b5b85a7bef42b8dcf5fc57a13e15173177f0d415636fe69c2cf00",
+            "claimant": "did:zhtp:a190539fe83924c3fa93c645e95ad94982b494acc2244e65",
+            "claimed_at_height": 497092,
+            "month_index": 3,
+            "recipient_wallet": "93f823760ef9d45ddcd7d261dd82709b8e2dcee7641f5bc501cf06c53b59100d"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "1b757d474fd7e194dc22cc3346aad65c90fb766cd893a3578abdc2ebbd469fb2",
+            "claimant": "did:zhtp:76e73a3bc41cae80803dd967704d119a2b0ebef7556aaa7d",
+            "claimed_at_height": 191655,
+            "month_index": 3,
+            "recipient_wallet": "dca16171e2de887a7c383a852e2bd3375b718465fde701b3ce96522c3a854caa"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "93e2bc74e3d6b2b4d6115e923c1f44e11e738a42cd7196dcc5ae236d11d2fac2",
+            "claimant": "did:zhtp:d2ef45221a1b76c9b2faf95d0f6a28070193048098797418",
+            "claimed_at_height": 163985,
+            "month_index": 3,
+            "recipient_wallet": "5ebc627144b719114e2a7703f67df19c6214634ecbe4b0f9c206bcd34170abff"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "5d0e89dbd1296124640c6b284aaba1f9442fa8986d1c01488a4ad30420dfd8b1",
+            "claimant": "did:zhtp:5ad9647239c9c26b223ed341b6685e2704fdc7a38b4184cb",
+            "claimed_at_height": 122850,
+            "month_index": 3,
+            "recipient_wallet": "df9fd5626f4e39b759f3ba1d2317b2d0c536a12f03be54544cff17f1500fe07e"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "3d5130840b2ad19493de504c03ce4263087732712de017fefdde90450af98564",
+            "claimant": "did:zhtp:780540bb6b418bfc54f1f9f51b48ed6966645e0e3392507f",
+            "claimed_at_height": 171888,
+            "month_index": 3,
+            "recipient_wallet": "2362e4c7b3e8e15fc6daedb7883065e1695080d245425dd3efa120f9cce8fbe6"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "a9e06b3245830f4df1543248a09a9c97f7980d3e980bf588ae6939d8c28d28ad",
+            "claimant": "did:zhtp:06bd983873f0df483889ecf5f1bf5011a470adaa88946254",
+            "claimed_at_height": 351052,
+            "month_index": 3,
+            "recipient_wallet": "aeb9e22fda60e7dd872d4b8010d3202d0974d844f608518ccfb41818b7a077ff"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "f6edd52b66c42f05e99e2f6e487e444d22cc4468ef791c40ff65cfd6ba065319",
+            "claimant": "did:zhtp:c513e66c9ec8c82e942272e36c4fcbd1a8be3df59f64b57c",
+            "claimed_at_height": 110502,
+            "month_index": 3,
+            "recipient_wallet": "a6a009437698d71781b88e90c9d788ddded1957515b226ed90881cf2df0d7da3"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "05cd86e23db8f6d33b62e053ef77b5c9e025c747b5951940947148f7d627676f",
+            "claimant": "did:zhtp:b092a9bac2dcf2df94fcd338fa297e9ccd1ab3751a47f81c",
+            "claimed_at_height": 316931,
+            "month_index": 3,
+            "recipient_wallet": "ac82c19a51d575d55b756ef0b43e1173519166dd03db44db708fbfca8afd7a06"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "483dbf5815afb9bee28e2f66d91f08df52c791ee67aca232343fdb7bc3637420",
+            "claimant": "did:zhtp:ed5ebbe2c247cc45d2f95e4f4119df732696a6e9368bea23",
+            "claimed_at_height": 186878,
+            "month_index": 3,
+            "recipient_wallet": "402544f048a9f3b9101c4e20101fc7c01470fe0aca2a16aeb59076729f7366d5"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "881a3f7e69bc4dfc729d0d00f32ecbe611efce9e9ac7048a96be423923b361ab",
+            "claimant": "did:zhtp:76f0e5aaabe502e3624c969f6e5bf5797ab66bd3055e4065",
+            "claimed_at_height": 132230,
+            "month_index": 3,
+            "recipient_wallet": "9a15dd47d6c172b4036e71886300259d1c5134c8700ef54bc756752bcdd0bce1"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "e1163ae2db216a8a38b34bbb6cf9f358fb612e359bcadbdc883f061d4fd5cfe9",
+            "claimant": "did:zhtp:e1305ce9f4edc1d611e2e176fd832ad7ad6a62368915ec54",
+            "claimed_at_height": 347111,
+            "month_index": 3,
+            "recipient_wallet": "5444db2188907cb1e7c8be47e8d2f8b128651854e2ba9e4b148888c2fdc4e610"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "377e5f22ca06870421596a57d22388d2e0a5aa7d26881470ca943e9b2f431abb",
+            "claimant": "did:zhtp:f1fa7050dc8c1d9938e0508c96867ff760febda5908589af",
+            "claimed_at_height": 140387,
+            "month_index": 3,
+            "recipient_wallet": "a408825e8738bce580336accaae27271aae5817a8286246225bd90d8547dacd9"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "11d56c2588ef89ecdbd6185f6764fa05dbc5d173b083f837ed7c76f2a4e4b1ba",
+            "claimant": "did:zhtp:c80f3231dc4fc8ffa299ac48d59c4990416624c1a5b3fcd5",
+            "claimed_at_height": 302784,
+            "month_index": 3,
+            "recipient_wallet": "628c5c621228bd12f0019bd4991e49ad070819f719446537ab412c8a138c89fb"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "0283efe9ec51523b1f37adf8b24a96486939e5d15feeb5602d7b84ed0f0dec9c",
+            "claimant": "did:zhtp:c7ef3d38f9d784e8ba70e7340a38e755820373d5cabaa214",
+            "claimed_at_height": 169940,
+            "month_index": 3,
+            "recipient_wallet": "9456c06dd22f82ca4832579556f8c1d5d1d0b5efeda3521439f953189d835fb9"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "f3619df6d7644f7377ad4ce4ed7e4c1255f4dca69a21c6b3e174164e5e2ed09d",
+            "claimant": "did:zhtp:f6e5e8966af30fdef49e29f84e77b5157f52551db1216db8",
+            "claimed_at_height": 293007,
+            "month_index": 3,
+            "recipient_wallet": "d9bf5cd85c6c88dab03f866783687ecbfc04fbaa265afd20172787eb42edce24"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "cf0bf542723c413864198c4de59f563dec44eacba7c40775fa50f5ae282a7905",
+            "claimant": "did:zhtp:8e3e1d3aa9413c7ca2b5da7b895a3396da7f047cf6ed3c5c",
+            "claimed_at_height": 154576,
+            "month_index": 3,
+            "recipient_wallet": "dfe9a5d0c4d77b2769db508b1ffa40fdd56420d07255d8bd4a386c6bd553fbae"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "a62aae41803b91334b69f69c5ac0daa869228cb678308d8ffc21d1f5765463dd",
+            "claimant": "did:zhtp:ae2e8eec4872206217fa928a5161fd9153a58e192fd6fab1",
+            "claimed_at_height": 493857,
+            "month_index": 3,
+            "recipient_wallet": "4dd97a855a63d1e45ce284132d9913e9161b10c9b83f7d906ce895972efde08c"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "9f4a9c08c823df642b7a85751af52b17a9ec794ac429f4e7c7bbc4ab04fe0488",
+            "claimant": "did:zhtp:5c6c73367f5792164adffddd4a2bfe1d36ca277e14ff4c2a",
+            "claimed_at_height": 155043,
+            "month_index": 3,
+            "recipient_wallet": "84b304d5bf52f27a685e183da18ebe6d06fba345238af8512d68e9c62b395de0"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "fcdd540ae51b4ed355f8fd64906ffc63d2cca4e3b048ccd11c96b416bfc02781",
+            "claimant": "did:zhtp:982ca03fe192f847e52ff66335489ad0c364b72112c4954a",
+            "claimed_at_height": 173670,
+            "month_index": 3,
+            "recipient_wallet": "c026bec132efb1caf35a449fe9eb90b8cc08e3d92137f0219812465b4d9b11d5"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "2ee376fbb26b0a3b67a5a120c37f4ef6fdf6f99994e3519a3946a1a5238b6fa2",
+            "claimant": "did:zhtp:9e8128f3eeb919cce4a75275f720345daebdfe3b22620caa",
+            "claimed_at_height": 100745,
+            "month_index": 3,
+            "recipient_wallet": "6a106e0ca73530a7d2ae70fae75a0f66cd4ab8e0387915058627494e8be085cb"
+          }
+        ],
+        "total_claims": 195,
+        "total_distributed": 97500000000
+      },
+      {
+        "month_index": 4,
+        "month_label": "2025-05",
+        "sample_claims": [
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "9efbb2d2c4d492a180e5f0a63cf5624ffbf90bdea468c95f045ef60fd0bbd556",
+            "claimant": "did:zhtp:bed13ca9ac0eb0a7db86cad1bbef81314af6550c5717ccc5",
+            "claimed_at_height": 487055,
+            "month_index": 4,
+            "recipient_wallet": "49ecc00db76e45942757109f8162dd3e3615bf9f260aa0b41c8f09ac06941a00"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "613d0a59c42c597029bdfc4c6489c3bb18eab3d3b7c98d5be2e9a9153018c1c4",
+            "claimant": "did:zhtp:37d94ca494b9ee9862e4deb867471dbdd0020745a358cc2d",
+            "claimed_at_height": 329250,
+            "month_index": 4,
+            "recipient_wallet": "ea83c3a69398ca7f2c6299df29590b04f9762889ddc493177067962027ed4d0d"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "99817897ee22437dc439ee14c5cee4770936e9cec40d9ecb10d78f99d257575c",
+            "claimant": "did:zhtp:d1efbc737322ae76f0145cd183b76543cf3dfeff8e08119e",
+            "claimed_at_height": 496617,
+            "month_index": 4,
+            "recipient_wallet": "db239b335302806a97dad6ef8b1137ac2be003ff958e7e2c44727699d6818de5"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "6f67569249ece3e872438d658e97df9789a007f05eeb2ff4944489a1d989d492",
+            "claimant": "did:zhtp:e26fe253700c905a268b4e4d5cc46980e22760c4a498a739",
+            "claimed_at_height": 269909,
+            "month_index": 4,
+            "recipient_wallet": "18dd02d7f8e0890d8998c93bf9064a6943338251f8095b0909d5ee24b61f03a2"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": false,
+            "claim_id": "1c0aa5e64c902af3292a3451ae6a7c5bdceec2a6a2d1f26d3ba4559878758aca",
+            "claimant": "did:zhtp:f15ea0c508a81fad66875aac9e1245f334ae18856148e490",
+            "claimed_at_height": 238194,
+            "month_index": 4,
+            "recipient_wallet": "fd946cc2670360fe0857e1558a1f56fc80a26eb344437c71ad86993afd040cce"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "01cef424d14d12262248ef3072f8b14a8ac30039ed6e4a98db07827416e95476",
+            "claimant": "did:zhtp:5153731c788a9bd417329994f1679918d8d6011d0cb39ef8",
+            "claimed_at_height": 387381,
+            "month_index": 4,
+            "recipient_wallet": "a8a47720a67f4b0e5036ff2e6637216d22e82224d554ad4c2d8e32f4780afb1d"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "71f6add2f410c352e242b5cba28a1c0d85ae1dbf2ae5a56240cb4f481f7adc77",
+            "claimant": "did:zhtp:b8016b14bff8ae543053eb0c54fb574e168078218ff27612",
+            "claimed_at_height": 191595,
+            "month_index": 4,
+            "recipient_wallet": "bb79cf1d3a5ba2bed15713b2fef1bf4c253b65148bb2f076262f2c3fdc7e9eef"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "d867b89581386c19ec7de0f4d392c7c5c9ffbc39363a73d5ca0272a085891228",
+            "claimant": "did:zhtp:00054faaff15252dbaea1bdb8762d92e25ba7d9a2568d5e0",
+            "claimed_at_height": 430503,
+            "month_index": 4,
+            "recipient_wallet": "4fe1656cbf2f4c9fba145044b2889971d8a40f0f8bd3f50adae2e2b11c6836a5"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "ed3ab6bcf095841dc57a9a6d0c97705b88f02ba186d304ed6b8bf584dd323fa9",
+            "claimant": "did:zhtp:09209921a0c00643c5313302d7f983a28eab3101dd94b876",
+            "claimed_at_height": 366573,
+            "month_index": 4,
+            "recipient_wallet": "faae9c4d10af69b70a0607acc73ace3eb0e772e0523341da6732483a8be526b0"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "7aaea158edf032db26b23bb3bd9eec147c8ef82891e29ac06642f203455f771f",
+            "claimant": "did:zhtp:3f9e576cc5a79164473458baaf2b76e89c229b6d9b0d001c",
+            "claimed_at_height": 291277,
+            "month_index": 4,
+            "recipient_wallet": "c97a2d2a1171790e4a8fb23c5010ae3bbc4c9996679e607ed7754f27ea597ede"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "29c19bf7dabac053333315e0310cf0b95c45b81ebdb264a8db7cf2bc89244aac",
+            "claimant": "did:zhtp:4939fbf69ef6f28a518618dc45e65316249ed4973babc2ce",
+            "claimed_at_height": 360434,
+            "month_index": 4,
+            "recipient_wallet": "ca75aaa4d7864125c48167f3a577d1bd13025ce3853743ef5ee1c04f825e2f41"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "b7d1da0500a3b98c1322da0d3afc64f72669fd9287ea93ee57863ff2e3eb577d",
+            "claimant": "did:zhtp:e8b76e2c7a4904e60a30ca207ff3a9db1b9b09c53f7fda3d",
+            "claimed_at_height": 366487,
+            "month_index": 4,
+            "recipient_wallet": "8eedd4da5562942bb3e7151804698e5de81ff8d506db54979cf59dbfdb8a0359"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "17b25621b970c31f9c94f899656cb5a28460c5ed0c5d2c1c3feeec51033e1686",
+            "claimant": "did:zhtp:8caf821579b245fe22f83a5fad7f22fd0e1d8c54d4ecf52d",
+            "claimed_at_height": 231745,
+            "month_index": 4,
+            "recipient_wallet": "20083ec1c00adafeca83188c8f0b6a9c982313dcff37f3117027168c5cb6806d"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "453382ddf998c1129a2511a574b218f9d587b37160806e601cad1ac6be343795",
+            "claimant": "did:zhtp:c1c63c0ab6ca057e586c92f346656636400f343b57163419",
+            "claimed_at_height": 372936,
+            "month_index": 4,
+            "recipient_wallet": "eeb13e872b50f27c015884443807df9e7d71c6c7f28abfe9a4d6691a43fcd049"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "34cf0ac40e0f9b97a958c783079bcb23826ba8e89c3712b174e76e487c18b010",
+            "claimant": "did:zhtp:9947b5e9a06203cd67da632057dc90f24d62a77186f9b0ca",
+            "claimed_at_height": 243504,
+            "month_index": 4,
+            "recipient_wallet": "0981719a8c2d3c8867148f37e214caf96dafde45ab6cdc17bf1053c06ec7d01d"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "9afa4ef96fea9d2903638b4e665f8d0fec076b0f89b706a16471777bd4d6244b",
+            "claimant": "did:zhtp:8f2f6cc0265010e82e72fc0edba83238069c9d61c02c57e6",
+            "claimed_at_height": 166224,
+            "month_index": 4,
+            "recipient_wallet": "80db8517a7eb618f97c9805abe005cf333c202a41313d111c6335028793f3763"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "e461bb9affab3db6556edc41dabd737b7bac2307a62da550b2bd0a9a2fa1cfc2",
+            "claimant": "did:zhtp:6aa0e194d813305dfdde88fe69202c3c5f0e8385de144dcd",
+            "claimed_at_height": 345364,
+            "month_index": 4,
+            "recipient_wallet": "3fed2fa6c98eeb697814075c37dd6975206bf14b41f74d723fa8a57a2a116960"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "81c0a37ba8ecd5176fa83d0d9070dd79ea017ca80390a2fa494b3a81cc83f579",
+            "claimant": "did:zhtp:a7e26fada92ad70b67671f7ba9ee3822b163ca9cfc28797c",
+            "claimed_at_height": 114565,
+            "month_index": 4,
+            "recipient_wallet": "3a5b4c8f1fc1671847635eb1270e04b4ccdc19b5cc695cce250ccd72742da59b"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "67a2c25422cf95a8e3f5d681ffa2d4905c2ce228a475bcf79cb06eaf75864045",
+            "claimant": "did:zhtp:620903a12ab5d5671a65da9cceedd132fb09d65998bcc6d8",
+            "claimed_at_height": 123101,
+            "month_index": 4,
+            "recipient_wallet": "1cd939dad7e09f4e804d9e1113ec51d9377fe48e8a8494bcc2828416a76e599b"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "5c5d5f6e331d6418c1832c84f028aadb790218e5a45b4b54b8c62e850258305b",
+            "claimant": "did:zhtp:0e2e4b0c36fa41cf54716024a88f15f42c714ed3a91da225",
+            "claimed_at_height": 492796,
+            "month_index": 4,
+            "recipient_wallet": "4456ef280a6a1e4e34615f8fb977f5a0a5998c8e8b7faa30b9bda7f24ee91edf"
+          }
+        ],
+        "total_claims": 200,
+        "total_distributed": 100000000000
+      },
+      {
+        "month_index": 5,
+        "month_label": "2025-06",
+        "sample_claims": [
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "bbfce2d7196089279b9eb030ddf55315f283e008b687dc0544bd804a23492507",
+            "claimant": "did:zhtp:92b4aafab9c1de57e995420d8dfc8a823f9f35245d1a28ab",
+            "claimed_at_height": 498226,
+            "month_index": 5,
+            "recipient_wallet": "1b2f71761807fb31a16bd486da2094978e7200c506f514c50597dbe2443100a7"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "f1aec9b1089204cbfaec261b7a53308668b135a17ec11dbc664f910f96639388",
+            "claimant": "did:zhtp:e3484941135c6a5f3740a04e6b90dcf6a0db0839cd16ce8c",
+            "claimed_at_height": 183256,
+            "month_index": 5,
+            "recipient_wallet": "f9ed05bca7f94158cafda363521c7dfbafcc5f25ac3e359e8578e611858630fa"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "1b6670f7d814df910ded923283de9b06c574757b86f097ca2faba1ea94e126a0",
+            "claimant": "did:zhtp:87979507bc273cba859cbf265ca73e0e35b6d65c4d036d44",
+            "claimed_at_height": 399747,
+            "month_index": 5,
+            "recipient_wallet": "2f23729a0981dd16ce8614ad5e2e1ff662308e6f8f1673aa42cc03c17fa4db80"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "b342a55920873df7c8b61e97dd04416e01352d4bfc8494ea177913589d9d34f1",
+            "claimant": "did:zhtp:c19b02414ffbd25c6102b4b0f61817dec2104cb6aef56620",
+            "claimed_at_height": 349628,
+            "month_index": 5,
+            "recipient_wallet": "119bf42c7524b9ea8a654124c11e23f03a59635f7ec9a3a77744d89b7ecbbd82"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "bc321931358d436df49f391868c34d9c29142afc8662ccf7976a19f38b3203fb",
+            "claimant": "did:zhtp:a3ca49bdeaa301bf1f82fb7b1864ce536202baeabf9fbb88",
+            "claimed_at_height": 116066,
+            "month_index": 5,
+            "recipient_wallet": "bb064d60a7fb1fc25169d169330fd857083e90123341345b72c30dc37af146e3"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "74230beae45af9a677846baa40bd1e056cf9c6c1451832b7f32390394b085a6d",
+            "claimant": "did:zhtp:ac87070b9bc4678a322ecbabdf2ec84bc9fd4de0e842fa28",
+            "claimed_at_height": 271823,
+            "month_index": 5,
+            "recipient_wallet": "99937070d89439bb78feb1b22a0f0b503a5bca786c385de1a85ad036458f3199"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": false,
+            "claim_id": "075841a0ebe53e75d3b5b6538db9db948005f103c1e103b30bf1312bc081a62e",
+            "claimant": "did:zhtp:0e923e720c9bd1cb495fabc4a9d991191e7d78131b916c59",
+            "claimed_at_height": 321094,
+            "month_index": 5,
+            "recipient_wallet": "49ff10824b079fc89b1dedd4997183ced0088a7bc42d86c0267c9065b8465353"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "8fec619a4f0a7a07060268e6bb0c5114c2f965b85030532a6c5e6207be1aae85",
+            "claimant": "did:zhtp:92a514435deda414ca74398862ebe936860eff13c5a80d33",
+            "claimed_at_height": 278751,
+            "month_index": 5,
+            "recipient_wallet": "a620169408dd7fb773ff4bdfd9aa69c73ade3c5ff602c1d281fe2d5fb3030b20"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "46cea559b4ba8d9f42ad1eeca178854a2ea4edecd42d10bdc699fb4699283e33",
+            "claimant": "did:zhtp:6b6c4c0bdfd9c4e6e40f2eb2150dec5ac51a8d4236a08239",
+            "claimed_at_height": 227882,
+            "month_index": 5,
+            "recipient_wallet": "1dce4b09d3e9527fc6b8e551156ed021b6ab563c21cf4392ba9137619d3c49b0"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "97086037582f88f6c2897b7f44b794ca66484c23a9300a550ff61dc99131b7e8",
+            "claimant": "did:zhtp:b4a94a501429294672510e79c219a9b19fbb913062a0567d",
+            "claimed_at_height": 390630,
+            "month_index": 5,
+            "recipient_wallet": "f7ba487269b7ab361ef190c0fbc6f0b741ea129079e207deca78c3621239107c"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "a32f2f86a0620fb346e12e40eb55754a1764c42444e6d56f422adbbc8bd5bb63",
+            "claimant": "did:zhtp:43e18a34ee05cf13aa838ea98aec7161fc0c82966dc9e98d",
+            "claimed_at_height": 168829,
+            "month_index": 5,
+            "recipient_wallet": "24e6291dea246489043f6b685c2746b6f8ea26a0f9390ee0674165403ab3e1f5"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "d54d2d40f8a065deb199bd956c9c7d4dc8c23377c51ea02216452381d50bd4ca",
+            "claimant": "did:zhtp:b09e5f7c188300db4e8676c69122feb1d2c4c9c7fb287cd6",
+            "claimed_at_height": 353821,
+            "month_index": 5,
+            "recipient_wallet": "28a552bf5ec1b0e25ce6eba1994c30e330540113e5610ee58d5d2abdd4877b87"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "ad6245d7cab85dc065df262c7ba35e94be30535b65a037991b3c4cddd9c3eebc",
+            "claimant": "did:zhtp:b74c8f28269ed4ca3f06f117367691093ab263df1fa58170",
+            "claimed_at_height": 489654,
+            "month_index": 5,
+            "recipient_wallet": "d51d7c248da92c878d00a482b8f42db3313f93fb5fb32e8fc0dc45036ac6322a"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "97d744223c4850f4bc8cd7be85adb26feb4925e4d3cba3b1eb411b8918ca4e1e",
+            "claimant": "did:zhtp:4ab26bee8350f3ad7679f71fbaa014d8eb262b266349c4e6",
+            "claimed_at_height": 189259,
+            "month_index": 5,
+            "recipient_wallet": "617ddb529686c1c9afcbc849a396e6650024cd9bfa40e8c87981a3a0a36ce3f9"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "90770f260be6253b57b48440991daabcb2eee465a4c07247f913d4df0c82ba08",
+            "claimant": "did:zhtp:52f728e8a10daf1a2f543c62a99c2b3c9f63765b71566989",
+            "claimed_at_height": 284385,
+            "month_index": 5,
+            "recipient_wallet": "1ac4f01c3e4074bf1d23946ba2927f3b68c619294409672cec994b77afb31a8e"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "98e136ee5b723f468605e4ea464d72ae7010430f4ee64a0d9f42e558313857fc",
+            "claimant": "did:zhtp:9591975ede011aa38b370ab2c825638432557c64efb4cb60",
+            "claimed_at_height": 478776,
+            "month_index": 5,
+            "recipient_wallet": "ddf24b34245858b2a9d6c1572eda6b5868fa76636f6aa24d66174ddc22ce2b64"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "cfb2b97b2bbf6df7130b66c7a740ba2595a6633714e6c88a322a7a9f5bcf11ed",
+            "claimant": "did:zhtp:f52e4a5bc89de850bb57cc09e58050f62e2597804cc99566",
+            "claimed_at_height": 437581,
+            "month_index": 5,
+            "recipient_wallet": "f747c2f22f6923aa16f90b8c8717beafdbcc0ad7530d1228cf18cc9a464eff25"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "f139393e1046b49c8c62214056bce93f3cbf35e91435eeb98fd0661be3eb0f64",
+            "claimant": "did:zhtp:f6952d655cf28ca83f2c035b97795788c5ae29c5640a60d3",
+            "claimed_at_height": 288850,
+            "month_index": 5,
+            "recipient_wallet": "11a82879390494b08ae3b7b47b1efa528315d4bbc34217036ce1da6cec63ff2b"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "ed18543cb2b30eea906ae34904ba08152fb1833b07743bd8475e91d5e025ce82",
+            "claimant": "did:zhtp:7dda9bc1bc60fd0b100f0ff14a7297072afeca05113920be",
+            "claimed_at_height": 403672,
+            "month_index": 5,
+            "recipient_wallet": "5e08b2fe0bebf90136f8667451cccae2b0836e8b63d60e57bd742ac753a7e657"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "43f5401d318ea512a2913ffea30c19f15503e4f051ad4cb2bb746aa7e196aea9",
+            "claimant": "did:zhtp:2d3be8f71e476e0e4f9d847370555ec936da7903dbf40fe8",
+            "claimed_at_height": 308896,
+            "month_index": 5,
+            "recipient_wallet": "4ab10d37741af84d37c3b0fb3219ea047198c9d5afbf7b6dfec7fade75cf19e7"
+          }
+        ],
+        "total_claims": 110,
+        "total_distributed": 55000000000
+      },
+      {
+        "month_index": 6,
+        "month_label": "2025-07",
+        "sample_claims": [
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "d4567aa2e010b53a91340b91b6d47cc61d866bfb721caa5a6548ccd6f6125916",
+            "claimant": "did:zhtp:0a557fd0217372e4459b31ff68ef8829436aa58008f06a3d",
+            "claimed_at_height": 233326,
+            "month_index": 6,
+            "recipient_wallet": "c47bd7dc7c771ba8a83aea557f49e1c08114cd37abedae8fa2382a8aecc091c6"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "7b37e9754b633ab2d35a6b3b559fa43a0dbdd29dbe737cffdda815323b5a37f7",
+            "claimant": "did:zhtp:7642192ed99006ac5440004770fec42c9f5677da60ca2630",
+            "claimed_at_height": 388893,
+            "month_index": 6,
+            "recipient_wallet": "7cb6339263184e570c4836db6ad3363bf215054a3ca1a648cfe12c77320517f1"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "181e6bd67d4fef49f0868cbba889233e3d02cf7e228aed7a0e88740b99d04700",
+            "claimant": "did:zhtp:deb39e79703958a8fa29217122c8f76df5b590ed3c7b8b64",
+            "claimed_at_height": 137034,
+            "month_index": 6,
+            "recipient_wallet": "d214adf526b28bab811b9a191922641095dbf29171170a73802c2851cc8b7377"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "b37384fcbc2222cc712de7c5e1a582d1bc898d824d10340d251a434921d8a3fd",
+            "claimant": "did:zhtp:d8358606b23dab361e5d5702c901091cc140430f75b12412",
+            "claimed_at_height": 459879,
+            "month_index": 6,
+            "recipient_wallet": "3fe01beee8776a03e5ee365517ad7ceaea01deee6abbc6277a75be590669715d"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "51f6b2f7145138ceef6fbe1e0d0cd0ed90a92620fcede27b3a99ab81b65d4b63",
+            "claimant": "did:zhtp:fb44b36715c1312b6d727e76021db192d4a9feb918e0ff3c",
+            "claimed_at_height": 182300,
+            "month_index": 6,
+            "recipient_wallet": "5f6030a9bef5c7146258d1f41efb34fea7737c279c688c2bf49db3287bf0ab45"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "d2235f70c3f2a445bce598c1eb66cbf50e693ea517a02ba7f2620334f72ba6ca",
+            "claimant": "did:zhtp:21088f51cccac724c736774dabeffa6313b088aa7d649bc8",
+            "claimed_at_height": 237294,
+            "month_index": 6,
+            "recipient_wallet": "7fc4770af51771e9c9eb6bf5f7a06b81677c08a88e95883e9465c5b5d384b469"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "e3bbf680b82f37ffa87cb486aebbe2172022ed73aeb7d5a9e29f546cd1bc52d3",
+            "claimant": "did:zhtp:de334f55ba2d44642f9016d58eab3dc49a965d5f10366f73",
+            "claimed_at_height": 124162,
+            "month_index": 6,
+            "recipient_wallet": "79f2eb75d51919b60b978c3e84cfd20f7e8932acd4865984cfe209f1843986f2"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "91bed995eab5600ca5dd8f57f01559420fe256a96d1628d3687b586a301af1cc",
+            "claimant": "did:zhtp:b22ea429dda66d871c977849b93376d94543af377b5c11c2",
+            "claimed_at_height": 308253,
+            "month_index": 6,
+            "recipient_wallet": "03394374b53c3ca2b54480105fd0187cb593a250db8f001830d4e1a0d26e09a1"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "6f15f6fc1bccc935de364285062b5f906866c7bf0efd979b6886ee13eddd3b2d",
+            "claimant": "did:zhtp:496b94ea99bc2baacd5c08b7424a46aa83e9838e51f4914e",
+            "claimed_at_height": 476085,
+            "month_index": 6,
+            "recipient_wallet": "4b275538e9aac42366b19d67241c3d29691bd4bb53ff0f6b8ec81558ef961613"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "83283086e05ae87a034c51410d70c672ac08eaa9af96dfc32deabf98f2e8c397",
+            "claimant": "did:zhtp:1a71df01fdaaf0537032e98eb9754c23b49511578d950440",
+            "claimed_at_height": 271601,
+            "month_index": 6,
+            "recipient_wallet": "1ffc7b083f45a3e20674a60785a40883dabf6b612255595f7526675a14bb7bb5"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": false,
+            "claim_id": "d88bb96529794aa8dad2ba187de402996a7ef8f46ad61f5af07f30b29247d48f",
+            "claimant": "did:zhtp:5fdd75bcdabce41f7a1d9c1564fd8f5314a0dfc8e269aaa3",
+            "claimed_at_height": 306515,
+            "month_index": 6,
+            "recipient_wallet": "a2f5c4f9a5a65ea67948e1c92b01ceffca72e2b159e870019bce036993c34ff6"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "eeeba3540b5f00a1ec13f434fd41212c7b32aafd2444b6987cd14d061a85e860",
+            "claimant": "did:zhtp:1269599677f05ca3c1d295da493009d31c4d5c23deb94acb",
+            "claimed_at_height": 257724,
+            "month_index": 6,
+            "recipient_wallet": "46d52e83d25ad8a9ed2826866421e28ffb7662f110da0ec72511cea6c73e8757"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "211a9098294d440493e48adc3d4c64d2ce18e4b52d2d1082d8da04a6e638bd79",
+            "claimant": "did:zhtp:09366a22b538d9f2ac355c4ed1f7d712bbe14aa69cd508af",
+            "claimed_at_height": 292919,
+            "month_index": 6,
+            "recipient_wallet": "aa828d903b7826aeebfedf3c5d705a0d5b2cab7c5495b3cbb74d137c0e6793f8"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "316669a5a0b26409b9941ce503eaa3136b555d27fdf1aa5e4af5b80d14fc8f12",
+            "claimant": "did:zhtp:febbffa8241924466dfe3c39215c2937d849a0a98a9c092e",
+            "claimed_at_height": 152748,
+            "month_index": 6,
+            "recipient_wallet": "78c4f425ec146b28ab08d95517c2410376140bd0704b7d22cb65f2c5a0f57271"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "97f1748b66e62af55a4ede4b03287f8b82b39e371a6b5b315f29541ce4a8ed6a",
+            "claimant": "did:zhtp:aa2a85a79a2ea4712c20733cb97771c3eceea34938c33a10",
+            "claimed_at_height": 173315,
+            "month_index": 6,
+            "recipient_wallet": "8031a06889b9aed1ebf1945f862b3ee8594642206b0ffdfc491d822c6b57c94c"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "c54dc1cde1b1bc562504279b1d5ed0a15e3bbd83f120e7494b18e70e7ce18693",
+            "claimant": "did:zhtp:c82cf4140c52d948c6a360084f515e8c6d2d0b9a110ff2e7",
+            "claimed_at_height": 397397,
+            "month_index": 6,
+            "recipient_wallet": "a81fd55551fda5ffbdaece12207ae4975326780f41f5e70c54a3a7e24d8e4f85"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "944996d2ee29d044d9bea47baa4d33d6d10d23bbc514e7f3eccfd88697479e1d",
+            "claimant": "did:zhtp:c839815a355fe69cbf1ec86579b243e3b882e65b670a3924",
+            "claimed_at_height": 335931,
+            "month_index": 6,
+            "recipient_wallet": "fb8b61caf8a590d02c45d5744002156339c53838961c71b11b0044f2e581ccc9"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "1552bee96f06fd80695ac8d0a7ed6c6ab5a55af2c6a7564914fca20820423337",
+            "claimant": "did:zhtp:3e680d911d7f5703ec98d7d94a7482d8355b6c5910d1287d",
+            "claimed_at_height": 371839,
+            "month_index": 6,
+            "recipient_wallet": "00044774c5cc9d9232566dc7de05bca3e3b2c4ce496110cd4ac6b03ac135b7e1"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "257f89319ebfc6784c18f1a206a9e361c13dc1e5670e44341d6b96f5973c1ffd",
+            "claimant": "did:zhtp:78e2e3105eaea6ebac4ced83e4d51cb67508e3d26f6e5051",
+            "claimed_at_height": 342802,
+            "month_index": 6,
+            "recipient_wallet": "9656af5b428dc39283b96935e40ddffa3dbb9d4a4a023c378644b9fa7a866c5a"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "7546509323cfcfc54834448b45a6fe9340fd899c4ccd46740612bad966090a8a",
+            "claimant": "did:zhtp:ff6d2f41f989f4388a6ec5a6efefe738753123fb429dae8a",
+            "claimed_at_height": 147746,
+            "month_index": 6,
+            "recipient_wallet": "d0edeacdaedad3eaf18e4a993a0336c9e8a3e15905977f41c055ff5d9061ad60"
+          }
+        ],
+        "total_claims": 212,
+        "total_distributed": 106000000000
+      },
+      {
+        "month_index": 7,
+        "month_label": "2025-08",
+        "sample_claims": [
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "91a3f81ef8fbdb19586ebc0c58d2ee77daa00b2334290aee14c780fd890b63e8",
+            "claimant": "did:zhtp:c315e94a07da67f235ec64b128e2b1639b58d935aec73072",
+            "claimed_at_height": 498487,
+            "month_index": 7,
+            "recipient_wallet": "e26ffbae92a5aaab404875db492e3b603cdeb6e4bbee1587d48d29f2a7723e5f"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "105f0fbe686465e3669f4108d4b4dcb6df294527b6b92d32c7f9eb0cc11c8a77",
+            "claimant": "did:zhtp:265ba57677e3269359ca8b0638d120307b26f056ce3684ec",
+            "claimed_at_height": 320559,
+            "month_index": 7,
+            "recipient_wallet": "d87024b36ef68a5086bedeed27a6498d46d4304a6d4cd1b6611c4e9cf2cb6828"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "1b194a3cca4229d78072669f4c224f6eab471366e94ae88840dd736222cb9338",
+            "claimant": "did:zhtp:1ccddb8485d40e7c2dde50ade661b6b367cf6418da63023b",
+            "claimed_at_height": 414527,
+            "month_index": 7,
+            "recipient_wallet": "bf8b2267678cab14e826b3654e028f674bebdef22d10f58e85d458cd48242c37"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "ff7fd631a7524c9878572a7c55fa4f57abd7c490aba1a329c45451afe9ca9923",
+            "claimant": "did:zhtp:de718e56ae7fe9754feb46a369fdfe36da136a28bcdb1895",
+            "claimed_at_height": 122271,
+            "month_index": 7,
+            "recipient_wallet": "2e3a1d97c5a23cdbd786e728666e14bdb90606e1c11c41cb70201561193f4d8e"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "fc7ac664851601d30a0546a24b1830e989b579115d8e9c7ba5b8db73d2c24bb4",
+            "claimant": "did:zhtp:9df5c20bfaafc06ed55bb392330a797726a645d2e359789a",
+            "claimed_at_height": 167956,
+            "month_index": 7,
+            "recipient_wallet": "bf36f88a2e4266c928a1d7a906485d847f7f8a923c530f7cdbe2770c1bd81585"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "185ddf0d8dbe645778cb4ff86385235497198a4093366a43e4beab372a9a57ad",
+            "claimant": "did:zhtp:8e6464a1544fc3238b1f957f98738432fec7fe900bf07611",
+            "claimed_at_height": 360378,
+            "month_index": 7,
+            "recipient_wallet": "69358ebee43fa4c9dd0afd55108f9800987637383ca29c8b903a4e1552139e44"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "7e6c40897da75f433690cab433f8b848b3be0c700cf79778c9a157bfbd0ce9d0",
+            "claimant": "did:zhtp:3f49b2568e1bf1aab15b03b7967c31b7c84851544d5374dd",
+            "claimed_at_height": 230654,
+            "month_index": 7,
+            "recipient_wallet": "36b6fb96922c04ec5985e4790e35af19ddfa51b22ecb4044d07bd1f61d08fa51"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "4ffde9cb14f060aea43dcffd8217a1e0f09ef531d702f0415e8e4a20231b8b8f",
+            "claimant": "did:zhtp:6d5b5ecb81881bc3f16ef2e31d91083d6431dc9747876b07",
+            "claimed_at_height": 220568,
+            "month_index": 7,
+            "recipient_wallet": "c1df7c67b91e5cb4feacce8b7478f5c0450c7b69170d13f699a6b7d77f11425f"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "16e7129d7bbab1ba1e38294b15765a864f304534079f032accd25b6d141aef6f",
+            "claimant": "did:zhtp:ac62e68d03fd71c4f7a40265e83ad2c879d45453fa4f08b1",
+            "claimed_at_height": 411052,
+            "month_index": 7,
+            "recipient_wallet": "6672556c0364e6cb542bd50393a65adb714932a6210fc12dda7fa3b593ee7f9b"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "6c8e87f9ba8488b873c8c0e8000019c37aac682c2dfc027fc2f34fc0974d3a1a",
+            "claimant": "did:zhtp:4fbb282bd4c61d3d09a1451c0465d321f963cd71b0b700cb",
+            "claimed_at_height": 236423,
+            "month_index": 7,
+            "recipient_wallet": "32ae2f91836bfdded4b79fd9a7edd19ac02f718e2db111df0ab29adddc6a09ee"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "d0081455418a66d8dcbac39d8c0dbf3e4ef4c01f83c7b5070e5062bceac0f380",
+            "claimant": "did:zhtp:552b4831f17178da734cba7994152f29c3a5c01c60b3db3e",
+            "claimed_at_height": 388354,
+            "month_index": 7,
+            "recipient_wallet": "ec93c1e86b3831190ddd5830710da18d811d0b2d6222cbe65782e30c1c44b678"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "b097ee71df436101373ad24c9a1cb2c796aa39d7b95ba17f68d71218397f3c4d",
+            "claimant": "did:zhtp:12424e72bb2e38606acaea1e07b295c9ff8c897e0420660b",
+            "claimed_at_height": 497398,
+            "month_index": 7,
+            "recipient_wallet": "160f44cc9eac3bb40605f8d808ea0d129446ae5895c11ca335c8e1feb052fb74"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "e0b48f6b1c9b45438d1371d3ee0a7954001719aea99b9b27240e05c6b37dded5",
+            "claimant": "did:zhtp:4ea1f96320db5a087e253a81e2919a25b4ae7b2feeebb4dd",
+            "claimed_at_height": 332909,
+            "month_index": 7,
+            "recipient_wallet": "2f08c2d19ef0dd3e420b5fa2f4ab0992f6035328ca8ecfec512f88f13334bf89"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "ab86bdac9ae1de28061c9dac9a9d9b15e6fb0f3c4ecec2307e530acee315fb85",
+            "claimant": "did:zhtp:1365e44b85b7090eaa30b3a9d4d80fbb2af223aebfc7f838",
+            "claimed_at_height": 278430,
+            "month_index": 7,
+            "recipient_wallet": "53b68e9172940e45525643843847d2849cfc8fbbdede09330227b3e9ab8bd546"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": false,
+            "claim_id": "8ec788ac52b31d8f7364758c19e9b7a2b80c37d1a3fdab7691d9cf6f2561d7f9",
+            "claimant": "did:zhtp:bef3c7a7203292840ded7352aef37181a8790878f4398f1f",
+            "claimed_at_height": 166165,
+            "month_index": 7,
+            "recipient_wallet": "4da6f8b35a62ba76c0b3542c6c6a506c7c6ef46d5eab5da89fa431c20de503a2"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "48ed02982e76506c6208ae50155e99be101d02ebe899d4858f22f270797eed64",
+            "claimant": "did:zhtp:56036be9809cfd86c4d8e38f23115b34362ec9cbaae51009",
+            "claimed_at_height": 243110,
+            "month_index": 7,
+            "recipient_wallet": "486125c875be439a6c67eacac69cbfb5fe606819f5f3e41e51b7f914acfa7f95"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "a1b63ae80bc419f1082044bc2daf39ac627250bea486c10dd0f0a8242c681d97",
+            "claimant": "did:zhtp:97f4c9f78f14a5bd69cf4a5c1e57563cd9cc3f32233753a9",
+            "claimed_at_height": 278681,
+            "month_index": 7,
+            "recipient_wallet": "25be5546567468badc9c75fe5f05142016d7e87211ee6bf7d0b63f5ac7a2f996"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "5964aae7574fd6cac812da82871878e4ec9e2da8b6c62bb68f3dffcf7af02f7d",
+            "claimant": "did:zhtp:975fce47f6eceb839f97e34b5585880bd7f0275785558aba",
+            "claimed_at_height": 487495,
+            "month_index": 7,
+            "recipient_wallet": "d1bcaf7edf62009ccaa69d49d7929acb7bab825e2103df147b3612fd66aefc57"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "f609acace967f67a3c81c74ba429967d65ce2fe662a38ed12ff399d149c7eeb4",
+            "claimant": "did:zhtp:e3f0629d4b269e34068d30b1ab4065f06de88d80dd2eb861",
+            "claimed_at_height": 305627,
+            "month_index": 7,
+            "recipient_wallet": "ffc41f1ff1dcb3aadc9c53d68fbf8062e204710bb2eadbdf2f5ed435fae4c2c7"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "eafbfd3ed77b2e15384dc3fcb9c4e6016cb074bc2554b4a73a368d2883ab6cff",
+            "claimant": "did:zhtp:19c3ac1651b03cf81c68b863202848573913bae9d029477e",
+            "claimed_at_height": 474218,
+            "month_index": 7,
+            "recipient_wallet": "e04865a81c4f3bed444bef62363238171476f74191f48168e655caa00d6c5262"
+          }
+        ],
+        "total_claims": 182,
+        "total_distributed": 91000000000
+      },
+      {
+        "month_index": 8,
+        "month_label": "2025-09",
+        "sample_claims": [
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "2423c3a2bc28a96be0b3dde581dd51bd94571f4e523a7a538893ce262999ef26",
+            "claimant": "did:zhtp:84a67f0700915c5b74e035c5b25a1c42303fb1e80a731101",
+            "claimed_at_height": 122101,
+            "month_index": 8,
+            "recipient_wallet": "8392c880651cec22b917fc081d32c962d9ec37c76a5e35470ef04f83bfb32139"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "a8da069503fbe558f97cb4a21ba2a4306607cddc35dde23aba58c2db6dc60c51",
+            "claimant": "did:zhtp:10e820445cec50c0dc4900b23ae64b7a54e10a9a5ede978a",
+            "claimed_at_height": 184887,
+            "month_index": 8,
+            "recipient_wallet": "0fe5d90e427f2d4a55724ea36074f0673aef9f2c044b34e45e94765b4fb86587"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "d32f4443ea718fefcb83022fda2933f71ceb0376f67dbfb9c8adbeda1402615e",
+            "claimant": "did:zhtp:780fa502727238ec9c73e3d4ec0b1be5d5a994f91d5fafb1",
+            "claimed_at_height": 395301,
+            "month_index": 8,
+            "recipient_wallet": "7322006cd6753b36e44b86fcb92dd3f6a1a738fca7a070a59fe1f6e0798ac2ca"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "682ee164af89f0a2580c10637a87adab4253eedf2c4daa4805b4fd969b2183c2",
+            "claimant": "did:zhtp:9b5b9c693c26c4a19e5ba4e32b64a090383437153fc964e6",
+            "claimed_at_height": 206282,
+            "month_index": 8,
+            "recipient_wallet": "1eed3a990d662980860d29af5d2d56e0da57f4f65c023f229e1974971a287617"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "3a552dd4844e7d1be1d7f570199e265a9e1f17c22b9759498edcb9b7ef9d206c",
+            "claimant": "did:zhtp:bce7abf9b0c95993e6eb3bb9a7fe89ca438d5c45cb5ddbc0",
+            "claimed_at_height": 121593,
+            "month_index": 8,
+            "recipient_wallet": "da753110cfc20be0726f2e525e75e0e48030894227b0d31d74bcf293fbaf17ec"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "116f71c1e349a001075bf2ce6d4b12031b4cb7b3300ea320428da555318662d8",
+            "claimant": "did:zhtp:67610a5ba2656d95b30a3901e84c9c74d112500d6ebaf246",
+            "claimed_at_height": 371980,
+            "month_index": 8,
+            "recipient_wallet": "2ff3452960b67424e0fb3adffa5a46bf484fc83aa13900056039bf41f1be23d8"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "ba0a75d9308db5079e40b4aade1dfde88c4675073c84223449d53179c8ea3782",
+            "claimant": "did:zhtp:061ccbc04906aa0bc411d0cc164b7acb12f796326ab12ccd",
+            "claimed_at_height": 194606,
+            "month_index": 8,
+            "recipient_wallet": "0a1cba8886fcea34900cfac51a7b7cf202ce2f1202f81f6aa5a0ee77b3f80266"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "dcdd868f6f7a66dce3e87b470f8d5972a49474a7ca2b00e8393c5a26bd64b9e9",
+            "claimant": "did:zhtp:b962ede4fa546065ebc73af522ffd4f3a7bef7e7e4c9c47b",
+            "claimed_at_height": 451149,
+            "month_index": 8,
+            "recipient_wallet": "e176d04c11fc841faeeb44564761fd7d62dbad330eaaafc5d67769249367ffd0"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "1d0be762c9e3d5e7b08b0346ee6ac8c42996fe7dd54389f2389967db14053964",
+            "claimant": "did:zhtp:e4806f7975a7afbf4355d47a3c6eabaa1b47a33c28db19ec",
+            "claimed_at_height": 131701,
+            "month_index": 8,
+            "recipient_wallet": "0fec1aa202d1fc25e8a9bbd41e1eda6b95c1f473bd03dc4bdf6e0fd36508f2a3"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "2d0b17c29917b4443cbbaf633f36df2870de57aabc898e589367a92bb2e39bce",
+            "claimant": "did:zhtp:c94945039e5c20dc4650178eddc1e5780bdd2a825b6f1041",
+            "claimed_at_height": 127293,
+            "month_index": 8,
+            "recipient_wallet": "59580da9010c8fc13d8a2323ce8c3d6685e91be56d5cc96b49ee689c9ccf0e18"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "d9bae5272c54614b36a0669fc7a73c76e57513effc4fedfb41f58edecce2aa37",
+            "claimant": "did:zhtp:e94a21b160636d7ae029eac964e21f83992eeb0cc43452c0",
+            "claimed_at_height": 307459,
+            "month_index": 8,
+            "recipient_wallet": "755a190be485018836af010fff9d4431d1e0afdba25329d2c0c7603e156b2814"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "bf5710558f111ded3687bfc27794f1a303672499626d72f9f2217021e1a884e9",
+            "claimant": "did:zhtp:561132570628308b72c1ce179a58616005485215602582c5",
+            "claimed_at_height": 319934,
+            "month_index": 8,
+            "recipient_wallet": "1f6b283839296ad61fb342de66f58c57bcbcb74fdf5dd8e9dc9c505d667eb6e9"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "9b3b6359475d650a8b882af65cfca9e2db3648fdac9c95c6ee13f076931d6135",
+            "claimant": "did:zhtp:ee1251ec7db8f4bc057c4f37d59decd2d93bf65f91e80d7e",
+            "claimed_at_height": 273539,
+            "month_index": 8,
+            "recipient_wallet": "6fb8831346225fedc580d042276e3880f92d891ce547f6e823db436efa4560c7"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "ece779c3009c05c31b26d8649fb644c5e7d438f23b4693d3fc535704ff6fc3c8",
+            "claimant": "did:zhtp:d0f0656717675e409b66a1fc24da52e73a15423c7d4c0ffa",
+            "claimed_at_height": 389575,
+            "month_index": 8,
+            "recipient_wallet": "9aba77407cf2cfd2bb51f080ad7d7cf93b2d605d301bacf863aacc7abb3cc8e5"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "3d0010178ab9ed4f14e1f65fb13c41146a9893496fd1c49eced23b08a0cae52a",
+            "claimant": "did:zhtp:7491aba44f7d6a8a5c998cb6e40890b45c4c7d8367062307",
+            "claimed_at_height": 238908,
+            "month_index": 8,
+            "recipient_wallet": "ae7dc41f8c6c6bd8622a2cdd6632e8824ef1256f6f976d629fe9e66757e132fc"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "c0a59407b861f4e8baac9312188a277846967e776077267c1efcb18ff3ec9925",
+            "claimant": "did:zhtp:5b276d9f6b0d263e17503c27b2377983c6cf00b9099a7236",
+            "claimed_at_height": 235881,
+            "month_index": 8,
+            "recipient_wallet": "25a412965b4e48baee804deff1ebaabf9d2860a43cc9ebb3379798c746e27d40"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "3bb53e275f221d245b07f78bae5f38aa748c23f0464dac759b0c50369a9088d3",
+            "claimant": "did:zhtp:742156d46dd55bae911ea9469a72f0765f8e0ba744c019bf",
+            "claimed_at_height": 243963,
+            "month_index": 8,
+            "recipient_wallet": "d6d7506de45a1b705a20ac2340fef2b1fbc89d8d5b3c758d277224f6b722e641"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "312caa9af8d6975f9d2ddbaa9eb599e3d2a5646303bd1a4720c72622f49c7a44",
+            "claimant": "did:zhtp:623966e934a29e10dfd56bcc4f34264eb85e59eb16baa4ea",
+            "claimed_at_height": 497781,
+            "month_index": 8,
+            "recipient_wallet": "ff06aabe06cfb73a5611438227100b8ff995cbb01a8a5bca60d00ffd126b926a"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "7d9bba7c31a1ff1b7a521ab6e3c28c0685121d025f3d88c6d098a07113053450",
+            "claimant": "did:zhtp:bc0aefb562489fa3f0260cffd2601e4901a5ada8467476fc",
+            "claimed_at_height": 466859,
+            "month_index": 8,
+            "recipient_wallet": "4052f65c2537ab96bb8a696b1043727580dcf3aff210541d8311052bbc002e47"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "22bb9ed4bf6fb070b49c69f74b2e44c5f3660d1708804b1e485490d4615d623b",
+            "claimant": "did:zhtp:bdcd03893dcb6780cee8436562c0663667e99eecbea28941",
+            "claimed_at_height": 141702,
+            "month_index": 8,
+            "recipient_wallet": "0717e4399141a9ef8c6fde42194f68012337d8fe633fbb472071d4686937ebbe"
+          }
+        ],
+        "total_claims": 212,
+        "total_distributed": 106000000000
+      },
+      {
+        "month_index": 9,
+        "month_label": "2025-10",
+        "sample_claims": [
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "1138befc7648289096d998826aa7fe52e2004b86fb28532f222232d9c5d07480",
+            "claimant": "did:zhtp:ee57b8ea3332ccd971b6e0061edba07c7757f2176c9c5262",
+            "claimed_at_height": 388354,
+            "month_index": 9,
+            "recipient_wallet": "2c657c0118747d86c7dee3c5401b1fa37b1cac2fa21e7c2df30a5b07b5963c05"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "3e9da2fa00574e5fb1dc0c62921029f3132d322ad0d693d5a723974e2386f4d4",
+            "claimant": "did:zhtp:18b3c3d8fb07a6090d38af1a3da77ddf80e2116a8ab25941",
+            "claimed_at_height": 195382,
+            "month_index": 9,
+            "recipient_wallet": "c49e5d335070085738138faf486344432423504809b740e335240b3911e8c2c1"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "8af53cafef421aa7697cbc7b3bb12faf2aa848266385c2a2a1117e23b412b060",
+            "claimant": "did:zhtp:210b1b608d1b13b1eddf17d658ae75ce9dfedd8e5f8ca5fb",
+            "claimed_at_height": 324602,
+            "month_index": 9,
+            "recipient_wallet": "abe11f8d62d93fefdce1dac7c802e8f6d45ac844e850c766f4bc4ce28d3ba22f"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "1842a2f0d5bfa673a2455ffb0627cb62d9e1ba208b73b0414244dad23a54b211",
+            "claimant": "did:zhtp:6ead9eb84db98e8425cc400a972f3899b297d18d0199e84b",
+            "claimed_at_height": 236615,
+            "month_index": 9,
+            "recipient_wallet": "1ed1671083cc33ea7e5f946cb4a2b48f70e9a9c61f1472dc71a140530751e397"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "8dc95f8a8c92a0dbb88a5859fba956fe59d0b72d7ee1278fbf41530f64ca1f10",
+            "claimant": "did:zhtp:61fd7dc59bf9376718e1e7740c05a91f160cf2689a3c574d",
+            "claimed_at_height": 443353,
+            "month_index": 9,
+            "recipient_wallet": "230e5cfd527d103390658a9b88be98c4ac4a955e54571c1694eee5c77d630638"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "edd9e4050f5b51a1eeb3a35a6069f7f3d1a01237948b1093519feec23ca02b77",
+            "claimant": "did:zhtp:0bde2a5c0068e1b3e2d6bbf2a5a194eb1bd899822775e310",
+            "claimed_at_height": 158688,
+            "month_index": 9,
+            "recipient_wallet": "24f8576150cc5d2da14fad242eacca933dbf29806c1f6c51af9b118c96cf2ec8"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "c23021f8a7377264bffe00ec407442c08d8af1528dabe963b1c07840fa39349f",
+            "claimant": "did:zhtp:bba5d4bf67d560d06e105666e421b4b5f50b255581b42a6f",
+            "claimed_at_height": 288260,
+            "month_index": 9,
+            "recipient_wallet": "02e759281b0c809c5e2f8ad0e99a614e339dd0b683286dbfb2e5db398277dfee"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "eda37aee07a4037cd1744f8c3647c2728bcfe2c8c218b2fee6e7c5c719cee958",
+            "claimant": "did:zhtp:d1a583f393d2286788fdf445143411b89d9c67acb41dc882",
+            "claimed_at_height": 339801,
+            "month_index": 9,
+            "recipient_wallet": "8f70974c967056c241d8b932bd6f699f6f3ab8a8af1ccacc74c76441489db1bb"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "29e0b427c2fc789d1990e573d2e043c64f989a231c6bb7591e886b69b1ec25b8",
+            "claimant": "did:zhtp:7b680ae84aadb2f780e3d729a554bddf232e027ff794e61e",
+            "claimed_at_height": 482730,
+            "month_index": 9,
+            "recipient_wallet": "af49b17eeed0de73470bc0cfbffcf3b45582db7a1d0f00005f5de17c154375ab"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "f10e7bc03acc870dfb35ca1261ade949c048b33cf8b94d720d237d8082ec31cc",
+            "claimant": "did:zhtp:0d87966c4aafd07496787005bf3b7311219701e515d51a1e",
+            "claimed_at_height": 295036,
+            "month_index": 9,
+            "recipient_wallet": "28a6ee1620b773f527f88257af8c78bb5689a30ee3a3303d78542661c09daf02"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "131c1f5f760ae348dd3d6d5fe29aa7b87d33997ed724e51b5d7a0f13ed8474ff",
+            "claimant": "did:zhtp:c3338a143cf1089845b992c77a21c41a4b3a5f4053d8ffe4",
+            "claimed_at_height": 149431,
+            "month_index": 9,
+            "recipient_wallet": "426662ad9e238d7b2997623cabf8f2285c5a2a391c2c0910a2e2c331ac45ee2d"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "d3670a64adfa0788ca18a884ee79ff0bbe614831780aac2547829b12d3121240",
+            "claimant": "did:zhtp:892639654a956a4f5e476fa28bc94e300896c69584bf12e3",
+            "claimed_at_height": 383429,
+            "month_index": 9,
+            "recipient_wallet": "20b1c9f196f359a80be5beaa1623db2da66f4d5f3abc9444bdcc5f67351d2028"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "0828ef45b35ba0322cbaf5e1fb0f50f8c7dc52ac90096b19b60cbce15e10be49",
+            "claimant": "did:zhtp:4fbb88570346047ba60760f1baaae537aa2e9594c58b1ca7",
+            "claimed_at_height": 208972,
+            "month_index": 9,
+            "recipient_wallet": "3d50b5f2c300ad087307a379dc3c78e7d11683791c7be90f6fbd1b0d98140c90"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "16f51e55097e144e855e78084ce95e6ccb046190de52c3c1901e10d45c7e6b2f",
+            "claimant": "did:zhtp:9d183f358dc2755bb8ed84efcc21e52e9bcfb29dd83b948c",
+            "claimed_at_height": 156051,
+            "month_index": 9,
+            "recipient_wallet": "8165e2fad6e33232777ebb5eccb8b768bcd64bf489f72b24359e04cd1adf1087"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "8fc387fa177abfb804726c9d5e0e51e99b9125aa98a72aa22bf18dabdaa13e72",
+            "claimant": "did:zhtp:4d16f5ebc4988e2a8bf491b43fffb72f4a53fed2d241a1fc",
+            "claimed_at_height": 254693,
+            "month_index": 9,
+            "recipient_wallet": "8a2f28f9bd84146fc7d5265bd2efb526222651b1d6542f093b93836adbd3483c"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "3e2309421b942a98921ffd07b56bb6e0dd026498dbb19840275d9cdc2d5e9638",
+            "claimant": "did:zhtp:6bdbaab5844646ca25851fc1e152ed0fa01105b2aef2d613",
+            "claimed_at_height": 495680,
+            "month_index": 9,
+            "recipient_wallet": "80bd0c55b2e5ee1576a8fc8d108b05ebdfc0da535753bec96110750ed9e44435"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "b53ecf79e416234d70e61aa56e62fb485c76475783ffd861968c90b694648c64",
+            "claimant": "did:zhtp:3e8fa61e13fece2e2e9761d3b0f9697393fe64610704d4ae",
+            "claimed_at_height": 273250,
+            "month_index": 9,
+            "recipient_wallet": "d42b36c3e4f0f4cce1d30e5a9d1f9a60c9824a97f5d1979ca264133bc4d38b39"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "e1f0c2f10c2a3a07216e5975024995f808910743a63b5769fc46fdf628603219",
+            "claimant": "did:zhtp:535dacacb35936b42e075bdce8e1a26f4eb9df3c4aac87c2",
+            "claimed_at_height": 329549,
+            "month_index": 9,
+            "recipient_wallet": "c59df1660f6d0b264016ba553eb2068e475538424cc756217b39ed4d8e8d8b8c"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "65cb346637279840cf6b6639f78d0bed06c8597d9ec1d229c7df1b6553e16f94",
+            "claimant": "did:zhtp:6af3265664c181f5056c85a9ade660686d223cc799a0d108",
+            "claimed_at_height": 115436,
+            "month_index": 9,
+            "recipient_wallet": "38638bf77fc8a9861b2b641a8ba2184b9e89a8017822958416c2fdbe8e4bc3ec"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "130f7aef5d050c98f97386f6a584bf44a1382d9fc5b0454a41a7720d005b0f06",
+            "claimant": "did:zhtp:fca7cef9f267d202f4ffc8e17080448e9fae2ff5c5e8fe5a",
+            "claimed_at_height": 259516,
+            "month_index": 9,
+            "recipient_wallet": "e5cda2b39eabb18710fa49050ad38d157daf16c7d7a7b6e55945b4bbc9859aa7"
+          }
+        ],
+        "total_claims": 328,
+        "total_distributed": 164000000000
+      },
+      {
+        "month_index": 10,
+        "month_label": "2025-11",
+        "sample_claims": [
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "14833930def131a693e2fa1ee7a65bcc76cca02ba0398b90765e7c1eb72ae4ed",
+            "claimant": "did:zhtp:18bf0cf2fa4cdce3c317cb5e8fdfce9fadbbde1e86a3c83c",
+            "claimed_at_height": 125525,
+            "month_index": 10,
+            "recipient_wallet": "ecd6102e9f65d765b27e251d862305a79acd7deb49861a682b7418472a3bc37b"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "91b22c074fc2174ffbc924ceb3219a34aba6c77c785d51727af11d6d98597b5e",
+            "claimant": "did:zhtp:88535ed5e43772ba1b215a84241ea65b6dd0a05990b0dbe8",
+            "claimed_at_height": 459664,
+            "month_index": 10,
+            "recipient_wallet": "4f341f518fa0a05eedeb77d307e3ed1a96d239b1b2324a10f60bd0a4cae2d28c"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "9bb5a91e9f701aebbe7667c73088b560a161f6c810e2404ccea7077bf3deacbb",
+            "claimant": "did:zhtp:6964ef5baaac6de7dee73fba8ed6cd42f1a525d152917165",
+            "claimed_at_height": 245486,
+            "month_index": 10,
+            "recipient_wallet": "2ffc1cd4104b7fee21edb822fbe492f9d1672efb7debfe6d108beedb3920c79e"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "98849e21ff9861e21980dbfc9b95825793f458efdec5ad182c5aada9654c7d3a",
+            "claimant": "did:zhtp:7681b18cd9bfba9350a5f552674a115bd4d0aae7259acf77",
+            "claimed_at_height": 412582,
+            "month_index": 10,
+            "recipient_wallet": "e95bd9f843fc0746d2917917577a6cedce4629e7d6b794f59f6aaf7ae2f94335"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "1284c47bfd09166e850dc291c31e6faa7abc78ed3251aa9ec22e88a8182c1bd8",
+            "claimant": "did:zhtp:1907db910593fa0ac6e9b6c9f17e5c7af8089c131bdc31e9",
+            "claimed_at_height": 122200,
+            "month_index": 10,
+            "recipient_wallet": "8b14fc0ac8fe62518eeb3af1be79e2632d2a18012958f225a862be68479a3351"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "514dba87254b01c25b7689633f461df10f7e60f2d73bbaeb2fd2a2fc5cb6367e",
+            "claimant": "did:zhtp:fb0900627edcff2729b818af78862c16a30d00492c3ae2e0",
+            "claimed_at_height": 280495,
+            "month_index": 10,
+            "recipient_wallet": "a220bf129e5179046a6c50266d43e6a3b3f14cec4c7c7fb2d2771dc8cb2abbca"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "2508bd57a40f9a9e65475438d768d2573070158126db0936b8a550fcb84c3a9d",
+            "claimant": "did:zhtp:891aa57bc34f9a9670ecf3a24171e78a60afb67e0175d028",
+            "claimed_at_height": 282464,
+            "month_index": 10,
+            "recipient_wallet": "429bec5673690026853322b7c3cc10232efdfbd65a76aaa58419d11fc063d44d"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "680163c213ae603549271e11768c08d19a8f153bdd92beed7324c4d4589a1bec",
+            "claimant": "did:zhtp:122b6dc20390cfbbf66962230b4fa30d0139001844c4aab9",
+            "claimed_at_height": 239517,
+            "month_index": 10,
+            "recipient_wallet": "6c934475f5b9057045ef8f335ca3bdd1cd6485d86030eb0bf6eb188102a0b71d"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "6aedbe37ef1c6ea31a84cb7f917675a8e56ff22142800a932ab113745e5173fd",
+            "claimant": "did:zhtp:9721ebfbc639d90033bd82b2d96bc50ef8946e796156833a",
+            "claimed_at_height": 392372,
+            "month_index": 10,
+            "recipient_wallet": "44152b9cb8cd1ec8e7aeabc1f874ea1207b35b3eb5638c28a5af3b4a6aa39597"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "26d65890e6d095c96aaeb4f0cfc6da4c90a506d7e5785be9c0c1858a0f565dfb",
+            "claimant": "did:zhtp:c3e04b570112d5e27e95bf07882854c3495822734bea3d17",
+            "claimed_at_height": 124483,
+            "month_index": 10,
+            "recipient_wallet": "c3619f3eee4a35279719ae0a29c08815298c67f286ff5d4e5f658df4d6a95a17"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "7b7873b1bb603497c6aaa5afdeacffdba84d4f2a0fa03cadcd0549bc31ca8bda",
+            "claimant": "did:zhtp:324d77356abdb7e595e5e4371e1f87848ac3fe8eee8cc471",
+            "claimed_at_height": 148121,
+            "month_index": 10,
+            "recipient_wallet": "7bc7b33db158f02ac6aae39264bfd0a1ab103298dd3fabc707088e1ae46af55d"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "d1f15b07ddac0c3ea27105312e0b0ae49d6c503b7857b93c3331ca538445b3cd",
+            "claimant": "did:zhtp:7758dc13fde55d33fd1143d20cbaa7acbad5adfc94e97db2",
+            "claimed_at_height": 334466,
+            "month_index": 10,
+            "recipient_wallet": "0a78690bad27d94cf46482cb994a68bd96737e72425f03e22a10a67c919c09c1"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "78181548c5405084552284b5d3bcca9b37f5df741120730e2d78c77967286893",
+            "claimant": "did:zhtp:5ae73f56167eafbf462fb5031fc71cf2f4d70ad92a045f5d",
+            "claimed_at_height": 254462,
+            "month_index": 10,
+            "recipient_wallet": "24bd3ab4479a5aad2ea068172c366dd79fe8edcca05eb88273c920edce08efa3"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "6096fe08c40345035ad4dbfc127d99cf4118026240f23a91a30233fbe5c9702c",
+            "claimant": "did:zhtp:06714fea1364fd0e2df07de1cb5213cf478287fe6f9602f7",
+            "claimed_at_height": 309754,
+            "month_index": 10,
+            "recipient_wallet": "5256d8415cb289ac920b787e28cfe954c9ad2f9a2134f5bc4e59f34af40b23a7"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "582cebdebec4a05f9f88a4c0c791c536988a83c213329af89756158c6479fc6a",
+            "claimant": "did:zhtp:2cf4bd595cd6f6eba7978e8aea3b166d3686ad69b51c4b9c",
+            "claimed_at_height": 343632,
+            "month_index": 10,
+            "recipient_wallet": "200e01fcebab9fe70f584b578bfbaa6af01403e614a5cbdc3562eae494c52967"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "be0b147892197a1eb3041857c436ad05577b0e4666f9fb022159ba130a1fc931",
+            "claimant": "did:zhtp:28150c591944245359ad28ff78574d443de49edd9ebf3549",
+            "claimed_at_height": 495334,
+            "month_index": 10,
+            "recipient_wallet": "209d26921a350e462fdbc7090b3db9807f4df752cede43f4efbb41440f3bb240"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "49c817408a8bc9b355df2ee1b25fe2281ad53355304356157ce7dcf0e2f4adf3",
+            "claimant": "did:zhtp:d862096eaa15941ad2ef1cf964f939a796057c75b1784ef3",
+            "claimed_at_height": 263285,
+            "month_index": 10,
+            "recipient_wallet": "b6d68ba6851ab70730b6236a09a18176f356b446db4e1a5038e132b01520e8e5"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "48bee00812475c096d7174964677364bdec873ad2e8e47b95a8dbf59e035b911",
+            "claimant": "did:zhtp:047bbe04765f79eae1dce5c8a955870c55842a334e1241fb",
+            "claimed_at_height": 232932,
+            "month_index": 10,
+            "recipient_wallet": "6056d4e59607379ca39366a86d90ae0274ddd1c5606c88f8120aa210ee2a4332"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "483ca6bb5a3f4b4667dd5ab7860c003c10f31d5fe2845e278eac56ef5223fac3",
+            "claimant": "did:zhtp:1cd08f45f77edca5ddf4d6bd302fab37928b8287e67872da",
+            "claimed_at_height": 396631,
+            "month_index": 10,
+            "recipient_wallet": "b55c518577e5ec2e05948f99b440b2473f94e3360a1e270215859281d188048e"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "d65fce86ba3be289bc03136f1167fbcb6bf8566ee619c8e22ab589aa5a29db28",
+            "claimant": "did:zhtp:87fe5935cbef5f58c395ddcc4d77651d47118a20fb458392",
+            "claimed_at_height": 374370,
+            "month_index": 10,
+            "recipient_wallet": "397a18465c4a1e7233cad624e979de5f10abe5717d18902b5c6d6109eb84811f"
+          }
+        ],
+        "total_claims": 392,
+        "total_distributed": 196000000000
+      },
+      {
+        "month_index": 11,
+        "month_label": "2025-12",
+        "sample_claims": [
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "550f38c7ad5ec68c1774f78d8d0d5decabcc2c0aee42923831be1a91c6890278",
+            "claimant": "did:zhtp:c2e96fca5f77de0f2ea716fbacdfb2aec200d3cd2e571a2a",
+            "claimed_at_height": 496327,
+            "month_index": 11,
+            "recipient_wallet": "44ab4e2f77653c710dafb25b05a697819eae2cae8e612ac945e15eafb36d632f"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "1f44d5617a5ba1dc64dfab08378b02316a4dcf30fbfdb37f399a95945236f2f1",
+            "claimant": "did:zhtp:76581c0a23faed2d9d8f616d7a8c20fd879c3713a0bc79d5",
+            "claimed_at_height": 292202,
+            "month_index": 11,
+            "recipient_wallet": "09e9e21f25aa0b21dd9b14312a9b2d79c3f96bdfdde9086f1c90c8e89390e624"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "7815492706c9126ee5c520b7fd8dba69d228bac2ee132a1f75aa2c322a0fef52",
+            "claimant": "did:zhtp:9dcb895d3a97a78b0d0cd37cc38b1c83b0bd5e1203eb774e",
+            "claimed_at_height": 228338,
+            "month_index": 11,
+            "recipient_wallet": "150a6d400ffb52a663e8367419e4cf6c98d16904271398a2ba003e9f13a9679b"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "1a44f963bcf81014ae6a397668492344d3626db07d2d3f42e9b565b1910aade4",
+            "claimant": "did:zhtp:00eb3256f01b093939b0d116e725c879cea9cba0ea21c52e",
+            "claimed_at_height": 199794,
+            "month_index": 11,
+            "recipient_wallet": "cdc2d66692c2a62af0513958388bb14953d9fb3609cf10eebdc9bbe60d0e2420"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "819d3b793a0867d663d35d25a444b133353a24892f344d6925518137f30b7dfd",
+            "claimant": "did:zhtp:16150814abd9b60cf829130a7be9835b562e1b2187cba6a4",
+            "claimed_at_height": 479905,
+            "month_index": 11,
+            "recipient_wallet": "aceb31237ad75ce0d3e49ae7a31f1553231d5fe04437de6e644dcd01958af5be"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "8c25c305d623b4f2dbc84d0d439ee265964ac10a1ec63c705a730ec05728ad39",
+            "claimant": "did:zhtp:5e5e6b13121b713de883181ac33527d895244e0b28aba5c5",
+            "claimed_at_height": 445555,
+            "month_index": 11,
+            "recipient_wallet": "b00a6c091c15c91f2774a5b9980816cb2b1713394dd70aa522b0118c335cf6c4"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "940e647731f31c38adb0dfe636a9eef3070a765bebcbee2265ed800d7b95b680",
+            "claimant": "did:zhtp:1fe844632bbc7406e3d1826110907855e3e0b31518b1b62e",
+            "claimed_at_height": 265372,
+            "month_index": 11,
+            "recipient_wallet": "f4d6b8b2b911af8c904d9f29555b380d593dbe19feaf6b11f1a8babd0cdab17c"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "05a3ffa09ec05dd23cbb8538178cc51dc17f15eaa522159a1108e4933af51b58",
+            "claimant": "did:zhtp:d09ccda623f30838e6d4ef43cdba16c3165dd36aaea9f2ea",
+            "claimed_at_height": 426282,
+            "month_index": 11,
+            "recipient_wallet": "7858c615bb0885bd15b618bec4068bea054ed3e60fb2522a9a984b945c47e701"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "bc26198e79c302549cb11eccc25aae49f1f3a8ea626da2e6f185bde1dc7c1e7e",
+            "claimant": "did:zhtp:479c11bc09620461a220c53242668a125274ba5df70ef36e",
+            "claimed_at_height": 288659,
+            "month_index": 11,
+            "recipient_wallet": "c7274fd72f018acf2496297a24715bac98973b0482034eed4b5419e97b6736ad"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "c4bac4ef546b256d0710a9c658d883f5fbf1c1f705fa91d0c976b31d1acaf84d",
+            "claimant": "did:zhtp:5c5810f55f9e63a9f61c61b242cf56e2792a5ac37c91e367",
+            "claimed_at_height": 328511,
+            "month_index": 11,
+            "recipient_wallet": "e084c07b41dddb93713d74ee87c1a009877db5274c1c9534f0aaa02d2b992b39"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "b845894bc822507881c0dced9dd47732e29c80d35ffde8dee3c104f72c9caa76",
+            "claimant": "did:zhtp:9a0999d3f9309168d9eb15a5ed0c66a71d22fcb047d9923a",
+            "claimed_at_height": 131886,
+            "month_index": 11,
+            "recipient_wallet": "5ab94c417922f7e34b6679e7fc9021f0a125a2adb4ab74ab37a92f70ace01bed"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "e63592166ee224b00fb2f8b97b85a3aa66017762bdbd10b91ba11b46e3f7d0fc",
+            "claimant": "did:zhtp:8d9fb3528765edf284cf158a7b2cd7cf4c52d3443c6486b9",
+            "claimed_at_height": 278352,
+            "month_index": 11,
+            "recipient_wallet": "721a7014a09335c6a054fa5257ae9fb2787af429139c32bc9182312114ec111f"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "ae8c69a2d26af36c1c7b39ec92a39a005cf92ded5b2285fe4cfd773ac71c4ae6",
+            "claimant": "did:zhtp:8965d92e762c3a7f91507ee3ee4ba9c556e0896a61569808",
+            "claimed_at_height": 101958,
+            "month_index": 11,
+            "recipient_wallet": "78274ea176282e63cf627fdc0b0e105db924990eaae74d12a4038a93f7d2a4e1"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "8b5c918c057fdc27cc3055856d53102cefcea17385f176747f27fdd0ceebb2eb",
+            "claimant": "did:zhtp:168a0fa422b080932be1ef3f943a39ea38e4d26526de1af4",
+            "claimed_at_height": 120798,
+            "month_index": 11,
+            "recipient_wallet": "677a2d266df44f9b13dad907cc7e789268878342de1c5fe09538fbfbce060b90"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "4a6b90b461e3a7f3c97166929a0d98d2da9eab2d1050b77acd6d8cda0ef3fa58",
+            "claimant": "did:zhtp:07d0a0fcd48405a2762e95bd8f72d63d821b6b14356a22c9",
+            "claimed_at_height": 251871,
+            "month_index": 11,
+            "recipient_wallet": "a312c400606a8e21fe95f45ad744e61d754f6acd689898224f688f1c91ff3133"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "833008a33736a9d4ed3dbf5882409d69f0d63a2247ff18a13870aeb8d686f6c1",
+            "claimant": "did:zhtp:fc97fd6f59855862b4ccdfa60c9ecec2b34acb64a286d7e3",
+            "claimed_at_height": 241848,
+            "month_index": 11,
+            "recipient_wallet": "6b5802dc14e347e3e53e6e1cafa8e44f4a3462acdd8420dfef66aaa425741562"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "f61c5f618d889477a670d8a6488345ff778fad89abb295397847efb79231c229",
+            "claimant": "did:zhtp:3c4de81720c27cf956cbbfda30e1e1987efe7eafa1e2e2f6",
+            "claimed_at_height": 456005,
+            "month_index": 11,
+            "recipient_wallet": "15326189fd7a41a731fc9b82d90c301f07edb3cf662a00dc6a2d6f71ab8b5464"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "bf35bed25dc2c003ecd7841bcf9f4aea1f9bb66b89a9f0b49a424293c8e8735a",
+            "claimant": "did:zhtp:4a5c9ba6b01003d1e5290f8f73403758c5face2c00a7a315",
+            "claimed_at_height": 327488,
+            "month_index": 11,
+            "recipient_wallet": "e44404ad7c3ea84d7571526ce91fbed8636f677d3070dff6a081118da087340b"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "523c09098bf9ecf7c86c1af846bacac7bec8cad48de09e7a19e843299bec5659",
+            "claimant": "did:zhtp:d72787e34c649a57c29f06f66c1886ff5c5be7f1657add25",
+            "claimed_at_height": 390545,
+            "month_index": 11,
+            "recipient_wallet": "27a8c390274b4bfd01a2992b7766e594aaaddd78481e42112269b549b2641147"
+          },
+          {
+            "amount": 500000000,
+            "citizenship_proof_valid": true,
+            "claim_id": "eba87cc61b9b4b424c38180d3b0facd946a19cc8c95fe64e83fcd6319651bbfe",
+            "claimant": "did:zhtp:26b851988bc07030ff6e10da876cdf23baa099ba4fd598e4",
+            "claimed_at_height": 170940,
+            "month_index": 11,
+            "recipient_wallet": "b941a0dbb3a191d085ebb88e315783f2f4f17b26d1ce7b6273b71be723c37ec7"
+          }
+        ],
+        "total_claims": 360,
+        "total_distributed": 180000000000
+      }
+    ]
+  },
+  "version": "sovereign-economy-v1"
+}

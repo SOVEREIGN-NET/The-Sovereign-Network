@@ -1,0 +1,3225 @@
+{
+  "block_count": 25,
+  "blocks": [
+    {
+      "block_size_bytes": 25862,
+      "fee_distribution": {
+        "consensus_30pct": 0,
+        "governance_15pct": 0,
+        "treasury_10pct": 0,
+        "ubi_pool_45pct": 0
+      },
+      "header": {
+        "bft_quorum_root": "4ba5e788c7b8a19bfb1bb2cd13920fd8e081dc4f6ee361cc4d824f48a2c26b77",
+        "block_hash": "c6f82a4ac776e3dad774667aedfb15dc2ec83c3ed2f4ecc4d58e3dd0aadb96dd",
+        "data_helix_root": "9a4d85d7d11deaad98bbf9e7395ae2a1104eb77209de69d916da36993737db33",
+        "height": 0,
+        "previous_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "state_root": "42cde1b455412d2da31bf328fa2252f7c0e57cf9776025c9aef4b177c5635dea",
+        "timestamp": 1735689600,
+        "verification_helix_root": "6c711c2f79de10016bbd679b8f7822f5081fd6e98699f8d17e7507d0b780c205",
+        "version": 1
+      },
+      "total_fees": 0,
+      "transaction_count": 1,
+      "transactions": [
+        {
+          "fee": 0,
+          "input_count": 0,
+          "output_count": 1,
+          "size_bytes": 985,
+          "transaction_type": "Coinbase",
+          "tx_hash": "3e1a9dde2dd591cda7d8a429143342ba659753c8847e86c7acfd1a17a1aba3da"
+        }
+      ],
+      "validator": "3f027b6cc712cc71dd6ec25cc8b340207724f181bf275ff7c5723398dd62fa31"
+    },
+    {
+      "block_size_bytes": 14421,
+      "fee_distribution": {
+        "consensus_30pct": 1352,
+        "governance_15pct": 676,
+        "treasury_10pct": 450,
+        "ubi_pool_45pct": 2028
+      },
+      "header": {
+        "bft_quorum_root": "40b1bf36d74607297120b7161d3beebe1a1200620209effe48fba839dbf02012",
+        "block_hash": "3785b3823ba6d122d7d31ece5a44b2e4fca591a58f6a58ac377eb50632f3aa1b",
+        "data_helix_root": "eb6516db654623524f7fd2f4228579ebcc47e0c58525cfaf85881ee1adddec7c",
+        "height": 1,
+        "previous_hash": "c6f82a4ac776e3dad774667aedfb15dc2ec83c3ed2f4ecc4d58e3dd0aadb96dd",
+        "state_root": "dfa6bc72cfa1ed0788515eda8b4a36ea557814afc926e50588c6fdc6addd595d",
+        "timestamp": 1735689615,
+        "verification_helix_root": "4880bd86161eb747b3eb94dc5350d436736f877311de78a40d459e2d2539ede4",
+        "version": 1
+      },
+      "total_fees": 4508,
+      "transaction_count": 14,
+      "transactions": [
+        {
+          "fee": 335,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 1195,
+          "transaction_type": "DaoStake",
+          "tx_hash": "1f05e55d1b2ebd2af54678c79329a91e79d6349b32b47038024ae7dbff80bdb5"
+        },
+        {
+          "fee": 312,
+          "input_count": 1,
+          "output_count": 2,
+          "size_bytes": 376,
+          "transaction_type": "BondingCurveBuy",
+          "tx_hash": "7a39a874e03bbf3dfcd0daa988cfc4ac16cbf46414b4d8d98003c69f6a6a36b7"
+        },
+        {
+          "fee": 234,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 1464,
+          "transaction_type": "BondingCurveDeploy",
+          "tx_hash": "35e97f4adc4e3441a9d4fcb25ba56f84bd6943c5d4e283fcba1425517229d2b3"
+        },
+        {
+          "fee": 185,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 1837,
+          "transaction_type": "SessionCreation",
+          "tx_hash": "63b126d27b088ede831443395dd9fd3a8dbd7a728151f8b82a3250878a5ef8fe"
+        },
+        {
+          "fee": 396,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 1265,
+          "transaction_type": "SessionCreation",
+          "tx_hash": "4d866f23df3074bb1a33daa75d2ffd541a63cd80cb117cecc48a70127f57fa16"
+        },
+        {
+          "fee": 491,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 1318,
+          "transaction_type": "TokenMint",
+          "tx_hash": "8f6f848ba48977bea109dcf0d93179d61fc144c34f3977616a45164f1acb1fb9"
+        },
+        {
+          "fee": 179,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 836,
+          "transaction_type": "SessionCreation",
+          "tx_hash": "7d8e3580b1f20f882ad88cf988009a3f07f77f6ab85896e6702d2d79c6f4cb75"
+        },
+        {
+          "fee": 139,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 1423,
+          "transaction_type": "ProfitDeclaration",
+          "tx_hash": "cbb7be4ebb9cbb02ed24df3e4d61bd63c9017824634e52d54eb9fb0ba0af3c1f"
+        },
+        {
+          "fee": 469,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 1073,
+          "transaction_type": "ContractExecution",
+          "tx_hash": "0d2a5ba1bd9b4ddaa6c65c709b7d2d1791fdd0803c5fc8fe061480bb9f668e9e"
+        },
+        {
+          "fee": 496,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 365,
+          "transaction_type": "DifficultyUpdate",
+          "tx_hash": "26a37bfbae0f41559d1b3c87c2f5704833e1882e778ab39591f60e518a5f8cd5"
+        },
+        {
+          "fee": 148,
+          "input_count": 1,
+          "output_count": 4,
+          "size_bytes": 1257,
+          "transaction_type": "Transfer",
+          "tx_hash": "77d2c5768ae0fe8aadb2ae944fbc30f4b8c58bdb51e6c38c91abe8612fb3ce05"
+        },
+        {
+          "fee": 471,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 1805,
+          "transaction_type": "Transfer",
+          "tx_hash": "7b8bae913d5a3749ca22c751fb9036e16b53b232c5806c6bdb78e305fedcb898"
+        },
+        {
+          "fee": 458,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 435,
+          "transaction_type": "ContractDeployment",
+          "tx_hash": "acd40ed84db3ecd0e0fba606d8270746b2374396b8660037b61646581ed38f4f"
+        },
+        {
+          "fee": 195,
+          "input_count": 1,
+          "output_count": 4,
+          "size_bytes": 902,
+          "transaction_type": "BondingCurveDeploy",
+          "tx_hash": "fa1534d52f4ad4e719565b77e429c686df15b73b083e09f3b27bf49a731f585e"
+        }
+      ],
+      "validator": "4e6327812a521cf2e4f7ab0b27835058f04a8280cee4d7b882dae6868a697ee7"
+    },
+    {
+      "block_size_bytes": 20779,
+      "fee_distribution": {
+        "consensus_30pct": 707,
+        "governance_15pct": 353,
+        "treasury_10pct": 235,
+        "ubi_pool_45pct": 1061
+      },
+      "header": {
+        "bft_quorum_root": "a7a546c568cdef2cdaeceb489428d207e1aaac977e8bb1dcc8d5698c23d17f0e",
+        "block_hash": "4b6e1fc5b92a960dc7935419a292484da5763ac457c9d051dc7ecd6480ae4499",
+        "data_helix_root": "5bc766cbe78983813f3b135d9b83942fa7f38cafb737a07be0fb77729b2a7c5e",
+        "height": 2,
+        "previous_hash": "3785b3823ba6d122d7d31ece5a44b2e4fca591a58f6a58ac377eb50632f3aa1b",
+        "state_root": "545be93317cdae4e31708ae65d20e4b4bc5087f723caef9399e71246dd82aa2c",
+        "timestamp": 1735689630,
+        "verification_helix_root": "d2bbb095f9ba7d1fc829984a2497f11790f24eab4fa892f174e48524db5cc831",
+        "version": 1
+      },
+      "total_fees": 2359,
+      "transaction_count": 8,
+      "transactions": [
+        {
+          "fee": 271,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 1989,
+          "transaction_type": "BondingCurveSell",
+          "tx_hash": "2ae567f9e574751ebb4dc21ab208ef75665a5d547046b61f212dd65f7d2acd49"
+        },
+        {
+          "fee": 238,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 1016,
+          "transaction_type": "TokenMint",
+          "tx_hash": "606130189bbb8ffda4ff19e60482766ac51a8615c39138a2da75f378193e49da"
+        },
+        {
+          "fee": 222,
+          "input_count": 1,
+          "output_count": 3,
+          "size_bytes": 1677,
+          "transaction_type": "DaoExecution",
+          "tx_hash": "7fbbdefd5e2ad01a8fa262792e34a1fc0a49cb9ebc4a932e1c007b75a9e8de45"
+        },
+        {
+          "fee": 404,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 2010,
+          "transaction_type": "UpdateOracleConfig",
+          "tx_hash": "bf57cb62b6c938e6cef1c41e1e7f6a8294127d7b3696d1fc47b87f2b7f7da283"
+        },
+        {
+          "fee": 382,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 616,
+          "transaction_type": "WalletRegistration",
+          "tx_hash": "00224ad6eecca6db5685ee81a2315fea05da69423ad711553d10a4ad9ed17046"
+        },
+        {
+          "fee": 333,
+          "input_count": 1,
+          "output_count": 2,
+          "size_bytes": 1420,
+          "transaction_type": "UBIClaim",
+          "tx_hash": "1b31d9f86477f8edd785ecf4d675b8afb35d7e58368f1987accce1e812b5992f"
+        },
+        {
+          "fee": 327,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 523,
+          "transaction_type": "BondingCurveDeploy",
+          "tx_hash": "978119677fe439acb770077a3935fb05cfe05ba6a373fa262725a9ab8cf23844"
+        },
+        {
+          "fee": 182,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 880,
+          "transaction_type": "UpdateOracleCommittee",
+          "tx_hash": "c5c39f311ec09f3f99aa83342bcd5907849f512cc47860bb490c679b069968e1"
+        }
+      ],
+      "validator": "83d33afccf46ac5490e0f34916ac53987626c6b524f5efefbddf0849af2906b7"
+    },
+    {
+      "block_size_bytes": 54064,
+      "fee_distribution": {
+        "consensus_30pct": 1467,
+        "governance_15pct": 733,
+        "treasury_10pct": 489,
+        "ubi_pool_45pct": 2200
+      },
+      "header": {
+        "bft_quorum_root": "a4af032f256b24dcfb700c012055b0a2d1f79f2d9de47c1b7d497bdd94ac2056",
+        "block_hash": "269dc14d3cf50fc4cf0c04588987a4cd72aa4d533977c78d4018c7c657220221",
+        "data_helix_root": "2365f1084a29f8deaf044890b08cc0ce52355973b3d592d3a05b64b55379a688",
+        "height": 3,
+        "previous_hash": "4b6e1fc5b92a960dc7935419a292484da5763ac457c9d051dc7ecd6480ae4499",
+        "state_root": "463631a8f98449109cea9f8b7f3adfa3c08b3afb697ed772d954aaae900320dd",
+        "timestamp": 1735689645,
+        "verification_helix_root": "e3e2580b20802a74224653511d8a04ce5e872a9e2274b01bc4588ed4d47347a1",
+        "version": 1
+      },
+      "total_fees": 4891,
+      "transaction_count": 17,
+      "transactions": [
+        {
+          "fee": 280,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 331,
+          "transaction_type": "ValidatorUnregister",
+          "tx_hash": "2dba1b51e3d2aee01410d2bd5ae9bdf228bdfcee79a904ebb1a8c959070b9e69"
+        },
+        {
+          "fee": 265,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 1205,
+          "transaction_type": "TokenCreation",
+          "tx_hash": "1e93ae99648643a70425d07a632e6496179da834ad3dd1402042fdb878313c0c"
+        },
+        {
+          "fee": 207,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 1953,
+          "transaction_type": "TokenCreation",
+          "tx_hash": "784a02531751282618eab7a87de2716f433cb09ae27f50869e9d9031bdad6bc5"
+        },
+        {
+          "fee": 107,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 1484,
+          "transaction_type": "InitCbeToken",
+          "tx_hash": "a79ebc0d058b687dd50959738d4cab7630d1c3467695041e2a4af37dbc7ebdad"
+        },
+        {
+          "fee": 119,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 1753,
+          "transaction_type": "TokenCreation",
+          "tx_hash": "6217a696e241f96596cf75da2212bf4d9404542c24b37e0c924487307a763a93"
+        },
+        {
+          "fee": 165,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 2044,
+          "transaction_type": "WalletRegistration",
+          "tx_hash": "58b8c083ab8a34e8eb1ba7414edbe60cdc251cc7d2a8c1b75691c8a4fdf0a40c"
+        },
+        {
+          "fee": 123,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 1742,
+          "transaction_type": "CreateEmploymentContract",
+          "tx_hash": "3e09397095fe707429fe14513d5d135170ce16648a6b3aaa3e1e492b7ea8fa44"
+        },
+        {
+          "fee": 471,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 954,
+          "transaction_type": "UpdateOracleConfig",
+          "tx_hash": "3f1592d19f163c5ed4d85d30c590f7f519067de55153c2eb552b4a87af1e8c31"
+        },
+        {
+          "fee": 474,
+          "input_count": 1,
+          "output_count": 4,
+          "size_bytes": 1834,
+          "transaction_type": "RemoveLiquidity",
+          "tx_hash": "74b12b5168eff6d056ed7df048d488dd5382c346729127619a8a60e6683bc1eb"
+        },
+        {
+          "fee": 444,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 1004,
+          "transaction_type": "SessionCreation",
+          "tx_hash": "509f674d4bccb0a04d3e17b8e0b00457ca45c3f2d1dc0c81a5893d5bc6fa2e4a"
+        },
+        {
+          "fee": 499,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 1741,
+          "transaction_type": "ContractDeployment",
+          "tx_hash": "fc20d452d1110a985d03f2e80eeaa9b60eef4fdb1d7022fa3440e56a15728c4b"
+        },
+        {
+          "fee": 104,
+          "input_count": 1,
+          "output_count": 2,
+          "size_bytes": 250,
+          "transaction_type": "ValidatorUpdate",
+          "tx_hash": "53c7201c178dfa96ff493d0e58669cf29329004c24201e3aa750f64b8c982e08"
+        },
+        {
+          "fee": 302,
+          "input_count": 1,
+          "output_count": 4,
+          "size_bytes": 1749,
+          "transaction_type": "GovernanceConfigUpdate",
+          "tx_hash": "99001cff677d335124ac2ae9f1d8f874e58cfaad19af29904c5318c86445c3ad"
+        },
+        {
+          "fee": 277,
+          "input_count": 1,
+          "output_count": 2,
+          "size_bytes": 1904,
+          "transaction_type": "IdentityRegistration",
+          "tx_hash": "08b4af9eb35166aacabf31bf420879363a7f595b04f7974f73907ce79fc31205"
+        },
+        {
+          "fee": 308,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 932,
+          "transaction_type": "ContractExecution",
+          "tx_hash": "47a23fdc7b95e5d00d0fc358cf5272bfb563bd533c4d4fcfabfb9f6f7bec0355"
+        },
+        {
+          "fee": 346,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 742,
+          "transaction_type": "BondingCurveDeploy",
+          "tx_hash": "f1ec6a60bfc5cf9966e148fd67407453aeda7ec78cf6eef73115670b42f35119"
+        },
+        {
+          "fee": 400,
+          "input_count": 1,
+          "output_count": 4,
+          "size_bytes": 1777,
+          "transaction_type": "CreateEmploymentContract",
+          "tx_hash": "582550b8c2779681f087bfe61b46be33ea353df53762051c023d6a766badf5fb"
+        }
+      ],
+      "validator": "60ab6fa115f519866c806a378f8f5f904b8952f640a7ab828c6985df3ac8c6b0"
+    },
+    {
+      "block_size_bytes": 27497,
+      "fee_distribution": {
+        "consensus_30pct": 1518,
+        "governance_15pct": 759,
+        "treasury_10pct": 506,
+        "ubi_pool_45pct": 2278
+      },
+      "header": {
+        "bft_quorum_root": "f13443207d836f66d4574c11988f8041e615d3606ff830433d51f220ff168ed1",
+        "block_hash": "aef191fdc64dee85de832a5215bd87b75c9aaba02d613f0c3e157fd52befde26",
+        "data_helix_root": "d44956a3fc7ff11e0ea7966f77ee26eb5d0a4e273bdec77aed1145cf68896830",
+        "height": 4,
+        "previous_hash": "269dc14d3cf50fc4cf0c04588987a4cd72aa4d533977c78d4018c7c657220221",
+        "state_root": "5d1ec5d7b897425a9f0eaeac2d7fc61d9dd0354f6bea9b537f1186daaea4e359",
+        "timestamp": 1735689660,
+        "verification_helix_root": "0b6c9a550ca72aa4e55880cdc775ce956216b29887913a96f455e8c0009cccb9",
+        "version": 1
+      },
+      "total_fees": 5063,
+      "transaction_count": 16,
+      "transactions": [
+        {
+          "fee": 323,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 705,
+          "transaction_type": "IdentityRevocation",
+          "tx_hash": "c981e4965e624b183dcce19c3435564dd341b245584ab5fd8fd7246c73217bdd"
+        },
+        {
+          "fee": 410,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 1737,
+          "transaction_type": "ProfitDeclaration",
+          "tx_hash": "80e5142f1177038fc2aa5aac1ef6f1ed76043644d0fde1fa5c3320eca0215b03"
+        },
+        {
+          "fee": 228,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 1087,
+          "transaction_type": "ValidatorRegistration",
+          "tx_hash": "78b5f6db1facf9888a6faed8413124d81f3d6dcf924bfbe2d90458ab1410294c"
+        },
+        {
+          "fee": 203,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 718,
+          "transaction_type": "UbiDistribution",
+          "tx_hash": "88afef984dbf14d7506cdd16c8bfecd5ddc62330243976eded2871ec4fa478a8"
+        },
+        {
+          "fee": 435,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 203,
+          "transaction_type": "InitEntityRegistry",
+          "tx_hash": "b5426feddb7d8331fd4c4a8e6bcf7f507a54787dd2502897e7c3ae51a5b07ed2"
+        },
+        {
+          "fee": 151,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 1704,
+          "transaction_type": "AddLiquidity",
+          "tx_hash": "7809a35a926d80acbe17900922a416b64332edcd28ef03cb838424c34a0893da"
+        },
+        {
+          "fee": 480,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 1166,
+          "transaction_type": "TokenMint",
+          "tx_hash": "90f08612920ec0f756af5e111ee17be6db0c97e38332b75112c04e35507fbfe4"
+        },
+        {
+          "fee": 477,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 717,
+          "transaction_type": "ValidatorUpdate",
+          "tx_hash": "f873ba5f6b97bd9c9e09887c3fdb970dc92fcdd56eff9724de91a1949cf7e4cf"
+        },
+        {
+          "fee": 112,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 2016,
+          "transaction_type": "DaoExecution",
+          "tx_hash": "02a7883fb06d2d8fcc7e63100ef62b21cf63e219c663e17b795986add58affdd"
+        },
+        {
+          "fee": 139,
+          "input_count": 1,
+          "output_count": 2,
+          "size_bytes": 807,
+          "transaction_type": "BondingCurveSell",
+          "tx_hash": "b20c3b038d84c391eb340670c3dcb1336690ecb64abc6e5e892e10559777c9f1"
+        },
+        {
+          "fee": 431,
+          "input_count": 1,
+          "output_count": 3,
+          "size_bytes": 1507,
+          "transaction_type": "InitEntityRegistry",
+          "tx_hash": "d9c7347daeb70d00363fc59ff4d5004c55974fc7621bfbd18c23ba82097f93c2"
+        },
+        {
+          "fee": 490,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 925,
+          "transaction_type": "UpdateOracleCommittee",
+          "tx_hash": "4685bf530deb688fb5ae3278b6ede83eb91e02d2a1193f2641301c7a2e370069"
+        },
+        {
+          "fee": 298,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 1047,
+          "transaction_type": "DaoVote",
+          "tx_hash": "bacadc531f1bc887552d1aaf9ec61edfb4274bd214e304da3041982282282c14"
+        },
+        {
+          "fee": 432,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 756,
+          "transaction_type": "CreateEmploymentContract",
+          "tx_hash": "e1f31f4b6fc7743d75f022653f9a5fbc77b31e2586f5d1fee3abe25185578f72"
+        },
+        {
+          "fee": 104,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 871,
+          "transaction_type": "OracleAttestation",
+          "tx_hash": "75ecab9cf2c4a00e58dc46844ef778caa76acf4af36a9b0589f25569aba96794"
+        },
+        {
+          "fee": 350,
+          "input_count": 1,
+          "output_count": 2,
+          "size_bytes": 1707,
+          "transaction_type": "IdentityUpdate",
+          "tx_hash": "3c13fbf6f1ca5fdd69ca04afb779d93a43c35944ae09649500a44841b1fb28c3"
+        }
+      ],
+      "validator": "fda2e6ee512db04a2138d734666bf922f1fe3adc0f6fcac40e811da9878afb6e"
+    },
+    {
+      "block_size_bytes": 40711,
+      "fee_distribution": {
+        "consensus_30pct": 1168,
+        "governance_15pct": 584,
+        "treasury_10pct": 389,
+        "ubi_pool_45pct": 1752
+      },
+      "header": {
+        "bft_quorum_root": "c4d5f2b45aa7e765403135767e01045734b8d4b7828ad464cc7191138fb40b2a",
+        "block_hash": "6ff07840c80a9d70c5654250dc01cd869a640362a75c06620e3c9791be132afb",
+        "data_helix_root": "36132ec803c27a78b568841c668d2a012454eef36cfdaf9686e44fdaf62f41b4",
+        "height": 5,
+        "previous_hash": "aef191fdc64dee85de832a5215bd87b75c9aaba02d613f0c3e157fd52befde26",
+        "state_root": "083c9ce710686d2b803fd6ec07fb93d5bbb4353a74b3389f0a6d7b5eace9ed47",
+        "timestamp": 1735689675,
+        "verification_helix_root": "aa028ee88f751ca3337839514bfc1539cade0f895357d30acd8e44025ece45c5",
+        "version": 1
+      },
+      "total_fees": 3895,
+      "transaction_count": 13,
+      "transactions": [
+        {
+          "fee": 137,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 660,
+          "transaction_type": "GovernanceConfigUpdate",
+          "tx_hash": "ff21c4c107bbf26b72dc9c48c0ae68705c6aad1e7b34b2b56cc061bb3c6f1f22"
+        },
+        {
+          "fee": 213,
+          "input_count": 1,
+          "output_count": 3,
+          "size_bytes": 1505,
+          "transaction_type": "BondingCurveSell",
+          "tx_hash": "c4ef0c3d3ad68b084e92c0cc80f856f2e946cb072dcc0c2c76e97db08d5a589b"
+        },
+        {
+          "fee": 344,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 1162,
+          "transaction_type": "TokenSwap",
+          "tx_hash": "6bde8360779508de9591cf50350f8f17c1d0377c1fa182690226f6b02dbf5530"
+        },
+        {
+          "fee": 241,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 426,
+          "transaction_type": "InitEntityRegistry",
+          "tx_hash": "7091a793e3479ee73e64bf2712ddcf8617229364af7e610a1d01bf9330565bcc"
+        },
+        {
+          "fee": 187,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 258,
+          "transaction_type": "TokenMint",
+          "tx_hash": "9eeca1cfcce93409bda2ded9e5a95671bc186bb15bb202b23c4d1974fd91c9a8"
+        },
+        {
+          "fee": 487,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 639,
+          "transaction_type": "ProfitDeclaration",
+          "tx_hash": "74a006565e377501a9a7a6a7b0ba9dbfcc7ae9db034fd334f2275db9a48e6574"
+        },
+        {
+          "fee": 347,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 1135,
+          "transaction_type": "TreasuryAllocation",
+          "tx_hash": "1b80cdbec287200f3cb116dffee1eb51950284dc2e7492a4db87e4043b15c5b2"
+        },
+        {
+          "fee": 378,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 749,
+          "transaction_type": "CreatePool",
+          "tx_hash": "b75e57a509090c45de66bc315e48a3f6a975a8a3e7c997fe1f0af625feb709ee"
+        },
+        {
+          "fee": 253,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 1665,
+          "transaction_type": "WalletUpdate",
+          "tx_hash": "91fcb1ac904fddf991124e8d4740031c26431f7763f26aa891e7e48dc9cc2d91"
+        },
+        {
+          "fee": 362,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 1222,
+          "transaction_type": "InitEntityRegistry",
+          "tx_hash": "5bf05a639c341bab238533bf6d60a6b0619eb5acfaec714232607d8b7622e6f1"
+        },
+        {
+          "fee": 442,
+          "input_count": 1,
+          "output_count": 4,
+          "size_bytes": 900,
+          "transaction_type": "ContractExecution",
+          "tx_hash": "41ca4bb5ebf50f6edf232819ce19775dcebc64341e018b2232a8aac2598577af"
+        },
+        {
+          "fee": 183,
+          "input_count": 1,
+          "output_count": 2,
+          "size_bytes": 1096,
+          "transaction_type": "InitEntityRegistry",
+          "tx_hash": "432e38985a4929c3e449d20ebefcf56397ca3b6abb0133875853be5b9c648f7e"
+        },
+        {
+          "fee": 321,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 1608,
+          "transaction_type": "DaoExecution",
+          "tx_hash": "b81a4eac26ba462f75e9384dabbadfdfd99e72c1315696e5f47ff6bfb6edd489"
+        }
+      ],
+      "validator": "efeab7dc831f3c8d29d8e92451573ce733cc084bab9ad943c78ae0f901053ca8"
+    },
+    {
+      "block_size_bytes": 40854,
+      "fee_distribution": {
+        "consensus_30pct": 1025,
+        "governance_15pct": 512,
+        "treasury_10pct": 341,
+        "ubi_pool_45pct": 1538
+      },
+      "header": {
+        "bft_quorum_root": "ce206f6b6726fe8884937be83984c08dfb999e60bcb3d85dda5b801884eda57b",
+        "block_hash": "fedabee661110be3533b7f6de9264ff15bd28a19ee639bb8d20e89058148ec65",
+        "data_helix_root": "7f63788977d9ff8735f6ddb3b8b6bfd80f108b378ffc783640b76b3165d8c9fd",
+        "height": 6,
+        "previous_hash": "6ff07840c80a9d70c5654250dc01cd869a640362a75c06620e3c9791be132afb",
+        "state_root": "f1519bb99818e789fa0f4b951ed10b515007550eb427680bf5f69de0aae57fd1",
+        "timestamp": 1735689690,
+        "verification_helix_root": "9af957d4b9840f860855baa35cdd5e98d05a5a0e7364537cc6998527722663a7",
+        "version": 1
+      },
+      "total_fees": 3418,
+      "transaction_count": 12,
+      "transactions": [
+        {
+          "fee": 309,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 531,
+          "transaction_type": "IdentityRevocation",
+          "tx_hash": "c755af794b6567aec994ec3478e8a66f9bbc04144411185a2ebf2651e5bf206f"
+        },
+        {
+          "fee": 320,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 1083,
+          "transaction_type": "RecordOnRampTrade",
+          "tx_hash": "aee073491c30a3cf766cc4a38d50f72e167c3802a49cf83ccd74602fdf2801c4"
+        },
+        {
+          "fee": 416,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 878,
+          "transaction_type": "ProcessPayroll",
+          "tx_hash": "91dc52447c9b15e5ad0450270c3942a66feef73ee04f2db8cc8eb2a96784e226"
+        },
+        {
+          "fee": 143,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 377,
+          "transaction_type": "TokenTransfer",
+          "tx_hash": "6cb21537c12db1eeaf3973c8bb417ab8c0ae4c37ae88e307d0693b0f957f9971"
+        },
+        {
+          "fee": 235,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 1301,
+          "transaction_type": "ValidatorRegistration",
+          "tx_hash": "110c6d46db45b97e1cfa16c7a3c3e479bed751c2ccacf97fe01c57d2dc234126"
+        },
+        {
+          "fee": 458,
+          "input_count": 1,
+          "output_count": 2,
+          "size_bytes": 443,
+          "transaction_type": "RemoveLiquidity",
+          "tx_hash": "201dc7c56ff0b04c440beb03d2ccea6f9223c58ce9f8ea60d4c85695bfaf9996"
+        },
+        {
+          "fee": 190,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 642,
+          "transaction_type": "UpdateOracleCommittee",
+          "tx_hash": "d5cd6a072b98cc0c11464cd1de1cfb73c62e1e7eb651c9dc38c18c3f10cfc8a4"
+        },
+        {
+          "fee": 153,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 1799,
+          "transaction_type": "ContractExecution",
+          "tx_hash": "40824a04241f5cb837bad074478dd53a0595278a5a53931c8d1d4acf42a06160"
+        },
+        {
+          "fee": 248,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 1055,
+          "transaction_type": "RecordOnRampTrade",
+          "tx_hash": "155fbf715f28f6e51a8460aaf6b64392442b74ee9ad3bfb656f0caff90e62195"
+        },
+        {
+          "fee": 158,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 808,
+          "transaction_type": "ValidatorUpdate",
+          "tx_hash": "2f9234b03735ad3fc2a00b8ccdb3197240b56f096e4ad441a019741d87e2d6c3"
+        },
+        {
+          "fee": 345,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 296,
+          "transaction_type": "IdentityRegistration",
+          "tx_hash": "5c2aa1dce25a295be60cb7033204a1f5e0733b1e3784157e234e74f7fc2d1095"
+        },
+        {
+          "fee": 443,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 828,
+          "transaction_type": "GovernanceConfigUpdate",
+          "tx_hash": "a398d5212f495da372971d175687850ed3aebfba880d9745638929a85ad52269"
+        }
+      ],
+      "validator": "201a4c21a82610cad261a6ceaf7eb468cfc332fccec431c2a3b3893a40a61612"
+    },
+    {
+      "block_size_bytes": 10103,
+      "fee_distribution": {
+        "consensus_30pct": 1673,
+        "governance_15pct": 836,
+        "treasury_10pct": 557,
+        "ubi_pool_45pct": 2510
+      },
+      "header": {
+        "bft_quorum_root": "d8483282ea0c327d0f2350c8cbdd4da90e79ae76ba027450ccad023610696204",
+        "block_hash": "b1f507dfe3b0089480b210618061468d9983093d90fbd0b3c0b440310f7543b0",
+        "data_helix_root": "ea8585289c8483e0792b5f8c0a966494b212e9b1d3f337d91fbd993df902ade4",
+        "height": 7,
+        "previous_hash": "fedabee661110be3533b7f6de9264ff15bd28a19ee639bb8d20e89058148ec65",
+        "state_root": "8de96343a81d092aaa2d230e188d45474b0806716ccf5251cf2e67b56fd8d5ed",
+        "timestamp": 1735689705,
+        "verification_helix_root": "73b51c9f3a9f9a443bb58f27ce96ab68171515df0cd507ec3e3657019ac178ca",
+        "version": 1
+      },
+      "total_fees": 5578,
+      "transaction_count": 19,
+      "transactions": [
+        {
+          "fee": 374,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 1241,
+          "transaction_type": "BondingCurveGraduate",
+          "tx_hash": "347486fb43eefa2d2aa686a3375aa9e070f6b2f32e6cfd452b323a974277b2e3"
+        },
+        {
+          "fee": 156,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 1869,
+          "transaction_type": "Transfer",
+          "tx_hash": "176d06df8ab786f08f439081e3faaf2d04e44abb21a612c587d2820eb8d52c2d"
+        },
+        {
+          "fee": 344,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 1234,
+          "transaction_type": "UBIClaim",
+          "tx_hash": "73f02b454ac8a272df9c4fba317493d3e3b2c0ff16a3af454e711535184fd0ab"
+        },
+        {
+          "fee": 402,
+          "input_count": 1,
+          "output_count": 2,
+          "size_bytes": 301,
+          "transaction_type": "TreasuryAllocation",
+          "tx_hash": "04fc4d8216f51e00643d1cef1baff28da11ad945cf5af02fff28884788d93e96"
+        },
+        {
+          "fee": 390,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 1135,
+          "transaction_type": "InitEntityRegistry",
+          "tx_hash": "f4826f711b7f3a7b985f5ffe110202bfdfc2b986549168b5a77a191ea49a0da5"
+        },
+        {
+          "fee": 373,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 1171,
+          "transaction_type": "BondingCurveBuy",
+          "tx_hash": "2246f97616ed30e2f22c97d65461e6998e6e5277da0caea766544e792df79e4b"
+        },
+        {
+          "fee": 271,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 696,
+          "transaction_type": "TokenMint",
+          "tx_hash": "cac1248a02e6405f2b8dd6b19b36bb4b944151e9e2c8bfff7e891af37acad2c2"
+        },
+        {
+          "fee": 118,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 422,
+          "transaction_type": "GovernanceConfigUpdate",
+          "tx_hash": "60f28365344f4b143983cdd2de7ce059246a6ec22b708f7cde8244dcfd366e30"
+        },
+        {
+          "fee": 314,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 1587,
+          "transaction_type": "SessionCreation",
+          "tx_hash": "b920a54b24e757874bbce7611a127e8fd9d4b53c4747ad9b689070a82ad35053"
+        },
+        {
+          "fee": 251,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 630,
+          "transaction_type": "InitEntityRegistry",
+          "tx_hash": "cd785aa71d3c9293da905737f4060b1247bf071eb64e220501003b212db7f4a5"
+        },
+        {
+          "fee": 230,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 1415,
+          "transaction_type": "ValidatorUnregister",
+          "tx_hash": "fb08dfa914f7523f1661d63ffee6dde9cb6e8d035fd78d07c9418e505d36b951"
+        },
+        {
+          "fee": 418,
+          "input_count": 1,
+          "output_count": 3,
+          "size_bytes": 1584,
+          "transaction_type": "ValidatorUpdate",
+          "tx_hash": "56a60c1670f3dc7822a1f5331c52e802ca4205bcf75a7493cc420d3877a8a142"
+        },
+        {
+          "fee": 167,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 896,
+          "transaction_type": "DaoStake",
+          "tx_hash": "09af8e9f86d409f8e98d7ec2f9b52a4d960ce6723ac6bf602c64ee6b49b941eb"
+        },
+        {
+          "fee": 376,
+          "input_count": 1,
+          "output_count": 3,
+          "size_bytes": 786,
+          "transaction_type": "DaoProposal",
+          "tx_hash": "dfc5a248fb8333096e5ca4f00303d922adca508a27af52a5c067fa30e67d2e50"
+        },
+        {
+          "fee": 330,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 1228,
+          "transaction_type": "ValidatorRegistration",
+          "tx_hash": "a9308253f3523ca8c3a6351ccfc45676f09d7c8179a2bdd3313e091110cb365d"
+        },
+        {
+          "fee": 326,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 827,
+          "transaction_type": "InitEntityRegistry",
+          "tx_hash": "97c6113cab9fa3be285d8c1ee2b08cc81a01ef11e2f81909c9a1f842a89ce7af"
+        },
+        {
+          "fee": 234,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 286,
+          "transaction_type": "Transfer",
+          "tx_hash": "9dd5c5356dac5094809cfb7045d85e02ed64e571f14b9eede6d7ab4916acf930"
+        },
+        {
+          "fee": 363,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 1895,
+          "transaction_type": "IdentityRevocation",
+          "tx_hash": "53821d41e4f6674d3a2915734fdc449d1b24554fb6e8be1c5e3cd0845534e7b0"
+        },
+        {
+          "fee": 141,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 358,
+          "transaction_type": "RecordOnRampTrade",
+          "tx_hash": "ed438cb2d26174378fdf55c5279f02037da03a8f28748510a7cf224c1d60f63b"
+        }
+      ],
+      "validator": "c9ea26a8a4af313d23f99f10d0f7bcfe4df5ca226188d957f1e5b0e89ab48991"
+    },
+    {
+      "block_size_bytes": 61189,
+      "fee_distribution": {
+        "consensus_30pct": 906,
+        "governance_15pct": 453,
+        "treasury_10pct": 302,
+        "ubi_pool_45pct": 1359
+      },
+      "header": {
+        "bft_quorum_root": "0d20e5c312810b5b7168c3da81f19a1f0f5f3786c74e3497d1ed6e38d2dda7ce",
+        "block_hash": "30a0335343bb15273facccf80b710a6fc9e7fa4e7756c7d29a4ea68cab5e9e5e",
+        "data_helix_root": "15c890af00cdfcd8480767f0d64622bf8b13eaa58aeab738543830a7fe5011ee",
+        "height": 8,
+        "previous_hash": "b1f507dfe3b0089480b210618061468d9983093d90fbd0b3c0b440310f7543b0",
+        "state_root": "fc0ef9e92918d672c5102305796e3d6f4512ab457eb7903b8189da0667c649cc",
+        "timestamp": 1735689720,
+        "verification_helix_root": "f1aaf141fde4d92a1be9d88ce3356ec7a2b5f6ec370da9fab5cd58fc2fe81f62",
+        "version": 1
+      },
+      "total_fees": 3021,
+      "transaction_count": 12,
+      "transactions": [
+        {
+          "fee": 108,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 1870,
+          "transaction_type": "OracleAttestation",
+          "tx_hash": "71942efcda62190ddbd7a11eb12c91c11617cb9d9d38bef1e880c82d2572af7c"
+        },
+        {
+          "fee": 384,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 632,
+          "transaction_type": "BondingCurveDeploy",
+          "tx_hash": "09ea0635f1bbae84c4866695e2b8eb7ba6e652b4f3d52285d28c8bcd698e80e4"
+        },
+        {
+          "fee": 100,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 508,
+          "transaction_type": "SessionTermination",
+          "tx_hash": "d7af60756cb803f1c1c6fa20afb261f33ae3693b0aa8f2e781ed0af28a6998ef"
+        },
+        {
+          "fee": 120,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 299,
+          "transaction_type": "IdentityRevocation",
+          "tx_hash": "1679e7582a1be7c8b9902aa15113edf064a2108e4ca6dd5612b3f43ee78bfb8c"
+        },
+        {
+          "fee": 145,
+          "input_count": 1,
+          "output_count": 2,
+          "size_bytes": 1378,
+          "transaction_type": "AddLiquidity",
+          "tx_hash": "3019ed174d6f9714ba90f58c1bb6f96cab9a17f3800a7768dd9348c1fe6b02cd"
+        },
+        {
+          "fee": 103,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 1928,
+          "transaction_type": "ValidatorRegistration",
+          "tx_hash": "2c7f9209d5f5257e96cad23bc5f916984a81e302ae5d770ce22ea7cde3334866"
+        },
+        {
+          "fee": 492,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 2047,
+          "transaction_type": "TreasuryAllocation",
+          "tx_hash": "5b2e1f74f14ae8179896c8b502e353759d5aed2852b5ec65d7aaed89fd46b6e4"
+        },
+        {
+          "fee": 397,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 1846,
+          "transaction_type": "UpdateOracleConfig",
+          "tx_hash": "042c2c2618046982e72fe5693688a71eb9ca7b27a7d6a0dc1f8c266b6d5de072"
+        },
+        {
+          "fee": 274,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 1763,
+          "transaction_type": "ValidatorRegistration",
+          "tx_hash": "f747839df1080715a8a1a7496626c36db94ebc4dcd48efe85d853853186bcda3"
+        },
+        {
+          "fee": 376,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 1295,
+          "transaction_type": "ContractDeployment",
+          "tx_hash": "87f85f5a93760837dc47a8603f3337bafb9811602d30b8360ec980e4c5cd669e"
+        },
+        {
+          "fee": 108,
+          "input_count": 1,
+          "output_count": 3,
+          "size_bytes": 1070,
+          "transaction_type": "DaoExecution",
+          "tx_hash": "157c60396cc3c8bf5eb9a8e9495a3a675a2009f1989780078130da32220e0100"
+        },
+        {
+          "fee": 414,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 1094,
+          "transaction_type": "UpdateOracleConfig",
+          "tx_hash": "5c94c0b3aeb7038fa6b5993e55cc68f7bfa70035847bb9536c2d44cf9723be93"
+        }
+      ],
+      "validator": "ca47e94ac7865808b8829a0bd5acff98d3fda4a53348cc19f20da0834a7bc66e"
+    },
+    {
+      "block_size_bytes": 64592,
+      "fee_distribution": {
+        "consensus_30pct": 1644,
+        "governance_15pct": 822,
+        "treasury_10pct": 548,
+        "ubi_pool_45pct": 2466
+      },
+      "header": {
+        "bft_quorum_root": "db9938872f81af62a3f16433c10f457c75f9ad0809e4bbd1289bf06ee2432373",
+        "block_hash": "90f893029adcdd2776f215f07d1a73e9575fcb174aaf7286679ddf4843abb386",
+        "data_helix_root": "97d3d30fa2e3f1c14fac38795a06bbf39e0948e5ed5a4c4c1068397b50883810",
+        "height": 9,
+        "previous_hash": "30a0335343bb15273facccf80b710a6fc9e7fa4e7756c7d29a4ea68cab5e9e5e",
+        "state_root": "2db135984fa452b8e88108f6c8485909ac77a917c7e5be84f9bba25cf43ae8ec",
+        "timestamp": 1735689735,
+        "verification_helix_root": "68c0576f01e30d07f14ffe4611d679ee0c01f49df91dd0621b551fea987a6fa9",
+        "version": 1
+      },
+      "total_fees": 5482,
+      "transaction_count": 18,
+      "transactions": [
+        {
+          "fee": 487,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 205,
+          "transaction_type": "ContractExecution",
+          "tx_hash": "ea1d79a70efd6ccff4940e03bc9c20225e889dcbf89f0cec936a20a5459a38a4"
+        },
+        {
+          "fee": 353,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 504,
+          "transaction_type": "SessionTermination",
+          "tx_hash": "a06111f548a9cdc023ae8b1948183f17a31381876b48212c7dee9eff9bd04dd7"
+        },
+        {
+          "fee": 383,
+          "input_count": 1,
+          "output_count": 2,
+          "size_bytes": 1667,
+          "transaction_type": "RemoveLiquidity",
+          "tx_hash": "e2dc2b020e247263dc0e099042806f2c208c42bbaf16235791ed3ad805548825"
+        },
+        {
+          "fee": 478,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 927,
+          "transaction_type": "InitCbeToken",
+          "tx_hash": "7ac4257be7518206a89cba611ee897bc92fe5ba9cccba6c0cfdc491a711e41af"
+        },
+        {
+          "fee": 104,
+          "input_count": 1,
+          "output_count": 4,
+          "size_bytes": 303,
+          "transaction_type": "ValidatorUpdate",
+          "tx_hash": "23cfb81ca3a23810675ade5f183303d499b87a7372944621d6a0c6536aa8a2bd"
+        },
+        {
+          "fee": 449,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 1703,
+          "transaction_type": "RemoveLiquidity",
+          "tx_hash": "ba1758f94dfabe2f8d148ec4e10db7ac42f735849e5dbb2c94e22956ddd3d5b4"
+        },
+        {
+          "fee": 230,
+          "input_count": 1,
+          "output_count": 2,
+          "size_bytes": 1840,
+          "transaction_type": "DifficultyUpdate",
+          "tx_hash": "05ac350921cf2fec42b6dd91a228876129a8adcdd90eca5ac93dd9c38be59652"
+        },
+        {
+          "fee": 480,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 613,
+          "transaction_type": "ContractDeployment",
+          "tx_hash": "7682f926a6aec182eb753eae462ca1f96721b7e29ac0670693d6ec9ae20565be"
+        },
+        {
+          "fee": 317,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 1650,
+          "transaction_type": "RecordOnRampTrade",
+          "tx_hash": "96a6d69617f0c98524f0c62e5792cf402c1c52e5768ea8458508bd0c4bcf336b"
+        },
+        {
+          "fee": 374,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 1688,
+          "transaction_type": "ProfitDeclaration",
+          "tx_hash": "4a6eb07cda68ab4ab8b86aa7ba4e743c95e64c4cac2edae9460128a191bdaf90"
+        },
+        {
+          "fee": 310,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 1099,
+          "transaction_type": "DaoUnstake",
+          "tx_hash": "912ac2030b9b590d15fcd0a19310fffe138b8c4afdb9ec55c5b6fb04bc1fb49c"
+        },
+        {
+          "fee": 280,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 1026,
+          "transaction_type": "ContractDeployment",
+          "tx_hash": "43468c0371a6f9506829362dc7ab09fb775bfae42177baeafb99852cf0bb95e5"
+        },
+        {
+          "fee": 241,
+          "input_count": 1,
+          "output_count": 3,
+          "size_bytes": 1153,
+          "transaction_type": "BondingCurveBuy",
+          "tx_hash": "a3d5fca4cf27eb214c28317280c5231f2543b96d1258841eec23802b6c859b89"
+        },
+        {
+          "fee": 157,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 1983,
+          "transaction_type": "SessionTermination",
+          "tx_hash": "be35426c27fc45e2448c11353d713a18f4f1ed512b04f0c5a64f38ec84a8136f"
+        },
+        {
+          "fee": 153,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 624,
+          "transaction_type": "AddLiquidity",
+          "tx_hash": "67902d3f7a433f144dde7425e13a133be20812afca0136834602b046313c2451"
+        },
+        {
+          "fee": 249,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 804,
+          "transaction_type": "RemoveLiquidity",
+          "tx_hash": "a74b7021412f851091601602db14deacdbd546d810178385c86dc25092c9b2f9"
+        },
+        {
+          "fee": 175,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 1197,
+          "transaction_type": "ValidatorUnregister",
+          "tx_hash": "c55c59b412060afd60efef5e227dfd363257c2d7ba1060fda67392a7505690c9"
+        },
+        {
+          "fee": 262,
+          "input_count": 1,
+          "output_count": 3,
+          "size_bytes": 583,
+          "transaction_type": "ContentUpload",
+          "tx_hash": "44c0fccfda9ec68b0e84c0ef7c0991ac1862de59ad29a8a70cb52865ebbda7bf"
+        }
+      ],
+      "validator": "31b4f307af646a4f2f45ee6d7be3667a39ff6aa6fbed50ca84f06a294c0544d8"
+    },
+    {
+      "block_size_bytes": 36486,
+      "fee_distribution": {
+        "consensus_30pct": 1293,
+        "governance_15pct": 646,
+        "treasury_10pct": 431,
+        "ubi_pool_45pct": 1940
+      },
+      "header": {
+        "bft_quorum_root": "f2a491537eae3bdaca753fdba11608f4155b83326e6ba96bb2052d565c0c1cf8",
+        "block_hash": "602a25821f708a7643d8bb066b05add4b7a9bc26b2655a6f03f9031974f36e77",
+        "data_helix_root": "e78af1df5a9dde90410a42da8d44e5cce315d95adb96ed7ddf9916efc2ab8231",
+        "height": 10,
+        "previous_hash": "90f893029adcdd2776f215f07d1a73e9575fcb174aaf7286679ddf4843abb386",
+        "state_root": "86dc0929ef0553b7428b2a6d7ed50890bdca9af7de01e6c5f0e6a5ffd138f6c7",
+        "timestamp": 1735689750,
+        "verification_helix_root": "41ee69e35859ade0509141a0abfefa2a79cccc700d8c1461d09f0b58503c9f53",
+        "version": 1
+      },
+      "total_fees": 4313,
+      "transaction_count": 15,
+      "transactions": [
+        {
+          "fee": 163,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 818,
+          "transaction_type": "WalletUpdate",
+          "tx_hash": "bd5fe6e13700d56eeb0d812c3115ead19553a92d71a9d38756ac7071320a5dfd"
+        },
+        {
+          "fee": 298,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 988,
+          "transaction_type": "ContractDeployment",
+          "tx_hash": "799eee338d6cab674488f026314cb56883e023d428ce0f3d4624f90c479fc376"
+        },
+        {
+          "fee": 297,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 1275,
+          "transaction_type": "CancelOracleUpdate",
+          "tx_hash": "8b36fad9d1dade1699a3ca1e977b3531858b1dea6271837f02bf109f94a06d72"
+        },
+        {
+          "fee": 162,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 798,
+          "transaction_type": "RecordOnRampTrade",
+          "tx_hash": "598055c64ae799a84d22ba48254063401682241033c867650d9ebb205c6e3946"
+        },
+        {
+          "fee": 469,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 857,
+          "transaction_type": "ProcessPayroll",
+          "tx_hash": "73de5a68bdb94a797fc6fb320d2a9aea387f3a1f93dc57b0e403013f56a3dc8c"
+        },
+        {
+          "fee": 215,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 824,
+          "transaction_type": "RecordOnRampTrade",
+          "tx_hash": "e96476cc86486dcf8b36e6febbbb16904036a43ed8b0bacdae4371b8ec073b37"
+        },
+        {
+          "fee": 385,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 933,
+          "transaction_type": "UpdateOracleCommittee",
+          "tx_hash": "559e835feab956ebd8244b93ce1d4bce4e006ef28320f3847dc57e8c227969ac"
+        },
+        {
+          "fee": 215,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 755,
+          "transaction_type": "IdentityUpdate",
+          "tx_hash": "68bd9728298e8c6af7d7fbb92adbe1d0f39449201c3f0eabf68287f5977d9130"
+        },
+        {
+          "fee": 364,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 1596,
+          "transaction_type": "RemoveLiquidity",
+          "tx_hash": "291041180939791d929adef42a7cbdb14748fdf52733e4b5b39cacf5b9ccdd21"
+        },
+        {
+          "fee": 310,
+          "input_count": 1,
+          "output_count": 2,
+          "size_bytes": 323,
+          "transaction_type": "DaoUnstake",
+          "tx_hash": "aeeaddc5035f16ff7612a19cc45c8d71434d34d9f9ae708e4e9cc64a971d721c"
+        },
+        {
+          "fee": 280,
+          "input_count": 1,
+          "output_count": 4,
+          "size_bytes": 1211,
+          "transaction_type": "AddLiquidity",
+          "tx_hash": "aca51aaac6b1defc3b0ef413df9235633b9932f6270fd1c5a7a40051ee33b07e"
+        },
+        {
+          "fee": 275,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 282,
+          "transaction_type": "SessionTermination",
+          "tx_hash": "a6627751443c232a2170bddbf90faacae00d559e84cea0354cb4322ce0911482"
+        },
+        {
+          "fee": 240,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 1980,
+          "transaction_type": "ValidatorUnregister",
+          "tx_hash": "d458ff7abae1316035d1f1bed6f9f7c68b8a12d2b3b3d5264fe6560965f2d116"
+        },
+        {
+          "fee": 259,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 1023,
+          "transaction_type": "ProfitDeclaration",
+          "tx_hash": "fa0616f9417f89db7f6369b7cd728d808c976752a059154ee0c08a5243927994"
+        },
+        {
+          "fee": 381,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 1378,
+          "transaction_type": "BondingCurveDeploy",
+          "tx_hash": "ac1faf9da1a1091217dbedcadef5b27b0d6f948a05f284254e6a2f17c3e8f0c1"
+        }
+      ],
+      "validator": "d5fb14794c1acc6adaac866467a98601b243e76375d775bc912badee40217690"
+    },
+    {
+      "block_size_bytes": 15986,
+      "fee_distribution": {
+        "consensus_30pct": 1360,
+        "governance_15pct": 680,
+        "treasury_10pct": 453,
+        "ubi_pool_45pct": 2040
+      },
+      "header": {
+        "bft_quorum_root": "d8a3a4e22b9ef7ae258bec110a33053bdd9dd7bd735816f17fa8d8b073241091",
+        "block_hash": "830f4bb851027edd49c99df68aaaaa67304b17c8cb0a8b034dab5c4d0d7733df",
+        "data_helix_root": "58dc7d395ea78e386f0f7e8428cbbe436d4183b6d4d689614ceeaccd892acf42",
+        "height": 11,
+        "previous_hash": "602a25821f708a7643d8bb066b05add4b7a9bc26b2655a6f03f9031974f36e77",
+        "state_root": "84ed98bdd3a78a4d9a2c82c05ec669a17d641d5e14df3ee1be302a02da8fbb3d",
+        "timestamp": 1735689765,
+        "verification_helix_root": "ef8248739c148d0ea7fbd398310c356753b8a7a3002f437f92c4b4b45c0af389",
+        "version": 1
+      },
+      "total_fees": 4534,
+      "transaction_count": 15,
+      "transactions": [
+        {
+          "fee": 308,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 426,
+          "transaction_type": "BondingCurveDeploy",
+          "tx_hash": "e89774667ad0c6a754c86f21b1e0903ecc57fcb1e868bfbfa536415933a43613"
+        },
+        {
+          "fee": 193,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 611,
+          "transaction_type": "TokenMint",
+          "tx_hash": "d4bd4a4c8c917fff69bc8b344cb17b307418bbfcb9e6205156876489fd0e80d6"
+        },
+        {
+          "fee": 185,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 603,
+          "transaction_type": "IdentityRevocation",
+          "tx_hash": "044908f7674d54c393def20dd6e790c061a3d09af21d54266e1595dbda97619e"
+        },
+        {
+          "fee": 470,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 660,
+          "transaction_type": "SessionTermination",
+          "tx_hash": "d1f3043b7534ab221b728bbcb4a20daea47993e84715219f7886e409b9e4f919"
+        },
+        {
+          "fee": 307,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 1545,
+          "transaction_type": "BondingCurveDeploy",
+          "tx_hash": "7deb6a7c11776e728d7e8aff01ca44f8cf6a910017675a4c66307430f4a08a78"
+        },
+        {
+          "fee": 151,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 768,
+          "transaction_type": "WalletUpdate",
+          "tx_hash": "c23800cd9afb4a54689a5ea04c7178134d00fa14f38336a8cda9d1636e17b25c"
+        },
+        {
+          "fee": 276,
+          "input_count": 1,
+          "output_count": 2,
+          "size_bytes": 315,
+          "transaction_type": "IdentityRevocation",
+          "tx_hash": "2fa3fc91f74e56e6c7ae9f756ba06bc2fd9c037c78f2e8424af8442695877a6c"
+        },
+        {
+          "fee": 143,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 1692,
+          "transaction_type": "DaoVote",
+          "tx_hash": "9b03609659ce093e24c0233309d2b048f6f36ea8f8c1dfbf8110536c55c02bec"
+        },
+        {
+          "fee": 492,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 1796,
+          "transaction_type": "ValidatorRegistration",
+          "tx_hash": "615401e64b613a8cdfa29290d40b2d1dc606ea1b2d0a99c61ff9846221208206"
+        },
+        {
+          "fee": 171,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 826,
+          "transaction_type": "CancelOracleUpdate",
+          "tx_hash": "c3427dc5caaac2680bf08832b06db1f87dfc939ca166616824e3d6268f333b98"
+        },
+        {
+          "fee": 406,
+          "input_count": 1,
+          "output_count": 4,
+          "size_bytes": 505,
+          "transaction_type": "DaoExecution",
+          "tx_hash": "0e7d008e0cfe7f69337718e1e0af9f5212f7249047d443947bf642fcf57dd84f"
+        },
+        {
+          "fee": 464,
+          "input_count": 1,
+          "output_count": 4,
+          "size_bytes": 830,
+          "transaction_type": "CreatePool",
+          "tx_hash": "4a5af2bb2d0df1ab3e80f03de1cf7c5f8783eccad5214f0d00e413e45483f536"
+        },
+        {
+          "fee": 437,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 1822,
+          "transaction_type": "DaoStake",
+          "tx_hash": "0039ab09be19028d38eb77ad416bf5deef835119fb14ffa53f870bd861eb6b30"
+        },
+        {
+          "fee": 103,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 514,
+          "transaction_type": "RemoveLiquidity",
+          "tx_hash": "9c31f0d6d0baa0df8f4cd61dc2d6068f66ac5d869c0afa807062a4bd8df5061a"
+        },
+        {
+          "fee": 428,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 263,
+          "transaction_type": "ValidatorUpdate",
+          "tx_hash": "aefa155397585156785a6133f6007da570d76f6933eb1bf184cb97e0f09d27b2"
+        }
+      ],
+      "validator": "718b54784e1987b4c2ca299624e35662fbeada312ed330db0a48cb93e4638880"
+    },
+    {
+      "block_size_bytes": 21346,
+      "fee_distribution": {
+        "consensus_30pct": 1340,
+        "governance_15pct": 670,
+        "treasury_10pct": 446,
+        "ubi_pool_45pct": 2010
+      },
+      "header": {
+        "bft_quorum_root": "a90a98f48c2a2fc814348c9fb173a842f2156decb574da9be4e68d8b387ddbb1",
+        "block_hash": "f117078a38f5486e9b9dcb7a8676aa01a2b6e1439c8eb9f6b3d4ab3525cf71da",
+        "data_helix_root": "193e38b58c2dbde3266cb32e33221e0983ad5b3d68c1e3c1bdcf34444f11d618",
+        "height": 12,
+        "previous_hash": "830f4bb851027edd49c99df68aaaaa67304b17c8cb0a8b034dab5c4d0d7733df",
+        "state_root": "6d8ce954b77b9d0d8057702b4c6324b6a6e2b5d4c09074ca2d531ffc4960008a",
+        "timestamp": 1735689780,
+        "verification_helix_root": "32e1f172c616a60956d989d8cc1967c1491312ae909cb3b527e3873448f0770c",
+        "version": 1
+      },
+      "total_fees": 4467,
+      "transaction_count": 16,
+      "transactions": [
+        {
+          "fee": 416,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 1924,
+          "transaction_type": "BondingCurveSell",
+          "tx_hash": "27adcb0426281b7fed6aa7c1a3acd879adbe2327a27ca0d462246093c2b01444"
+        },
+        {
+          "fee": 112,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 973,
+          "transaction_type": "ContentUpload",
+          "tx_hash": "a084a1c00d2f5015aafc58d75463fe21db513389761cb95869956044056f5ea2"
+        },
+        {
+          "fee": 234,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 1705,
+          "transaction_type": "DaoUnstake",
+          "tx_hash": "6603e28b8f6b73875ade939af2d444aeab70560fdc923950a88598f118600b19"
+        },
+        {
+          "fee": 149,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 1551,
+          "transaction_type": "DaoStake",
+          "tx_hash": "57d2dc6f516bca77db07ee06244df6eaef32c9ac301fdcb4de593bccb691f1b1"
+        },
+        {
+          "fee": 222,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 1968,
+          "transaction_type": "CreatePool",
+          "tx_hash": "e9d376961a5fd4b25dd9d3fce3fbacd5ce15b1312aaceae325f6da4ccff2e1aa"
+        },
+        {
+          "fee": 363,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 285,
+          "transaction_type": "TokenMint",
+          "tx_hash": "a883afd2845491685fd85980012b843588bd3dd4f1d80f543b2f29d7b9b541c6"
+        },
+        {
+          "fee": 272,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 1332,
+          "transaction_type": "SessionCreation",
+          "tx_hash": "8493f94163c437dead56194854d6c1be3a241bb8a0a0c4b21bbb43d027b2756f"
+        },
+        {
+          "fee": 211,
+          "input_count": 1,
+          "output_count": 2,
+          "size_bytes": 631,
+          "transaction_type": "ValidatorRegistration",
+          "tx_hash": "bf536d8a8b5bb5dca479f5bb54a7fc7ebfb5bd020e1e422e1db72104615e10cc"
+        },
+        {
+          "fee": 215,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 1819,
+          "transaction_type": "DaoVote",
+          "tx_hash": "a3388c697e31faf2cf47a6cad97f1fd2bfd6d2fecfae483f19b2c8ac114d7cec"
+        },
+        {
+          "fee": 251,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 872,
+          "transaction_type": "TokenMint",
+          "tx_hash": "a0d5c25711954947400f97764d231ed93b433551f0437b1911950c2ee2042467"
+        },
+        {
+          "fee": 256,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 1751,
+          "transaction_type": "IdentityRegistration",
+          "tx_hash": "77a4471ace5d35a628dc3dc6edf7212af0edde1d3cbf6204d5dffd8dd737889c"
+        },
+        {
+          "fee": 389,
+          "input_count": 1,
+          "output_count": 4,
+          "size_bytes": 1193,
+          "transaction_type": "UpdateOracleConfig",
+          "tx_hash": "d54cd8b79bcbf0abf8d2e82ecf6a37702046b71de0e295a95052fcb57492cdd6"
+        },
+        {
+          "fee": 464,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 1272,
+          "transaction_type": "TokenTransfer",
+          "tx_hash": "0a02fbfe3cbbdad4fe4c16fc59ff930c25ccfbbd7d71ab0f255524c9b8e3b9cb"
+        },
+        {
+          "fee": 445,
+          "input_count": 1,
+          "output_count": 3,
+          "size_bytes": 236,
+          "transaction_type": "BondingCurveGraduate",
+          "tx_hash": "667fb6dd6f698491cb8f6e8efb995fc9a0faeb508f61e65dd1c907f0f1848d13"
+        },
+        {
+          "fee": 249,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 444,
+          "transaction_type": "WalletUpdate",
+          "tx_hash": "ca202b7a4caa50049400e166c938f29c6f0e1f1379a961c40563295e477d3915"
+        },
+        {
+          "fee": 219,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 1568,
+          "transaction_type": "ContractExecution",
+          "tx_hash": "3370eca16f0a98de29547e666fbbdbbe69fc08a39b355305f289857add0f94e3"
+        }
+      ],
+      "validator": "bcf01b219650c4550771da1eb71e96e87f74d3c13d1e8be1eb547bb78e551987"
+    },
+    {
+      "block_size_bytes": 56321,
+      "fee_distribution": {
+        "consensus_30pct": 1150,
+        "governance_15pct": 575,
+        "treasury_10pct": 383,
+        "ubi_pool_45pct": 1726
+      },
+      "header": {
+        "bft_quorum_root": "84b38f569f37842c679ad18f76bee77aa9e088c39f87366100711ffdec4bb472",
+        "block_hash": "10eb8c11c05056b8c99177be41fbc68296132eafd5a482e98c94ff7602ad4030",
+        "data_helix_root": "0e00737485838a58dac164062d3f6b4c9b2f64f3999145c023deb83b44e71ecc",
+        "height": 13,
+        "previous_hash": "f117078a38f5486e9b9dcb7a8676aa01a2b6e1439c8eb9f6b3d4ab3525cf71da",
+        "state_root": "da00faf5f5ae7c7e91010f30422ab552f9f781975ccb9e9ad1bd153df4d4b62c",
+        "timestamp": 1735689795,
+        "verification_helix_root": "00ff688f6c67dfe3fa10ba9d9cca0529ba7534547e59fd951da975619fd87b07",
+        "version": 1
+      },
+      "total_fees": 3836,
+      "transaction_count": 15,
+      "transactions": [
+        {
+          "fee": 237,
+          "input_count": 1,
+          "output_count": 2,
+          "size_bytes": 1211,
+          "transaction_type": "CreateEmploymentContract",
+          "tx_hash": "08474de24c8c82d9b64afb399b8993d0d1f1f13b272b7291798fcf96a724e49e"
+        },
+        {
+          "fee": 308,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 498,
+          "transaction_type": "ContractExecution",
+          "tx_hash": "74c609d127d96a84a4c5ddb205518be985aec57b138a60c5284016bdfe6d35f4"
+        },
+        {
+          "fee": 101,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 1169,
+          "transaction_type": "TreasuryAllocation",
+          "tx_hash": "18f7def8d0b132621ffc56bbc590749d6e1f6e3e72f2cdc58ff1df07d60cd4bd"
+        },
+        {
+          "fee": 376,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 2042,
+          "transaction_type": "DaoVote",
+          "tx_hash": "948b94ca0b2766bcfa8f0c8d9408875ebd7bcbc500d75239800bad44ffa53946"
+        },
+        {
+          "fee": 390,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 1700,
+          "transaction_type": "DaoProposal",
+          "tx_hash": "cd275b7d6dc8ea268eff49de094c88b149a89f5724f62dc840e67cabd632aafc"
+        },
+        {
+          "fee": 157,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 2000,
+          "transaction_type": "UBIClaim",
+          "tx_hash": "d340c99e2ffd6a5665f04a1ae2ebcdab87f641465d25ed2ffdc92b1dbb485bb7"
+        },
+        {
+          "fee": 180,
+          "input_count": 1,
+          "output_count": 2,
+          "size_bytes": 833,
+          "transaction_type": "BondingCurveSell",
+          "tx_hash": "e4d2777737fb550eff870e45911ccfc4f0631cefe27c0b477fe689ab945dd5f0"
+        },
+        {
+          "fee": 291,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 1969,
+          "transaction_type": "ValidatorUnregister",
+          "tx_hash": "37d29a2180176f17439a0d9f2b4811095df89a1d7df09fb06c6ce29b85b6f235"
+        },
+        {
+          "fee": 291,
+          "input_count": 1,
+          "output_count": 3,
+          "size_bytes": 268,
+          "transaction_type": "TreasuryAllocation",
+          "tx_hash": "6cd629ddef01910c0846abd4b0cf41856f050d565ee1a77a27add45bf513d92c"
+        },
+        {
+          "fee": 128,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 776,
+          "transaction_type": "ContentUpload",
+          "tx_hash": "dd6457ccc15b61d88b2a0d02b39765717e2338d082951a1d5d9ee28f63da59a5"
+        },
+        {
+          "fee": 397,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 1420,
+          "transaction_type": "SessionTermination",
+          "tx_hash": "7bbadcc98163aa345db0c4cc1841d4af5e61f2344c080e62d7573912b52dcff4"
+        },
+        {
+          "fee": 221,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 1273,
+          "transaction_type": "BondingCurveGraduate",
+          "tx_hash": "76779dd9c2023c6f241a68499724ad10330e54830e1b9761adb6e820d1f3bb08"
+        },
+        {
+          "fee": 351,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 922,
+          "transaction_type": "BondingCurveGraduate",
+          "tx_hash": "60dac8d3548d09c80794d80cbfb3fc12bf8ccbcddd484bd23fa642b6268f1e37"
+        },
+        {
+          "fee": 230,
+          "input_count": 1,
+          "output_count": 3,
+          "size_bytes": 1349,
+          "transaction_type": "TokenSwap",
+          "tx_hash": "26d9e181e9d810a0f5f816343b791d4eec85be86bb853f2f9cc79407a6daf19b"
+        },
+        {
+          "fee": 178,
+          "input_count": 1,
+          "output_count": 3,
+          "size_bytes": 937,
+          "transaction_type": "UpdateOracleConfig",
+          "tx_hash": "051b2b2727495fd0ece7dd73afc79fc06656d19a61e73117097e086fd40fd203"
+        }
+      ],
+      "validator": "391f564454bd0b9e3b5bfdd32c4dde1ac05337fc5bde17ee6b6de4d336668223"
+    },
+    {
+      "block_size_bytes": 13286,
+      "fee_distribution": {
+        "consensus_30pct": 535,
+        "governance_15pct": 267,
+        "treasury_10pct": 178,
+        "ubi_pool_45pct": 803
+      },
+      "header": {
+        "bft_quorum_root": "1694061dd8f92f66fece5fe5071c1ff5890047c05086bb1660301f0e9c39c07d",
+        "block_hash": "30f004d653ca6c5a98631a2365348fe2e3ceb9f2d3b31928be97d11370dae0f6",
+        "data_helix_root": "5b93c3aafd9371c569269c1780fac3cb38bb68294ae30c05bc43bee9d1b681b9",
+        "height": 14,
+        "previous_hash": "10eb8c11c05056b8c99177be41fbc68296132eafd5a482e98c94ff7602ad4030",
+        "state_root": "c479e15509bc1f06a3dfbf98379d77d78a2a4478ad91c52014e807115dd3bd1c",
+        "timestamp": 1735689810,
+        "verification_helix_root": "226a25703ce269e48b82a3c5260c6995605804bc6209b81db56aeb5a69143762",
+        "version": 1
+      },
+      "total_fees": 1786,
+      "transaction_count": 8,
+      "transactions": [
+        {
+          "fee": 260,
+          "input_count": 1,
+          "output_count": 3,
+          "size_bytes": 339,
+          "transaction_type": "TokenMint",
+          "tx_hash": "b9c583c0b43a76885021d708b7e9f017ea9f88431396b2a88fd8c82d72132215"
+        },
+        {
+          "fee": 373,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 1095,
+          "transaction_type": "IdentityUpdate",
+          "tx_hash": "53f3c811af61514e34bff507ecadac269a2c8e2e429d07adafde81cdd969e6f2"
+        },
+        {
+          "fee": 0,
+          "input_count": 0,
+          "output_count": 3,
+          "size_bytes": 1767,
+          "transaction_type": "Coinbase",
+          "tx_hash": "613db91d9f4d27f4664b102bbd0ff30ca6196b2c8d3df2647a63444f550a2592"
+        },
+        {
+          "fee": 294,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 853,
+          "transaction_type": "BondingCurveBuy",
+          "tx_hash": "4d7ed51025d3892935dc5de2cc0c10c84224ddb8eee94c84a6d72ab91282cc62"
+        },
+        {
+          "fee": 198,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 697,
+          "transaction_type": "BondingCurveDeploy",
+          "tx_hash": "e119153d1d1cba30d40fb80525d6b45fc3b6b8745e8c9b589368c6d778454f2c"
+        },
+        {
+          "fee": 163,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 1274,
+          "transaction_type": "OracleAttestation",
+          "tx_hash": "a80f04a241f695ca251a105712bc52c2d61eb223299aa83dc7d364df13afaa3b"
+        },
+        {
+          "fee": 207,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 1643,
+          "transaction_type": "RemoveLiquidity",
+          "tx_hash": "2232bc35da5dc5615cf27434a4675115ea512a95aa763c54d34d0aeb577739dd"
+        },
+        {
+          "fee": 291,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 1613,
+          "transaction_type": "UpdateOracleCommittee",
+          "tx_hash": "d4b7821c5da13ed31c79cb4cc83ceb649a9ecaad02cc441f69b69fd67fee3bfd"
+        }
+      ],
+      "validator": "b1a51d24022c49a474e1ccc5ae0c65ea3aa83ec934366430211dcea937433d69"
+    },
+    {
+      "block_size_bytes": 40542,
+      "fee_distribution": {
+        "consensus_30pct": 694,
+        "governance_15pct": 347,
+        "treasury_10pct": 231,
+        "ubi_pool_45pct": 1041
+      },
+      "header": {
+        "bft_quorum_root": "791516864b91ca8c9c1f8859c97b0cb53b0cd6d02c113b3b4a42b6f26412b97a",
+        "block_hash": "cf540f2cffb8640054bae3443048ef46955a5a2a97765b42cd4de611feff920b",
+        "data_helix_root": "e81e51a5bd499851d7f7a0fc7bfb65e18845a9438e2a0b6bbf62daa1a0844c31",
+        "height": 15,
+        "previous_hash": "30f004d653ca6c5a98631a2365348fe2e3ceb9f2d3b31928be97d11370dae0f6",
+        "state_root": "3d94a154abea42072548221130baae3ee6db453cc7073ad49e97022429ba51d3",
+        "timestamp": 1735689825,
+        "verification_helix_root": "f96e41f4f8874877554e6db5547462293444ea0a406093cd0d34485b0b85a9b6",
+        "version": 1
+      },
+      "total_fees": 2314,
+      "transaction_count": 9,
+      "transactions": [
+        {
+          "fee": 401,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 1262,
+          "transaction_type": "TokenTransfer",
+          "tx_hash": "c107e4fb64e231c5df95232ab91f6e4ba28dd1be937aa7457280170fa07756ce"
+        },
+        {
+          "fee": 297,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 1574,
+          "transaction_type": "OracleAttestation",
+          "tx_hash": "76ff7216d27b8527d8d0c52fc435e8d2371c5ee55ba013b2741490eab603e6c6"
+        },
+        {
+          "fee": 102,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 428,
+          "transaction_type": "DaoStake",
+          "tx_hash": "4530f63fb10cc5c2401f0d5f8dbac1d450dc5aedb0c21ab999c3cb74c7da9840"
+        },
+        {
+          "fee": 405,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 203,
+          "transaction_type": "ValidatorRegistration",
+          "tx_hash": "d2dda2aaf5b52a5c753d87a51f9fea39f30a1e6dd1993c30d3bd504b9693000b"
+        },
+        {
+          "fee": 321,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 212,
+          "transaction_type": "CancelOracleUpdate",
+          "tx_hash": "51be1a2e21f59bd9d71212c350185139bfa634d6b883f8c9a92b15735e5da946"
+        },
+        {
+          "fee": 0,
+          "input_count": 0,
+          "output_count": 2,
+          "size_bytes": 1089,
+          "transaction_type": "Coinbase",
+          "tx_hash": "e5355f5469524edcf014bddd1e2c24490662a412ed41fe6d11638c358f17625c"
+        },
+        {
+          "fee": 184,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 1208,
+          "transaction_type": "UbiDistribution",
+          "tx_hash": "6bcc4648e84c2c469f408127f44b0bf6105c97bbf9a33365607fe5cfbb03c774"
+        },
+        {
+          "fee": 359,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 475,
+          "transaction_type": "ProfitDeclaration",
+          "tx_hash": "703ec3e366cdaf431ac7f01e4b7c42eb743bee70b7ead53db924bf5742816f3d"
+        },
+        {
+          "fee": 245,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 1026,
+          "transaction_type": "ProfitDeclaration",
+          "tx_hash": "edd8f488b24446a6f8ab3d349710189cfb817f57610d7f41c97f85752be75d65"
+        }
+      ],
+      "validator": "4f37fd578e2cda8b1298bfbad5d01ee6e61f2bf9816b19a9ef1a54f835bfcfa5"
+    },
+    {
+      "block_size_bytes": 53289,
+      "fee_distribution": {
+        "consensus_30pct": 1344,
+        "governance_15pct": 672,
+        "treasury_10pct": 448,
+        "ubi_pool_45pct": 2016
+      },
+      "header": {
+        "bft_quorum_root": "52388af5f60225460deb51c6997276b7c594ac823d9ba850267b95eb283a3101",
+        "block_hash": "17b6f8d87372b11e132c5fdc266e8412cbaedf33001cc309e52db3b460caf520",
+        "data_helix_root": "deb9be216feedd711e84c88a7d1a8e79f2b0e8cb143ff0c42c64d8295ee18d14",
+        "height": 16,
+        "previous_hash": "cf540f2cffb8640054bae3443048ef46955a5a2a97765b42cd4de611feff920b",
+        "state_root": "215587fbc7bafc15e4fbd1c49681c97b7bfa1082b709aed7ea812b5cf3260e8f",
+        "timestamp": 1735689840,
+        "verification_helix_root": "20c3856927e1f5390429c4d3544ff8895621c68e5cc67557f71bd82cab559f8f",
+        "version": 1
+      },
+      "total_fees": 4481,
+      "transaction_count": 18,
+      "transactions": [
+        {
+          "fee": 364,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 1180,
+          "transaction_type": "InitEntityRegistry",
+          "tx_hash": "03f21e06a859ef855d68f2f0a519b55df74ca1e9c6c8ceab248c9f906bdff0cf"
+        },
+        {
+          "fee": 130,
+          "input_count": 1,
+          "output_count": 3,
+          "size_bytes": 1666,
+          "transaction_type": "RemoveLiquidity",
+          "tx_hash": "54b64a1dd18be5045924081e220f0594a9e10e752cc43b91e4f756cd9f617c0d"
+        },
+        {
+          "fee": 424,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 1387,
+          "transaction_type": "Transfer",
+          "tx_hash": "61dee98a86c30d5478e831246672e67c98dfeb831357027556c4b8074803d541"
+        },
+        {
+          "fee": 103,
+          "input_count": 1,
+          "output_count": 4,
+          "size_bytes": 2017,
+          "transaction_type": "InitCbeToken",
+          "tx_hash": "00d4221b8abf8b6bcd2220bacbd7ab01e8f54533d9cad71a9f4afe3eb7417663"
+        },
+        {
+          "fee": 124,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 1287,
+          "transaction_type": "ProcessPayroll",
+          "tx_hash": "eb298df9106412f8a6a6bd4927e8705372bc89a20afae396a84593ec52831f47"
+        },
+        {
+          "fee": 440,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 1920,
+          "transaction_type": "UbiDistribution",
+          "tx_hash": "59b5b0df0e7fe91285b0cf78e88e9ec89847ac040dcdd69866862db69155a644"
+        },
+        {
+          "fee": 209,
+          "input_count": 1,
+          "output_count": 2,
+          "size_bytes": 1612,
+          "transaction_type": "CancelOracleUpdate",
+          "tx_hash": "761a7116b25cb09bbf000c8cd7bf8c29bfeb38a5ea656df3952de668196d0f4e"
+        },
+        {
+          "fee": 259,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 1012,
+          "transaction_type": "RemoveLiquidity",
+          "tx_hash": "249880d8d4d041b112a5e70b526b0438855de94c05959beab4586a7f8a40e964"
+        },
+        {
+          "fee": 303,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 1745,
+          "transaction_type": "UbiDistribution",
+          "tx_hash": "ec23181c4de4a13c5830588fabce265ecfe950ee81627a48a2b4561ac99b4068"
+        },
+        {
+          "fee": 253,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 465,
+          "transaction_type": "TokenCreation",
+          "tx_hash": "bb8881ebf06211fe5de317e7890343f693726c4780b7ec154576e79a8a8557e8"
+        },
+        {
+          "fee": 454,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 1830,
+          "transaction_type": "ContractExecution",
+          "tx_hash": "81a7b31974b83a1be8cda0061c601fd6d53623b3590190f2157a15c67ef1d4a6"
+        },
+        {
+          "fee": 337,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 2016,
+          "transaction_type": "BondingCurveBuy",
+          "tx_hash": "26a8a89515a500fd3414b43817f27eb4160918ea3999709f3b2b5aaa111f7fb7"
+        },
+        {
+          "fee": 250,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 678,
+          "transaction_type": "TokenTransfer",
+          "tx_hash": "a074c1134c85dbab6d6288c5b99fe241304b02838eaf03dbe767073264f5208a"
+        },
+        {
+          "fee": 128,
+          "input_count": 1,
+          "output_count": 3,
+          "size_bytes": 707,
+          "transaction_type": "WalletRegistration",
+          "tx_hash": "948139f8588d2cfda608eeefad9aaaebba780c2b1c3d431104c0320b79481fef"
+        },
+        {
+          "fee": 182,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 574,
+          "transaction_type": "ContentUpload",
+          "tx_hash": "af2b64b15c0baf1862b4accbe99a1a2ed7550f39a0115d33c72826f71705548b"
+        },
+        {
+          "fee": 135,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 1323,
+          "transaction_type": "ProfitDeclaration",
+          "tx_hash": "51280e4d50ae1c6c3e4ca44583024306f05bbdfd10d2ea15fe509eae6cdacd80"
+        },
+        {
+          "fee": 102,
+          "input_count": 1,
+          "output_count": 2,
+          "size_bytes": 313,
+          "transaction_type": "ContractExecution",
+          "tx_hash": "a0eda29f2714cac0eb4569516b26459648114ad76580c3080e6c239e871c1556"
+        },
+        {
+          "fee": 284,
+          "input_count": 1,
+          "output_count": 4,
+          "size_bytes": 1179,
+          "transaction_type": "RecordOnRampTrade",
+          "tx_hash": "cc1b46c5865d5b1d5dd2051cb6f09eda35d9bff5eefb82961296cced1334fab5"
+        }
+      ],
+      "validator": "fb0640103325de173a3f650ea6a610980748ad2b7289c3f1ece70b40af147b6b"
+    },
+    {
+      "block_size_bytes": 32849,
+      "fee_distribution": {
+        "consensus_30pct": 1183,
+        "governance_15pct": 591,
+        "treasury_10pct": 394,
+        "ubi_pool_45pct": 1775
+      },
+      "header": {
+        "bft_quorum_root": "1d075280088cf0aaa28322fba736062a4c88029916e12f306532e5273a3e21b6",
+        "block_hash": "d9d5aa77cb504756e8c00e30e3923acd57a211e936a76679ddbefc25016b24c9",
+        "data_helix_root": "408aca7a9aacff63b5c3d8d22308789da5e6a55d6a731bb01fa5a5e87ebba842",
+        "height": 17,
+        "previous_hash": "17b6f8d87372b11e132c5fdc266e8412cbaedf33001cc309e52db3b460caf520",
+        "state_root": "17e3a6944e24d38fad10942f3413e151ce25f4a033fd63c33ff607737a76600a",
+        "timestamp": 1735689855,
+        "verification_helix_root": "07dbaf351d8aaad0a6f81f2184d2ceb9710b1ede5d175337c1e84b10c420a0e3",
+        "version": 1
+      },
+      "total_fees": 3946,
+      "transaction_count": 13,
+      "transactions": [
+        {
+          "fee": 321,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 1444,
+          "transaction_type": "IdentityUpdate",
+          "tx_hash": "e98f3514de60ae42fc0fd57439ead00afe73a8a184bb136a9561d1ebc7bdaadf"
+        },
+        {
+          "fee": 113,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 626,
+          "transaction_type": "DaoUnstake",
+          "tx_hash": "39e34136f79032a1d451c359f50a475336774db588496f55e57cf788e2bb5f15"
+        },
+        {
+          "fee": 181,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 1757,
+          "transaction_type": "BondingCurveDeploy",
+          "tx_hash": "28daf026dc77466878adb269d55aba6e5cc4adc603b20dfbb35c34b3e05611b7"
+        },
+        {
+          "fee": 426,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 1651,
+          "transaction_type": "ContractExecution",
+          "tx_hash": "4ad4cdff794d1380a0370e5b831eb1a8ad962c5637f9ef53266f683bfcf4c8e1"
+        },
+        {
+          "fee": 218,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 267,
+          "transaction_type": "BondingCurveGraduate",
+          "tx_hash": "70ea7696773b83fc8a613f6d4132b0bf705fcc3f04b32b4828763f7f48f24d2a"
+        },
+        {
+          "fee": 431,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 1091,
+          "transaction_type": "GovernanceConfigUpdate",
+          "tx_hash": "98804bb13768ff8cf0399054eb582fd5ab4cc369488626d8512cfccb05a6cd29"
+        },
+        {
+          "fee": 148,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 409,
+          "transaction_type": "BondingCurveBuy",
+          "tx_hash": "1491db36965c17dc29ddc6147c8d7a1a2a0d6bc8450b189fbd54bf99245d3af6"
+        },
+        {
+          "fee": 474,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 1546,
+          "transaction_type": "ValidatorUnregister",
+          "tx_hash": "49459980554efc1f3dd2aeeffa9dab01f226406e169b2227f27f1462be9bbdbc"
+        },
+        {
+          "fee": 424,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 1582,
+          "transaction_type": "SessionCreation",
+          "tx_hash": "5118371468a1ea5d186821453cb05cdb92d8af12d2fa29ae9d3f6f58d155d0e6"
+        },
+        {
+          "fee": 266,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 2017,
+          "transaction_type": "DaoStake",
+          "tx_hash": "22755a7908f2e1e952369b43ad94b477ce3a7fd53540402f3a1fa6f8b0c2e970"
+        },
+        {
+          "fee": 121,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 1948,
+          "transaction_type": "Transfer",
+          "tx_hash": "bc93a0f8d9b0e4803ef26b0b543f8ece036dd1049c7f229e5dfd1a8deae21e9c"
+        },
+        {
+          "fee": 342,
+          "input_count": 1,
+          "output_count": 4,
+          "size_bytes": 519,
+          "transaction_type": "UBIClaim",
+          "tx_hash": "9f2155937d7929993315dabf086064e07ba13e8440375b77610f0a01363e13af"
+        },
+        {
+          "fee": 481,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 781,
+          "transaction_type": "DaoStake",
+          "tx_hash": "ccb43f06b30253212cb37f176d41dd2356d9f65fc61b81e792f1b968ddc41bf9"
+        }
+      ],
+      "validator": "475caac21af29277e746f80b6e2f6a8d7a52572cd90a51f15bec1d88fa1ef48d"
+    },
+    {
+      "block_size_bytes": 8996,
+      "fee_distribution": {
+        "consensus_30pct": 837,
+        "governance_15pct": 418,
+        "treasury_10pct": 279,
+        "ubi_pool_45pct": 1256
+      },
+      "header": {
+        "bft_quorum_root": "1c363538455ab8d59573999486a588351b39a16039009f5c7eb6907f0e53f41b",
+        "block_hash": "4791fdb108b538f6d9ecad93a883e52dffeb047652e3e63b70f79b2698adb9f5",
+        "data_helix_root": "fe3c5305ddbb6f480e76eb9d64892b7dbede1e844905df8f1ede4e72d23e502a",
+        "height": 18,
+        "previous_hash": "d9d5aa77cb504756e8c00e30e3923acd57a211e936a76679ddbefc25016b24c9",
+        "state_root": "db93e644c9b81887fcd1580afbe3374ea793fe5e5bd3579a1e444911373b96aa",
+        "timestamp": 1735689870,
+        "verification_helix_root": "04dbfec070383627a4d7ab393fb20d7fcf577f68bff7e0b403896b3bdf850b53",
+        "version": 1
+      },
+      "total_fees": 2792,
+      "transaction_count": 8,
+      "transactions": [
+        {
+          "fee": 431,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 244,
+          "transaction_type": "IdentityRevocation",
+          "tx_hash": "7b431011989d3bba0f33ba4d43dbd1eb3d4461633dd4bc45e444775a47202f55"
+        },
+        {
+          "fee": 311,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 473,
+          "transaction_type": "BondingCurveSell",
+          "tx_hash": "5928ced9999c285840cc36bf30d2c02b40edd7bb5235ccbc9fd6143a3f57d057"
+        },
+        {
+          "fee": 411,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 1733,
+          "transaction_type": "IdentityUpdate",
+          "tx_hash": "f0a7c64c6619a3335b6d48deb783633c006306595c4744b39c667aab41112afd"
+        },
+        {
+          "fee": 417,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 473,
+          "transaction_type": "ContractExecution",
+          "tx_hash": "a6e87f0dec76b43af326b0c41a531a182b4be10fafa568556561ae1b51e11e0b"
+        },
+        {
+          "fee": 426,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 938,
+          "transaction_type": "ContentUpload",
+          "tx_hash": "911dbe902ee1b90223c6a8f09ce9a129c2f031d00708ceea21aa7d08448d58bf"
+        },
+        {
+          "fee": 229,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 580,
+          "transaction_type": "BondingCurveSell",
+          "tx_hash": "ac2ac0285dbf4a2406ac4b67be0117820e5bbaf893f247dbf825a11483726d11"
+        },
+        {
+          "fee": 142,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 1088,
+          "transaction_type": "CreatePool",
+          "tx_hash": "b8afb8ab710784d5aadd2359a5c15b497beefca96672cec2a09c652b50cfb1f5"
+        },
+        {
+          "fee": 425,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 685,
+          "transaction_type": "TreasuryAllocation",
+          "tx_hash": "3c29548ae2675e5d5458d633dba584665090d1bb3d0dcfb3d57308a22e76ba5b"
+        }
+      ],
+      "validator": "6476ccefffceb3a767ad78d107fe117ff49dfc98a70c9335507baa049ecb8b0d"
+    },
+    {
+      "block_size_bytes": 52238,
+      "fee_distribution": {
+        "consensus_30pct": 1305,
+        "governance_15pct": 652,
+        "treasury_10pct": 435,
+        "ubi_pool_45pct": 1957
+      },
+      "header": {
+        "bft_quorum_root": "50529925e941cb7b6629febaf3818006aa91dfeee4610b6b1e215bc7b09bac49",
+        "block_hash": "eac7aa05696c3cc12dd32456ac7bd01f51b948f330577831f3670b2d1d2454ae",
+        "data_helix_root": "91cce09386821832113d7013cad023ffb23dab991b2c1ab3594e86f174542c52",
+        "height": 19,
+        "previous_hash": "4791fdb108b538f6d9ecad93a883e52dffeb047652e3e63b70f79b2698adb9f5",
+        "state_root": "9ae20404fcc9810019a3c66441b56f750f7e992a368c1a8b8d257dc38c3385f6",
+        "timestamp": 1735689885,
+        "verification_helix_root": "e9d15afc1dd6da4992eff0f7d45f2ca31a8510b62769faaf385cc785c8685568",
+        "version": 1
+      },
+      "total_fees": 4351,
+      "transaction_count": 13,
+      "transactions": [
+        {
+          "fee": 327,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 1547,
+          "transaction_type": "IdentityUpdate",
+          "tx_hash": "6d262741010e577c0a801bbe1743bf55161adbdaa60e43dc2ab8da577f010d8c"
+        },
+        {
+          "fee": 171,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 1175,
+          "transaction_type": "InitCbeToken",
+          "tx_hash": "89a306db5c8d7a595a4eb6d42aa64f9d234ac95804598ce37ec46d8aceda93ae"
+        },
+        {
+          "fee": 251,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 658,
+          "transaction_type": "UpdateOracleCommittee",
+          "tx_hash": "fd1bf027975d562c84f85bdd12b45e1f3334fb337286de2f7e5f7d97d9de6e2e"
+        },
+        {
+          "fee": 480,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 1021,
+          "transaction_type": "InitCbeToken",
+          "tx_hash": "69e33358b095cfdaa0c188123b7899c9e8595d78d1e0c6326e8125d46171d6d2"
+        },
+        {
+          "fee": 450,
+          "input_count": 1,
+          "output_count": 3,
+          "size_bytes": 348,
+          "transaction_type": "InitCbeToken",
+          "tx_hash": "009739746cd461490909d951ec95816da1ce3855cc37d0faedbd160eb5b5397c"
+        },
+        {
+          "fee": 213,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 1860,
+          "transaction_type": "DaoProposal",
+          "tx_hash": "04fb31074a6be1031901f3817dca9476f5171aeae3f4245200edeb2ab94927d0"
+        },
+        {
+          "fee": 219,
+          "input_count": 1,
+          "output_count": 4,
+          "size_bytes": 953,
+          "transaction_type": "TokenMint",
+          "tx_hash": "ad14bf674bd9190ed1fc7123d16e110901c6b456082ff7692bbef12b19458cfa"
+        },
+        {
+          "fee": 315,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 598,
+          "transaction_type": "TokenMint",
+          "tx_hash": "67c05c2bd658649de2fd5ad89b60a2509f4b0feefd396db7f3de63c8380b75de"
+        },
+        {
+          "fee": 364,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 256,
+          "transaction_type": "CreatePool",
+          "tx_hash": "a399eb7e44713de501296be2b1d701f9ba96ef664084d43bc09bfeeb17effe41"
+        },
+        {
+          "fee": 461,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 1628,
+          "transaction_type": "ContractDeployment",
+          "tx_hash": "268b25494094458592394f5bc3e855faea4d94c7297355bc2f590f14d25e7e97"
+        },
+        {
+          "fee": 187,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 752,
+          "transaction_type": "DaoExecution",
+          "tx_hash": "68ec57cb8c70df3cca3cf6b4adc1ee3efcba2c3331bf95d3eaa0a883b095dcaa"
+        },
+        {
+          "fee": 467,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 797,
+          "transaction_type": "TreasuryAllocation",
+          "tx_hash": "4ccb28ff32a3c284ebab1c490c80b625939e24699b487f79241f2bf36a50baff"
+        },
+        {
+          "fee": 446,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 1679,
+          "transaction_type": "DifficultyUpdate",
+          "tx_hash": "5b6c557345d70cb9d763a3bd55be25322703a852bf199a262a535b0680319ec3"
+        }
+      ],
+      "validator": "0c5c2ec418c58cb4191406bb606ed03d19bda7ba28ff9d68be278d754242e4ec"
+    },
+    {
+      "block_size_bytes": 59807,
+      "fee_distribution": {
+        "consensus_30pct": 867,
+        "governance_15pct": 433,
+        "treasury_10pct": 289,
+        "ubi_pool_45pct": 1301
+      },
+      "header": {
+        "bft_quorum_root": "12227bdedc96482fc968b63d634611c7de9a78397087bff1f40d3a106717d143",
+        "block_hash": "22b178123987bdeaa0801164a72ac8c1f477ad5ce545efeb6da2496c2dc0117a",
+        "data_helix_root": "10e040e130f5dc3a53536fd893564030d22c02817b3f0451620942209b5932a0",
+        "height": 20,
+        "previous_hash": "eac7aa05696c3cc12dd32456ac7bd01f51b948f330577831f3670b2d1d2454ae",
+        "state_root": "b4d8a1534b9475ce281b92f81d02b021b8a0e5f39dcd093612472f3bae0de4b2",
+        "timestamp": 1735689900,
+        "verification_helix_root": "d86c5849b4df4ab3bedd48ced81956e2cc0a5dff359d96f2188149eeaa50bb5d",
+        "version": 1
+      },
+      "total_fees": 2892,
+      "transaction_count": 9,
+      "transactions": [
+        {
+          "fee": 201,
+          "input_count": 1,
+          "output_count": 4,
+          "size_bytes": 1031,
+          "transaction_type": "TokenSwap",
+          "tx_hash": "b06df6cd02f8f0856ba6b01abbca960d0d37208e3e5ff309305a638769a1afc5"
+        },
+        {
+          "fee": 365,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 1777,
+          "transaction_type": "CancelOracleUpdate",
+          "tx_hash": "2f1616d21f80da18fd302b85abd56e7904651f1c2c86fc0028922b41abb41f1b"
+        },
+        {
+          "fee": 402,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 1849,
+          "transaction_type": "UpdateOracleConfig",
+          "tx_hash": "bb7b851a214824800c792043c474214a57991fa275dc136db8c716f84a6413d1"
+        },
+        {
+          "fee": 235,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 906,
+          "transaction_type": "ContractExecution",
+          "tx_hash": "e4685667bf8deb4b597fa32d40c3e9042695f5959a86b98fd3a12d3e9e9964e0"
+        },
+        {
+          "fee": 242,
+          "input_count": 1,
+          "output_count": 3,
+          "size_bytes": 1717,
+          "transaction_type": "ContractDeployment",
+          "tx_hash": "630cce2c71a0fb7bb9e79627eac12aaf39e7c4793b68d982d42e008c6302765e"
+        },
+        {
+          "fee": 417,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 2038,
+          "transaction_type": "BondingCurveDeploy",
+          "tx_hash": "5c83044fbd40ef9dfe3fa209bd28e42388d0b687fa2e1c649044df70c4c8c914"
+        },
+        {
+          "fee": 428,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 764,
+          "transaction_type": "DaoExecution",
+          "tx_hash": "a42f832db19d1c4da5648bfd1f42d94dd78b08757b6e4f5343a03679d8b8f0f2"
+        },
+        {
+          "fee": 399,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 1813,
+          "transaction_type": "OracleAttestation",
+          "tx_hash": "4f1700b325d77c73e7bb61a561048300a11ecf7ac851247f362b1cfeba08d817"
+        },
+        {
+          "fee": 203,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 1699,
+          "transaction_type": "OracleAttestation",
+          "tx_hash": "56bbc82c94c7b166e6bd94b735252aedb2da1f7dc9e2ef8c1bb04295dd18a4eb"
+        }
+      ],
+      "validator": "65333f5f0a8fa5f684e0a83caf052a72511d8cf49cffecf0fb53ebd599a09151"
+    },
+    {
+      "block_size_bytes": 7769,
+      "fee_distribution": {
+        "consensus_30pct": 1278,
+        "governance_15pct": 639,
+        "treasury_10pct": 426,
+        "ubi_pool_45pct": 1917
+      },
+      "header": {
+        "bft_quorum_root": "5f840ab07ca47c10065af20f2bf44b454d4d140bce961a3f3b651f208d67213c",
+        "block_hash": "7ab9abdd82d6a1b7ae41c0de535642762080b432845edf60c29a8308a2ae35bb",
+        "data_helix_root": "7678e27ea8ae9ae0ebcb98c898de8625adda69adfbc31c0a69db89d41985ea51",
+        "height": 21,
+        "previous_hash": "22b178123987bdeaa0801164a72ac8c1f477ad5ce545efeb6da2496c2dc0117a",
+        "state_root": "889db951cb178d4b18f39513eaaaf0f9bda0ba00a0674e550d4a0d6d37b009df",
+        "timestamp": 1735689915,
+        "verification_helix_root": "d405bfb81f328a7d8377f8f156e964fff0d0ba696a9115e2312c2e666c2362f2",
+        "version": 1
+      },
+      "total_fees": 4262,
+      "transaction_count": 12,
+      "transactions": [
+        {
+          "fee": 215,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 994,
+          "transaction_type": "TokenSwap",
+          "tx_hash": "4e7321677ac2f00f68b35dcefdbd6c18edc0f001d228a30f1d55537c55373866"
+        },
+        {
+          "fee": 430,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 1102,
+          "transaction_type": "BondingCurveSell",
+          "tx_hash": "4d20b84fb12eeae1f70db703f6c04d9fb7b5569e087d3eb5f4780e7af00724d6"
+        },
+        {
+          "fee": 389,
+          "input_count": 1,
+          "output_count": 2,
+          "size_bytes": 1776,
+          "transaction_type": "SessionTermination",
+          "tx_hash": "888cbe97dc7777ceaa40b19534fa5b566b606cecead93cd57db0e85c8e651da7"
+        },
+        {
+          "fee": 426,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 966,
+          "transaction_type": "IdentityUpdate",
+          "tx_hash": "400d7be7c7d3d08e64adc0ac23ba0dec59489c7dca02010b5d744a5a70349ae1"
+        },
+        {
+          "fee": 344,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 1595,
+          "transaction_type": "RecordOnRampTrade",
+          "tx_hash": "59a434ebc3a424e067a15729aee602add6244486cc7fe3494869a7bb597bcda3"
+        },
+        {
+          "fee": 338,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 1880,
+          "transaction_type": "TreasuryAllocation",
+          "tx_hash": "d8ac8f7ba7bed6e2156c588606824c48e1746d13461698f4f373052f3be499bc"
+        },
+        {
+          "fee": 324,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 1795,
+          "transaction_type": "SessionCreation",
+          "tx_hash": "080becc60c31d1735ffecb1e34be6b552cbb34d6049b24e670a90339ca6f71fd"
+        },
+        {
+          "fee": 330,
+          "input_count": 1,
+          "output_count": 2,
+          "size_bytes": 1993,
+          "transaction_type": "Transfer",
+          "tx_hash": "8971e7b6590a525c8442441055096a3a739d29e6ad25102fb2703f6e67595f94"
+        },
+        {
+          "fee": 412,
+          "input_count": 1,
+          "output_count": 3,
+          "size_bytes": 818,
+          "transaction_type": "CreateEmploymentContract",
+          "tx_hash": "877aa69eb831fa7443b7ae9fe85daa2322309b7670f0d08e5dc7a567dc1a0470"
+        },
+        {
+          "fee": 449,
+          "input_count": 1,
+          "output_count": 3,
+          "size_bytes": 298,
+          "transaction_type": "IdentityRevocation",
+          "tx_hash": "bef7e379cbb63d9323e1ffc4cb37d9277026166a4585fd3ff976dd4b44f2d8c0"
+        },
+        {
+          "fee": 107,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 1817,
+          "transaction_type": "IdentityRegistration",
+          "tx_hash": "e15920ed36800d4d1db55fd199b9932608883284ce3f61328a5d70e50c46ba3b"
+        },
+        {
+          "fee": 498,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 988,
+          "transaction_type": "ValidatorUpdate",
+          "tx_hash": "6c8b7a09839da8e789249907d3992cd2d0ec61097de40e01ef6831b6ad4ba12c"
+        }
+      ],
+      "validator": "83b6b2337991daa3c1c4255ee72c59cada35f0948e8d5a35c4957788902fce93"
+    },
+    {
+      "block_size_bytes": 17674,
+      "fee_distribution": {
+        "consensus_30pct": 1545,
+        "governance_15pct": 772,
+        "treasury_10pct": 515,
+        "ubi_pool_45pct": 2318
+      },
+      "header": {
+        "bft_quorum_root": "35eac995d38140c430882fc642e1083bb239dbaa5997c6fb4bac4e185fecd515",
+        "block_hash": "dd57967f559305924351dd3b7f25c6bfa1dfa3d418d865445deb004c9ef35fdd",
+        "data_helix_root": "ca2d7bc5c6d2aa84795b5bfbe324e2ad50288b968e3342eef3b5a1f3264d7be2",
+        "height": 22,
+        "previous_hash": "7ab9abdd82d6a1b7ae41c0de535642762080b432845edf60c29a8308a2ae35bb",
+        "state_root": "e0d0601c6b0a695e636c32d894e143843553a4229d398fda083370fec01eb283",
+        "timestamp": 1735689930,
+        "verification_helix_root": "0996ea8db17133ed038011476612bdc9d842bd0d566be62919fa9e37885b18d9",
+        "version": 1
+      },
+      "total_fees": 5153,
+      "transaction_count": 19,
+      "transactions": [
+        {
+          "fee": 180,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 982,
+          "transaction_type": "UbiDistribution",
+          "tx_hash": "364705968ec50b8eba9842689fbcb2016ec908ceec44e412ab09d834129919da"
+        },
+        {
+          "fee": 278,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 342,
+          "transaction_type": "ProfitDeclaration",
+          "tx_hash": "b8611e7731f74fae1121c22212011fff94fac48010f37377a960db5c466b219c"
+        },
+        {
+          "fee": 245,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 1210,
+          "transaction_type": "DaoUnstake",
+          "tx_hash": "9ce75c71807f3234e8c7234b9c83fa046b21248cbe6080572da63c093db7e6bf"
+        },
+        {
+          "fee": 190,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 620,
+          "transaction_type": "UBIClaim",
+          "tx_hash": "b4ee29cb77e9a6354009ba720b6abeac1319949e1cb393c34af1983706050542"
+        },
+        {
+          "fee": 164,
+          "input_count": 1,
+          "output_count": 4,
+          "size_bytes": 1784,
+          "transaction_type": "ProcessPayroll",
+          "tx_hash": "55473e455b768af9cfff8885ed336657bae43530cbf1afcec2e69ddd2833efad"
+        },
+        {
+          "fee": 112,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 285,
+          "transaction_type": "RecordOnRampTrade",
+          "tx_hash": "882e36a6fbb1baf3bcc7aa496961a41cd5e99efd54f5b1399109ffbe5f9ddfe0"
+        },
+        {
+          "fee": 250,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 1833,
+          "transaction_type": "ContentUpload",
+          "tx_hash": "3137625cc5005c80214f313323025bc12c0b1e9669941c07478b7bc590e03404"
+        },
+        {
+          "fee": 264,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 1430,
+          "transaction_type": "WalletRegistration",
+          "tx_hash": "6e9894b534ce558cbf83a7b0806667d543e42538895407f217bf6682f037432d"
+        },
+        {
+          "fee": 382,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 1998,
+          "transaction_type": "AddLiquidity",
+          "tx_hash": "5a38de6f1a2f8ed90ca91a80baff1d4993b5a5729b50bec55e841588ff95f9c3"
+        },
+        {
+          "fee": 463,
+          "input_count": 1,
+          "output_count": 3,
+          "size_bytes": 1984,
+          "transaction_type": "DifficultyUpdate",
+          "tx_hash": "d389662a4bb4a672e173b2db1011fe8ac1b1f769193c43fc31abf2f8177fe395"
+        },
+        {
+          "fee": 363,
+          "input_count": 2,
+          "output_count": 4,
+          "size_bytes": 1378,
+          "transaction_type": "UbiDistribution",
+          "tx_hash": "853e4d4be292ebc82477f2233f03e9ceafc5432499c60f13267be222b16e3e03"
+        },
+        {
+          "fee": 274,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 1952,
+          "transaction_type": "ValidatorUpdate",
+          "tx_hash": "9a06aa39a8a1e44a0c016cd24ba73d2ca435f49bc056c13d2dffa5a91a6da32f"
+        },
+        {
+          "fee": 495,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 1790,
+          "transaction_type": "SessionCreation",
+          "tx_hash": "54f2bab0c2beaa65f3bcbe3ca39ee667779af680891ff99e6041c864802c74a3"
+        },
+        {
+          "fee": 206,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 1896,
+          "transaction_type": "SessionTermination",
+          "tx_hash": "55cd834f2e871573b6b2f7eabf83f7435a292ae326825dce490438ed8f9d6d3f"
+        },
+        {
+          "fee": 409,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 1503,
+          "transaction_type": "DaoStake",
+          "tx_hash": "15e54f10fb41f95745b0cc0c0679fa4fd3bb4ba69f807456eb73e0dd04a9f63b"
+        },
+        {
+          "fee": 252,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 1969,
+          "transaction_type": "IdentityUpdate",
+          "tx_hash": "ac825cc4a63abce1185b5628aeb042d1967436c328379de6d07e43dc3bc466ba"
+        },
+        {
+          "fee": 295,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 1219,
+          "transaction_type": "TokenTransfer",
+          "tx_hash": "bde1a1e0373d0e395f49cd7e1f101b91124b1cfd98c8de0f5a566cd302ec66a8"
+        },
+        {
+          "fee": 100,
+          "input_count": 1,
+          "output_count": 2,
+          "size_bytes": 874,
+          "transaction_type": "TokenMint",
+          "tx_hash": "af3681f394e9f2f3d09e5ef81e050bef3c00d41ac54995a1242a40a017ea5c2c"
+        },
+        {
+          "fee": 231,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 860,
+          "transaction_type": "UpdateOracleConfig",
+          "tx_hash": "e1c835075c7f534dfc56187f1a4d00e0ddb321d86a723f132132092ba22c9176"
+        }
+      ],
+      "validator": "b61426fd04132ff04f63084ab6783ebafc8738bd9bfa592d2ea6e75688de0ee6"
+    },
+    {
+      "block_size_bytes": 32701,
+      "fee_distribution": {
+        "consensus_30pct": 879,
+        "governance_15pct": 439,
+        "treasury_10pct": 293,
+        "ubi_pool_45pct": 1318
+      },
+      "header": {
+        "bft_quorum_root": "14e0be56e0c11137a4136417f33f38abbe241470a10d5781eacbc7bfd322860a",
+        "block_hash": "c43352e7652c203e67ee7adb343e150bf3487081f137e2d3d989d18702778e79",
+        "data_helix_root": "070cbf8b6e6d0562c00fc8fd834045665306087bca558c3b6cdd321327dbbc24",
+        "height": 23,
+        "previous_hash": "dd57967f559305924351dd3b7f25c6bfa1dfa3d418d865445deb004c9ef35fdd",
+        "state_root": "19c8830154706a1b43d80c5e0bedbb061ff19faf7718394fc3c3bd7ccd96126d",
+        "timestamp": 1735689945,
+        "verification_helix_root": "6f13b937766afb07eafa9b4412dd2f37947b691df012c19591c7d33eacad215f",
+        "version": 1
+      },
+      "total_fees": 2930,
+      "transaction_count": 10,
+      "transactions": [
+        {
+          "fee": 326,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 965,
+          "transaction_type": "DaoExecution",
+          "tx_hash": "9a5608566c64e21adbff6bdfe2fb6af486ef6e7676b9162fd2a8de565787ffdd"
+        },
+        {
+          "fee": 186,
+          "input_count": 3,
+          "output_count": 2,
+          "size_bytes": 1054,
+          "transaction_type": "TokenCreation",
+          "tx_hash": "81719c77fc855ea70cbd44c87eb8f7e50614319175781c6b62e0f0d26e7174b5"
+        },
+        {
+          "fee": 473,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 1974,
+          "transaction_type": "ValidatorUpdate",
+          "tx_hash": "25be9aa9f260a5a1048884a8587d02daded5d2a91a6df4758a382e51530d841d"
+        },
+        {
+          "fee": 249,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 1488,
+          "transaction_type": "DaoVote",
+          "tx_hash": "951ade877f24543b56ad8598430b200ce521146a9741f8664f5b9285178ba818"
+        },
+        {
+          "fee": 332,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 782,
+          "transaction_type": "DaoProposal",
+          "tx_hash": "d165cdd2278356000ae30af34dae68960d95ccfd2dbb1d8cf1dfd714e12a52a7"
+        },
+        {
+          "fee": 215,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 1885,
+          "transaction_type": "UpdateOracleCommittee",
+          "tx_hash": "3910badaf76574f163a3468a307299fb3a21fd8e8a868aeb32da09c3c5058d2a"
+        },
+        {
+          "fee": 184,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 1578,
+          "transaction_type": "BondingCurveGraduate",
+          "tx_hash": "c9c2c5ea3a61037d089e5234d1164f5914ee485380b9902499825f665378bdfc"
+        },
+        {
+          "fee": 142,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 436,
+          "transaction_type": "InitCbeToken",
+          "tx_hash": "d9e56fce8eff5adfe309d0274eeae61645271ed5cc4d2d8c6bb02067e4b95afc"
+        },
+        {
+          "fee": 415,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 1662,
+          "transaction_type": "WalletUpdate",
+          "tx_hash": "345162ad53e83fb817385cced8f7e29b666eccf929491bdea0688c9f40a0749b"
+        },
+        {
+          "fee": 408,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 1049,
+          "transaction_type": "CancelOracleUpdate",
+          "tx_hash": "1040003b57b956924603105d000cf8f46d904f91889b088044d9e1121b4187a0"
+        }
+      ],
+      "validator": "2b9bcc00bf380d8af470c29e823f45bc007e7303a8b4d47ab3bd0e5bf54f979d"
+    },
+    {
+      "block_size_bytes": 40547,
+      "fee_distribution": {
+        "consensus_30pct": 1103,
+        "governance_15pct": 551,
+        "treasury_10pct": 367,
+        "ubi_pool_45pct": 1654
+      },
+      "header": {
+        "bft_quorum_root": "f5ed945ed32af9503ccc0ed3d12a3eb3cc9157f16002d51e74c84b77d269135f",
+        "block_hash": "2acd464236a6420ff1c954490ee7ca94cb147b8b20fa735085c84da6b1165404",
+        "data_helix_root": "961f466a41ffe8d0f76d1b7c69c1ec2a1962b3af9294b25b082683ad5ae1b907",
+        "height": 24,
+        "previous_hash": "c43352e7652c203e67ee7adb343e150bf3487081f137e2d3d989d18702778e79",
+        "state_root": "02a3c96a68ebe98a80397fcede92e1b30607842cd737a02e4a8d52d22b559de8",
+        "timestamp": 1735689960,
+        "verification_helix_root": "62d4564bdc2b3282a9186a595062c43b1d77935bf19f14f384218e402e7d83b9",
+        "version": 1
+      },
+      "total_fees": 3677,
+      "transaction_count": 14,
+      "transactions": [
+        {
+          "fee": 221,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 738,
+          "transaction_type": "InitEntityRegistry",
+          "tx_hash": "c3913e7b676e2973c349b59f887d79b47abdb032f87f0a19e6b2b4d4bd0bdea2"
+        },
+        {
+          "fee": 198,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 1935,
+          "transaction_type": "IdentityRevocation",
+          "tx_hash": "e1e5ce62826b8197ec1fdc660bdaed27c260455446f17a90c5f871a8d6dfa1ba"
+        },
+        {
+          "fee": 299,
+          "input_count": 3,
+          "output_count": 4,
+          "size_bytes": 670,
+          "transaction_type": "DaoUnstake",
+          "tx_hash": "e10e39a8c85ae1c3d0a924ba96c3c9f8adb8790480de344a9f408dd6e22a0770"
+        },
+        {
+          "fee": 143,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 989,
+          "transaction_type": "SessionCreation",
+          "tx_hash": "4aa5ce4b9d23d452f0aa54472e3e0591ff20fd6d62bf96529ac02ef69147d1aa"
+        },
+        {
+          "fee": 173,
+          "input_count": 3,
+          "output_count": 1,
+          "size_bytes": 1206,
+          "transaction_type": "DaoUnstake",
+          "tx_hash": "20a3f955b07a8bf1b8918bd274dc3475c82793197f89a7e2020d705a518235f3"
+        },
+        {
+          "fee": 202,
+          "input_count": 1,
+          "output_count": 1,
+          "size_bytes": 2011,
+          "transaction_type": "ContractDeployment",
+          "tx_hash": "4f5f6f5cb9f8fbdaee933b5293c3a9cd6aed30f9c235d4f30f09984a56a4e133"
+        },
+        {
+          "fee": 417,
+          "input_count": 2,
+          "output_count": 3,
+          "size_bytes": 1091,
+          "transaction_type": "RemoveLiquidity",
+          "tx_hash": "6e445cb247f293c0cb1da3107960a7b35a7993a2a4a063956be558ad291e442d"
+        },
+        {
+          "fee": 397,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 1756,
+          "transaction_type": "TokenTransfer",
+          "tx_hash": "76ab0566c60043cdf7dc5797dfc7562ba0095994b0cef60c1ed8c498c72a3d6b"
+        },
+        {
+          "fee": 218,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 353,
+          "transaction_type": "CreateEmploymentContract",
+          "tx_hash": "3927c1cec0cced626ce871a0ad7c3bf9f442dc89f3ed7c735a732bb552c55ec2"
+        },
+        {
+          "fee": 210,
+          "input_count": 1,
+          "output_count": 4,
+          "size_bytes": 478,
+          "transaction_type": "ValidatorUpdate",
+          "tx_hash": "10e1c74488347183fc969113318fd63892274e346afe3328757221a4a70215d4"
+        },
+        {
+          "fee": 430,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 415,
+          "transaction_type": "UpdateOracleCommittee",
+          "tx_hash": "395e7737cae26a12a73b91293d18d21240961166ee38aca1048c195ddc160cbf"
+        },
+        {
+          "fee": 267,
+          "input_count": 2,
+          "output_count": 1,
+          "size_bytes": 1543,
+          "transaction_type": "BondingCurveDeploy",
+          "tx_hash": "c0dcd045debc86fca3c7579cb0c02eb737fb1a490a71a10d56916435a26cb197"
+        },
+        {
+          "fee": 227,
+          "input_count": 2,
+          "output_count": 2,
+          "size_bytes": 458,
+          "transaction_type": "DaoUnstake",
+          "tx_hash": "8896ca0cb35551ce13c05bf72f5a16812517be17c07b96bb6acd37bdb6c1cefb"
+        },
+        {
+          "fee": 275,
+          "input_count": 3,
+          "output_count": 3,
+          "size_bytes": 1390,
+          "transaction_type": "BondingCurveDeploy",
+          "tx_hash": "681c5f8ba02ead169c9818361cc0d3f6720e6a8abfb4b9b879e19220cd284ec7"
+        }
+      ],
+      "validator": "13108f1aa7f304b50361b2d1d65fcb006d32c3692aedc1047876a962cc123ba3"
+    }
+  ],
+  "chain": "mainnet",
+  "latest_height": 24,
+  "version": "sovereign-network-v1"
+}

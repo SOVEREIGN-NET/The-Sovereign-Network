@@ -59,6 +59,7 @@ pub mod quic_handshake; // UHP v2 transport adapter for QUIC (no QUIC crypto)
 #[cfg(feature = "quic")]
 pub mod quic_mesh; // QUIC transport with PQC encryption
 pub mod satellite;
+pub mod shard_protocol; // Shard distribution protocol for compression layer
 #[cfg(feature = "mdns")]
 pub mod wifi_direct;
 pub mod wifi_direct_handshake; // UHP handshake adapter for WiFi Direct

@@ -10,6 +10,7 @@ members = [
     "lib-mempool",
     "lib-blockchain",
     "lib-client",
+    "lib-compression",      # NEW: Lossless compression via network deduplication
     "lib-consensus",
     "lib-crypto",
     "lib-dht",
@@ -18,6 +19,7 @@ members = [
     "lib-identity-core",
     "lib-identity",
     "lib-network",
+    "lib-neural-mesh",      # NEW: ML/AI optimization layer
     "lib-proofs",
     "lib-protocols",
     "tools",
@@ -38,6 +40,10 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Sovereign Network Team"]
 license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+anyhow = "1.0"
+tempfile = "3.10"
 
 [profile.release]
 opt-level = 3

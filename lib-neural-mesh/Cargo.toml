@@ -1,0 +1,44 @@
+[package]
+name = "lib-neural-mesh"
+version = "0.1.0"
+edition = "2021"
+authors = ["Sovereign Network Team"]
+description = "ML/AI optimization layer for routing and compression"
+
+[dependencies]
+# Core dependencies
+tokio = { version = "1.40", features = ["full"] }
+async-trait = "0.1"
+thiserror = "2.0"
+anyhow = "1.0"
+rand = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+blake3 = "1.5"
+
+# ML dependencies
+ndarray = { version = "0.16", features = ["serde"] }
+ndarray-rand = "0.15"
+bincode = "1.3"
+linfa = "0.7"
+linfa-clustering = "0.7"
+linfa-nn = "0.7"
+smartcore = { version = "0.3", features = ["serde"] }  # For LSTM/neural networks
+tract-onnx = "0.21"  # ONNX Runtime alternative (pure Rust)
+
+# Performance optimizations
+rayon = "1.10"          # Parallel processing
+ahash = "0.8"           # Fast hashing
+simsimd = "5.9"         # SIMD vector operations for embeddings
+
+# Utilities
+tracing = "0.1"
+lazy_static = "1.5"
+
+[dev-dependencies]
+criterion = "0.5"
+anyhow = { workspace = true }
+
+[[example]]
+name = "neural_mesh_demo"
+path = "../examples/neural_mesh_demo.rs"

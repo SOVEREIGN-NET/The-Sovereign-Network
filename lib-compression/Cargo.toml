@@ -1,0 +1,77 @@
+[package]
+name = "lib-compression"
+version = "0.1.0"
+edition = "2021"
+authors = ["Sovereign Network Team"]
+description = "Universal lossless compression via network-wide deduplication"
+
+[dependencies]
+# Core dependencies
+tokio = { version = "1.40", features = ["full"] }
+async-trait = "0.1"
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Cryptography (from workspace)
+blake3 = "1.5"
+lib-crypto = { path = "../lib-crypto" }
+
+# Zero-knowledge proofs
+lib-proofs = { path = "../lib-proofs" }
+
+# Storage and networking
+lib-storage = { path = "../lib-storage" }
+lib-network = { path = "../lib-network" }
+lib-neural-mesh = { path = "../lib-neural-mesh" }
+
+# Chunking
+fastcdc = "3.1"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"
+bincode = "1.3"
+
+# Web server (for frontend)
+axum = { version = "0.7", features = ["multipart"] }
+tower-http = { version = "0.5", features = ["fs", "cors"] }
+base64 = "0.22"
+
+# Memory-mapped I/O
+memmap2 = "0.9"
+
+# Utilities
+bytes = { version = "1.9", features = ["serde"] }
+futures = "0.3"
+tracing = "0.1"
+bitvec = "1.0"
+hex = "0.4"
+lazy_static = "1.4"
+
+# Performance optimizations
+rayon = "1.10"          # Parallel iterators for multi-core compression
+ahash = "0.8"           # Faster hashing for pattern lookups
+memchr = "2.7"          # SIMD-accelerated pattern matching
+dashmap = "6.1"         # Concurrent hash maps for thread-safe caching
+once_cell = "1.19"      # Efficient lazy initialization
+flate2 = "1.0"           # Gzip baseline for Weissman Score calculation
+
+[dev-dependencies]
+criterion = "0.5"
+tempfile = "3.13"
+proptest = "1.6"
+anyhow = { workspace = true }
+lib-neural-mesh = { path = "../lib-neural-mesh" }
+
+[[example]]
+name = "compression_demo"
+path = "../examples/compression_demo.rs"
+
+[[example]]
+name = "complete_workflow"
+path = "../examples/complete_workflow.rs"
+
+# Benchmarks will be added later
+# [[bench]]
+# name = "chunking"
+# harness = false
