@@ -5231,4 +5231,99 @@ mod tests {
             amount_in, sov_after
         );
     }
+
+    /// Epic E end-to-end integration: real Plonky2 transaction proof flows through
+    /// fee calculation and executor block application.
+    #[test]
+    #[cfg(feature = "real-proofs")]
+    fn test_real_zk_transaction_proof_end_to_end() {
+        use crate::transaction::hashing::hash_transaction;
+        use lib_fees::compute_fee_v2;
+        use lib_proofs::transaction::ZkTransactionProof;
+        use lib_types::fees::FeeParams;
+
+        let store = create_test_store();
+        let executor = BlockExecutor::with_store(store.clone());
+
+        // Genesis
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        // Fund a coinbase UTXO
+        let funded_block = create_block_with_txs(
+            1,
+            genesis.header.block_hash,
+            vec![create_coinbase_tx(create_dummy_public_key())],
+        );
+        executor.apply_block(&funded_block).unwrap();
+
+        let coinbase_tx = &funded_block.transactions[0];
+        let coinbase_tx_hash = hash_transaction(coinbase_tx);
+
+        let sender_balance = 10_000u64;
+        let receiver_balance = 5_000u64;
+        let amount = 1_000u64;
+        let fee = 100u64;
+        let sender_blinding = [7u8; 32];
+        let receiver_blinding = [8u8; 32];
+        let nullifier = [9u8; 32];
+
+        // 1. Generate a real ZK transaction proof
+        let zk_proof = ZkTransactionProof::prove_transaction(
+            sender_balance,
+            receiver_balance,
+            amount,
+            fee,
+            sender_blinding,
+            receiver_blinding,
+            nullifier,
+        )
+        .expect("Real proof generation should succeed");
+
+        // 2. Verify the proof independently
+        assert!(
+            ZkTransactionProof::verify_transaction(&zk_proof).unwrap(),
+            "Real proof should verify"
+        );
+
+        // 3. Build a blockchain transaction carrying the real proof
+        let tx = Transaction {
+            version: 1,
+            chain_id: 0x03,
+            transaction_type: TransactionType::Transfer,
+            inputs: vec![TransactionInput {
+                previous_output: coinbase_tx_hash,
+                output_index: 0,
+                nullifier: Hash::default(),
+                zk_proof,
+            }],
+            outputs: vec![TransactionOutput {
+                commitment: Hash::default(),
+                note: Hash::default(),
+                recipient: create_dummy_public_key(),
+            }],
+            fee: 10_000,
+            signature: create_dummy_signature(),
+            memo: vec![],
+            payload: crate::transaction::TransactionPayload::None,
+        };
+
+        // 4. Fee model must charge for ZK verification units
+        let fee_input = FeeModelV2::tx_to_fee_input(&tx);
+        assert!(
+            fee_input.zk_verify_units > 0,
+            "zk_verify_units should be > 0 for transactions with inputs"
+        );
+
+        let fee_params = FeeParams::default();
+        let total_fee = compute_fee_v2(&fee_input, &fee_params);
+        assert!(total_fee > 0, "Total fee should include ZK verification cost");
+
+        // 5. Full block application should succeed with a real ZK proof
+        let spend_block = create_block_with_txs(2, funded_block.header.block_hash, vec![tx]);
+        executor.apply_block(&spend_block).expect(
+            "Transaction with real ZK proof should be accepted into the chain"
+        );
+        assert_eq!(store.latest_height().unwrap(), 2);
+    }
 }

@@ -166,3 +166,17 @@ mod tests {
         assert_eq!(null_sys, "Plonky2");
     }
 }
+
+#[cfg(test)]
+mod backend_tests {
+    use super::*;
+
+    #[test]
+    #[cfg(feature = "real-proofs")]
+    fn test_backend_transaction_proof_roundtrip() {
+        let proof = ZkTransactionProof::prove_transaction(
+            1000, 500, 100, 10, [1u8; 32], [2u8; 32], [3u8; 32]
+        ).unwrap();
+        assert!(ZkTransactionProof::verify_transaction(&proof).unwrap());
+    }
+}

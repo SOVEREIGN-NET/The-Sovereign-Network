@@ -3550,6 +3550,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "criterion",
+ "dirs",
  "lib-crypto",
  "log",
  "num_cpus",

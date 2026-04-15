@@ -24,6 +24,7 @@ pub mod real {
             proof::ProofWithPublicInputs,
         },
     };
+    use serde::{Deserialize, Serialize};
     use std::sync::OnceLock;
 
     pub type TxProof = ProofWithPublicInputs<F, C, D>;
@@ -42,6 +43,7 @@ pub mod real {
     pub const TX_PI_LEN: usize = 4;
 
     /// Targets for the transaction circuit.
+    #[derive(Clone, Serialize, Deserialize)]
     pub struct TransactionTargets {
         pub sender_balance: Target,
         pub amount: Target,
@@ -111,10 +113,36 @@ pub mod real {
         }
     }
 
+    /// Default on-disk cache path for the transaction circuit.
+    pub fn default_cache_path() -> std::path::PathBuf {
+        dirs::home_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join(".zhtp")
+            .join("cache")
+            .join("tx_circuit.bin")
+    }
+
     /// Lazy-initialized circuit so we only build once per process.
+    /// Tries to load from disk cache first, falling back to build-and-save.
     fn circuit() -> &'static TransactionCircuit {
         static CIRCUIT: OnceLock<TransactionCircuit> = OnceLock::new();
-        CIRCUIT.get_or_init(TransactionCircuit::build)
+        CIRCUIT.get_or_init(|| {
+            let path = default_cache_path();
+            if let Ok((data, targets)) =
+                crate::backend::circuit_cache::real::load_transaction_circuit(&path)
+            {
+                return TransactionCircuit { data, targets };
+            }
+            let circuit = TransactionCircuit::build();
+            if let Err(e) = crate::backend::circuit_cache::real::save_transaction_circuit(
+                &circuit.data,
+                &circuit.targets,
+                &path,
+            ) {
+                tracing::warn!("Failed to save transaction circuit cache: {}", e);
+            }
+            circuit
+        })
     }
 
     /// Generate a transaction proof.

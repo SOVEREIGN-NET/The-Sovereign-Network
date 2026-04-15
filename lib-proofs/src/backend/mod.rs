@@ -13,6 +13,9 @@ mod plonky2_backend;
 #[cfg(feature = "real-proofs")]
 pub mod plonky2_spike;
 
+#[cfg(feature = "real-proofs")]
+pub mod circuit_cache;
+
 #[cfg(any(test, feature = "fake-proofs"))]
 mod fake_backend;
 

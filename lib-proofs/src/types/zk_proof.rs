@@ -324,7 +324,9 @@ impl ZkProof {
         if let Some(ref backend_proof) = self.backend_proof {
             let backend = crate::backend::get_backend();
             match backend_proof.proof_system.as_str() {
-                "ZHTP-Optimized-Transaction" => backend.verify_transaction(backend_proof),
+                "ZHTP-Optimized-Transaction" | "plonky2-real-transaction" => {
+                    backend.verify_transaction(backend_proof)
+                }
                 "ZHTP-Optimized-Identity" => backend.verify_identity(backend_proof),
                 "ZHTP-Optimized-Range" => backend.verify_range(backend_proof),
                 "ZHTP-Optimized-StorageAccess" => backend.verify_storage_access(backend_proof),

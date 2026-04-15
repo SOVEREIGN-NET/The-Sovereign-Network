@@ -5,8 +5,11 @@
 
 use lib_crypto::hashing::hash_blake3;
 use lib_crypto::random::SecureRng;
+#[cfg(feature = "fake-proofs")]
 use lib_proofs::range::range_proof::ZkRangeProof;
+#[cfg(feature = "fake-proofs")]
 use lib_proofs::range::verification::verify_range_proof;
+#[cfg(feature = "fake-proofs")]
 use lib_proofs::types::VerificationResult;
 
 #[test]
