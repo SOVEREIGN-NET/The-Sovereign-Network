@@ -68,6 +68,7 @@ pub struct FeeInput {
     /// Total bytes written to state
     pub state_write_bytes: u32,
     /// ZK proof verification units (derived from benchmarked verifier latency)
+    #[serde(default)]
     pub zk_verify_units: u32,
 }
 
