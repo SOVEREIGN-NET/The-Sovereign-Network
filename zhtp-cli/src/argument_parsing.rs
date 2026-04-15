@@ -549,6 +549,15 @@ pub enum IdentityAction {
         #[arg(long)]
         retain_until_ttl: bool,
     },
+    /// Import identity from .zkdid backup file
+    Import {
+        /// Path to .zkdid backup file
+        #[arg(short, long)]
+        file: String,
+        /// Path to keystore directory
+        #[arg(short, long)]
+        keystore: Option<String>,
+    },
 }
 
 /// Network operation commands
@@ -1207,6 +1216,20 @@ pub enum DomainAction {
         /// Path to identity keystore directory (REQUIRED)
         #[arg(short, long)]
         keystore: String,
+
+        #[command(flatten)]
+        trust: TrustFlags,
+    },
+
+    /// List all domains from the catalog
+    Catalog {
+        /// Output file (JSON). Stdout if not specified.
+        #[arg(short, long)]
+        output: Option<String>,
+
+        /// Path to identity keystore directory
+        #[arg(short, long)]
+        keystore: Option<String>,
 
         #[command(flatten)]
         trust: TrustFlags,

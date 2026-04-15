@@ -32,6 +32,7 @@ pub enum IdentityOperation {
     CreateWithType,
     Verify,
     List,
+    Import,
     Unsupported,
 }
 
@@ -43,6 +44,7 @@ impl IdentityOperation {
             IdentityOperation::CreateWithType => "Create identity with specific type",
             IdentityOperation::Verify => "Verify identity on blockchain",
             IdentityOperation::List => "List blockchain identities",
+            IdentityOperation::Import => "Import identity from backup",
             IdentityOperation::Unsupported => "Run identity operation",
         }
     }
@@ -58,6 +60,7 @@ pub fn action_to_operation(action: &IdentityAction) -> IdentityOperation {
         IdentityAction::Register { .. } => IdentityOperation::Create,
         IdentityAction::Verify { .. } => IdentityOperation::Verify,
         IdentityAction::List => IdentityOperation::List,
+        IdentityAction::Import { .. } => IdentityOperation::Import,
         IdentityAction::SimulateMessage { .. }
         | IdentityAction::Pending { .. }
         | IdentityAction::Ack { .. } => IdentityOperation::Unsupported,
@@ -133,6 +136,9 @@ async fn handle_identity_command_impl(
             // Imperative: QUIC communication
             list_identities_impl(cli, output).await
         }
+        IdentityAction::Import { file, keystore } => {
+            import_identity_impl(&file, keystore.as_deref(), output).await
+        }
         IdentityAction::SimulateMessage { .. }
         | IdentityAction::Pending { .. }
         | IdentityAction::Ack { .. } => Err(CliError::ConfigError(
@@ -146,6 +152,228 @@ fn get_default_keystore_path() -> CliResult<PathBuf> {
     dirs::home_dir()
         .ok_or_else(|| CliError::IdentityError("Could not determine home directory".to_string()))
         .map(|home| home.join(".zhtp").join("keystore"))
+}
+
+/// Import identity from a .zkdid backup file
+///
+/// The .zkdid file is JSON with a `keystore_base64` field containing a base64-encoded
+/// tar.gz archive with `keystore/user_identity.json` and `keystore/user_private_key.json`.
+///
+/// The private key JSON from the export uses JSON number arrays for byte fields,
+/// which must be converted to hex-encoded format for `KeystorePrivateKey` compatibility.
+async fn import_identity_impl(
+    file_path: &str,
+    keystore_path: Option<&str>,
+    output: &dyn Output,
+) -> CliResult<()> {
+    use base64::Engine;
+    use flate2::read::GzDecoder;
+    use std::io::Read as IoRead;
+    use tar::Archive;
+
+    output.header("Import Identity from .zkdid Backup")?;
+    output.info(&format!("Reading backup file: {}", file_path))?;
+
+    // 1. Read .zkdid JSON file
+    let zkdid_content = std::fs::read_to_string(file_path).map_err(|e| {
+        CliError::IdentityError(format!("Failed to read .zkdid file '{}': {}", file_path, e))
+    })?;
+    let zkdid: serde_json::Value = serde_json::from_str(&zkdid_content).map_err(|e| {
+        CliError::IdentityError(format!("Failed to parse .zkdid JSON: {}", e))
+    })?;
+
+    let keystore_b64 = zkdid
+        .get("keystore_base64")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            CliError::IdentityError("Missing 'keystore_base64' field in .zkdid file".to_string())
+        })?;
+
+    // 2. Decode base64 -> gzip -> tar
+    let archive_bytes = base64::engine::general_purpose::STANDARD
+        .decode(keystore_b64)
+        .map_err(|e| CliError::IdentityError(format!("Failed to decode base64: {}", e)))?;
+
+    let decoder = GzDecoder::new(&archive_bytes[..]);
+    let mut archive = Archive::new(decoder);
+
+    let mut identity_json: Option<String> = None;
+    let mut private_key_json: Option<String> = None;
+
+    for entry_result in archive.entries().map_err(|e| {
+        CliError::IdentityError(format!("Failed to read tar archive: {}", e))
+    })? {
+        let mut entry = entry_result.map_err(|e| {
+            CliError::IdentityError(format!("Failed to read tar entry: {}", e))
+        })?;
+        let path = entry
+            .path()
+            .map_err(|e| CliError::IdentityError(format!("Failed to read entry path: {}", e)))?
+            .to_string_lossy()
+            .to_string();
+
+        let mut content = String::new();
+        entry.read_to_string(&mut content).map_err(|e| {
+            CliError::IdentityError(format!("Failed to read entry content: {}", e))
+        })?;
+
+        if path.ends_with("user_identity.json") {
+            identity_json = Some(content);
+        } else if path.ends_with("user_private_key.json") {
+            private_key_json = Some(content);
+        }
+    }
+
+    let identity_json = identity_json.ok_or_else(|| {
+        CliError::IdentityError(
+            "Backup archive missing keystore/user_identity.json".to_string(),
+        )
+    })?;
+    let private_key_json = private_key_json.ok_or_else(|| {
+        CliError::IdentityError(
+            "Backup archive missing keystore/user_private_key.json".to_string(),
+        )
+    })?;
+
+    // 3. Parse identity to extract DID and public key
+    let identity_value: serde_json::Value =
+        serde_json::from_str(&identity_json).map_err(|e| {
+            CliError::IdentityError(format!("Failed to parse identity JSON: {}", e))
+        })?;
+
+    let did = identity_value
+        .get("did")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    output.info(&format!("DID: {}", did))?;
+
+    // 4. Convert private key from JSON array format to hex format for KeystorePrivateKey
+    let pk_value: serde_json::Value = serde_json::from_str(&private_key_json).map_err(|e| {
+        CliError::IdentityError(format!("Failed to parse private key JSON: {}", e))
+    })?;
+
+    let extract_bytes = |value: &serde_json::Value, field: &str| -> CliResult<Vec<u8>> {
+        let arr = value.get(field).ok_or_else(|| {
+            CliError::IdentityError(format!("Private key missing field '{}'", field))
+        })?;
+        // Handle both hex string and JSON array formats
+        if let Some(hex_str) = arr.as_str() {
+            hex::decode(hex_str).map_err(|e| {
+                CliError::IdentityError(format!("Invalid hex in '{}': {}", field, e))
+            })
+        } else if let Some(arr) = arr.as_array() {
+            Ok(arr
+                .iter()
+                .map(|v| v.as_u64().unwrap_or(0) as u8)
+                .collect())
+        } else {
+            Err(CliError::IdentityError(format!(
+                "Field '{}' must be hex string or byte array",
+                field
+            )))
+        }
+    };
+
+    let dilithium_sk_raw = extract_bytes(&pk_value, "dilithium_sk")?;
+    let kyber_sk_raw = extract_bytes(&pk_value, "kyber_sk")?;
+    let master_seed_raw = extract_bytes(&pk_value, "master_seed")?;
+
+    // Pad dilithium_sk to 4896 bytes if needed (crystals-dilithium raw is 4864)
+    let mut dilithium_sk = [0u8; 4896];
+    let copy_len = dilithium_sk_raw.len().min(4896);
+    dilithium_sk[..copy_len].copy_from_slice(&dilithium_sk_raw[..copy_len]);
+
+    // Kyber SK must be 3168 bytes
+    let mut kyber_sk = [0u8; 3168];
+    let copy_len = kyber_sk_raw.len().min(3168);
+    kyber_sk[..copy_len].copy_from_slice(&kyber_sk_raw[..copy_len]);
+
+    // Handle master_seed padding: if 32 bytes, pad to 64
+    let mut master_seed = [0u8; 64];
+    let copy_len = master_seed_raw.len().min(64);
+    master_seed[..copy_len].copy_from_slice(&master_seed_raw[..copy_len]);
+
+    // Get dilithium_pk from identity public_key or from the private key file
+    let dilithium_pk_raw = if pk_value.get("dilithium_pk").is_some() {
+        extract_bytes(&pk_value, "dilithium_pk")?
+    } else {
+        // Fall back to identity's public_key
+        let pk_obj = identity_value.get("public_key").ok_or_else(|| {
+            CliError::IdentityError("Identity missing public_key".to_string())
+        })?;
+        if let Some(arr) = pk_obj.get("dilithium_pk") {
+            if let Some(hex_str) = arr.as_str() {
+                hex::decode(hex_str).map_err(|e| {
+                    CliError::IdentityError(format!("Invalid dilithium_pk hex: {}", e))
+                })?
+            } else if let Some(arr) = arr.as_array() {
+                arr.iter().map(|v| v.as_u64().unwrap_or(0) as u8).collect()
+            } else {
+                return Err(CliError::IdentityError(
+                    "Cannot extract dilithium_pk".to_string(),
+                ));
+            }
+        } else {
+            return Err(CliError::IdentityError(
+                "Neither private key nor identity contains dilithium_pk".to_string(),
+            ));
+        }
+    };
+
+    let mut dilithium_pk = [0u8; 2592];
+    let copy_len = dilithium_pk_raw.len().min(2592);
+    dilithium_pk[..copy_len].copy_from_slice(&dilithium_pk_raw[..copy_len]);
+
+    // 5. Build KeystorePrivateKey in hex format and save
+    let keystore_private_key =
+        zhtp::keyfile_names::KeystorePrivateKey {
+            dilithium_sk,
+            dilithium_pk,
+            kyber_sk,
+            master_seed,
+        };
+
+    let keystore_dir = match keystore_path {
+        Some(p) => PathBuf::from(p),
+        None => get_default_keystore_path()?,
+    };
+
+    std::fs::create_dir_all(&keystore_dir).map_err(|e| {
+        CliError::IdentityError(format!("Failed to create keystore directory: {}", e))
+    })?;
+
+    // Save identity JSON (already in correct format from the archive)
+    let identity_file = keystore_dir.join(USER_IDENTITY_FILENAME);
+    std::fs::write(&identity_file, &identity_json).map_err(|e| {
+        CliError::IdentityError(format!("Failed to write {}: {}", USER_IDENTITY_FILENAME, e))
+    })?;
+    output.success(&format!("Saved: {:?}", identity_file))?;
+
+    // Save private key in hex-encoded KeystorePrivateKey format
+    let private_key_file = keystore_dir.join(USER_PRIVATE_KEY_FILENAME);
+    let pk_json = serde_json::to_string_pretty(&keystore_private_key).map_err(|e| {
+        CliError::IdentityError(format!("Failed to serialize private key: {}", e))
+    })?;
+    std::fs::write(&private_key_file, &pk_json).map_err(|e| {
+        CliError::IdentityError(format!(
+            "Failed to write {}: {}",
+            USER_PRIVATE_KEY_FILENAME, e
+        ))
+    })?;
+    // Set restrictive permissions on private key file
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&private_key_file, std::fs::Permissions::from_mode(0o600));
+    }
+    output.success(&format!("Saved: {:?}", private_key_file))?;
+
+    output.success(&format!("Identity imported successfully: {}", did))?;
+    output.print(&format!("Keystore: {:?}", keystore_dir))?;
+
+    Ok(())
 }
 
 /// Create a new identity locally and save to keystore
