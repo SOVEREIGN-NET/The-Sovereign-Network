@@ -140,27 +140,41 @@ pub fn build_create_employment_contract_tx(
         .map_err(|e| format!("Failed to serialize CreateEmploymentContract tx: {}", e))
 }
 
-/// Build a signed `ProcessPayroll` transaction.
+/// Build a signed `ProcessPayroll` transaction (CBE bonding curve §6 payroll mint).
 ///
-/// Triggers payroll computation and CBE transfer for the given contract.
+/// Triggers a synthetic curve event: mints `amount_cbe` (X) to the collaborator
+/// and routes 0.25X to the SOV treasury, recording a PRE_BACKED entry for the
+/// full 1.25X gross.
 ///
 /// # Arguments
-/// - `identity`    — Signer (compensation pool controller or CBE DAO executor)
-/// - `contract_id` — 32-byte employment contract identifier
-/// - `chain_id`    — Chain identifier
+/// - `identity`              — Signer (compensation pool controller or CBE DAO executor)
+/// - `contract_id`           — 32-byte employment contract identifier
+/// - `amount_cbe`            — CBE amount the collaborator earns (X, 18-decimal atoms)
+/// - `collaborator_address`  — Wallet address that receives X CBE
+/// - `deliverable_hash`      — Blake3 hash of the governance-approved deliverable
+/// - `chain_id`              — Chain identifier
 ///
 /// # Returns
 /// Hex-encoded bincode `Transaction` ready to POST to `POST /api/v1/cbe/payroll/process`.
 pub fn build_process_payroll_tx(
     identity: &crate::Identity,
     contract_id: [u8; 32],
+    amount_cbe: u128,
+    collaborator_address: [u8; 32],
+    deliverable_hash: [u8; 32],
     chain_id: u8,
 ) -> Result<String, String> {
     let signer_pk = crate::token_tx::create_public_key(identity.public_key.clone());
     let now = now_secs();
 
-    let mut tx =
-        Transaction::new_process_payroll(chain_id, contract_id, empty_sig(signer_pk.clone()));
+    let mut tx = Transaction::new_process_payroll(
+        chain_id,
+        contract_id,
+        amount_cbe,
+        collaborator_address,
+        deliverable_hash,
+        empty_sig(signer_pk.clone()),
+    );
 
     let tx_hash = tx.signing_hash();
     let sig_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())

@@ -72,6 +72,10 @@ sysinfo = "0.31"
 # Home directory detection
 dirs = "5.0"
 
+# Archive handling for identity import (.zkdid backup files)
+flate2 = "1.0"
+tar = "0.4"
+
 # Self-update mechanism (conditionally for non-musl targets)
 [target.'cfg(not(target_env = "musl"))'.dependencies]
 self_update = { version = "0.39", features = ["archive-tar", "compression-flate2"] }

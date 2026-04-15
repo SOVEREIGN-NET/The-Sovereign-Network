@@ -708,7 +708,8 @@ mod tests {
     fn test_from_embedded_parses() {
         let config = GenesisConfig::from_embedded().expect("embedded genesis.toml should parse");
         assert_eq!(config.chain.chain_id, 1);
-        assert_eq!(config.bootstrap_council.threshold, 3);
+        assert_eq!(config.bootstrap_council.threshold, 1);
+        assert!(!config.bootstrap_council.members.is_empty(), "council must have at least one member");
         assert_eq!(config.bonding_curve.graduation_threshold, 2_745_966);
     }
 

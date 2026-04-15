@@ -689,9 +689,36 @@ impl BlockExecutor {
             // migration path, or coordinating a breaking storage-format change.
             // Any such change without migration will corrupt deserialization of
             // existing chains.
-            self.store
-                .put_cbe_economic_state(&lib_types::BondingCurveEconomicState::default())
-                .map_err(|e| BlockApplyError::PersistFailed(e.to_string()))?;
+            // ── Genesis economic state with 20B treasury allocation (#2127) ──
+            {
+                use crate::contracts::bonding_curve::canonical::GENESIS_TREASURY_ALLOCATION;
+
+                let mut econ = lib_types::BondingCurveEconomicState::default();
+                econ.genesis_treasury_allocation = GENESIS_TREASURY_ALLOCATION;
+                // S_c stays 0 — this allocation is explicitly off-curve.
+
+                self.store
+                    .put_cbe_economic_state(&econ)
+                    .map_err(|e| BlockApplyError::PersistFailed(e.to_string()))?;
+
+                // Credit 20B CBE to the SOV treasury address in the token ledger.
+                let cbe_token_id = TokenId::new(crate::Blockchain::derive_cbe_token_id_pub());
+                let treasury_addr = *self.fee_model.protocol_params.fee_sink_address();
+                let current = self.store
+                    .get_token_balance(&cbe_token_id, &treasury_addr)
+                    .unwrap_or(0);
+                self.store
+                    .set_token_balance(
+                        &cbe_token_id,
+                        &treasury_addr,
+                        current.saturating_add(GENESIS_TREASURY_ALLOCATION),
+                    )
+                    .map_err(|e| BlockApplyError::PersistFailed(e.to_string()))?;
+
+                tracing::info!(
+                    "Genesis: 20B CBE treasury allocation credited (off-curve, S_c=0)"
+                );
+            }
 
             self.store
                 .append_block(block)
@@ -803,6 +830,10 @@ impl BlockExecutor {
                 }
                 TxOutcome::TreasuryAllocation => {
                     summary.balance_changes += 2; // source debit + destination credit
+                }
+                TxOutcome::PayrollMint => {
+                    // Collaborator credit + treasury credit = 2 balance changes
+                    summary.balance_changes += 2;
                 }
                 TxOutcome::LegacySystem => {
                     // No state changes for legacy system transactions.
@@ -1790,57 +1821,27 @@ impl BlockExecutor {
         next_nonce: lib_types::Nonce48,
     ) -> Result<CanonicalBondingCurveOutcome, TxApplyError> {
         use crate::contracts::bonding_curve::canonical::{
-            mint_with_reserve, GRAD_THRESHOLD, MAX_DELTA_S_PER_TX, MAX_GROSS_SOV_PER_TX, SCALE,
+            mint_with_reserve, GRAD_THRESHOLD, MAX_GROSS_SOV_PER_TX,
         };
-        use primitive_types::U256;
 
+        // ── Validate caps ────────────────────────────────────────────────
         if amount_in > MAX_GROSS_SOV_PER_TX {
             return Err(TxApplyError::InvalidType(format!(
                 "BUY_CBE: amount_in {amount_in} exceeds MAX_GROSS_SOV_PER_TX"
             )));
         }
 
-        // Event-driven on-ramp split (see docs/architecture/token-architecture.md):
-        //   20% → SOV treasury (held as CBE tokens, contributes to SOV NAV)
-        //   32% → CBE strategic reserve (locked, backs floor price)
-        //   48% → CBE liquidity pool (accumulates toward graduation)
-        //
-        // The 80% DAO portion splits 40/60 into reserve/liquidity.
-        // Integer arithmetic: compute each leg, liquidity gets the remainder for exactness.
-        let sov_treasury_credit = amount_in * 20 / 100;
-        let reserve_credit = amount_in * 32 / 100;
-        let liquidity_credit = amount_in - sov_treasury_credit - reserve_credit;
+        // ── On-ramp split ────────────────────────────────────────────────
+        let (sov_treasury_credit, reserve_credit, liquidity_credit) =
+            compute_onramp_split(amount_in);
 
+        // ── Mint and slippage check ──────────────────────────────────────
         let delta_s = mint_with_reserve(reserve_credit, econ.s_c)
             .map_err(|e| TxApplyError::InvalidType(format!("BUY_CBE: mint overflow: {e:?}")))?;
 
-        if delta_s == 0 {
-            return Err(TxApplyError::InvalidType(
-                "BUY_CBE: zero tokens minted for given reserve credit".to_string(),
-            ));
-        }
+        validate_buy_limits(amount_in, delta_s, max_price, econ.s_c)?;
 
-        if delta_s > MAX_DELTA_S_PER_TX {
-            return Err(TxApplyError::InvalidType(format!(
-                "BUY_CBE: delta_s {delta_s} exceeds MAX_DELTA_S_PER_TX"
-            )));
-        }
-
-        // Slippage: effective = amount_in * SCALE / delta_s; use U256 to avoid overflow.
-        let effective = U256::from(amount_in)
-            .checked_mul(U256::from(SCALE))
-            .ok_or_else(|| {
-                TxApplyError::InvalidType(
-                    "BUY_CBE: slippage overflow in amount_in * SCALE".to_string(),
-                )
-            })?
-            / U256::from(delta_s);
-        if effective > U256::from(max_price) {
-            return Err(TxApplyError::InvalidType(format!(
-                "BUY_CBE: slippage — effective price {effective} > max_price {max_price}"
-            )));
-        }
-
+        // ── Mutate economic state ────────────────────────────────────────
         econ.s_c = econ
             .s_c
             .checked_add(delta_s)
@@ -1853,28 +1854,34 @@ impl BlockExecutor {
             .sov_treasury_cbe_balance
             .checked_add(sov_treasury_credit)
             .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: sov_treasury overflow".to_string()))?;
-        econ.liquidity_pool_balance = econ
-            .liquidity_pool_balance
-            .checked_add(liquidity_credit)
-            .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: liquidity_pool overflow".to_string()))?;
+        econ.liquidity_pool
+            .mint(liquidity_credit)
+            .map_err(|e| TxApplyError::InvalidType(format!("BUY_CBE: liquidity pool: {e}")))?;
+        econ.liquidity_pool_balance = econ.liquidity_pool.balance;
+
+        // SOVRN audit: liquidity_credit is already in SOV atoms (1:1).
+        econ.sovrn_total_supply = econ
+            .sovrn_total_supply
+            .saturating_add(liquidity_credit);
+
+        econ.satisfy_pre_backed(liquidity_credit);
+
         if econ.reserve_balance >= GRAD_THRESHOLD {
             econ.graduated = true;
         }
 
-        // Only nonce lives in cbe_account_state now; balances use token_balances tree.
         account.next_nonce = next_nonce;
 
         mutator.put_cbe_economic_state(&econ)?;
         mutator.put_cbe_account_state(&sender, &account)?;
 
-        // Wire SOV ledger: debit sender's actual SOV token balance.
+        // ── Wire token ledgers ───────────────────────────────────────────
         mutator.debit_token(
             &Self::canonical_sov_token_id(),
             &Address::new(sender),
             amount_in,
         )?;
 
-        // Wire CBE ledger: credit sender's CBE token balance.
         let cbe_token_id = TokenId::new(crate::Blockchain::derive_cbe_token_id_pub());
         mutator.credit_token(
             &cbe_token_id,
@@ -1882,37 +1889,22 @@ impl BlockExecutor {
             delta_s,
         )?;
 
-        // ── Event-driven SOV minting ──────────────────────────────────────
-        // The 20% SOV treasury portion generates new SOV supply. SOV mints
-        // proportional to the CBE value deposited, priced at the current
-        // SOV NAV model:
-        //   sov_to_mint = sov_treasury_credit_cbe × cbe_price / sov_price
-        //
-        // During bootstrap (before SOV has a market price), SOV genesis
-        // price is $0.10. CBE price comes from the bonding curve at current s_c.
-        // Both prices are in SCALE (1e18) units.
-        //
-        // For now, use the curve price as the CBE/SOV ratio directly:
-        //   sov_to_mint = sov_treasury_credit (in SOV atoms, since buyer paid in SOV)
-        // This is correct because the buyer already paid `amount_in` SOV, and 20%
-        // of that SOV is the treasury's share. The SOV minting matches the value
-        // contributed to the treasury.
+        // ── Event-driven SOV minting ─────────────────────────────────────
+        // The 20% SOV treasury portion represents real SOV value entering
+        // the treasury. The same amount of SOV is minted as new supply —
+        // matching the value contributed.
         let sov_to_mint = sov_treasury_credit;
         if sov_to_mint > 0 {
-            // Credit the SOV treasury address with the newly minted SOV.
-            // The treasury address is the fee_sink (DAO treasury).
             let treasury_addr = *self.fee_model.protocol_params.fee_sink_address();
             mutator.credit_token(
                 &Self::canonical_sov_token_id(),
                 &treasury_addr,
                 sov_to_mint,
             )?;
-            // Track total SOV minted via on-ramp for audit.
             econ.total_sov_minted = econ
                 .total_sov_minted
                 .checked_add(sov_to_mint)
                 .unwrap_or(econ.total_sov_minted);
-            // Re-persist econ with updated total_sov_minted.
             mutator.put_cbe_economic_state(&econ)?;
         }
 
@@ -1995,6 +1987,149 @@ impl BlockExecutor {
                 stable_received: sov_out,
             },
         ))
+    }
+
+    /// Apply a payroll mint — synthetic CBE bonding curve event (spec §6).
+    ///
+    /// Mints `amount_cbe` (X) CBE to the collaborator wallet and 0.25X to the SOV
+    /// treasury address.  Records a PRE_BACKED entry for the full 1.25X gross.
+    /// No SOV enters the system — `s_c` does not change, `reserve_balance` is
+    /// unaffected, and the floor price remains stable.
+    fn apply_payroll_mint(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        block_height: u64,
+    ) -> Result<(), TxApplyError> {
+        use crate::contracts::bonding_curve::canonical::{compute_debt_state, DEBT_CEILING};
+        use crate::transaction::core::ProcessPayrollData;
+
+        let data: &ProcessPayrollData = tx
+            .process_payroll_data()
+            .ok_or_else(|| {
+                TxApplyError::InvalidType("ProcessPayroll missing payload".to_string())
+            })?;
+
+        let amount_cbe = data.amount_cbe;
+        let collaborator = data.collaborator_address;
+        let deliverable_hash = data.deliverable_hash;
+
+        if amount_cbe == 0 {
+            return Err(TxApplyError::InvalidType(
+                "PAYROLL_MINT: amount_cbe must be > 0".to_string(),
+            ));
+        }
+
+        // ── 1. Compute gross mint (1.25X) and split ─────────────────────────
+        use crate::contracts::bonding_curve::canonical::{
+            PAYROLL_GROSS_DEN, PAYROLL_GROSS_NUM, PAYROLL_SOV_TREASURY_DIVISOR,
+        };
+
+        let gross = amount_cbe
+            .checked_mul(PAYROLL_GROSS_NUM)
+            .and_then(|v| v.checked_div(PAYROLL_GROSS_DEN))
+            .ok_or_else(|| {
+                TxApplyError::InvalidType("PAYROLL_MINT: gross overflow".to_string())
+            })?;
+
+        // 0.25X → SOV treasury (held as CBE, not swapped)
+        let sov_treasury_credit = gross / PAYROLL_SOV_TREASURY_DIVISOR;
+        // Remaining X split: 40% reserve, 60% liquidity — but these are CBE-denominated
+        // obligations, not SOV. The actual reserve_balance (SOV) doesn't change because
+        // no SOV entered. We track the obligation via PRE_BACKED.
+
+        // ── 2. Debt ceiling check ───────────────────────────────────────────
+        let mut econ = mutator.get_cbe_economic_state()?;
+
+        let new_outstanding = econ
+            .outstanding_pre_backed
+            .checked_add(gross)
+            .ok_or_else(|| {
+                TxApplyError::InvalidType("PAYROLL_MINT: outstanding overflow".to_string())
+            })?;
+
+        if new_outstanding > DEBT_CEILING {
+            return Err(TxApplyError::InvalidType(format!(
+                "PAYROLL_MINT: debt ceiling breached — outstanding {} + gross {} > ceiling {}",
+                econ.outstanding_pre_backed, gross, DEBT_CEILING
+            )));
+        }
+
+        // ── 3. Update compensation pool (tracks CBE allocated to collaborators)
+        econ.compensation_pool
+            .mint(amount_cbe)
+            .map_err(|e| TxApplyError::InvalidType(format!("PAYROLL_MINT: compensation pool: {e}")))?;
+
+        // ── 4. Update SOV treasury CBE balance ──────────────────────────────
+        econ.sov_treasury_cbe_balance = econ
+            .sov_treasury_cbe_balance
+            .checked_add(sov_treasury_credit)
+            .ok_or_else(|| {
+                TxApplyError::InvalidType("PAYROLL_MINT: sov_treasury overflow".to_string())
+            })?;
+
+        // ── 5. Record PRE_BACKED entry ──────────────────────────────────────
+        econ.pre_backed_queue.push(lib_types::PreBackedEntry {
+            block_height,
+            amount_cbe: gross,
+            recipient: collaborator,
+            deliverable_hash,
+            satisfied: false,
+        });
+        econ.outstanding_pre_backed = new_outstanding;
+        econ.debt_state = compute_debt_state(new_outstanding);
+
+        // ── 5b. SOVRN audit token (#2129) ───────────────────────────────────
+        // For payroll, 60% of X goes to liquidity as CBE obligation.
+        // SOVRN = liquidity_cbe × P(S_c) / SCALE  (SOV-denominated value).
+        {
+            use crate::contracts::bonding_curve::canonical::{price_at_supply, SCALE};
+            use crate::contracts::utils::u256_to_u128;
+            use primitive_types::U256;
+
+            let liquidity_cbe = amount_cbe * crate::contracts::bonding_curve::canonical::PAYROLL_LIQUIDITY_PCT / 100;
+            let price = price_at_supply(econ.s_c);
+            let sovrn_mint = U256::from(liquidity_cbe)
+                .checked_mul(U256::from(price))
+                .unwrap_or(U256::zero())
+                / U256::from(SCALE);
+            econ.sovrn_total_supply = econ
+                .sovrn_total_supply
+                .saturating_add(u256_to_u128(sovrn_mint).unwrap_or(0));
+        }
+
+        // ── 6. Persist economic state ───────────────────────────────────────
+        mutator.put_cbe_economic_state(&econ)?;
+
+        // ── 7. Credit CBE tokens ────────────────────────────────────────────
+        let cbe_token_id = TokenId::new(crate::Blockchain::derive_cbe_token_id_pub());
+
+        // X CBE → collaborator wallet
+        mutator.credit_token(
+            &cbe_token_id,
+            &Address::new(collaborator),
+            amount_cbe,
+        )?;
+
+        // 0.25X CBE → SOV treasury address
+        let treasury_addr = *self.fee_model.protocol_params.fee_sink_address();
+        mutator.credit_token(
+            &cbe_token_id,
+            &treasury_addr,
+            sov_treasury_credit,
+        )?;
+
+        tracing::info!(
+            "PAYROLL_MINT: collaborator={} amount_cbe={} gross={} treasury_credit={} deliverable={} outstanding={}",
+            hex::encode(&collaborator[..4]),
+            amount_cbe,
+            gross,
+            sov_treasury_credit,
+            hex::encode(&deliverable_hash[..4]),
+            new_outstanding,
+        );
+
+        Ok(())
     }
 
     /// Apply a TreasuryAllocation transaction — transfer SOV from source treasury
@@ -2185,25 +2320,6 @@ impl BlockExecutor {
         );
 
         Ok(())
-    }
-
-    fn canonical_bonding_curve_envelope_from_transaction(
-        &self,
-        tx: &crate::transaction::Transaction,
-    ) -> Result<CanonicalBondingCurveEnvelope, TxApplyError> {
-        let payload: [u8; BONDING_CURVE_TX_PAYLOAD_LEN] =
-            tx.memo.as_slice().try_into().map_err(|_| {
-                TxApplyError::InvalidType(format!(
-                    "Canonical curve payload must be exactly {} bytes, got {}",
-                    BONDING_CURVE_TX_PAYLOAD_LEN,
-                    tx.memo.len()
-                ))
-            })?;
-
-        Ok(CanonicalBondingCurveEnvelope {
-            payload,
-            signature: tx.signature.clone(),
-        })
     }
 
     fn apply_canonical_bonding_curve_envelope(
@@ -2494,13 +2610,17 @@ impl BlockExecutor {
             | TransactionType::GovernanceConfigUpdate
             | TransactionType::UpdateOracleCommittee
             | TransactionType::UpdateOracleConfig
-            // Employment and payroll transactions: state is maintained in-memory by
-            // process_employment_contract_transactions and process_payroll_transactions
-            // (called after executor.apply_block in process_and_commit_block). The executor
-            // accepts them as no-ops so blocks containing these types don't fail validation.
+            // Employment contract creation and CBE init: state is maintained in-memory by
+            // process_employment_contract_transactions (called after executor.apply_block
+            // in process_and_commit_block). The executor accepts them as no-ops so blocks
+            // containing these types don't fail validation.
             | TransactionType::InitCbeToken
-            | TransactionType::CreateEmploymentContract
-            | TransactionType::ProcessPayroll => Ok(TxOutcome::LegacySystem),
+            | TransactionType::CreateEmploymentContract => Ok(TxOutcome::LegacySystem),
+
+            TransactionType::ProcessPayroll => {
+                self.apply_payroll_mint(mutator, tx, block_height)?;
+                Ok(TxOutcome::PayrollMint)
+            }
 
             TransactionType::DaoStake => {
                 self.apply_dao_stake(mutator, tx, block_height)?;
@@ -2519,13 +2639,7 @@ impl BlockExecutor {
             TransactionType::BondingCurveDeploy => Ok(TxOutcome::BondingCurveDeploy),
             TransactionType::BondingCurveGraduate => Ok(TxOutcome::BondingCurveGraduate),
             TransactionType::BondingCurveBuy => {
-                // Type-mismatch guard: reject SELL payloads before full pre-validation.
-                if tx.memo.first() == Some(&BONDING_CURVE_SELL_ACTION) {
-                    return Err(TxApplyError::InvalidType(
-                        "Canonical SELL_CBE payload cannot execute as BondingCurveBuy".to_string(),
-                    ));
-                }
-                let envelope = self.canonical_bonding_curve_envelope_from_transaction(tx)?;
+                let envelope = extract_bonding_curve_envelope(tx, true)?;
                 match self.apply_canonical_bonding_curve_envelope(mutator, &envelope)? {
                     CanonicalBondingCurveOutcome::Buy(outcome) => {
                         Ok(TxOutcome::BondingCurveBuy(outcome))
@@ -2536,13 +2650,7 @@ impl BlockExecutor {
                 }
             }
             TransactionType::BondingCurveSell => {
-                // Type-mismatch guard: reject BUY payloads before full pre-validation.
-                if tx.memo.first() == Some(&BONDING_CURVE_BUY_ACTION) {
-                    return Err(TxApplyError::InvalidType(
-                        "Canonical BUY_CBE payload cannot execute as BondingCurveSell".to_string(),
-                    ));
-                }
-                let envelope = self.canonical_bonding_curve_envelope_from_transaction(tx)?;
+                let envelope = extract_bonding_curve_envelope(tx, false)?;
                 match self.apply_canonical_bonding_curve_envelope(mutator, &envelope)? {
                     CanonicalBondingCurveOutcome::Sell(outcome) => {
                         Ok(TxOutcome::BondingCurveSell(outcome))
@@ -2668,6 +2776,8 @@ enum TxOutcome {
     Coinbase(CoinbaseOutcome),
     /// Treasury allocation: SOV transferred from source treasury to destination wallet.
     TreasuryAllocation,
+    /// Payroll mint: synthetic curve event that mints CBE to a collaborator.
+    PayrollMint,
     /// Legacy system transaction types (IdentityRegistration, WalletRegistration, etc.)
     /// accepted as no-ops by the Phase-2 executor for backwards compatibility.
     LegacySystem,
@@ -2769,6 +2879,98 @@ pub struct OracleAttestationOutcome {
 }
 
 // =============================================================================
+// BUY_CBE helper functions
+// =============================================================================
+
+/// Compute the on-ramp split for a BUY_CBE transaction.
+///
+/// Returns `(sov_treasury_credit, reserve_credit, liquidity_credit)`.
+/// Liquidity gets the remainder so integer rounding never loses atoms.
+fn compute_onramp_split(amount_in: u128) -> (u128, u128, u128) {
+    use crate::contracts::bonding_curve::canonical::{RESERVE_SHARE_PCT, SOV_TREASURY_SHARE_PCT};
+
+    let sov_treasury_credit = amount_in * SOV_TREASURY_SHARE_PCT / 100;
+    let reserve_credit = amount_in * RESERVE_SHARE_PCT / 100;
+    let liquidity_credit = amount_in - sov_treasury_credit - reserve_credit;
+    (sov_treasury_credit, reserve_credit, liquidity_credit)
+}
+
+/// Validate per-transaction minting limits and slippage for a BUY_CBE.
+fn validate_buy_limits(
+    amount_in: u128,
+    delta_s: u128,
+    max_price: u128,
+    _s_c: u128,
+) -> Result<(), TxApplyError> {
+    use crate::contracts::bonding_curve::canonical::{MAX_DELTA_S_PER_TX, SCALE};
+    use primitive_types::U256;
+
+    if delta_s == 0 {
+        return Err(TxApplyError::InvalidType(
+            "BUY_CBE: zero tokens minted for given reserve credit".to_string(),
+        ));
+    }
+
+    if delta_s > MAX_DELTA_S_PER_TX {
+        return Err(TxApplyError::InvalidType(format!(
+            "BUY_CBE: delta_s {delta_s} exceeds MAX_DELTA_S_PER_TX"
+        )));
+    }
+
+    // Slippage: effective = amount_in * SCALE / delta_s; use U256 to avoid overflow.
+    let effective = U256::from(amount_in)
+        .checked_mul(U256::from(SCALE))
+        .ok_or_else(|| {
+            TxApplyError::InvalidType(
+                "BUY_CBE: slippage overflow in amount_in * SCALE".to_string(),
+            )
+        })?
+        / U256::from(delta_s);
+    if effective > U256::from(max_price) {
+        return Err(TxApplyError::InvalidType(format!(
+            "BUY_CBE: slippage — effective price {effective} > max_price {max_price}"
+        )));
+    }
+
+    Ok(())
+}
+
+/// Extract and validate the canonical bonding-curve envelope from a
+/// `BondingCurveBuy` or `BondingCurveSell` transaction, including the
+/// type-mismatch guard that rejects cross-type payloads.
+fn extract_bonding_curve_envelope(
+    tx: &crate::transaction::Transaction,
+    expected_buy: bool,
+) -> Result<CanonicalBondingCurveEnvelope, TxApplyError> {
+    // Type-mismatch guard.
+    let first_byte = tx.memo.first().copied();
+    if expected_buy && first_byte == Some(BONDING_CURVE_SELL_ACTION) {
+        return Err(TxApplyError::InvalidType(
+            "Canonical SELL_CBE payload cannot execute as BondingCurveBuy".to_string(),
+        ));
+    }
+    if !expected_buy && first_byte == Some(BONDING_CURVE_BUY_ACTION) {
+        return Err(TxApplyError::InvalidType(
+            "Canonical BUY_CBE payload cannot execute as BondingCurveSell".to_string(),
+        ));
+    }
+
+    let payload: [u8; BONDING_CURVE_TX_PAYLOAD_LEN] =
+        tx.memo.as_slice().try_into().map_err(|_| {
+            TxApplyError::InvalidType(format!(
+                "Canonical curve payload must be exactly {} bytes, got {}",
+                BONDING_CURVE_TX_PAYLOAD_LEN,
+                tx.memo.len()
+            ))
+        })?;
+
+    Ok(CanonicalBondingCurveEnvelope {
+        payload,
+        signature: tx.signature.clone(),
+    })
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -2856,6 +3058,9 @@ mod tests {
         // #1927: genesis must explicitly persist the canonical CBE economic
         // zero-state so reads after block 0 return a concrete record rather
         // than an implicit fallback default.
+        // #2127: genesis now includes the 20B treasury allocation (off-curve).
+        use crate::contracts::bonding_curve::canonical::GENESIS_TREASURY_ALLOCATION;
+
         let store = create_test_store();
         let executor = BlockExecutor::with_store(store.clone());
 
@@ -2863,8 +3068,11 @@ mod tests {
         executor.apply_block(&genesis).unwrap();
 
         let state = store.get_cbe_economic_state().unwrap();
-        assert_eq!(state, lib_types::BondingCurveEconomicState::default());
-        assert_eq!(state.s_c, 0);
+        let mut expected = lib_types::BondingCurveEconomicState::default();
+        expected.genesis_treasury_allocation = GENESIS_TREASURY_ALLOCATION;
+        assert_eq!(state, expected);
+        assert_eq!(state.s_c, 0); // off-curve: S_c stays 0
+        assert_eq!(state.genesis_treasury_allocation, GENESIS_TREASURY_ALLOCATION);
         assert!(!state.graduated);
         assert!(!state.sell_enabled);
     }
@@ -4310,6 +4518,7 @@ mod tests {
                 total_sov_minted: 0,
                 graduated: false,
                 sell_enabled: false,
+                ..Default::default()
             })
             .unwrap();
         }
@@ -4520,6 +4729,7 @@ mod tests {
                 total_sov_minted: 0,
                 graduated: false,
                 sell_enabled: true,
+                ..Default::default()
             })
             .unwrap();
         }

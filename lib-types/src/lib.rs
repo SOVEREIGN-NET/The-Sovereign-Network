@@ -23,7 +23,8 @@ pub use primitives::{Address, Amount, BlockHash, BlockHeight, Bps, TokenId, TxHa
 
 pub use bonding_curve::{
     BondingCurveAccountState, BondingCurveBand, BondingCurveBuyReceipt, BondingCurveBuyTx,
-    BondingCurveEconomicState, BondingCurveSellReceipt, BondingCurveSellTx, Nonce48,
+    BondingCurveEconomicState, BondingCurveSellReceipt, BondingCurveSellTx, DebtState, Nonce48,
+    PoolState, PreBackedEntry,
 };
 pub use chunk::*;
 pub use consensus::{

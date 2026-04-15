@@ -549,6 +549,15 @@ pub enum IdentityAction {
         #[arg(long)]
         retain_until_ttl: bool,
     },
+    /// Import identity from .zkdid backup file
+    Import {
+        /// Path to .zkdid backup file
+        #[arg(short, long)]
+        file: String,
+        /// Path to keystore directory
+        #[arg(short, long)]
+        keystore: Option<String>,
+    },
 }
 
 /// Network operation commands
@@ -1211,6 +1220,20 @@ pub enum DomainAction {
         #[command(flatten)]
         trust: TrustFlags,
     },
+
+    /// List all domains from the catalog
+    Catalog {
+        /// Output file (JSON). Stdout if not specified.
+        #[arg(short, long)]
+        output: Option<String>,
+
+        /// Path to identity keystore directory
+        #[arg(short, long)]
+        keystore: Option<String>,
+
+        #[command(flatten)]
+        trust: TrustFlags,
+    },
 }
 
 /// Man page generation
@@ -1380,11 +1403,20 @@ pub enum CbeAction {
         #[arg(long, default_value = "0")]
         profit_share_bp: u16,
     },
-    /// Process a payroll period for an employment contract
+    /// Process a payroll period for an employment contract (synthetic curve event)
     Payroll {
         /// 32-byte hex employment contract ID
         #[arg(long)]
         contract_id: String,
+        /// CBE amount the collaborator earns (X, in 18-decimal atoms)
+        #[arg(long)]
+        amount_cbe: u128,
+        /// Collaborator wallet address (32-byte hex key_id)
+        #[arg(long)]
+        collaborator: String,
+        /// Blake3 hash of the governance-approved deliverable (32-byte hex)
+        #[arg(long)]
+        deliverable_hash: String,
     },
     /// Transfer CBE tokens from your wallet to another
     ///
