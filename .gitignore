@@ -109,3 +109,9 @@ cbe_transfers_*.csv
 tools/*/target/
 tools/sled-identity-export/state-export.json
 tools/sled-identity-export/state-snapshot.json
+
+# Sensitive keys — NEVER commit
+keys/
+tmp/keystore*
+tmp/zhtp-keystore*
+*.zkdid.json
