@@ -277,8 +277,25 @@ pub async fn handle_cbe_command_with_output<O: Output>(
             amount_cbe,
             collaborator,
             deliverable_hash,
+            keystore,
         } => {
-            let identity = load_identity()?;
+            let identity = match keystore {
+                Some(ref path) => {
+                    let loaded = load_identity_from_keystore(&PathBuf::from(path))?;
+                    zhtp_client::Identity {
+                        did: loaded.identity.did.clone(),
+                        public_key: loaded.identity.public_key.dilithium_pk.to_vec(),
+                        private_key: loaded.keypair.private_key.dilithium_sk.to_vec(),
+                        kyber_public_key: loaded.identity.public_key.kyber_pk.to_vec(),
+                        kyber_secret_key: loaded.keypair.private_key.kyber_sk.to_vec(),
+                        node_id: loaded.identity.node_id.as_bytes().to_vec(),
+                        device_id: loaded.identity.primary_device.clone(),
+                        recovery_entropy: loaded.keypair.private_key.master_seed.to_vec(),
+                        created_at: loaded.identity.created_at,
+                    }
+                }
+                None => load_identity()?,
+            };
             let contract_id_bytes = parse_hex32(&contract_id, "--contract-id")?;
             let collaborator_bytes = parse_hex32(&collaborator, "--collaborator")?;
             let deliverable_bytes = parse_hex32(&deliverable_hash, "--deliverable-hash")?;

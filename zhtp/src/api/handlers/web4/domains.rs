@@ -966,11 +966,14 @@ impl Web4Handler {
                 ));
             }
 
-            let owner_wallet_pubkey =
-                lib_blockchain::integration::crypto_integration::PublicKey::new(
-                    owner_wallet.public_key.as_slice().try_into().unwrap_or([0u8; 2592]),
-                );
-            if fee_payment_tx.signature.public_key.key_id != owner_wallet_pubkey.key_id {
+            // Compare dilithium_pk directly: the wallet registry stores only the
+            // dilithium public key (2592 bytes), not the full composite key. Constructing
+            // a PublicKey from it would zero the kyber_pk, producing a different key_id
+            // than the transaction signature which carries both dilithium + kyber components.
+            let sig_dilithium = fee_payment_tx.signature.public_key.dilithium_pk.as_slice();
+            if owner_wallet.public_key.len() != 2592
+                || owner_wallet.public_key.as_slice() != sig_dilithium
+            {
                 return Err(anyhow!(
                     "fee_payment_tx signature does not match owner Primary wallet public key"
                 ));

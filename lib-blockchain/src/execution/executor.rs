@@ -2032,7 +2032,10 @@ impl BlockExecutor {
         tx: &crate::transaction::Transaction,
         block_height: u64,
     ) -> Result<(), TxApplyError> {
-        use crate::contracts::bonding_curve::canonical::{compute_debt_state, DEBT_CEILING};
+        use crate::contracts::bonding_curve::canonical::{
+            compute_debt_state, DEBT_CEILING, PAYROLL_GROSS_DEN, PAYROLL_GROSS_NUM,
+            PAYROLL_RESERVE_PCT, PAYROLL_TREASURY_PCT,
+        };
         use crate::transaction::core::ProcessPayrollData;
 
         let data: &ProcessPayrollData = tx
@@ -2041,7 +2044,7 @@ impl BlockExecutor {
                 TxApplyError::InvalidType("ProcessPayroll missing payload".to_string())
             })?;
 
-        let amount_cbe = data.amount_cbe;
+        let amount_cbe = data.amount_cbe; // X — what the collaborator earns
         let collaborator = data.collaborator_address;
         let deliverable_hash = data.deliverable_hash;
 
@@ -2051,10 +2054,13 @@ impl BlockExecutor {
             ));
         }
 
-        // ── 1. Compute gross mint (1.25X) and split ─────────────────────────
-        use crate::contracts::bonding_curve::canonical::{
-            PAYROLL_GROSS_DEN, PAYROLL_GROSS_NUM, PAYROLL_SOV_TREASURY_DIVISOR,
-        };
+        // ── 1. Compute gross mint (≈2.083X) and split ───────────────────────
+        //
+        // gross = X × 25 / 12  (X / 0.48)
+        //   20% gross → SOV treasury (DAO tax, held as CBE)
+        //   32% gross → locked reserve (backs floor price)
+        //   collaborator receives exactly X (the amount they earned)
+        //   rounding dust (0–1 atoms) goes to reserve (backs floor price)
 
         let gross = amount_cbe
             .checked_mul(PAYROLL_GROSS_NUM)
@@ -2063,13 +2069,13 @@ impl BlockExecutor {
                 TxApplyError::InvalidType("PAYROLL_MINT: gross overflow".to_string())
             })?;
 
-        // 0.25X → SOV treasury (held as CBE, not swapped)
-        let sov_treasury_credit = gross / PAYROLL_SOV_TREASURY_DIVISOR;
-        // Remaining X split: 40% reserve, 60% liquidity — but these are CBE-denominated
-        // obligations, not SOV. The actual reserve_balance (SOV) doesn't change because
-        // no SOV entered. We track the obligation via PRE_BACKED.
+        let treasury_credit = gross * PAYROLL_TREASURY_PCT / 100;     // 20%
+        let base_reserve = gross * PAYROLL_RESERVE_PCT / 100;         // 32%
+        let collaborator_credit = amount_cbe;                         // exactly X
+        let rounding_dust = gross - treasury_credit - base_reserve - collaborator_credit;
+        let reserve_credit = base_reserve + rounding_dust;            // 32% + dust
 
-        // ── 2. Debt ceiling check ───────────────────────────────────────────
+        // ── 2. Debt ceiling check (against gross) ───────────────────────────
         let mut econ = mutator.get_cbe_economic_state()?;
 
         let new_outstanding = econ
@@ -2086,20 +2092,29 @@ impl BlockExecutor {
             )));
         }
 
-        // ── 3. Update compensation pool (tracks CBE allocated to collaborators)
+        // ── 3. Update pools ─────────────────────────────────────────────────
+        // Compensation pool tracks what collaborators received.
         econ.compensation_pool
-            .mint(amount_cbe)
+            .mint(collaborator_credit)
             .map_err(|e| TxApplyError::InvalidType(format!("PAYROLL_MINT: compensation pool: {e}")))?;
 
-        // ── 4. Update SOV treasury CBE balance ──────────────────────────────
+        // SOV treasury CBE balance (20% of gross).
         econ.sov_treasury_cbe_balance = econ
             .sov_treasury_cbe_balance
-            .checked_add(sov_treasury_credit)
+            .checked_add(treasury_credit)
             .ok_or_else(|| {
                 TxApplyError::InvalidType("PAYROLL_MINT: sov_treasury overflow".to_string())
             })?;
 
-        // ── 5. Record PRE_BACKED entry ──────────────────────────────────────
+        // Locked reserve (32% of gross — backs floor price).
+        econ.reserve_balance = econ
+            .reserve_balance
+            .checked_add(reserve_credit)
+            .ok_or_else(|| {
+                TxApplyError::InvalidType("PAYROLL_MINT: reserve overflow".to_string())
+            })?;
+
+        // ── 4. Record PRE_BACKED entry ──────────────────────────────────────
         econ.pre_backed_queue.push(lib_types::PreBackedEntry {
             block_height,
             amount_cbe: gross,
@@ -2110,17 +2125,17 @@ impl BlockExecutor {
         econ.outstanding_pre_backed = new_outstanding;
         econ.debt_state = compute_debt_state(new_outstanding);
 
-        // ── 5b. SOVRN audit token (#2129) ───────────────────────────────────
-        // For payroll, 60% of X goes to liquidity as CBE obligation.
-        // SOVRN = liquidity_cbe × P(S_c) / SCALE  (SOV-denominated value).
+        // ── 5. SOVRN audit token ────────────────────────────────────────────
+        // SOVRN tracks value-weighted liquidity. For payroll the reserve portion
+        // (32% of gross) is the value that backs the floor.
+        // SOVRN_mint = reserve_credit × P(S_c) / SCALE
         {
             use crate::contracts::bonding_curve::canonical::{price_at_supply, SCALE};
             use crate::contracts::utils::u256_to_u128;
             use primitive_types::U256;
 
-            let liquidity_cbe = amount_cbe * crate::contracts::bonding_curve::canonical::PAYROLL_LIQUIDITY_PCT / 100;
             let price = price_at_supply(econ.s_c);
-            let sovrn_mint = U256::from(liquidity_cbe)
+            let sovrn_mint = U256::from(reserve_credit)
                 .checked_mul(U256::from(price))
                 .unwrap_or(U256::zero())
                 / U256::from(SCALE);
@@ -2135,27 +2150,33 @@ impl BlockExecutor {
         // ── 7. Credit CBE tokens ────────────────────────────────────────────
         let cbe_token_id = TokenId::new(crate::Blockchain::derive_cbe_token_id_pub());
 
-        // X CBE → collaborator wallet
+        // 48% gross (≈ X) → collaborator wallet
         mutator.credit_token(
             &cbe_token_id,
             &Address::new(collaborator),
-            amount_cbe,
+            collaborator_credit,
         )?;
 
-        // 0.25X CBE → SOV treasury address
+        // 20% gross → SOV treasury address (held as CBE)
         let treasury_addr = *self.fee_model.protocol_params.fee_sink_address();
         mutator.credit_token(
             &cbe_token_id,
             &treasury_addr,
-            sov_treasury_credit,
+            treasury_credit,
         )?;
 
+        // 32% gross → locked reserve (no token credit — reserve is an accounting
+        // entry in BondingCurveEconomicState, not a wallet balance; it backs the
+        // floor price and is only released at graduation or sell-back redemption).
+
         tracing::info!(
-            "PAYROLL_MINT: collaborator={} amount_cbe={} gross={} treasury_credit={} deliverable={} outstanding={}",
+            "PAYROLL_MINT: collaborator={} X={} gross={} treasury={} reserve={} collab_credit={} deliverable={} outstanding={}",
             hex::encode(&collaborator[..4]),
             amount_cbe,
             gross,
-            sov_treasury_credit,
+            treasury_credit,
+            reserve_credit,
+            collaborator_credit,
             hex::encode(&deliverable_hash[..4]),
             new_outstanding,
         );

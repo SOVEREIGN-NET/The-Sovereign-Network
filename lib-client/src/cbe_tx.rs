@@ -50,7 +50,10 @@ pub fn build_init_cbe_token_tx(
     chain_id: u8,
     block_height: u64,
 ) -> Result<String, String> {
-    let signer_pk = crate::token_tx::create_public_key(identity.public_key.clone());
+    let signer_pk = crate::token_tx::create_public_key_with_kyber(
+        identity.public_key.clone(),
+        identity.kyber_public_key.clone(),
+    );
     let now = now_secs();
 
     let mut tx = Transaction::new_init_cbe_token(
@@ -101,14 +104,17 @@ pub fn build_create_employment_contract_tx(
     dao_id: [u8; 32],
     employee_key_id: [u8; 32],
     contract_type: u8,
-    compensation_amount: u64,
+    compensation_amount: u128,
     payment_period: u8,
     tax_rate_basis_points: u16,
     tax_jurisdiction: String,
     profit_share_percentage: u16,
     chain_id: u8,
 ) -> Result<String, String> {
-    let signer_pk = crate::token_tx::create_public_key(identity.public_key.clone());
+    let signer_pk = crate::token_tx::create_public_key_with_kyber(
+        identity.public_key.clone(),
+        identity.kyber_public_key.clone(),
+    );
     let now = now_secs();
 
     let mut tx = Transaction::new_create_employment_contract(
@@ -142,12 +148,13 @@ pub fn build_create_employment_contract_tx(
 
 /// Build a signed `ProcessPayroll` transaction (CBE bonding curve §6 payroll mint).
 ///
-/// Triggers a synthetic curve event: mints `amount_cbe` (X) to the collaborator
-/// and routes 0.25X to the SOV treasury, recording a PRE_BACKED entry for the
-/// full 1.25X gross.
+/// Triggers a synthetic curve event: gross ≈ 2.083X CBE is minted and split
+/// 20% SOV treasury / 32% locked reserve / 48% collaborator (= X).
+/// A PRE_BACKED entry is recorded for the full gross.  Signer must be a
+/// Bootstrap Council member (governance guard).
 ///
 /// # Arguments
-/// - `identity`              — Signer (compensation pool controller or CBE DAO executor)
+/// - `identity`              — Signer (must be Bootstrap Council member)
 /// - `contract_id`           — 32-byte employment contract identifier
 /// - `amount_cbe`            — CBE amount the collaborator earns (X, 18-decimal atoms)
 /// - `collaborator_address`  — Wallet address that receives X CBE
@@ -164,7 +171,10 @@ pub fn build_process_payroll_tx(
     deliverable_hash: [u8; 32],
     chain_id: u8,
 ) -> Result<String, String> {
-    let signer_pk = crate::token_tx::create_public_key(identity.public_key.clone());
+    let signer_pk = crate::token_tx::create_public_key_with_kyber(
+        identity.public_key.clone(),
+        identity.kyber_public_key.clone(),
+    );
     let now = now_secs();
 
     let mut tx = Transaction::new_process_payroll(

@@ -84,10 +84,11 @@ pub const STRATEGIC_RESERVE_CEILING: u128 = 100_000_000 * SCALE; // 100M CBE
 
 // ── Debt ceiling and safety valves (Feature #2125) ─────────────────────────
 //
-// Maximum genesis payroll debt in CBE atoms (71M × 10^18).
+// Maximum gross payroll debt in CBE atoms (147.9M × 10^18).
+// Equivalent to 71M collaborator-received CBE (147.9M × 0.48 ≈ 71M).
 // Protocol invariant — cannot be raised by governance.
 
-pub const DEBT_CEILING: u128 = 71_000_000 * SCALE;
+pub const DEBT_CEILING: u128 = 147_900_000 * SCALE;
 
 /// Genesis treasury allocation — 20B CBE minted off-curve to SOV treasury.
 ///
@@ -127,13 +128,26 @@ pub const SOV_TREASURY_SHARE_PCT: u128 = 20;
 pub const RESERVE_SHARE_PCT: u128 = 32;
 // Liquidity gets the remainder: 100 - 20 - 32 = 48
 
-/// Payroll mint multiplier: gross = amount_cbe * PAYROLL_GROSS_NUM / PAYROLL_GROSS_DEN (1.25X).
-pub const PAYROLL_GROSS_NUM: u128 = 125;
-pub const PAYROLL_GROSS_DEN: u128 = 100;
-/// Payroll SOV treasury share: 1/5 of gross (= 0.25X of the base).
-pub const PAYROLL_SOV_TREASURY_DIVISOR: u128 = 5;
-/// Payroll liquidity share: 60% of the base amount for SOVRN audit.
-pub const PAYROLL_LIQUIDITY_PCT: u128 = 60;
+// ── Payroll mint constants (CBE spec §6) ──────────────────────────────────
+//
+// Collaborator receives X CBE.  X = 48% of gross (60% of the 80% backing
+// portion).  Working backward: gross = X / 0.48 = X × 25 / 12 ≈ 2.083X.
+//
+// Split of gross:
+//   20% → SOV treasury  (DAO tax, held as CBE)
+//   32% → locked reserve (40% of 80%, backs floor price)
+//   48% → collaborator   (60% of 80%, the X they earned)
+
+/// Payroll gross multiplier numerator: gross = X × 25 / 12 (≈ 2.083X).
+pub const PAYROLL_GROSS_NUM: u128 = 25;
+/// Payroll gross multiplier denominator.
+pub const PAYROLL_GROSS_DEN: u128 = 12;
+/// Payroll SOV treasury share: 20% of gross.
+pub const PAYROLL_TREASURY_PCT: u128 = 20;
+/// Payroll locked reserve share: 32% of gross.
+pub const PAYROLL_RESERVE_PCT: u128 = 32;
+/// Payroll collaborator share: 48% of gross (= X, rounds down).
+pub const PAYROLL_COLLABORATOR_PCT: u128 = 48;
 
 // ── Upgrade-gated curve parameters ──────────────────────────────────────────
 //

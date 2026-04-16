@@ -1387,9 +1387,9 @@ pub enum CbeAction {
         /// Contract type: 0 = PublicAccess, 1 = Employment
         #[arg(long, default_value = "1")]
         contract_type: u8,
-        /// Per-period compensation in base units
+        /// Per-period compensation in CBE atomic units (18 decimals)
         #[arg(long)]
-        compensation: u64,
+        compensation: u128,
         /// Payment period: 0 = Monthly, 1 = Quarterly, 2 = Annually
         #[arg(long, default_value = "0")]
         period: u8,
@@ -1417,6 +1417,9 @@ pub enum CbeAction {
         /// Blake3 hash of the governance-approved deliverable (32-byte hex)
         #[arg(long)]
         deliverable_hash: String,
+        /// Path to keystore directory (default: ~/.zhtp/keystore)
+        #[arg(long)]
+        keystore: Option<String>,
     },
     /// Transfer CBE tokens from your wallet to another
     ///
