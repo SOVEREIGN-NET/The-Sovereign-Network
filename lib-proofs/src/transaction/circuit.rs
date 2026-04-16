@@ -7,9 +7,85 @@
 //!      in the Merkle tree with root `merkle_root` at `leaf_index`.
 
 /// Fixed Merkle tree depth for the UTXO set.
-/// Production will use a larger depth (e.g. 32-40); 4 is used here
-/// to keep tests and benchmarks fast while proving the concept.
 pub const MERKLE_DEPTH: usize = 32;
+
+/// Convert a Poseidon hash ([u64; 4]) to its 32-byte LE representation.
+/// This is the format stored in the sled Merkle tree.
+pub fn hash_to_bytes(hash: [u64; 4]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    for (i, &elem) in hash.iter().enumerate() {
+        out[i * 8..(i + 1) * 8].copy_from_slice(&elem.to_le_bytes());
+    }
+    out
+}
+
+/// Convert a 32-byte LE representation back to a Poseidon hash ([u64; 4]).
+pub fn bytes_to_hash(bytes: [u8; 32]) -> [u64; 4] {
+    let mut hash = [0u64; 4];
+    for i in 0..4 {
+        hash[i] = u64::from_le_bytes([
+            bytes[i * 8],
+            bytes[i * 8 + 1],
+            bytes[i * 8 + 2],
+            bytes[i * 8 + 3],
+            bytes[i * 8 + 4],
+            bytes[i * 8 + 5],
+            bytes[i * 8 + 6],
+            bytes[i * 8 + 7],
+        ]);
+    }
+    hash
+}
+
+/// Derive deterministic UTXO secrets (nullifier_seed, sender_secret) for a given output.
+///
+/// The secrets are derived from the sender's private key material and the recipient's
+/// public key_id, making them:
+/// - Deterministic: same inputs always produce the same secrets
+/// - Recoverable: anyone with the sender's dilithium_sk + the public tx data can recompute
+/// - Independent of tx_hash: avoids circular dependency (hash depends on merkle_leaf,
+///   merkle_leaf depends on secrets, secrets must not depend on hash)
+///
+/// The `nonce` breaks uniqueness across multiple outputs to the same recipient.
+/// Typically `nonce = output_index` or a random value stored in the output's `note` field.
+///
+/// Returns `(nullifier_seed: u64, sender_secret: u64)` — the two private witnesses
+/// needed for the Poseidon leaf commitment and later ZK proof generation.
+pub fn derive_utxo_secrets(
+    sender_dilithium_sk: &[u8],
+    recipient_key_id: &[u8; 32],
+    nonce: u64,
+) -> (u64, u64) {
+    // Domain-separated key derivation using blake3 via lib-crypto.
+    // Uses the sender's SECRET key so only the sender can derive the original secrets.
+    // The recipient recovers them via the encrypted note (future: Kyber), or in the
+    // current non-private mode, via the sender's public key + output metadata.
+    let mut nullifier_input = Vec::with_capacity(100 + sender_dilithium_sk.len().min(64));
+    nullifier_input.extend_from_slice(b"utxo_nullifier_v1");
+    // Use only first 64 bytes of sk as key material (enough entropy, avoids huge allocations)
+    nullifier_input.extend_from_slice(&sender_dilithium_sk[..64.min(sender_dilithium_sk.len())]);
+    nullifier_input.extend_from_slice(recipient_key_id);
+    nullifier_input.extend_from_slice(&nonce.to_le_bytes());
+    let nullifier_hash = lib_crypto::hashing::hash_blake3(&nullifier_input);
+    let nullifier_seed = u64::from_le_bytes(
+        nullifier_hash[..8].try_into().unwrap(),
+    );
+
+    let mut secret_input = Vec::with_capacity(100 + sender_dilithium_sk.len().min(64));
+    secret_input.extend_from_slice(b"utxo_secret_v1");
+    secret_input.extend_from_slice(&sender_dilithium_sk[..64.min(sender_dilithium_sk.len())]);
+    secret_input.extend_from_slice(recipient_key_id);
+    secret_input.extend_from_slice(&nonce.to_le_bytes());
+    let secret_hash = lib_crypto::hashing::hash_blake3(&secret_input);
+    let sender_secret = u64::from_le_bytes(
+        secret_hash[..8].try_into().unwrap(),
+    );
+
+    // Goldilocks field prime: p = 2^64 - 2^32 + 1 = 0xFFFFFFFF00000001.
+    // Reduce to ensure values are valid field elements (< p).
+    const GOLDILOCKS_P: u64 = 0xFFFF_FFFF_0000_0001;
+    (nullifier_seed % GOLDILOCKS_P, sender_secret % GOLDILOCKS_P)
+}
 
 #[cfg(not(feature = "real-proofs"))]
 pub mod real {

@@ -47,6 +47,23 @@ impl std::fmt::Display for TransactionCreateError {
 
 impl std::error::Error for TransactionCreateError {}
 
+/// Pre-fetched Merkle witness for a UTXO input, used to generate a real ZK spend proof.
+#[derive(Debug, Clone)]
+pub struct InputMerkleWitness {
+    /// Actual balance of the UTXO being spent.
+    pub sender_balance: u64,
+    /// The nullifier_seed used when the UTXO was committed.
+    pub nullifier_seed: u64,
+    /// The sender_secret used when the UTXO was committed.
+    pub sender_secret: u64,
+    /// Leaf index in the Merkle tree.
+    pub leaf_index: u32,
+    /// Sibling hashes from leaf to root (32 levels, each [u8; 32]).
+    pub siblings: Vec<[u8; 32]>,
+    /// Current Merkle root.
+    pub root: [u8; 32],
+}
+
 /// Builder for creating transactions
 #[derive(Debug, Clone)]
 pub struct TransactionBuilder {
@@ -58,6 +75,10 @@ pub struct TransactionBuilder {
     memo: Vec<u8>,
     identity_data: Option<IdentityTransactionData>,
     wallet_data: Option<WalletTransactionData>,
+    /// Pre-fetched Merkle witnesses for each input (indexed by input position).
+    /// When present, real ZK proofs are generated. When absent, falls back to
+    /// dummy self-consistent proofs (backward compatible).
+    merkle_witnesses: Vec<Option<InputMerkleWitness>>,
 }
 
 impl Default for TransactionBuilder {
@@ -78,7 +99,18 @@ impl TransactionBuilder {
             memo: Vec::new(),
             identity_data: None,
             wallet_data: None,
+            merkle_witnesses: Vec::new(),
         }
+    }
+
+    /// Set pre-fetched Merkle witnesses for inputs.
+    ///
+    /// Each entry corresponds to an input by position. When a witness is `Some`,
+    /// the builder generates a real ZK proof bound to the on-chain Merkle tree.
+    /// When `None`, the input gets a self-consistent dummy proof (backward compat).
+    pub fn merkle_witnesses(mut self, witnesses: Vec<Option<InputMerkleWitness>>) -> Self {
+        self.merkle_witnesses = witnesses;
+        self
     }
 
     /// Set transaction version
@@ -144,7 +176,7 @@ impl TransactionBuilder {
     }
 
     /// Build the transaction (requires signing)
-    pub fn build(self, private_key: &PrivateKey) -> Result<Transaction, TransactionCreateError> {
+    pub fn build(mut self, private_key: &PrivateKey) -> Result<Transaction, TransactionCreateError> {
         // Validate inputs and outputs
         if self.inputs.is_empty() && !self.transaction_type.is_identity_transaction() {
             return Err(TransactionCreateError::InvalidInputs);
@@ -152,6 +184,14 @@ impl TransactionBuilder {
 
         if self.outputs.is_empty() && !self.transaction_type.is_identity_transaction() {
             return Err(TransactionCreateError::InvalidOutputs);
+        }
+
+        // ── Compute Poseidon leaf commitments for Transfer outputs ───────
+        // Each output gets a Merkle leaf = Poseidon(nullifier_seed, sender_secret, amount).
+        // The secrets are derived from the sender's private key so only the sender (and
+        // recipient via the note) can later prove ownership in a ZK proof.
+        if self.transaction_type == TransactionType::Transfer {
+            self.compute_output_leaf_commitments(private_key);
         }
 
         // Check if inputs already have ZK proofs (they should be pre-generated in most cases)
@@ -209,97 +249,151 @@ impl TransactionBuilder {
         Ok(transaction)
     }
 
-    /// Generate ZK proofs for all transaction inputs using lib-proofs
+    /// Compute Poseidon Merkle leaf commitments for each output in a Transfer transaction.
+    ///
+    /// For each output, derives `(nullifier_seed, sender_secret)` deterministically from
+    /// the sender's private key + recipient key_id + output index, then computes:
+    ///   `leaf = Poseidon(nullifier_seed, sender_secret, amount)`
+    ///
+    /// The leaf commitment is stored in `TransactionOutput.merkle_leaf` so the executor
+    /// inserts it into the persistent UTXO Merkle tree. The recipient can later recover
+    /// the secrets to generate a ZK spend proof.
+    fn compute_output_leaf_commitments(&mut self, private_key: &PrivateKey) {
+        use lib_proofs::transaction::circuit::{self, hash_to_bytes};
+
+        for (index, output) in self.outputs.iter_mut().enumerate() {
+            let (nullifier_seed, sender_secret) = circuit::derive_utxo_secrets(
+                &private_key.dilithium_sk,
+                &output.recipient.key_id,
+                index as u64,
+            );
+
+            // Amount is not directly stored on TransactionOutput (it uses commitments).
+            // For now, we use the fee as a proxy for the output amount since Transfer
+            // distributes inputs equally. The caller should set the amount explicitly
+            // in a future enhancement. Use 0 as placeholder — the amount will be set
+            // correctly when the full UTXO model is wired up.
+            //
+            // TODO: Pass explicit output amounts into the builder so leaf commitments
+            // are computed with the real amount.
+            let amount = 0u64; // Placeholder — see TODO above
+
+            let leaf_hash = circuit::real::compute_leaf_commitment(
+                nullifier_seed,
+                sender_secret,
+                amount,
+            );
+
+            output.merkle_leaf = crate::types::Hash::new(hash_to_bytes(leaf_hash));
+
+            debug!(
+                "Output {} leaf commitment: nullifier_seed={}, amount={}, merkle_leaf={}",
+                index,
+                nullifier_seed,
+                amount,
+                hex::encode(&hash_to_bytes(leaf_hash)[..8]),
+            );
+        }
+    }
+
+    /// Generate ZK proofs for all transaction inputs using lib-proofs.
+    ///
+    /// When a pre-fetched `InputMerkleWitness` is available for an input, generates a
+    /// real Plonky2 proof bound to the on-chain Merkle tree root. Otherwise falls back
+    /// to a self-consistent dummy proof (backward compatible with existing tests).
     fn generate_zk_proofs_for_inputs(
         &self,
-        private_key: &PrivateKey,
+        _private_key: &PrivateKey,
     ) -> Result<Vec<TransactionInput>, TransactionCreateError> {
-        use lib_crypto::random::generate_nonce;
+        use lib_proofs::transaction::circuit::bytes_to_hash;
         use lib_proofs::ZkTransactionProof;
 
         let mut inputs_with_proofs = Vec::with_capacity(self.inputs.len());
 
-        // Calculate total output amount for proper proof generation
-        // This is critical: the ZK proof must prove sender_balance >= amount + fee
-        let total_output_amount: u64 = self
-            .outputs
-            .iter()
-            .map(|_| {
-                // In a full implementation, we'd extract the actual amount from the commitment
-                // For now, we estimate based on typical transaction patterns
-                // The actual UTXO amounts should be passed in from the caller
-                1000u64 // Reasonable estimate per output
-            })
-            .sum();
-
-        // The sender balance must be at least the sum of outputs + fee
-        // We add a buffer to ensure proof generation succeeds
-        let estimated_sender_balance = total_output_amount.max(self.fee + 1000);
-
-        tracing::debug!(
-            "Generating ZK proofs: outputs={}, total_amount={}, fee={}, estimated_balance={}",
-            self.outputs.len(),
-            total_output_amount,
-            self.fee,
-            estimated_sender_balance
-        );
-
         for (idx, input) in self.inputs.iter().enumerate() {
-            // Generate cryptographic parameters for ZK proof using private key
-            let sender_nonce = generate_nonce();
-            let nullifier_nonce = generate_nonce();
+            let witness = self.merkle_witnesses.get(idx).and_then(|w| w.as_ref());
 
-            // Use private key bytes to derive sender secret for ZK proof
-            let mut sender_secret = [0u8; 32];
-            let mut nullifier_secret = [0u8; 32];
+            let zk_proof = if let Some(w) = witness {
+                // ── Real proof: bound to on-chain Merkle root ────────────
+                let merkle_root = bytes_to_hash(w.root);
+                let siblings: Vec<[u64; 4]> = w.siblings.iter().map(|s| bytes_to_hash(*s)).collect();
 
-            // Combine private key with nonce for enhanced security
-            let pk_bytes = &private_key.dilithium_sk[..12.min(private_key.dilithium_sk.len())];
-            for i in 0..pk_bytes.len() {
-                sender_secret[i] = pk_bytes[i] ^ sender_nonce[i % sender_nonce.len()];
-                nullifier_secret[i] = pk_bytes[i] ^ nullifier_nonce[i % nullifier_nonce.len()];
-            }
-
-            // Generate ZK proof for this input
-            let zk_proof = match ZkTransactionProof::prove_transaction(
-                estimated_sender_balance, // sender_balance (must be >= amount + fee)
-                0,                        // receiver_balance (not needed for inputs)
-                total_output_amount,      // amount (sum of outputs)
-                self.fee,                 // fee
-                sender_secret,            // sender_blinding
-                [0u8; 32],                // receiver_blinding (not needed)
-                nullifier_secret,         // nullifier
-            ) {
-                Ok(proof) => {
-                    tracing::debug!("Successfully generated ZK proof for input {}", idx);
-                    proof
-                }
-                Err(e) => {
-                    // If ZK proof generation fails, log detailed error and return
+                if siblings.len() != lib_proofs::transaction::circuit::MERKLE_DEPTH {
                     tracing::error!(
-                        "ZK proof generation failed for input {}: {:?}\n\
-                         Parameters: balance={}, amount={}, fee={}",
+                        "Input {}: expected {} siblings, got {}",
                         idx,
-                        e,
-                        estimated_sender_balance,
-                        total_output_amount,
-                        self.fee
+                        lib_proofs::transaction::circuit::MERKLE_DEPTH,
+                        siblings.len(),
                     );
                     return Err(TransactionCreateError::ZkProofError);
                 }
+
+                // Total output amount (the "amount" in the circuit constraint:
+                // amount + fee <= sender_balance).
+                let total_output_amount: u64 = w.sender_balance.saturating_sub(self.fee);
+
+                ZkTransactionProof::prove_transaction_with_merkle(
+                    w.sender_balance,
+                    total_output_amount,
+                    self.fee,
+                    w.sender_secret,
+                    w.nullifier_seed,
+                    merkle_root,
+                    w.leaf_index,
+                    &siblings,
+                )
+                .map_err(|e| {
+                    tracing::error!(
+                        "Real ZK proof generation failed for input {}: {:?} (balance={}, fee={})",
+                        idx, e, w.sender_balance, self.fee,
+                    );
+                    TransactionCreateError::ZkProofError
+                })?
+            } else {
+                // ── Fallback: self-consistent dummy proof ─────────────────
+                // Used when no Merkle witness is available (backward compat).
+                let (nullifier_seed, sender_secret) =
+                    lib_proofs::transaction::circuit::derive_utxo_secrets(
+                        &[0u8; 64], // No real private key in fallback path
+                        &input.nullifier.as_bytes()[..32].try_into().unwrap_or([0u8; 32]),
+                        idx as u64,
+                    );
+                let sender_balance = self.fee + 1000;
+
+                ZkTransactionProof::prove_transaction(
+                    sender_balance,
+                    0,
+                    1000,
+                    self.fee,
+                    {
+                        let mut b = [0u8; 32];
+                        b[..8].copy_from_slice(&sender_secret.to_le_bytes());
+                        b
+                    },
+                    [0u8; 32],
+                    {
+                        let mut b = [0u8; 32];
+                        b[..8].copy_from_slice(&nullifier_seed.to_le_bytes());
+                        b
+                    },
+                )
+                .map_err(|e| {
+                    tracing::error!("Fallback ZK proof generation failed for input {}: {:?}", idx, e);
+                    TransactionCreateError::ZkProofError
+                })?
             };
 
-            // Create new input with ZK proof
             let mut input_with_proof = input.clone();
             input_with_proof.zk_proof = zk_proof;
-
             inputs_with_proofs.push(input_with_proof);
+
+            tracing::debug!(
+                "Generated ZK proof for input {} (real={})",
+                idx,
+                witness.is_some(),
+            );
         }
 
-        tracing::debug!(
-            "Successfully generated ZK proofs for all {} inputs",
-            inputs_with_proofs.len()
-        );
         Ok(inputs_with_proofs)
     }
 

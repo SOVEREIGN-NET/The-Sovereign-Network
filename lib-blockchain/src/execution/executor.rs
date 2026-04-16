@@ -1213,6 +1213,7 @@ impl BlockExecutor {
         // Empty/mock proofs are skipped for backward compatibility with test fixtures.
         for input in &tx.inputs {
             if !input.zk_proof.has_empty_proofs() {
+                // Step 1: Verify the proof's cryptographic validity.
                 match lib_proofs::transaction::ZkTransactionProof::verify_transaction(&input.zk_proof)
                 {
                     Ok(true) => {}
@@ -1227,6 +1228,23 @@ impl BlockExecutor {
                             e
                         )))
                     }
+                }
+
+                // Step 2: Bind the proof to chain state — the Merkle root in the proof
+                // must match the current on-chain UTXO Merkle tree root.
+                if let Some(proof_root) = input.zk_proof.extract_merkle_root() {
+                    let chain_root = self.store.get_utxo_merkle_root().ok().flatten();
+                    if let Some(expected_root) = chain_root {
+                        if proof_root != expected_root {
+                            return Err(TxApplyError::InvalidType(format!(
+                                "ZK proof Merkle root mismatch: proof={} chain={}",
+                                hex::encode(&proof_root[..8]),
+                                hex::encode(&expected_root[..8]),
+                            )));
+                        }
+                    }
+                    // If chain has no Merkle root yet (empty tree), allow the proof
+                    // through — the tree will be populated as UTXOs are created.
                 }
             }
         }
