@@ -1897,7 +1897,7 @@ impl IdentityHandler {
             "device_id": req_data.device_id,
             "identity_type": req_data.identity_type,
             "blockchain_tx": blockchain_tx_hash,
-            "welcome_bonus": welcome_bonus_amount,
+            "welcome_bonus": welcome_bonus_amount.to_string(),
             "registered_at": now,
             "pqc_enabled": req_data.kyber_public_key.is_some(),
             "primary_wallet_id": primary_wallet_id,
