@@ -5,6 +5,7 @@
 //! for each incoming request.
 
 use crate::config::{BackendSelectionPolicy, GatewayConfig};
+use crate::metrics::{log_pool_snapshot, log_state_transition, GatewayMetrics};
 use anyhow::{anyhow, Context, Result};
 use lib_identity::ZhtpIdentity;
 use lib_network::web4::client::Web4ClientConfig;
@@ -89,6 +90,7 @@ pub struct BackendPool {
     static_entries: Vec<Arc<BackendEntry>>,
     dynamic_entries: Arc<RwLock<HashMap<String, Arc<BackendEntry>>>>,
     rr_counter: AtomicUsize,
+    metrics: GatewayMetrics,
 }
 
 impl BackendPool {
@@ -134,6 +136,7 @@ impl BackendPool {
             static_entries,
             dynamic_entries: Arc::new(RwLock::new(HashMap::new())),
             rr_counter: AtomicUsize::new(0),
+            metrics: GatewayMetrics::new(),
         })
     }
 
@@ -171,6 +174,7 @@ impl BackendPool {
 
     /// Pick the best healthy backend for the given request.
     pub async fn pick_backend(&self, _req: &ZhtpRequest) -> Result<Arc<BackendEntry>> {
+        self.metrics.record_request();
         let max_in_flight = self.cfg.max_in_flight_per_backend;
 
         // Gather candidates from healthy dynamic and static backends.
@@ -204,6 +208,7 @@ impl BackendPool {
         }
 
         if candidates.is_empty() {
+            self.metrics.record_failure();
             return Err(anyhow!("No healthy backend available"));
         }
 
@@ -234,6 +239,7 @@ impl BackendPool {
 
     /// Report a successful request to a backend.
     pub async fn report_success(&self, addr: &str, latency_ms: u64) {
+        self.metrics.record_success();
         if let Some(entry) = self.find_entry(addr).await {
             entry.dec_in_flight();
             entry.latency_ewma_ms.store(ewma(entry.latency_ewma_ms.load(Ordering::Relaxed), latency_ms), Ordering::Relaxed);
@@ -256,8 +262,14 @@ impl BackendPool {
         }
     }
 
+    /// Report a retried request.
+    pub fn record_retry(&self) {
+        self.metrics.record_retry();
+    }
+
     /// Report a failed request to a backend.
     pub async fn report_failure(&self, addr: &str) {
+        self.metrics.record_failure();
         if let Some(entry) = self.find_entry(addr).await {
             entry.dec_in_flight();
             *entry.last_checked.lock().await = Some(Instant::now());
@@ -302,6 +314,7 @@ impl BackendPool {
         drop(registry);
 
         for (addr, caps) in candidates {
+            self.metrics.record_dynamic_candidate();
             let exists = {
                 let dynamic = self.dynamic_entries.read().await;
                 dynamic.contains_key(&addr)
@@ -335,6 +348,8 @@ impl BackendPool {
                 }
             }
         }
+
+        self.log_pool_snapshot().await;
     }
 
     async fn run_health_checks(&self) -> Result<()> {
@@ -396,6 +411,7 @@ impl BackendPool {
                     {
                         info!(addr = %entry.addr, "Promoting quarantined dynamic backend to Healthy");
                         Self::transition_state(&entry, BackendState::Healthy).await;
+                        self.metrics.record_dynamic_promotion();
                     }
                 }
             }
@@ -550,14 +566,34 @@ impl BackendPool {
     async fn transition_state(entry: &BackendEntry, new_state: BackendState) {
         let mut state_guard = entry.state.lock().await;
         if *state_guard != new_state {
-            info!(
-                addr = %entry.addr,
-                old_state = ?*state_guard,
-                new_state = ?new_state,
-                "Backend state transition"
-            );
+            let old = format!("{:?}", *state_guard);
+            let new_str = format!("{:?}", new_state);
+            log_state_transition(&entry.addr, &old, &new_str);
             *state_guard = new_state;
         }
+    }
+
+    async fn log_pool_snapshot(&self) {
+        let (static_total, dynamic_total, healthy, unhealthy, half_open, quarantined) = {
+            let dynamic = self.dynamic_entries.read().await;
+            let mut healthy = 0usize;
+            let mut unhealthy = 0usize;
+            let mut half_open = 0usize;
+            let mut quarantined = 0usize;
+
+            for entry in self.static_entries.iter().chain(dynamic.values()) {
+                match *entry.state.lock().await {
+                    BackendState::Healthy => healthy += 1,
+                    BackendState::Unhealthy => unhealthy += 1,
+                    BackendState::HalfOpen => half_open += 1,
+                    BackendState::Quarantined => quarantined += 1,
+                }
+            }
+
+            (self.static_entries.len(), dynamic.len(), healthy, unhealthy, half_open, quarantined)
+        };
+
+        log_pool_snapshot(static_total, dynamic_total, healthy, unhealthy, half_open, quarantined);
     }
 
     async fn find_entry(&self, addr: &str) -> Option<Arc<BackendEntry>> {

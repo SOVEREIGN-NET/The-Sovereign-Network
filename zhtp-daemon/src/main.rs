@@ -2,7 +2,9 @@ mod api;
 mod backend_pool;
 mod config;
 mod discovery;
+mod forward_context;
 mod identity;
+mod metrics;
 mod service;
 
 use anyhow::{Context, Result};
