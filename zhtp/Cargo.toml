@@ -128,7 +128,7 @@ hybrid = []     # Hybrid mesh + TCP/IP mode
 yaml = ["dep:serde_yaml"]  # Optional YAML output support
 
 # Blockchain features
-full-blockchain = ["lib-blockchain", "lib-blockchain/wasm-runtime"]  # Full blockchain with WASM contracts
+full-blockchain = ["lib-blockchain", "lib-blockchain/wasm-runtime", "lib-proofs/real-proofs"]  # Full blockchain with WASM contracts and real proof circuits
 basic-blockchain = ["lib-blockchain"]  # Basic blockchain without WASM (saves ~500MB RAM during compile)
 minimal-blockchain = []  # No blockchain validation, DHT storage only
 
