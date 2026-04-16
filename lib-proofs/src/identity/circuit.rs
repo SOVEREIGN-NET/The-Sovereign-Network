@@ -11,12 +11,9 @@
 #[cfg(not(feature = "real-proofs"))]
 pub mod real {
     use anyhow::Result;
-    use plonky2::field::goldilocks_field::GoldilocksField;
-
-    type F = GoldilocksField;
 
     /// Stub for non-real-proofs builds.
-    pub fn prove_identity_stub(
+    pub fn prove_identity(
         _identity_secret: u64,
         _age: u64,
         _jurisdiction_hash: u64,
@@ -27,6 +24,21 @@ pub mod real {
         _claim_bitmap: u8,
     ) -> Result<(Vec<u8>, Vec<u64>)> {
         Ok((vec![], vec![0u64; 6]))
+    }
+
+    /// Stub for non-real-proofs builds.
+    pub fn verify_identity(_proof_data: &[u8]) -> Result<()> {
+        Ok(())
+    }
+
+    /// Stub for non-real-proofs builds.
+    pub fn compute_identity_commitment(
+        _identity_secret: u64,
+        _age: u64,
+        _jurisdiction_hash: u64,
+        _kyc_level: u64,
+    ) -> [u64; 4] {
+        [0u64; 4]
     }
 }
 

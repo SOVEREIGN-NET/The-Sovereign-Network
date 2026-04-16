@@ -97,28 +97,97 @@ impl StateProofAggregator {
         state: StateCommitment,
         network_metadata: NetworkStateInfo,
     ) -> Result<AggregatedStateProof> {
-        // Create a simple transaction proof for the current state
-        let proof_system = crate::plonky2::ZkProofSystem::new()
-            .map_err(|e| anyhow!("Failed to create proof system: {}", e))?;
+        #[cfg(feature = "real-proofs")]
+        {
+            use crate::state::circuit::{real as state_circuit, STATE_MERKLE_DEPTH};
+            use crate::plonky2::Plonky2Proof;
 
-        // Generate a proof for the current state
-        let plonky2_proof = proof_system
-            .prove_transaction(
-                state.total_supply,
+            // Build a sample state Merkle tree with dummy accounts
+            let accounts: Vec<(u64, u64)> = vec![
+                (1, state.total_supply / 4),
+                (2, state.total_supply / 4),
+                (3, state.total_supply / 4),
+                (4, state.total_supply / 4),
+            ];
+            let leaves: Vec<[u64; 4]> = accounts
+                .iter()
+                .map(|(id, bal)| state_circuit::compute_state_leaf(*id, *bal))
+                .collect();
+            let leaf_index = 0;
+            let (root, siblings) =
+                state_circuit::build_state_merkle_tree(&leaves, leaf_index)
+                    .map_err(|e| anyhow!("Failed to build state Merkle tree: {}", e))?;
+
+            let mut siblings_arr = [[0u64; 4]; STATE_MERKLE_DEPTH];
+            for (i, s) in siblings.iter().enumerate() {
+                siblings_arr[i] = *s;
+            }
+
+            let (account_id, balance) = accounts[leaf_index];
+            let proof_bytes = state_circuit::prove_state(
+                root,
                 state.block_height,
-                network_metadata.node_count.into(),
-                state.timestamp,
-                1000, // Default stake value since we removed complex metadata
+                account_id,
+                balance,
+                &siblings_arr,
+                leaf_index,
             )
-            .map_err(|e| anyhow!("Failed to generate transaction proof: {}", e))?;
+            .map_err(|e| anyhow!("Failed to generate state proof: {}", e))?;
 
-        // Create the single network proof
-        Ok(AggregatedStateProof::new_single_network(
-            state,
-            crate::types::ZkProof::empty(), // No state transition for bootstrap
-            network_metadata,
-            plonky2_proof,
-        ))
+            let public_inputs: Vec<u64> = root
+                .iter()
+                .copied()
+                .chain([
+                    state.block_height,
+                    account_id,
+                    balance,
+                ])
+                .collect();
+
+            let plonky2_proof = Plonky2Proof {
+                proof: proof_bytes,
+                public_inputs,
+                verification_key_hash: [0u8; 32],
+                proof_system: "plonky2-real-state".to_string(),
+                generated_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                circuit_id: "state_merkle_inclusion_v1".to_string(),
+                private_input_commitment: [0u8; 32],
+            };
+
+            return Ok(AggregatedStateProof::new_single_network(
+                state,
+                crate::types::ZkProof::empty(), // No state transition for bootstrap
+                network_metadata,
+                plonky2_proof,
+            ));
+        }
+
+        #[cfg(not(feature = "real-proofs"))]
+        {
+            // Create a simple transaction proof for the current state
+            let proof_system = crate::plonky2::ZkProofSystem::new()
+                .map_err(|e| anyhow!("Failed to create proof system: {}", e))?;
+
+            let plonky2_proof = proof_system
+                .prove_transaction(
+                    state.total_supply,
+                    state.block_height,
+                    network_metadata.node_count.into(),
+                    state.timestamp,
+                    1000,
+                )
+                .map_err(|e| anyhow!("Failed to generate transaction proof: {}", e))?;
+
+            Ok(AggregatedStateProof::new_single_network(
+                state,
+                crate::types::ZkProof::empty(),
+                network_metadata,
+                plonky2_proof,
+            ))
+        }
     }
 
     /// Validate that all child proofs are legitimate and compatible
