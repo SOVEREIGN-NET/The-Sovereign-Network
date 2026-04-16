@@ -1,6 +1,7 @@
 mod api;
 mod backend_pool;
 mod config;
+mod discovery;
 mod identity;
 mod service;
 

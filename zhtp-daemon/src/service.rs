@@ -35,9 +35,13 @@ impl ZhtpDaemonService {
         let gateway_cfg = config.effective_gateway_config();
         let identity = Arc::new(identity);
         let backend_pool = Arc::new(
-            BackendPool::new(gateway_cfg, (*identity).clone(), trust_config).await?,
+            BackendPool::new(gateway_cfg.clone(), (*identity).clone(), trust_config).await?,
         );
-        backend_pool.start_background_tasks(None);
+
+        // Start discovery and wire the PeerRegistry into the backend pool.
+        let _registry =
+            crate::discovery::start_gateway_discovery(&gateway_cfg, (*identity).clone(), backend_pool.clone())
+                .await?;
 
         Ok(Self {
             config,
