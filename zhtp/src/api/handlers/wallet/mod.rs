@@ -347,7 +347,7 @@ impl WalletHandler {
                 "status": "success",
                 "identity_id": identity_id,
                 "total_wallets": wallets.len(),
-                "total_balance": total_balance_adjusted,
+                "total_balance": total_balance_adjusted.to_string(),
                 "wallets": wallets
             });
             let json_response = serde_json::to_vec(&response_data)?;
@@ -582,10 +582,10 @@ impl WalletHandler {
                     "wallet_type": wallet_type_str,
                     "identity_id": identity_id,
                     "balance": {
-                        "available_balance": available_balance,
-                        "staked_balance": staked_balance,
-                        "pending_rewards": pending_rewards,
-                        "total_balance": total_balance
+                        "available_balance": available_balance.to_string(),
+                        "staked_balance": staked_balance.to_string(),
+                        "pending_rewards": pending_rewards.to_string(),
+                        "total_balance": total_balance.to_string()
                     },
                     "permissions": {
                         "can_transfer_external": true,
@@ -674,10 +674,10 @@ impl WalletHandler {
                 };
 
             let wallet_stat = json!({
-                "available_balance": summary.balance.saturating_sub(staked_balance),
-                "staked_balance": staked_balance,
-                "pending_rewards": pending_rewards,
-                "total_balance": summary.balance + pending_rewards,
+                "available_balance": summary.balance.saturating_sub(staked_balance).to_string(),
+                "staked_balance": staked_balance.to_string(),
+                "pending_rewards": pending_rewards.to_string(),
+                "total_balance": (summary.balance + pending_rewards).to_string(),
                 "transaction_count": 0,
                 "description": format!("{:?} wallet", summary.wallet_type),
                 "created_at": summary.created_at
@@ -691,7 +691,7 @@ impl WalletHandler {
                 "public_key": hex::encode(&identity.public_key.dilithium_pk),
                 "identity_type": format!("{:?}", identity.identity_type)
             },
-            "total_balance": total_balance,
+            "total_balance": total_balance.to_string(),
             "wallet_count": wallet_summaries.len(),
             "wallet_statistics": wallet_stats,
             "cross_wallet_transactions": 0,
