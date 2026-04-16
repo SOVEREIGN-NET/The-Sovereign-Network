@@ -15,6 +15,9 @@ pub const MERKLE_DEPTH: usize = 32;
 pub mod real {
     use super::MERKLE_DEPTH;
 
+    /// Stub type for builds without real proof circuits (e.g. Android quic-jni).
+    pub type TxProof = ();
+
     /// Stub for non-real-proofs builds.
     pub fn build_merkle_tree(
         _leaves: &[Vec<u64>],
