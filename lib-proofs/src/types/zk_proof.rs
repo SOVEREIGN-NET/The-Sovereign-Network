@@ -337,6 +337,20 @@ impl ZkProof {
     pub fn verify(&self) -> anyhow::Result<bool> {
         self.ensure_not_mock()?;
 
+        // Direct dispatch for real identity proofs that bypass the backend envelope.
+        if self.proof_system == "plonky2-real-identity" {
+            #[cfg(feature = "real-proofs")]
+            {
+                return crate::identity::circuit::real::verify_identity(&self.proof_data)
+                    .map(|_| true)
+                    .or_else(|_| Ok(false));
+            }
+            #[cfg(not(feature = "real-proofs"))]
+            {
+                return Ok(false);
+            }
+        }
+
         if let Some(ref backend_proof) = self.backend_proof {
             let backend = crate::backend::get_backend();
             match backend_proof.proof_system.as_str() {
