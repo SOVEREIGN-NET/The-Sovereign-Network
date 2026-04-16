@@ -121,6 +121,30 @@ impl BlockchainHandler {
     }
 
     fn tx_to_info(tx: &lib_blockchain::transaction::Transaction) -> TransactionInfo {
+        let zk_proofs: Vec<ZkProofInfo> = tx
+            .inputs
+            .iter()
+            .enumerate()
+            .filter(|(_, input)| !input.zk_proof.has_empty_proofs())
+            .map(|(idx, input)| {
+                let (amt_sys, _, _) = input.zk_proof.proof_systems();
+                ZkProofInfo {
+                    input_index: idx,
+                    has_proof: true,
+                    proof_size: input.zk_proof.total_size(),
+                    proof_system: amt_sys,
+                }
+            })
+            .collect();
+
+        let default_hash = lib_blockchain::types::Hash::default();
+        let merkle_leaves: Vec<String> = tx
+            .outputs
+            .iter()
+            .filter(|o| o.merkle_leaf != default_hash)
+            .map(|o| hex::encode(o.merkle_leaf.as_bytes()))
+            .collect();
+
         TransactionInfo {
             hash: tx.hash().to_string(),
             from: tx
@@ -138,6 +162,8 @@ impl BlockchainHandler {
             transaction_type: format!("{:?}", tx.transaction_type),
             timestamp: tx.signature.timestamp,
             size: tx.size(),
+            zk_proofs,
+            merkle_leaves,
         }
     }
 
@@ -447,6 +473,26 @@ struct TransactionInfo {
     transaction_type: String,
     timestamp: u64,
     size: usize,
+    /// ZK proof data for each input (hex-encoded proof bytes).
+    /// Empty for transactions without UTXO inputs (e.g. TokenTransfer, Coinbase).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    zk_proofs: Vec<ZkProofInfo>,
+    /// Merkle leaf commitments for each output (hex-encoded Poseidon hash).
+    /// Present when the output was committed to the UTXO Merkle tree.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    merkle_leaves: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct ZkProofInfo {
+    /// Input index this proof covers.
+    input_index: usize,
+    /// Whether the proof contains real cryptographic data (vs empty/default).
+    has_proof: bool,
+    /// Total proof size in bytes.
+    proof_size: usize,
+    /// Proof system used.
+    proof_system: String,
 }
 
 #[derive(Serialize)]
@@ -1853,24 +1899,7 @@ impl BlockchainHandler {
         // Convert to response format
         let transactions: Vec<TransactionInfo> = pending_txs
             .iter()
-            .map(|tx| TransactionInfo {
-                hash: tx.hash().to_string(),
-                from: tx
-                    .inputs
-                    .first()
-                    .map(|i| i.previous_output.to_string())
-                    .unwrap_or_else(|| "genesis".to_string()),
-                to: tx
-                    .outputs
-                    .first()
-                    .map(|o| format!("{:02x?}", &o.recipient.key_id[..8]))
-                    .unwrap_or_else(|| "unknown".to_string()),
-                amount: 0, // Amount is hidden in commitment for privacy
-                fee: tx.fee,
-                transaction_type: format!("{:?}", tx.transaction_type),
-                timestamp: tx.signature.timestamp,
-                size: tx.size(),
-            })
+            .map(|tx| Self::tx_to_info(tx))
             .collect();
 
         let response_data = PendingTransactionsResponse {
@@ -1912,24 +1941,7 @@ impl BlockchainHandler {
         // First check pending transactions (mempool)
         let pending_txs = blockchain.get_pending_transactions();
         if let Some(pending_tx) = pending_txs.iter().find(|tx| tx.hash() == tx_hash) {
-            let transaction_info = TransactionInfo {
-                hash: pending_tx.hash().to_string(),
-                from: pending_tx
-                    .inputs
-                    .first()
-                    .map(|i| i.previous_output.to_string())
-                    .unwrap_or_else(|| "genesis".to_string()),
-                to: pending_tx
-                    .outputs
-                    .first()
-                    .map(|o| format!("{:02x?}", &o.recipient.key_id[..8]))
-                    .unwrap_or_else(|| "unknown".to_string()),
-                amount: 0, // Amount is hidden in commitment for privacy
-                fee: pending_tx.fee,
-                transaction_type: format!("{:?}", pending_tx.transaction_type),
-                timestamp: pending_tx.signature.timestamp,
-                size: pending_tx.size(),
-            };
+            let transaction_info = Self::tx_to_info(pending_tx);
 
             let response_data = TransactionResponse {
                 status: "transaction_found".to_string(),
@@ -1950,24 +1962,7 @@ impl BlockchainHandler {
         // Search through all blocks for the transaction
         for (_block_index, block) in blockchain.blocks.iter().enumerate() {
             if let Some(confirmed_tx) = block.transactions.iter().find(|tx| tx.hash() == tx_hash) {
-                let transaction_info = TransactionInfo {
-                    hash: confirmed_tx.hash().to_string(),
-                    from: confirmed_tx
-                        .inputs
-                        .first()
-                        .map(|i| i.previous_output.to_string())
-                        .unwrap_or_else(|| "genesis".to_string()),
-                    to: confirmed_tx
-                        .outputs
-                        .first()
-                        .map(|o| format!("{:02x?}", &o.recipient.key_id[..8]))
-                        .unwrap_or_else(|| "unknown".to_string()),
-                    amount: 0, // Amount is hidden in commitment for privacy
-                    fee: confirmed_tx.fee,
-                    transaction_type: format!("{:?}", confirmed_tx.transaction_type),
-                    timestamp: confirmed_tx.signature.timestamp,
-                    size: confirmed_tx.size(),
-                };
+                let transaction_info = Self::tx_to_info(confirmed_tx);
 
                 let block_height = block.header.height;
                 let confirmations = blockchain.get_height().saturating_sub(block_height);
