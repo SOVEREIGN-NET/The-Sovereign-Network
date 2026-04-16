@@ -533,6 +533,10 @@ fn service_visible(
                 matches!(service_type, "ZhtpWeb4Access" | "ZhtpIdentityVerification")
             }
             NodeType::Relay => service_type == "ZhtpIdentityVerification",
+            NodeType::Gateway => matches!(
+                service_type,
+                "ZhtpIdentityVerification" | "ZhtpWeb4Access"
+            ),
         };
     }
 

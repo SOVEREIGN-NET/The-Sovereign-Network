@@ -15,6 +15,9 @@ pub const MERKLE_DEPTH: usize = 32;
 pub mod real {
     use super::MERKLE_DEPTH;
 
+    /// Stub type for non-real-proofs builds.
+    pub type TxProof = Vec<u8>;
+
     /// Stub for non-real-proofs builds.
     pub fn build_merkle_tree(
         _leaves: &[Vec<u64>],

@@ -516,6 +516,14 @@ pub struct ConnectionMetrics {
 /// Node capabilities for routing decisions
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeCapabilities {
+    /// Node type advertised by the peer (if known)
+    pub node_type: Option<lib_types::NodeType>,
+    /// API endpoint for gateway/backend access (e.g. "quic://1.2.3.4:443")
+    pub api_endpoint: Option<String>,
+    /// Protocol version advertised by the peer
+    pub protocol_version: Option<String>,
+    /// Whether this peer supports Web4 content serving
+    pub supports_web4: bool,
     /// Supported protocols
     pub protocols: Vec<NetworkProtocol>,
     /// Maximum bandwidth capacity (bytes/sec)
@@ -528,6 +536,32 @@ pub struct NodeCapabilities {
     pub energy_level: Option<f32>,
     /// Node availability percentage
     pub availability_percent: f32,
+}
+
+impl Default for NodeCapabilities {
+    fn default() -> Self {
+        Self {
+            node_type: None,
+            api_endpoint: None,
+            protocol_version: None,
+            supports_web4: false,
+            protocols: Vec::new(),
+            max_bandwidth: 0,
+            available_bandwidth: 0,
+            routing_capacity: 0,
+            energy_level: None,
+            availability_percent: 0.0,
+        }
+    }
+}
+
+impl NodeCapabilities {
+    /// Returns true if this peer advertises itself as a usable backend for gateway routing.
+    pub fn is_backend_candidate(&self) -> bool {
+        self.node_type.map(|t| t.is_backend_candidate()).unwrap_or(false)
+            && self.api_endpoint.is_some()
+            && self.supports_web4
+    }
 }
 
 /// Geographic location
@@ -1631,6 +1665,10 @@ mod tests {
             hop_count: 1,
             route_quality: 0.85,
             capabilities: NodeCapabilities {
+                node_type: Some(lib_types::NodeType::Validator),
+                api_endpoint: None,
+                protocol_version: None,
+                supports_web4: true,
                 protocols: vec![NetworkProtocol::QUIC],
                 max_bandwidth: 1_000_000,
                 available_bandwidth: 800_000,

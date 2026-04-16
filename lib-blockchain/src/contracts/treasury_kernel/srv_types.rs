@@ -559,7 +559,7 @@ mod tests {
     #[test]
     fn test_genesis_config_default() {
         let config = SRVGenesisConfig::default();
-        assert_eq!(config.initial_srv, 2_180_000);
+        assert_eq!(config.initial_srv, 1_000_000);
         assert_eq!(config.initial_committed_value_usd, 109_000_000);
         assert_eq!(config.initial_circulating_supply, 50_000_000_000_000_000);
         assert_eq!(config.stability_multiplier_bps, 10_000);

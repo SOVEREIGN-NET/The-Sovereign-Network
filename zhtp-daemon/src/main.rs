@@ -1,4 +1,5 @@
 mod api;
+mod backend_pool;
 mod config;
 mod identity;
 mod service;
@@ -34,12 +35,12 @@ async fn async_main() -> Result<()> {
     let (config, config_path) = DaemonConfig::load_or_create()?;
     let root_dir = DaemonConfig::root_dir()?;
     let identity = identity::load_or_create(&root_dir)?;
-    let service = Arc::new(ZhtpDaemonService::new(config.clone(), identity));
+    let service = Arc::new(ZhtpDaemonService::new(config.clone(), identity).await?);
 
     info!(
         config_path = %config_path.display(),
         listen_addr = %config.listen_addr,
-        backend_count = config.backend_nodes.len(),
+        backend_count = config.static_backends().len(),
         "Starting zhtp-daemon"
     );
 

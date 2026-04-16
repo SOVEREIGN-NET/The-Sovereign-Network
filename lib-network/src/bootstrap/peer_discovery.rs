@@ -223,6 +223,10 @@ async fn add_peer_to_registry(
     // SECURITY FIX: Use conservative capability estimates
     // Bootstrap peers should be verified before getting high availability assumptions
     let capabilities = NodeCapabilities {
+        node_type: None, // Will be updated after handshake/authentication
+        api_endpoint: None,
+        protocol_version: None,
+        supports_web4: false, // Requires explicit advertisement post-auth
         protocols: peer_info.protocols.clone(),
         max_bandwidth: peer_info.bandwidth_capacity,
         available_bandwidth: (peer_info.bandwidth_capacity * 8) / 10, // 80% of max (conservative)

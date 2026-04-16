@@ -653,6 +653,10 @@ impl MeshMessageHandler {
             1,     // hop_count
             0.8,   // route_quality
             crate::peer_registry::NodeCapabilities {
+                node_type: Some(lib_types::NodeType::Relay),
+                api_endpoint: None,
+                protocol_version: None,
+                supports_web4: false,
                 protocols: vec![crate::protocols::NetworkProtocol::BluetoothLE],
                 max_bandwidth: shared_resources.relay_bandwidth_kbps as u64 * 1024,
                 available_bandwidth: shared_resources.relay_bandwidth_kbps as u64 * 1024,
@@ -1990,6 +1994,10 @@ mod tests {
                 1,     // hop_count
                 0.8,   // route_quality
                 crate::peer_registry::NodeCapabilities {
+                    node_type: Some(lib_types::NodeType::Relay),
+                    api_endpoint: None,
+                    protocol_version: None,
+                    supports_web4: false,
                     protocols: vec![crate::protocols::NetworkProtocol::BluetoothLE],
                     max_bandwidth: 1000000,
                     available_bandwidth: 1000000,

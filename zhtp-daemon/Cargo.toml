@@ -20,6 +20,7 @@ lib-crypto = { path = "../lib-crypto" }
 lib-identity = { path = "../lib-identity" }
 lib-network = { path = "../lib-network" }
 lib-protocols = { path = "../lib-protocols" }
+lib-types = { path = "../lib-types" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
