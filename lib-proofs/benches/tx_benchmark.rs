@@ -3,9 +3,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 #[cfg(feature = "real-proofs")]
 fn benchmark_tx_proof_generation(c: &mut Criterion) {
     use plonky2::field::types::Field;
-    use lib_proofs::transaction::circuit::real::{
-        build_merkle_tree, prove_transaction,
-    };
+    use lib_proofs::transaction::circuit::real::prove_transaction;
     use plonky2::hash::hash_types::NUM_HASH_OUT_ELTS;
 
     let sender_balance = 1000u64;
@@ -15,11 +13,13 @@ fn benchmark_tx_proof_generation(c: &mut Criterion) {
     let nullifier_seed = 67890u64;
 
     // Build a dummy Merkle tree so the benchmark exercises the Merkle constraints.
-    let leaf = vec![nullifier_seed, sender_secret, sender_balance];
-    let dummy_leaves: Vec<Vec<u64>> = (0..(1 << lib_proofs::transaction::circuit::MERKLE_DEPTH))
-        .map(|i| if i == 0 { leaf.clone() } else { vec![0u64] })
-        .collect();
-    let (merkle_root_u64, siblings_u64) = build_merkle_tree(&dummy_leaves, 0).unwrap();
+    let leaf_hash = lib_proofs::transaction::circuit::real::compute_leaf_commitment(
+        nullifier_seed, sender_secret, sender_balance,
+    );
+    let (merkle_root_u64, siblings_u64) =
+        lib_proofs::transaction::circuit::real::build_sparse_merkle_tree_from_hashes(
+            &[(0, leaf_hash)], 0,
+        ).unwrap();
 
     type F = plonky2::field::goldilocks_field::GoldilocksField;
     let merkle_root = merkle_root_u64.map(F::from_canonical_u64);
@@ -50,9 +50,7 @@ fn benchmark_tx_proof_generation(c: &mut Criterion) {
 #[cfg(feature = "real-proofs")]
 fn benchmark_tx_proof_verification(c: &mut Criterion) {
     use plonky2::field::types::Field;
-    use lib_proofs::transaction::circuit::real::{
-        build_merkle_tree, prove_transaction, verify_transaction,
-    };
+    use lib_proofs::transaction::circuit::real::{prove_transaction, verify_transaction};
     use plonky2::hash::hash_types::NUM_HASH_OUT_ELTS;
 
     let sender_balance = 1000u64;
@@ -61,11 +59,13 @@ fn benchmark_tx_proof_verification(c: &mut Criterion) {
     let sender_secret = 12345u64;
     let nullifier_seed = 67890u64;
 
-    let leaf = vec![nullifier_seed, sender_secret, sender_balance];
-    let dummy_leaves: Vec<Vec<u64>> = (0..(1 << lib_proofs::transaction::circuit::MERKLE_DEPTH))
-        .map(|i| if i == 0 { leaf.clone() } else { vec![0u64] })
-        .collect();
-    let (merkle_root_u64, siblings_u64) = build_merkle_tree(&dummy_leaves, 0).unwrap();
+    let leaf_hash = lib_proofs::transaction::circuit::real::compute_leaf_commitment(
+        nullifier_seed, sender_secret, sender_balance,
+    );
+    let (merkle_root_u64, siblings_u64) =
+        lib_proofs::transaction::circuit::real::build_sparse_merkle_tree_from_hashes(
+            &[(0, leaf_hash)], 0,
+        ).unwrap();
 
     type F = plonky2::field::goldilocks_field::GoldilocksField;
     let merkle_root = merkle_root_u64.map(F::from_canonical_u64);

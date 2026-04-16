@@ -2,16 +2,29 @@ use super::*;
 
 impl Blockchain {
     /// Idempotently populate the Bootstrap Council from config.
+    ///
+    /// If the current council already matches the provided config (same
+    /// members and effective threshold), this is a no-op. Otherwise the
+    /// existing council is replaced so that tests and runtime reconfiguration
+    /// both behave predictably even when genesis has pre-loaded members.
     pub fn ensure_council_bootstrap(&mut self, config: &crate::dao::CouncilBootstrapConfig) {
-        if !self.council_members.is_empty() || config.members.is_empty() {
+        let effective_threshold = if config.threshold == 0 { 4 } else { config.threshold };
+
+        // Check if current council already matches the desired config exactly.
+        let matches = self.council_threshold == effective_threshold
+            && self.council_members.len() == config.members.len()
+            && self.council_members.iter().zip(config.members.iter()).all(|(m, e)| {
+                m.identity_id == e.identity_id
+                    && m.wallet_id == e.wallet_id
+                    && m.stake_amount == e.stake_amount
+            });
+
+        if matches {
             return;
         }
 
-        self.council_threshold = if config.threshold == 0 {
-            4
-        } else {
-            config.threshold
-        };
+        self.council_members.clear();
+        self.council_threshold = effective_threshold;
 
         for entry in &config.members {
             self.council_members.push(crate::dao::CouncilMember {
@@ -22,11 +35,13 @@ impl Blockchain {
             });
         }
 
-        info!(
-            "🏛️ Bootstrap Council initialized: {} members, threshold {}",
-            self.council_members.len(),
-            self.council_threshold
-        );
+        if !self.council_members.is_empty() {
+            info!(
+                "🏛️ Bootstrap Council initialized: {} members, threshold {}",
+                self.council_members.len(),
+                self.council_threshold
+            );
+        }
     }
 
     pub fn is_council_member(&self, did: &str) -> bool {
