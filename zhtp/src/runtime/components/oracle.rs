@@ -216,6 +216,21 @@ impl OracleComponent {
                         format_price_8dec(attestation.sov_usd_price),
                         admission
                     );
+                    // Relay admitted attestations to all peers so nodes that aren't
+                    // directly connected to every validator still reach quorum.
+                    // Skip relay for our own attestations (already gossiped at production time)
+                    // and for duplicates/finalized (no new information to share).
+                    use lib_blockchain::oracle::OracleAttestationAdmission;
+                    match &admission {
+                        OracleAttestationAdmission::Accepted
+                        | OracleAttestationAdmission::Finalized(_) => {
+                            let att_clone = attestation.clone();
+                            tokio::spawn(async move {
+                                Self::gossip_attestation(&att_clone).await;
+                            });
+                        }
+                        _ => {} // Don't relay duplicates or ignored attestations
+                    }
                 }
                 Err(OracleAttestationAdmissionError::ConflictingSigner { .. }) => {
                     // ORACLE-4: Slash for double-signing (two different prices for same epoch)
