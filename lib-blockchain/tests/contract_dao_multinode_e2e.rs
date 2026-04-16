@@ -26,6 +26,7 @@ fn mk_output(seed: u8) -> TransactionOutput {
         commitment: Hash::from([seed; 32]),
         note: Hash::default(),
         recipient: test_public_key(seed),
+        merkle_leaf: Hash::default(),
     }
 }
 

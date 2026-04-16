@@ -428,6 +428,10 @@ pub struct TransactionOutput {
     pub note: Hash,
     /// Public key of the recipient
     pub recipient: PublicKey,
+    /// Poseidon Merkle leaf commitment for the UTXO set tree.
+    /// When present, the node inserts this commitment into the persistent
+    /// UTXO Merkle tree so the recipient can later request a inclusion proof.
+    pub merkle_leaf: Hash,
 }
 
 /// Identity transaction data (processed by lib-identity package)
@@ -1642,6 +1646,7 @@ impl TransactionOutput {
             commitment,
             note,
             recipient,
+            merkle_leaf: Hash::default(),
         }
     }
 

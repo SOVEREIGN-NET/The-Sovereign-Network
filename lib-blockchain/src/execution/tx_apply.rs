@@ -58,6 +58,11 @@ impl<'a> StateMutator<'a> {
         // Delete it (mark as spent)
         self.store.delete_utxo(outpoint)?;
 
+        // Remove from the persistent Merkle tree if it was tracked there.
+        if utxo.merkle_leaf.is_some() {
+            self.store.delete_utxo_merkle_leaf(outpoint)?;
+        }
+
         Ok(utxo)
     }
 
@@ -66,6 +71,12 @@ impl<'a> StateMutator<'a> {
     /// The outpoint is derived from tx_hash + output_index.
     pub fn create_utxo(&self, outpoint: &OutPoint, utxo: &Utxo) -> TxApplyResult<()> {
         self.store.put_utxo(outpoint, utxo)?;
+
+        // Insert into the persistent Merkle tree if a leaf commitment is present.
+        if let Some(leaf) = utxo.merkle_leaf {
+            self.store.put_utxo_merkle_leaf(outpoint, leaf)?;
+        }
+
         Ok(())
     }
 
@@ -103,6 +114,11 @@ impl<'a> StateMutator<'a> {
                 token: TokenId::NATIVE,
                 created_at_height: block_height,
                 script: None,
+                merkle_leaf: if output.merkle_leaf == crate::types::Hash::default() {
+                    None
+                } else {
+                    Some(output.merkle_leaf.as_array())
+                },
             };
 
             self.create_utxo(&outpoint, &utxo)?;
@@ -758,6 +774,11 @@ pub fn apply_native_transfer(
             token: TokenId::NATIVE,
             created_at_height: block_height,
             script: None,
+            merkle_leaf: if output.merkle_leaf == crate::types::Hash::default() {
+                None
+            } else {
+                Some(output.merkle_leaf.as_array())
+            },
         };
 
         mutator.create_utxo(&outpoint, &utxo)?;
@@ -927,6 +948,11 @@ pub fn apply_coinbase(
             token: TokenId::NATIVE,
             created_at_height: block_height,
             script: None,
+            merkle_leaf: if output.merkle_leaf == crate::types::Hash::default() {
+                None
+            } else {
+                Some(output.merkle_leaf.as_array())
+            },
         };
 
         mutator.create_utxo(&outpoint, &utxo)?;

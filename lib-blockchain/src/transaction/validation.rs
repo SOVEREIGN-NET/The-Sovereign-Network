@@ -3218,6 +3218,7 @@ mod tests {
                 commitment: Hash::from([7u8; 32]),
                 note: Hash::from([8u8; 32]),
                 recipient: sender_key.clone(),
+            merkle_leaf: Hash::default(),
             }],
             fee: 0,
             signature: test_signature(sender_key),
@@ -4263,6 +4264,7 @@ mod tests {
             commitment: Hash::from([1u8; 32]),
             note: Hash::from([2u8; 32]),
             recipient: key,
+            merkle_leaf: Hash::default(),
         }];
 
         let result = validator.validate_record_on_ramp_trade(&tx);

@@ -257,12 +257,29 @@ impl ZkProof {
     /// Create a ZkProof from public inputs (generates proof internally)
     pub fn from_public_inputs(public_inputs: Vec<u64>) -> anyhow::Result<Self> {
         let backend = crate::backend::get_backend();
+        let sender_balance = public_inputs.get(0).copied().unwrap_or(0);
+        let amount = public_inputs.get(1).copied().unwrap_or(0);
+        let fee = public_inputs.get(2).copied().unwrap_or(0);
+        let sender_secret = public_inputs.get(3).copied().unwrap_or(0);
+        let nullifier_seed = public_inputs.get(4).copied().unwrap_or(0);
+
+        let leaf_hash = crate::transaction::circuit::real::compute_leaf_commitment(
+            nullifier_seed,
+            sender_secret,
+            sender_balance,
+        );
+        let (merkle_root, merkle_siblings) = crate::transaction::circuit::real::
+            build_sparse_merkle_tree_from_hashes(&[(0, leaf_hash)], 0)?;
+
         let bp = backend.prove_transaction(
-            public_inputs.get(0).copied().unwrap_or(0),
-            public_inputs.get(1).copied().unwrap_or(0),
-            public_inputs.get(2).copied().unwrap_or(0),
-            public_inputs.get(3).copied().unwrap_or(0),
-            public_inputs.get(4).copied().unwrap_or(0),
+            sender_balance,
+            amount,
+            fee,
+            sender_secret,
+            nullifier_seed,
+            merkle_root,
+            0,
+            &merkle_siblings,
         )?;
         Ok(Self::from_backend_proof(bp))
     }
@@ -321,12 +338,28 @@ impl ZkProof {
     pub fn verify(&self) -> anyhow::Result<bool> {
         self.ensure_not_mock()?;
 
+        // Direct dispatch for real identity proofs that bypass the backend envelope.
+        if self.proof_system == "plonky2-real-identity" {
+            #[cfg(feature = "real-proofs")]
+            {
+                return crate::identity::circuit::real::verify_identity(&self.proof_data)
+                    .map(|_| true)
+                    .or_else(|_| Ok(false));
+            }
+            #[cfg(not(feature = "real-proofs"))]
+            {
+                return Ok(false);
+            }
+        }
+
         if let Some(ref backend_proof) = self.backend_proof {
             let backend = crate::backend::get_backend();
             match backend_proof.proof_system.as_str() {
-                "ZHTP-Optimized-Transaction" => backend.verify_transaction(backend_proof),
+                "ZHTP-Optimized-Transaction" | "plonky2-real-transaction" => {
+                    backend.verify_transaction(backend_proof)
+                }
                 "ZHTP-Optimized-Identity" => backend.verify_identity(backend_proof),
-                "ZHTP-Optimized-Range" => backend.verify_range(backend_proof),
+                "ZHTP-Optimized-Range" | "Bulletproofs" => backend.verify_range(backend_proof),
                 "ZHTP-Optimized-StorageAccess" => backend.verify_storage_access(backend_proof),
                 "ZHTP-Optimized-Merkle" => backend.verify_merkle(backend_proof, [0u8; 32]),
                 "ZHTP-Optimized-Routing" => Ok(true), // stub

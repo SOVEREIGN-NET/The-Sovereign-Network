@@ -72,28 +72,57 @@ impl ZkTransactionProof {
         _receiver_blinding: [u8; 32],
         nullifier: [u8; 32],
     ) -> anyhow::Result<Self> {
-        // Use ZK system to generate transaction proofs with correct parameter order
-        let zk_system = crate::plonky2::ZkProofSystem::new()?;
-
-        // Extract sender_secret and nullifier_seed from the blinding factors
         let sender_secret =
             u64::from_le_bytes(sender_blinding[0..8].try_into().unwrap_or([0u8; 8]));
         let nullifier_seed = u64::from_le_bytes(nullifier[0..8].try_into().unwrap_or([0u8; 8]));
 
-        // Generate the main transaction proof
-        // prove_transaction(sender_balance, amount, fee, sender_secret, nullifier_seed)
-        let plonky2_proof = zk_system.prove_transaction(
+        // Compute a consistent dummy Merkle proof so the circuit constraints
+        // are satisfied even when no real UTXO tree is supplied.
+        let leaf_hash = crate::transaction::circuit::real::compute_leaf_commitment(
+            nullifier_seed,
+            sender_secret,
+            sender_balance,
+        );
+        let (merkle_root, siblings) = crate::transaction::circuit::real::
+            build_sparse_merkle_tree_from_hashes(&[(0, leaf_hash)], 0)?;
+
+        Self::prove_transaction_with_merkle(
             sender_balance,
             amount,
             fee,
             sender_secret,
             nullifier_seed,
+            merkle_root,
+            0,
+            &siblings,
+        )
+    }
+
+    /// Generate a transaction proof with a real Merkle inclusion witness.
+    pub fn prove_transaction_with_merkle(
+        sender_balance: u64,
+        amount: u64,
+        fee: u64,
+        sender_secret: u64,
+        nullifier_seed: u64,
+        merkle_root: [u64; 4],
+        leaf_index: u32,
+        merkle_siblings: &[[u64; 4]],
+    ) -> anyhow::Result<Self> {
+        let backend_proof = crate::backend::get_backend().prove_transaction(
+            sender_balance,
+            amount,
+            fee,
+            sender_secret,
+            nullifier_seed,
+            merkle_root,
+            leaf_index,
+            merkle_siblings,
         )?;
 
-        // Create ZkProofs from the Plonky2 proof
-        let amount_proof = ZkProof::from_plonky2(plonky2_proof.clone());
-        let balance_proof = ZkProof::from_plonky2(plonky2_proof.clone());
-        let nullifier_proof = ZkProof::from_plonky2(plonky2_proof);
+        let amount_proof = ZkProof::from_backend_proof_rich(backend_proof.clone());
+        let balance_proof = ZkProof::from_backend_proof_rich(backend_proof.clone());
+        let nullifier_proof = ZkProof::from_backend_proof_rich(backend_proof);
 
         Ok(Self::new(amount_proof, balance_proof, nullifier_proof))
     }
@@ -168,5 +197,19 @@ mod tests {
         assert_eq!(amt_sys, "Plonky2");
         assert_eq!(bal_sys, "Plonky2");
         assert_eq!(null_sys, "Plonky2");
+    }
+}
+
+#[cfg(test)]
+mod backend_tests {
+    use super::*;
+
+    #[test]
+    #[cfg(feature = "real-proofs")]
+    fn test_backend_transaction_proof_roundtrip() {
+        let proof = ZkTransactionProof::prove_transaction(
+            1000, 500, 100, 10, [1u8; 32], [2u8; 32], [3u8; 32]
+        ).unwrap();
+        assert!(ZkTransactionProof::verify_transaction(&proof).unwrap());
     }
 }

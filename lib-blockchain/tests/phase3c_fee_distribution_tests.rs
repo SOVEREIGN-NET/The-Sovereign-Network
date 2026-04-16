@@ -83,7 +83,8 @@ fn create_coinbase_with_fees(
         commitment: Hash::default(),
         note: Hash::default(),
         recipient: reward_recipient.clone(),
-    }];
+            merkle_leaf: Hash::default(),
+}];
 
     // Add fee sink output if there are fees.
     // The executor identifies the fee sink by key_id (Address), so we must
@@ -98,7 +99,8 @@ fn create_coinbase_with_fees(
             commitment: Hash::default(),
             note: Hash::default(),
             recipient: fee_sink_pk,
-        });
+                    merkle_leaf: Hash::default(),
+});
     }
 
     Transaction {
@@ -174,7 +176,8 @@ fn create_transfer_tx(
             commitment: Hash::default(),
             note: Hash::default(),
             recipient,
-        }],
+                    merkle_leaf: Hash::default(),
+}],
         fee,
         signature: create_dummy_signature(),
         memo: vec![],
@@ -332,12 +335,14 @@ fn test_fee_sink_balance_increases_deterministically() {
                 commitment: Hash::default(),
                 note: Hash::default(),
                 recipient: create_recipient_pk(10),
-            },
+                            merkle_leaf: Hash::default(),
+},
             TransactionOutput {
                 commitment: Hash::default(),
                 note: Hash::default(),
                 recipient: create_recipient_pk(11),
-            },
+                            merkle_leaf: Hash::default(),
+},
         ],
         fee: 0,
         signature: create_dummy_signature(),
@@ -444,7 +449,8 @@ fn test_coinbase_without_fee_sink_rejected() {
             commitment: Hash::default(),
             note: Hash::default(),
             recipient: miner_pk.clone(),
-        }],
+                    merkle_leaf: Hash::default(),
+}],
         fee: 0,
         signature: create_dummy_signature(),
         memo: vec![],
@@ -480,7 +486,8 @@ fn test_zero_fees_no_fee_sink_required() {
             commitment: Hash::default(),
             note: Hash::default(),
             recipient: miner_pk.clone(),
-        }],
+                    merkle_leaf: Hash::default(),
+}],
         fee: 0,
         signature: create_dummy_signature(),
         memo: vec![],

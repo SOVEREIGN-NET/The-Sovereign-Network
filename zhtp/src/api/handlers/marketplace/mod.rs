@@ -582,7 +582,8 @@ impl MarketplaceHandler {
                 kyber_pk: [0u8; 1568],
                 key_id: [0; 32],
             },
-        };
+                    merkle_leaf: lib_blockchain::Hash::default(),
+};
         outputs.push(payment_output);
         info!("   → Payment output: {} SOV to seller", amount);
 
@@ -610,7 +611,8 @@ impl MarketplaceHandler {
                     kyber_pk: [0u8; 1568],
                     key_id: [0; 32],
                 },
-            };
+                            merkle_leaf: lib_blockchain::Hash::default(),
+};
             outputs.push(change_output);
             info!("   → Change output: {} SOV back to buyer", change_amount);
         }

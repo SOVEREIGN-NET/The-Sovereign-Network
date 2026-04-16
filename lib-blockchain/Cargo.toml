@@ -55,6 +55,7 @@ contracts = []
 wasm-runtime = ["wasmtime"]
 wasmtime = ["dep:wasmtime"]
 persistent-contracts = ["lru"]
+real-proofs = ["lib-proofs/real-proofs"]
 
 [dev-dependencies]
 tokio-test = "0.4"

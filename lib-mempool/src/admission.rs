@@ -149,6 +149,9 @@ pub fn admit(
         state_reads: tx.state_reads,
         state_writes: tx.state_writes,
         state_write_bytes: tx.state_write_bytes,
+        // Each input carries one ZkTransactionProof (currently 3 sub-proofs).
+        // We charge 50 units per input to match the executor fee model.
+        zk_verify_units: tx.input_count as u32 * 50,
     };
 
     let min_fee = compute_fee_v2(&fee_input, fee_params);

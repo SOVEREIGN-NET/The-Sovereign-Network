@@ -367,7 +367,8 @@ impl EnhancedTransactionCreator {
                 kyber_pk: [0u8; 1568],
                 key_id: *receiver_address,
             },
-        };
+                        merkle_leaf: Hash::default(),
+};
 
         // Create transaction input with ZK proof
         let input = crate::transaction::TransactionInput {

@@ -170,6 +170,11 @@ impl FeeModelV2 {
         // Witness is based on signature size, not ZK proof internals
         let witness_bytes = (tx.inputs.len() as u32) * sig_scheme.signature_size();
 
+        // ZK verification units: ~1.66 ms per proof verification (tx_benchmark).
+        // Each input carries one ZkTransactionProof (currently 3 sub-proofs).
+        // We charge 50 units per input as a conservative first approximation.
+        let zk_verify_units = (tx.inputs.len() as u32).saturating_mul(50);
+
         FeeInput {
             kind,
             sig_scheme,
@@ -181,6 +186,7 @@ impl FeeModelV2 {
             state_reads: (tx.inputs.len() + tx.outputs.len()) as u32,
             state_writes: tx.outputs.len() as u32,
             state_write_bytes: (tx.outputs.len() * 64) as u32, // Estimate per output
+            zk_verify_units,
         }
     }
 }
@@ -1198,6 +1204,31 @@ impl BlockExecutor {
                 }
             }
             _ => {}
+        }
+
+        // =========================================================================
+        // ZK Proof Validation (Epic E)
+        // =========================================================================
+        // Verify real ZK transaction proofs when present.
+        // Empty/mock proofs are skipped for backward compatibility with test fixtures.
+        for input in &tx.inputs {
+            if !input.zk_proof.has_empty_proofs() {
+                match lib_proofs::transaction::ZkTransactionProof::verify_transaction(&input.zk_proof)
+                {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        return Err(TxApplyError::InvalidType(
+                            "Invalid ZK proof".to_string(),
+                        ))
+                    }
+                    Err(e) => {
+                        return Err(TxApplyError::InvalidType(format!(
+                            "ZK verification failed: {}",
+                            e
+                        )))
+                    }
+                }
+            }
         }
 
         // =========================================================================
@@ -3181,6 +3212,7 @@ mod tests {
                 commitment: Hash::default(),
                 note: Hash::default(),
                 recipient: create_dummy_public_key(),
+            merkle_leaf: Hash::default(),
             }],
             fee: 10_000, // High enough for testing fee params
             signature: create_dummy_signature(),
@@ -3199,6 +3231,7 @@ mod tests {
                 commitment: Hash::default(),
                 note: Hash::default(),
                 recipient: recipient_pk,
+            merkle_leaf: Hash::default(),
             }],
             fee: 0,
             signature: create_dummy_signature(),
@@ -5223,6 +5256,167 @@ mod tests {
             sov_after, 0,
             "SOV ledger should be fully debited after BUY_CBE (before={}, after={})",
             amount_in, sov_after
+        );
+    }
+
+    /// Epic E/F end-to-end integration: real Plonky2 transaction proof with
+    /// Merkle inclusion flows through fee calculation and executor block application.
+    ///
+    /// This test exercises the *persistent* UTXO Merkle tree in SledStore:
+    /// - The coinbase output carries a real Poseidon leaf commitment.
+    /// - After block application the node has inserted the leaf and rebuilt the root.
+    /// - The wallet (test code) queries the store for `merkle_root + siblings + leaf_index`.
+    /// - The ZK proof is generated against the store-supplied witness and accepted by the executor.
+    #[test]
+    #[cfg(feature = "real-proofs")]
+    fn test_real_zk_transaction_proof_end_to_end() {
+        use crate::transaction::hashing::hash_transaction;
+        use lib_fees::compute_fee_v2;
+        use lib_proofs::transaction::ZkTransactionProof;
+        use lib_types::fees::FeeParams;
+        use crate::storage::{OutPoint, TxHash};
+
+        let store = create_test_store();
+        let executor = BlockExecutor::with_store(store.clone());
+
+        // Genesis
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let sender_balance = 10_000u64;
+        let amount = 1_000u64;
+        let fee = 100u64;
+        let sender_blinding = [7u8; 32];
+        let nullifier = [9u8; 32];
+
+        // Derive secrets for Merkle leaf computation
+        let sender_secret =
+            u64::from_le_bytes(sender_blinding[0..8].try_into().unwrap_or([0u8; 8]));
+        let nullifier_seed = u64::from_le_bytes(nullifier[0..8].try_into().unwrap_or([0u8; 8]));
+
+        // Compute the Poseidon leaf commitment that the node will store.
+        let leaf_commitment_u64 = lib_proofs::transaction::circuit::real::compute_leaf_commitment(
+            nullifier_seed,
+            sender_secret,
+            sender_balance,
+        );
+        let mut leaf_commitment = [0u8; 32];
+        for (i, &v) in leaf_commitment_u64.iter().enumerate() {
+            leaf_commitment[i * 8..(i + 1) * 8].copy_from_slice(&v.to_le_bytes());
+        }
+
+        // Fund a coinbase UTXO with the merkle leaf commitment so the node tracks it.
+        let coinbase_tx = Transaction {
+            version: 1,
+            chain_id: 0x03,
+            transaction_type: TransactionType::Coinbase,
+            inputs: vec![],
+            outputs: vec![TransactionOutput {
+                commitment: Hash::default(),
+                note: Hash::default(),
+                recipient: create_dummy_public_key(),
+                merkle_leaf: Hash::new(leaf_commitment),
+            }],
+            fee: 0,
+            signature: create_dummy_signature(),
+            memo: vec![],
+            payload: crate::transaction::TransactionPayload::None,
+        };
+
+        let funded_block = create_block_with_txs(
+            1,
+            genesis.header.block_hash,
+            vec![coinbase_tx],
+        );
+        executor.apply_block(&funded_block).unwrap();
+
+        let coinbase_tx_hash = hash_transaction(&funded_block.transactions[0]);
+
+        // Query the persistent Merkle tree for the inclusion proof.
+        let outpoint = OutPoint::new(TxHash::new(coinbase_tx_hash.as_array()), 0);
+        let merkle_proof = store
+            .get_utxo_merkle_proof(&outpoint)
+            .expect("store query should succeed")
+            .expect("Merkle proof should exist for the funded UTXO");
+
+        // Convert store proof ([u8;32]) to the format expected by the prover ([u64;4]).
+        let mut merkle_root = [0u64; 4];
+        for (i, chunk) in merkle_proof.root.chunks_exact(8).enumerate() {
+            merkle_root[i] = u64::from_le_bytes(chunk.try_into().unwrap());
+        }
+        let mut siblings = Vec::with_capacity(merkle_proof.siblings.len());
+        for s in &merkle_proof.siblings {
+            let mut arr = [0u64; 4];
+            for (j, chunk) in s.chunks_exact(8).enumerate() {
+                arr[j] = u64::from_le_bytes(chunk.try_into().unwrap());
+            }
+            siblings.push(arr);
+        }
+
+        // 1. Generate a real ZK transaction proof with Merkle inclusion
+        let zk_proof = ZkTransactionProof::prove_transaction_with_merkle(
+            sender_balance,
+            amount,
+            fee,
+            sender_secret,
+            nullifier_seed,
+            merkle_root,
+            merkle_proof.leaf_index as u32,
+            &siblings,
+        )
+        .expect("Real proof generation should succeed");
+
+        // 2. Verify the proof independently
+        assert!(
+            ZkTransactionProof::verify_transaction(&zk_proof).unwrap(),
+            "Real proof should verify"
+        );
+
+        // 3. Build a blockchain transaction carrying the real proof
+        let tx = Transaction {
+            version: 1,
+            chain_id: 0x03,
+            transaction_type: TransactionType::Transfer,
+            inputs: vec![TransactionInput {
+                previous_output: coinbase_tx_hash,
+                output_index: 0,
+                nullifier: Hash::default(),
+                zk_proof,
+            }],
+            outputs: vec![TransactionOutput {
+                commitment: Hash::default(),
+                note: Hash::default(),
+                recipient: create_dummy_public_key(),
+                merkle_leaf: Hash::default(),
+            }],
+            fee: 10_000,
+            signature: create_dummy_signature(),
+            memo: vec![],
+            payload: crate::transaction::TransactionPayload::None,
+        };
+
+        // 4. Fee model must charge for ZK verification units
+        let fee_input = FeeModelV2::tx_to_fee_input(&tx);
+        assert!(
+            fee_input.zk_verify_units > 0,
+            "zk_verify_units should be > 0 for transactions with inputs"
+        );
+
+        let fee_params = FeeParams::default();
+        let total_fee = compute_fee_v2(&fee_input, &fee_params);
+        assert!(total_fee > 0, "Total fee should include ZK verification cost");
+
+        // 5. Full block application should succeed with a real ZK proof
+        let spend_block = create_block_with_txs(2, funded_block.header.block_hash, vec![tx]);
+        executor.apply_block(&spend_block).expect(
+            "Transaction with real ZK proof should be accepted into the chain"
+        );
+        assert_eq!(store.latest_height().unwrap(), 2);
+
+        // 6. The spent UTXO should no longer have a Merkle proof in the store.
+        assert!(
+            store.get_utxo_merkle_proof(&outpoint).unwrap().is_none(),
+            "Spent UTXO should be removed from the Merkle tree index"
         );
     }
 }

@@ -58,7 +58,8 @@ mod sov_week10_integration_tests {
                 commitment: Hash::default(),
                 note: Hash::default(),
                 recipient: create_test_public_key(index),
-            }],
+                            merkle_leaf: Hash::default(),
+}],
             fee,
             signature: Signature {
                 signature: format!("sig_{}", index).as_bytes().to_vec(),

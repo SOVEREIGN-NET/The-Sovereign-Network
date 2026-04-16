@@ -433,7 +433,8 @@ impl EconomicTransactionProcessor {
                 .as_bytes(),
             ),
             recipient: PublicKey::new([0u8; 2592]), // Use empty dilithium key for economy transaction
-        }];
+                        merkle_leaf: Hash::default(),
+}];
 
         // Map economy transaction type to blockchain transaction type
         let blockchain_tx_type = match economy_tx.tx_type {

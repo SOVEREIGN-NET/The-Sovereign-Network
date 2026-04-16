@@ -99,7 +99,8 @@ impl GenesisFundingService {
                     format!("validator_stake_note_{}_{}", validator_id_hex, index).as_bytes(),
                 ),
                 recipient: PublicKey::new([0u8; 2592]),
-            };
+                            merkle_leaf: lib_blockchain::Hash::default(),
+};
 
             genesis_outputs.push(validator_output);
             total_validator_stake += validator.stake;
@@ -132,7 +133,8 @@ impl GenesisFundingService {
                 commitment: lib_blockchain::types::hash::blake3_hash(b"ubi_pool_commitment_500000"),
                 note: lib_blockchain::types::hash::blake3_hash(b"ubi_pool_note"),
                 recipient: PublicKey::new([0u8; 2592]),
-            },
+                            merkle_leaf: lib_blockchain::Hash::default(),
+},
             // Mining rewards pool
             TransactionOutput {
                 commitment: lib_blockchain::types::hash::blake3_hash(
@@ -140,13 +142,15 @@ impl GenesisFundingService {
                 ),
                 note: lib_blockchain::types::hash::blake3_hash(b"mining_pool_note"),
                 recipient: PublicKey::new([0u8; 2592]),
-            },
+                            merkle_leaf: lib_blockchain::Hash::default(),
+},
             // Development fund
             TransactionOutput {
                 commitment: lib_blockchain::types::hash::blake3_hash(b"dev_pool_commitment_200000"),
                 note: lib_blockchain::types::hash::blake3_hash(b"dev_pool_note"),
                 recipient: PublicKey::new([0u8; 2592]),
-            },
+                            merkle_leaf: lib_blockchain::Hash::default(),
+},
         ]);
 
         // Add user primary wallet funding (welcome bonus: 5,000 SOV)

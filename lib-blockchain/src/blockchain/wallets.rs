@@ -607,7 +607,8 @@ impl Blockchain {
             recipient: PublicKey::new(
                 recipient_identity.try_into().unwrap_or([0u8; 2592])
             ),
-        };
+                        merkle_leaf: Hash::default(),
+};
         let utxo_hash = crate::types::hash::blake3_hash(
             format!("funding_utxo:{}:{}", wallet_id, amount).as_bytes(),
         );
