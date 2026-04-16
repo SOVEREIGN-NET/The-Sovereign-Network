@@ -13,36 +13,36 @@ use serde::{Deserialize, Serialize};
 /// Interface for blockchain economic events
 pub trait BlockchainEconomics {
     /// Process transaction fees from blockchain
-    fn process_transaction_fees(&mut self, transaction_id: &str, fees: u64) -> Result<()>;
+    fn process_transaction_fees(&mut self, transaction_id: &str, fees: u128) -> Result<()>;
 
     /// Handle block rewards for validators
-    fn handle_block_rewards(&mut self, validator_id: &str, reward: u64) -> Result<()>;
+    fn handle_block_rewards(&mut self, validator_id: &str, reward: u128) -> Result<()>;
 
     /// Process DAO fee distribution
-    fn process_dao_fees(&mut self, dao_fees: u64) -> Result<()>;
+    fn process_dao_fees(&mut self, dao_fees: u128) -> Result<()>;
 
     /// Handle infrastructure rewards
-    fn handle_infrastructure_rewards(&mut self, provider_id: &str, reward: u64) -> Result<()>;
+    fn handle_infrastructure_rewards(&mut self, provider_id: &str, reward: u128) -> Result<()>;
 
     /// Process  incentives
-    fn process_isp_bypass_rewards(&mut self, participant_id: &str, reward: u64) -> Result<()>;
+    fn process_isp_bypass_rewards(&mut self, participant_id: &str, reward: u128) -> Result<()>;
 }
 
 /// Economic data that flows to blockchain
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EconomicBlockchainData {
     /// Network transaction fees
-    pub transaction_fees: u64,
+    pub transaction_fees: u128,
     /// DAO fees for UBI/DAO allocations
-    pub dao_fees: u64,
+    pub dao_fees: u128,
     /// Infrastructure provider rewards
-    pub infrastructure_rewards: u64,
+    pub infrastructure_rewards: u128,
     /// Validator rewards
-    pub validator_rewards: u64,
+    pub validator_rewards: u128,
     ///  incentive rewards
-    pub isp_bypass_rewards: u64,
+    pub isp_bypass_rewards: u128,
     /// Total tokens minted
-    pub tokens_minted: u64,
+    pub tokens_minted: u128,
     /// Block height for this data
     pub block_height: u64,
     /// Timestamp of economic data
@@ -65,7 +65,7 @@ impl EconomicBlockchainData {
     }
 
     /// Calculate total economic value
-    pub fn total_value(&self) -> u64 {
+    pub fn total_value(&self) -> u128 {
         self.transaction_fees
             + self.dao_fees
             + self.infrastructure_rewards
@@ -199,7 +199,7 @@ impl BlockchainIntegration {
 
     /// Get integration statistics
     pub fn get_integration_stats(&self) -> serde_json::Value {
-        let pending_value: u64 = self
+        let pending_value: u128 = self
             .pending_transactions
             .iter()
             .map(|tx| tx.total_value())
@@ -237,7 +237,7 @@ impl BlockchainIntegration {
 
 #[allow(deprecated)] // SupplyManager methods are deprecated; callers will migrate to TreasuryKernel
 impl BlockchainEconomics for BlockchainIntegration {
-    fn process_transaction_fees(&mut self, transaction_id: &str, fees: u64) -> Result<()> {
+    fn process_transaction_fees(&mut self, transaction_id: &str, fees: u128) -> Result<()> {
         self.economic_model.process_network_fees(fees)?;
 
         info!(
@@ -248,7 +248,7 @@ impl BlockchainEconomics for BlockchainIntegration {
         Ok(())
     }
 
-    fn handle_block_rewards(&mut self, validator_id: &str, reward: u64) -> Result<()> {
+    fn handle_block_rewards(&mut self, validator_id: &str, reward: u128) -> Result<()> {
         self.economic_model
             .mint_operational_tokens(reward, "validator reward")?;
 
@@ -260,7 +260,7 @@ impl BlockchainEconomics for BlockchainIntegration {
         Ok(())
     }
 
-    fn process_dao_fees(&mut self, dao_fees: u64) -> Result<()> {
+    fn process_dao_fees(&mut self, dao_fees: u128) -> Result<()> {
         let distribution = calculate_dao_fee_distribution(dao_fees);
         self.dao_treasury.apply_fee_distribution(distribution)?;
 
@@ -272,7 +272,7 @@ impl BlockchainEconomics for BlockchainIntegration {
         Ok(())
     }
 
-    fn handle_infrastructure_rewards(&mut self, provider_id: &str, reward: u64) -> Result<()> {
+    fn handle_infrastructure_rewards(&mut self, provider_id: &str, reward: u128) -> Result<()> {
         self.economic_model
             .mint_operational_tokens(reward, "infrastructure reward")?;
 
@@ -284,7 +284,7 @@ impl BlockchainEconomics for BlockchainIntegration {
         Ok(())
     }
 
-    fn process_isp_bypass_rewards(&mut self, participant_id: &str, reward: u64) -> Result<()> {
+    fn process_isp_bypass_rewards(&mut self, participant_id: &str, reward: u128) -> Result<()> {
         self.economic_model
             .mint_operational_tokens(reward, " reward")?;
 
@@ -322,7 +322,7 @@ pub fn create_blockchain_integration_with_treasury(treasury: DaoTreasury) -> Blo
 /// Process economic events from blockchain
 pub fn process_blockchain_economic_events(
     integration: &mut BlockchainIntegration,
-    events: &[(String, String, u64)], // (event_type, entity_id, amount)
+    events: &[(String, String, u128)], // (event_type, entity_id, amount)
 ) -> Result<()> {
     for (event_type, entity_id, amount) in events {
         match event_type.as_str() {

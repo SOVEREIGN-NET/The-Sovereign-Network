@@ -11,18 +11,18 @@ use anyhow::Result;
 pub fn calculate_ubi_amount(
     treasury: &DaoTreasury,
     verified_citizens: &[IdentityId],
-) -> Result<u64> {
+) -> Result<u128> {
     if verified_citizens.is_empty() {
         return Ok(0);
     }
 
     treasury.calculate_ubi_per_citizen(verified_citizens.len() as u64);
-    Ok(treasury.ubi_allocated / verified_citizens.len() as u64)
+    Ok(treasury.ubi_allocated / verified_citizens.len() as u128)
 }
 
 /// Calculate total UBI distribution required
-pub fn calculate_total_ubi_distribution(ubi_per_citizen: u64, citizen_count: u64) -> u64 {
-    ubi_per_citizen * citizen_count
+pub fn calculate_total_ubi_distribution(ubi_per_citizen: u128, citizen_count: u64) -> u128 {
+    ubi_per_citizen * citizen_count as u128
 }
 
 /// Verify UBI eligibility for citizens

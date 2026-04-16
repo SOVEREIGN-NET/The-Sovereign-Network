@@ -59,10 +59,10 @@ pub const SOV_TOTAL_SUPPLY: u64 = 1_000_000_000_000; // 1 trillion
 /// Transaction fee rate: 1% (expressed in basis points)
 /// Fee amount = (transaction_amount * TRANSACTION_FEE_RATE) / 10000
 pub const TRANSACTION_FEE_RATE: u64 = 100; // 1% in basis points
-pub const DEFAULT_DAO_FEE_RATE: u64 = 100; // 1% in basis points
+pub const DEFAULT_DAO_FEE_RATE: u128 = 100; // 1% in basis points
 
-pub const MINIMUM_DAO_FEE: u64 = 5;
-pub const MINIMUM_NETWORK_FEE: u64 = 10;
+pub const MINIMUM_DAO_FEE: u128 = 5;
+pub const MINIMUM_NETWORK_FEE: u128 = 10;
 
 /// Fee allocation percentages (must sum to 100%)
 /// Applied to 1% transaction fee across all transactions

@@ -29,7 +29,7 @@ const DEFAULT_WITNESS_CAP: u32 = 500;
 static TX_FEE_BASE_FEE: AtomicU64 = AtomicU64::new(DEFAULT_BASE_FEE);
 static TX_FEE_BYTES_PER_SOV: AtomicU64 = AtomicU64::new(DEFAULT_BYTES_PER_SOV);
 static TX_FEE_WITNESS_CAP: AtomicU32 = AtomicU32::new(DEFAULT_WITNESS_CAP);
-static TX_TOKEN_CREATION_FEE: AtomicU64 = AtomicU64::new(DEFAULT_TOKEN_CREATION_FEE);
+static TX_TOKEN_CREATION_FEE: AtomicU64 = AtomicU64::new(DEFAULT_TOKEN_CREATION_FEE as u64); // safe: 1000 fits u64
 
 // ============================================================================
 // Helper functions

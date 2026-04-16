@@ -89,11 +89,11 @@ pub struct ZhtpHeaders {
 
     // Web4 Economic Extensions
     /// Network operation fee (covers bandwidth, storage, compute)
-    pub network_fee: Option<u64>,
+    pub network_fee: Option<u128>,
     /// Mandatory DAO fee for Universal Basic Income and welfare (1% of transaction value)
-    pub dao_fee: u64,
+    pub dao_fee: u128,
     /// Total transaction fees (network_fee + dao_fee)
-    pub total_fees: u64,
+    pub total_fees: u128,
     /// DAO fee payment proof (validates UBI contribution)
     pub dao_fee_proof: Option<[u8; 32]>,
     /// Transaction priority for network QoS
@@ -298,14 +298,14 @@ impl ZhtpHeaders {
     }
 
     /// Set DAO fee
-    pub fn with_dao_fee(mut self, fee: u64, proof: [u8; 32]) -> Self {
+    pub fn with_dao_fee(mut self, fee: u128, proof: [u8; 32]) -> Self {
         self.dao_fee = fee;
         self.dao_fee_proof = Some(proof);
         self
     }
 
     /// Set network fee
-    pub fn with_network_fee(mut self, fee: u64) -> Self {
+    pub fn with_network_fee(mut self, fee: u128) -> Self {
         self.network_fee = Some(fee);
         self.total_fees = self.dao_fee + fee;
         self
@@ -397,7 +397,7 @@ impl ZhtpHeaders {
             }
             "encryption" => self.encryption = Some(value),
             "dao-fee" => {
-                if let Ok(fee) = value.parse::<u64>() {
+                if let Ok(fee) = value.parse::<u128>() {
                     self.dao_fee = fee;
                 }
             }

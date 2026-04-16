@@ -13,7 +13,7 @@ use crate::types::{transaction_type::TransactionType as BlockchainTransactionTyp
 use lib_economy::types::TransactionTypeExt;
 
 /// Calculate minimum fee required for blockchain transaction
-pub fn calculate_minimum_blockchain_fee(tx_size: u64, amount: u64, priority: Priority) -> u64 {
+pub fn calculate_minimum_blockchain_fee(tx_size: u64, amount: u128, priority: Priority) -> u128 {
     let (network_fee, dao_fee, total_fee) = calculate_total_fee(tx_size, amount, priority);
 
     // Log fee breakdown for transparency
@@ -104,7 +104,7 @@ impl EconomicTransactionProcessor {
     /// Create UBI distribution transactions for verified citizens
     pub async fn create_ubi_distributions_for_blockchain(
         &mut self,
-        citizens: &[(IdentityId, u64)],
+        citizens: &[(IdentityId, u128)],
         system_keypair: &lib_crypto::KeyPair,
     ) -> Result<Vec<BlockchainTransaction>> {
         info!("Creating UBI distributions for {} citizens", citizens.len());
@@ -122,7 +122,7 @@ impl EconomicTransactionProcessor {
         }
 
         // Update UBI statistics
-        let total_ubi_amount: u64 = citizens.iter().map(|(_, amount)| *amount).sum();
+        let total_ubi_amount: u128 = citizens.iter().map(|(_, amount)| *amount).sum();
         info!(
             "Created {} UBI distributions totaling {} SOV",
             blockchain_txs.len(),
@@ -135,7 +135,7 @@ impl EconomicTransactionProcessor {
     /// Create reward transactions for network services
     pub async fn create_network_reward_transactions(
         &mut self,
-        rewards: &[([u8; 32], u64)], // (recipient, amount)
+        rewards: &[([u8; 32], u128)], // (recipient, amount)
         system_keypair: &lib_crypto::KeyPair,
     ) -> Result<Vec<BlockchainTransaction>> {
         info!(
@@ -144,7 +144,7 @@ impl EconomicTransactionProcessor {
         );
 
         // Use proper lib-economy reward distribution system
-        let total_rewards: u64 = rewards.iter().map(|(_, amount)| *amount).sum();
+        let total_rewards: u128 = rewards.iter().map(|(_, amount)| *amount).sum();
         debug!(
             "Processing reward distribution for {} SOV across {} recipients",
             total_rewards,
@@ -208,7 +208,7 @@ impl EconomicTransactionProcessor {
     pub async fn distribute_infrastructure_rewards(
         &mut self,
         participants: &[([u8; 32], u64, u64, u64)], // (address, routing_work, storage_work, compute_work)
-        reward_pool: u64,
+        reward_pool: u128,
         system_keypair: &lib_crypto::KeyPair,
     ) -> Result<Vec<BlockchainTransaction>> {
         info!(
@@ -218,9 +218,9 @@ impl EconomicTransactionProcessor {
         );
 
         // Calculate total work
-        let total_work: u64 = participants
+        let total_work: u128 = participants
             .iter()
-            .map(|(_, routing, storage, compute)| routing + storage + compute)
+            .map(|(_, routing, storage, compute)| (*routing + *storage + *compute) as u128)
             .sum();
 
         if total_work == 0 {
@@ -228,10 +228,10 @@ impl EconomicTransactionProcessor {
         }
 
         let mut blockchain_txs = Vec::new();
-        let mut distributed_total = 0u64;
+        let mut distributed_total = 0u128;
 
         for (address, routing_work, storage_work, compute_work) in participants {
-            let participant_work = routing_work + storage_work + compute_work;
+            let participant_work = (*routing_work + *storage_work + *compute_work) as u128;
             let reward_share = (participant_work * reward_pool) / total_work;
 
             if reward_share > 0 {
@@ -283,7 +283,7 @@ impl EconomicTransactionProcessor {
         &mut self,
         from: [u8; 32],
         to: [u8; 32],
-        amount: u64,
+        amount: u128,
         priority: Priority,
         sender_keypair: &lib_crypto::KeyPair,
     ) -> Result<BlockchainTransaction> {
@@ -312,10 +312,10 @@ impl EconomicTransactionProcessor {
     pub fn calculate_transaction_fees_with_exemptions(
         &self,
         tx_size: u64,
-        amount: u64,
+        amount: u128,
         priority: Priority,
         is_system_transaction: bool,
-    ) -> (u64, u64, u64) {
+    ) -> (u128, u128, u128) {
         calculate_fee_with_exemptions(tx_size, amount, priority, is_system_transaction)
     }
 
@@ -333,20 +333,20 @@ impl EconomicTransactionProcessor {
     pub async fn get_treasury_statistics(&self) -> Result<TreasuryStats> {
         let stats = self.dao_treasury.get_treasury_stats();
         Ok(TreasuryStats {
-            total_dao_fees_collected: stats["total_dao_fees_collected"].as_u64().unwrap_or(0),
-            total_ubi_distributed: stats["total_ubi_distributed"].as_u64().unwrap_or(0),
+            total_dao_fees_collected: stats["total_dao_fees_collected"].as_u64().unwrap_or(0) as u128,
+            total_ubi_distributed: stats["total_ubi_distributed"].as_u64().unwrap_or(0) as u128,
             total_sector_dao_distributed: stats["total_sector_dao_distributed"]
                 .as_u64()
-                .unwrap_or(0),
-            total_emergency_distributed: stats["total_emergency_distributed"].as_u64().unwrap_or(0),
+                .unwrap_or(0) as u128,
+            total_emergency_distributed: stats["total_emergency_distributed"].as_u64().unwrap_or(0) as u128,
             total_dev_grants_distributed: stats["total_dev_grants_distributed"]
                 .as_u64()
-                .unwrap_or(0),
-            current_treasury_balance: stats["treasury_balance"].as_u64().unwrap_or(0),
-            ubi_fund_balance: stats["ubi_allocated"].as_u64().unwrap_or(0),
-            sector_dao_fund_balance: stats["sector_dao_allocated"].as_u64().unwrap_or(0),
-            emergency_fund_balance: stats["emergency_allocated"].as_u64().unwrap_or(0),
-            dev_grants_fund_balance: stats["dev_grants_allocated"].as_u64().unwrap_or(0),
+                .unwrap_or(0) as u128,
+            current_treasury_balance: stats["treasury_balance"].as_u64().unwrap_or(0) as u128,
+            ubi_fund_balance: stats["ubi_allocated"].as_u64().unwrap_or(0) as u128,
+            sector_dao_fund_balance: stats["sector_dao_allocated"].as_u64().unwrap_or(0) as u128,
+            emergency_fund_balance: stats["emergency_allocated"].as_u64().unwrap_or(0) as u128,
+            dev_grants_fund_balance: stats["dev_grants_allocated"].as_u64().unwrap_or(0) as u128,
         })
     }
 
@@ -354,9 +354,9 @@ impl EconomicTransactionProcessor {
     pub fn calculate_transaction_fees(
         &self,
         tx_size: u64,
-        amount: u64,
+        amount: u128,
         priority: Priority,
-    ) -> (u64, u64, u64) {
+    ) -> (u128, u128, u128) {
         // Calculate network fee using lib-economy function
         let network_fee = calculate_network_fee(tx_size, priority);
 
@@ -375,7 +375,7 @@ impl EconomicTransactionProcessor {
     }
 
     /// Process network fees for infrastructure operation
-    pub async fn process_network_fees(&mut self, network_fees: u64) -> Result<()> {
+    pub async fn process_network_fees(&mut self, network_fees: u128) -> Result<()> {
         if network_fees > 0 {
             debug!(
                 "Processing {} SOV in network infrastructure fees",
@@ -495,7 +495,7 @@ impl EconomicTransactionProcessor {
                     ),
                     created_at: economy_tx.timestamp,
                     registration_fee: 0,
-                    dao_fee: economy_tx.dao_fee,
+                    dao_fee: economy_tx.dao_fee as u64,
                     controlled_nodes: Vec::new(),
                     owned_wallets: Vec::new(),
                 })
@@ -510,7 +510,7 @@ impl EconomicTransactionProcessor {
             transaction_type: blockchain_tx_type,
             inputs,
             outputs,
-            fee: economy_tx.total_fee,
+            fee: economy_tx.total_fee as u64,
             signature,
             memo,
             payload: identity_data
@@ -541,7 +541,7 @@ impl EconomicTransactionProcessor {
             transaction_type: BlockchainTransactionType::Transfer,
             inputs: inputs.to_vec(),
             outputs: outputs.to_vec(),
-            fee: economy_tx.total_fee,
+            fee: economy_tx.total_fee as u64,
             signature: temp_signature,
             memo: format!("Economic signature for {}", hex::encode(economy_tx.tx_id)).into_bytes(),
             payload: crate::transaction::TransactionPayload::None,
@@ -628,7 +628,7 @@ impl EconomicTransactionProcessor {
         economy_tx: &EconomyTransaction,
     ) -> Result<()> {
         // Validate fee consistency
-        if blockchain_tx.fee != economy_tx.total_fee {
+        if blockchain_tx.fee as u128 != economy_tx.total_fee {
             return Err(anyhow::anyhow!(
                 "Fee mismatch: blockchain={}, economy={}",
                 blockchain_tx.fee,
@@ -670,16 +670,16 @@ impl Default for EconomicTransactionProcessor {
 /// Treasury statistics for monitoring
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TreasuryStats {
-    pub total_dao_fees_collected: u64,
-    pub total_ubi_distributed: u64,
-    pub total_sector_dao_distributed: u64,
-    pub total_emergency_distributed: u64,
-    pub total_dev_grants_distributed: u64,
-    pub current_treasury_balance: u64,
-    pub ubi_fund_balance: u64,
-    pub sector_dao_fund_balance: u64,
-    pub emergency_fund_balance: u64,
-    pub dev_grants_fund_balance: u64,
+    pub total_dao_fees_collected: u128,
+    pub total_ubi_distributed: u128,
+    pub total_sector_dao_distributed: u128,
+    pub total_emergency_distributed: u128,
+    pub total_dev_grants_distributed: u128,
+    pub current_treasury_balance: u128,
+    pub ubi_fund_balance: u128,
+    pub sector_dao_fund_balance: u128,
+    pub emergency_fund_balance: u128,
+    pub dev_grants_fund_balance: u128,
 }
 
 /// Create an economic transaction processor for blockchain integration
@@ -688,24 +688,24 @@ pub fn create_economic_processor() -> EconomicTransactionProcessor {
 }
 
 /// Convert economy transaction amount to blockchain amount (1:1 mapping)
-pub fn convert_economy_amount_to_blockchain(economy_amount: u64) -> u64 {
+pub fn convert_economy_amount_to_blockchain(economy_amount: u128) -> u128 {
     economy_amount // Direct 1:1 mapping between economy and blockchain tokens
 }
 
 /// Convert blockchain amount to economy amount (1:1 mapping)
-pub fn convert_blockchain_amount_to_economy(blockchain_amount: u64) -> u64 {
+pub fn convert_blockchain_amount_to_economy(blockchain_amount: u128) -> u128 {
     blockchain_amount // Direct 1:1 mapping between economy and blockchain tokens
 }
 
 /// Validate DAO fee calculation for blockchain transaction
-pub fn validate_dao_fee_calculation(transaction_amount: u64, claimed_dao_fee: u64) -> Result<bool> {
+pub fn validate_dao_fee_calculation(transaction_amount: u128, claimed_dao_fee: u128) -> Result<bool> {
     let expected_dao_fee = calculate_dao_fee(transaction_amount);
     Ok(claimed_dao_fee == expected_dao_fee)
 }
 
 /// Process welfare funding transactions for blockchain
 pub async fn create_welfare_funding_transactions(
-    services: &[(String, [u8; 32], u64)], // (service_name, address, amount)
+    services: &[(String, [u8; 32], u128)], // (service_name, address, amount)
     system_keypair: &lib_crypto::KeyPair,
 ) -> Result<Vec<BlockchainTransaction>> {
     info!(
@@ -727,7 +727,7 @@ pub async fn create_welfare_funding_transactions(
         blockchain_txs.push(blockchain_tx);
     }
 
-    let total_welfare: u64 = services.iter().map(|(_, _, amount)| *amount).sum();
+    let total_welfare: u128 = services.iter().map(|(_, _, amount)| *amount).sum();
     info!(
         "Created {} welfare funding transactions totaling {} SOV",
         blockchain_txs.len(),

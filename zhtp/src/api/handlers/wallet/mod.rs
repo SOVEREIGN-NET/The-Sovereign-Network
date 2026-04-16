@@ -192,21 +192,21 @@ struct CrossWalletTransferRequest {
     identity_id: String,
     from_wallet: String,
     to_wallet: String,
-    amount: u64,
+    amount: u128,
     purpose: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct StakingRequest {
     identity_id: String,
-    amount: u64,
+    amount: u128,
 }
 
 #[derive(Deserialize)]
 struct SimpleSendRequest {
     from_identity: String,
     to_address: String,
-    amount: u64,
+    amount: u128,
     memo: Option<String>,
 }
 
@@ -221,8 +221,10 @@ struct TransactionHistoryResponse {
 struct TransactionRecord {
     tx_hash: String,
     tx_type: String,
-    amount: u64,
-    fee: u64,
+    #[serde(serialize_with = "crate::api::handlers::token::u128_as_string::serialize")]
+    amount: u128,
+    #[serde(serialize_with = "crate::api::handlers::token::u128_as_string::serialize")]
+    fee: u128,
     from_wallet: Option<String>,
     to_address: Option<String>,
     timestamp: u64,
@@ -1040,21 +1042,17 @@ impl WalletHandler {
         }
     }
 
-    fn u128_to_u64_saturating(amount: u128) -> u64 {
-        u64::try_from(amount).unwrap_or(u64::MAX)
-    }
-
-    fn infer_transaction_amount(tx: &lib_blockchain::transaction::Transaction) -> u64 {
+    fn infer_transaction_amount(tx: &lib_blockchain::transaction::Transaction) -> u128 {
         if let Some(data) = tx.token_transfer_data() {
-            return Self::u128_to_u64_saturating(data.amount);
+            return data.amount;
         }
         if let Some(data) = tx.token_mint_data() {
-            return Self::u128_to_u64_saturating(data.amount);
+            return data.amount;
         }
         if let Some(data) = tx.dao_execution_data() {
-            return data.amount.unwrap_or(tx.outputs.len() as u64);
+            return data.amount.unwrap_or(tx.outputs.len() as u64) as u128;
         }
-        tx.outputs.len() as u64
+        tx.outputs.len() as u128
     }
 
     fn canonical_key_id_from_public_key_bytes(public_key: &[u8]) -> Option<[u8; 32]> {
@@ -1235,7 +1233,7 @@ impl WalletHandler {
             tx_hash: hex::encode(tx_hash.as_bytes()),
             tx_type: format!("{:?}", tx.transaction_type),
             amount,
-            fee: tx.fee,
+            fee: tx.fee as u128,
             from_wallet,
             to_address,
             timestamp,
@@ -1438,7 +1436,7 @@ impl WalletHandler {
             .ok_or_else(|| anyhow::anyhow!("No primary wallet found"))?;
 
         // Check balance
-        if primary_wallet.balance < send_req.amount as u128 {
+        if primary_wallet.balance < send_req.amount {
             return Ok(create_error_response(
                 ZhtpStatus::PaymentRequired,
                 format!(

@@ -5,11 +5,11 @@ use anyhow::Result;
 
 /// Mock blockchain for testing economic flows
 pub struct MockBlockchain {
-    pub processed_fees: Vec<(String, u64)>,
-    pub block_rewards: Vec<(String, u64)>,
-    pub dao_fees: Vec<u64>,
-    pub infrastructure_rewards: Vec<(String, u64)>,
-    pub isp_bypass_rewards: Vec<(String, u64)>,
+    pub processed_fees: Vec<(String, u128)>,
+    pub block_rewards: Vec<(String, u128)>,
+    pub dao_fees: Vec<u128>,
+    pub infrastructure_rewards: Vec<(String, u128)>,
+    pub isp_bypass_rewards: Vec<(String, u128)>,
 }
 
 impl MockBlockchain {
@@ -23,26 +23,26 @@ impl MockBlockchain {
         }
     }
 
-    pub fn total_fees(&self) -> u64 {
+    pub fn total_fees(&self) -> u128 {
         self.processed_fees.iter().map(|(_, fee)| *fee).sum()
     }
 
-    pub fn total_rewards(&self) -> u64 {
+    pub fn total_rewards(&self) -> u128 {
         self.block_rewards.iter().map(|(_, reward)| *reward).sum()
     }
 
-    pub fn total_dao_fees(&self) -> u64 {
+    pub fn total_dao_fees(&self) -> u128 {
         self.dao_fees.iter().sum()
     }
 
-    pub fn total_infrastructure_rewards(&self) -> u64 {
+    pub fn total_infrastructure_rewards(&self) -> u128 {
         self.infrastructure_rewards
             .iter()
             .map(|(_, reward)| *reward)
             .sum()
     }
 
-    pub fn total_isp_bypass_rewards(&self) -> u64 {
+    pub fn total_isp_bypass_rewards(&self) -> u128 {
         self.isp_bypass_rewards
             .iter()
             .map(|(_, reward)| *reward)
@@ -51,28 +51,28 @@ impl MockBlockchain {
 }
 
 impl BlockchainEconomics for MockBlockchain {
-    fn process_transaction_fees(&mut self, transaction_id: &str, fees: u64) -> Result<()> {
+    fn process_transaction_fees(&mut self, transaction_id: &str, fees: u128) -> Result<()> {
         self.processed_fees.push((transaction_id.to_string(), fees));
         Ok(())
     }
 
-    fn handle_block_rewards(&mut self, validator_id: &str, reward: u64) -> Result<()> {
+    fn handle_block_rewards(&mut self, validator_id: &str, reward: u128) -> Result<()> {
         self.block_rewards.push((validator_id.to_string(), reward));
         Ok(())
     }
 
-    fn process_dao_fees(&mut self, dao_fees: u64) -> Result<()> {
+    fn process_dao_fees(&mut self, dao_fees: u128) -> Result<()> {
         self.dao_fees.push(dao_fees);
         Ok(())
     }
 
-    fn handle_infrastructure_rewards(&mut self, provider_id: &str, reward: u64) -> Result<()> {
+    fn handle_infrastructure_rewards(&mut self, provider_id: &str, reward: u128) -> Result<()> {
         self.infrastructure_rewards
             .push((provider_id.to_string(), reward));
         Ok(())
     }
 
-    fn process_isp_bypass_rewards(&mut self, participant_id: &str, reward: u64) -> Result<()> {
+    fn process_isp_bypass_rewards(&mut self, participant_id: &str, reward: u128) -> Result<()> {
         self.isp_bypass_rewards
             .push((participant_id.to_string(), reward));
         Ok(())

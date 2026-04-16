@@ -20,14 +20,14 @@ pub struct Transaction {
     pub from: [u8; 32],
     /// Recipient address
     pub to: [u8; 32],
-    /// Transaction amount in SOV tokens
-    pub amount: u64,
+    /// Transaction amount in SOV tokens (18-decimal atoms)
+    pub amount: u128,
     /// Network infrastructure fee
-    pub base_fee: u64,
+    pub base_fee: u128,
     /// Mandatory DAO fee for UBI/welfare (2% of amount)
-    pub dao_fee: u64,
+    pub dao_fee: u128,
     /// Total fee (base_fee + dao_fee)
-    pub total_fee: u64,
+    pub total_fee: u128,
     /// Type of transaction
     pub tx_type: TransactionType,
     /// Transaction timestamp
@@ -43,7 +43,7 @@ impl Transaction {
     pub fn new(
         from: [u8; 32],
         to: [u8; 32],
-        amount: u64,
+        amount: u128,
         tx_type: TransactionType,
         tx_size: u64,
         priority: Priority,
@@ -99,14 +99,14 @@ impl Transaction {
     pub fn new_payment(
         from: [u8; 32],
         to: [u8; 32],
-        amount: u64,
+        amount: u128,
         priority: Priority,
     ) -> Result<Self> {
         Self::new(from, to, amount, TransactionType::Payment, 250, priority) // 250 bytes typical
     }
 
     /// Create a reward transaction
-    pub fn new_reward(to: [u8; 32], amount: u64) -> Result<Self> {
+    pub fn new_reward(to: [u8; 32], amount: u128) -> Result<Self> {
         let from = [0u8; 32]; // Network address
         Self::new(
             from,
@@ -119,7 +119,7 @@ impl Transaction {
     }
 
     /// Create a UBI distribution transaction (fee-free)
-    pub fn new_ubi_distribution(to: [u8; 32], amount: u64) -> Result<Self> {
+    pub fn new_ubi_distribution(to: [u8; 32], amount: u128) -> Result<Self> {
         let from = [0u8; 32]; // DAO treasury address
         Self::new(
             from,
@@ -132,7 +132,7 @@ impl Transaction {
     }
 
     /// Create a welfare distribution transaction (fee-free)
-    pub fn new_welfare_distribution(to: [u8; 32], amount: u64) -> Result<Self> {
+    pub fn new_welfare_distribution(to: [u8; 32], amount: u128) -> Result<Self> {
         let from = [0u8; 32]; // DAO treasury address
         Self::new(
             from,
@@ -181,7 +181,7 @@ impl Transaction {
     }
 
     /// Get the effective cost to sender (amount + fees)
-    pub fn total_cost(&self) -> u64 {
+    pub fn total_cost(&self) -> u128 {
         self.amount + self.total_fee
     }
 

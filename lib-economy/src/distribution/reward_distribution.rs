@@ -15,9 +15,9 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RewardDistribution {
     /// Total rewards distributed
-    pub total_rewards_distributed: u64,
+    pub total_rewards_distributed: u128,
     /// Rewards distributed by category
-    pub rewards_by_category: HashMap<String, u64>,
+    pub rewards_by_category: HashMap<String, u128>,
     /// Number of participants rewarded
     pub participants_rewarded: u64,
     /// Last distribution timestamp
@@ -90,11 +90,11 @@ impl RewardDistribution {
             }
         }
 
-        self.total_rewards_distributed += distributed_total;
+        self.total_rewards_distributed += distributed_total as u128;
         *self
             .rewards_by_category
             .entry("infrastructure".to_string())
-            .or_insert(0) += distributed_total;
+            .or_insert(0) += distributed_total as u128;
         self.participants_rewarded += participants.len() as u64;
         self.last_distribution = crate::wasm::compatibility::current_timestamp().unwrap_or(0);
 
@@ -154,11 +154,11 @@ impl RewardDistribution {
             }
         }
 
-        self.total_rewards_distributed += distributed_total;
+        self.total_rewards_distributed += distributed_total as u128;
         *self
             .rewards_by_category
             .entry("isp_bypass".to_string())
-            .or_insert(0) += distributed_total;
+            .or_insert(0) += distributed_total as u128;
         self.participants_rewarded += participants.len() as u64;
         self.last_distribution = crate::wasm::compatibility::current_timestamp().unwrap_or(0);
 
@@ -206,11 +206,11 @@ impl RewardDistribution {
             }
         }
 
-        self.total_rewards_distributed += distributed_total;
+        self.total_rewards_distributed += distributed_total as u128;
         *self
             .rewards_by_category
             .entry("validation".to_string())
-            .or_insert(0) += distributed_total;
+            .or_insert(0) += distributed_total as u128;
         self.participants_rewarded += validators.len() as u64;
         self.last_distribution = crate::wasm::compatibility::current_timestamp().unwrap_or(0);
 
@@ -226,7 +226,7 @@ impl RewardDistribution {
     /// Get distribution statistics
     pub fn get_distribution_stats(&self) -> serde_json::Value {
         let avg_reward_per_participant = if self.participants_rewarded > 0 {
-            self.total_rewards_distributed / self.participants_rewarded
+            self.total_rewards_distributed / self.participants_rewarded as u128
         } else {
             0
         };

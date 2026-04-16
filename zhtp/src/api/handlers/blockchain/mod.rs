@@ -158,7 +158,7 @@ impl BlockchainHandler {
                 .map(|o| format!("{:02x?}", &o.recipient.key_id[..8]))
                 .unwrap_or_else(|| "unknown".to_string()),
             amount: 0, // Amount is hidden in commitment for privacy
-            fee: tx.fee,
+            fee: tx.fee as u128,
             transaction_type: format!("{:?}", tx.transaction_type),
             timestamp: tx.signature.timestamp,
             size: tx.size(),
@@ -403,8 +403,8 @@ struct TransactionSubmissionResponse {
 struct SubmitTransactionRequest {
     from: String,
     to: String,
-    amount: u64,
-    fee: u64,
+    amount: u128,
+    fee: u128,
     signature: String,
 }
 
@@ -429,8 +429,8 @@ struct ValidatorInfo {
 struct BalanceResponse {
     status: String,
     address: String,
-    balance: u64,
-    pending_balance: u64,
+    balance: u128,
+    pending_balance: u128,
     transaction_count: u64,
     note: Option<String>,
 }
@@ -449,10 +449,10 @@ struct UtxoMerkleProofResponse {
 struct MempoolStatusResponse {
     status: String,
     transaction_count: usize,
-    total_fees: u64,
+    total_fees: u128,
     total_size: usize,
     average_fee_rate: f64,
-    min_fee_rate: u64,
+    min_fee_rate: u128,
     max_size: usize,
 }
 
@@ -468,8 +468,8 @@ struct TransactionInfo {
     hash: String,
     from: String,
     to: String,
-    amount: u64,
-    fee: u64,
+    amount: u128,
+    fee: u128,
     transaction_type: String,
     timestamp: u64,
     size: usize,
@@ -541,10 +541,10 @@ struct TransactionResponse {
 #[derive(Serialize)]
 struct FeeEstimateResponse {
     status: String,
-    estimated_fee: u64,
-    base_fee: u64,
-    dao_fee: u64,
-    total_fee: u64,
+    estimated_fee: u128,
+    base_fee: u128,
+    dao_fee: u128,
+    total_fee: u128,
     transaction_size: usize,
     fee_rate: f64,
 }
@@ -555,7 +555,7 @@ struct FeeConfigResponse {
     base_fee: u64,
     bytes_per_sov: u64,
     witness_cap: u32,
-    token_creation_fee: u64,
+    token_creation_fee: u128,
     updated_at_height: u64,
     chain_height: u64,
 }
@@ -571,7 +571,7 @@ struct FeeQuoteRequest {
 #[derive(Serialize)]
 struct FeeQuoteResponse {
     status: String,
-    estimated_fee: u64,
+    estimated_fee: u128,
     base_fee: u64,
     bytes_per_sov: u64,
     witness_cap: u32,
@@ -595,7 +595,7 @@ struct TransactionReceiptResponse {
     transaction_index: Option<usize>,
     confirmations: u64,
     timestamp: Option<u64>,
-    gas_used: Option<u64>,
+    gas_used: Option<u128>,
     success: bool,
     logs: Vec<String>,
 }
@@ -638,7 +638,7 @@ struct ContractStateResponse {
 #[derive(Deserialize)]
 struct FeeEstimateRequest {
     transaction_size: Option<usize>,
-    _amount: u64,
+    _amount: u128,
     _priority: Option<String>, // "low", "medium", "high"
     is_system_transaction: Option<bool>,
     transaction_type: Option<String>,
@@ -707,13 +707,13 @@ fn transaction_type_requires_semantic_fee_quote(value: &str) -> bool {
 fn canonical_fee_for_transaction(
     transaction: &Transaction,
     fee_config: &lib_blockchain::transaction::TxFeeConfig,
-) -> Option<u64> {
+) -> Option<u128> {
     match transaction.transaction_type {
         TransactionType::Coinbase | TransactionType::TokenTransfer | TransactionType::TokenMint => {
             Some(0)
         }
         TransactionType::TokenCreation => Some(
-            lib_blockchain::transaction::required_token_creation_fee(fee_config),
+            lib_blockchain::transaction::required_token_creation_fee(fee_config) as u128,
         ),
         _ if transaction.inputs.is_empty() => Some(0),
         _ => None,
@@ -724,11 +724,11 @@ fn quote_fee_for_transaction(
     transaction: &Transaction,
     tx_size: usize,
     fee_config: &lib_blockchain::transaction::TxFeeConfig,
-) -> u64 {
+) -> u128 {
     canonical_fee_for_transaction(transaction, fee_config).unwrap_or_else(|| {
         lib_blockchain::transaction::creation::utils::calculate_minimum_fee_with_config(
             tx_size, fee_config,
-        )
+        ) as u128
     })
 }
 
@@ -1620,7 +1620,7 @@ impl BlockchainHandler {
         let transaction = lib_blockchain::transaction::Transaction::new(
             vec![input],
             vec![output],
-            req_data.fee,
+            req_data.fee as u64,
             signature,
             format!(
                 "P2P Transfer {} SOV from {} to {}",
@@ -1744,7 +1744,7 @@ impl BlockchainHandler {
 
             // Pending balance is set to 0 due to privacy-preserving commitments
             // We cannot estimate pending balances when amounts are hidden via Pedersen commitments
-            let pending_balance = 0u64;
+            let pending_balance = 0u128;
 
             BalanceResponse {
                 status: "balance_found".to_string(),
@@ -1862,7 +1862,7 @@ impl BlockchainHandler {
         );
 
         // Calculate mempool statistics
-        let total_fees: u64 = pending_txs.iter().map(|tx| tx.fee).sum();
+        let total_fees: u128 = pending_txs.iter().map(|tx| tx.fee as u128).sum();
         let total_size: usize = pending_txs.iter().map(|tx| tx.size()).sum();
         let average_fee_rate = if total_size > 0 {
             total_fees as f64 / total_size as f64
@@ -2027,10 +2027,10 @@ impl BlockchainHandler {
         let min_fee =
             lib_blockchain::transaction::creation::utils::calculate_minimum_fee_with_config(
                 tx_size, fee_config,
-            );
+            ) as u128;
         let base_fee = min_fee;
-        let dao_fee = 0;
-        let total_fee = if is_system { 0 } else { min_fee };
+        let dao_fee = 0u128;
+        let total_fee = if is_system { 0u128 } else { min_fee };
 
         // Calculate fee rate (fee per byte)
         let fee_rate = if tx_size > 0 {
@@ -2068,7 +2068,7 @@ impl BlockchainHandler {
             base_fee: fee_config.base_fee,
             bytes_per_sov: fee_config.bytes_per_sov,
             witness_cap: fee_config.witness_cap,
-            token_creation_fee: fee_config.token_creation_fee,
+            token_creation_fee: fee_config.token_creation_fee as u128,
             updated_at_height: blockchain.tx_fee_config_updated_at_height,
             chain_height: blockchain.get_height(),
         };
@@ -2103,7 +2103,7 @@ impl BlockchainHandler {
                             lib_blockchain::transaction::creation::utils::calculate_minimum_fee_with_config(
                                 tx_size,
                                 fee_config,
-                            ),
+                            ) as u128,
                         ),
                     }
                 }
@@ -2114,7 +2114,7 @@ impl BlockchainHandler {
                         lib_blockchain::transaction::creation::utils::calculate_minimum_fee_with_config(
                             tx_size,
                             fee_config,
-                        ),
+                        ) as u128,
                     )
                 }
             }
@@ -2124,7 +2124,7 @@ impl BlockchainHandler {
                 tx_size,
                 lib_blockchain::transaction::creation::utils::calculate_minimum_fee_with_config(
                     tx_size, fee_config,
-                ),
+                ) as u128,
             )
         };
 
@@ -2288,7 +2288,7 @@ impl BlockchainHandler {
                     transaction_index: Some(tx_index),
                     confirmations,
                     timestamp: Some(block.header.timestamp),
-                    gas_used: Some(confirmed_tx.fee), // Using fee as gas_used equivalent
+                    gas_used: Some(confirmed_tx.fee as u128), // Using fee as gas_used equivalent
                     success: true,                    // Assume success if in block
                     logs: vec![
                         format!("Transaction confirmed in block {}", block_height),

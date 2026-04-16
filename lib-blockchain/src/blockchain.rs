@@ -2782,7 +2782,7 @@ impl Blockchain {
     /// Create UBI distribution transactions using lib-economy
     pub async fn create_ubi_distributions(
         &mut self,
-        citizens: &[(lib_economy::wasm::IdentityId, u64)],
+        citizens: &[(lib_economy::wasm::IdentityId, u128)],
         system_keypair: &lib_crypto::KeyPair,
     ) -> Result<Vec<Hash>> {
         if let Some(ref mut processor) = self.economic_processor {
@@ -2810,7 +2810,7 @@ impl Blockchain {
     /// Create network reward transactions using lib-economy
     pub async fn create_network_rewards(
         &mut self,
-        rewards: &[([u8; 32], u64)], // (recipient, amount)
+        rewards: &[([u8; 32], u128)], // (recipient, amount)
         system_keypair: &lib_crypto::KeyPair,
     ) -> Result<Vec<Hash>> {
         if let Some(ref mut processor) = self.economic_processor {
@@ -2837,7 +2837,7 @@ impl Blockchain {
         &mut self,
         from: [u8; 32],
         to: [u8; 32],
-        amount: u64,
+        amount: u128,
         priority: lib_economy::Priority,
         sender_keypair: &lib_crypto::KeyPair,
     ) -> Result<Hash> {
@@ -2868,7 +2868,7 @@ impl Blockchain {
     /// Create welfare funding transactions using lib-economy
     pub async fn create_welfare_funding(
         &mut self,
-        services: &[(String, [u8; 32], u64)], // (service_name, address, amount)
+        services: &[(String, [u8; 32], u128)], // (service_name, address, amount)
         system_keypair: &lib_crypto::KeyPair,
     ) -> Result<Vec<Hash>> {
         if let Some(ref mut _processor) = self.economic_processor {
@@ -2909,10 +2909,10 @@ impl Blockchain {
     pub fn calculate_transaction_fees(
         &self,
         tx_size: u64,
-        amount: u64,
+        amount: u128,
         priority: lib_economy::Priority,
         is_system_transaction: bool,
-    ) -> (u64, u64, u64) {
+    ) -> (u128, u128, u128) {
         if let Some(ref processor) = self.economic_processor {
             processor.calculate_transaction_fees_with_exemptions(
                 tx_size,
@@ -2921,19 +2921,18 @@ impl Blockchain {
                 is_system_transaction,
             )
         } else {
-            // Fallback basic fee calculation if processor not available
             if is_system_transaction {
                 (0, 0, 0)
             } else {
-                let base_fee = tx_size * 10; // Basic fallback
-                let dao_fee = amount * 200 / 10000; // 2% DAO fee
+                let base_fee = (tx_size * 10) as u128;
+                let dao_fee = amount * 200 / 10000;
                 (base_fee, dao_fee, base_fee + dao_fee)
             }
         }
     }
 
     /// Get wallet balance for an address using economic processor
-    pub fn get_wallet_balance(&self, address: &[u8; 32]) -> Option<u64> {
+    pub fn get_wallet_balance(&self, address: &[u8; 32]) -> Option<u128> {
         if let Some(ref processor) = self.economic_processor {
             processor
                 .get_wallet_balance(address)

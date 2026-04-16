@@ -27,9 +27,9 @@ pub struct EconomicModel {
     /// Annual inflation rate (zero for stability)
     pub inflation_rate: f64,
     /// Maximum token supply (unlimited for utility)
-    pub max_supply: u64,
+    pub max_supply: u128,
     /// Current circulating supply
-    pub current_supply: u64,
+    pub current_supply: u128,
     /// Token burn rate (zero for utility focus)
     pub burn_rate: f64,
     /// DAO treasury for UBI and DAO allocations (economics interface only)
@@ -61,7 +61,7 @@ impl EconomicModel {
             quality_multiplier: 0.1, // Minimal quality bonus (infrastructure focus)
             uptime_multiplier: 0.05, // Minimal uptime bonus (reliability expected)
             inflation_rate: 0.0,     // ZERO inflation (stable utility token)
-            max_supply: u64::MAX,    // UNLIMITED supply (like internet capacity)
+            max_supply: u128::MAX,    // UNLIMITED supply (like internet capacity)
             current_supply: 0,       // Start from zero, mint as needed
             burn_rate: 0.0,          // NO BURNING (utility, not speculation)
             dao_treasury,            // Treasury interface for economics
@@ -126,13 +126,13 @@ impl EconomicModel {
     }
 
     /// Calculate transaction fees including mandatory DAO fee for UBI/DAO allocations
-    pub fn calculate_fee(&self, tx_size: u64, amount: u64, priority: Priority) -> (u64, u64, u64) {
+    pub fn calculate_fee(&self, tx_size: u64, amount: u128, priority: Priority) -> (u128, u128, u128) {
         // NETWORK INFRASTRUCTURE FEE (covers bandwidth, storage, compute)
-        let base_fee = tx_size * 1; // 1 token per byte (minimal infrastructure cost)
+        let base_fee = (tx_size as u128) * 1; // 1 token per byte (minimal infrastructure cost)
 
         // PRIORITY MULTIPLIER: Like QoS in networking
         let priority_multiplier = priority.fee_multiplier();
-        let network_fee = ((base_fee as f64) * priority_multiplier) as u64;
+        let network_fee = ((base_fee as f64) * priority_multiplier) as u128;
         let network_fee = network_fee.max(crate::MINIMUM_NETWORK_FEE); // Minimum network fee
 
         // MANDATORY DAO FEE FOR UNIVERSAL BASIC INCOME & DAO ALLOCATIONS
@@ -146,7 +146,7 @@ impl EconomicModel {
     }
 
     /// Process network fees for infrastructure operation
-    pub fn process_network_fees(&mut self, total_fees: u64) -> Result<u64> {
+    pub fn process_network_fees(&mut self, total_fees: u128) -> Result<u128> {
         // Network fees go to infrastructure providers (routing/storage/compute)
         info!(
             "Processed {} SOV tokens in network fees - distributed to infrastructure providers",
@@ -157,7 +157,7 @@ impl EconomicModel {
     }
 
     /// Process DAO fees for Universal Basic Income and DAO allocations
-    pub fn process_dao_fees(&mut self, dao_fees: u64) -> Result<u64> {
+    pub fn process_dao_fees(&mut self, dao_fees: u128) -> Result<u128> {
         let distribution = calculate_dao_fee_distribution(dao_fees);
         self.dao_treasury.apply_fee_distribution(distribution)?;
 
@@ -170,7 +170,7 @@ impl EconomicModel {
     }
 
     /// Mint tokens for network operations (like issuing bandwidth credits)
-    pub fn mint_operational_tokens(&mut self, amount: u64, purpose: &str) -> Result<u64> {
+    pub fn mint_operational_tokens(&mut self, amount: u128, purpose: &str) -> Result<u128> {
         // UNLIMITED MINTING for actual network utility
         // Think of tokens like "bandwidth credits" or "compute credits"
         // ISPs don't have limited "internet capacity" - they scale as needed
