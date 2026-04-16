@@ -263,12 +263,13 @@ impl ZkProof {
         let sender_secret = public_inputs.get(3).copied().unwrap_or(0);
         let nullifier_seed = public_inputs.get(4).copied().unwrap_or(0);
 
-        let leaf = vec![nullifier_seed, sender_secret, sender_balance];
-        let dummy_leaves: Vec<Vec<u64>> = (0..(1 << crate::transaction::circuit::MERKLE_DEPTH))
-            .map(|i| if i == 0 { leaf.clone() } else { vec![0u64] })
-            .collect();
-        let (merkle_root, merkle_siblings) =
-            crate::transaction::circuit::real::build_merkle_tree(&dummy_leaves, 0)?;
+        let leaf_hash = crate::transaction::circuit::real::compute_leaf_commitment(
+            nullifier_seed,
+            sender_secret,
+            sender_balance,
+        );
+        let (merkle_root, merkle_siblings) = crate::transaction::circuit::real::
+            build_sparse_merkle_tree_from_hashes(&[(0, leaf_hash)], 0)?;
 
         let bp = backend.prove_transaction(
             sender_balance,
@@ -358,7 +359,7 @@ impl ZkProof {
                     backend.verify_transaction(backend_proof)
                 }
                 "ZHTP-Optimized-Identity" => backend.verify_identity(backend_proof),
-                "ZHTP-Optimized-Range" => backend.verify_range(backend_proof),
+                "ZHTP-Optimized-Range" | "Bulletproofs" => backend.verify_range(backend_proof),
                 "ZHTP-Optimized-StorageAccess" => backend.verify_storage_access(backend_proof),
                 "ZHTP-Optimized-Merkle" => backend.verify_merkle(backend_proof, [0u8; 32]),
                 "ZHTP-Optimized-Routing" => Ok(true), // stub

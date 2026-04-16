@@ -33,11 +33,15 @@ ahash = "0.8"
 # Real ZK backend: Plonky2
 plonky2 = { version = "1.1.0", optional = true }
 plonky2_field = { version = "1.0.0", optional = true }
+bulletproofs = "5"
+curve25519-dalek = { version = "4", features = ["alloc", "rand_core"] }
+merlin = "3"
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
 criterion = "0.5"
 serde_json = "1.0"
+bulletproofs = "5"
 
 [[bench]]
 name = "zk_benchmarks"

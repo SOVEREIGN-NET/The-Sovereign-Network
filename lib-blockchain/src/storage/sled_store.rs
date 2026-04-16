@@ -30,6 +30,7 @@ const TREE_UTXOS: &str = "utxos";
 const TREE_UTXO_MERKLE_LEAVES: &str = "utxo_merkle_leaves";
 const TREE_UTXO_MERKLE_INDEX: &str = "utxo_merkle_index";
 const TREE_UTXO_MERKLE_META: &str = "utxo_merkle_meta";
+const TREE_UTXO_MERKLE_NODES: &str = "utxo_merkle_nodes";
 const TREE_ACCOUNTS: &str = "accounts";
 const TREE_TOKEN_BALANCES: &str = "token_balances";
 const TREE_TOKEN_NONCES: &str = "token_nonces"; // Token transfer nonces for replay protection
@@ -77,6 +78,7 @@ pub struct SledStore {
     utxo_merkle_leaves: Tree,    // leaf_index (u64 BE) → [u8; 32] leaf hash
     utxo_merkle_index: Tree,     // outpoint (36 bytes) → leaf_index (u64 BE)
     utxo_merkle_meta: Tree,      // metadata: next_leaf_index, current_root
+    utxo_merkle_nodes: Tree,     // level (u32 BE) || node_index (u64 BE) → [u8; 32]
     meta: Tree,
 
     // Transaction state
@@ -109,8 +111,11 @@ struct PendingBatch {
     utxo_merkle_leaves: Batch,
     utxo_merkle_index: Batch,
     utxo_merkle_meta: Batch,
+    utxo_merkle_nodes: Batch,
     /// In-transaction cache of outpoints → leaf_index for the current block.
     utxo_merkle_indexed: std::collections::HashMap<[u8; 36], u64>,
+    /// In-transaction cache of Merkle internal nodes for path updates.
+    utxo_merkle_nodes_cache: std::collections::HashMap<[u8; 12], [u8; 32]>,
     meta: Batch,
 }
 
@@ -138,7 +143,9 @@ impl PendingBatch {
             utxo_merkle_leaves: Batch::default(),
             utxo_merkle_index: Batch::default(),
             utxo_merkle_meta: Batch::default(),
+            utxo_merkle_nodes: Batch::default(),
             utxo_merkle_indexed: std::collections::HashMap::new(),
+            utxo_merkle_nodes_cache: std::collections::HashMap::new(),
             meta: Batch::default(),
         }
     }
@@ -248,6 +255,9 @@ impl SledStore {
         let utxo_merkle_meta = db
             .open_tree(TREE_UTXO_MERKLE_META)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let utxo_merkle_nodes = db
+            .open_tree(TREE_UTXO_MERKLE_NODES)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
 
         Ok(Self {
             db,
@@ -274,6 +284,7 @@ impl SledStore {
             utxo_merkle_leaves,
             utxo_merkle_index,
             utxo_merkle_meta,
+            utxo_merkle_nodes,
             meta,
             tx_active: AtomicBool::new(false),
             tx_height: AtomicU64::new(0),
@@ -428,70 +439,88 @@ impl SledStore {
         &self.identities
     }
 
-    /// Collect all leaf hashes currently in the committed Merkle tree.
-    fn collect_utxo_merkle_leaves(&self) -> StorageResult<Vec<[u8; 32]>> {
-        let mut leaves = Vec::new();
-        for result in self.utxo_merkle_leaves.iter() {
-            match result {
-                Ok((key, value)) if key.len() >= 8 => {
-                    let mut arr = [0u8; 32];
-                    if value.len() == 32 {
-                        arr.copy_from_slice(&value);
-                        leaves.push(arr);
-                    }
-                }
-                _ => continue,
+    /// Build a 12-byte key for a Merkle internal node: `level (u32 BE) || node_index (u64 BE)`.
+    fn merkle_node_key(level: u32, index: u64) -> [u8; 12] {
+        let mut key = [0u8; 12];
+        key[..4].copy_from_slice(&level.to_be_bytes());
+        key[4..].copy_from_slice(&index.to_be_bytes());
+        key
+    }
+
+    /// Precomputed zero hashes for each Merkle level.
+    /// `zero_hashes[level]` is the hash of a zero-filled subtree at that height.
+    fn merkle_zero_hashes() -> &'static Vec<[u8; 32]> {
+        use std::sync::OnceLock;
+        static ZERO_HASHES: OnceLock<Vec<[u8; 32]>> = OnceLock::new();
+        ZERO_HASHES.get_or_init(|| {
+            let mut zh = vec![[0u8; 32]];
+            for _ in 1..=lib_proofs::transaction::circuit::MERKLE_DEPTH {
+                let last = *zh.last().unwrap();
+                zh.push(lib_proofs::transaction::circuit::real::hash_pair_u8(last, last));
             }
+            zh
+        })
+    }
+
+    /// Read a Merkle node from the in-flight batch cache or the committed tree.
+    fn get_merkle_node(
+        &self,
+        batch: &PendingBatch,
+        level: u32,
+        index: u64,
+    ) -> StorageResult<[u8; 32]> {
+        let key = Self::merkle_node_key(level, index);
+        if let Some(&hash) = batch.utxo_merkle_nodes_cache.get(&key) {
+            return Ok(hash);
         }
-        Ok(leaves)
+        match self.utxo_merkle_nodes.get(key) {
+            Ok(Some(bytes)) if bytes.len() == 32 => {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&bytes);
+                Ok(arr)
+            }
+            Ok(_) => Ok(Self::merkle_zero_hashes()[level as usize]),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
     }
 
-    /// Rebuild the UTXO Merkle tree root from the current leaf set and persist it.
-    #[cfg(feature = "real-proofs")]
-    fn rebuild_and_store_merkle_root(&self) -> StorageResult<()> {
-        let leaves = self.collect_utxo_merkle_leaves()?;
-        let root = if leaves.is_empty() {
-            [0u8; 32]
-        } else {
-            let u64_leaves: Vec<[u64; 4]> = leaves
-                .iter()
-                .map(|leaf| {
-                    let mut arr = [0u64; 4];
-                    for i in 0..4 {
-                        arr[i] = u64::from_le_bytes([
-                            leaf[i * 8],
-                            leaf[i * 8 + 1],
-                            leaf[i * 8 + 2],
-                            leaf[i * 8 + 3],
-                            leaf[i * 8 + 4],
-                            leaf[i * 8 + 5],
-                            leaf[i * 8 + 6],
-                            leaf[i * 8 + 7],
-                        ]);
-                    }
-                    arr
-                })
-                .collect();
-            let (root, _siblings) =
-                lib_proofs::transaction::circuit::real::build_merkle_tree_from_hashes(
-                    &u64_leaves,
-                    0,
-                )
-                .map_err(|e| StorageError::Database(format!("Merkle tree rebuild failed: {e}")))?;
-            root.iter()
-                .flat_map(|&v| v.to_le_bytes())
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap_or([0u8; 32])
-        };
-        self.utxo_merkle_meta
-            .insert(keys::meta::UTXO_MERKLE_ROOT, root.as_ref())
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-        Ok(())
-    }
+    /// Update the Merkle path from `leaf_index` up to the root using `leaf_hash`.
+    fn update_merkle_path(
+        &self,
+        leaf_index: u64,
+        leaf_hash: [u8; 32],
+    ) -> StorageResult<()> {
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let batch = batch_guard.as_mut().ok_or(StorageError::NoActiveTransaction)?;
 
-    #[cfg(not(feature = "real-proofs"))]
-    fn rebuild_and_store_merkle_root(&self) -> StorageResult<()> {
+        let mut current_hash = leaf_hash;
+        let mut current_index = leaf_index;
+
+        for level in 0..lib_proofs::transaction::circuit::MERKLE_DEPTH as u32 {
+            let key = Self::merkle_node_key(level, current_index);
+            batch.utxo_merkle_nodes_cache.insert(key, current_hash);
+            batch.utxo_merkle_nodes.insert(key.as_ref(), current_hash.as_ref());
+
+            let sibling_index = current_index ^ 1;
+            let sibling_hash = self.get_merkle_node(batch, level, sibling_index)?;
+
+            current_hash = if current_index % 2 == 0 {
+                lib_proofs::transaction::circuit::real::hash_pair_u8(current_hash, sibling_hash)
+            } else {
+                lib_proofs::transaction::circuit::real::hash_pair_u8(sibling_hash, current_hash)
+            };
+            current_index /= 2;
+        }
+
+        let depth = lib_proofs::transaction::circuit::MERKLE_DEPTH as u32;
+        let root_key = Self::merkle_node_key(depth, 0);
+        batch.utxo_merkle_nodes_cache.insert(root_key, current_hash);
+        batch.utxo_merkle_nodes.insert(root_key.as_ref(), current_hash.as_ref());
+        batch.utxo_merkle_meta.insert(
+            keys::meta::UTXO_MERKLE_ROOT,
+            current_hash.as_ref(),
+        );
+
         Ok(())
     }
 
@@ -692,7 +721,9 @@ impl BlockchainStore for SledStore {
             (next_index + 1).to_be_bytes().as_ref(),
         );
         batch.utxo_merkle_indexed.insert(op_key, next_index);
+        drop(batch_guard);
 
+        self.update_merkle_path(next_index, leaf)?;
         Ok(next_index)
     }
 
@@ -718,13 +749,33 @@ impl BlockchainStore for SledStore {
         if let Some(bytes) = index_bytes {
             batch.utxo_merkle_leaves.insert(bytes.as_slice(), &[0u8; 32][..]);
             batch.utxo_merkle_index.remove(op_key.as_ref());
+            let idx = u64::from_be_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3],
+                bytes[4], bytes[5], bytes[6], bytes[7],
+            ]);
+            drop(batch_guard);
+            self.update_merkle_path(idx, [0u8; 32])?;
         }
 
         Ok(())
     }
 
     fn get_utxo_merkle_root(&self) -> StorageResult<Option<[u8; 32]>> {
-        match self.utxo_merkle_meta.get(keys::meta::UTXO_MERKLE_ROOT) {
+        let depth = lib_proofs::transaction::circuit::MERKLE_DEPTH as u32;
+        let root_key = Self::merkle_node_key(depth, 0);
+
+        // Check active batch cache first
+        {
+            let batch_guard = self.tx_batch.lock().unwrap();
+            if let Some(batch) = batch_guard.as_ref() {
+                if let Some(&hash) = batch.utxo_merkle_nodes_cache.get(&root_key) {
+                    return Ok(Some(hash));
+                }
+            }
+        }
+
+        // Fall back to committed tree
+        match self.utxo_merkle_nodes.get(root_key) {
             Ok(Some(bytes)) if bytes.len() == 32 => {
                 let mut arr = [0u8; 32];
                 arr.copy_from_slice(&bytes);
@@ -743,55 +794,53 @@ impl BlockchainStore for SledStore {
 
         #[cfg(feature = "real-proofs")]
         {
-            let leaves = self.collect_utxo_merkle_leaves()?;
-            if leaves.is_empty() {
-                return Ok(None);
-            }
-            let u64_leaves: Vec<[u64; 4]> = leaves
-                .iter()
-                .map(|leaf| {
-                    let mut arr = [0u64; 4];
-                    for i in 0..4 {
-                        arr[i] = u64::from_le_bytes([
-                            leaf[i * 8],
-                            leaf[i * 8 + 1],
-                            leaf[i * 8 + 2],
-                            leaf[i * 8 + 3],
-                            leaf[i * 8 + 4],
-                            leaf[i * 8 + 5],
-                            leaf[i * 8 + 6],
-                            leaf[i * 8 + 7],
-                        ]);
+            let mut siblings = Vec::with_capacity(lib_proofs::transaction::circuit::MERKLE_DEPTH);
+            let mut current_index = leaf_index;
+            let zero_hashes = Self::merkle_zero_hashes();
+
+            let batch_guard = self.tx_batch.lock().unwrap();
+            let batch_ref = batch_guard.as_ref();
+
+            for level in 0..lib_proofs::transaction::circuit::MERKLE_DEPTH as u32 {
+                let sibling_index = current_index ^ 1;
+                let sibling_key = Self::merkle_node_key(level, sibling_index);
+                let sibling_hash = if let Some(hash) = batch_ref.and_then(|b| b.utxo_merkle_nodes_cache.get(&sibling_key)) {
+                    *hash
+                } else {
+                    match self.utxo_merkle_nodes.get(sibling_key) {
+                        Ok(Some(bytes)) if bytes.len() == 32 => {
+                            let mut arr = [0u8; 32];
+                            arr.copy_from_slice(&bytes);
+                            arr
+                        }
+                        Ok(_) => zero_hashes[level as usize],
+                        Err(e) => return Err(StorageError::Database(e.to_string())),
                     }
-                    arr
-                })
-                .collect();
-            let (root, siblings) = match lib_proofs::transaction::circuit::real::
-                build_merkle_tree_from_hashes(&u64_leaves, leaf_index as usize)
-            {
-                Ok(v) => v,
-                Err(_) => return Ok(None),
+                };
+                siblings.push(sibling_hash);
+                current_index /= 2;
+            }
+
+            let depth = lib_proofs::transaction::circuit::MERKLE_DEPTH as u32;
+            let root_key = Self::merkle_node_key(depth, 0);
+            let root = if let Some(hash) = batch_ref.and_then(|b| b.utxo_merkle_nodes_cache.get(&root_key)) {
+                *hash
+            } else {
+                match self.utxo_merkle_nodes.get(root_key) {
+                    Ok(Some(bytes)) if bytes.len() == 32 => {
+                        let mut arr = [0u8; 32];
+                        arr.copy_from_slice(&bytes);
+                        arr
+                    }
+                    Ok(_) => zero_hashes[lib_proofs::transaction::circuit::MERKLE_DEPTH],
+                    Err(e) => return Err(StorageError::Database(e.to_string())),
+                }
             };
-            let root_u8: [u8; 32] = root
-                .iter()
-                .flat_map(|&v| v.to_le_bytes())
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap_or([0u8; 32]);
-            let siblings_u8: Vec<[u8; 32]> = siblings
-                .iter()
-                .map(|s| {
-                    s.iter()
-                        .flat_map(|&v| v.to_le_bytes())
-                        .collect::<Vec<_>>()
-                        .try_into()
-                        .unwrap_or([0u8; 32])
-                })
-                .collect();
+
             Ok(Some(UtxoMerkleProof {
                 leaf_index,
-                siblings: siblings_u8,
-                root: root_u8,
+                siblings,
+                root,
             }))
         }
 
@@ -1520,8 +1569,9 @@ impl BlockchainStore for SledStore {
             .apply_batch(batch.utxo_merkle_meta)
             .map_err(|e| StorageError::Database(e.to_string()))?;
 
-        // Recompute and persist the UTXO Merkle root now that leaves are committed.
-        self.rebuild_and_store_merkle_root()?;
+        self.utxo_merkle_nodes
+            .apply_batch(batch.utxo_merkle_nodes)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
 
         self.accounts
             .apply_batch(batch.accounts)
