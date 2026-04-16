@@ -2002,8 +2002,8 @@ impl BlockExecutor {
         block_height: u64,
     ) -> Result<(), TxApplyError> {
         use crate::contracts::bonding_curve::canonical::{
-            compute_debt_state, DEBT_CEILING, PAYROLL_COLLABORATOR_PCT, PAYROLL_GROSS_DEN,
-            PAYROLL_GROSS_NUM, PAYROLL_RESERVE_PCT, PAYROLL_TREASURY_PCT,
+            compute_debt_state, DEBT_CEILING, PAYROLL_GROSS_DEN, PAYROLL_GROSS_NUM,
+            PAYROLL_RESERVE_PCT, PAYROLL_TREASURY_PCT,
         };
         use crate::transaction::core::ProcessPayrollData;
 
@@ -2028,7 +2028,8 @@ impl BlockExecutor {
         // gross = X × 25 / 12  (X / 0.48)
         //   20% gross → SOV treasury (DAO tax, held as CBE)
         //   32% gross → locked reserve (backs floor price)
-        //   48% gross → collaborator (= X, rounds down)
+        //   collaborator receives exactly X (the amount they earned)
+        //   rounding dust (0–1 atoms) goes to reserve (backs floor price)
 
         let gross = amount_cbe
             .checked_mul(PAYROLL_GROSS_NUM)
@@ -2037,9 +2038,11 @@ impl BlockExecutor {
                 TxApplyError::InvalidType("PAYROLL_MINT: gross overflow".to_string())
             })?;
 
-        let treasury_credit = gross * PAYROLL_TREASURY_PCT / 100;   // 20%
-        let reserve_credit = gross * PAYROLL_RESERVE_PCT / 100;     // 32%
-        let collaborator_credit = gross * PAYROLL_COLLABORATOR_PCT / 100; // 48%
+        let treasury_credit = gross * PAYROLL_TREASURY_PCT / 100;     // 20%
+        let base_reserve = gross * PAYROLL_RESERVE_PCT / 100;         // 32%
+        let collaborator_credit = amount_cbe;                         // exactly X
+        let rounding_dust = gross - treasury_credit - base_reserve - collaborator_credit;
+        let reserve_credit = base_reserve + rounding_dust;            // 32% + dust
 
         // ── 2. Debt ceiling check (against gross) ───────────────────────────
         let mut econ = mutator.get_cbe_economic_state()?;
