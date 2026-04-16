@@ -144,7 +144,7 @@ impl TransactionBuilder {
     }
 
     /// Build the transaction (requires signing)
-    pub fn build(self, private_key: &PrivateKey) -> Result<Transaction, TransactionCreateError> {
+    pub fn build(mut self, private_key: &PrivateKey) -> Result<Transaction, TransactionCreateError> {
         // Validate inputs and outputs
         if self.inputs.is_empty() && !self.transaction_type.is_identity_transaction() {
             return Err(TransactionCreateError::InvalidInputs);
@@ -152,6 +152,14 @@ impl TransactionBuilder {
 
         if self.outputs.is_empty() && !self.transaction_type.is_identity_transaction() {
             return Err(TransactionCreateError::InvalidOutputs);
+        }
+
+        // ── Compute Poseidon leaf commitments for Transfer outputs ───────
+        // Each output gets a Merkle leaf = Poseidon(nullifier_seed, sender_secret, amount).
+        // The secrets are derived from the sender's private key so only the sender (and
+        // recipient via the note) can later prove ownership in a ZK proof.
+        if self.transaction_type == TransactionType::Transfer {
+            self.compute_output_leaf_commitments(private_key);
         }
 
         // Check if inputs already have ZK proofs (they should be pre-generated in most cases)
@@ -207,6 +215,53 @@ impl TransactionBuilder {
             .map_err(|_| TransactionCreateError::SigningError)?;
 
         Ok(transaction)
+    }
+
+    /// Compute Poseidon Merkle leaf commitments for each output in a Transfer transaction.
+    ///
+    /// For each output, derives `(nullifier_seed, sender_secret)` deterministically from
+    /// the sender's private key + recipient key_id + output index, then computes:
+    ///   `leaf = Poseidon(nullifier_seed, sender_secret, amount)`
+    ///
+    /// The leaf commitment is stored in `TransactionOutput.merkle_leaf` so the executor
+    /// inserts it into the persistent UTXO Merkle tree. The recipient can later recover
+    /// the secrets to generate a ZK spend proof.
+    fn compute_output_leaf_commitments(&mut self, private_key: &PrivateKey) {
+        use lib_proofs::transaction::circuit::{self, hash_to_bytes};
+
+        for (index, output) in self.outputs.iter_mut().enumerate() {
+            let (nullifier_seed, sender_secret) = circuit::derive_utxo_secrets(
+                &private_key.dilithium_sk,
+                &output.recipient.key_id,
+                index as u64,
+            );
+
+            // Amount is not directly stored on TransactionOutput (it uses commitments).
+            // For now, we use the fee as a proxy for the output amount since Transfer
+            // distributes inputs equally. The caller should set the amount explicitly
+            // in a future enhancement. Use 0 as placeholder — the amount will be set
+            // correctly when the full UTXO model is wired up.
+            //
+            // TODO: Pass explicit output amounts into the builder so leaf commitments
+            // are computed with the real amount.
+            let amount = 0u64; // Placeholder — see TODO above
+
+            let leaf_hash = circuit::real::compute_leaf_commitment(
+                nullifier_seed,
+                sender_secret,
+                amount,
+            );
+
+            output.merkle_leaf = crate::types::Hash::new(hash_to_bytes(leaf_hash));
+
+            debug!(
+                "Output {} leaf commitment: nullifier_seed={}, amount={}, merkle_leaf={}",
+                index,
+                nullifier_seed,
+                amount,
+                hex::encode(&hash_to_bytes(leaf_hash)[..8]),
+            );
+        }
     }
 
     /// Generate ZK proofs for all transaction inputs using lib-proofs
