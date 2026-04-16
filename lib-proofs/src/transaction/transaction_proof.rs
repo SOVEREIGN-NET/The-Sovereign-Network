@@ -62,6 +62,25 @@ impl ZkTransactionProof {
         Ok(amount_valid && balance_valid && nullifier_valid)
     }
 
+    /// Extract the Merkle root public input from the proof.
+    ///
+    /// The proof's public inputs are: [sender_balance, amount, fee, nullifier_seed_hash,
+    /// merkle_root (4 field elements)]. The merkle_root occupies indices 4..8 and each
+    /// element is a Goldilocks field element stored as 8 LE bytes.
+    ///
+    /// Returns `None` if the proof has no public inputs (empty/mock proof).
+    pub fn extract_merkle_root(&self) -> Option<[u8; 32]> {
+        let pi = &self.amount_proof.public_inputs;
+        // Public inputs: 8 field elements × 8 bytes each = 64 bytes minimum.
+        // Merkle root starts at element 4 (byte offset 32).
+        if pi.len() < 64 {
+            return None;
+        }
+        let mut root = [0u8; 32];
+        root.copy_from_slice(&pi[32..64]);
+        Some(root)
+    }
+
     /// Generate a transaction proof (static method for compatibility)
     pub fn prove_transaction(
         sender_balance: u64,
