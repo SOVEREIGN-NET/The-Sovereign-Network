@@ -209,7 +209,7 @@ pub mod real {
 
     /// Lazy-initialized circuit so we only build once per process.
     /// Tries to load from disk cache first, falling back to build-and-save.
-    fn circuit() -> &'static TransactionCircuit {
+    pub fn circuit() -> &'static TransactionCircuit {
         static CIRCUIT: OnceLock<TransactionCircuit> = OnceLock::new();
         CIRCUIT.get_or_init(|| {
             let path = default_cache_path();

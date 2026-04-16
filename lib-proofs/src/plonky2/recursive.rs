@@ -76,6 +76,11 @@ impl RecursiveProofBuilder {
             return Err(anyhow::anyhow!("No proofs to aggregate"));
         }
 
+        #[cfg(feature = "real-proofs")]
+        if self.all_proofs_are_real() {
+            return self.build_real_recursive_proof();
+        }
+
         // Start with the first proof as base
         let base_proof = self.pending_proofs[0].clone();
         let mut recursive_layers = Vec::new();
@@ -116,6 +121,56 @@ impl RecursiveProofBuilder {
             recursive_layers,
             aggregated_inputs,
             depth,
+            config: self.config,
+        })
+    }
+
+    #[cfg(feature = "real-proofs")]
+    fn all_proofs_are_real(&self) -> bool {
+        self.pending_proofs
+            .iter()
+            .all(|p| p.proof_system == "plonky2-real-transaction" && !p.proof.is_empty())
+    }
+
+    #[cfg(feature = "real-proofs")]
+    fn build_real_recursive_proof(self) -> Result<RecursiveProof> {
+        use crate::transaction::circuit::real::TxProof;
+
+        let mut tx_proofs = Vec::with_capacity(self.pending_proofs.len());
+        for plonky2_proof in &self.pending_proofs {
+            let tx_proof: TxProof = bincode::deserialize(&plonky2_proof.proof)
+                .map_err(|e| anyhow::anyhow!("Failed to deserialize TxProof: {:?}", e))?;
+            tx_proofs.push(tx_proof);
+        }
+
+        let recursive_proof_bytes =
+            crate::recursive::circuit::real::prove_recursive_batch(&tx_proofs)
+                .map_err(|e| anyhow::anyhow!("Recursive batch proof generation failed: {}", e))?;
+
+        let mut aggregated_inputs = Vec::new();
+        for proof in &self.pending_proofs {
+            aggregated_inputs.extend_from_slice(&proof.public_inputs);
+        }
+
+        let base_proof = self.pending_proofs[0].clone();
+        let recursive_layer = Plonky2Proof {
+            proof: recursive_proof_bytes,
+            public_inputs: aggregated_inputs.clone(),
+            verification_key_hash: [0u8; 32],
+            proof_system: "plonky2-real-recursive-batch".to_string(),
+            generated_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            circuit_id: "recursive_batch_v1".to_string(),
+            private_input_commitment: [0u8; 32],
+        };
+
+        Ok(RecursiveProof {
+            base_proof,
+            recursive_layers: vec![recursive_layer],
+            aggregated_inputs,
+            depth: 1,
             config: self.config,
         })
     }
@@ -178,6 +233,20 @@ impl RecursiveVerifier {
             return Ok(false);
         }
 
+        #[cfg(feature = "real-proofs")]
+        {
+            if let Some(layer) = proof.recursive_layers.first() {
+                if layer.proof_system == "plonky2-real-recursive-batch" {
+                    return crate::recursive::circuit::real::verify_recursive_batch(&layer.proof)
+                        .map(|_| true)
+                        .or_else(|e| {
+                            tracing::debug!("Recursive batch verification failed: {}", e);
+                            Ok(false)
+                        });
+                }
+            }
+        }
+
         // Verify each recursive layer
         for layer_proof in &proof.recursive_layers {
             if !self.verify_recursive_layer(layer_proof)? {
@@ -223,10 +292,15 @@ impl RecursiveVerifier {
         }
 
         // For recursive proofs, accept both transaction and recursive proof systems
-        let valid_systems = ["ZHTP-Optimized-Transaction", "Plonky2"];
+        let valid_systems = [
+            "ZHTP-Optimized-Transaction",
+            "Plonky2",
+            "plonky2-real-transaction",
+        ];
 
         let is_valid_system = valid_systems.iter().any(|&sys| proof.proof_system == sys)
-            || proof.proof_system.starts_with("ZHTP-Recursive-");
+            || proof.proof_system.starts_with("ZHTP-Recursive-")
+            || proof.proof_system.starts_with("plonky2-real-");
 
         Ok(is_valid_system)
     }
@@ -334,5 +408,86 @@ mod tests {
         assert!(verify_batch_recursive_proof(&recursive_proof)?);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_real_recursive_batch_proof() {
+        #[cfg(feature = "real-proofs")]
+        {
+            use plonky2::field::types::{Field, PrimeField64};
+
+            // Build a small Merkle tree for real transaction proofs
+            let leaf0 = crate::transaction::circuit::real::compute_leaf_commitment(1, 10, 1000);
+            let leaf1 = crate::transaction::circuit::real::compute_leaf_commitment(2, 20, 2000);
+            let leaves_hashed = vec![leaf0, leaf1];
+            let (root, siblings0) =
+                crate::transaction::circuit::real::build_merkle_tree_from_hashes(&leaves_hashed, 0)
+                    .unwrap();
+            let (_, siblings1) =
+                crate::transaction::circuit::real::build_merkle_tree_from_hashes(&leaves_hashed, 1)
+                    .unwrap();
+
+            let root_f = root.map(Field::from_canonical_u64);
+            let mut s0 = [[Field::ZERO; 4]; crate::transaction::circuit::MERKLE_DEPTH];
+            let mut s1 = [[Field::ZERO; 4]; crate::transaction::circuit::MERKLE_DEPTH];
+            for i in 0..crate::transaction::circuit::MERKLE_DEPTH {
+                s0[i] = siblings0[i].map(Field::from_canonical_u64);
+                s1[i] = siblings1[i].map(Field::from_canonical_u64);
+            }
+
+            let tx1 = crate::transaction::circuit::real::prove_transaction(
+                1000, 100, 10, 10, 1, root_f, 0, &s0,
+            )
+            .unwrap();
+            let tx2 = crate::transaction::circuit::real::prove_transaction(
+                2000, 200, 20, 20, 2, root_f, 1, &s1,
+            )
+            .unwrap();
+
+            let tx1_bytes = bincode::serialize(&tx1).unwrap();
+            let tx2_bytes = bincode::serialize(&tx2).unwrap();
+
+            let pi1: Vec<u64> = tx1
+                .public_inputs
+                .iter()
+                .map(|f| f.to_canonical_u64())
+                .collect();
+            let pi2: Vec<u64> = tx2
+                .public_inputs
+                .iter()
+                .map(|f| f.to_canonical_u64())
+                .collect();
+
+            let plonky2_proof1 = Plonky2Proof {
+                proof: tx1_bytes,
+                public_inputs: pi1,
+                verification_key_hash: [0u8; 32],
+                proof_system: "plonky2-real-transaction".to_string(),
+                generated_at: 0,
+                circuit_id: "tx_v1".to_string(),
+                private_input_commitment: [0u8; 32],
+            };
+            let plonky2_proof2 = Plonky2Proof {
+                proof: tx2_bytes,
+                public_inputs: pi2,
+                verification_key_hash: [0u8; 32],
+                proof_system: "plonky2-real-transaction".to_string(),
+                generated_at: 0,
+                circuit_id: "tx_v1".to_string(),
+                private_input_commitment: [0u8; 32],
+            };
+
+            let config = RecursiveConfig::default();
+            let mut builder = RecursiveProofBuilder::new(config).unwrap();
+            builder.add_proof(plonky2_proof1).unwrap();
+            builder.add_proof(plonky2_proof2).unwrap();
+
+            let recursive_proof = builder.build().unwrap();
+            assert_eq!(recursive_proof.depth, 1);
+            assert!(!recursive_proof.recursive_layers.is_empty());
+
+            let verifier = RecursiveVerifier::new().unwrap();
+            assert!(verifier.verify(&recursive_proof).unwrap());
+        }
     }
 }
