@@ -34,7 +34,7 @@ bincode = "1.3"
 
 # Web server (for frontend)
 axum = { version = "0.7", features = ["multipart"] }
-tower-http = { version = "0.5", features = ["fs", "cors"] }
+tower-http = { version = "0.5", features = ["fs", "cors", "limit"] }
 base64 = "0.22"
 
 # Memory-mapped I/O

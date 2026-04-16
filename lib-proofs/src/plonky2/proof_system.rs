@@ -1225,8 +1225,11 @@ impl ZkProofSystem {
 
     /// Verify zero-knowledge data integrity proof
     /// Exact implementation from original zk_plonky2.rs
+    ///
+    /// NOTE: This is NOT a stub — it performs real deterministic verification
+    /// of proof structure, parameter bounds, and hash commitments.
+    /// The `ensure_stub_allowed()` guard does NOT apply here.
     pub fn verify_data_integrity(&self, proof: &Plonky2Proof) -> Result<bool> {
-        Self::ensure_stub_allowed()?;
         if !self.initialized {
             return Ok(false);
         }

@@ -463,13 +463,66 @@
         <p class="subtitle">Zero Knowledge Compression (ZKC) with Network-Learning Patterns</p>
         
         <div id="uploadArea">
-            <div class="drop-zone" id="dropZone">
-                <div class="drop-icon">📁</div>
-                <div class="drop-text">Drag & Drop Your File Here</div>
-                <div class="drop-subtext">or click to browse</div>
+            <div class="upload-options">
+                <div class="drop-zone" id="dropZone">
+                    <div class="drop-icon">📄</div>
+                    <div class="drop-text">Drop File Here</div>
+                    <div class="drop-subtext">or click to browse</div>
+                </div>
+                <div class="drop-zone folder-zone" id="folderZone">
+                    <div class="drop-icon">📂</div>
+                    <div class="drop-text">Drop Folder Here</div>
+                    <div class="drop-subtext">or click to select folder</div>
+                </div>
             </div>
             <input type="file" id="fileInput" accept="*/*">
+            <input type="file" id="folderInput" webkitdirectory directory multiple>
         </div>
+        
+        <style>
+            .upload-options {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 20px;
+            }
+            .folder-zone {
+                border-color: #10b981 !important;
+                background: #f0fdf4 !important;
+            }
+            .folder-zone:hover {
+                border-color: #059669 !important;
+                background: #dcfce7 !important;
+            }
+            .folder-zone .drop-text {
+                color: #10b981 !important;
+            }
+            .folder-info {
+                margin-top: 15px;
+                padding: 15px;
+                background: #f0fdf4;
+                border-radius: 10px;
+                border-left: 4px solid #10b981;
+            }
+            .folder-info h4 {
+                color: #10b981;
+                margin-bottom: 10px;
+            }
+            .file-list {
+                max-height: 200px;
+                overflow-y: auto;
+                font-size: 0.9em;
+                color: #666;
+            }
+            .file-list div {
+                padding: 4px 0;
+                border-bottom: 1px solid #e5e7eb;
+            }
+            @media (max-width: 600px) {
+                .upload-options {
+                    grid-template-columns: 1fr;
+                }
+            }
+        </style>
         
         <div class="processing" id="processing">
             <div class="spinner"></div>
@@ -770,6 +823,8 @@
     <script>
         const dropZone = document.getElementById('dropZone');
         const fileInput = document.getElementById('fileInput');
+        const folderZone = document.getElementById('folderZone');
+        const folderInput = document.getElementById('folderInput');
         const uploadArea = document.getElementById('uploadArea');
         const processing = document.getElementById('processing');
         const results = document.getElementById('results');
@@ -783,10 +838,14 @@
         let currentReconstructedData = null;
         let currentOriginalFilename = 'file';
         
-        // Click to browse
+        // ═══════════════════════════════════════════════════════════
+        // FILE UPLOAD HANDLERS
+        // ═══════════════════════════════════════════════════════════
+        
+        // Click to browse file
         dropZone.addEventListener('click', () => fileInput.click());
         
-        // Drag and drop
+        // Drag and drop file
         dropZone.addEventListener('dragover', (e) => {
             e.preventDefault();
             dropZone.classList.add('dragover');
@@ -807,6 +866,136 @@
             const file = e.target.files[0];
             if (file) uploadFile(file);
         });
+
+        // ═══════════════════════════════════════════════════════════
+        // FOLDER UPLOAD HANDLERS
+        // ═══════════════════════════════════════════════════════════
+        
+        // Click to browse folder
+        folderZone.addEventListener('click', () => folderInput.click());
+        
+        // Drag and drop folder
+        folderZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            folderZone.classList.add('dragover');
+        });
+        
+        folderZone.addEventListener('dragleave', () => {
+            folderZone.classList.remove('dragover');
+        });
+        
+        folderZone.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            folderZone.classList.remove('dragover');
+            
+            // Use DataTransferItemList to get folder contents recursively
+            const items = e.dataTransfer.items;
+            if (items && items.length > 0) {
+                const files = await getAllFilesFromDataTransfer(items);
+                if (files.length > 0) {
+                    uploadFolder(files);
+                }
+            }
+        });
+        
+        folderInput.addEventListener('change', (e) => {
+            const files = Array.from(e.target.files);
+            if (files.length > 0) {
+                uploadFolder(files);
+            }
+        });
+        
+        // Recursively get all files from DataTransferItemList (for drag-drop folders)
+        async function getAllFilesFromDataTransfer(items) {
+            const files = [];
+            
+            async function traverseEntry(entry, path = '') {
+                if (entry.isFile) {
+                    return new Promise((resolve) => {
+                        entry.file((file) => {
+                            // Store relative path in file object
+                            file.relativePath = path + file.name;
+                            files.push(file);
+                            resolve();
+                        });
+                    });
+                } else if (entry.isDirectory) {
+                    const reader = entry.createReader();
+                    return new Promise((resolve) => {
+                        const readEntries = () => {
+                            reader.readEntries(async (entries) => {
+                                if (entries.length === 0) {
+                                    resolve();
+                                } else {
+                                    for (const e of entries) {
+                                        await traverseEntry(e, path + entry.name + '/');
+                                    }
+                                    readEntries(); // Continue reading (may have more)
+                                }
+                            });
+                        };
+                        readEntries();
+                    });
+                }
+            }
+            
+            for (let i = 0; i < items.length; i++) {
+                const entry = items[i].webkitGetAsEntry();
+                if (entry) {
+                    await traverseEntry(entry);
+                }
+            }
+            
+            return files;
+        }
+        
+        async function uploadFolder(files) {
+            // Show folder info first
+            const folderName = files[0].webkitRelativePath 
+                ? files[0].webkitRelativePath.split('/')[0] 
+                : (files[0].relativePath ? files[0].relativePath.split('/')[0] : 'folder');
+            
+            const totalSize = files.reduce((sum, f) => sum + f.size, 0);
+            
+            console.log(`📂 Uploading folder: ${folderName} (${files.length} files, ${formatBytes(totalSize)})`);
+            
+            uploadArea.style.display = 'none';
+            processing.style.display = 'block';
+            document.querySelector('#processing p').textContent = 
+                `Compressing folder "${folderName}" (${files.length} files, ${formatBytes(totalSize)})...`;
+            
+            // Create FormData with all files
+            const formData = new FormData();
+            formData.append('folder_name', folderName);
+            
+            for (const file of files) {
+                // Get the relative path
+                const relativePath = file.webkitRelativePath || file.relativePath || file.name;
+                formData.append('files', file);
+                formData.append('paths', relativePath);
+            }
+            
+            try {
+                const response = await fetch('/compress-folder', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (!response.ok || result.error) {
+                    const errorMsg = result.message || result.error || 'Unknown error occurred';
+                    alert('Error compressing folder: ' + errorMsg);
+                    resetForm();
+                    return;
+                }
+                
+                displayResults(result);
+            } catch (error) {
+                alert('Error compressing folder: ' + error.message);
+                resetForm();
+            }
+        }
         
         async function uploadFile(file) {
             uploadArea.style.display = 'none';

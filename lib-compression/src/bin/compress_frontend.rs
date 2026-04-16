@@ -11,6 +11,7 @@ use axum::{
     http::StatusCode,
 };
 use tower_http::cors::{CorsLayer, Any};
+use tower_http::limit::RequestBodyLimitLayer;
 use lib_compression::{
     ContentChunker, ZkWitness, Shard, ShardId,
     ZkcCompressor, ZkcDecompressor, CompressedShard,
@@ -317,6 +318,13 @@ async fn main() {
             let flags = compression_flags.clone();
             move |multipart| compress_file(multipart, shard, pattern, neural, flags)
         }))
+        .route("/compress-folder", post({
+            let shard = shard_cache.clone();
+            let pattern = pattern_cache.clone();
+            let neural = neural_state.clone();
+            let flags = compression_flags.clone();
+            move |multipart| compress_folder(multipart, shard, pattern, neural, flags)
+        }))
         .route("/decompress", post({
             let shard = shard_cache.clone();
             let pattern = pattern_cache.clone();
@@ -328,7 +336,8 @@ async fn main() {
             move || neural_status(neural)
         }))
         .layer(cors)
-        .layer(DefaultBodyLimit::max(100 * 1024 * 1024)); // 100 MB max upload
+        .layer(DefaultBodyLimit::max(500 * 1024 * 1024)) // 500 MB max upload (for large PPM files)
+        .layer(RequestBodyLimitLayer::new(500 * 1024 * 1024)); // Also apply tower-http limit
     
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     
@@ -366,16 +375,23 @@ async fn compress_file(mut multipart: Multipart, shard_cache: ShardCache, patter
     };
     
     let filename = field.file_name().unwrap_or("unknown").to_string();
-    let data = match field.bytes().await {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("❌ Failed to read file data: {}", e);
-            return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse {
-                error: "ReadError".to_string(),
-                message: format!("Failed to read file data: {}", e),
-            })));
+    
+    // Use chunked reading for better handling of large binary files
+    let mut data = Vec::new();
+    let mut field_stream = field;
+    while let Some(chunk_result) = field_stream.chunk().await.transpose() {
+        match chunk_result {
+            Ok(chunk) => data.extend_from_slice(&chunk),
+            Err(e) => {
+                eprintln!("❌ Failed to read file chunk: {}", e);
+                return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse {
+                    error: "ReadError".to_string(),
+                    message: format!("Failed to read file data: {}", e),
+                })));
+            }
         }
-    };
+    }
+    let data = bytes::Bytes::from(data);
         
         println!("📥 Received file: {} ({} bytes)", filename, data.len());
         println!("⏱️  Starting compression pipeline...");
@@ -958,6 +974,377 @@ async fn compress_file(mut multipart: Multipart, shard_cache: ShardCache, patter
         }));
 }
 
+/// Compress an entire folder with nested files
+/// 
+/// Creates a tarball-like structure:
+/// - 4 bytes: number of files (u32 little-endian)
+/// - For each file:
+///   - 2 bytes: path length (u16 little-endian)
+///   - N bytes: relative path (UTF-8)
+///   - 8 bytes: file size (u64 little-endian)
+///   - M bytes: file content
+async fn compress_folder(
+    mut multipart: Multipart,
+    shard_cache: ShardCache,
+    pattern_cache: PatternCache,
+    neural_state: NeuralMeshState,
+    compression_flags: ShardCompressionFlags
+) -> Result<Json<CompressionResult>, (StatusCode, Json<ErrorResponse>)> {
+    let mut folder_name = String::from("folder");
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new(); // (relative_path, content)
+    let mut paths: Vec<String> = Vec::new();
+    
+    // Collect all files and their paths from multipart
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or("").to_string();
+        
+        if name == "folder_name" {
+            if let Ok(bytes) = field.bytes().await {
+                folder_name = String::from_utf8_lossy(&bytes).to_string();
+            }
+        } else if name == "paths" {
+            if let Ok(bytes) = field.bytes().await {
+                paths.push(String::from_utf8_lossy(&bytes).to_string());
+            }
+        } else if name == "files" {
+            if let Ok(bytes) = field.bytes().await {
+                files.push((String::new(), bytes.to_vec()));
+            }
+        }
+    }
+    
+    // Match paths to files
+    if paths.len() != files.len() {
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse {
+            error: "BadRequest".to_string(),
+            message: format!("Path count ({}) doesn't match file count ({})", paths.len(), files.len()),
+        })));
+    }
+    
+    for (i, path) in paths.into_iter().enumerate() {
+        files[i].0 = path;
+    }
+    
+    if files.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse {
+            error: "BadRequest".to_string(),
+            message: "No files found in folder".to_string(),
+        })));
+    }
+    
+    println!("📂 Received folder: {} ({} files)", folder_name, files.len());
+    
+    // Build tarball-like structure
+    let mut combined_data: Vec<u8> = Vec::new();
+    
+    // Write file count
+    combined_data.extend_from_slice(&(files.len() as u32).to_le_bytes());
+    
+    // Write each file
+    let mut total_original_size = 0usize;
+    for (path, content) in &files {
+        let path_bytes = path.as_bytes();
+        combined_data.extend_from_slice(&(path_bytes.len() as u16).to_le_bytes());
+        combined_data.extend_from_slice(path_bytes);
+        combined_data.extend_from_slice(&(content.len() as u64).to_le_bytes());
+        combined_data.extend_from_slice(content);
+        total_original_size += content.len();
+        println!("   📄 {} ({} bytes)", path, content.len());
+    }
+    
+    let filename = format!("{}.zkfolder", folder_name);
+    let data = bytes::Bytes::from(combined_data);
+    let original_size = data.len();
+    
+    println!("⏱️  Starting folder compression pipeline...");
+    println!("   📊 Combined size: {} bytes (from {} files, {} bytes total content)", 
+             original_size, files.len(), total_original_size);
+    
+    // Now use the same compression pipeline as single files
+    let compress_start = Instant::now();
+    
+    println!("   📦 Chunking folder bundle into shards...");
+    let chunker = ContentChunker::new();
+    let shards = match chunker.chunk(&data) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("❌ Chunking error: {}", e);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
+                error: "ChunkingError".to_string(),
+                message: format!("Failed to chunk folder: {}", e),
+            })));
+        }
+    };
+    println!("   ✅ Created {} shards (avg: {} bytes each)", shards.len(), original_size / shards.len().max(1));
+    
+    // Clear pattern dictionary
+    println!("   🧹 Clearing pattern dictionary for fresh compression...");
+    GLOBAL_PATTERN_DICT.replace_patterns(std::collections::HashMap::new())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
+            error: "DictionaryError".to_string(),
+            message: format!("Failed to clear dictionary: {}", e),
+        })))?;
+    
+    let metadata = lib_compression::witness::FileMetadata {
+        name: filename.clone(),
+        size: original_size as u64,
+        shard_count: shards.len(),
+        avg_shard_size: original_size / shards.len().max(1),
+        created_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        mime_type: Some("application/x-zkfolder".to_string()),
+        shard_offsets: None,
+    };
+    
+    // Apply neural mesh (simplified for folder)
+    println!("🔮 Applying Zero Knowledge Compression (ZKC) to {} folder shards...", shards.len());
+    
+    let neuro = neural_state.neuro_compressor.read().map_err(lock_err)?;
+    let mut store = neural_state.embedding_store.write().map_err(lock_err)?;
+    let (neural_enabled, semantic_saves) = {
+        let mut saves = 0usize;
+        let mut new_embeddings = 0usize;
+        
+        for (i, shard) in shards.iter().enumerate() {
+            if let Ok(embedding) = neuro.embed(&shard.data) {
+                let content_hash = blake3::hash(&shard.data).to_hex().to_string();
+                let mut found_similar = false;
+                for (existing_hash, existing_emb) in store.iter() {
+                    if neuro.is_similar(&embedding, existing_emb) {
+                        println!("   🧠 Shard {} semantically matches [{}...] (dedup!)", i, &existing_hash[..8]);
+                        saves += 1;
+                        found_similar = true;
+                        break;
+                    }
+                }
+                if !found_similar {
+                    store.insert(content_hash, embedding);
+                    new_embeddings += 1;
+                }
+            }
+        }
+        
+        println!("   🧠 Semantic dedup: {} saves, {} new embeddings ({} total in cache)",
+                 saves, new_embeddings, store.len());
+        (true, saves)
+    };
+    drop(neuro);
+    drop(store);
+    
+    // RL Router
+    let mut router = neural_state.rl_router.write().map_err(lock_err)?;
+    let rl_action = {
+        let mut state = NetworkState {
+            latencies: HashMap::new(),
+            bandwidth: HashMap::new(),
+            packet_loss: HashMap::new(),
+            energy_scores: HashMap::new(),
+            congestion: 0.0,
+        };
+        
+        let entropy_estimate: f32 = {
+            let mut counts = [0u32; 256];
+            for &b in data.iter().take(4096) { counts[b as usize] += 1; }
+            let len = data.len().min(4096) as f64;
+            let mut entropy = 0.0f64;
+            for &c in &counts {
+                if c > 0 {
+                    let p = c as f64 / len;
+                    entropy -= p * p.log2();
+                }
+            }
+            (entropy / 8.0) as f32
+        };
+        
+        state.latencies.insert("size".into(), (original_size as f32) / 1_000_000.0);
+        state.bandwidth.insert("entropy".into(), entropy_estimate * 100.0);
+        state.packet_loss.insert("repetition".into(), (1.0 - entropy_estimate) * 100.0);
+        state.energy_scores.insert("shards".into(), shards.len() as f32);
+        state.congestion = {
+            let emb_store = neural_state.embedding_store.read().map_err(lock_err)?;
+            (emb_store.len() as f32 / 1000.0).min(1.0)
+        };
+        
+        match router.select_action(&state) {
+            Ok(action) => {
+                println!("   🎯 RL Router selected action {} (confidence: {:.2})",
+                         action.action_id, action.confidence);
+                Some((action, state))
+            },
+            Err(e) => {
+                println!("   ⚠️  RL Router: {} (using default strategy)", e);
+                None
+            }
+        }
+    };
+    drop(router);
+    
+    // ZKC compression using the same pipeline as single file compression
+    let zkc_compressor = ZkcCompressor::new();
+    let compressed_shards = match zkc_compressor.compress_shards_sequential(&shards) {
+        Ok(cs) => cs,
+        Err(e) => {
+            eprintln!("❌ ZKC compression error: {}", e);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
+                error: "CompressionError".to_string(),
+                message: format!("ZKC compression failed: {}", e),
+            })));
+        }
+    };
+    
+    // Calculate ZKC compression statistics
+    let zkc_stats = zkc_compressor.get_compression_stats(&compressed_shards);
+    println!("✨ ZKC compressed {} shards: {} bytes → {} bytes ({:.2}:1 ratio)",
+             zkc_stats.total_shards,
+             zkc_stats.total_original_size,
+             zkc_stats.total_compressed_size,
+             zkc_stats.avg_compression_ratio);
+    
+    // Store in caches
+    {
+        let mut cache = shard_cache.write().map_err(lock_err)?;
+        let mut flags = compression_flags.write().map_err(lock_err)?;
+        for compressed_shard in &compressed_shards {
+            let zkc_shard = compressed_shard.to_shard();
+            flags.insert(compressed_shard.original_id.clone(), compressed_shard.is_compressed);
+            cache.insert(zkc_shard.id.clone(), zkc_shard);
+        }
+    }
+    
+    // Generate witness
+    let witness = match ZkWitness::generate(&shards, metadata) {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("❌ Witness generation error: {}", e);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
+                error: "WitnessError".to_string(),
+                message: format!("Failed to generate witness: {}", e),
+            })));
+        }
+    };
+    
+    let compress_time = compress_start.elapsed();
+    
+    // Verify witness
+    if let Err(e) = witness.verify() {
+        eprintln!("⚠️ Verification error: {}", e);
+        return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
+            error: "VerificationError".to_string(),
+            message: format!("Witness verification failed: {}", e),
+        })));
+    }
+    
+    // Decompress for verification
+    let decompress_start = Instant::now();
+    let zkc_decompressor = ZkcDecompressor::new();
+    let mut reconstructed = Vec::new();
+    for cshard in &compressed_shards {
+        let is_compressed = compression_flags.read().map_err(lock_err)?
+            .get(&cshard.original_id).copied().unwrap_or(cshard.is_compressed);
+        if is_compressed {
+            if let Ok(decompressed) = zkc_decompressor.decompress_shard(cshard) {
+                reconstructed.extend_from_slice(&decompressed.data);
+            }
+        } else {
+            reconstructed.extend_from_slice(&cshard.compressed_data);
+        }
+    }
+    let decompress_time = decompress_start.elapsed();
+    let integrity_verified = reconstructed == data.as_ref();
+    
+    // Serialize and measure
+    let witness_bytes = bincode::serialize(&witness).unwrap_or_default();
+    let witness_size = witness_bytes.len();
+    let compressed_shards_size = zkc_stats.total_compressed_size;
+    let total_storage = witness_size + compressed_shards_size;
+    
+    // Gzip baseline
+    let (gzip_compressed_size, gzip_time_secs) = gzip_baseline(&data);
+    let gzip_ratio = original_size as f64 / gzip_compressed_size.max(1) as f64;
+    let gzip_time_ms = gzip_time_secs * 1000.0;
+    
+    // Calculate metrics
+    let witness_compression_ratio = original_size as f64 / witness_size as f64;
+    let zkc_compression_ratio = zkc_stats.avg_compression_ratio;
+    let total_compression_ratio = original_size as f64 / total_storage as f64;
+    let space_saved = (1.0 - (total_storage as f64 / original_size as f64)) * 100.0;
+    
+    let weismann_score = calculate_weismann_score(
+        total_compression_ratio, gzip_ratio,
+        compress_time.as_secs_f64(), gzip_time_secs,
+    );
+    let vs_gzip_ratio_improvement = total_compression_ratio / gzip_ratio;
+    let vs_gzip_speed_factor = {
+        let t_ours = compress_time.as_secs_f64().max(1e-9);
+        let t_gzip = gzip_time_secs.max(1e-9);
+        let sf = t_gzip.ln() / t_ours.ln();
+        if sf.is_finite() && sf > 0.0 { sf } else if sf.is_finite() { sf.abs() } else { 1.0 }
+    };
+    
+    let witness_bytes_base64 = general_purpose::STANDARD.encode(&witness_bytes);
+    
+    // Learning update
+    {
+        let mut metrics = neural_state.learning_metrics.write().map_err(lock_err)?;
+        metrics.total_compressions += 1;
+        metrics.semantic_dedup_saves += semantic_saves;
+        metrics.avg_compression_improvement = 
+            (metrics.avg_compression_improvement * (metrics.total_compressions - 1) as f64 + total_compression_ratio)
+            / metrics.total_compressions as f64;
+    }
+    
+    // Network potential
+    let network_potential = calculate_network_potential(
+        original_size, witness_size, compressed_shards_size, total_storage,
+        compress_time.as_secs_f64(), gzip_ratio, gzip_time_secs,
+    );
+    
+    println!("📂 Folder compression complete:");
+    println!("   Files: {} ({} bytes total content)", files.len(), total_original_size);
+    println!("   Bundle: {} bytes → {} bytes ({:.2}:1)", original_size, total_storage, total_compression_ratio);
+    println!("   Weismann Score: {:.2}", weismann_score);
+    
+    Ok(Json(CompressionResult {
+        filename,
+        original_size,
+        witness_size,
+        compressed_shards_size,
+        total_storage,
+        compression_ratio: witness_compression_ratio,
+        zkc_compression_ratio,
+        total_compression_ratio,
+        space_saved_percent: space_saved,
+        shard_count: shards.len(),
+        shards_compressed: zkc_stats.shards_compressed,
+        compress_time_ms: compress_time.as_millis(),
+        decompress_time_ms: decompress_time.as_millis(),
+        weismann_score,
+        gzip_ratio,
+        gzip_compressed_size,
+        gzip_time_ms,
+        vs_gzip_ratio_improvement,
+        vs_gzip_speed_factor,
+        integrity_verified,
+        witness_bytes: witness_bytes_base64,
+        neural_enabled,
+        semantic_dedup_used: semantic_saves > 0,
+        semantic_dedup_saves: semantic_saves,
+        embedding_cache_size: neural_state.embedding_store.read().map_err(lock_err)?.len(),
+        neural_optimization_score: if semantic_saves > 0 {
+            (semantic_saves as f64 / shards.len() as f64) * 100.0
+        } else { 0.0 },
+        rl_router_action: rl_action.as_ref().map(|(a, _)| a.action_id),
+        rl_router_confidence: rl_action.as_ref().map(|(a, _)| a.confidence as f64),
+        rl_total_compressions: neural_state.learning_metrics.read().map_err(lock_err)?.total_compressions,
+        rl_avg_ratio: neural_state.learning_metrics.read().map_err(lock_err)?.avg_compression_improvement,
+        anomaly_detected: false,
+        anomaly_score: 0.0,
+        network_potential,
+    }))
+}
+
 async fn decompress_witness(mut multipart: Multipart, shard_cache: ShardCache, pattern_cache: PatternCache, compression_flags: ShardCompressionFlags) -> Result<Json<DecompressionResult>, (StatusCode, Json<ErrorResponse>)> {
     let field = match multipart.next_field().await {
         Ok(Some(f)) => f,
@@ -975,16 +1362,23 @@ async fn decompress_witness(mut multipart: Multipart, shard_cache: ShardCache, p
     };
     
     let witness_filename = field.file_name().unwrap_or("unknown.zkw").to_string();
-    let data = match field.bytes().await {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("❌ Failed to read witness data: {}", e);
-            return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse {
-                error: "ReadError".to_string(),
-                message: format!("Failed to read witness data: {}", e),
-            })));
+    
+    // Use chunked reading for better handling of binary files
+    let mut data = Vec::new();
+    let mut field_stream = field;
+    while let Some(chunk_result) = field_stream.chunk().await.transpose() {
+        match chunk_result {
+            Ok(chunk) => data.extend_from_slice(&chunk),
+            Err(e) => {
+                eprintln!("❌ Failed to read witness chunk: {}", e);
+                return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse {
+                    error: "ReadError".to_string(),
+                    message: format!("Failed to read witness data: {}", e),
+                })));
+            }
         }
-    };
+    }
+    let data = bytes::Bytes::from(data);
         
         println!("📥 Received witness: {} ({} bytes)", witness_filename, data.len());
         
