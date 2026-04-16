@@ -345,7 +345,7 @@ impl ZkProof {
                     backend.verify_transaction(backend_proof)
                 }
                 "ZHTP-Optimized-Identity" => backend.verify_identity(backend_proof),
-                "ZHTP-Optimized-Range" => backend.verify_range(backend_proof),
+                "ZHTP-Optimized-Range" | "Bulletproofs" => backend.verify_range(backend_proof),
                 "ZHTP-Optimized-StorageAccess" => backend.verify_storage_access(backend_proof),
                 "ZHTP-Optimized-Merkle" => backend.verify_merkle(backend_proof, [0u8; 32]),
                 "ZHTP-Optimized-Routing" => Ok(true), // stub

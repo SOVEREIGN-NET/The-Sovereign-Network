@@ -3,25 +3,8 @@
 //! Implements 2 endpoints for ZK proof generation and verification.
 //! Supports age verification, citizenship verification, and other privacy-preserving proofs.
 //!
-//! ## IMPORTANT SECURITY NOTICE
-//!
-//! **Current ZK Proof Implementation is NOT True Zero-Knowledge**
-//!
-//! The current implementation uses ZkRangeProof which stores plaintext values in proofs
-//! and performs plaintext comparison during verification. This is a SIMULATION of zero-knowledge
-//! proofs, not cryptographically sound zero-knowledge proofs.
-//!
-//! **Privacy Limitations:**
-//! - Proofs contain plaintext credential values
-//! - Verifiers can extract actual ages, not just range membership
-//! - Not suitable for production privacy-critical applications
-//!
-//! **Roadmap:**
-//! - Short-term: Use for testing and demonstration only
-//! - Medium-term: Migrate to Bulletproofs for range proofs
-//! - Long-term: Full Plonky2 circuit implementation
-//!
-//! For production use, credentials must be verified before proof generation.
+//! Range proofs are backed by real Bulletproofs over Ristretto255.
+//! The proof bytes do not reveal the underlying credential value.
 
 use base64::Engine as _;
 
