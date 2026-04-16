@@ -9,6 +9,16 @@
 use super::{BackendProof, ProofBackend};
 use crate::plonky2::{Plonky2Proof, ZkProofSystem};
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
+
+/// Serialized envelope for Bulletproofs range proofs stored in `BackendProof.data`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BulletproofsRangeEnvelope {
+    pub proof_bytes: Vec<u8>,
+    pub commitment: [u8; 32],
+    pub min_value: u64,
+    pub max_value: u64,
+}
 
 /// Plonky2 backend wrapper.
 pub struct Plonky2Backend {
@@ -165,16 +175,34 @@ impl ProofBackend for Plonky2Backend {
         min_value: u64,
         max_value: u64,
     ) -> Result<BackendProof> {
-        let plonky2_proof = self
-            .inner
-            .prove_range(value, blinding_factor, min_value, max_value)?;
+        // Range proofs are implemented via Bulletproofs, not Plonky2.
+        let mut blinding = [0u8; 32];
+        blinding[..8].copy_from_slice(&blinding_factor.to_le_bytes());
+        let (proof_bytes, commitment) =
+            crate::range::bulletproofs::prove_range(value, min_value, max_value, blinding)?;
+        let data = bincode::serialize(&BulletproofsRangeEnvelope {
+            proof_bytes,
+            commitment,
+            min_value,
+            max_value,
+        })?;
         Ok(BackendProof {
-            proof_system: plonky2_proof.proof_system.clone(),
-            data: Self::encode(&plonky2_proof)?,
+            proof_system: "Bulletproofs".to_string(),
+            data,
         })
     }
 
     fn verify_range(&self, proof: &BackendProof) -> Result<bool> {
+        if proof.proof_system == "Bulletproofs" {
+            let envelope: BulletproofsRangeEnvelope = bincode::deserialize(&proof.data)?;
+            return crate::range::bulletproofs::verify_range(
+                &envelope.proof_bytes,
+                &envelope.commitment,
+                envelope.min_value,
+                envelope.max_value,
+            );
+        }
+        // Legacy fallback for old Plonky2-stub range proofs (test compat only).
         let plonky2_proof = Self::decode(&proof.data)?;
         self.inner.verify_range(&plonky2_proof)
     }
