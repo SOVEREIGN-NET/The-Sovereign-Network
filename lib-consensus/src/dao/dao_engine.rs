@@ -809,7 +809,7 @@ impl DaoEngine {
         note = "Use blockchain.has_proposal_passed() and blockchain.execute_dao_proposal() instead"
     )]
     pub async fn process_expired_proposals(&mut self) -> Result<()> {
-        tracing::warn!("process_expired_proposals is deprecated - use blockchain layer methods");
+        tracing::trace!("process_expired_proposals is deprecated");
         Ok(())
     }
 
