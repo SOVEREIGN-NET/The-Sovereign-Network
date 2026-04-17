@@ -3,8 +3,10 @@
 //! Pure data types for identity-backed observer admission, sponsorship,
 //! proof-level policy, trusted sync-source selection, and revocation.
 //!
-//! Rule: No behavior here. Domain crates own lifecycle logic, validation,
-//! and state transitions. This module defines only the shapes.
+//! Rule: keep behavior here minimal and type-local. Domain crates own
+//! lifecycle logic, validation, policy enforcement/overrides, and state
+//! transitions. This module primarily defines the shapes, plus lightweight,
+//! pure helper methods that are intrinsic to those shapes.
 
 use serde::{Deserialize, Serialize};
 
@@ -14,8 +16,9 @@ use serde::{Deserialize, Serialize};
 
 /// Lifecycle status of an observer admission record.
 ///
-/// Only `Active` observers may sync or serve data. All other states
-/// deny bootstrap, gap-fill, and long-range block import.
+/// `Active` is required for an observer to sync or serve data, but
+/// record-level authorization may impose additional checks (e.g. expiry).
+/// All other states deny bootstrap, gap-fill, and long-range block import.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum ObserverAdmissionStatus {
@@ -105,7 +108,9 @@ pub enum ObserverRateLimitTier {
 pub struct ObserverNodeInfo {
     /// Node DID (`did:zhtp:...`) — machine identity for QUIC auth.
     pub observer_node_did: String,
-    /// Node public key (Dilithium5), base64-encoded.
+    /// Node public key (Dilithium5) as raw bytes.
+    /// When serialized with derived Serde JSON, this is encoded as an array
+    /// of byte values, not as a base64 string.
     pub observer_public_key: Vec<u8>,
     /// Optional advertised endpoints in `host:port` form.
     #[serde(default)]
@@ -234,15 +239,15 @@ pub struct ObserverAdmissionRecord {
 
 impl ObserverAdmissionRecord {
     /// Whether this record currently permits sync access.
-    pub fn is_authorized(&self) -> bool {
+    ///
+    /// `now_secs` is the current unix timestamp in seconds. Records with
+    /// an `expires_at` in the past are denied even if status is `Active`.
+    pub fn is_authorized_at(&self, now_secs: u64) -> bool {
         if !self.status.is_authorized() {
             return false;
         }
-        // Expired records are not authorized even if status is Active.
         if let Some(expires) = self.expires_at {
-            // Caller must supply current time; this is a structural check
-            // against a sentinel. Domain crates do the real time comparison.
-            if expires == 0 {
+            if now_secs >= expires {
                 return false;
             }
         }
@@ -444,21 +449,26 @@ mod tests {
     #[test]
     fn active_record_is_authorized() {
         let record = sample_record();
-        assert!(record.is_authorized());
+        assert!(record.is_authorized_at(1700000000));
     }
 
     #[test]
     fn suspended_record_is_not_authorized() {
         let mut record = sample_record();
         record.status = ObserverAdmissionStatus::Suspended;
-        assert!(!record.is_authorized());
+        assert!(!record.is_authorized_at(1700000000));
     }
 
     #[test]
-    fn expired_record_with_zero_sentinel_is_not_authorized() {
+    fn expired_record_is_not_authorized() {
         let mut record = sample_record();
-        record.expires_at = Some(0);
-        assert!(!record.is_authorized());
+        record.expires_at = Some(1700000000);
+        // At expiry time: denied
+        assert!(!record.is_authorized_at(1700000000));
+        // After expiry: denied
+        assert!(!record.is_authorized_at(1700000001));
+        // Before expiry: allowed
+        assert!(record.is_authorized_at(1699999999));
     }
 
     // ----- proof-level quotas -----
