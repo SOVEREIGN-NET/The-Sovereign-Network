@@ -14,6 +14,9 @@ pub enum RewardSource {
 ///
 /// Tracks total paid and enforces per-source and combined caps.
 /// All amounts are in SOV atomic units (18 decimals).
+///
+/// After the PoUW sub-budget (2.1M SOV) exhausts, rewards can continue
+/// from the broader DEV_GRANT_POOL (100B SOV) as long as NAI justifies them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetTracker {
     pub pouw_paid: u128,
@@ -22,6 +25,11 @@ pub struct BudgetTracker {
     pub pouw_cap: u128,
     pub routing_cap: u128,
     pub storage_cap: u128,
+    /// DEV_GRANT_POOL lifetime ceiling (100B SOV in atoms).
+    /// The absolute cap across all reward sources after sub-budgets exhaust.
+    pub dev_grant_pool_ceiling: u128,
+    /// Total paid from DEV_GRANT_POOL (across all sources, lifetime).
+    pub dev_grant_pool_paid: u128,
 }
 
 impl BudgetTracker {
@@ -33,13 +41,23 @@ impl BudgetTracker {
             pouw_cap,
             routing_cap,
             storage_cap,
+            dev_grant_pool_ceiling: super::nai::DEV_GRANT_POOL_CEILING,
+            dev_grant_pool_paid: 0,
         }
     }
 
-    /// Check if a payment can be made from the given source without exceeding its cap.
+    /// Check if a payment can be made.
+    ///
+    /// First checks the per-source sub-budget. If that's exhausted, checks the
+    /// broader DEV_GRANT_POOL ceiling. The DEV_GRANT_POOL is the absolute
+    /// lifetime cap — never exceeded.
     pub fn can_pay(&self, source: RewardSource, amount: u128) -> bool {
         let (paid, cap) = self.source_state(source);
-        paid + amount <= cap
+        if paid + amount <= cap {
+            return true;
+        }
+        // Sub-budget exhausted — check DEV_GRANT_POOL fallback
+        self.dev_grant_pool_paid + amount <= self.dev_grant_pool_ceiling
     }
 
     /// Record a successful payment.
@@ -49,6 +67,7 @@ impl BudgetTracker {
             RewardSource::Routing => self.routing_paid = self.routing_paid.saturating_add(amount),
             RewardSource::Storage => self.storage_paid = self.storage_paid.saturating_add(amount),
         }
+        self.dev_grant_pool_paid = self.dev_grant_pool_paid.saturating_add(amount);
     }
 
     /// Total paid across all sources.

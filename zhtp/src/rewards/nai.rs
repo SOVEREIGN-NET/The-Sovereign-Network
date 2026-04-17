@@ -21,6 +21,11 @@ pub const MIN_PER_NODE_CAP: u128 = 1_000_000_000_000; // 0.000001 SOV
 /// Maximum per-node cap (atoms) — ceiling even when NAI is high.
 pub const MAX_PER_NODE_CAP: u128 = 1_000_000_000_000_000_000; // 1 SOV
 
+/// DEV_GRANT_POOL lifetime ceiling — 100B SOV in atoms.
+/// After PoUW sub-budget (2.1M SOV) exhausts, rewards continue from this
+/// broader pool as long as NAI justifies them.
+pub const DEV_GRANT_POOL_CEILING: u128 = lib_types::sov::atoms(100_000_000_000); // 100B SOV
+
 /// Snapshot of on-chain activity for one epoch.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NetworkActivityIndex {
@@ -33,23 +38,31 @@ pub struct NetworkActivityIndex {
     pub transaction_count: u64,
     /// Nodes that submitted PoUW receipts this epoch.
     pub active_node_count: u64,
+    /// Whether the bonding curve has graduated.
+    /// When true, bonding_curve_reserve_delta is populated with tx fee volume instead.
+    pub graduated: bool,
 }
 
 impl NetworkActivityIndex {
     /// Compute NAI from chain state for a given epoch.
     ///
     /// All inputs come from on-chain state — no external feeds.
+    /// Pre-graduation: `value_delta` is bonding curve reserve SOV added this epoch.
+    /// Post-graduation: `value_delta` is transaction fee volume this epoch.
+    /// Same slot, same weight in the multiplier formula.
     pub fn compute(
-        bonding_curve_reserve_delta: u128,
+        value_delta: u128,
         new_registrations: u64,
         transaction_count: u64,
         active_node_count: u64,
+        graduated: bool,
     ) -> Self {
         Self {
-            bonding_curve_reserve_delta,
+            bonding_curve_reserve_delta: value_delta,
             new_registrations,
             transaction_count,
             active_node_count,
+            graduated,
         }
     }
 
@@ -150,6 +163,7 @@ mod tests {
             new_registrations: u64::MAX,
             transaction_count: u64::MAX,
             active_node_count: 1,
+            graduated: false,
         };
         assert!(nai.multiplier() <= MAX_NAI_MULTIPLIER);
     }
