@@ -804,50 +804,62 @@ impl QuicHandler {
     ) {
         let peer_did = &peer_identity.did;
 
-        // Check if identity already exists
         let identity_id = match lib_identity::did::parse_did_to_identity_id(peer_did) {
             Ok(id) => id,
             Err(e) => {
-                warn!(peer_did = %peer_did, error = %e, "Invalid DID format, cannot check identity");
+                warn!(peer_did = %peer_did, error = %e, "Invalid DID format");
                 return;
             }
         };
 
+        // Already in identity manager — nothing to do
         {
             let identity_mgr = self.identity_manager.read().await;
             if identity_mgr.get_identity(&identity_id).is_some() {
-                debug!(
-                    peer_did = %peer_did,
-                    "Peer identity already registered, updating last_seen"
-                );
-                // TODO: Update last_seen timestamp
                 return;
             }
         }
 
-        // Create observed identity from handshake
-        // Note: peer_identity.node_id is already a lib_identity::NodeId
+        // Load created_at from the blockchain identity_registry (on-chain, survives restarts).
+        // Falls back to handshake time only if identity is not registered on-chain.
+        let chain_created_at = match crate::runtime::blockchain_provider::get_global_blockchain().await {
+            Ok(blockchain_arc) => {
+                let blockchain = blockchain_arc.read().await;
+                blockchain
+                    .identity_registry
+                    .get(peer_did)
+                    .map(|id| id.created_at)
+            }
+            Err(_) => None,
+        };
+
         match lib_identity::ZhtpIdentity::from_observed_handshake(
             peer_identity.did.clone(),
             peer_identity.public_key.clone(),
             peer_identity.device_id.clone(),
             peer_identity.node_id.clone(),
         ) {
-            Ok(observed_identity) => {
+            Ok(mut identity) => {
+                // Use on-chain created_at if available — prevents age reset on node restart
+                if let Some(on_chain_ts) = chain_created_at {
+                    identity.created_at = on_chain_ts;
+                }
+
                 let mut identity_mgr = self.identity_manager.write().await;
-                identity_mgr.add_identity(observed_identity.clone());
+                identity_mgr.add_identity(identity);
                 drop(identity_mgr);
 
-                info!(
+                debug!(
                     peer_did = %peer_did,
-                    "📝 Auto-registered authenticated peer identity (observed, unprivileged)"
+                    on_chain = chain_created_at.is_some(),
+                    "Peer identity loaded into identity manager"
                 );
             }
             Err(e) => {
                 warn!(
                     peer_did = %peer_did,
                     error = %e,
-                    "Failed to auto-register peer identity"
+                    "Failed to create peer identity"
                 );
             }
         }
