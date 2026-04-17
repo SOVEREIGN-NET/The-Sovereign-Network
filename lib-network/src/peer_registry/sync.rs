@@ -717,6 +717,10 @@ mod tests {
         };
 
         let capabilities = NodeCapabilities {
+            node_type: Some(lib_types::NodeType::Validator),
+            api_endpoint: None,
+            protocol_version: None,
+            supports_web4: true,
             protocols: vec![NetworkProtocol::QUIC],
             max_bandwidth: 1_000_000,
             available_bandwidth: 1_000_000,

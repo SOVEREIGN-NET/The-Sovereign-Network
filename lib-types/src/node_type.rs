@@ -30,6 +30,10 @@ pub enum NodeType {
     /// Relay node: routing only, no blockchain state
     #[serde(rename = "relay")]
     Relay,
+
+    /// Gateway node: public ingress proxy that forwards to backend validators/full nodes
+    #[serde(rename = "gateway")]
+    Gateway,
 }
 
 impl Default for NodeType {
@@ -45,6 +49,7 @@ impl fmt::Display for NodeType {
             NodeType::EdgeNode => write!(f, "edge"),
             NodeType::Validator => write!(f, "validator"),
             NodeType::Relay => write!(f, "relay"),
+            NodeType::Gateway => write!(f, "gateway"),
         }
     }
 }
@@ -59,6 +64,7 @@ impl NodeType {
             Some("validator") => NodeType::Validator,
             Some("edge") => NodeType::EdgeNode,
             Some("relay") => NodeType::Relay,
+            Some("gateway") => NodeType::Gateway,
             Some("full") | None => NodeType::FullNode,
             Some(unknown) => {
                 // Unknown node types fall back to FullNode safely.
@@ -79,6 +85,11 @@ impl NodeType {
     /// Check if this node can verify blocks (syntactic/semantic validation)
     /// Note: Only Validator nodes can participate in active consensus
     pub fn can_verify_blocks(&self) -> bool {
+        matches!(self, NodeType::FullNode | NodeType::Validator)
+    }
+
+    /// Check if this node type can serve as a backend for gateway routing
+    pub fn is_backend_candidate(&self) -> bool {
         matches!(self, NodeType::FullNode | NodeType::Validator)
     }
 
@@ -110,6 +121,7 @@ impl NodeType {
             NodeType::EdgeNode => "Edge node: headers-only mode, minimal storage",
             NodeType::Validator => "Validator: full blockchain + block production",
             NodeType::Relay => "Relay node: routing only, no blockchain state",
+            NodeType::Gateway => "Gateway node: public ingress proxy to backend nodes",
         }
     }
 }
@@ -126,6 +138,7 @@ mod tests {
         );
         assert_eq!(NodeType::from_config(Some("edge")), NodeType::EdgeNode);
         assert_eq!(NodeType::from_config(Some("relay")), NodeType::Relay);
+        assert_eq!(NodeType::from_config(Some("gateway")), NodeType::Gateway);
         assert_eq!(NodeType::from_config(Some("full")), NodeType::FullNode);
         assert_eq!(NodeType::from_config(None), NodeType::FullNode);
     }
@@ -155,6 +168,15 @@ mod tests {
         assert!(!relay.can_verify_blocks());
         assert!(!relay.needs_full_blockchain());
         assert!(!relay.headers_only());
+
+        let gateway = NodeType::Gateway;
+        assert!(!gateway.can_mine());
+        assert!(!gateway.can_verify_blocks());
+        assert!(!gateway.needs_full_blockchain());
+        assert!(!gateway.headers_only());
+        assert!(!gateway.is_backend_candidate());
+        assert!(validator.is_backend_candidate());
+        assert!(full.is_backend_candidate());
     }
 
     #[test]
@@ -164,5 +186,6 @@ mod tests {
         assert_eq!(NodeType::EdgeNode.to_string(), "edge");
         assert_eq!(NodeType::Validator.to_string(), "validator");
         assert_eq!(NodeType::Relay.to_string(), "relay");
+        assert_eq!(NodeType::Gateway.to_string(), "gateway");
     }
 }

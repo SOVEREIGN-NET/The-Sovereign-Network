@@ -191,6 +191,10 @@ impl BluetoothRouter {
                                 1,
                                 0.8,
                                 lib_network::peer_registry::NodeCapabilities {
+                                    node_type: None,
+                                    api_endpoint: None,
+                                    protocol_version: None,
+                                    supports_web4: false,
                                     protocols: vec![connection.protocol.clone()],
                                     max_bandwidth: 1_000_000,
                                     available_bandwidth: 800_000,
@@ -597,6 +601,10 @@ impl BluetoothRouter {
                         1,
                         0.8,
                         lib_network::peer_registry::NodeCapabilities {
+                            node_type: None,
+                            api_endpoint: None,
+                            protocol_version: None,
+                            supports_web4: false,
                             protocols: vec![connection.protocol.clone()],
                             max_bandwidth: 1_000_000,
                             available_bandwidth: 800_000,

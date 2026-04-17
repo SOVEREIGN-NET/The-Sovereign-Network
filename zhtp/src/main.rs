@@ -61,6 +61,12 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("Starting node as Relay (routing only, no blockchain state)");
             RuntimeOrchestrator::start_relay(config).await?
         }
+        NodeType::Gateway => {
+            anyhow::bail!(
+                "Gateway mode is not supported by the zhtp binary. \
+                 Use the zhtp-daemon binary for gateway/ingress-proxy operation."
+            )
+        }
     };
 
     // Wrap orchestrator in Arc for shared ownership (needed by runtime handlers)

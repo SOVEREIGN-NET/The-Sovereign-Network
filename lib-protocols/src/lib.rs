@@ -90,6 +90,7 @@
 // Re-export all public types and modules
 pub mod crypto;
 pub mod economics;
+pub mod forward_context;
 pub mod handlers;
 pub mod identity;
 pub mod identity_messaging;

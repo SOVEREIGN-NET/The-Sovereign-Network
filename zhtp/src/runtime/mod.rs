@@ -738,6 +738,11 @@ impl RuntimeOrchestrator {
                 // treat them as Observer to avoid breaking existing code
                 NodeRole::Observer
             }
+            crate::config::NodeType::Gateway => {
+                // Gateway nodes are public ingress proxies; they do not
+                // maintain blockchain state and have their own NodeRole.
+                NodeRole::Gateway
+            }
         }
     }
 

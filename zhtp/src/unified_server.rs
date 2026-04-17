@@ -563,6 +563,10 @@ impl ZhtpUnifiedServer {
         // Wire PoUW session log into QuicHandler for proof-of-presence recording
         let quic_handler = quic_handler.with_pouw_session_log(pouw_session_log.clone());
 
+        // Wire blockchain into QuicHandler for gateway forwarding context verification
+        #[cfg(feature = "lib-blockchain")]
+        let quic_handler = quic_handler.with_blockchain(blockchain.clone());
+
         let quic_handler = Arc::new(quic_handler);
         info!(" QUIC handler initialized for native ZHTP-over-QUIC");
 
@@ -1128,6 +1132,7 @@ impl ZhtpUnifiedServer {
                 crate::runtime::NodeRole::BootstrapNode => "BootstrapNode",
                 crate::runtime::NodeRole::Observer => "Observer",
                 crate::runtime::NodeRole::ArchivalNode => "ArchivalNode",
+                crate::runtime::NodeRole::Gateway => "Gateway",
             }
         );
 
