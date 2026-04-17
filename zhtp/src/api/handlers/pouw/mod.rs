@@ -188,11 +188,26 @@ impl PouwHandler {
 
                 // Identity age check: reject DIDs registered less than MIN_IDENTITY_AGE_SECS ago.
                 // Prevents Sybil attacks from freshly created identities.
+                // Use on-chain created_at (persisted in blocks) instead of in-memory
+                // identity manager timestamp, which resets on node restart.
                 let now = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs();
-                let age_secs = now.saturating_sub(identity.created_at);
+                let chain_created_at = match
+                    crate::runtime::blockchain_provider::get_global_blockchain().await
+                {
+                    Ok(blockchain_arc) => {
+                        let blockchain = blockchain_arc.read().await;
+                        blockchain
+                            .identity_registry
+                            .get(client_did)
+                            .map(|id| id.created_at)
+                            .unwrap_or(identity.created_at)
+                    }
+                    Err(_) => identity.created_at,
+                };
+                let age_secs = now.saturating_sub(chain_created_at);
                 if age_secs < MIN_IDENTITY_AGE_SECS {
                     warn!(
                         did = %client_did,
