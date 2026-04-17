@@ -1599,6 +1599,8 @@ impl WalletHandler {
             .unwrap_or_default()
             .as_secs();
 
+        let public_key_for_wallet = public_key_bytes.clone();
+
         let welcome_bonus_amount: u128 = if req.welcome_bonus {
             lib_types::sov::atoms(5000)
         } else {
@@ -1610,7 +1612,7 @@ impl WalletHandler {
             wallet_type: req.wallet_type.clone(),
             wallet_name: format!("{} Wallet (provisioned)", req.wallet_type),
             alias: Some(req.wallet_type.to_lowercase()),
-            public_key: public_key_bytes,
+            public_key: public_key_for_wallet,
             owner_identity_id: Some(lib_blockchain::Hash::from_slice(&owner_arr)),
             seed_commitment: lib_blockchain::types::hash::blake3_hash(b"provisioned_wallet"),
             created_at: now,
@@ -1625,6 +1627,54 @@ impl WalletHandler {
             .map_err(|e| anyhow::anyhow!("blockchain unavailable: {}", e))?;
         {
             let mut blockchain = blockchain_arc.write().await;
+
+            // If the owner identity is not in the identity_registry, register it
+            // via a system transaction so it persists in blocks on all nodes.
+            let did = format!("did:zhtp:{}", owner_hex);
+            if !blockchain.identity_registry.contains_key(&did) {
+                let identity_data = lib_blockchain::transaction::IdentityTransactionData {
+                    did: did.clone(),
+                    display_name: String::new(),
+                    public_key: public_key_bytes.clone(),
+                    ownership_proof: vec![],
+                    identity_type: "human".to_string(),
+                    did_document_hash: lib_blockchain::types::hash::blake3_hash(
+                        format!("provisioned_identity_{}", owner_hex).as_bytes(),
+                    ),
+                    created_at: now,
+                    registration_fee: 0,
+                    dao_fee: 0,
+                    controlled_nodes: vec![],
+                    owned_wallets: vec![],
+                };
+
+                // Create IdentityRegistration system transaction for block persistence
+                let identity_tx = lib_blockchain::transaction::Transaction::new_identity_registration(
+                    identity_data.clone(),
+                    vec![],
+                    lib_blockchain::integration::crypto_integration::Signature {
+                        signature: Vec::new(),
+                        public_key: lib_blockchain::integration::crypto_integration::PublicKey::new(
+                            public_key_bytes.as_slice().try_into().unwrap_or([0u8; 2592]),
+                        ),
+                        algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::DEFAULT,
+                        timestamp: now,
+                    },
+                    format!("Provisioned identity {}", &did[..40.min(did.len())]).into_bytes(),
+                );
+                if let Err(e) = blockchain.add_system_transaction(identity_tx) {
+                    tracing::warn!("Failed to submit identity tx: {}", e);
+                }
+                // Also insert in-memory so the handshake works immediately
+                blockchain.identity_registry.insert(did.clone(), identity_data);
+                let current_height = blockchain.get_height();
+                blockchain.identity_blocks.insert(did.clone(), current_height);
+                tracing::info!(
+                    "📝 Identity registered: {} (system tx + in-memory)",
+                    &did[..40.min(did.len())],
+                );
+            }
+
             match blockchain.register_wallet(wallet_data) {
                 Ok(tx_hash) => {
                     tracing::info!(

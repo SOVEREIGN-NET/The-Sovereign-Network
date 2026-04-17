@@ -340,6 +340,7 @@ async fn handle_wallet_command_impl(
             owner,
             wallet_type,
             welcome_bonus,
+            public_key,
         } => {
             output.info(&format!(
                 "Provisioning {} wallet {} for owner {}...",
@@ -348,12 +349,15 @@ async fn handle_wallet_command_impl(
                 &owner[..16.min(owner.len())],
             ))?;
 
-            let body = serde_json::json!({
+            let mut body = serde_json::json!({
                 "wallet_id": wallet_id,
                 "owner_identity_id": owner,
                 "wallet_type": wallet_type,
                 "welcome_bonus": welcome_bonus,
             });
+            if let Some(pk) = public_key {
+                body["public_key"] = serde_json::json!(pk);
+            }
 
             let response = client
                 .post_json("/api/v1/wallet/provision", &body)

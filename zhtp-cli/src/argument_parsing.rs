@@ -258,6 +258,9 @@ pub enum WalletAction {
         /// Mint SOV welcome bonus (5000 SOV)
         #[arg(long)]
         welcome_bonus: bool,
+        /// Dilithium public key hex (2592 bytes). Required if identity not yet registered.
+        #[arg(long)]
+        public_key: Option<String>,
     },
 }
 
