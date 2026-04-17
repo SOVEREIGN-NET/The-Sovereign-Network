@@ -235,6 +235,15 @@ pub enum WalletAction {
         /// Identity ID (DID or public key)
         identity_id: String,
     },
+    /// Mint SOV to an existing wallet (admin, genesis balance recovery)
+    MintSov {
+        /// 32-byte hex wallet ID
+        #[arg(long)]
+        wallet_id: String,
+        /// Amount in SOV (display units, e.g. 5000)
+        #[arg(long)]
+        amount: u64,
+    },
     /// Provision a wallet for an existing identity (restore or create)
     Provision {
         /// 32-byte hex wallet ID (use existing ID to restore, or generate new)

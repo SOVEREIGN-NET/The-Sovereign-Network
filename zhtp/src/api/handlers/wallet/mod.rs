@@ -131,6 +131,10 @@ impl ZhtpRequestHandler for WalletHandler {
             (ZhtpMethod::Post, "/api/v1/wallet/provision") => {
                 self.handle_provision_wallet(request).await
             }
+            // POST /api/v1/wallet/mint-sov
+            (ZhtpMethod::Post, "/api/v1/wallet/mint-sov") => {
+                self.handle_mint_sov(request).await
+            }
             _ => Ok(create_error_response(
                 ZhtpStatus::NotFound,
                 "Wallet endpoint not found".to_string(),
@@ -1647,5 +1651,80 @@ impl WalletHandler {
                 }
             }
         }
+    }
+
+    /// Mint SOV to an existing wallet (admin operation for genesis balance recovery).
+    async fn handle_mint_sov(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        #[derive(serde::Deserialize)]
+        struct MintRequest {
+            wallet_id: String,
+            /// Amount in SOV display units (e.g. 5000 = 5000 SOV)
+            amount_sov: u64,
+        }
+
+        let req: MintRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("invalid mint request: {}", e))?;
+
+        let wallet_id_bytes = hex::decode(&req.wallet_id)
+            .map_err(|_| anyhow::anyhow!("invalid wallet_id hex"))?;
+        if wallet_id_bytes.len() != 32 {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "wallet_id must be 32 bytes".to_string(),
+            ));
+        }
+
+        let amount_atoms = lib_types::sov::atoms(req.amount_sov as u128);
+        let mut wallet_id_arr = [0u8; 32];
+        wallet_id_arr.copy_from_slice(&wallet_id_bytes);
+
+        let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+            .await
+            .map_err(|e| anyhow::anyhow!("blockchain unavailable: {}", e))?;
+
+        let mut blockchain = blockchain_arc.write().await;
+
+        // Verify wallet exists in registry
+        let wallet_id_hex = hex::encode(&wallet_id_arr);
+        if !blockchain.wallet_registry.contains_key(&wallet_id_hex) {
+            return Ok(create_error_response(
+                ZhtpStatus::NotFound,
+                format!("Wallet {} not found in registry", &wallet_id_hex[..16]),
+            ));
+        }
+
+        // Mint SOV to the wallet using the same key construction as balance lookups
+        let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+        let recipient_pk = lib_blockchain::integration::crypto_integration::PublicKey {
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
+            key_id: wallet_id_arr,
+        };
+        if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+            if let Err(e) = token.mint(&recipient_pk, amount_atoms) {
+                return Ok(create_error_response(
+                    ZhtpStatus::InternalServerError,
+                    format!("SOV mint failed: {}", e),
+                ));
+            }
+        } else {
+            return Ok(create_error_response(
+                ZhtpStatus::InternalServerError,
+                "SOV token contract not found".to_string(),
+            ));
+        }
+
+        tracing::info!(
+            "💰 Minted {} SOV to wallet {} (admin mint)",
+            req.amount_sov,
+            &wallet_id_hex[..16],
+        );
+
+        create_json_response(serde_json::json!({
+            "status": "success",
+            "wallet_id": req.wallet_id,
+            "amount_sov": req.amount_sov,
+            "amount_atoms": amount_atoms.to_string(),
+        }))
     }
 }
