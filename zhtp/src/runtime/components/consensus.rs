@@ -120,7 +120,7 @@ impl ConsensusMessageBroadcaster for ConsensusMeshBroadcaster {
             }
         }
 
-        info!(
+        debug!(
             "Consensus broadcast (height {}) delivered to {} validator peer(s)",
             target_height, delivered
         );
