@@ -26,7 +26,9 @@ pub use health::{HealthCheck, HealthCheckResponse, HealthStatus, PouwHealthCheck
 pub use load_test::{run_load_test, LoadTestConfig, LoadTestResults, SyntheticReceiptGenerator};
 pub use metrics::{PouwMetrics, PouwMetricsSnapshot, RejectionType};
 pub use rate_limiter::{PouwRateLimiter, RateLimitConfig, RateLimitReason, RateLimitResult};
-pub use rewards::{EpochClientStats, PayoutStatus, Reward, RewardCalculator, RewardTransaction};
+pub use rewards::{
+    BudgetState, EpochClientStats, PayoutStatus, Reward, RewardCalculator, RewardTransaction,
+};
 pub use session_log::{new_shared_session_log, SessionLog, SessionLogEntry, SharedSessionLog};
 pub use types::*;
 pub use validation::{
@@ -42,7 +44,6 @@ pub use validation::{
 pub fn spawn_pouw_payout_task(
     calculator: std::sync::Arc<crate::pouw::rewards::RewardCalculator>,
     blockchain: std::sync::Arc<tokio::sync::RwLock<lib_blockchain::Blockchain>>,
-    blockchain_dat_path: std::path::PathBuf,
     interval_secs: u64,
 ) {
     tokio::spawn(async move {
@@ -113,33 +114,23 @@ pub fn spawn_pouw_payout_task(
                     }
                 };
 
-                // Mint SOV on the blockchain and persist immediately
+                // Create a TokenMint system transaction on the blockchain
                 let mint_result = {
                     let mut bc = blockchain.write().await;
                     bc.mint_sov_for_pouw(key_id, reward.final_amount)
-                        .and_then(|_| {
-                            // Phase 2: Use incremental storage if available, else fall back to file
-                            if bc.get_store().is_some() {
-                                // Store handles persistence incrementally
-                                Ok(())
-                            } else {
-                                #[allow(deprecated)]
-                                bc.save_to_file(&blockchain_dat_path).map_err(|e| {
-                                    anyhow::anyhow!("save_to_file after POUW mint: {}", e)
-                                })
-                            }
-                        })
                 };
 
                 match mint_result {
-                    Ok(()) => {
-                        // Mark paid with None tx_hash (direct kernel mint, no mempool tx)
-                        calculator.mark_paid(&reward_id, None).await;
+                    Ok(tx_hash) => {
+                        calculator
+                            .mark_paid(&reward_id, Some(tx_hash.as_bytes().to_vec()))
+                            .await;
                         tracing::info!(
                             did = %reward.client_did,
                             amount = reward.final_amount,
                             epoch = reward.epoch,
-                            "POUW reward paid -- SOV minted successfully"
+                            tx_hash = %tx_hash,
+                            "POUW reward paid -- TokenMint tx queued"
                         );
                     }
                     Err(e) => {

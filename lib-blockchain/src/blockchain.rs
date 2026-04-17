@@ -6448,30 +6448,46 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Mint SOV tokens for a POUW reward recipient.
+    /// Mint SOV tokens for a POUW reward recipient via a system transaction.
     ///
-    /// This is an out-of-block kernel operation that mirrors the UBI engine pattern.
-    /// The recipient is identified by a 32-byte key_id derived from their DID.
-    /// After minting, the caller must call `save_to_file()` to persist the updated balance.
+    /// Creates a TokenMint transaction and adds it to the pending pool so it is
+    /// included in the next block. Returns the transaction hash on success.
     pub fn mint_sov_for_pouw(
         &mut self,
         recipient_key_id: [u8; 32],
         amount: u128,
-    ) -> anyhow::Result<()> {
-        self.ensure_sov_token_contract();
-        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
-        let token = self.token_contracts.get_mut(&sov_token_id).ok_or_else(|| {
-            anyhow::anyhow!("SOV token contract not found after ensure_sov_token_contract")
-        })?;
-        let recipient = crate::integration::crypto_integration::PublicKey {
-            dilithium_pk: [0u8; 2592],
-            kyber_pk: [0u8; 1568],
-            key_id: recipient_key_id,
+    ) -> anyhow::Result<Hash> {
+        let mint_data = crate::transaction::TokenMintData {
+            token_id: crate::contracts::utils::generate_lib_token_id(),
+            to: recipient_key_id,
+            amount,
         };
-        token
-            .mint(&recipient, amount)
-            .map_err(|e| anyhow::anyhow!("POUW SOV mint failed: {}", e))?;
-        Ok(())
+
+        let signature = Signature {
+            signature: Vec::new(),
+            public_key: PublicKey {
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
+                key_id: [0u8; 32],
+            },
+            algorithm: SignatureAlgorithm::Dilithium5,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        };
+
+        let memo = format!(
+            "pouw:mint:{}:{}",
+            hex::encode(recipient_key_id),
+            amount
+        )
+        .into_bytes();
+
+        let mint_tx = Transaction::new_token_mint(mint_data, signature, memo);
+        let tx_hash = mint_tx.hash();
+        self.add_system_transaction(mint_tx)?;
+        Ok(tx_hash)
     }
 }
 

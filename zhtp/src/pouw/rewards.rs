@@ -205,6 +205,43 @@ pub struct DIDEpochRecord {
     pub hit_cap: bool,
 }
 
+/// Tracks cumulative POUW budget spend against the 4-year cap.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BudgetState {
+    /// Total atoms already paid out (persisted across restarts)
+    pub total_paid_atoms: u128,
+    /// Maximum atoms that may ever be paid (POUW_TOTAL_BUDGET)
+    pub budget_cap_atoms: u128,
+}
+
+impl BudgetState {
+    /// Create a new budget state with the default POUW cap.
+    pub fn new() -> Self {
+        Self {
+            total_paid_atoms: 0,
+            budget_cap_atoms: POUW_TOTAL_BUDGET,
+        }
+    }
+
+    /// Returns `true` if the budget can absorb `new_amount` on top of `pending_total`.
+    pub fn can_pay(&self, pending_total: u128, new_amount: u128) -> bool {
+        self.total_paid_atoms
+            .saturating_add(pending_total)
+            .saturating_add(new_amount)
+            <= self.budget_cap_atoms
+    }
+
+    /// Record a successfully paid amount.
+    pub fn record_paid(&mut self, amount: u128) {
+        self.total_paid_atoms = self.total_paid_atoms.saturating_add(amount);
+    }
+
+    /// How many atoms remain before the cap is hit.
+    pub fn remaining(&self) -> u128 {
+        self.budget_cap_atoms.saturating_sub(self.total_paid_atoms)
+    }
+}
+
 /// Reward calculator
 pub struct RewardCalculator {
     /// Epoch duration in seconds
@@ -221,6 +258,8 @@ pub struct RewardCalculator {
     did_history: Arc<RwLock<HashMap<String, VecDeque<DIDEpochRecord>>>>,
     /// DIDs flagged for manual review due to anomalous reward patterns
     suspicious_dids: Arc<RwLock<HashSet<String>>>,
+    /// Cumulative budget tracker (persisted alongside rewards)
+    budget: Arc<RwLock<BudgetState>>,
 }
 
 /// Configurable multipliers for proof types
@@ -256,6 +295,7 @@ impl RewardCalculator {
             pool_config: EpochPoolConfig::default_beta(),
             did_history: Arc::new(RwLock::new(HashMap::new())),
             suspicious_dids: Arc::new(RwLock::new(HashSet::new())),
+            budget: Arc::new(RwLock::new(BudgetState::new())),
         }
     }
 
@@ -522,6 +562,21 @@ impl RewardCalculator {
                 )
                 .await;
 
+                // Budget gate: skip reward if it would exceed the lifetime cap
+                {
+                    let budget = self.budget.read().await;
+                    let pending_total: u128 = rewards.iter().map(|r: &Reward| r.final_amount).sum();
+                    if !budget.can_pay(pending_total, reward.final_amount) {
+                        warn!(
+                            client = %stats.client_did,
+                            epoch = epoch,
+                            remaining = budget.remaining(),
+                            "POUW budget exhausted — skipping reward"
+                        );
+                        continue;
+                    }
+                }
+
                 rewards.push(reward.clone());
 
                 // Store reward
@@ -563,25 +618,41 @@ impl RewardCalculator {
 
     /// Mark reward as paid (idempotent)
     pub async fn mark_paid(&self, reward_id: &[u8], tx_hash: Option<Vec<u8>>) -> bool {
-        let mut rewards = self.rewards.write().await;
-        for reward in rewards.iter_mut() {
-            if reward.reward_id == reward_id {
-                match reward.payout_status {
-                    PayoutStatus::Processing => {
-                        reward.payout_status = PayoutStatus::Paid;
-                        reward.paid_at = Some(self.now_secs());
-                        reward.tx_hash = tx_hash;
-                        return true;
+        let paid_amount: Option<u128>;
+        {
+            let mut rewards = self.rewards.write().await;
+            let mut found = false;
+            let mut amount = None;
+            for reward in rewards.iter_mut() {
+                if reward.reward_id == reward_id {
+                    match reward.payout_status {
+                        PayoutStatus::Processing => {
+                            reward.payout_status = PayoutStatus::Paid;
+                            reward.paid_at = Some(self.now_secs());
+                            reward.tx_hash = tx_hash;
+                            amount = Some(reward.final_amount);
+                            found = true;
+                            break;
+                        }
+                        PayoutStatus::Paid => {
+                            // Already paid - idempotent success
+                            return true;
+                        }
+                        _ => return false,
                     }
-                    PayoutStatus::Paid => {
-                        // Already paid - idempotent success
-                        return true;
-                    }
-                    _ => return false,
                 }
             }
+            if !found {
+                return false;
+            }
+            paid_amount = amount;
+        } // rewards lock dropped here
+
+        // Record spend in budget tracker (outside rewards lock)
+        if let Some(amount) = paid_amount {
+            self.budget.write().await.record_paid(amount);
         }
-        false
+        true
     }
 
     /// Mark reward as failed (will retry)
@@ -724,6 +795,66 @@ impl RewardCalculator {
             .parent()
             .unwrap_or(std::path::Path::new("."))
             .join("rewards.dat")
+    }
+
+    /// Persist current budget state to a bincode file.
+    pub async fn save_budget_to_file(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        use std::io::Write;
+        let budget = self.budget.read().await.clone();
+        let encoded = bincode::serialize(&budget)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize budget: {}", e))?;
+        let mut file = std::fs::File::create(path)
+            .map_err(|e| anyhow::anyhow!("Failed to create {}: {}", path.display(), e))?;
+        file.write_all(&encoded)
+            .map_err(|e| anyhow::anyhow!("Failed to write budget file: {}", e))?;
+        info!(
+            path = %path.display(),
+            total_paid = budget.total_paid_atoms,
+            remaining = budget.remaining(),
+            "POUW budget state saved to disk"
+        );
+        Ok(())
+    }
+
+    /// Load budget state from a bincode file, replacing in-memory state.
+    ///
+    /// Silently returns Ok if the file does not exist (first boot).
+    pub async fn load_budget_from_file(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        if !path.exists() {
+            info!(
+                "No budget file at {} — starting with fresh budget",
+                path.display()
+            );
+            return Ok(());
+        }
+        let bytes = std::fs::read(path)
+            .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?;
+        let loaded: BudgetState = bincode::deserialize(&bytes).map_err(|e| {
+            anyhow::anyhow!("Failed to deserialize budget (file may be corrupt): {}", e)
+        })?;
+        info!(
+            path = %path.display(),
+            total_paid = loaded.total_paid_atoms,
+            remaining = loaded.remaining(),
+            "POUW budget state loaded from disk"
+        );
+        *self.budget.write().await = loaded;
+        Ok(())
+    }
+
+    /// Derive the budget file path from a blockchain.dat path.
+    ///
+    /// Example: `/data/testnet/blockchain.dat` → `/data/testnet/pouw_budget.dat`
+    pub fn budget_path_for(blockchain_dat: &std::path::Path) -> std::path::PathBuf {
+        blockchain_dat
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join("pouw_budget.dat")
+    }
+
+    /// Get a snapshot of the current budget state.
+    pub async fn get_budget_state(&self) -> BudgetState {
+        self.budget.read().await.clone()
     }
 }
 
