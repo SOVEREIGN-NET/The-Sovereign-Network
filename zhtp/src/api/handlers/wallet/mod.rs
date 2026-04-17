@@ -127,6 +127,10 @@ impl ZhtpRequestHandler for WalletHandler {
             (ZhtpMethod::Post, "/api/v1/wallet/staking/unstake") => {
                 self.handle_unstake_tokens(request).await
             }
+            // POST /api/v1/wallet/provision
+            (ZhtpMethod::Post, "/api/v1/wallet/provision") => {
+                self.handle_provision_wallet(request).await
+            }
             _ => Ok(create_error_response(
                 ZhtpStatus::NotFound,
                 "Wallet endpoint not found".to_string(),
@@ -1512,6 +1516,136 @@ impl WalletHandler {
             can_receive_rewards: permissions.can_receive_rewards,
             daily_transaction_limit: permissions.daily_transaction_limit,
             requires_multisig_threshold: permissions.requires_multisig_threshold,
+        }
+    }
+
+    /// Provision a wallet for an existing identity.
+    ///
+    /// Registers a wallet in the blockchain wallet_registry with the given ID and
+    /// owner. If `welcome_bonus` is true, mints the SOV welcome bonus. The wallet
+    /// registration transaction is included in the next block, persisting the wallet
+    /// on-chain.
+    ///
+    /// Used for:
+    /// - Restoring wallets lost during testnet resets
+    /// - Provisioning wallets for observed-only identities
+    async fn handle_provision_wallet(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        #[derive(serde::Deserialize)]
+        struct ProvisionRequest {
+            wallet_id: String,
+            owner_identity_id: String,
+            wallet_type: String,
+            #[serde(default)]
+            welcome_bonus: bool,
+            /// Optional dilithium public key hex (2592 bytes). If omitted, looked up
+            /// from the on-chain identity registry.
+            #[serde(default)]
+            public_key: Option<String>,
+        }
+
+        let req: ProvisionRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("invalid provision request: {}", e))?;
+
+        // Parse wallet_id
+        let wallet_id_bytes = hex::decode(&req.wallet_id)
+            .map_err(|_| anyhow::anyhow!("invalid wallet_id hex"))?;
+        if wallet_id_bytes.len() != 32 {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "wallet_id must be 32 bytes".to_string(),
+            ));
+        }
+        let mut wallet_id_arr = [0u8; 32];
+        wallet_id_arr.copy_from_slice(&wallet_id_bytes);
+
+        // Parse owner identity ID
+        let owner_hex = req.owner_identity_id
+            .strip_prefix("did:zhtp:")
+            .unwrap_or(&req.owner_identity_id);
+        let owner_bytes = hex::decode(owner_hex)
+            .map_err(|_| anyhow::anyhow!("invalid owner_identity_id hex"))?;
+        if owner_bytes.len() != 32 {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "owner_identity_id must be 32 bytes".to_string(),
+            ));
+        }
+        let mut owner_arr = [0u8; 32];
+        owner_arr.copy_from_slice(&owner_bytes);
+
+        // Resolve public key: explicit or from identity registry
+        let public_key_bytes = if let Some(pk_hex) = &req.public_key {
+            hex::decode(pk_hex).map_err(|_| anyhow::anyhow!("invalid public_key hex"))?
+        } else {
+            // Look up from identity registry
+            let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+                .await
+                .map_err(|e| anyhow::anyhow!("blockchain unavailable: {}", e))?;
+            let blockchain = blockchain_arc.read().await;
+            let did = format!("did:zhtp:{}", owner_hex);
+            blockchain
+                .identity_registry
+                .get(&did)
+                .map(|id| id.public_key.clone())
+                .unwrap_or_else(|| vec![0u8; 2592])
+        };
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let welcome_bonus_amount: u128 = if req.welcome_bonus {
+            lib_types::sov::atoms(5000)
+        } else {
+            0
+        };
+
+        let wallet_data = lib_blockchain::transaction::WalletTransactionData {
+            wallet_id: lib_blockchain::Hash::from_slice(&wallet_id_arr),
+            wallet_type: req.wallet_type.clone(),
+            wallet_name: format!("{} Wallet (provisioned)", req.wallet_type),
+            alias: Some(req.wallet_type.to_lowercase()),
+            public_key: public_key_bytes,
+            owner_identity_id: Some(lib_blockchain::Hash::from_slice(&owner_arr)),
+            seed_commitment: lib_blockchain::types::hash::blake3_hash(b"provisioned_wallet"),
+            created_at: now,
+            registration_fee: 0,
+            capabilities: if req.wallet_type == "Primary" { 0xFF } else { 0x01 },
+            initial_balance: welcome_bonus_amount,
+        };
+
+        // Register on blockchain — creates system transaction for block inclusion
+        let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+            .await
+            .map_err(|e| anyhow::anyhow!("blockchain unavailable: {}", e))?;
+        {
+            let mut blockchain = blockchain_arc.write().await;
+            match blockchain.register_wallet(wallet_data) {
+                Ok(tx_hash) => {
+                    tracing::info!(
+                        "✅ Wallet provisioned: {} (type={}, owner={}, bonus={})",
+                        &req.wallet_id[..16.min(req.wallet_id.len())],
+                        req.wallet_type,
+                        &owner_hex[..16.min(owner_hex.len())],
+                        req.welcome_bonus,
+                    );
+                    create_json_response(serde_json::json!({
+                        "status": "success",
+                        "wallet_id": req.wallet_id,
+                        "owner_identity_id": req.owner_identity_id,
+                        "wallet_type": req.wallet_type,
+                        "welcome_bonus": welcome_bonus_amount.to_string(),
+                        "tx_hash": hex::encode(tx_hash.as_bytes()),
+                    }))
+                }
+                Err(e) => {
+                    Ok(create_error_response(
+                        ZhtpStatus::BadRequest,
+                        format!("Wallet provision failed: {}", e),
+                    ))
+                }
+            }
         }
     }
 }

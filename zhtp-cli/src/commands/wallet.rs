@@ -301,6 +301,47 @@ async fn handle_wallet_command_impl(
             output.print(&formatted)?;
             Ok(())
         }
+
+        WalletAction::Provision {
+            wallet_id,
+            owner,
+            wallet_type,
+            welcome_bonus,
+        } => {
+            output.info(&format!(
+                "Provisioning {} wallet {} for owner {}...",
+                wallet_type,
+                &wallet_id[..16.min(wallet_id.len())],
+                &owner[..16.min(owner.len())],
+            ))?;
+
+            let body = serde_json::json!({
+                "wallet_id": wallet_id,
+                "owner_identity_id": owner,
+                "wallet_type": wallet_type,
+                "welcome_bonus": welcome_bonus,
+            });
+
+            let response = client
+                .post_json("/api/v1/wallet/provision", &body)
+                .await
+                .map_err(|e| CliError::ApiCallFailed {
+                    endpoint: "/api/v1/wallet/provision".to_string(),
+                    status: 0,
+                    reason: e.to_string(),
+                })?;
+
+            let result: serde_json::Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
+                    endpoint: "/api/v1/wallet/provision".to_string(),
+                    status: 0,
+                    reason: format!("Failed to parse response: {}", e),
+                })?;
+            let formatted = format_output(&result, &cli.format)?;
+            output.header("Wallet Provisioned")?;
+            output.print(&formatted)?;
+            Ok(())
+        }
     }
 }
 

@@ -235,6 +235,21 @@ pub enum WalletAction {
         /// Identity ID (DID or public key)
         identity_id: String,
     },
+    /// Provision a wallet for an existing identity (restore or create)
+    Provision {
+        /// 32-byte hex wallet ID (use existing ID to restore, or generate new)
+        #[arg(long)]
+        wallet_id: String,
+        /// Owner identity DID or hex ID
+        #[arg(long)]
+        owner: String,
+        /// Wallet type: Primary, UBI, Savings
+        #[arg(long, default_value = "Primary")]
+        wallet_type: String,
+        /// Mint SOV welcome bonus (5000 SOV)
+        #[arg(long)]
+        welcome_bonus: bool,
+    },
 }
 
 /// DAO operation commands
