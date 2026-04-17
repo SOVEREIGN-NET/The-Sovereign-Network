@@ -1,6 +1,6 @@
 //! Signed forwarded client context for gateway-to-backend requests.
 //!
-//! When the gateway proxies a client request to a backend, it attaches a
+//! When a gateway proxies a client request to a backend, it attaches a
 //! cryptographically signed context so the backend can verify that the
 //! request was forwarded by a trusted gateway and has not been replayed.
 
@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use base64::{engine::general_purpose, Engine as _};
 use lib_crypto::{hash_blake3, KeyPair};
 use lib_identity::ZhtpIdentity;
-use lib_protocols::types::ZhtpRequest;
+use crate::types::ZhtpRequest;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::debug;
@@ -64,12 +64,12 @@ impl ForwardedClientContext {
     }
 
     /// Canonical byte representation used for signing and verification.
-    fn canonical_bytes(&self) -> Result<Vec<u8>> {
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
         serde_json::to_vec(self).context("Failed to serialize ForwardedClientContext")
     }
 
     /// Compute the blake3 hash of the canonical bytes.
-    fn hash(&self) -> Result<[u8; 32]> {
+    pub fn hash(&self) -> Result<[u8; 32]> {
         let bytes = self.canonical_bytes()?;
         Ok(hash_blake3(&bytes))
     }
@@ -135,11 +135,9 @@ pub fn attach_context(
     Ok(request)
 }
 
-/// Extract and verify a forwarded context from an incoming request.
-pub fn extract_context(
-    request: &ZhtpRequest,
-    gateway_public_key: &lib_crypto::PublicKey,
-) -> Result<Option<ForwardedClientContext>> {
+/// Parse raw context and signature bytes from an incoming request without verifying.
+/// Returns `Ok(None)` if the gateway headers are absent.
+pub fn parse_context(request: &ZhtpRequest) -> Result<Option<(ForwardedClientContext, Vec<u8>)>> {
     let ctx_b64 = match request.headers.custom.get("X-ZHTP-GW-CTX") {
         Some(v) => v,
         None => return Ok(None),
@@ -159,6 +157,19 @@ pub fn extract_context(
         .decode(sig_b64)
         .context("Failed to base64-decode forwarded context signature")?;
 
+    Ok(Some((ctx, sig_bytes)))
+}
+
+/// Extract and verify a forwarded context from an incoming request.
+pub fn extract_context(
+    request: &ZhtpRequest,
+    gateway_public_key: &lib_crypto::PublicKey,
+) -> Result<Option<ForwardedClientContext>> {
+    let (ctx, sig_bytes) = match parse_context(request)? {
+        Some(v) => v,
+        None => return Ok(None),
+    };
+
     if !verify_context(&ctx, &sig_bytes, gateway_public_key)? {
         return Err(anyhow::anyhow!(
             "ForwardedClientContext signature verification failed or context is stale"
@@ -166,4 +177,75 @@ pub fn extract_context(
     }
 
     Ok(Some(ctx))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_identity() -> ZhtpIdentity {
+        ZhtpIdentity::new_unified(
+            lib_identity::IdentityType::Device,
+            None,
+            None,
+            "test-device",
+            Some([0u8; 64]),
+        )
+        .expect("test identity")
+    }
+
+    #[test]
+    fn sign_and_verify_roundtrip() {
+        let identity = test_identity();
+        let ctx = ForwardedClientContext::new(
+            identity.did.clone(),
+            Some("client-123".to_string()),
+            Some("192.168.1.1".to_string()),
+            60_000,
+        );
+        let sig = sign_context(&identity, &ctx).expect("sign");
+        let valid = verify_context(&ctx, &sig, &identity.public_key).expect("verify");
+        assert!(valid);
+    }
+
+    #[test]
+    fn verify_rejects_stale_context() {
+        let identity = test_identity();
+        let mut ctx = ForwardedClientContext::new(
+            identity.did.clone(),
+            None,
+            None,
+            0,
+        );
+        // Manually backdate so it is immediately stale
+        ctx.received_at_ms = 0;
+        let sig = sign_context(&identity, &ctx).expect("sign");
+        let valid = verify_context(&ctx, &sig, &identity.public_key).expect("verify");
+        assert!(!valid);
+    }
+
+    #[test]
+    fn attach_and_parse_context() {
+        let identity = test_identity();
+        let ctx = ForwardedClientContext::new(
+            identity.did.clone(),
+            Some("client-456".to_string()),
+            Some("10.0.0.1".to_string()),
+            30_000,
+        );
+        let sig = sign_context(&identity, &ctx).expect("sign");
+        let request = ZhtpRequest::get("/test".to_string(), None).expect("valid request");
+        let attached = attach_context(request, &ctx, &sig).expect("attach");
+
+        let (parsed_ctx, parsed_sig) = parse_context(&attached).expect("parse").expect("some");
+        assert_eq!(parsed_ctx.gateway_did, ctx.gateway_did);
+        assert_eq!(parsed_ctx.source_ip, ctx.source_ip);
+        assert_eq!(parsed_sig, sig);
+    }
+
+    #[test]
+    fn parse_returns_none_when_headers_missing() {
+        let request = ZhtpRequest::get("/test".to_string(), None).expect("valid request");
+        assert!(parse_context(&request).expect("parse").is_none());
+    }
 }

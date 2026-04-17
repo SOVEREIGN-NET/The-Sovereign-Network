@@ -119,7 +119,7 @@ impl BackendPool {
                     static_entries.push(Arc::new(BackendEntry::new(
                         addr.clone(),
                         BackendSource::Static,
-                        Self::dummy_client(&identity, &trust_config).await?,
+                        Self::dummy_client(addr, &identity, &trust_config).await?,
                     )));
                 }
             }
@@ -141,6 +141,10 @@ impl BackendPool {
     }
 
     /// Start background health-check and optional dynamic-discovery tasks.
+    pub fn metrics_snapshot(&self) -> crate::metrics::MetricsSnapshot {
+        self.metrics.snapshot()
+    }
+
     pub fn start_background_tasks(
         self: &Arc<Self>,
         peer_registry: Option<lib_network::SharedPeerRegistry>,
@@ -516,13 +520,16 @@ impl BackendPool {
         Ok(client)
     }
 
-    async fn dummy_client(identity: &ZhtpIdentity, trust_config: &TrustConfig) -> Result<Web4Client> {
+    async fn dummy_client(addr: &str, identity: &ZhtpIdentity, trust_config: &TrustConfig) -> Result<Web4Client> {
         // Used for entries that failed initial connection so the struct is still valid.
         // The background health check will reconnect before any traffic is routed.
+        let cache_dir = crate::config::DaemonConfig::root_dir()?
+            .join("client-cache")
+            .join(addr.replace(['/', ':'], "_"));
         let client_config = Web4ClientConfig {
             allow_bootstrap: trust_config.bootstrap_mode,
-            cache_dir: Some(crate::config::DaemonConfig::root_dir()?.join("client-cache")),
-            session_id: Some("gateway-dummy".to_string()),
+            cache_dir: Some(cache_dir),
+            session_id: Some(format!("gateway-dummy-{}", addr.replace(['/', ':'], "_"))),
         };
         if trust_config.bootstrap_mode {
             Web4Client::new_bootstrap_with_config(identity.clone(), client_config)
@@ -573,6 +580,17 @@ impl BackendPool {
         }
     }
 
+    pub async fn healthy_count(&self) -> usize {
+        let dynamic = self.dynamic_entries.read().await;
+        let mut count = 0usize;
+        for entry in self.static_entries.iter().chain(dynamic.values()) {
+            if *entry.state.lock().await == BackendState::Healthy {
+                count += 1;
+            }
+        }
+        count
+    }
+
     async fn log_pool_snapshot(&self) {
         let (static_total, dynamic_total, healthy, unhealthy, half_open, quarantined) = {
             let dynamic = self.dynamic_entries.read().await;
@@ -611,5 +629,125 @@ fn ewma(old: u64, new: u64) -> u64 {
         new
     } else {
         ((old * 8) + (new * 2)) / 10
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    fn test_identity() -> ZhtpIdentity {
+        ZhtpIdentity::new_unified(
+            lib_identity::IdentityType::Device,
+            None,
+            None,
+            "test-device",
+            Some([0u8; 64]),
+        )
+        .expect("test identity")
+    }
+
+    fn test_gateway_config(backends: Vec<String>) -> GatewayConfig {
+        GatewayConfig {
+            static_backends: backends,
+            backend_selection: BackendSelectionPolicy::LowestLatency,
+            retry_idempotent_requests: false,
+            ..GatewayConfig::default()
+        }
+    }
+
+    fn unique_root() -> std::path::PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+            .to_string();
+        std::env::temp_dir().join(format!("zhtp-daemon-test-{}", unique))
+    }
+
+    async fn test_pool(backends: Vec<String>) -> BackendPool {
+        let root = unique_root();
+        std::fs::create_dir_all(&root).unwrap();
+        std::env::set_var("ZHTP_DAEMON_ROOT_DIR", &root);
+        let identity = test_identity();
+        let cfg = test_gateway_config(backends);
+        let trust = TrustConfig::bootstrap();
+        BackendPool::new(cfg, identity, trust).await.expect("pool")
+    }
+
+    use std::sync::Mutex;
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[tokio::test]
+    async fn pick_backend_prefers_lowest_score() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let pool = test_pool(vec!["a:1".to_string(), "b:1".to_string()]).await;
+
+        pool.static_entries[0]
+            .latency_ewma_ms
+            .store(100, Ordering::Relaxed);
+        pool.static_entries[1]
+            .latency_ewma_ms
+            .store(10, Ordering::Relaxed);
+
+        let dummy_req = ZhtpRequest::get("/".to_string(), None).unwrap();
+        let picked = pool.pick_backend(&dummy_req).await.unwrap();
+        assert_eq!(picked.addr, "b:1");
+        picked.dec_in_flight(); // balance the inc from pick
+    }
+
+    #[tokio::test]
+    async fn report_failure_moves_healthy_to_unhealthy() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let pool = test_pool(vec!["a:1".to_string()]).await;
+        let threshold = pool.cfg.unhealthy_threshold;
+
+        for _ in 0..threshold - 1 {
+            pool.report_failure("a:1").await;
+        }
+        assert_eq!(*pool.static_entries[0].state.lock().await, BackendState::Healthy);
+
+        pool.report_failure("a:1").await;
+        assert_eq!(*pool.static_entries[0].state.lock().await, BackendState::Unhealthy);
+        assert!(pool.static_entries[0].cooldown_until.lock().await.is_some());
+    }
+
+    #[tokio::test]
+    async fn report_success_promotes_halfopen_to_healthy() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let pool = test_pool(vec!["a:1".to_string()]).await;
+        let threshold = pool.cfg.recovery_threshold;
+
+        *pool.static_entries[0].state.lock().await = BackendState::HalfOpen;
+        pool.static_entries[0].consecutive_successes.store(0, Ordering::Relaxed);
+
+        for _ in 0..threshold - 1 {
+            pool.report_success("a:1", 10).await;
+        }
+        assert_eq!(*pool.static_entries[0].state.lock().await, BackendState::HalfOpen);
+
+        pool.report_success("a:1", 10).await;
+        assert_eq!(*pool.static_entries[0].state.lock().await, BackendState::Healthy);
+        assert_eq!(pool.static_entries[0].consecutive_failures.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn metrics_counters_increment() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let pool = test_pool(vec!["a:1".to_string()]).await;
+        let before = pool.metrics.snapshot();
+
+        let dummy_req = ZhtpRequest::get("/".to_string(), None).unwrap();
+        let _ = pool.pick_backend(&dummy_req).await.unwrap();
+        pool.report_success("a:1", 10).await;
+        pool.report_failure("a:1").await;
+        pool.record_retry();
+
+        let after = pool.metrics.snapshot();
+        assert_eq!(after.requests_total, before.requests_total + 1);
+        assert_eq!(after.requests_success, before.requests_success + 1);
+        assert_eq!(after.requests_failure, before.requests_failure + 1);
+        assert_eq!(after.retries_total, before.retries_total + 1);
     }
 }

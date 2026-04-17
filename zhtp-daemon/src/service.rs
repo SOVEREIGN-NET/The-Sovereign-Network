@@ -1,6 +1,6 @@
 use crate::backend_pool::BackendPool;
 use crate::config::DaemonConfig;
-use crate::forward_context::{attach_context, ForwardedClientContext, sign_context};
+use lib_protocols::forward_context::{attach_context, ForwardedClientContext, sign_context};
 use anyhow::{anyhow, Context, Result};
 use lib_identity::ZhtpIdentity;
 use lib_network::web4::{ManifestFile, Web4Manifest};
@@ -20,6 +20,7 @@ pub struct ServiceStatus {
     pub daemon_did: String,
     pub active_backend: Option<String>,
     pub configured_backends: Vec<String>,
+    pub healthy_backends: usize,
     pub started_at: u64,
 }
 
@@ -55,6 +56,10 @@ impl ZhtpDaemonService {
         })
     }
 
+    pub fn metrics(&self) -> crate::metrics::MetricsSnapshot {
+        self.backend_pool.metrics_snapshot()
+    }
+
     pub async fn status(&self) -> ServiceStatus {
         ServiceStatus {
             daemon_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -62,11 +67,12 @@ impl ZhtpDaemonService {
             daemon_did: self.identity.did.clone(),
             active_backend: None,
             configured_backends: self.config.static_backends(),
+            healthy_backends: self.backend_pool.healthy_count().await,
             started_at: self.started_at,
         }
     }
 
-    pub async fn resolve_domain(&self, domain: &str) -> Result<serde_json::Value> {
+    pub async fn resolve_domain(&self, domain: &str, client_ip: Option<String>) -> Result<serde_json::Value> {
         let body = serde_json::json!({ "domain": domain, "version": serde_json::Value::Null });
         let req = ZhtpRequest::post(
             "/api/v1/web4/domains/resolve".to_string(),
@@ -74,7 +80,7 @@ impl ZhtpDaemonService {
             "application/json".to_string(),
             Some(self.identity.id.clone()),
         )?;
-        let req = self.attach_forwarded_context(req).await?;
+        let req = self.attach_forwarded_context(req, client_ip).await?;
 
         let backend = self.backend_pool.pick_backend(&req).await?;
         let start = std::time::Instant::now();
@@ -102,7 +108,7 @@ impl ZhtpDaemonService {
         }
     }
 
-    pub async fn fetch_content(&self, domain: &str, path: &str) -> Result<ZhtpResponse> {
+    pub async fn fetch_content(&self, domain: &str, path: &str, client_ip: Option<String>) -> Result<ZhtpResponse> {
         let normalized_path = normalize_requested_path(path);
         let req = ZhtpRequest::get(
             format!("/web4/content/{}{}", domain, normalized_path),
@@ -111,13 +117,13 @@ impl ZhtpDaemonService {
         .unwrap_or_else(|_| {
             ZhtpRequest::get("/".to_string(), Some(self.identity.id.clone())).expect("valid request")
         });
-        let req = self.attach_forwarded_context(req).await?;
+        let req = self.attach_forwarded_context(req, client_ip.clone()).await?;
 
         let backend = self.backend_pool.pick_backend(&req).await?;
         let start = std::time::Instant::now();
 
         match self
-            .fetch_content_with_backend(&backend, domain, &normalized_path)
+            .fetch_content_with_backend(&backend, domain, &normalized_path, client_ip.clone())
             .await
         {
             Ok(response) => {
@@ -132,7 +138,7 @@ impl ZhtpDaemonService {
                     if let Ok(retry_backend) = self.backend_pool.pick_backend(&req).await {
                         self.backend_pool.record_retry();
                         return self
-                            .fetch_content_with_backend(&retry_backend, domain, &normalized_path)
+                            .fetch_content_with_backend(&retry_backend, domain, &normalized_path, client_ip)
                             .await;
                     }
                 }
@@ -141,19 +147,19 @@ impl ZhtpDaemonService {
         }
     }
 
-    pub async fn list_domains(&self) -> Result<serde_json::Value> {
+    pub async fn list_domains(&self, client_ip: Option<String>) -> Result<serde_json::Value> {
         let req =
             ZhtpRequest::get("/api/v1/web4/domains/catalog".to_string(), Some(self.identity.id.clone()))
                 .unwrap_or_else(|_| {
                     ZhtpRequest::get("/api/v1/dns/domains".to_string(), Some(self.identity.id.clone()))
                         .expect("valid request")
                 });
-        let req = self.attach_forwarded_context(req).await?;
+        let req = self.attach_forwarded_context(req, client_ip.clone()).await?;
 
         let backend = self.backend_pool.pick_backend(&req).await?;
         let start = std::time::Instant::now();
 
-        match self.list_domains_with_backend(&backend).await {
+        match self.list_domains_with_backend(&backend, client_ip.clone()).await {
             Ok(value) => {
                 self.backend_pool
                     .report_success(&backend.addr, start.elapsed().as_millis() as u64)
@@ -165,7 +171,7 @@ impl ZhtpDaemonService {
                 if req.is_idempotent() && self.config.effective_gateway_config().retry_idempotent_requests {
                     if let Ok(retry_backend) = self.backend_pool.pick_backend(&req).await {
                         self.backend_pool.record_retry();
-                        return self.list_domains_with_backend(&retry_backend).await;
+                        return self.list_domains_with_backend(&retry_backend, client_ip).await;
                     }
                 }
                 Err(e)
@@ -173,10 +179,10 @@ impl ZhtpDaemonService {
         }
     }
 
-    async fn list_domains_with_backend(&self, backend: &crate::backend_pool::BackendEntry) -> Result<serde_json::Value> {
+    async fn list_domains_with_backend(&self, backend: &crate::backend_pool::BackendEntry, client_ip: Option<String>) -> Result<serde_json::Value> {
         for uri in ["/api/v1/web4/domains/catalog", "/api/v1/dns/domains"] {
             let request = ZhtpRequest::get(uri.to_string(), Some(self.identity.id.clone()))?;
-            let request = self.attach_forwarded_context(request).await?;
+            let request = self.attach_forwarded_context(request, client_ip.clone()).await?;
             let response = backend.client.read().await.request(request).await?;
 
             if response.status.code() == 404 {
@@ -216,6 +222,7 @@ impl ZhtpDaemonService {
         backend: &crate::backend_pool::BackendEntry,
         domain: &str,
         path: &str,
+        client_ip: Option<String>,
     ) -> Result<ZhtpResponse> {
         let resolve_body = serde_json::json!({ "domain": domain, "version": serde_json::Value::Null });
         let resolve_req = ZhtpRequest::post(
@@ -224,7 +231,7 @@ impl ZhtpDaemonService {
             "application/json".to_string(),
             Some(self.identity.id.clone()),
         )?;
-        let resolve_req = self.attach_forwarded_context(resolve_req).await?;
+        let resolve_req = self.attach_forwarded_context(resolve_req, client_ip.clone()).await?;
 
         let resolve_resp = backend.client.read().await.request(resolve_req).await
             .with_context(|| format!("Failed to resolve domain {}", domain))?;
@@ -245,7 +252,7 @@ impl ZhtpDaemonService {
             .ok_or_else(|| anyhow!("Resolve response missing manifest CID for {}", domain))?;
 
         let manifest = self
-            .fetch_manifest(backend, domain, manifest_cid)
+            .fetch_manifest(backend, domain, manifest_cid, client_ip.clone())
             .await
             .with_context(|| format!("Failed to fetch manifest {} for {}", manifest_cid, domain))?;
 
@@ -260,7 +267,7 @@ impl ZhtpDaemonService {
             })?;
 
         let blob = self
-            .fetch_blob(backend, domain, &selected_file.cid)
+            .fetch_blob(backend, domain, &selected_file.cid, client_ip)
             .await
             .with_context(|| {
                 format!(
@@ -285,6 +292,7 @@ impl ZhtpDaemonService {
         backend: &crate::backend_pool::BackendEntry,
         domain: &str,
         cid: &str,
+        client_ip: Option<String>,
     ) -> Result<Web4Manifest> {
         let request = json_post_request(
             "/api/v1/web4/content/manifest",
@@ -292,7 +300,7 @@ impl ZhtpDaemonService {
             Some(domain),
             self.identity.id.clone(),
         )?;
-        let request = self.attach_forwarded_context(request).await?;
+        let request = self.attach_forwarded_context(request, client_ip).await?;
         let response = backend.client.read().await.request(request).await?;
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -309,6 +317,7 @@ impl ZhtpDaemonService {
         backend: &crate::backend_pool::BackendEntry,
         domain: &str,
         cid: &str,
+        client_ip: Option<String>,
     ) -> Result<Vec<u8>> {
         let request = json_post_request(
             "/api/v1/web4/content/blob",
@@ -316,7 +325,7 @@ impl ZhtpDaemonService {
             Some(domain),
             self.identity.id.clone(),
         )?;
-        let request = self.attach_forwarded_context(request).await?;
+        let request = self.attach_forwarded_context(request, client_ip).await?;
         let response = backend.client.read().await.request(request).await?;
         if !response.status.is_success() {
             return Err(anyhow!(
@@ -328,12 +337,12 @@ impl ZhtpDaemonService {
         Ok(response.body)
     }
 
-    async fn attach_forwarded_context(&self, request: ZhtpRequest) -> Result<ZhtpRequest> {
+    async fn attach_forwarded_context(&self, request: ZhtpRequest, client_ip: Option<String>) -> Result<ZhtpRequest> {
         let ttl_ms = self.config.effective_gateway_config().request_timeout_ms;
         let ctx = ForwardedClientContext::new(
             self.identity.did.clone(),
             None, // original_client_id not available at service layer yet
-            None, // source_ip not available at service layer yet
+            client_ip,
             ttl_ms,
         );
         let signature = sign_context(&self.identity, &ctx)?;

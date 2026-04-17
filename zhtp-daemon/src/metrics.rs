@@ -57,7 +57,7 @@ impl GatewayMetrics {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize)]
 pub struct MetricsSnapshot {
     pub requests_total: u64,
     pub requests_success: u64,
