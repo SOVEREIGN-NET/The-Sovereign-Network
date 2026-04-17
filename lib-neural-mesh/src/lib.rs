@@ -44,6 +44,7 @@ pub mod anomaly;
 pub mod inference;
 pub mod error;
 pub mod ml; // ML implementations
+pub mod content; // Content analysis and compression feedback
 
 // Re-export all public types
 pub use router::{RlRouter, NetworkState, RoutingAction};
@@ -52,6 +53,7 @@ pub use prefetch::{PredictivePrefetcher, AccessPattern, PredictionResult};
 pub use anomaly::{AnomalySentry, NodeMetrics, AnomalyReport, AnomalySeverity, ThreatType};
 pub use inference::InferenceEngine;
 pub use error::{NeuralMeshError, Result};
+pub use content::{ContentType, ContentProfile, CompressionFeedback};
 
 /// Neural mesh protocol version
 pub const PROTOCOL_VERSION: u32 = 1;

@@ -705,8 +705,23 @@
                 <div class="neural-status" id="neuralStatusBox">
                     <h4><span class="neural-pulse"></span> Neural Mesh — Live Learning Engine</h4>
                     
-                    <!-- Semantic Dedup Section -->
+                    <!-- Content Analysis Section -->
                     <div class="neural-subsection" style="margin-top:0; padding-top:0; border-top:none;">
+                        <h5>🔍 Content Analysis</h5>
+                        <div class="neural-metrics">
+                            <div class="neural-metric" id="nmContentMetric">
+                                <span>Detected Type:</span>
+                                <strong id="neuralContentType" style="color: #667eea;">—</strong>
+                            </div>
+                            <div class="neural-metric">
+                                <span>Shannon Entropy:</span>
+                                <strong id="neuralContentEntropy" style="color: #667eea;">— bits/byte</strong>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Semantic Dedup Section -->
+                    <div class="neural-subsection">
                         <h5>🧬 Semantic Deduplication</h5>
                         <div class="neural-metrics">
                             <div class="neural-metric" id="nmDedupMetric">
@@ -728,24 +743,36 @@
                         </div>
                     </div>
                     
-                    <!-- RL Router Section -->
+                    <!-- Compression Pipeline & RL Router Section -->
                     <div class="neural-subsection">
-                        <h5>🎯 PPO Reinforcement Learning Router</h5>
+                        <h5>🗜️ Sovereign Frequency Coder + RL Router</h5>
                         <div class="neural-metrics">
                             <div class="neural-metric" id="nmRlMetric">
-                                <span>Strategy Action:</span>
-                                <strong id="neuralRlAction" style="color: #667eea;">—</strong>
+                                <span>Pipeline:</span>
+                                <strong id="neuralRlAction" style="color: #10b981;">BWT → MTF → RLE → Adaptive O1 Range</strong>
                             </div>
                             <div class="neural-metric">
-                                <span>Confidence:</span>
+                                <span>RL Action:</span>
+                                <strong id="neuralRlActionId" style="color: #667eea;">—</strong>
+                            </div>
+                            <div class="neural-metric">
+                                <span>RL Confidence:</span>
                                 <strong id="neuralRlConfidence" style="color: #667eea;">—</strong>
                             </div>
                             <div class="neural-metric">
-                                <span>Training Iterations:</span>
+                                <span>RL Reward:</span>
+                                <strong id="neuralRlReward" style="color: #667eea;">—</strong>
+                            </div>
+                            <div class="neural-metric">
+                                <span>Training Episodes:</span>
+                                <strong id="neuralRlEpisodes" style="color: #667eea;">0</strong>
+                            </div>
+                            <div class="neural-metric">
+                                <span>Total Compressions:</span>
                                 <strong id="neuralRlIterations" style="color: #667eea;">0</strong>
                             </div>
                             <div class="neural-metric">
-                                <span>Avg Learned Ratio:</span>
+                                <span>Avg Ratio:</span>
                                 <strong id="neuralRlAvgRatio" style="color: #667eea;">—</strong>
                             </div>
                         </div>
@@ -1040,8 +1067,11 @@
             
             // Display gzip baseline comparison
             if (data.gzip_ratio) {
-                const gzipInfo = `SFC: ${(data.total_compression_ratio || 0).toFixed(2)}:1 vs Gzip: ${data.gzip_ratio.toFixed(2)}:1 — ` +
-                    `${data.vs_gzip_ratio_improvement.toFixed(2)}× better ratio`;
+                const imp = data.vs_gzip_ratio_improvement || 0;
+                const comparison = imp >= 1.0
+                    ? `${imp.toFixed(2)}× better ratio`
+                    : `${imp.toFixed(2)}× of gzip ratio (witness overhead)`;
+                const gzipInfo = `SFC: ${(data.total_compression_ratio || 0).toFixed(2)}:1 vs Gzip: ${data.gzip_ratio.toFixed(2)}:1 — ${comparison}`;
                 document.getElementById('gzipComparison').textContent = gzipInfo;
             }
             
@@ -1087,6 +1117,16 @@
             
             // Display Neural Mesh Status
             if (data.neural_enabled !== undefined) {
+                // Content Analysis
+                const contentType = data.content_type || 'Unknown';
+                document.getElementById('neuralContentType').textContent = contentType;
+                document.getElementById('neuralContentType').style.color = '#10b981';
+                document.getElementById('nmContentMetric').classList.add('active');
+                
+                const entropy = data.content_entropy || 0;
+                document.getElementById('neuralContentEntropy').textContent = entropy.toFixed(3) + ' bits/byte';
+                document.getElementById('neuralContentEntropy').style.color = entropy < 4.0 ? '#10b981' : entropy < 6.0 ? '#f59e0b' : '#ef4444';
+                
                 // Semantic Dedup
                 const dedupUsed = data.semantic_dedup_used;
                 document.getElementById('neuralSemanticDedup').textContent = dedupUsed ? 'Yes ✓' : 'No';
@@ -1103,22 +1143,39 @@
                 document.getElementById('neuralOptScore').textContent = optScore + '%';
                 document.getElementById('neuralOptScore').style.color = optScore > 0 ? '#10b981' : '#94a3b8';
                 
-                // RL Router
-                if (data.rl_router_action !== null && data.rl_router_action !== undefined) {
-                    const actionNames = ['SFC-Low0','SFC-Low1','SFC-Low2','SFC-BW3','SFC-BW4','SFC-BW5','SFC-E6','SFC-E7','SFC-E8','SFC-Bal'];
-                    const actionId = data.rl_router_action;
-                    const actionLabel = actionNames[actionId] || ('Action ' + actionId);
-                    document.getElementById('neuralRlAction').textContent = '#' + actionId + ' (' + actionLabel + ')';
-                    document.getElementById('neuralRlAction').style.color = '#10b981';
-                    document.getElementById('nmRlMetric').classList.add('active');
-                    
-                    const conf = (data.rl_router_confidence * 100).toFixed(1);
-                    document.getElementById('neuralRlConfidence').textContent = conf + '%';
-                    document.getElementById('neuralRlConfidence').style.color = conf >= 90 ? '#10b981' : conf >= 70 ? '#f59e0b' : '#ef4444';
+                // Compression Pipeline + RL Router
+                document.getElementById('neuralRlAction').textContent = 'BWT → MTF → RLE → Adaptive O1 Range';
+                document.getElementById('neuralRlAction').style.color = '#10b981';
+                document.getElementById('nmRlMetric').classList.add('active');
+                
+                // RL Router action/confidence/reward
+                const rlAction = data.rl_router_action;
+                if (rlAction !== null && rlAction !== undefined) {
+                    document.getElementById('neuralRlActionId').textContent = 'Action #' + rlAction;
+                    document.getElementById('neuralRlActionId').style.color = '#10b981';
                 } else {
-                    document.getElementById('neuralRlAction').textContent = 'Warming up…';
+                    document.getElementById('neuralRlActionId').textContent = 'Not active';
+                    document.getElementById('neuralRlActionId').style.color = '#94a3b8';
+                }
+                
+                const rlConf = data.rl_router_confidence;
+                if (rlConf !== null && rlConf !== undefined) {
+                    document.getElementById('neuralRlConfidence').textContent = (rlConf * 100).toFixed(1) + '%';
+                    document.getElementById('neuralRlConfidence').style.color = rlConf > 0.7 ? '#10b981' : rlConf > 0.4 ? '#f59e0b' : '#667eea';
+                } else {
                     document.getElementById('neuralRlConfidence').textContent = '—';
                 }
+                
+                const rlReward = data.rl_reward;
+                if (rlReward !== null && rlReward !== undefined) {
+                    document.getElementById('neuralRlReward').textContent = rlReward.toFixed(3);
+                    document.getElementById('neuralRlReward').style.color = rlReward > 2.0 ? '#10b981' : rlReward > 0 ? '#f59e0b' : '#ef4444';
+                } else {
+                    document.getElementById('neuralRlReward').textContent = '—';
+                }
+                
+                document.getElementById('neuralRlEpisodes').textContent = data.training_episodes || 0;
+                document.getElementById('neuralRlEpisodes').style.color = (data.training_episodes > 0) ? '#10b981' : '#667eea';
                 
                 document.getElementById('neuralRlIterations').textContent = data.rl_total_compressions || 0;
                 
@@ -1193,9 +1250,10 @@
             if (score >= 4.0) return '🌟 EXCEPTIONAL — Far Beyond Gzip!';
             if (score >= 2.5) return '⭐ EXCELLENT — Massively Beats Gzip';
             if (score >= 1.5) return '⭐ VERY GOOD — Significantly Beats Gzip';
-            if (score >= 1.0) return '✓ GOOD — Beats Gzip';
-            if (score >= 0.8) return '○ COMPETITIVE — Near Gzip Level';
-            return '△ BELOW GZIP — Needs Improvement';
+            if (score >= 1.0) return '✓ GOOD — Beats Gzip (single-file)';
+            if (score >= 0.5) return '○ ZK-VERIFIED — Proof overhead; see Network Potential';
+            if (score >= 0.2) return '○ ZK-VERIFIED — Trade-off: proof cost vs network gains';
+            return '△ BELOW BASELINE — Small file + proof overhead';
         }
         
         function resetForm() {

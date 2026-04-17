@@ -55,6 +55,17 @@ codegen-units = 1
 opt-level = 0
 debug = true
 
+# Optimize the hot compression path even in dev builds.
+# BWT sort + range coder are 10-30× faster at opt-level 3.
+[profile.dev.package.lib-compression]
+opt-level = 3
+
+[profile.dev.package.lib-proofs]
+opt-level = 3
+
+[profile.dev.package.lib-neural-mesh]
+opt-level = 2
+
 [profile.rpi]
 # Raspberry Pi optimized: lower memory usage during compilation
 inherits = "release"

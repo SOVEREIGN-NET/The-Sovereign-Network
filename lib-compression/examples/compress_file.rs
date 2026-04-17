@@ -23,7 +23,7 @@ async fn main() -> anyhow::Result<()> {
     println!("   ✓ Created {} shards\n", shards.len());
     
     // Step 2: Generate ZK-Witness
-    println!("2️⃣  Generating ZK-Witness with Plonky2 proof...");
+    println!("2️⃣  Generating ZK-Witness with Bulletproofs proof...");
     let metadata = lib_compression::witness::FileMetadata {
         name: test_file.to_string(),
         size: test_data.len() as u64,
@@ -39,14 +39,16 @@ async fn main() -> anyhow::Result<()> {
     
     let witness = ZkWitness::generate(&shards, metadata)?;
     println!("   ✓ Witness generated");
-    println!("   ✓ Plonky2 zkSNARK proof verified\n");
+    println!("   ✓ Bulletproofs compression proof generated\n");
     
     // Step 3: Show witness details
     println!("3️⃣  Witness details:");
     println!("   ✓ Root hash: {}...", &witness.root_hash.iter().take(8).map(|b| format!("{:02x}", b)).collect::<String>());
     println!("   ✓ Merkle root: {}...", &witness.merkle_root.iter().take(8).map(|b| format!("{:02x}", b)).collect::<String>());
     if let Some(proof) = &witness.zk_proof {
-        println!("   ✓ zkSNARK proof: {} bytes (circuit: {})", proof.proof.len(), proof.proof_system);
+        println!("   ✓ Size range proof: {} bytes (Bulletproofs/Ristretto255)", proof.size_proof_bytes.len());
+        println!("   ✓ Count range proof: {} bytes (Bulletproofs/Ristretto255)", proof.count_proof_bytes.len());
+        println!("   ✓ Proof system: {}", proof.proof_system);
     }
     
     // Step 4: Verify witness

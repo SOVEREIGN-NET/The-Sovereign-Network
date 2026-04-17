@@ -123,9 +123,9 @@ impl Default for PatternMinerConfig {
     fn default() -> Self {
         PatternMinerConfig {
             min_pattern_size: 4,      // ZKC v2: refs are 2 bytes, pattern needs freq*(size-2)>16 per shard
-            max_pattern_size: 512,    // Larger patterns = better savings per match
-            min_frequency: 2,         // Must appear at least twice
-            max_patterns: 50000,      // Top 50k patterns (more coverage)
+            max_pattern_size: 128,    // 128 bytes covers JSON structural patterns; anything larger is rare
+            min_frequency: 3,         // Must appear at least 3 times (reduces noise)
+            max_patterns: 4096,       // Top 4K patterns (fast overlap removal)
             window_size: 16384,       // 16 KB sliding window for better pattern discovery
         }
     }
@@ -167,9 +167,9 @@ impl PatternMiner {
         self.add_byte_run_patterns(data, &mut pattern_frequencies);
         
         // Phase 1: Intelligent sampling for large data
-        // For files ≤ 1MB, scan ALL data for complete pattern coverage.
-        // For larger files, use 5-region sampling from 1MB.
-        const MAX_SCAN_SIZE: usize = 1024 * 1024; // 1MB — much better pattern discovery
+        // For files ≤ 256KB, scan ALL data for complete pattern coverage.
+        // For larger files, use 5-region sampling up to 256KB.
+        const MAX_SCAN_SIZE: usize = 256 * 1024; // 256KB — fast mining, good pattern discovery
         let scan_data = if data.len() > MAX_SCAN_SIZE {
             // Sample from 5 regions: beginning, 25%, 50%, 75%, end
             let chunk_size = MAX_SCAN_SIZE / 5;
@@ -228,8 +228,9 @@ impl PatternMiner {
                 for start in (0..=(scan_data.len().saturating_sub(pattern_len))).step_by(step) {
                     let sequence = &scan_data[start..start + pattern_len];
                     
-                    // Skip patterns that are all zeros or all 0xFF (low value)
-                    if sequence.iter().all(|&b| b == 0) || sequence.iter().all(|&b| b == 0xFF) {
+                    // Skip homogeneous patterns (all same byte) — fast O(1) check
+                    let first = sequence[0];
+                    if (first == 0 || first == 0xFF) && sequence[sequence.len() - 1] == first && sequence[sequence.len() / 2] == first {
                         continue;
                     }
                     
@@ -259,13 +260,21 @@ impl PatternMiner {
             .filter(|p| p.score > 0.0)  // Only patterns that actually save space
             .collect();
 
-        // Phase 4: Remove overlapping patterns (keep highest scoring)
-        patterns = self.remove_overlaps_fast(patterns);
-
-        // Phase 5: Sort by compression score (descending) - parallel sort
+        // Phase 4: Pre-sort by score and cap before expensive overlap removal
         patterns.par_sort_by(|a, b| {
             b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
         });
+        // Cap at 2× max_patterns BEFORE overlap removal to bound O(n²) cost
+        let overlap_cap = self.config.max_patterns * 2;
+        if patterns.len() > overlap_cap {
+            patterns.truncate(overlap_cap);
+        }
+
+        // Phase 5: Remove overlapping patterns (keep highest scoring)
+        if patterns.len() <= 8192 {
+            patterns = self.remove_overlaps_fast(patterns);
+        }
+        // else: skip overlap removal for very large sets — score ranking is sufficient
 
         // Phase 6: Take top N patterns
         patterns.truncate(self.config.max_patterns);

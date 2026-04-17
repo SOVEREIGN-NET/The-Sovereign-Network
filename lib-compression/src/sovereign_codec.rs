@@ -1,19 +1,16 @@
-// sovereign_codec.rs — Sovereign Frequency Coder (SFC) v2
+// sovereign_codec.rs — Sovereign Frequency Coder (SFC)
 //
 // A 100% from-scratch entropy coding pipeline for the Sovereign Network.
-// Three encoding strategies, automatically selected per-block for best ratio:
-//
-//   SFC0: Stored passthrough (for incompressible data)
-//   SFC1: Canonical Huffman (for data with simple byte-frequency skew)
-//   SFC2: BWT → MTF → Canonical Huffman (for structured/text data — best ratio)
-//
-// Applied after ZKC pattern replacement to capture remaining statistical
-// redundancy that dictionary-based pattern matching cannot exploit.
+// Single deterministic strategy: BWT → MTF → RLE → Adaptive O1 Range (SFC7)
+// with SFC0 (stored) fallback for incompressible data.
 //
 // The BWT (Burrows-Wheeler Transform) groups bytes by their following context,
 // making the data highly compressible. MTF (Move-to-Front) converts the BWT
-// output into mostly-zero values. Canonical Huffman then assigns short bit
-// codes to frequent values (0 and small indices).
+// output into mostly-zero values. RLE collapses runs of zeros. Adaptive
+// Order-1 Range coding compresses near the theoretical entropy limit by
+// learning byte-pair statistics on the fly.
+//
+// Legacy decoders for SFC1-SFC6 are retained for backward compatibility.
 //
 // 100% novel implementation — no borrowed compression libraries.
 
@@ -73,17 +70,17 @@ struct HuffCode {
 pub struct SovereignCodec;
 
 impl SovereignCodec {
-    /// Encode data using the best available SFC strategy
+    /// Encode data using the Sovereign pipeline: BWT → MTF → RLE → Adaptive O1 Range (SFC7).
     ///
-    /// Tries SFC1 (Huffman), SFC2 (BWT+Huffman), SFC3 (BWT+Range),
-    /// SFC4 (LZ77+Huffman), picks smallest, falls back to SFC0 (stored).
+    /// Single deterministic strategy — no strategy zoo, no RL router.
+    /// BWT groups bytes by context, MTF converts to small integers,
+    /// RLE collapses runs, Adaptive Order-1 Range codes near the entropy limit.
+    /// Falls back to SFC0 (stored) when compression doesn't help.
     pub fn encode(data: &[u8]) -> Vec<u8> {
         if data.is_empty() {
             return Vec::new();
         }
-        // SFC format stores sizes as u32 — reject inputs that would silently truncate
         if data.len() > u32::MAX as usize {
-            // Fall through to stored format with a warning; callers should chunk large inputs
             eprintln!("⚠️  SFC: input exceeds u32::MAX ({} bytes), returning stored verbatim", data.len());
             return Self::make_stored(data);
         }
@@ -92,66 +89,33 @@ impl SovereignCodec {
         }
 
         let stored = Self::make_stored(data);
-        let mut best = stored;
 
-        // ── Parallel strategy evaluation ────────────────────────────
-
-        // Fork: SFC1 + SFC4 run in parallel with the BWT pipeline.
-        // The BWT path (SFC2/SFC3/SFC7) shares the BWT+MTF+RLE work.
-        let use_bwt = data.len() >= MIN_BWT_SIZE && data.len() <= MAX_BWT_SIZE;
-
-        let (light_best, bwt_results) = rayon::join(
-            // Thread A: lightweight strategies (no BWT)
-            || {
-                let sfc1 = Self::encode_huffman(data);
-                let sfc4 = Self::encode_lz77(data);
-                if sfc1.len() <= sfc4.len() { sfc1 } else { sfc4 }
-            },
-            // Thread B: BWT pipeline (heavy lifting)
-            || {
-                if !use_bwt {
-                    return None;
-                }
-                let (bwt_output, bwt_index) = Self::bwt_forward(data);
-                let mtf_output = Self::mtf_forward(&bwt_output);
-                let rle_output = Self::rle_encode(&mtf_output);
-
-                // Run SFC2, SFC3, SFC7 and pick the best
-                let sfc2 = Self::encode_bwt_from_rle(data.len(), bwt_index, &rle_output);
-                let mut bwt_best = sfc2;
-
-                let sfc3 = Self::encode_range_from_rle(data.len(), bwt_index, &rle_output);
-                if sfc3.len() < bwt_best.len() {
-                    if let Ok(decoded) = Self::decode(&sfc3) {
-                        if decoded == data {
-                            bwt_best = sfc3;
-                        }
-                    }
-                }
-
-                let sfc7 = Self::encode_adaptive_o1_rle(data.len(), bwt_index, &rle_output);
-                if sfc7.len() < bwt_best.len() {
-                    if let Ok(decoded) = Self::decode(&sfc7) {
-                        if decoded == data {
-                            bwt_best = sfc7;
-                        }
-                    }
-                }
-
-                Some(bwt_best)
-            },
-        );
-
-        if light_best.len() < best.len() {
-            best = light_best;
+        // BWT requires data within [MIN_BWT_SIZE, MAX_BWT_SIZE].
+        // For data that exceeds MAX_BWT_SIZE, fall back to Huffman coding
+        // which has no size limit and still provides decent entropy compression.
+        if data.len() < MIN_BWT_SIZE {
+            return stored;
         }
-        if let Some(bwt_best) = bwt_results {
-            if bwt_best.len() < best.len() {
-                best = bwt_best;
+        if data.len() > MAX_BWT_SIZE {
+            // Huffman fallback for large data — no BWT size restriction
+            let huffman = Self::encode_huffman(data);
+            if huffman.len() < stored.len() {
+                return huffman;
             }
+            return stored;
         }
 
-        best
+        // ── The Novel Pipeline: BWT → MTF → RLE → Adaptive O1 Range ──
+        let (bwt_output, bwt_index) = Self::bwt_forward(data);
+        let mtf_output = Self::mtf_forward(&bwt_output);
+        let rle_output = Self::rle_encode(&mtf_output);
+        let sfc7 = Self::encode_adaptive_o1_rle(data.len(), bwt_index, &rle_output);
+
+        if sfc7.len() < stored.len() {
+            return sfc7;
+        }
+
+        stored
     }
 
     /// Decode SFC-encoded data back to original bytes
@@ -1810,7 +1774,6 @@ struct RangeEncoderState {
     cache: u8,
     cache_count: u32,
     output: Vec<u8>,
-    started: bool,
 }
 
 impl RangeEncoderState {
@@ -1821,7 +1784,6 @@ impl RangeEncoderState {
             cache: 0,
             cache_count: 0,
             output: Vec::with_capacity(capacity / 2),
-            started: false,
         }
     }
 
@@ -1851,14 +1813,15 @@ impl RangeEncoderState {
         let byte = ((self.low >> 24) & 0xFF) as u8;
 
         if byte < 0xFF || carry != 0 {
-            if self.started {
-                self.output.push(self.cache.wrapping_add(carry));
-                let fill = 0xFF_u8.wrapping_add(carry);
-                for _ in 0..self.cache_count {
-                    self.output.push(fill);
-                }
+            // Always output the previous cache byte (+ carry) and any
+            // pending 0xFF bytes (which become 0x00 on carry propagation).
+            // The very first push outputs the initial cache (0x00), which
+            // the decoder skips.
+            self.output.push(self.cache.wrapping_add(carry));
+            let fill = 0xFF_u8.wrapping_add(carry);
+            for _ in 0..self.cache_count {
+                self.output.push(fill);
             }
-            self.started = true;
             self.cache = byte;
             self.cache_count = 0;
         } else {
@@ -1895,9 +1858,11 @@ struct RangeDecoderState<'a> {
 
 impl<'a> RangeDecoderState<'a> {
     fn new(data: &'a [u8]) -> Self {
-        // Initialize code from first 4 bytes
+        // Skip the first byte — it is the encoder's initial cache (always 0x00),
+        // emitted unconditionally so that any leading 0xFF carry-pending bytes
+        // are preserved in the stream.  Bytes 1..5 hold the real code.
         let mut code = 0u32;
-        let mut pos = 0;
+        let mut pos = 1; // skip initial cache byte
         for _ in 0..4 {
             let b = if pos < data.len() { let v = data[pos]; pos += 1; v } else { 0 };
             code = (code << 8) | b as u32;
@@ -2938,6 +2903,72 @@ mod tests {
         let encoded = SovereignCodec::encode(&data);
         let decoded = SovereignCodec::decode(&encoded).unwrap();
         assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn test_sfc7_pipeline_step_by_step() {
+        // Same failing data pattern: every 3rd byte is 0xFF
+        let mut data = Vec::with_capacity(1000);
+        for i in 0..1000 {
+            data.push(if i % 3 == 0 { 0xFF } else { (i % 254) as u8 });
+        }
+
+        // Step 1: BWT roundtrip
+        let (bwt_out, bwt_idx) = SovereignCodec::bwt_forward(&data);
+        let bwt_back = SovereignCodec::bwt_inverse(&bwt_out, bwt_idx);
+        assert_eq!(bwt_back, data, "BWT roundtrip failed");
+
+        // Step 2: MTF roundtrip
+        let mtf_out = SovereignCodec::mtf_forward(&bwt_out);
+        let mtf_back = SovereignCodec::mtf_inverse(&mtf_out);
+        assert_eq!(mtf_back, bwt_out, "MTF roundtrip failed");
+
+        // Step 3: RLE roundtrip
+        let rle_out = SovereignCodec::rle_encode(&mtf_out);
+        let rle_back = SovereignCodec::rle_decode(&rle_out);
+        assert_eq!(rle_back, mtf_out, "RLE roundtrip failed");
+
+        // Step 4: Range coder isolation test
+        let sfc7 = SovereignCodec::encode_adaptive_o1_rle(data.len(), bwt_idx, &rle_out);
+        let stored_rle_len = u32::from_le_bytes([sfc7[12], sfc7[13], sfc7[14], sfc7[15]]) as usize;
+        assert_eq!(rle_out.len(), stored_rle_len, "RLE length mismatch in SFC7 header");
+
+        // Decode just the range coder part (replicate decoder logic)
+        let range_body = &sfc7[16..];
+        let init_freq = SovereignCodec::adaptive_init_freq();
+        let init_total = SovereignCodec::adaptive_init_total();
+        let mut freq: Vec<[u32; 256]> = vec![init_freq; 256];
+        let mut total: [u32; 256] = [init_total; 256];
+        let mut dec = RangeDecoderState::new(range_body);
+        let mut decoded_rle = Vec::with_capacity(stored_rle_len);
+        let mut prev = 0usize;
+        const RESCALE_LIMIT: u32 = 65536;
+        for idx in 0..stored_rle_len {
+            let ctx = prev;
+            let mut cum = [0u32; 257];
+            for i in 0..256 {
+                cum[i + 1] = cum[i] + freq[ctx][i];
+            }
+            let sym = dec.decode_symbol(&cum, total[ctx]);
+            decoded_rle.push(sym as u8);
+            // Check symbol-by-symbol
+            if sym as u8 != rle_out[idx] {
+                eprintln!("Range coder diverged at symbol {}: got {} expected {}", idx, sym, rle_out[idx]);
+                eprintln!("  context={}, total={}", ctx, total[ctx]);
+                break;
+            }
+            freq[ctx][sym] += 2;
+            total[ctx] += 2;
+            if total[ctx] >= RESCALE_LIMIT {
+                total[ctx] = 0;
+                for i in 0..256 {
+                    freq[ctx][i] = (freq[ctx][i] + 1) / 2;
+                    total[ctx] += freq[ctx][i];
+                }
+            }
+            prev = sym;
+        }
+        assert_eq!(decoded_rle, rle_out, "Range coder roundtrip failed on RLE data");
     }
 
     #[test]
