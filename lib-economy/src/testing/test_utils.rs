@@ -4,7 +4,7 @@ use crate::types::*;
 
 /// Create test transaction with specified parameters
 pub fn create_test_transaction(
-    amount: u64,
+    amount: u128,
     transaction_type: TransactionType,
     priority: Priority,
 ) -> crate::transactions::Transaction {
@@ -57,12 +57,12 @@ pub fn current_timestamp() -> u64 {
 }
 
 /// Calculate DAO fee for testing
-pub fn calculate_dao_fee(amount: u64) -> u64 {
-    (amount as f64 * 0.02) as u64 // 2% DAO fee
+pub fn calculate_dao_fee(amount: u128) -> u128 {
+    (amount as f64 * 0.02) as u128 // 2% DAO fee
 }
 
 /// Generate DAO proof for testing
-pub fn generate_dao_proof(amount: u64) -> String {
+pub fn generate_dao_proof(amount: u128) -> String {
     format!("dao_proof_{}", calculate_dao_fee(amount))
 }
 

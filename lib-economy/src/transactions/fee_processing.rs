@@ -8,14 +8,14 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct DaoFeeDistribution {
-    pub ubi: u64,
-    pub sector_daos: u64,
-    pub emergency_reserve: u64,
-    pub dev_grants: u64,
+    pub ubi: u128,
+    pub sector_daos: u128,
+    pub emergency_reserve: u128,
+    pub dev_grants: u128,
 }
 
 impl DaoFeeDistribution {
-    pub fn total(&self) -> u64 {
+    pub fn total(&self) -> u128 {
         self.ubi
             .saturating_add(self.sector_daos)
             .saturating_add(self.emergency_reserve)
@@ -24,7 +24,7 @@ impl DaoFeeDistribution {
 }
 
 /// Process network infrastructure fees
-pub fn process_network_fees(total_fees: u64) -> Result<u64> {
+pub fn process_network_fees(total_fees: u128) -> Result<u128> {
     // Network fees go to infrastructure providers (routing/storage/compute)
     info!(
         "Processed {} SOV tokens in network fees - distributed to infrastructure providers",
@@ -35,7 +35,7 @@ pub fn process_network_fees(total_fees: u64) -> Result<u64> {
 }
 
 /// Process DAO fees for UBI and DAO allocations
-pub fn process_dao_fees(dao_fees: u64) -> Result<u64> {
+pub fn process_dao_fees(dao_fees: u128) -> Result<u128> {
     info!(
         " Processed {} SOV tokens in DAO fees - added to treasury allocations",
         dao_fees
@@ -57,16 +57,14 @@ pub fn process_dao_fees(dao_fees: u64) -> Result<u64> {
 /// # Overflow Safety
 /// Uses u128 intermediates for multiplication to prevent overflow on large fee amounts.
 /// Safe casting back to u64: percentages are at most 100, so final result is at most 100% of input.
-pub fn calculate_dao_fee_distribution(dao_fees: u64) -> DaoFeeDistribution {
-    // CRITICAL: Use u128 for intermediate calculations to prevent overflow
-    let dao_fees_u128 = dao_fees as u128;
-    let ubi_allocation = ((dao_fees_u128 * crate::UBI_ALLOCATION_PERCENTAGE as u128) / 100) as u64;
+pub fn calculate_dao_fee_distribution(dao_fees: u128) -> DaoFeeDistribution {
+    let ubi_allocation = (dao_fees * crate::UBI_ALLOCATION_PERCENTAGE as u128) / 100;
     let dao_allocation =
-        ((dao_fees_u128 * crate::SECTOR_DAO_ALLOCATION_PERCENTAGE as u128) / 100) as u64;
+        (dao_fees * crate::SECTOR_DAO_ALLOCATION_PERCENTAGE as u128) / 100;
     let emergency_allocation =
-        ((dao_fees_u128 * crate::EMERGENCY_ALLOCATION_PERCENTAGE as u128) / 100) as u64;
+        (dao_fees * crate::EMERGENCY_ALLOCATION_PERCENTAGE as u128) / 100;
     let dev_grant_allocation =
-        ((dao_fees_u128 * crate::DEV_GRANT_ALLOCATION_PERCENTAGE as u128) / 100) as u64;
+        (dao_fees * crate::DEV_GRANT_ALLOCATION_PERCENTAGE as u128) / 100;
 
     // Calculate sum of all allocations (including dev grants)
     let allocated = ubi_allocation
@@ -87,9 +85,9 @@ pub fn calculate_dao_fee_distribution(dao_fees: u64) -> DaoFeeDistribution {
 }
 
 /// Separate network and DAO fees from a batch of transactions
-pub fn separate_fees(transactions: &[crate::transactions::Transaction]) -> (u64, u64) {
-    let mut total_network_fees = 0;
-    let mut total_dao_fees = 0;
+pub fn separate_fees(transactions: &[crate::transactions::Transaction]) -> (u128, u128) {
+    let mut total_network_fees: u128 = 0;
+    let mut total_dao_fees: u128 = 0;
 
     for tx in transactions {
         total_network_fees += tx.base_fee;
@@ -100,7 +98,7 @@ pub fn separate_fees(transactions: &[crate::transactions::Transaction]) -> (u64,
 }
 
 /// Calculate fee distribution breakdown
-pub fn calculate_fee_distribution(network_fees: u64, dao_fees: u64) -> serde_json::Value {
+pub fn calculate_fee_distribution(network_fees: u128, dao_fees: u128) -> serde_json::Value {
     let total_fees = network_fees + dao_fees;
     let network_percentage = if total_fees > 0 {
         (network_fees as f64 / total_fees as f64) * 100.0

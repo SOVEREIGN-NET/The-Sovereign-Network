@@ -2369,6 +2369,31 @@ impl<'a> StatefulTransactionValidator<'a> {
             return Err(ValidationError::InvalidTransaction);
         }
 
+        // ── Governance guard: signer must be a Bootstrap Council member ──────
+        // The transaction signature already proves the signer holds the private key.
+        // We only need to verify that key belongs to a council member identity.
+        // With threshold=1 and a single council member, the tx signature suffices.
+        let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
+        // Derive the signer's DID directly from the transaction's dilithium public key.
+        // DID = "did:zhtp:" + hex(blake3(dilithium_pk))
+        // Identity IDs are derived from dilithium_pk only (not dilithium+kyber which
+        // produces key_id). This avoids requiring the identity to be registered
+        // on-chain — the council membership is authoritative (set at genesis).
+        let signer_did = {
+            let hash = lib_crypto::hashing::hash_blake3(
+                &transaction.signature.public_key.dilithium_pk,
+            );
+            format!("did:zhtp:{}", hex::encode(hash))
+        };
+        if !blockchain.is_council_member(&signer_did) {
+            tracing::warn!(
+                "[PAYROLL] signer {} is not a council member (key_id={})",
+                &signer_did[..50.min(signer_did.len())],
+                hex::encode(&transaction.signature.public_key.key_id[..8])
+            );
+            return Err(ValidationError::Unauthorized);
+        }
+
         Ok(())
     }
 
@@ -3218,6 +3243,7 @@ mod tests {
                 commitment: Hash::from([7u8; 32]),
                 note: Hash::from([8u8; 32]),
                 recipient: sender_key.clone(),
+            merkle_leaf: Hash::default(),
             }],
             fee: 0,
             signature: test_signature(sender_key),
@@ -4263,6 +4289,7 @@ mod tests {
             commitment: Hash::from([1u8; 32]),
             note: Hash::from([2u8; 32]),
             recipient: key,
+            merkle_leaf: Hash::default(),
         }];
 
         let result = validator.validate_record_on_ramp_trade(&tx);

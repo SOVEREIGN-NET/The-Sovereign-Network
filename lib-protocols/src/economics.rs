@@ -215,7 +215,7 @@ impl ZhtpEconomics {
         // In a implementation, this would query the economic state
         // For now, we'll use the economic model to provide estimates
         let base_fee = self.model.calculate_fee(1000, 1000, Priority::Normal).1; // Get network fee
-        let dao_fee = (base_fee as f64 * self.config.dao_fee_percentage / 100.0) as u64;
+        let dao_fee = (base_fee as f64 * self.config.dao_fee_percentage / 100.0) as u128;
 
         EconomicStats {
             total_fees_collected: base_fee * 100, // Estimate based on activity
@@ -243,15 +243,15 @@ pub struct UBIPayment {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EconomicStats {
     /// Total fees collected across all operations
-    pub total_fees_collected: u64,
+    pub total_fees_collected: u128,
     /// Total DAO fees collected for UBI
-    pub dao_fees_collected: u64,
+    pub dao_fees_collected: u128,
     /// Total UBI distributed to participants
-    pub ubi_distributed: u64,
-    /// Number of active participants
+    pub ubi_distributed: u128,
+    /// Number of active participants (count, not amount)
     pub active_participants: u64,
     /// Average fee per operation
-    pub average_fee_per_operation: u64,
+    pub average_fee_per_operation: u128,
     /// Current DAO fee percentage
     pub dao_fee_percentage: f64,
 }
@@ -265,29 +265,29 @@ pub mod utils {
         method: &crate::types::ZhtpMethod,
         body: &[u8],
         uri: &str,
-    ) -> u64 {
+    ) -> u128 {
         match method {
             crate::types::ZhtpMethod::Post
             | crate::types::ZhtpMethod::Put
             | crate::types::ZhtpMethod::Patch => {
                 // For content creation/modification, use content size as value
-                body.len() as u64 * 10 // 10 tokens per byte for content operations
+                body.len() as u128 * 10 // 10 tokens per byte for content operations
             }
             crate::types::ZhtpMethod::Get | crate::types::ZhtpMethod::Head => {
                 // For content retrieval, use base value plus URI complexity
-                100 + (uri.len() as u64 / 10) // Base 100 tokens + URI complexity
+                100 + (uri.len() as u128 / 10) // Base 100 tokens + URI complexity
             }
             crate::types::ZhtpMethod::Delete => {
                 // Deletion operations have medium cost
-                200 + (uri.len() as u64 / 5) // Base 200 tokens + URI complexity
+                200 + (uri.len() as u128 / 5) // Base 200 tokens + URI complexity
             }
             crate::types::ZhtpMethod::Verify => {
                 // Verification operations have lower cost
-                50 + (uri.len() as u64 / 20) // Base 50 tokens + URI complexity
+                50 + (uri.len() as u128 / 20) // Base 50 tokens + URI complexity
             }
             _ => {
                 // Other operations use header value or default
-                50 + (uri.len() as u64 / 10) // Minimum 50 tokens + URI complexity
+                50 + (uri.len() as u128 / 10) // Minimum 50 tokens + URI complexity
             }
         }
     }

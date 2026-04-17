@@ -544,7 +544,7 @@ async fn handle_dao_command_impl(
                 1,
                 source,
                 dest,
-                amount,
+                amount as u128,
                 spending_category,
                 proposal,
                 parsed_approvals,

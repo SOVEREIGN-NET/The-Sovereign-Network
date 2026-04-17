@@ -86,7 +86,7 @@ pub struct EmploymentContract {
     pub status: EmploymentStatus,
 
     // Compensation
-    pub compensation_amount: u64, // In DAO tokens per period
+    pub compensation_amount: u128, // In DAO tokens per period (18-decimal atoms)
     pub payment_period: EconomicPeriod,
 
     // Tax and compliance
@@ -97,7 +97,7 @@ pub struct EmploymentContract {
     pub profit_share_percentage: u16, // Basis points, e.g., 500 = 5%
 
     // Governance
-    pub voting_power: u64, // Based on CBE holdings + tenure
+    pub voting_power: u128, // Based on CBE holdings + tenure
 
     // Lifecycle
     pub start_height: u64,
@@ -108,9 +108,9 @@ pub struct EmploymentContract {
 /// Payment details
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentDetails {
-    pub gross_amount: u64,
-    pub tax_amount: u64,
-    pub net_amount: u64,
+    pub gross_amount: u128,
+    pub tax_amount: u128,
+    pub net_amount: u128,
     pub periods_elapsed: u64,
     pub payment_height: u64,
 }
@@ -118,9 +118,9 @@ pub struct PaymentDetails {
 /// Profit share calculation result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfitShareResult {
-    pub dao_profit: u64,
+    pub dao_profit: u128,
     pub share_percentage: u16,
-    pub share_amount: u64,
+    pub share_amount: u128,
 }
 
 /// Employment Registry main contract
@@ -151,7 +151,7 @@ impl EmploymentRegistry {
         dao_id: [u8; 32],
         employee_sid: PublicKey,
         contract_type: ContractAccessType,
-        compensation_amount: u64,
+        compensation_amount: u128,
         payment_period: EconomicPeriod,
         tax_rate_basis_points: u16,
         tax_jurisdiction: String,
@@ -245,10 +245,10 @@ impl EmploymentRegistry {
         }
 
         // Calculate amounts
-        let gross_amount = contract.compensation_amount.saturating_mul(periods_elapsed);
-        let tax_amount = (gross_amount as u128)
+        let gross_amount = contract.compensation_amount.saturating_mul(periods_elapsed as u128);
+        let tax_amount = gross_amount
             .saturating_mul(contract.tax_rate_basis_points as u128)
-            .saturating_div(10000) as u64;
+            .saturating_div(10000);
         let net_amount = gross_amount.saturating_sub(tax_amount);
 
         // Update contract
@@ -267,7 +267,7 @@ impl EmploymentRegistry {
     pub fn calculate_profit_share(
         &self,
         contract_id: [u8; 32],
-        dao_profit: u64,
+        dao_profit: u128,
     ) -> Result<ProfitShareResult> {
         let contract = self
             .contracts
@@ -275,9 +275,9 @@ impl EmploymentRegistry {
             .find(|c| c.contract_id == contract_id)
             .ok_or_else(|| anyhow!("Employment contract not found"))?;
 
-        let share_amount = (dao_profit as u128)
+        let share_amount = dao_profit
             .saturating_mul(contract.profit_share_percentage as u128)
-            .saturating_div(10000) as u64;
+            .saturating_div(10000);
 
         Ok(ProfitShareResult {
             dao_profit,
@@ -290,9 +290,9 @@ impl EmploymentRegistry {
     pub fn update_voting_power(
         &mut self,
         contract_id: [u8; 32],
-        cbe_balance: u64,
+        cbe_balance: u128,
         current_height: u64,
-    ) -> Result<u64> {
+    ) -> Result<u128> {
         let contract = self
             .contracts
             .iter_mut()
@@ -312,9 +312,9 @@ impl EmploymentRegistry {
         };
 
         // Voting power = cbe_balance * (1 + tenure_bonus / 1000)
-        let voting_power = (cbe_balance as u128)
+        let voting_power = cbe_balance
             .saturating_mul(10000 + tenure_bonus as u128)
-            .saturating_div(10000) as u64;
+            .saturating_div(10000);
 
         contract.voting_power = voting_power;
         Ok(voting_power)

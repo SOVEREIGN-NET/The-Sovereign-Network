@@ -163,6 +163,20 @@ pub struct Utxo {
     pub created_at_height: u64,
     /// Optional lock script or conditions
     pub script: Option<Vec<u8>>,
+    /// Poseidon Merkle leaf commitment (`[u8; 32]`).
+    /// When present, the node tracks this UTXO in the persistent Merkle tree.
+    pub merkle_leaf: Option<[u8; 32]>,
+}
+
+/// Merkle inclusion proof for a UTXO in the persistent Poseidon tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UtxoMerkleProof {
+    /// Leaf index of the UTXO commitment in the tree.
+    pub leaf_index: u64,
+    /// Sibling hashes from leaf to root.
+    pub siblings: Vec<[u8; 32]>,
+    /// Current Merkle root.
+    pub root: [u8; 32],
 }
 
 /// Consensus snapshot for token subsystem state.
@@ -220,6 +234,7 @@ impl Utxo {
             token,
             created_at_height,
             script: None,
+            merkle_leaf: None,
         }
     }
 
@@ -896,6 +911,37 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// - MUST be called within begin_block/commit_block
     /// - Deleting non-existent UTXO is a no-op (idempotent)
     fn delete_utxo(&self, op: &OutPoint) -> StorageResult<()>;
+
+    // =========================================================================
+    // UTXO Merkle Tree (Mutable)
+    // =========================================================================
+    // Persistent Poseidon Merkle tree of unspent outputs. Wallets query this
+    // to obtain inclusion proofs for real ZK transaction proofs.
+    // =========================================================================
+
+    /// Insert a UTXO leaf commitment into the Merkle tree.
+    ///
+    /// Returns the assigned `leaf_index` for the outpoint.
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn put_utxo_merkle_leaf(&self, op: &OutPoint, leaf: [u8; 32]) -> StorageResult<u64>;
+
+    /// Remove a UTXO from the Merkle tree (sets its leaf to the zero hash).
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn delete_utxo_merkle_leaf(&self, op: &OutPoint) -> StorageResult<()>;
+
+    /// Get the current UTXO Merkle root.
+    fn get_utxo_merkle_root(&self) -> StorageResult<Option<[u8; 32]>>;
+
+    /// Get the Merkle inclusion proof for a given outpoint.
+    ///
+    /// Returns `None` if the outpoint is not tracked in the Merkle tree.
+    fn get_utxo_merkle_proof(&self, op: &OutPoint) -> StorageResult<Option<UtxoMerkleProof>>;
+
+    /// Get the leaf index assigned to an outpoint.
+    fn get_utxo_merkle_leaf_index(&self, op: &OutPoint) -> StorageResult<Option<u64>>;
 
     // =========================================================================
     // Token Contracts

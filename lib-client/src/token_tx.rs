@@ -29,7 +29,7 @@ const DEFAULT_WITNESS_CAP: u32 = 500;
 static TX_FEE_BASE_FEE: AtomicU64 = AtomicU64::new(DEFAULT_BASE_FEE);
 static TX_FEE_BYTES_PER_SOV: AtomicU64 = AtomicU64::new(DEFAULT_BYTES_PER_SOV);
 static TX_FEE_WITNESS_CAP: AtomicU32 = AtomicU32::new(DEFAULT_WITNESS_CAP);
-static TX_TOKEN_CREATION_FEE: AtomicU64 = AtomicU64::new(DEFAULT_TOKEN_CREATION_FEE);
+static TX_TOKEN_CREATION_FEE: AtomicU64 = AtomicU64::new(DEFAULT_TOKEN_CREATION_FEE as u64); // safe: 1000 fits u64
 
 // ============================================================================
 // Helper functions
@@ -139,7 +139,7 @@ pub fn set_fee_config_from_json_with_meta(json: &str) -> Result<FeeConfigMeta, S
 pub struct CreateTokenParams {
     pub name: String,
     pub symbol: String,
-    pub initial_supply: u64,
+    pub initial_supply: u128,
     pub decimals: u8,
 }
 
@@ -148,7 +148,7 @@ pub struct CreateTokenParams {
 pub struct MintParams {
     pub token_id: [u8; 32],
     pub to: Vec<u8>, // PublicKey bytes
-    pub amount: u64,
+    pub amount: u128,
 }
 
 /// Parameters for transferring tokens
@@ -156,14 +156,14 @@ pub struct MintParams {
 pub struct TransferParams {
     pub token_id: [u8; 32],
     pub to: Vec<u8>, // PublicKey bytes or key_id (32 bytes)
-    pub amount: u64,
+    pub amount: u128,
 }
 
 /// Parameters for burning tokens
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BurnParams {
     pub token_id: [u8; 32],
-    pub amount: u64,
+    pub amount: u128,
 }
 
 // ============================================================================
@@ -385,7 +385,7 @@ pub fn build_transfer_tx(
     identity: &Identity,
     token_id: &[u8; 32],
     to_pubkey: &[u8],
-    amount: u64,
+    amount: u128,
     chain_id: u8,
     nonce: u64,
 ) -> Result<String, String> {
@@ -461,7 +461,7 @@ pub fn build_sov_wallet_transfer_tx(
     identity: &Identity,
     from_wallet_id: &[u8; 32],
     to_wallet_id: &[u8; 32],
-    amount: u64,
+    amount: u128,
     chain_id: u8,
     nonce: u64,
 ) -> Result<String, String> {
@@ -526,7 +526,7 @@ pub fn build_token_wallet_transfer_tx(
     token_id: &[u8; 32],
     _from_wallet_id: &[u8; 32],
     to_wallet_id: &[u8; 32],
-    amount: u64,
+    amount: u128,
     chain_id: u8,
     nonce: u64,
 ) -> Result<String, String> {
@@ -649,7 +649,7 @@ pub fn build_mint_tx(
     identity: &Identity,
     token_id: &[u8; 32],
     to_pubkey: &[u8],
-    amount: u64,
+    amount: u128,
     chain_id: u8,
 ) -> Result<String, String> {
     let to_key_id = if to_pubkey.len() == 32 {
@@ -709,7 +709,7 @@ pub fn build_create_token_tx(
     identity: &Identity,
     name: &str,
     symbol: &str,
-    initial_supply: u64,
+    initial_supply: u128,
     decimals: u8,
     treasury_recipient: [u8; 32],
     chain_id: u8,
@@ -722,7 +722,7 @@ pub fn build_create_token_tx(
     let payload = TokenCreationPayloadV1 {
         name: name.to_string(),
         symbol: symbol.to_string(),
-        initial_supply,
+        initial_supply: initial_supply as u64, // TODO: widen TokenCreationPayloadV1 to u128
         decimals,
         treasury_allocation_bps: 2_000,
         treasury_recipient,
@@ -820,7 +820,7 @@ mod tests {
 pub fn build_burn_tx(
     _identity: &Identity,
     token_id: &[u8; 32],
-    amount: u64,
+    amount: u128,
     _chain_id: u8,
 ) -> Result<String, String> {
     let _ = (token_id, amount);

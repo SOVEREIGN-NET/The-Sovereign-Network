@@ -11,13 +11,13 @@ use anyhow::Result;
 pub fn calculate_optimal_ubi_per_citizen(
     treasury: &DaoTreasury,
     total_citizens: u64,
-    target_monthly_ubi: u64,
-) -> (u64, bool) {
+    target_monthly_ubi: u128,
+) -> (u128, bool) {
     if total_citizens == 0 {
         return (0, false);
     }
 
-    let required_total = target_monthly_ubi * total_citizens;
+    let required_total = target_monthly_ubi * total_citizens as u128;
     let actual_per_citizen = treasury.calculate_ubi_per_citizen(total_citizens);
     let can_meet_target = treasury.ubi_allocated >= required_total;
 
@@ -35,9 +35,9 @@ pub fn calculate_welfare_efficiency(treasury: &DaoTreasury) -> f64 {
     }
 
     let expected_non_ubi_distributed = (treasury.total_dao_fees_collected
-        * (crate::SECTOR_DAO_ALLOCATION_PERCENTAGE
-            + crate::EMERGENCY_ALLOCATION_PERCENTAGE
-            + crate::DEV_GRANT_ALLOCATION_PERCENTAGE))
+        * (crate::SECTOR_DAO_ALLOCATION_PERCENTAGE as u128
+            + crate::EMERGENCY_ALLOCATION_PERCENTAGE as u128
+            + crate::DEV_GRANT_ALLOCATION_PERCENTAGE as u128))
         / 100;
 
     if expected_non_ubi_distributed == 0 {
@@ -59,7 +59,7 @@ pub fn calculate_ubi_efficiency(treasury: &DaoTreasury) -> f64 {
     }
 
     let expected_ubi_distributed =
-        (treasury.total_dao_fees_collected * crate::UBI_ALLOCATION_PERCENTAGE) / 100;
+        (treasury.total_dao_fees_collected * crate::UBI_ALLOCATION_PERCENTAGE as u128) / 100;
 
     if expected_ubi_distributed == 0 {
         return 1.0;
@@ -71,7 +71,7 @@ pub fn calculate_ubi_efficiency(treasury: &DaoTreasury) -> f64 {
 /// Calculate treasury sustainability metrics
 pub fn calculate_treasury_sustainability(
     treasury: &DaoTreasury,
-    monthly_burn_rate: u64,
+    monthly_burn_rate: u128,
 ) -> serde_json::Value {
     let total_allocated = treasury.ubi_allocated
         + treasury.sector_dao_allocated
@@ -81,7 +81,7 @@ pub fn calculate_treasury_sustainability(
     let months_sustainable = if monthly_burn_rate > 0 {
         total_allocated / monthly_burn_rate
     } else {
-        u64::MAX // Infinite sustainability with no burn
+        u128::MAX // Infinite sustainability with no burn
     };
 
     let allocation_ratio = if treasury.treasury_balance > 0 {
@@ -103,7 +103,7 @@ pub fn calculate_treasury_sustainability(
 pub fn calculate_ubi_funding_gap(
     treasury: &DaoTreasury,
     total_citizens: u64,
-    target_monthly_ubi: u64,
+    target_monthly_ubi: u128,
 ) -> Result<serde_json::Value> {
     if total_citizens == 0 {
         return Ok(serde_json::json!({
@@ -114,7 +114,7 @@ pub fn calculate_ubi_funding_gap(
         }));
     }
 
-    let required_total = target_monthly_ubi * total_citizens;
+    let required_total = target_monthly_ubi * total_citizens as u128;
     let current_available = treasury.ubi_allocated;
 
     let funding_gap = if required_total > current_available {
@@ -159,7 +159,7 @@ pub fn calculate_ubi_funding_gap(
 /// Calculate treasury balance projections
 pub fn calculate_treasury_projections(
     treasury: &DaoTreasury,
-    projected_monthly_fees: u64,
+    projected_monthly_fees: u128,
     months: u64,
 ) -> serde_json::Value {
     let mut projected_balance = treasury.treasury_balance;
@@ -186,6 +186,6 @@ pub fn calculate_treasury_projections(
         "projected_dev_grants_allocated": projected_dev_grants_allocated,
         "projection_months": months,
         "monthly_fee_assumption": projected_monthly_fees,
-        "total_projected_fees": projected_monthly_fees * months
+        "total_projected_fees": projected_monthly_fees * months as u128
     })
 }

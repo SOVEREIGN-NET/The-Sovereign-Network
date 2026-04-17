@@ -127,6 +127,14 @@ impl ZhtpRequestHandler for WalletHandler {
             (ZhtpMethod::Post, "/api/v1/wallet/staking/unstake") => {
                 self.handle_unstake_tokens(request).await
             }
+            // POST /api/v1/wallet/provision
+            (ZhtpMethod::Post, "/api/v1/wallet/provision") => {
+                self.handle_provision_wallet(request).await
+            }
+            // POST /api/v1/wallet/mint-sov
+            (ZhtpMethod::Post, "/api/v1/wallet/mint-sov") => {
+                self.handle_mint_sov(request).await
+            }
             _ => Ok(create_error_response(
                 ZhtpStatus::NotFound,
                 "Wallet endpoint not found".to_string(),
@@ -192,21 +200,21 @@ struct CrossWalletTransferRequest {
     identity_id: String,
     from_wallet: String,
     to_wallet: String,
-    amount: u64,
+    amount: u128,
     purpose: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct StakingRequest {
     identity_id: String,
-    amount: u64,
+    amount: u128,
 }
 
 #[derive(Deserialize)]
 struct SimpleSendRequest {
     from_identity: String,
     to_address: String,
-    amount: u64,
+    amount: u128,
     memo: Option<String>,
 }
 
@@ -221,8 +229,10 @@ struct TransactionHistoryResponse {
 struct TransactionRecord {
     tx_hash: String,
     tx_type: String,
-    amount: u64,
-    fee: u64,
+    #[serde(serialize_with = "crate::api::handlers::token::u128_as_string::serialize")]
+    amount: u128,
+    #[serde(serialize_with = "crate::api::handlers::token::u128_as_string::serialize")]
+    fee: u128,
     from_wallet: Option<String>,
     to_address: Option<String>,
     timestamp: u64,
@@ -347,7 +357,7 @@ impl WalletHandler {
                 "status": "success",
                 "identity_id": identity_id,
                 "total_wallets": wallets.len(),
-                "total_balance": total_balance_adjusted,
+                "total_balance": total_balance_adjusted.to_string(),
                 "wallets": wallets
             });
             let json_response = serde_json::to_vec(&response_data)?;
@@ -582,10 +592,10 @@ impl WalletHandler {
                     "wallet_type": wallet_type_str,
                     "identity_id": identity_id,
                     "balance": {
-                        "available_balance": available_balance,
-                        "staked_balance": staked_balance,
-                        "pending_rewards": pending_rewards,
-                        "total_balance": total_balance
+                        "available_balance": available_balance.to_string(),
+                        "staked_balance": staked_balance.to_string(),
+                        "pending_rewards": pending_rewards.to_string(),
+                        "total_balance": total_balance.to_string()
                     },
                     "permissions": {
                         "can_transfer_external": true,
@@ -674,10 +684,10 @@ impl WalletHandler {
                 };
 
             let wallet_stat = json!({
-                "available_balance": summary.balance.saturating_sub(staked_balance),
-                "staked_balance": staked_balance,
-                "pending_rewards": pending_rewards,
-                "total_balance": summary.balance + pending_rewards,
+                "available_balance": summary.balance.saturating_sub(staked_balance).to_string(),
+                "staked_balance": staked_balance.to_string(),
+                "pending_rewards": pending_rewards.to_string(),
+                "total_balance": (summary.balance + pending_rewards).to_string(),
                 "transaction_count": 0,
                 "description": format!("{:?} wallet", summary.wallet_type),
                 "created_at": summary.created_at
@@ -691,7 +701,7 @@ impl WalletHandler {
                 "public_key": hex::encode(&identity.public_key.dilithium_pk),
                 "identity_type": format!("{:?}", identity.identity_type)
             },
-            "total_balance": total_balance,
+            "total_balance": total_balance.to_string(),
             "wallet_count": wallet_summaries.len(),
             "wallet_statistics": wallet_stats,
             "cross_wallet_transactions": 0,
@@ -1040,21 +1050,17 @@ impl WalletHandler {
         }
     }
 
-    fn u128_to_u64_saturating(amount: u128) -> u64 {
-        u64::try_from(amount).unwrap_or(u64::MAX)
-    }
-
-    fn infer_transaction_amount(tx: &lib_blockchain::transaction::Transaction) -> u64 {
+    fn infer_transaction_amount(tx: &lib_blockchain::transaction::Transaction) -> u128 {
         if let Some(data) = tx.token_transfer_data() {
-            return Self::u128_to_u64_saturating(data.amount);
+            return data.amount;
         }
         if let Some(data) = tx.token_mint_data() {
-            return Self::u128_to_u64_saturating(data.amount);
+            return data.amount;
         }
         if let Some(data) = tx.dao_execution_data() {
-            return data.amount.unwrap_or(tx.outputs.len() as u64);
+            return data.amount.unwrap_or(tx.outputs.len() as u64) as u128;
         }
-        tx.outputs.len() as u64
+        tx.outputs.len() as u128
     }
 
     fn canonical_key_id_from_public_key_bytes(public_key: &[u8]) -> Option<[u8; 32]> {
@@ -1235,7 +1241,7 @@ impl WalletHandler {
             tx_hash: hex::encode(tx_hash.as_bytes()),
             tx_type: format!("{:?}", tx.transaction_type),
             amount,
-            fee: tx.fee,
+            fee: tx.fee as u128,
             from_wallet,
             to_address,
             timestamp,
@@ -1438,7 +1444,7 @@ impl WalletHandler {
             .ok_or_else(|| anyhow::anyhow!("No primary wallet found"))?;
 
         // Check balance
-        if primary_wallet.balance < send_req.amount as u128 {
+        if primary_wallet.balance < send_req.amount {
             return Ok(create_error_response(
                 ZhtpStatus::PaymentRequired,
                 format!(
@@ -1515,5 +1521,277 @@ impl WalletHandler {
             daily_transaction_limit: permissions.daily_transaction_limit,
             requires_multisig_threshold: permissions.requires_multisig_threshold,
         }
+    }
+
+    /// Provision a wallet for an existing identity.
+    ///
+    /// Registers a wallet in the blockchain wallet_registry with the given ID and
+    /// owner. If `welcome_bonus` is true, mints the SOV welcome bonus. The wallet
+    /// registration transaction is included in the next block, persisting the wallet
+    /// on-chain.
+    ///
+    /// Used for:
+    /// - Restoring wallets lost during testnet resets
+    /// - Provisioning wallets for observed-only identities
+    async fn handle_provision_wallet(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        #[derive(serde::Deserialize)]
+        struct ProvisionRequest {
+            wallet_id: String,
+            owner_identity_id: String,
+            wallet_type: String,
+            #[serde(default)]
+            welcome_bonus: bool,
+            /// Optional dilithium public key hex (2592 bytes). If omitted, looked up
+            /// from the on-chain identity registry.
+            #[serde(default)]
+            public_key: Option<String>,
+        }
+
+        let req: ProvisionRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("invalid provision request: {}", e))?;
+
+        // Parse wallet_id
+        let wallet_id_bytes = hex::decode(&req.wallet_id)
+            .map_err(|_| anyhow::anyhow!("invalid wallet_id hex"))?;
+        if wallet_id_bytes.len() != 32 {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "wallet_id must be 32 bytes".to_string(),
+            ));
+        }
+        let mut wallet_id_arr = [0u8; 32];
+        wallet_id_arr.copy_from_slice(&wallet_id_bytes);
+
+        // Parse owner identity ID
+        let owner_hex = req.owner_identity_id
+            .strip_prefix("did:zhtp:")
+            .unwrap_or(&req.owner_identity_id);
+        let owner_bytes = hex::decode(owner_hex)
+            .map_err(|_| anyhow::anyhow!("invalid owner_identity_id hex"))?;
+        if owner_bytes.len() != 32 {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "owner_identity_id must be 32 bytes".to_string(),
+            ));
+        }
+        let mut owner_arr = [0u8; 32];
+        owner_arr.copy_from_slice(&owner_bytes);
+
+        // Resolve public key: explicit or from identity registry
+        let public_key_bytes = if let Some(pk_hex) = &req.public_key {
+            hex::decode(pk_hex).map_err(|_| anyhow::anyhow!("invalid public_key hex"))?
+        } else {
+            // Look up from identity registry
+            let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+                .await
+                .map_err(|e| anyhow::anyhow!("blockchain unavailable: {}", e))?;
+            let blockchain = blockchain_arc.read().await;
+            let did = format!("did:zhtp:{}", owner_hex);
+            blockchain
+                .identity_registry
+                .get(&did)
+                .map(|id| id.public_key.clone())
+                .unwrap_or_else(|| vec![0u8; 2592])
+        };
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let public_key_for_wallet = public_key_bytes.clone();
+
+        let welcome_bonus_amount: u128 = if req.welcome_bonus {
+            lib_types::sov::atoms(5000)
+        } else {
+            0
+        };
+
+        let wallet_data = lib_blockchain::transaction::WalletTransactionData {
+            wallet_id: lib_blockchain::Hash::from_slice(&wallet_id_arr),
+            wallet_type: req.wallet_type.clone(),
+            wallet_name: format!("{} Wallet (provisioned)", req.wallet_type),
+            alias: Some(req.wallet_type.to_lowercase()),
+            public_key: public_key_for_wallet,
+            owner_identity_id: Some(lib_blockchain::Hash::from_slice(&owner_arr)),
+            seed_commitment: lib_blockchain::types::hash::blake3_hash(b"provisioned_wallet"),
+            created_at: now,
+            registration_fee: 0,
+            capabilities: if req.wallet_type == "Primary" { 0xFF } else { 0x01 },
+            initial_balance: welcome_bonus_amount,
+        };
+
+        // Register on blockchain — creates system transaction for block inclusion
+        let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+            .await
+            .map_err(|e| anyhow::anyhow!("blockchain unavailable: {}", e))?;
+        {
+            let mut blockchain = blockchain_arc.write().await;
+
+            // If the owner identity is not in the identity_registry, register it
+            // via a system transaction so it persists in blocks on all nodes.
+            let did = format!("did:zhtp:{}", owner_hex);
+            if !blockchain.identity_registry.contains_key(&did) {
+                let identity_data = lib_blockchain::transaction::IdentityTransactionData {
+                    did: did.clone(),
+                    display_name: String::new(),
+                    public_key: public_key_bytes.clone(),
+                    ownership_proof: vec![],
+                    identity_type: "human".to_string(),
+                    did_document_hash: lib_blockchain::types::hash::blake3_hash(
+                        format!("provisioned_identity_{}", owner_hex).as_bytes(),
+                    ),
+                    created_at: now,
+                    registration_fee: 0,
+                    dao_fee: 0,
+                    controlled_nodes: vec![],
+                    owned_wallets: vec![],
+                };
+
+                // Create IdentityRegistration system transaction for block persistence
+                let identity_tx = lib_blockchain::transaction::Transaction::new_identity_registration(
+                    identity_data.clone(),
+                    vec![],
+                    lib_blockchain::integration::crypto_integration::Signature {
+                        signature: Vec::new(),
+                        public_key: lib_blockchain::integration::crypto_integration::PublicKey::new(
+                            public_key_bytes.as_slice().try_into().unwrap_or([0u8; 2592]),
+                        ),
+                        algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::DEFAULT,
+                        timestamp: now,
+                    },
+                    format!("Provisioned identity {}", &did[..40.min(did.len())]).into_bytes(),
+                );
+                if let Err(e) = blockchain.add_system_transaction(identity_tx) {
+                    tracing::warn!("Failed to submit identity tx: {}", e);
+                }
+                // Also insert in-memory so the handshake works immediately
+                blockchain.identity_registry.insert(did.clone(), identity_data);
+                let current_height = blockchain.get_height();
+                blockchain.identity_blocks.insert(did.clone(), current_height);
+                tracing::info!(
+                    "📝 Identity registered: {} (system tx + in-memory)",
+                    &did[..40.min(did.len())],
+                );
+            }
+
+            match blockchain.register_wallet(wallet_data) {
+                Ok(tx_hash) => {
+                    tracing::info!(
+                        "✅ Wallet provisioned: {} (type={}, owner={}, bonus={})",
+                        &req.wallet_id[..16.min(req.wallet_id.len())],
+                        req.wallet_type,
+                        &owner_hex[..16.min(owner_hex.len())],
+                        req.welcome_bonus,
+                    );
+                    create_json_response(serde_json::json!({
+                        "status": "success",
+                        "wallet_id": req.wallet_id,
+                        "owner_identity_id": req.owner_identity_id,
+                        "wallet_type": req.wallet_type,
+                        "welcome_bonus": welcome_bonus_amount.to_string(),
+                        "tx_hash": hex::encode(tx_hash.as_bytes()),
+                    }))
+                }
+                Err(e) => {
+                    Ok(create_error_response(
+                        ZhtpStatus::BadRequest,
+                        format!("Wallet provision failed: {}", e),
+                    ))
+                }
+            }
+        }
+    }
+
+    /// Mint SOV to an existing wallet via a TokenMint system transaction.
+    ///
+    /// Creates a real blockchain transaction that goes through consensus and is
+    /// executed by all nodes. The SOV is persisted in the sled token_balances tree.
+    async fn handle_mint_sov(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        #[derive(serde::Deserialize)]
+        struct MintRequest {
+            wallet_id: String,
+            /// Amount in SOV display units (e.g. 5000 = 5000 SOV)
+            amount_sov: u64,
+        }
+
+        let req: MintRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("invalid mint request: {}", e))?;
+
+        let wallet_id_bytes = hex::decode(&req.wallet_id)
+            .map_err(|_| anyhow::anyhow!("invalid wallet_id hex"))?;
+        if wallet_id_bytes.len() != 32 {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "wallet_id must be 32 bytes".to_string(),
+            ));
+        }
+
+        let amount_atoms = lib_types::sov::atoms(req.amount_sov as u128);
+        let mut wallet_id_arr = [0u8; 32];
+        wallet_id_arr.copy_from_slice(&wallet_id_bytes);
+        let wallet_id_hex = hex::encode(&wallet_id_arr);
+
+        let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+            .await
+            .map_err(|e| anyhow::anyhow!("blockchain unavailable: {}", e))?;
+
+        // Verify wallet exists, then create and submit the TokenMint transaction
+        let tx_hash = {
+            let mut blockchain = blockchain_arc.write().await;
+
+            if !blockchain.wallet_registry.contains_key(&wallet_id_hex) {
+                return Ok(create_error_response(
+                    ZhtpStatus::NotFound,
+                    format!("Wallet {} not found in registry", &wallet_id_hex[..16]),
+                ));
+            }
+
+            let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+            let mint_data = lib_blockchain::transaction::TokenMintData {
+                token_id: sov_token_id,
+                to: wallet_id_arr,
+                amount: amount_atoms,
+            };
+
+            let mint_tx = lib_blockchain::transaction::Transaction::new_token_mint(
+                mint_data,
+                lib_blockchain::integration::crypto_integration::Signature {
+                    signature: Vec::new(),
+                    public_key: lib_blockchain::integration::crypto_integration::PublicKey::new(
+                        [0u8; 2592],
+                    ),
+                    algorithm:
+                        lib_blockchain::integration::crypto_integration::SignatureAlgorithm::DEFAULT,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                },
+                format!("Admin SOV mint: {} SOV to {}", req.amount_sov, &wallet_id_hex[..16])
+                    .into_bytes(),
+            );
+
+            let hash = mint_tx.hash();
+            blockchain.add_system_transaction(mint_tx)
+                .map_err(|e| anyhow::anyhow!("Failed to submit TokenMint transaction: {}", e))?;
+
+            tracing::info!(
+                "💰 TokenMint submitted: {} SOV to wallet {} (tx={})",
+                req.amount_sov,
+                &wallet_id_hex[..16],
+                hex::encode(hash.as_bytes()),
+            );
+
+            hash
+        };
+
+        create_json_response(serde_json::json!({
+            "status": "success",
+            "wallet_id": req.wallet_id,
+            "amount_sov": req.amount_sov,
+            "amount_atoms": amount_atoms.to_string(),
+            "tx_hash": hex::encode(tx_hash.as_bytes()),
+        }))
     }
 }

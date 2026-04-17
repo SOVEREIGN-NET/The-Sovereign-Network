@@ -301,6 +301,84 @@ async fn handle_wallet_command_impl(
             output.print(&formatted)?;
             Ok(())
         }
+
+        WalletAction::MintSov { wallet_id, amount } => {
+            output.info(&format!(
+                "Minting {} SOV to wallet {}...",
+                amount,
+                &wallet_id[..16.min(wallet_id.len())],
+            ))?;
+
+            let body = serde_json::json!({
+                "wallet_id": wallet_id,
+                "amount_sov": amount,
+            });
+
+            let response = client
+                .post_json("/api/v1/wallet/mint-sov", &body)
+                .await
+                .map_err(|e| CliError::ApiCallFailed {
+                    endpoint: "/api/v1/wallet/mint-sov".to_string(),
+                    status: 0,
+                    reason: e.to_string(),
+                })?;
+
+            let result: serde_json::Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
+                    endpoint: "/api/v1/wallet/mint-sov".to_string(),
+                    status: 0,
+                    reason: format!("Failed to parse response: {}", e),
+                })?;
+            let formatted = format_output(&result, &cli.format)?;
+            output.header("SOV Minted")?;
+            output.print(&formatted)?;
+            Ok(())
+        }
+
+        WalletAction::Provision {
+            wallet_id,
+            owner,
+            wallet_type,
+            welcome_bonus,
+            public_key,
+        } => {
+            output.info(&format!(
+                "Provisioning {} wallet {} for owner {}...",
+                wallet_type,
+                &wallet_id[..16.min(wallet_id.len())],
+                &owner[..16.min(owner.len())],
+            ))?;
+
+            let mut body = serde_json::json!({
+                "wallet_id": wallet_id,
+                "owner_identity_id": owner,
+                "wallet_type": wallet_type,
+                "welcome_bonus": welcome_bonus,
+            });
+            if let Some(pk) = public_key {
+                body["public_key"] = serde_json::json!(pk);
+            }
+
+            let response = client
+                .post_json("/api/v1/wallet/provision", &body)
+                .await
+                .map_err(|e| CliError::ApiCallFailed {
+                    endpoint: "/api/v1/wallet/provision".to_string(),
+                    status: 0,
+                    reason: e.to_string(),
+                })?;
+
+            let result: serde_json::Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
+                    endpoint: "/api/v1/wallet/provision".to_string(),
+                    status: 0,
+                    reason: format!("Failed to parse response: {}", e),
+                })?;
+            let formatted = format_output(&result, &cli.format)?;
+            output.header("Wallet Provisioned")?;
+            output.print(&formatted)?;
+            Ok(())
+        }
     }
 }
 

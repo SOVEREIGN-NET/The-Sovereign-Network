@@ -25,18 +25,32 @@ num_cpus = "1.16"
 # Serialization
 bincode = "1.3"
 serde_json = "1.0"
+dirs = "5.0"
 
 # Hash map for performance
 ahash = "0.8"
+
+# Real ZK backend: Plonky2
+plonky2 = { version = "1.1.0", optional = true }
+plonky2_field = { version = "1.0.0", optional = true }
+bulletproofs = "5"
+curve25519-dalek = { version = "4", features = ["alloc", "rand_core"] }
+merlin = "3"
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
 criterion = "0.5"
 serde_json = "1.0"
+bulletproofs = "5"
 
 [[bench]]
 name = "zk_benchmarks"
 harness = false
+
+[[bench]]
+name = "tx_benchmark"
+harness = false
+required-features = ["real-proofs"]
 
 [lib]
 name = "lib_proofs"
@@ -46,7 +60,7 @@ path = "src/lib.rs"
 default = ["std"]
 std = []
 # Enable real cryptographic proof backends (required for production builds)
-real-proofs = []
+real-proofs = ["plonky2", "plonky2_field"]
 # Enable fake/mock proof paths for testing and migration ONLY.
 # This feature MUST NOT be enabled in release or production builds.
 fake-proofs = []

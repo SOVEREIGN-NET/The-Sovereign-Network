@@ -10,6 +10,12 @@ use std::sync::OnceLock;
 
 mod plonky2_backend;
 
+#[cfg(feature = "real-proofs")]
+pub mod plonky2_spike;
+
+#[cfg(feature = "real-proofs")]
+pub mod circuit_cache;
+
 #[cfg(any(test, feature = "fake-proofs"))]
 mod fake_backend;
 
@@ -46,6 +52,9 @@ pub trait ProofBackend: Send + Sync {
         fee: u64,
         sender_secret: u64,
         nullifier_seed: u64,
+        merkle_root: [u64; 4],
+        leaf_index: u32,
+        merkle_siblings: &[[u64; 4]],
     ) -> Result<BackendProof>;
 
     /// Verify a transaction proof.

@@ -119,7 +119,7 @@ pub fn to_blockchain_data(
 /// * `system_keypair` - Keypair for signing system transactions
 pub fn create_ubi_blockchain_data(
     citizen_id: crate::wasm::IdentityId,
-    amount: u64,
+    amount: u128,
     chain_id: u32,
     system_keypair: &lib_crypto::KeyPair,
 ) -> Result<BlockchainTransactionData> {
@@ -146,7 +146,7 @@ pub fn create_ubi_blockchain_data(
 /// * `system_keypair` - Keypair for signing system transactions
 pub fn create_reward_blockchain_data(
     node_id: [u8; 32],
-    reward_amount: u64,
+    reward_amount: u128,
     chain_id: u32,
     system_keypair: &lib_crypto::KeyPair,
 ) -> Result<BlockchainTransactionData> {

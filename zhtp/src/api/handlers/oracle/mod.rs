@@ -364,16 +364,70 @@ impl OracleHandler {
 
                 let body = if let Some(token) = bonding_token {
                     let price_atomic = token.current_price() as u128;
+                    let s_c = if let Some(store) = bc.get_store() {
+                        store.get_cbe_economic_state()
+                            .map(|e| e.s_c)
+                            .unwrap_or(0)
+                    } else { 0 };
+                    let econ = if let Some(store) = bc.get_store() {
+                        store.get_cbe_economic_state().ok()
+                    } else { None };
+                    let floor_price = if s_c > 0 {
+                        let reserve = econ.as_ref().map(|e| e.reserve_balance).unwrap_or(0);
+                        Some(lib_blockchain::contracts::bonding_curve::canonical::floor_price(
+                            &econ.clone().unwrap_or_default()
+                        ))
+                    } else { None };
+
+                    // Determine current band (0-4) from supply
+                    let current_band = lib_blockchain::contracts::bonding_curve::canonical::BANDS
+                        .iter()
+                        .position(|b| s_c >= b.start_supply && s_c < b.end_supply)
+                        .unwrap_or(0);
+                    let band = &lib_blockchain::contracts::bonding_curve::canonical::BANDS[current_band];
+                    let band_progress = if band.end_supply > band.start_supply {
+                        ((s_c.saturating_sub(band.start_supply)) as f64
+                            / (band.end_supply - band.start_supply) as f64 * 100.0) as u8
+                    } else { 0 };
+
+                    let graduation_threshold = lib_blockchain::contracts::bonding_curve::canonical::GRAD_THRESHOLD;
+                    let reserve_balance = econ.as_ref().map(|e| e.reserve_balance).unwrap_or(0);
+                    let graduation_progress = if graduation_threshold > 0 {
+                        (reserve_balance as f64 / graduation_threshold as f64 * 100.0).min(100.0)
+                    } else { 0.0 };
+
                     json!({
                         "pair": pair.as_str(),
                         "source": "bonding_curve",
                         "token_id": hex::encode(token.token_id),
                         "phase": format!("{:?}", token.phase),
+                        // Prices
                         "price_atomic": price_atomic.to_string(),
                         "price": Self::price_f64_from_atomic(price_atomic),
                         "price_scale": ORACLE_PRICE_SCALE.to_string(),
-                        "total_supply": token.total_supply,
-                        "reserve_balance": token.reserve_balance,
+                        "floor_price_atomic": floor_price.map(|f| f.to_string()),
+                        "cbe_sov_price": price_atomic as f64 / lib_types::TOKEN_SCALE_18 as f64,
+                        // Supply
+                        "circulating_supply": s_c.to_string(),
+                        "total_supply_ceiling": lib_blockchain::contracts::bonding_curve::canonical::MAX_SUPPLY.to_string(),
+                        "genesis_treasury_allocation": econ.as_ref().map(|e| e.genesis_treasury_allocation.to_string()),
+                        // Band info
+                        "current_band": current_band,
+                        "band_count": 5,
+                        "band_progress_pct": band_progress,
+                        // Graduation
+                        "graduation_progress_pct": graduation_progress,
+                        "graduated": econ.as_ref().map(|e| e.graduated).unwrap_or(false),
+                        // Pools
+                        "reserve_balance": reserve_balance.to_string(),
+                        "sov_treasury_cbe_balance": econ.as_ref().map(|e| e.sov_treasury_cbe_balance.to_string()),
+                        "liquidity_pool_balance": econ.as_ref().map(|e| e.liquidity_pool.balance.to_string()),
+                        // SOVRN audit
+                        "sovrn_total_supply": econ.as_ref().map(|e| e.sovrn_total_supply.to_string()),
+                        // Debt
+                        "debt_state": econ.as_ref().map(|e| format!("{:?}", e.debt_state)),
+                        "outstanding_pre_backed": econ.as_ref().map(|e| e.outstanding_pre_backed.to_string()),
+                        // Epoch
                         "current_epoch": current_epoch,
                     })
                 } else if let Some(token) =

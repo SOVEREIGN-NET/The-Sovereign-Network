@@ -6,20 +6,20 @@
 use crate::types::{Priority, PriorityExt};
 
 /// Calculate network infrastructure fee based on transaction size and priority
-pub fn calculate_network_fee(tx_size: u64, priority: Priority) -> u64 {
+pub fn calculate_network_fee(tx_size: u64, priority: Priority) -> u128 {
     // Base fee covers network infrastructure costs (bandwidth, storage, compute)
-    let base_fee = tx_size * 1; // 1 token per byte (minimal infrastructure cost)
+    let base_fee = (tx_size as u128) * 1; // 1 token per byte (minimal infrastructure cost)
 
     // Apply priority multiplier for QoS
     let priority_multiplier = priority.fee_multiplier();
-    let network_fee = ((base_fee as f64) * priority_multiplier) as u64;
+    let network_fee = ((base_fee as f64) * priority_multiplier) as u128;
 
     // Ensure minimum fee for network operation
     network_fee.max(crate::MINIMUM_NETWORK_FEE)
 }
 
 /// Calculate mandatory DAO fee for UBI and welfare funding
-pub fn calculate_dao_fee(amount: u64) -> u64 {
+pub fn calculate_dao_fee(amount: u128) -> u128 {
     // 1% of transaction amount goes to DAO treasury (Phase 1: UBI and welfare services)
     // Use saturating arithmetic to prevent overflow
     let dao_fee = amount.saturating_mul(crate::DEFAULT_DAO_FEE_RATE) / 10000; // 1.00% mandatory (TRANSACTION_FEE_RATE)
@@ -29,7 +29,7 @@ pub fn calculate_dao_fee(amount: u64) -> u64 {
 }
 
 /// Calculate total transaction fee (network + DAO)
-pub fn calculate_total_fee(tx_size: u64, amount: u64, priority: Priority) -> (u64, u64, u64) {
+pub fn calculate_total_fee(tx_size: u64, amount: u128, priority: Priority) -> (u128, u128, u128) {
     let network_fee = calculate_network_fee(tx_size, priority);
     let dao_fee = calculate_dao_fee(amount);
     let total_fee = network_fee + dao_fee;
@@ -40,10 +40,10 @@ pub fn calculate_total_fee(tx_size: u64, amount: u64, priority: Priority) -> (u6
 /// Calculate fee with exemptions for UBI and welfare distributions
 pub fn calculate_fee_with_exemptions(
     tx_size: u64,
-    amount: u64,
+    amount: u128,
     priority: Priority,
     is_ubi_or_welfare: bool,
-) -> (u64, u64, u64) {
+) -> (u128, u128, u128) {
     if is_ubi_or_welfare {
         // UBI and welfare distributions are completely fee-free
         (0, 0, 0)

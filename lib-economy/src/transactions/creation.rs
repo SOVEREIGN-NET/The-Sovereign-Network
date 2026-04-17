@@ -11,7 +11,7 @@ use anyhow::Result;
 pub fn create_payment_transaction(
     from: [u8; 32],
     to: [u8; 32],
-    amount: u64,
+    amount: u128,
     priority: Priority,
 ) -> Result<Transaction> {
     // Transaction::new_payment already sets the TransactionType::Payment
@@ -19,13 +19,13 @@ pub fn create_payment_transaction(
 }
 
 /// Create a reward transaction for network services
-pub fn create_reward_transaction(recipient: [u8; 32], amount: u64) -> Result<Transaction> {
+pub fn create_reward_transaction(recipient: [u8; 32], amount: u128) -> Result<Transaction> {
     // Transaction::new_reward already sets the TransactionType::Reward
     Transaction::new_reward(recipient, amount)
 }
 
 /// Create multiple UBI distribution transactions
-pub fn create_ubi_distributions(citizens: &[(IdentityId, u64)]) -> Result<Vec<Transaction>> {
+pub fn create_ubi_distributions(citizens: &[(IdentityId, u128)]) -> Result<Vec<Transaction>> {
     let mut distributions = Vec::new();
 
     for (citizen_id, ubi_amount) in citizens {
@@ -38,7 +38,7 @@ pub fn create_ubi_distributions(citizens: &[(IdentityId, u64)]) -> Result<Vec<Tr
 }
 
 /// Create welfare service funding transactions
-pub fn create_welfare_funding(services: &[(String, [u8; 32], u64)]) -> Result<Vec<Transaction>> {
+pub fn create_welfare_funding(services: &[(String, [u8; 32], u128)]) -> Result<Vec<Transaction>> {
     let mut funding_txs = Vec::new();
 
     for (_service_name, service_address, funding_amount) in services {
@@ -53,7 +53,7 @@ pub fn create_welfare_funding(services: &[(String, [u8; 32], u64)]) -> Result<Ve
 /// Create a staking transaction
 pub fn create_stake_transaction(
     staker: [u8; 32],
-    amount: u64,
+    amount: u128,
     priority: Priority,
 ) -> Result<Transaction> {
     // For staking, we need to manually create the transaction with correct type
@@ -70,7 +70,7 @@ pub fn create_stake_transaction(
 /// Create an unstaking transaction
 pub fn create_unstake_transaction(
     staker: [u8; 32],
-    amount: u64,
+    amount: u128,
     priority: Priority,
 ) -> Result<Transaction> {
     // For unstaking, we need to manually create the transaction with correct type
@@ -85,7 +85,7 @@ pub fn create_unstake_transaction(
 }
 
 /// Create a DAO fee transaction
-pub fn create_dao_fee_transaction(payer: [u8; 32], fee_amount: u64) -> Result<Transaction> {
+pub fn create_dao_fee_transaction(payer: [u8; 32], fee_amount: u128) -> Result<Transaction> {
     let dao_treasury = [0u8; 32]; // DAO treasury address (placeholder)
                                   // For DAO fee, we need to manually create the transaction with correct type
     Transaction::new(

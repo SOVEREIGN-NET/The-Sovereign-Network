@@ -63,6 +63,7 @@ mod tests {
             state_reads: 2,
             state_writes: 2,
             state_write_bytes: 32,
+            zk_verify_units: 0,
         };
         let params = FeeParams::default();
 
@@ -104,6 +105,7 @@ mod tests {
             state_reads: 2,
             state_writes: 2,
             state_write_bytes: 32,
+            zk_verify_units: 0,
         };
         let params = FeeParams::default();
 
@@ -148,6 +150,7 @@ mod tests {
             state_reads: 10,
             state_writes: 5,
             state_write_bytes: 500,
+            zk_verify_units: 0,
         };
         let params = FeeParams::default();
 
@@ -190,6 +193,7 @@ mod tests {
             state_reads: 1,
             state_writes: 1,
             state_write_bytes: 32,
+            zk_verify_units: 0,
         };
         let params = FeeParams::default();
 
@@ -231,6 +235,7 @@ mod tests {
             state_reads: 1,
             state_writes: 1,
             state_write_bytes: 10000,
+            zk_verify_units: 0,
         };
         let params = FeeParams::default();
 
@@ -270,6 +275,7 @@ mod tests {
             state_reads: 3,  // sender balance, recipient balance, token contract
             state_writes: 2, // sender balance, recipient balance
             state_write_bytes: 64,
+            zk_verify_units: 0,
         };
         let params = FeeParams::default();
 
@@ -301,6 +307,7 @@ mod tests {
             state_reads: 2,
             state_writes: 2,
             state_write_bytes: 32,
+            zk_verify_units: 0,
         };
         let params = FeeParams::default();
 
@@ -331,6 +338,7 @@ mod tests {
             state_reads: 2,
             state_writes: 2,
             state_write_bytes: 32,
+            zk_verify_units: 0,
         };
         let params = FeeParams::default();
 
@@ -360,6 +368,7 @@ mod tests {
             state_reads: 0,
             state_writes: 0,
             state_write_bytes: 0,
+            zk_verify_units: 0,
         };
         let params = FeeParams::default();
 
@@ -390,6 +399,7 @@ mod tests {
             state_reads: 2,
             state_writes: 2,
             state_write_bytes: 32,
+            zk_verify_units: 0,
         };
 
         let params = FeeParams {
@@ -399,6 +409,7 @@ mod tests {
             fee_per_state_write: 1000,    // 2x default
             fee_per_state_write_byte: 20, // 2x default
             fee_per_signature: 2000,      // 2x default
+            fee_per_zk_verify_unit: 0,
             minimum_fee: 500,
             maximum_fee: 1_000_000_000,
         };
@@ -432,6 +443,7 @@ mod tests {
             state_reads: 2,
             state_writes: 2,
             state_write_bytes: 32,
+            zk_verify_units: 0,
         };
 
         let params = FeeParams::for_testing();

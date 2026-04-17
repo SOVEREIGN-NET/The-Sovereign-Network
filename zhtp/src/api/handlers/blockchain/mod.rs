@@ -19,9 +19,10 @@ use lib_blockchain::transaction::{
     ContractDeploymentPayloadV1, DecodedContractExecutionMemo, Transaction,
     CONTRACT_DEPLOYMENT_MEMO_PREFIX,
 };
+use lib_blockchain::storage::UtxoMerkleProof;
 use lib_blockchain::types::Hash;
 use lib_blockchain::types::{transaction_type::TransactionType, ContractType};
-use lib_blockchain::Blockchain;
+use lib_blockchain::{Blockchain, storage::{OutPoint, TxHash}};
 use crate::config::Environment;
 
 // Access control imports
@@ -120,6 +121,30 @@ impl BlockchainHandler {
     }
 
     fn tx_to_info(tx: &lib_blockchain::transaction::Transaction) -> TransactionInfo {
+        let zk_proofs: Vec<ZkProofInfo> = tx
+            .inputs
+            .iter()
+            .enumerate()
+            .filter(|(_, input)| !input.zk_proof.has_empty_proofs())
+            .map(|(idx, input)| {
+                let (amt_sys, _, _) = input.zk_proof.proof_systems();
+                ZkProofInfo {
+                    input_index: idx,
+                    has_proof: true,
+                    proof_size: input.zk_proof.total_size(),
+                    proof_system: amt_sys,
+                }
+            })
+            .collect();
+
+        let default_hash = lib_blockchain::types::Hash::default();
+        let merkle_leaves: Vec<String> = tx
+            .outputs
+            .iter()
+            .filter(|o| o.merkle_leaf != default_hash)
+            .map(|o| hex::encode(o.merkle_leaf.as_bytes()))
+            .collect();
+
         TransactionInfo {
             hash: tx.hash().to_string(),
             from: tx
@@ -133,10 +158,12 @@ impl BlockchainHandler {
                 .map(|o| format!("{:02x?}", &o.recipient.key_id[..8]))
                 .unwrap_or_else(|| "unknown".to_string()),
             amount: 0, // Amount is hidden in commitment for privacy
-            fee: tx.fee,
+            fee: tx.fee as u128,
             transaction_type: format!("{:?}", tx.transaction_type),
             timestamp: tx.signature.timestamp,
             size: tx.size(),
+            zk_proofs,
+            merkle_leaves,
         }
     }
 
@@ -185,6 +212,12 @@ impl ZhtpRequestHandler for BlockchainHandler {
             }
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/blockchain/balance/") => {
                 self.handle_get_balance(request).await
+            }
+            (ZhtpMethod::Get, path)
+                if path.starts_with("/api/v1/blockchain/utxo/")
+                    && path.ends_with("/merkle-proof") =>
+            {
+                self.handle_get_utxo_merkle_proof(request).await
             }
             (ZhtpMethod::Get, "/api/v1/blockchain/mempool") => {
                 self.handle_get_mempool_status(request).await
@@ -370,8 +403,8 @@ struct TransactionSubmissionResponse {
 struct SubmitTransactionRequest {
     from: String,
     to: String,
-    amount: u64,
-    fee: u64,
+    amount: u128,
+    fee: u128,
     signature: String,
 }
 
@@ -396,20 +429,30 @@ struct ValidatorInfo {
 struct BalanceResponse {
     status: String,
     address: String,
-    balance: u64,
-    pending_balance: u64,
+    balance: u128,
+    pending_balance: u128,
     transaction_count: u64,
     note: Option<String>,
+}
+
+#[derive(Serialize)]
+struct UtxoMerkleProofResponse {
+    status: String,
+    tx_hash: String,
+    output_index: u32,
+    leaf_index: u64,
+    merkle_root: String,
+    siblings: Vec<String>,
 }
 
 #[derive(Serialize)]
 struct MempoolStatusResponse {
     status: String,
     transaction_count: usize,
-    total_fees: u64,
+    total_fees: u128,
     total_size: usize,
     average_fee_rate: f64,
-    min_fee_rate: u64,
+    min_fee_rate: u128,
     max_size: usize,
 }
 
@@ -425,11 +468,31 @@ struct TransactionInfo {
     hash: String,
     from: String,
     to: String,
-    amount: u64,
-    fee: u64,
+    amount: u128,
+    fee: u128,
     transaction_type: String,
     timestamp: u64,
     size: usize,
+    /// ZK proof data for each input (hex-encoded proof bytes).
+    /// Empty for transactions without UTXO inputs (e.g. TokenTransfer, Coinbase).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    zk_proofs: Vec<ZkProofInfo>,
+    /// Merkle leaf commitments for each output (hex-encoded Poseidon hash).
+    /// Present when the output was committed to the UTXO Merkle tree.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    merkle_leaves: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct ZkProofInfo {
+    /// Input index this proof covers.
+    input_index: usize,
+    /// Whether the proof contains real cryptographic data (vs empty/default).
+    has_proof: bool,
+    /// Total proof size in bytes.
+    proof_size: usize,
+    /// Proof system used.
+    proof_system: String,
 }
 
 #[derive(Serialize)]
@@ -478,10 +541,10 @@ struct TransactionResponse {
 #[derive(Serialize)]
 struct FeeEstimateResponse {
     status: String,
-    estimated_fee: u64,
-    base_fee: u64,
-    dao_fee: u64,
-    total_fee: u64,
+    estimated_fee: u128,
+    base_fee: u128,
+    dao_fee: u128,
+    total_fee: u128,
     transaction_size: usize,
     fee_rate: f64,
 }
@@ -492,7 +555,7 @@ struct FeeConfigResponse {
     base_fee: u64,
     bytes_per_sov: u64,
     witness_cap: u32,
-    token_creation_fee: u64,
+    token_creation_fee: u128,
     updated_at_height: u64,
     chain_height: u64,
 }
@@ -508,7 +571,7 @@ struct FeeQuoteRequest {
 #[derive(Serialize)]
 struct FeeQuoteResponse {
     status: String,
-    estimated_fee: u64,
+    estimated_fee: u128,
     base_fee: u64,
     bytes_per_sov: u64,
     witness_cap: u32,
@@ -532,7 +595,7 @@ struct TransactionReceiptResponse {
     transaction_index: Option<usize>,
     confirmations: u64,
     timestamp: Option<u64>,
-    gas_used: Option<u64>,
+    gas_used: Option<u128>,
     success: bool,
     logs: Vec<String>,
 }
@@ -575,7 +638,7 @@ struct ContractStateResponse {
 #[derive(Deserialize)]
 struct FeeEstimateRequest {
     transaction_size: Option<usize>,
-    _amount: u64,
+    _amount: u128,
     _priority: Option<String>, // "low", "medium", "high"
     is_system_transaction: Option<bool>,
     transaction_type: Option<String>,
@@ -644,13 +707,13 @@ fn transaction_type_requires_semantic_fee_quote(value: &str) -> bool {
 fn canonical_fee_for_transaction(
     transaction: &Transaction,
     fee_config: &lib_blockchain::transaction::TxFeeConfig,
-) -> Option<u64> {
+) -> Option<u128> {
     match transaction.transaction_type {
         TransactionType::Coinbase | TransactionType::TokenTransfer | TransactionType::TokenMint => {
             Some(0)
         }
         TransactionType::TokenCreation => Some(
-            lib_blockchain::transaction::required_token_creation_fee(fee_config),
+            lib_blockchain::transaction::required_token_creation_fee(fee_config) as u128,
         ),
         _ if transaction.inputs.is_empty() => Some(0),
         _ => None,
@@ -661,11 +724,11 @@ fn quote_fee_for_transaction(
     transaction: &Transaction,
     tx_size: usize,
     fee_config: &lib_blockchain::transaction::TxFeeConfig,
-) -> u64 {
+) -> u128 {
     canonical_fee_for_transaction(transaction, fee_config).unwrap_or_else(|| {
         lib_blockchain::transaction::creation::utils::calculate_minimum_fee_with_config(
             tx_size, fee_config,
-        )
+        ) as u128
     })
 }
 
@@ -1535,7 +1598,8 @@ impl BlockchainHandler {
             commitment: lib_blockchain::Hash::from_slice(&req_data.amount.to_le_bytes()),
             note: lib_blockchain::Hash::from_slice(&recipient_pubkey),
             recipient: lib_blockchain::integration::crypto_integration::PublicKey::new(recipient_pubkey),
-        };
+                    merkle_leaf: Hash::default(),
+};
 
         // Use the provided signature (client must sign with their private key)
         let signature = lib_crypto::Signature {
@@ -1556,7 +1620,7 @@ impl BlockchainHandler {
         let transaction = lib_blockchain::transaction::Transaction::new(
             vec![input],
             vec![output],
-            req_data.fee,
+            req_data.fee as u64,
             signature,
             format!(
                 "P2P Transfer {} SOV from {} to {}",
@@ -1680,7 +1744,7 @@ impl BlockchainHandler {
 
             // Pending balance is set to 0 due to privacy-preserving commitments
             // We cannot estimate pending balances when amounts are hidden via Pedersen commitments
-            let pending_balance = 0u64;
+            let pending_balance = 0u128;
 
             BalanceResponse {
                 status: "balance_found".to_string(),
@@ -1711,6 +1775,78 @@ impl BlockchainHandler {
         ))
     }
 
+    /// Handle UTXO Merkle proof query for ZK transaction proofs.
+    ///
+    /// Path: /api/v1/blockchain/utxo/{tx_hash}/{output_index}/merkle-proof
+    async fn handle_get_utxo_merkle_proof(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        // Extract tx_hash and output_index from path
+        let path_parts: Vec<&str> = request.uri.split('/').collect();
+        let tx_hash_str = path_parts
+            .get(5)
+            .ok_or_else(|| anyhow::anyhow!("tx_hash required"))?;
+        let output_index_str = path_parts
+            .get(6)
+            .ok_or_else(|| anyhow::anyhow!("output_index required"))?;
+        let output_index: u32 = output_index_str
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Invalid output_index"))?;
+
+        let tx_hash_bytes = if tx_hash_str.len() == 64 {
+            hex::decode(tx_hash_str)
+                .map_err(|_| anyhow::anyhow!("Invalid tx_hash hex"))?
+        } else {
+            return Err(anyhow::anyhow!("tx_hash must be 64 hex chars"));
+        };
+
+        if tx_hash_bytes.len() != 32 {
+            return Err(anyhow::anyhow!("tx_hash must decode to 32 bytes"));
+        }
+
+        let mut tx_hash_arr = [0u8; 32];
+        tx_hash_arr.copy_from_slice(&tx_hash_bytes);
+        let outpoint = OutPoint::new(TxHash::new(tx_hash_arr), output_index);
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        let response = if let Some(ref store) = blockchain.store {
+            match store.get_utxo_merkle_proof(&outpoint)? {
+                Some(proof) => UtxoMerkleProofResponse {
+                    status: "ok".to_string(),
+                    tx_hash: tx_hash_str.to_string(),
+                    output_index,
+                    leaf_index: proof.leaf_index,
+                    merkle_root: hex::encode(&proof.root),
+                    siblings: proof.siblings.iter().map(|s| hex::encode(s)).collect(),
+                },
+                None => UtxoMerkleProofResponse {
+                    status: "not_found".to_string(),
+                    tx_hash: tx_hash_str.to_string(),
+                    output_index,
+                    leaf_index: 0,
+                    merkle_root: String::new(),
+                    siblings: vec![],
+                },
+            }
+        } else {
+            UtxoMerkleProofResponse {
+                status: "store_unavailable".to_string(),
+                tx_hash: tx_hash_str.to_string(),
+                output_index,
+                leaf_index: 0,
+                merkle_root: String::new(),
+                siblings: vec![],
+            }
+        };
+
+        let json_response = serde_json::to_vec(&response)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
     /// Handle mempool status request
     async fn handle_get_mempool_status(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
         let blockchain_arc = self.get_blockchain().await?;
@@ -1726,7 +1862,7 @@ impl BlockchainHandler {
         );
 
         // Calculate mempool statistics
-        let total_fees: u64 = pending_txs.iter().map(|tx| tx.fee).sum();
+        let total_fees: u128 = pending_txs.iter().map(|tx| tx.fee as u128).sum();
         let total_size: usize = pending_txs.iter().map(|tx| tx.size()).sum();
         let average_fee_rate = if total_size > 0 {
             total_fees as f64 / total_size as f64
@@ -1763,24 +1899,7 @@ impl BlockchainHandler {
         // Convert to response format
         let transactions: Vec<TransactionInfo> = pending_txs
             .iter()
-            .map(|tx| TransactionInfo {
-                hash: tx.hash().to_string(),
-                from: tx
-                    .inputs
-                    .first()
-                    .map(|i| i.previous_output.to_string())
-                    .unwrap_or_else(|| "genesis".to_string()),
-                to: tx
-                    .outputs
-                    .first()
-                    .map(|o| format!("{:02x?}", &o.recipient.key_id[..8]))
-                    .unwrap_or_else(|| "unknown".to_string()),
-                amount: 0, // Amount is hidden in commitment for privacy
-                fee: tx.fee,
-                transaction_type: format!("{:?}", tx.transaction_type),
-                timestamp: tx.signature.timestamp,
-                size: tx.size(),
-            })
+            .map(|tx| Self::tx_to_info(tx))
             .collect();
 
         let response_data = PendingTransactionsResponse {
@@ -1822,24 +1941,7 @@ impl BlockchainHandler {
         // First check pending transactions (mempool)
         let pending_txs = blockchain.get_pending_transactions();
         if let Some(pending_tx) = pending_txs.iter().find(|tx| tx.hash() == tx_hash) {
-            let transaction_info = TransactionInfo {
-                hash: pending_tx.hash().to_string(),
-                from: pending_tx
-                    .inputs
-                    .first()
-                    .map(|i| i.previous_output.to_string())
-                    .unwrap_or_else(|| "genesis".to_string()),
-                to: pending_tx
-                    .outputs
-                    .first()
-                    .map(|o| format!("{:02x?}", &o.recipient.key_id[..8]))
-                    .unwrap_or_else(|| "unknown".to_string()),
-                amount: 0, // Amount is hidden in commitment for privacy
-                fee: pending_tx.fee,
-                transaction_type: format!("{:?}", pending_tx.transaction_type),
-                timestamp: pending_tx.signature.timestamp,
-                size: pending_tx.size(),
-            };
+            let transaction_info = Self::tx_to_info(pending_tx);
 
             let response_data = TransactionResponse {
                 status: "transaction_found".to_string(),
@@ -1860,24 +1962,7 @@ impl BlockchainHandler {
         // Search through all blocks for the transaction
         for (_block_index, block) in blockchain.blocks.iter().enumerate() {
             if let Some(confirmed_tx) = block.transactions.iter().find(|tx| tx.hash() == tx_hash) {
-                let transaction_info = TransactionInfo {
-                    hash: confirmed_tx.hash().to_string(),
-                    from: confirmed_tx
-                        .inputs
-                        .first()
-                        .map(|i| i.previous_output.to_string())
-                        .unwrap_or_else(|| "genesis".to_string()),
-                    to: confirmed_tx
-                        .outputs
-                        .first()
-                        .map(|o| format!("{:02x?}", &o.recipient.key_id[..8]))
-                        .unwrap_or_else(|| "unknown".to_string()),
-                    amount: 0, // Amount is hidden in commitment for privacy
-                    fee: confirmed_tx.fee,
-                    transaction_type: format!("{:?}", confirmed_tx.transaction_type),
-                    timestamp: confirmed_tx.signature.timestamp,
-                    size: confirmed_tx.size(),
-                };
+                let transaction_info = Self::tx_to_info(confirmed_tx);
 
                 let block_height = block.header.height;
                 let confirmations = blockchain.get_height().saturating_sub(block_height);
@@ -1942,10 +2027,10 @@ impl BlockchainHandler {
         let min_fee =
             lib_blockchain::transaction::creation::utils::calculate_minimum_fee_with_config(
                 tx_size, fee_config,
-            );
+            ) as u128;
         let base_fee = min_fee;
-        let dao_fee = 0;
-        let total_fee = if is_system { 0 } else { min_fee };
+        let dao_fee = 0u128;
+        let total_fee = if is_system { 0u128 } else { min_fee };
 
         // Calculate fee rate (fee per byte)
         let fee_rate = if tx_size > 0 {
@@ -1983,7 +2068,7 @@ impl BlockchainHandler {
             base_fee: fee_config.base_fee,
             bytes_per_sov: fee_config.bytes_per_sov,
             witness_cap: fee_config.witness_cap,
-            token_creation_fee: fee_config.token_creation_fee,
+            token_creation_fee: fee_config.token_creation_fee as u128,
             updated_at_height: blockchain.tx_fee_config_updated_at_height,
             chain_height: blockchain.get_height(),
         };
@@ -2018,7 +2103,7 @@ impl BlockchainHandler {
                             lib_blockchain::transaction::creation::utils::calculate_minimum_fee_with_config(
                                 tx_size,
                                 fee_config,
-                            ),
+                            ) as u128,
                         ),
                     }
                 }
@@ -2029,7 +2114,7 @@ impl BlockchainHandler {
                         lib_blockchain::transaction::creation::utils::calculate_minimum_fee_with_config(
                             tx_size,
                             fee_config,
-                        ),
+                        ) as u128,
                     )
                 }
             }
@@ -2039,7 +2124,7 @@ impl BlockchainHandler {
                 tx_size,
                 lib_blockchain::transaction::creation::utils::calculate_minimum_fee_with_config(
                     tx_size, fee_config,
-                ),
+                ) as u128,
             )
         };
 
@@ -2203,7 +2288,7 @@ impl BlockchainHandler {
                     transaction_index: Some(tx_index),
                     confirmations,
                     timestamp: Some(block.header.timestamp),
-                    gas_used: Some(confirmed_tx.fee), // Using fee as gas_used equivalent
+                    gas_used: Some(confirmed_tx.fee as u128), // Using fee as gas_used equivalent
                     success: true,                    // Assume success if in block
                     logs: vec![
                         format!("Transaction confirmed in block {}", block_height),
@@ -3039,8 +3124,9 @@ mod tests {
             commitment: Hash::from_slice(b"test-commitment"),
             note: Hash::from_slice(b"test-note"),
             recipient,
+            merkle_leaf: Hash::default(),
         }
-    }
+}
 
     fn build_contract_tx(
         tx_type: TransactionType,
@@ -3271,5 +3357,32 @@ mod tests {
         
         // Verify chain_id is sourced from environment
         assert_eq!(handler.chain_id(), Environment::Development.chain_id());
+    }
+
+    #[test]
+    fn handler_claims_utxo_merkle_proof_endpoint() {
+        use crate::config::Environment;
+        
+        let handler = BlockchainHandler::new(
+            Arc::new(RwLock::new(Blockchain::new().expect("Blockchain::new"))),
+            Environment::Development,
+            Arc::new(RwLock::new(lib_identity::IdentityManager::new())),
+        );
+
+        let merkle_proof_request = ZhtpRequest {
+            method: ZhtpMethod::Get,
+            uri: "/api/v1/blockchain/utxo/abcd1234/0/merkle-proof".to_string(),
+            version: "ZHTP/1.0".to_string(),
+            headers: ZhtpHeaders::default(),
+            body: Vec::new(),
+            timestamp: 0,
+            requester: None,
+            auth_proof: None,
+        };
+        
+        assert!(
+            handler.can_handle(&merkle_proof_request),
+            "handler must claim UTXO merkle-proof endpoint"
+        );
     }
 }

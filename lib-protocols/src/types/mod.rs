@@ -60,10 +60,10 @@ pub const DEFAULT_REQUEST_TIMEOUT: u64 = 30;
 pub const DEFAULT_CACHE_TTL: u64 = 3600;
 
 /// Minimum DAO fee (5 SOV tokens)
-pub const MIN_DAO_FEE: u64 = 5;
+pub const MIN_DAO_FEE: u128 = 5;
 
 /// DAO fee percentage (2.00%)
-pub const DAO_FEE_PERCENTAGE: u64 = 200; // Basis points (200/10000 = 2%)
+pub const DAO_FEE_PERCENTAGE: u128 = 200; // Basis points (200/10000 = 2%)
 
 /// Default privacy level (maximum)
 pub const DEFAULT_PRIVACY_LEVEL: u8 = 100;

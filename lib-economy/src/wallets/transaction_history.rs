@@ -21,10 +21,10 @@ use crate::network_types::{get_mesh_status, get_network_statistics};
 pub struct BlockchainTransaction {
     pub id: String,
     pub timestamp: u64,
-    pub amount: u64,
+    pub amount: u128,
     pub from: String,
     pub to: String,
-    pub fee: u64,
+    pub fee: u128,
 }
 
 /// Transaction status with blockchain validation
@@ -100,8 +100,8 @@ pub struct TransactionRecord {
     pub from_address: Option<[u8; 32]>,
     pub to_address: Option<[u8; 32]>,
     /// Amount details
-    pub amount: u64,
-    pub fees: u64,
+    pub amount: u128,
+    pub fees: u128,
     pub gas_used: Option<u64>,
     /// Blockchain context
     pub block_height: Option<u64>,
@@ -145,9 +145,9 @@ pub struct TransactionAnalytics {
     /// Total transaction count by category
     pub transaction_counts: HashMap<TransactionCategory, u64>,
     /// Total volume by category
-    pub volume_by_category: HashMap<TransactionCategory, u64>,
+    pub volume_by_category: HashMap<TransactionCategory, u128>,
     /// Total fees paid by category
-    pub fees_by_category: HashMap<TransactionCategory, u64>,
+    pub fees_by_category: HashMap<TransactionCategory, u128>,
     /// Average transaction size by category
     pub average_amount_by_category: HashMap<TransactionCategory, f64>,
     /// Success rates by category
@@ -168,9 +168,9 @@ pub struct MonthlyTransactionData {
     /// Total transactions in month
     pub total_transactions: u64,
     /// Total volume in month
-    pub total_volume: u64,
+    pub total_volume: u128,
     /// Total fees paid in month
-    pub total_fees: u64,
+    pub total_fees: u128,
     /// Average confirmation time in seconds
     pub average_confirmation_time: f64,
     /// Transaction breakdown by category
@@ -185,7 +185,7 @@ pub struct DailyActivityData {
     /// Transaction count for this hour
     pub transaction_count: u64,
     /// Total volume for this hour
-    pub total_volume: u64,
+    pub total_volume: u128,
     /// Average confirmation time for this hour
     pub average_confirmation_time: f64,
 }
@@ -218,8 +218,8 @@ pub struct TransactionFilter {
     /// Filter by transaction status
     pub statuses: Option<Vec<TransactionStatus>>,
     /// Filter by amount range
-    pub min_amount: Option<u64>,
-    pub max_amount: Option<u64>,
+    pub min_amount: Option<u128>,
+    pub max_amount: Option<u128>,
     /// Filter by address (from or to)
     pub address_filter: Option<[u8; 32]>,
     /// Filter by priority
@@ -515,8 +515,8 @@ impl TransactionHistoryManager {
             .collect();
 
         let total_count = period_transactions.len();
-        let total_volume: u64 = period_transactions.iter().map(|tx| tx.amount).sum();
-        let total_fees: u64 = period_transactions.iter().map(|tx| tx.fees).sum();
+        let total_volume: u128 = period_transactions.iter().map(|tx| tx.amount).sum();
+        let total_fees: u128 = period_transactions.iter().map(|tx| tx.fees).sum();
 
         // Category breakdown
         let mut category_counts = HashMap::new();
@@ -524,7 +524,7 @@ impl TransactionHistoryManager {
 
         for tx in &period_transactions {
             *category_counts.entry(tx.category.clone()).or_insert(0) += 1;
-            *category_volumes.entry(tx.category.clone()).or_insert(0u64) += tx.amount;
+            *category_volumes.entry(tx.category.clone()).or_insert(0u128) += tx.amount;
         }
 
         // Success rates
@@ -570,7 +570,7 @@ impl TransactionHistoryManager {
                 "transaction_count": total_count,
                 "total_volume": total_volume,
                 "total_fees": total_fees,
-                "average_transaction_size": if total_count > 0 { total_volume / total_count as u64 } else { 0 }
+                "average_transaction_size": if total_count > 0 { total_volume / total_count as u128 } else { 0 }
             },
             "performance": {
                 "success_rate": success_rate,
@@ -743,8 +743,8 @@ impl TransactionHistoryManager {
             *transaction_counts.entry(tx.category.clone()).or_insert(0) += 1;
             *volume_by_category
                 .entry(tx.category.clone())
-                .or_insert(0u64) += tx.amount;
-            *fees_by_category.entry(tx.category.clone()).or_insert(0u64) += tx.fees;
+                .or_insert(0u128) += tx.amount;
+            *fees_by_category.entry(tx.category.clone()).or_insert(0u128) += tx.fees;
 
             // Monthly trends
             let month_key = format!(

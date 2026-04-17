@@ -53,7 +53,7 @@ impl TransactionBuilder {
         use lib_economy::transactions::creation::create_reward_transaction;
 
         // Create reward for network services (routing, storage, etc.)
-        let reward_tx = create_reward_transaction(node_id, reward_amount)?;
+        let reward_tx = create_reward_transaction(node_id, reward_amount as u128)?;
 
         // Convert economics transaction to blockchain transaction
         Self::convert_economics_to_system_tx(&reward_tx, environment).await
@@ -77,7 +77,8 @@ impl TransactionBuilder {
                 &format!("note_{}", hex::encode(economics_tx.tx_id)).as_bytes(),
             ),
             recipient: PublicKey::new([0u8; 2592]),
-        }];
+                    merkle_leaf: lib_blockchain::Hash::default(),
+}];
 
         // Map economics transaction type to blockchain transaction type
         let blockchain_tx_type = match economics_tx.tx_type {
@@ -147,7 +148,7 @@ impl TransactionBuilder {
             transaction_type: tx_type,
             inputs: inputs.to_vec(),
             outputs: outputs.to_vec(),
-            fee: economics_tx.total_fee,
+            fee: economics_tx.total_fee as u64,
             signature: temp_signature,
             memo: format!(
                 "System TX: {} {} SOV from {:?} to {:?}",

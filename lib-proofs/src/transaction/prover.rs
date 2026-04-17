@@ -168,7 +168,7 @@ impl ZkTransactionProver {
             )
             .context("Failed to generate nullifier proof")?;
 
-        let nullifier_commitment = hash_blake3(&nullifier);
+        let _nullifier_commitment = hash_blake3(&nullifier);
 
         Ok(ZkTransactionProof {
             amount_proof: ZkProof::from_plonky2(amount_plonky2_proof),

@@ -12,25 +12,25 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaoTreasury {
     /// Current treasury balance
-    pub treasury_balance: u64,
+    pub treasury_balance: u128,
     /// Amount allocated for UBI distribution
-    pub ubi_allocated: u64,
+    pub ubi_allocated: u128,
     /// Amount allocated for sector DAOs
-    pub sector_dao_allocated: u64,
+    pub sector_dao_allocated: u128,
     /// Amount allocated for emergency reserves
-    pub emergency_allocated: u64,
+    pub emergency_allocated: u128,
     /// Amount allocated for development grants
-    pub dev_grants_allocated: u64,
+    pub dev_grants_allocated: u128,
     /// Total DAO fees collected (for accounting)
-    pub total_dao_fees_collected: u64,
+    pub total_dao_fees_collected: u128,
     /// Total UBI distributed (for accounting)
-    pub total_ubi_distributed: u64,
+    pub total_ubi_distributed: u128,
     /// Total sector DAO distributions (for accounting)
-    pub total_sector_dao_distributed: u64,
+    pub total_sector_dao_distributed: u128,
     /// Total emergency reserve distributions (for accounting)
-    pub total_emergency_distributed: u64,
+    pub total_emergency_distributed: u128,
     /// Total development grant distributions (for accounting)
-    pub total_dev_grants_distributed: u64,
+    pub total_dev_grants_distributed: u128,
     /// Last UBI distribution timestamp
     pub last_ubi_distribution: u64,
     /// Last sector DAO distribution timestamp
@@ -122,31 +122,31 @@ impl DaoTreasury {
     }
 
     /// Calculate UBI distribution amount per citizen
-    pub fn calculate_ubi_per_citizen(&self, total_citizens: u64) -> u64 {
+    pub fn calculate_ubi_per_citizen(&self, total_citizens: u64) -> u128 {
         if total_citizens > 0 && self.ubi_allocated > 0 {
-            self.ubi_allocated / total_citizens
+            self.ubi_allocated / total_citizens as u128
         } else {
             0
         }
     }
 
     /// Calculate sector DAO funding available
-    pub fn calculate_sector_dao_funding_available(&self) -> u64 {
+    pub fn calculate_sector_dao_funding_available(&self) -> u128 {
         self.sector_dao_allocated
     }
 
     /// Calculate emergency reserve funding available
-    pub fn calculate_emergency_funding_available(&self) -> u64 {
+    pub fn calculate_emergency_funding_available(&self) -> u128 {
         self.emergency_allocated
     }
 
     /// Calculate development grants funding available
-    pub fn calculate_dev_grants_funding_available(&self) -> u64 {
+    pub fn calculate_dev_grants_funding_available(&self) -> u128 {
         self.dev_grants_allocated
     }
 
     /// Record UBI distribution (for accounting)
-    pub fn record_ubi_distribution(&mut self, amount: u64, timestamp: u64) -> Result<()> {
+    pub fn record_ubi_distribution(&mut self, amount: u128, timestamp: u64) -> Result<()> {
         if amount > self.ubi_allocated {
             return Err(anyhow::anyhow!("UBI distribution exceeds allocated amount"));
         }
@@ -166,7 +166,7 @@ impl DaoTreasury {
     }
 
     /// Record sector DAO distribution (for accounting)
-    pub fn record_sector_dao_distribution(&mut self, amount: u64, timestamp: u64) -> Result<()> {
+    pub fn record_sector_dao_distribution(&mut self, amount: u128, timestamp: u64) -> Result<()> {
         if amount > self.sector_dao_allocated {
             return Err(anyhow::anyhow!(
                 "Sector DAO distribution exceeds allocated amount"
@@ -188,7 +188,7 @@ impl DaoTreasury {
     }
 
     /// Record emergency reserve distribution (for accounting)
-    pub fn record_emergency_distribution(&mut self, amount: u64, timestamp: u64) -> Result<()> {
+    pub fn record_emergency_distribution(&mut self, amount: u128, timestamp: u64) -> Result<()> {
         if amount > self.emergency_allocated {
             return Err(anyhow::anyhow!(
                 "Emergency distribution exceeds allocated amount"
@@ -210,7 +210,7 @@ impl DaoTreasury {
     }
 
     /// Record development grant distribution (for accounting)
-    pub fn record_dev_grants_distribution(&mut self, amount: u64, timestamp: u64) -> Result<()> {
+    pub fn record_dev_grants_distribution(&mut self, amount: u128, timestamp: u64) -> Result<()> {
         if amount > self.dev_grants_allocated {
             return Err(anyhow::anyhow!(
                 "Dev grant distribution exceeds allocated amount"
@@ -275,7 +275,7 @@ impl DaoTreasury {
         })
     }
 
-    fn total_allocated(&self) -> u64 {
+    fn total_allocated(&self) -> u128 {
         self.ubi_allocated
             .saturating_add(self.sector_dao_allocated)
             .saturating_add(self.emergency_allocated)

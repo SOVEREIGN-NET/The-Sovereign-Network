@@ -607,7 +607,8 @@ impl Blockchain {
             recipient: PublicKey::new(
                 recipient_identity.try_into().unwrap_or([0u8; 2592])
             ),
-        };
+                        merkle_leaf: Hash::default(),
+};
         let utxo_hash = crate::types::hash::blake3_hash(
             format!("funding_utxo:{}:{}", wallet_id, amount).as_bytes(),
         );
@@ -701,17 +702,9 @@ impl Blockchain {
                                 }
                             }
                         }
-                        if let Some(store) = &self.store {
-                            if let Some(token) = self.token_contracts.get(&sov_token_id) {
-                                let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
-                                if let Err(e) = store_ref.put_token_contract(token) {
-                                    warn!(
-                                        "Failed to persist SOV token after wallet registration mint: {}",
-                                        e
-                                    );
-                                }
-                            }
-                        }
+                        // Sled persistence happens during block commit (begin_block/commit_block).
+                        // The in-memory mint above is authoritative; sled is updated when the
+                        // wallet registration transaction is included in a block.
                     }
                 }
             }

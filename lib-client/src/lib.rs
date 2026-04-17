@@ -1044,7 +1044,7 @@ pub extern "C" fn zhtp_client_build_token_transfer(
     token_id: *const u8,
     to_pubkey: *const u8,
     to_pubkey_len: usize,
-    amount: u64,
+    amount: u128,
     chain_id: u8,
     nonce: u64,
 ) -> *mut std::ffi::c_char {
@@ -1091,7 +1091,7 @@ pub extern "C" fn zhtp_client_build_sov_wallet_transfer(
     handle: *const IdentityHandle,
     from_wallet_id: *const u8,
     to_wallet_id: *const u8,
-    amount: u64,
+    amount: u128,
     chain_id: u8,
     nonce: u64,
 ) -> *mut std::ffi::c_char {
@@ -1138,7 +1138,7 @@ pub extern "C" fn zhtp_client_build_token_wallet_transfer(
     token_id: *const u8,
     from_wallet_id: *const u8,
     to_wallet_id: *const u8,
-    amount: u64,
+    amount: u128,
     chain_id: u8,
     nonce: u64,
 ) -> *mut std::ffi::c_char {
@@ -1295,7 +1295,7 @@ pub extern "system" fn Java_com_sovereignnetworkmobile_Identity_nativeBuildSovWa
         handle as *const IdentityHandle,
         from_vec.as_ptr(),
         to_vec.as_ptr(),
-        amount as u64,
+        amount as u128,
         chain_id as u8,
         nonce as u64,
     );
@@ -1417,7 +1417,7 @@ pub extern "C" fn zhtp_client_build_token_mint(
     token_id: *const u8,
     to_pubkey: *const u8,
     to_pubkey_len: usize,
-    amount: u64,
+    amount: u128,
     chain_id: u8,
 ) -> *mut std::ffi::c_char {
     if handle.is_null() || token_id.is_null() || to_pubkey.is_null() {
@@ -1457,7 +1457,7 @@ pub extern "C" fn zhtp_client_build_token_create(
     handle: *const IdentityHandle,
     name: *const std::ffi::c_char,
     symbol: *const std::ffi::c_char,
-    initial_supply: u64,
+    initial_supply: u128,
     decimals: u8,
     treasury_recipient: *const u8,
     chain_id: u8,
@@ -1507,7 +1507,7 @@ pub extern "C" fn zhtp_client_build_token_create(
 pub extern "C" fn zhtp_client_build_token_burn(
     handle: *const IdentityHandle,
     token_id: *const u8,
-    amount: u64,
+    amount: u128,
     chain_id: u8,
 ) -> *mut std::ffi::c_char {
     if handle.is_null() || token_id.is_null() {
@@ -1557,7 +1557,7 @@ pub extern "C" fn zhtp_client_build_token_burn(
 pub unsafe extern "C" fn zhtp_client_build_dao_stake(
     handle: *const IdentityHandle,
     sector_dao_key_id: *const u8,
-    amount: u64,
+    amount: u128,
     nonce: u64,
     lock_blocks: u64,
     chain_id: u8,
@@ -1863,8 +1863,8 @@ pub extern "C" fn zhtp_client_build_bonding_curve_deploy(
 pub extern "C" fn zhtp_client_build_bonding_curve_buy(
     handle: *const IdentityHandle,
     token_id: *const u8,
-    stable_amount: u64,
-    min_tokens_out: u64,
+    stable_amount: u128,
+    min_tokens_out: u128,
     chain_id: u8,
     nonce: u64,
 ) -> *mut std::ffi::c_char {
@@ -1908,8 +1908,8 @@ pub extern "C" fn zhtp_client_build_bonding_curve_buy(
 pub extern "C" fn zhtp_client_build_bonding_curve_sell(
     handle: *const IdentityHandle,
     token_id: *const u8,
-    token_amount: u64,
-    min_stable_out: u64,
+    token_amount: u128,
+    min_stable_out: u128,
     chain_id: u8,
     nonce: u64,
 ) -> *mut std::ffi::c_char {
@@ -1956,8 +1956,8 @@ pub extern "C" fn zhtp_client_build_swap(
     handle: *const IdentityHandle,
     token_id: *const u8,
     pool_id: *const u8,
-    amount_in: u64,
-    min_amount_out: u64,
+    amount_in: u128,
+    min_amount_out: u128,
     token_to_sov: u8,
     chain_id: u8,
     nonce: u64,
@@ -2009,8 +2009,8 @@ pub extern "C" fn zhtp_client_build_add_liquidity(
     handle: *const IdentityHandle,
     token_id: *const u8,
     pool_id: *const u8,
-    token_amount: u64,
-    sov_amount: u64,
+    token_amount: u128,
+    sov_amount: u128,
     chain_id: u8,
     nonce: u64,
 ) -> *mut std::ffi::c_char {
@@ -2059,7 +2059,7 @@ pub extern "C" fn zhtp_client_build_remove_liquidity(
     handle: *const IdentityHandle,
     token_id: *const u8,
     pool_id: *const u8,
-    lp_amount: u64,
+    lp_amount: u128,
     chain_id: u8,
     nonce: u64,
 ) -> *mut std::ffi::c_char {

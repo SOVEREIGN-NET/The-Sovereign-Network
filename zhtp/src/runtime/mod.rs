@@ -2609,7 +2609,8 @@ impl RuntimeOrchestrator {
                                                     .as_bytes(),
                                             ),
                                             recipient: lib_crypto::PublicKey::new([0u8; 2592]),
-                                        };
+                                                                                    merkle_leaf: lib_blockchain::Hash::default(),
+};
                                     let utxo_hash = lib_blockchain::types::hash::blake3_hash(
                                         format!("welcome_bonus_utxo:{}", wallet_id_hex).as_bytes(),
                                     );
@@ -2795,7 +2796,8 @@ impl RuntimeOrchestrator {
                                                         format!("welcome_bonus_note_{}", wallet_id_hex).as_bytes()
                                                     ),
                                                     recipient: lib_crypto::PublicKey::new([0u8; 2592]),
-                                                };
+                                                                                                    merkle_leaf: lib_blockchain::Hash::default(),
+};
                                                 let utxo_hash =
                                                     lib_blockchain::types::hash::blake3_hash(
                                                         format!(
@@ -2861,7 +2863,8 @@ impl RuntimeOrchestrator {
                                                         .as_bytes(),
                                                 ),
                                                 recipient: lib_crypto::PublicKey::new([0u8; 2592]),
-                                            };
+                                                                                            merkle_leaf: lib_blockchain::Hash::default(),
+};
                                         let utxo_hash = lib_blockchain::types::hash::blake3_hash(
                                             format!("welcome_bonus_utxo:{}", wallet_id_hex)
                                                 .as_bytes(),
@@ -2956,7 +2959,8 @@ impl RuntimeOrchestrator {
                                                         format!("welcome_bonus_note_{}", wallet_id_hex).as_bytes()
                                                     ),
                                                     recipient: lib_crypto::PublicKey::new([0u8; 2592]),
-                                                };
+                                                                                                    merkle_leaf: lib_blockchain::Hash::default(),
+};
                                                 let utxo_hash =
                                                     lib_blockchain::types::hash::blake3_hash(
                                                         format!(

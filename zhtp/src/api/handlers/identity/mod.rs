@@ -330,7 +330,8 @@ impl IdentityHandler {
                 recipient: PublicKey::new(
                     citizenship_result.identity_id.as_bytes().try_into().unwrap_or([0u8; 2592])
                 ),
-            };
+                            merkle_leaf: Hash::default(),
+};
 
             let outputs = vec![welcome_bonus_output];
 
@@ -686,7 +687,8 @@ impl IdentityHandler {
             recipient: PublicKey::new(
                 recipient_identity.as_slice().try_into().unwrap_or([0u8; 2592])
             ),
-        };
+                    merkle_leaf: Hash::default(),
+};
 
         let outputs = vec![wallet_dust_output];
 
@@ -1728,7 +1730,8 @@ impl IdentityHandler {
             recipient: PublicKey::new(
                 public_key_bytes.as_slice().try_into().unwrap_or([0u8; 2592])
             ),
-        }];
+                    merkle_leaf: Hash::default(),
+}];
 
         let server_keypair = lib_crypto::generate_keypair()
             .map_err(|e| anyhow::anyhow!("Failed to generate server keypair: {}", e))?;
@@ -1894,7 +1897,7 @@ impl IdentityHandler {
             "device_id": req_data.device_id,
             "identity_type": req_data.identity_type,
             "blockchain_tx": blockchain_tx_hash,
-            "welcome_bonus": welcome_bonus_amount,
+            "welcome_bonus": welcome_bonus_amount.to_string(),
             "registered_at": now,
             "pqc_enabled": req_data.kyber_public_key.is_some(),
             "primary_wallet_id": primary_wallet_id,

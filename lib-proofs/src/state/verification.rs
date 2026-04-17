@@ -84,13 +84,29 @@ pub async fn verify_state_proof(proof: &AggregatedStateProof) -> Result<Verifica
         ));
     }
 
-    // For now, return Valid for well-formed proofs
-    // In a full implementation, this would verify the cryptographic proof
-    Ok(VerificationResult::Valid {
-        circuit_id: "state_proof".to_string(),
-        verification_time_ms: 1,
-        public_inputs: vec![proof.state.block_height],
-    })
+    #[cfg(feature = "real-proofs")]
+    {
+        let start = std::time::Instant::now();
+        match crate::state::circuit::real::verify_state(&proof.plonky2_proof.proof) {
+            Ok(()) => Ok(VerificationResult::Valid {
+                circuit_id: "plonky2-real-state".to_string(),
+                verification_time_ms: start.elapsed().as_millis() as u64,
+                public_inputs: proof.plonky2_proof.public_inputs.clone(),
+            }),
+            Err(e) => Ok(VerificationResult::Invalid(format!(
+                "State proof cryptographic verification failed: {}",
+                e
+            ))),
+        }
+    }
+
+    #[cfg(not(feature = "real-proofs"))]
+    {
+        let _ = proof;
+        Err(anyhow::anyhow!(
+            "Real state proof verification requires the 'real-proofs' feature"
+        ))
+    }
 }
 
 /// Convenience function for quick bootstrap proof verification

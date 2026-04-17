@@ -156,7 +156,7 @@ fn attach_test_blockchain_provider(engine: &mut ConsensusEngine) {
         async fn decode_block_data(
             &self,
             _block_data: &[u8],
-        ) -> Result<(u32, u64), Box<dyn std::error::Error + Send + Sync>> {
+        ) -> Result<(u32, u128), Box<dyn std::error::Error + Send + Sync>> {
             Ok((0, 0))
         }
     }

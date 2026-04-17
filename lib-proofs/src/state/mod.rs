@@ -6,6 +6,7 @@
 
 pub mod aggregation;
 pub mod bootstrap;
+pub mod circuit;
 pub mod state_proof;
 pub mod verification;
 

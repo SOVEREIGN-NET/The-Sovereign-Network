@@ -22,16 +22,16 @@ pub struct PayoutSchedule {
     /// Next scheduled payout
     pub next_payout: u64,
     /// Amount per payout
-    pub amount_per_payout: u64,
+    pub amount_per_payout: u128,
     /// Total payouts processed
     pub total_payouts: u64,
     /// Total amount paid out
-    pub total_amount_paid: u64,
+    pub total_amount_paid: u128,
 }
 
 impl PayoutSchedule {
     /// Create a new payout schedule
-    pub fn new(frequency_seconds: u64, amount_per_payout: u64) -> Self {
+    pub fn new(frequency_seconds: u64, amount_per_payout: u128) -> Self {
         let current_time = crate::wasm::compatibility::current_timestamp().unwrap_or(0);
 
         PayoutSchedule {
@@ -51,7 +51,7 @@ impl PayoutSchedule {
     }
 
     /// Process payout and update schedule
-    pub fn process_payout(&mut self) -> Result<u64> {
+    pub fn process_payout(&mut self) -> Result<u128> {
         if !self.is_payout_due() {
             return Ok(0);
         }
@@ -74,12 +74,12 @@ pub struct AutomatedUBI {
     /// Registered UBI recipients
     pub recipients: HashMap<String, [u8; 32]>, // citizen_id -> wallet_address
     /// UBI amount per recipient
-    pub ubi_per_recipient: u64,
+    pub ubi_per_recipient: u128,
 }
 
 impl AutomatedUBI {
     /// Create new automated UBI system
-    pub fn new(monthly_ubi_amount: u64) -> Self {
+    pub fn new(monthly_ubi_amount: u128) -> Self {
         let monthly_frequency = 30 * 24 * 3600; // 30 days in seconds
 
         AutomatedUBI {
@@ -125,7 +125,7 @@ impl AutomatedUBI {
         wallets: &mut HashMap<[u8; 32], WalletBalance>,
         registrations: &mut HashMap<Hash, UbiRegistration>,
         current_block: u64,
-    ) -> Result<u64> {
+    ) -> Result<u128> {
         if !self.schedule.is_payout_due() || self.recipients.is_empty() {
             return Ok(0);
         }
@@ -138,10 +138,10 @@ impl AutomatedUBI {
             return Ok(0);
         }
 
-        let total_distribution = match ubi_per_citizen.checked_mul(total_recipients) {
+        let total_distribution = match ubi_per_citizen.checked_mul(total_recipients as u128) {
             Some(amount) => amount,
             None => {
-                info!("UBI distribution overflow: ubi_per_citizen ({}) * recipients ({}) exceeds u64::MAX", ubi_per_citizen, total_recipients);
+                info!("UBI distribution overflow: ubi_per_citizen ({}) * recipients ({}) exceeds u128::MAX", ubi_per_citizen, total_recipients);
                 return Ok(0);
             }
         };
@@ -154,7 +154,7 @@ impl AutomatedUBI {
         let mut successful_distributions = 0u64;
         for (citizen_id, wallet_address) in &self.recipients {
             if let Some(wallet) = wallets.get_mut(wallet_address) {
-                wallet.available_balance = wallet.available_balance.saturating_add(ubi_per_citizen);
+                wallet.available_balance = wallet.available_balance.saturating_add(ubi_per_citizen as u128);
                 successful_distributions += 1;
 
                 // Synchronize registration state - record the payout with block height
@@ -179,7 +179,7 @@ impl AutomatedUBI {
                 // If remainder was distributed, update wallet accordingly
                 if actual_payout > ubi_per_citizen as u128 {
                     let remainder = actual_payout - ubi_per_citizen as u128;
-                    wallet.available_balance = wallet.available_balance.saturating_add(remainder as u64);
+                    wallet.available_balance = wallet.available_balance.saturating_add(remainder as u128);
                 }
 
                 info!(
@@ -229,7 +229,7 @@ pub struct AutomatedInfrastructureRewards {
 
 impl AutomatedInfrastructureRewards {
     /// Create new automated infrastructure rewards
-    pub fn new(daily_reward_pool: u64) -> Self {
+    pub fn new(daily_reward_pool: u128) -> Self {
         let daily_frequency = 24 * 3600; // 24 hours in seconds
 
         AutomatedInfrastructureRewards {
@@ -259,7 +259,7 @@ impl AutomatedInfrastructureRewards {
     pub fn process_infrastructure_rewards(
         &mut self,
         wallets: &mut HashMap<[u8; 32], WalletBalance>,
-    ) -> Result<u64> {
+    ) -> Result<u128> {
         if !self.schedule.is_payout_due() || self.providers.is_empty() {
             return Ok(0);
         }
@@ -271,11 +271,11 @@ impl AutomatedInfrastructureRewards {
         }
 
         let reward_pool = self.schedule.amount_per_payout;
-        let mut total_distributed = 0u64;
+        let mut total_distributed = 0u128;
 
         // Distribute rewards proportionally
         for (wallet_address, contribution_score) in &self.providers {
-            let provider_reward = (reward_pool * contribution_score) / total_contribution_score;
+            let provider_reward = (reward_pool * *contribution_score as u128) / total_contribution_score as u128;
 
             if let Some(wallet) = wallets.get_mut(wallet_address) {
                 wallet.available_balance += provider_reward;
@@ -328,7 +328,7 @@ pub struct AutomatedPayoutProcessor {
 
 impl AutomatedPayoutProcessor {
     /// Create new automated payout processor
-    pub fn new(monthly_ubi: u64, daily_infrastructure_rewards: u64) -> Self {
+    pub fn new(monthly_ubi: u128, daily_infrastructure_rewards: u128) -> Self {
         AutomatedPayoutProcessor {
             ubi_system: AutomatedUBI::new(monthly_ubi),
             infrastructure_system: AutomatedInfrastructureRewards::new(
@@ -344,7 +344,7 @@ impl AutomatedPayoutProcessor {
         wallets: &mut HashMap<[u8; 32], WalletBalance>,
         registrations: &mut HashMap<Hash, UbiRegistration>,
         current_block: u64,
-    ) -> Result<(u64, u64)> {
+    ) -> Result<(u128, u128)> {
         let ubi_distributed = self.ubi_system.process_ubi_distribution(
             treasury,
             wallets,

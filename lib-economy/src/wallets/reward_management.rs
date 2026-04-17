@@ -705,13 +705,13 @@ impl MultiWallet {
         Ok(())
     }
 
-    pub fn transfer_between_wallets(&mut self, from: &str, to: &str, amount: u64) -> Result<()> {
-        if amount > self.transfer_capabilities.daily_transfer_limit {
+    pub fn transfer_between_wallets(&mut self, from: &str, to: &str, amount: u128) -> Result<()> {
+        if amount > self.transfer_capabilities.daily_transfer_limit as u128 {
             return Err(anyhow!("Amount exceeds daily transfer limit"));
         }
 
         // Calculate transfer fee
-        let fee = (amount * self.transfer_capabilities.transfer_fee_rate) / 10000;
+        let fee = (amount * self.transfer_capabilities.transfer_fee_rate as u128) / 10000;
         let net_amount = amount - fee;
 
         // Get source wallet
@@ -743,9 +743,9 @@ impl MultiWallet {
         Ok(())
     }
 
-    pub fn get_total_balance(&self) -> u64 {
+    pub fn get_total_balance(&self) -> u128 {
         let primary_balance = self.primary_wallet.total_balance();
-        let reward_balance: u64 = self
+        let reward_balance: u128 = self
             .reward_wallets
             .values()
             .map(|w| w.total_balance())
@@ -754,12 +754,12 @@ impl MultiWallet {
         primary_balance + reward_balance
     }
 
-    pub fn consolidate_rewards(&mut self) -> Result<u64> {
+    pub fn consolidate_rewards(&mut self) -> Result<u128> {
         if !self.transfer_capabilities.auto_consolidate {
             return Err(anyhow!("Auto-consolidation disabled"));
         }
 
-        let mut total_consolidated = 0;
+        let mut total_consolidated: u128 = 0;
 
         for (_, wallet) in self.reward_wallets.iter_mut() {
             let balance = wallet.available_balance;

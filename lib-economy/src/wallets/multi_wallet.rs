@@ -164,9 +164,9 @@ pub struct CrossWalletTransaction {
     /// Destination wallet type
     pub to_wallet: WalletType,
     /// Transfer amount
-    pub amount: u64,
+    pub amount: u128,
     /// Transaction fees paid
-    pub fees: u64,
+    pub fees: u128,
     /// Blockchain block height
     pub block_height: u64,
     /// Transaction timestamp
@@ -296,7 +296,7 @@ impl MultiWalletManager {
         &mut self,
         from_wallet: WalletType,
         to_wallet: WalletType,
-        amount: u64,
+        amount: u128,
         purpose: String,
     ) -> Result<[u8; 32]> {
         // Validate wallets exist
@@ -428,7 +428,7 @@ impl MultiWalletManager {
     }
 
     /// Get total balance across all wallets
-    pub fn get_total_balance(&self) -> u64 {
+    pub fn get_total_balance(&self) -> u128 {
         self.wallets
             .values()
             .map(|wallet| wallet.total_balance())
@@ -436,7 +436,7 @@ impl MultiWalletManager {
     }
 
     /// Get balance breakdown by wallet type
-    pub fn get_balance_breakdown(&self) -> HashMap<WalletType, u64> {
+    pub fn get_balance_breakdown(&self) -> HashMap<WalletType, u128> {
         self.wallets
             .iter()
             .map(|(wallet_type, wallet)| (wallet_type.clone(), wallet.total_balance()))
@@ -463,9 +463,9 @@ impl MultiWalletManager {
 
             // Check if wallet has enough balance
             if let Some(wallet) = self.wallets.get(wallet_type) {
-                if wallet.available_balance >= rule.minimum_balance {
+                if wallet.available_balance >= rule.minimum_balance as u128 {
                     let consolidation_amount =
-                        wallet.available_balance - (rule.minimum_balance / 2); // Leave some balance
+                        wallet.available_balance - (rule.minimum_balance as u128 / 2); // Leave some balance
 
                     if consolidation_amount > 0 {
                         let tx_id = self
@@ -649,7 +649,7 @@ impl MultiWalletManager {
         &self,
         from_wallet: &WalletType,
         to_wallet: &WalletType,
-        amount: u64,
+        amount: u128,
     ) -> Result<()> {
         // Validate the target wallet type is compatible
         match (from_wallet, to_wallet) {
@@ -676,7 +676,7 @@ impl MultiWalletManager {
             .daily_transfer_limits
             .get(from_wallet)
         {
-            if amount > *limit {
+            if amount > *limit as u128 {
                 return Err(anyhow::anyhow!("Transfer amount exceeds daily limit"));
             }
         }
@@ -687,7 +687,7 @@ impl MultiWalletManager {
             .minimum_transfer_amounts
             .get(from_wallet)
         {
-            if amount < *minimum {
+            if amount < *minimum as u128 {
                 return Err(anyhow::anyhow!("Transfer amount below minimum"));
             }
         }
@@ -715,8 +715,8 @@ impl MultiWalletManager {
         &self,
         from_wallet: &WalletType,
         to_wallet: &WalletType,
-        amount: u64,
-    ) -> Result<u64> {
+        amount: u128,
+    ) -> Result<u128> {
         // Get fee rate for this wallet pair
         let fee_rate = self
             .transfer_capabilities
@@ -724,7 +724,7 @@ impl MultiWalletManager {
             .get(&(from_wallet.clone(), to_wallet.clone()))
             .unwrap_or(&50); // Default 0.5%
 
-        let fee = (amount * fee_rate) / 10_000; // Convert basis points to fee
+        let fee = (amount * (*fee_rate as u128)) / 10_000; // Convert basis points to fee
         Ok(fee.max(1)) // Minimum fee of 1 SOV
     }
 
@@ -732,8 +732,8 @@ impl MultiWalletManager {
         &self,
         from_wallet: &WalletType,
         to_wallet: &WalletType,
-        amount: u64,
-        fee: u64,
+        amount: u128,
+        fee: u128,
     ) -> Result<[u8; 32]> {
         // Create proper blockchain transaction using imported transaction creation functionality
         let transaction_type =
@@ -823,7 +823,7 @@ impl MultiWalletManager {
         if let Some(rule) = self.auto_consolidation_rules.get(wallet_type).cloned() {
             if rule.enabled {
                 if let Some(wallet) = self.wallets.get(wallet_type) {
-                    if wallet.available_balance >= rule.minimum_balance {
+                    if wallet.available_balance >= rule.minimum_balance as u128 {
                         // Trigger consolidation check on next cycle
                         info!(
                             "Auto-consolidation eligible for {:?} wallet (balance: {} >= minimum: {})",

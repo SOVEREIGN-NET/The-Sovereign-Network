@@ -428,6 +428,10 @@ pub struct TransactionOutput {
     pub note: Hash,
     /// Public key of the recipient
     pub recipient: PublicKey,
+    /// Poseidon Merkle leaf commitment for the UTXO set tree.
+    /// When present, the node inserts this commitment into the persistent
+    /// UTXO Merkle tree so the recipient can later request a inclusion proof.
+    pub merkle_leaf: Hash,
 }
 
 /// Identity transaction data (processed by lib-identity package)
@@ -1512,7 +1516,7 @@ impl Transaction {
         dao_id: [u8; 32],
         employee_key_id: [u8; 32],
         contract_type: u8,
-        compensation_amount: u64,
+        compensation_amount: u128,
         payment_period: u8,
         tax_rate_basis_points: u16,
         tax_jurisdiction: String,
@@ -1642,6 +1646,7 @@ impl TransactionOutput {
             commitment,
             note,
             recipient,
+            merkle_leaf: Hash::default(),
         }
     }
 
@@ -2146,8 +2151,8 @@ pub struct CreateEmploymentContractData {
     pub employee_key_id: [u8; 32],
     /// Contract type discriminant (0=PublicAccess, 1=Employment)
     pub contract_type: u8,
-    /// Compensation amount in CBE atomic units
-    pub compensation_amount: u64,
+    /// Compensation amount in CBE atomic units (18-decimal)
+    pub compensation_amount: u128,
     /// Payment period discriminant (0=Monthly, 1=Quarterly, 2=Annually)
     pub payment_period: u8,
     /// Tax rate in basis points (max 5000 = 50%)
@@ -2160,10 +2165,10 @@ pub struct CreateEmploymentContractData {
 
 /// Payroll mint as a synthetic CBE bonding curve event (CBE spec §6).
 ///
-/// Mints `amount_cbe` (X) to the collaborator and routes 0.25X to the SOV
-/// treasury, recording a PRE_BACKED entry for the full 1.25X gross.  No SOV
-/// enters the system — s_c does not change.  A governance-approved deliverable
-/// hash must be recorded on-chain before the mint fires (protocol invariant).
+/// Mints gross ≈ 2.083X CBE, split 20% SOV treasury / 32% locked reserve /
+/// 48% collaborator (= X).  Records a PRE_BACKED entry for the full gross.
+/// No SOV enters the system — s_c does not change.  Signer must be a
+/// Bootstrap Council member (governance guard).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessPayrollData {
     /// Employment contract that authorises this payroll (32-byte contract_id).
