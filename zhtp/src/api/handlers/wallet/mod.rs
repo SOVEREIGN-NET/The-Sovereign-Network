@@ -1653,7 +1653,10 @@ impl WalletHandler {
         }
     }
 
-    /// Mint SOV to an existing wallet (admin operation for genesis balance recovery).
+    /// Mint SOV to an existing wallet via a TokenMint system transaction.
+    ///
+    /// Creates a real blockchain transaction that goes through consensus and is
+    /// executed by all nodes. The SOV is persisted in the sled token_balances tree.
     async fn handle_mint_sov(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         #[derive(serde::Deserialize)]
         struct MintRequest {
@@ -1677,54 +1680,68 @@ impl WalletHandler {
         let amount_atoms = lib_types::sov::atoms(req.amount_sov as u128);
         let mut wallet_id_arr = [0u8; 32];
         wallet_id_arr.copy_from_slice(&wallet_id_bytes);
+        let wallet_id_hex = hex::encode(&wallet_id_arr);
 
         let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
             .await
             .map_err(|e| anyhow::anyhow!("blockchain unavailable: {}", e))?;
 
-        let mut blockchain = blockchain_arc.write().await;
+        // Verify wallet exists, then create and submit the TokenMint transaction
+        let tx_hash = {
+            let mut blockchain = blockchain_arc.write().await;
 
-        // Verify wallet exists in registry
-        let wallet_id_hex = hex::encode(&wallet_id_arr);
-        if !blockchain.wallet_registry.contains_key(&wallet_id_hex) {
-            return Ok(create_error_response(
-                ZhtpStatus::NotFound,
-                format!("Wallet {} not found in registry", &wallet_id_hex[..16]),
-            ));
-        }
-
-        // Mint SOV to the wallet using the same key construction as balance lookups
-        let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
-        let recipient_pk = lib_blockchain::integration::crypto_integration::PublicKey {
-            dilithium_pk: [0u8; 2592],
-            kyber_pk: [0u8; 1568],
-            key_id: wallet_id_arr,
-        };
-        if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
-            if let Err(e) = token.mint(&recipient_pk, amount_atoms) {
+            if !blockchain.wallet_registry.contains_key(&wallet_id_hex) {
                 return Ok(create_error_response(
-                    ZhtpStatus::InternalServerError,
-                    format!("SOV mint failed: {}", e),
+                    ZhtpStatus::NotFound,
+                    format!("Wallet {} not found in registry", &wallet_id_hex[..16]),
                 ));
             }
-        } else {
-            return Ok(create_error_response(
-                ZhtpStatus::InternalServerError,
-                "SOV token contract not found".to_string(),
-            ));
-        }
 
-        tracing::info!(
-            "💰 Minted {} SOV to wallet {} (admin mint)",
-            req.amount_sov,
-            &wallet_id_hex[..16],
-        );
+            let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+            let mint_data = lib_blockchain::transaction::TokenMintData {
+                token_id: sov_token_id,
+                to: wallet_id_arr,
+                amount: amount_atoms,
+            };
+
+            let mint_tx = lib_blockchain::transaction::Transaction::new_token_mint(
+                mint_data,
+                lib_blockchain::integration::crypto_integration::Signature {
+                    signature: Vec::new(),
+                    public_key: lib_blockchain::integration::crypto_integration::PublicKey::new(
+                        [0u8; 2592],
+                    ),
+                    algorithm:
+                        lib_blockchain::integration::crypto_integration::SignatureAlgorithm::DEFAULT,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                },
+                format!("Admin SOV mint: {} SOV to {}", req.amount_sov, &wallet_id_hex[..16])
+                    .into_bytes(),
+            );
+
+            let hash = mint_tx.hash();
+            blockchain.add_system_transaction(mint_tx)
+                .map_err(|e| anyhow::anyhow!("Failed to submit TokenMint transaction: {}", e))?;
+
+            tracing::info!(
+                "💰 TokenMint submitted: {} SOV to wallet {} (tx={})",
+                req.amount_sov,
+                &wallet_id_hex[..16],
+                hex::encode(hash.as_bytes()),
+            );
+
+            hash
+        };
 
         create_json_response(serde_json::json!({
             "status": "success",
             "wallet_id": req.wallet_id,
             "amount_sov": req.amount_sov,
             "amount_atoms": amount_atoms.to_string(),
+            "tx_hash": hex::encode(tx_hash.as_bytes()),
         }))
     }
 }
