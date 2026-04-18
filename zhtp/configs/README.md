@@ -85,7 +85,7 @@ This directory contains pre-configured templates for different types of ZHTP nod
 - Fast block times (2 seconds)
 - Lower resource requirements
 - Simplified configuration
-- TCP-only networking
+- QUIC-first networking
 - Local bootstrap peers
 
 **Resources**: 512MB RAM, 2 CPU threads, 50GB storage
@@ -106,6 +106,26 @@ zhtp --config zhtp/configs/dev-node.toml
 # Or use the zhtp-cli command surface
 zhtp-cli node start --config zhtp/configs/full-node.toml
 ```
+
+### macOS Transport Baseline (QUIC-first)
+
+For first-run node bring-up on macOS, use the QUIC-only baseline profile:
+
+```bash
+zhtp --config zhtp/configs/mac-bootstrap.toml
+```
+
+Experimental transports (`bluetooth`, `bluetooth_le`, `wifi_direct`, `lorawan`) are opt-in on macOS:
+
+```bash
+export ZHTP_ENABLE_EXPERIMENTAL_MAC_TRANSPORTS=1
+zhtp --config zhtp/configs/full-node.toml
+```
+
+Transport support matrix for mac startup:
+
+- Stable default: `quic`
+- Experimental / explicit opt-in: `bluetooth`, `bluetooth_le`, `wifi_direct`, `lorawan`
 
 ### Advanced Usage
 
