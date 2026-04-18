@@ -58,7 +58,7 @@ All proof serialization includes version markers for forward compatibility.
 ## 🚀 Quick Start
 
 ### Prerequisites
-- **Rust** 1.70+ (install from [rustup.rs](https://rustup.rs/))
+- **Rust nightly** (repository pins `channel = "nightly"` in `rust-toolchain.toml`)
 - **Git**
 
 ### Build & Run
@@ -72,6 +72,23 @@ cargo build --release --workspace
 
 # Or start from the CLI command surface
 ./target/release/zhtp-cli node start --config zhtp/configs/test-node1.toml
+```
+
+### macOS Quickstart (Validated)
+
+```bash
+# Ensure nightly toolchain is installed and active
+rustup toolchain install nightly
+rustup default nightly
+
+# Build binaries
+cargo build --release --workspace
+
+# Validate the mac baseline config
+bash zhtp/configs/validate-config.sh zhtp/configs/mac-bootstrap.toml
+
+# Start a mac node with the stable QUIC-first profile
+./target/release/zhtp --config zhtp/configs/mac-bootstrap.toml
 ```
 
 ### Multi-node Testing
@@ -182,7 +199,7 @@ When a node starts successfully, you'll see:
 ## 🛠️ Troubleshooting
 
 ### Build Errors
-- Ensure Rust 1.70+ is installed: `rustc --version`
+- Ensure Rust nightly is active: `rustup show active-toolchain`
 - Update Rust: `rustup update`
 - Clean build: `cargo clean && cargo build --release`
 
