@@ -407,6 +407,15 @@ impl TransactionValidator {
                     return Err(ValidationError::InvalidMemo);
                 }
             }
+            TransactionType::NftCreateCollection
+            | TransactionType::NftMint
+            | TransactionType::NftTransfer
+            | TransactionType::NftBurn => {
+                // NFT transactions - check payload is present
+                if transaction.memo.is_empty() && matches!(transaction.payload, crate::transaction::TransactionPayload::None) {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
         }
 
         // Signature validation:
@@ -655,6 +664,15 @@ impl TransactionValidator {
                     .starts_with(crate::transaction::DOMAIN_UPDATE_PREFIX)
                 {
                     return Err(ValidationError::InvalidMemo);
+                }
+            }
+            TransactionType::NftCreateCollection
+            | TransactionType::NftMint
+            | TransactionType::NftTransfer
+            | TransactionType::NftBurn => {
+                // NFT transactions - check payload is present
+                if transaction.memo.is_empty() && matches!(transaction.payload, crate::transaction::TransactionPayload::None) {
+                    return Err(ValidationError::MissingRequiredData);
                 }
             }
         }
@@ -1893,6 +1911,15 @@ impl<'a> StatefulTransactionValidator<'a> {
                             return Err(ValidationError::InvalidTransaction);
                         }
                     }
+                }
+            }
+            TransactionType::NftCreateCollection
+            | TransactionType::NftMint
+            | TransactionType::NftTransfer
+            | TransactionType::NftBurn => {
+                // NFT transactions - full validation deferred to executor
+                if transaction.memo.is_empty() && matches!(transaction.payload, crate::transaction::TransactionPayload::None) {
+                    return Err(ValidationError::MissingRequiredData);
                 }
             }
         }
@@ -3143,6 +3170,13 @@ pub mod utils {
                     .starts_with(crate::transaction::DOMAIN_UPDATE_PREFIX)
                     && transaction.inputs.is_empty()
                     && transaction.outputs.is_empty()
+            }
+            TransactionType::NftCreateCollection
+            | TransactionType::NftMint
+            | TransactionType::NftTransfer
+            | TransactionType::NftBurn => {
+                // NFT transactions - payload must be present
+                !transaction.memo.is_empty() || !matches!(transaction.payload, crate::transaction::TransactionPayload::None)
             }
         }
     }

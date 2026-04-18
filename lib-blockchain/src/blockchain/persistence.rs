@@ -280,6 +280,7 @@ impl BlockchainV1 {
                 crate::contracts::economics::fee_router::DAO_HEALTHCARE_KEY_ID,
             ),
             domain_registry: HashMap::new(),
+            nft_collections: HashMap::new(),
         }
     }
 }
@@ -595,6 +596,7 @@ impl BlockchainStorageV3 {
                 crate::contracts::economics::fee_router::DAO_HEALTHCARE_KEY_ID,
             ),
             domain_registry: HashMap::new(),
+            nft_collections: HashMap::new(),
         }
     }
 }

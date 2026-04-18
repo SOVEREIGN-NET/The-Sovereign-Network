@@ -1020,7 +1020,12 @@ impl BlockExecutor {
             | TransactionType::DaoUnstake
             // Domain registration/update - state applied by process_domain_transactions
             | TransactionType::DomainRegistration
-            | TransactionType::DomainUpdate => {
+            | TransactionType::DomainUpdate
+            // NFT operations
+            | TransactionType::NftCreateCollection
+            | TransactionType::NftMint
+            | TransactionType::NftTransfer
+            | TransactionType::NftBurn => {
                 // Fall through to the general validation flow below without
                 // treating oracle attestations as automatically valid.
             }
@@ -2699,6 +2704,18 @@ impl BlockExecutor {
 
             TransactionType::DaoUnstake => {
                 self.apply_dao_unstake(mutator, tx, block_height)?;
+                Ok(TxOutcome::LegacySystem)
+            }
+
+            // NFT types — create, mint, transfer, burn
+            TransactionType::NftCreateCollection
+            | TransactionType::NftMint
+            | TransactionType::NftTransfer
+            | TransactionType::NftBurn => {
+                // NFT operations are processed by the blockchain layer in
+                // process_nft_transactions (called after executor.apply_block).
+                // The executor accepts them as pass-through so blocks containing
+                // NFT transactions don't fail validation.
                 Ok(TxOutcome::LegacySystem)
             }
 
