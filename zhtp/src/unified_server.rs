@@ -938,6 +938,12 @@ impl ZhtpUnifiedServer {
         );
         zhtp_router.register_handler("/api/v1/storage".to_string(), storage_handler);
 
+        // Shared auth store for all bearer-protected routes and mobile auth handler (#2157).
+        // Defined here so BearerAuthMiddleware wrappers below can reference it before
+        // the mobile_auth_handler registration further down.
+        let mobile_auth_store =
+            Arc::new(lib_identity::auth::mobile_delegation::MobileAuthStore::new());
+
         // Wallet operations — PROTECTED (#2157)
         let wallet_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(BearerAuthMiddleware::new(
             Arc::new(WalletHandler::new(identity_manager.clone())),
@@ -1121,10 +1127,8 @@ impl ZhtpUnifiedServer {
 
         // Mobile + Web App Authentication Delegation (Issue #1877)
         // All three phases (challenge/verify/session, refresh, delegation certs) share one store.
-        // The store is also shared with BearerAuthMiddleware so protected routes use the same
-        // token validation path (#2157).
-        let mobile_auth_store =
-            Arc::new(lib_identity::auth::mobile_delegation::MobileAuthStore::new());
+        // mobile_auth_store is created above (before the bearer-protected routes) so it can be
+        // shared with BearerAuthMiddleware (#2157).
         let mobile_auth_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             crate::api::handlers::MobileAuthHandler::new(mobile_auth_store.clone()),
         );
