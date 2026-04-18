@@ -1266,8 +1266,7 @@ impl RuntimeOrchestrator {
 
     /// Returns true if local persistent chain artifacts already exist.
     fn has_local_chain_data(&self) -> bool {
-        let data_dir = self.config.environment.data_directory();
-        let sled_path = std::path::Path::new(&data_dir).join("sled");
+        let sled_path = crate::node_data_dir().join("sled");
         if !sled_path.exists() {
             return false;
         }
@@ -1876,8 +1875,7 @@ impl RuntimeOrchestrator {
 
         // Phase 3: Use SledStore for persistent blockchain storage
         // This replaces the deprecated file-based storage with incremental Sled DB
-        let data_dir = self.config.environment.data_directory();
-        let sled_path = std::path::Path::new(&data_dir).join("sled");
+        let sled_path = crate::node_data_dir().join("sled");
 
         info!("📂 Opening SledStore at {:?}", sled_path);
 
