@@ -37,3 +37,14 @@ pub fn seeded_signature(seed: u8) -> Signature {
         timestamp: 1,
     }
 }
+
+/// A zero-value signature bound to an arbitrary existing public key.
+/// Use when the test already has a specific PublicKey it wants to sign with.
+pub fn signature_for(pubkey: &PublicKey) -> Signature {
+    Signature {
+        signature: vec![0u8; 64],
+        public_key: pubkey.clone(),
+        algorithm: SignatureAlgorithm::DEFAULT,
+        timestamp: 0,
+    }
+}

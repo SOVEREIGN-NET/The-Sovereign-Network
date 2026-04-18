@@ -10,20 +10,16 @@ use lib_crypto::types::keys::PublicKey;
 use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 use serde_json::json;
 
+mod common;
+
 const EXEC_REGISTER: &str = "dao_delegate_register_v1";
 const EXEC_REVOKE: &str = "dao_delegate_revoke_v1";
 
-fn test_pubkey(id: u8) -> PublicKey {
-    PublicKey::new([id; 2592])
-}
-
+fn test_pubkey(id: u8) -> PublicKey { common::crypto_fixtures::seeded_public_key(id) }
 fn test_signature(pubkey: &PublicKey, timestamp: u64) -> Signature {
-    Signature {
-        signature: vec![0u8; 64],
-        public_key: pubkey.clone(),
-        algorithm: SignatureAlgorithm::DEFAULT,
-        timestamp,
-    }
+    let mut sig = common::crypto_fixtures::signature_for(pubkey);
+    sig.timestamp = timestamp;
+    sig
 }
 
 fn dao_execution_tx(
