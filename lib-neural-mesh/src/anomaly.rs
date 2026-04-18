@@ -1,7 +1,7 @@
 //! Anomaly detection for Byzantine fault identification
 
 use crate::error::{NeuralMeshError, Result};
-use crate::ml::{IsolationForestConfig, AnomalyDetector};
+use crate::ml::{IsolationForest, IsolationForestConfig, AnomalyDetector};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -282,6 +282,51 @@ impl AnomalySentry {
             ThreatType::Normal
         }
     }
+}
+
+impl AnomalySentry {
+    /// Save anomaly detection model to bytes (compressed-ready for distributed sync)
+    pub fn save_model(&self) -> Result<Vec<u8>> {
+        let detector = self.detector.as_ref().ok_or_else(|| {
+            NeuralMeshError::InferenceFailed("No anomaly detector initialized".to_string())
+        })?;
+        // Serialize the full detector state: forest + threshold + contamination
+        let state = AnomalyDetectorState {
+            forest_bytes: detector.save_forest()
+                .map_err(|e| NeuralMeshError::InferenceFailed(e))?,
+            threshold: detector.threshold(),
+            baseline: self.baseline.clone(),
+        };
+        bincode::serialize(&state)
+            .map_err(|e| NeuralMeshError::InferenceFailed(format!("Serialize anomaly model: {}", e)))
+    }
+
+    /// Load anomaly detection model from bytes (from compressed distributed sync)
+    pub fn load_model(&mut self, data: &[u8]) -> Result<()> {
+        let state: AnomalyDetectorState = bincode::deserialize(data)
+            .map_err(|e| NeuralMeshError::InferenceFailed(format!("Deserialize anomaly model: {}", e)))?;
+        let forest = IsolationForest::load(&state.forest_bytes)
+            .map_err(|e| NeuralMeshError::InferenceFailed(e))?;
+        let mut detector = AnomalyDetector::new(IsolationForestConfig::default(), 0.1);
+        detector.load_forest(forest);
+        self.detector = Some(detector);
+        self.baseline = state.baseline;
+        self.enabled = true;
+        Ok(())
+    }
+
+    /// Get the byte size of the current model weights
+    pub fn model_size_bytes(&self) -> usize {
+        self.save_model().map(|v| v.len()).unwrap_or(0)
+    }
+}
+
+/// Serializable snapshot of anomaly detector state for distributed sync
+#[derive(Serialize, Deserialize)]
+struct AnomalyDetectorState {
+    forest_bytes: Vec<u8>,
+    threshold: f32,
+    baseline: HashMap<String, NodeMetrics>,
 }
 
 impl Default for AnomalySentry {

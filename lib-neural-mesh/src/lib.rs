@@ -45,6 +45,7 @@ pub mod inference;
 pub mod error;
 pub mod ml; // ML implementations
 pub mod content; // Content analysis and compression feedback
+pub mod distributed; // Distributed training + self-compressing neural mesh
 
 // Re-export all public types
 pub use router::{RlRouter, NetworkState, RoutingAction};
@@ -54,6 +55,10 @@ pub use anomaly::{AnomalySentry, NodeMetrics, AnomalyReport, AnomalySeverity, Th
 pub use inference::InferenceEngine;
 pub use error::{NeuralMeshError, Result};
 pub use content::{ContentType, ContentProfile, CompressionFeedback};
+pub use distributed::{
+    DistributedTrainingCoordinator, CompressedModel, ModelId,
+    FedAvgResult, ModelSyncMessage, SelfOptimizingMetrics,
+};
 
 /// Neural mesh protocol version
 pub const PROTOCOL_VERSION: u32 = 1;

@@ -9935,6 +9935,7 @@ dependencies = [
  "lib-access-control",
  "lib-blockchain",
  "lib-client",
+ "lib-compression",
  "lib-consensus",
  "lib-crypto",
  "lib-economy",

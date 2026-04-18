@@ -26,7 +26,33 @@ use crate::runtime::{Component, ComponentHealth, ComponentId, ComponentMessage, 
 use lib_neural_mesh::{
     AnomalyReport, AnomalySentry, NetworkState, NeuroCompressor, NodeMetrics,
     PredictivePrefetcher, RlRouter, RoutingAction,
+    distributed::{
+        CompressedModel, DistributedTrainingCoordinator, ModelCompressor, ModelId,
+        ModelSyncMessage, SelfOptimizingMetrics,
+    },
 };
+
+// ─── SovereignCodec Compressor ──────────────────────────────────────
+// Implements the ModelCompressor trait using SovereignCodec.
+// This is the SELF-REFERENTIAL part: the AI's own model weights are
+// compressed by the same BWT→MTF→RLE→Range codec that the AI helps optimize.
+
+/// Production compressor that wraps SovereignCodec for model weight compression
+pub struct SovereignCodecCompressor;
+
+impl ModelCompressor for SovereignCodecCompressor {
+    fn compress(&self, data: &[u8]) -> Vec<u8> {
+        lib_compression::SovereignCodec::encode(data)
+    }
+
+    fn decompress(&self, data: &[u8]) -> std::result::Result<Vec<u8>, String> {
+        lib_compression::SovereignCodec::decode(data)
+    }
+
+    fn name(&self) -> &str {
+        "SovereignCodec-SFC7"
+    }
+}
 
 /// Statistics tracked during operation
 #[derive(Debug, Default, Clone)]
@@ -38,6 +64,9 @@ pub struct NeuralMeshStats {
     pub training_episodes: u64,
     pub total_reward: f64,
     pub avg_routing_confidence: f64,
+    pub distributed_syncs: u64,
+    pub fedavg_rounds: u64,
+    pub model_bytes_saved: u64,
 }
 
 /// Neural Mesh runtime component
@@ -52,6 +81,11 @@ pub struct NeuralMeshComponent {
     prefetcher: Arc<RwLock<PredictivePrefetcher>>,
     compressor: Arc<RwLock<NeuroCompressor>>,
 
+    // Distributed training — self-compressing neural mesh
+    // More nodes = faster training because FedAvg merges gradients from all peers
+    // The AI's own model weights are ZKC-compressed by SovereignCodec
+    distributed: Arc<RwLock<DistributedTrainingCoordinator>>,
+
     // Operational stats
     stats: Arc<RwLock<NeuralMeshStats>>,
 
@@ -61,6 +95,15 @@ pub struct NeuralMeshComponent {
 
 impl NeuralMeshComponent {
     pub fn new() -> Self {
+        let node_id = uuid::Uuid::new_v4().to_string();
+
+        // Create distributed coordinator with SovereignCodec compressor
+        // This is the self-referential part: the AI compresses itself
+        let coordinator = DistributedTrainingCoordinator::with_compressor(
+            node_id,
+            Arc::new(SovereignCodecCompressor),
+        );
+
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
             start_time: Arc::new(RwLock::new(None)),
@@ -68,6 +111,7 @@ impl NeuralMeshComponent {
             anomaly: Arc::new(RwLock::new(AnomalySentry::new())),
             prefetcher: Arc::new(RwLock::new(PredictivePrefetcher::new())),
             compressor: Arc::new(RwLock::new(NeuroCompressor::new())),
+            distributed: Arc::new(RwLock::new(coordinator)),
             stats: Arc::new(RwLock::new(NeuralMeshStats::default())),
             baseline_metrics: Arc::new(RwLock::new(Vec::new())),
         }
@@ -206,6 +250,96 @@ impl NeuralMeshComponent {
     pub async fn get_stats(&self) -> NeuralMeshStats {
         self.stats.read().await.clone()
     }
+
+    // ── Distributed Training (self-compressing neural mesh) ──
+
+    /// Export ALL model weights as compressed bundles ready for mesh broadcast.
+    /// Each model (RL Router, Prefetcher, Anomaly Sentry) is independently
+    /// ZKC-compressed using SovereignCodec — the same codec the AI optimizes.
+    pub async fn export_all_compressed_models(&self) -> Vec<CompressedModel> {
+        let mut models = Vec::new();
+        let dist = self.distributed.read().await;
+
+        // RL Router weights
+        if let Ok(raw) = self.router.read().await.save_model() {
+            let compressed = dist.export_compressed_model(ModelId::RlRouter, &raw).await;
+            info!("🧠📦 RL Router: {} → {} bytes ({:.1}x)",
+                compressed.raw_size, compressed.compressed_weights.len(), compressed.compression_ratio);
+            models.push(compressed);
+        }
+
+        // Prefetcher LSTM weights
+        if let Ok(raw) = self.prefetcher.read().await.save_model() {
+            let compressed = dist.export_compressed_model(ModelId::Prefetcher, &raw).await;
+            info!("🧠📦 Prefetcher: {} → {} bytes ({:.1}x)",
+                compressed.raw_size, compressed.compressed_weights.len(), compressed.compression_ratio);
+            models.push(compressed);
+        }
+
+        // Anomaly Sentry weights
+        if let Ok(raw) = self.anomaly.read().await.save_model() {
+            let compressed = dist.export_compressed_model(ModelId::AnomalySentry, &raw).await;
+            info!("🧠📦 Anomaly Sentry: {} → {} bytes ({:.1}x)",
+                compressed.raw_size, compressed.compressed_weights.len(), compressed.compression_ratio);
+            models.push(compressed);
+        }
+
+        models
+    }
+
+    /// Receive a compressed model from a peer and check if FedAvg should run.
+    /// Returns true if enough peers have contributed for FedAvg.
+    pub async fn receive_peer_model(&self, compressed: CompressedModel, sample_count: u64) -> bool {
+        let dist = self.distributed.read().await;
+        dist.receive_peer_model(compressed, sample_count).await
+    }
+
+    /// Run Federated Averaging for a specific model, merging local + peer weights.
+    /// More nodes = more diverse gradients = faster convergence.
+    pub async fn run_federated_average(&self, model_id: ModelId) -> Result<()> {
+        let local_weights = match model_id {
+            ModelId::RlRouter => self.router.read().await.save_model()?,
+            ModelId::Prefetcher => self.prefetcher.read().await.save_model()?,
+            ModelId::AnomalySentry => self.anomaly.read().await.save_model()?,
+        };
+
+        let dist = self.distributed.read().await;
+        let result = dist.federated_average(model_id, &local_weights).await?;
+
+        // Apply merged weights back to the local model
+        match model_id {
+            ModelId::RlRouter => {
+                let mut router = self.router.write().await;
+                router.load_model(&result.merged_weights, 5, 3)?;
+                info!("🧠🔄 FedAvg: RL Router updated (gen={}, {} contributors)",
+                    result.generation, result.num_contributors);
+            }
+            ModelId::Prefetcher => {
+                let mut prefetcher = self.prefetcher.write().await;
+                prefetcher.load_model(&result.merged_weights)?;
+                info!("🧠🔄 FedAvg: Prefetcher updated (gen={}, {} contributors)",
+                    result.generation, result.num_contributors);
+            }
+            ModelId::AnomalySentry => {
+                let mut sentry = self.anomaly.write().await;
+                sentry.load_model(&result.merged_weights)?;
+                info!("🧠🔄 FedAvg: Anomaly Sentry updated (gen={}, {} contributors)",
+                    result.generation, result.num_contributors);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get the self-optimization loop metrics (how well is the AI compressing and training itself?)
+    pub async fn get_loop_metrics(&self) -> SelfOptimizingMetrics {
+        self.distributed.read().await.loop_metrics().await
+    }
+
+    /// Record local training activity for FedAvg weighting
+    pub async fn record_distributed_training(&self, model_id: ModelId, samples: u64) {
+        self.distributed.read().await.record_local_training(model_id, samples).await;
+    }
 }
 
 #[async_trait::async_trait]
@@ -257,17 +391,24 @@ impl Component for NeuralMeshComponent {
         *self.start_time.write().await = Some(Instant::now());
         *self.status.write().await = ComponentStatus::Running;
 
-        // Spawn background training loop — periodically trains anomaly baseline
-        // and updates routing policy from accumulated experiences.
+        // Spawn background training loop — periodically trains anomaly baseline,
+        // updates routing policy, and exports compressed models for distributed sync.
+        // This is the self-optimizing loop:
+        //   train locally → compress weights → broadcast → FedAvg → better model → repeat
         let status_clone = self.status.clone();
         let anomaly_clone = self.anomaly.clone();
         let router_clone = self.router.clone();
         let baseline_clone = self.baseline_metrics.clone();
         let stats_clone = self.stats.clone();
+        let distributed_clone = self.distributed.clone();
+        let prefetcher_clone = self.prefetcher.clone();
+        let anomaly_export_clone = self.anomaly.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
+            let mut cycle_count: u64 = 0;
             loop {
                 interval.tick().await;
+                cycle_count += 1;
 
                 // Check if still running
                 if !matches!(*status_clone.read().await, ComponentStatus::Running) {
@@ -309,6 +450,64 @@ impl Component for NeuralMeshComponent {
                         Err(_) => {
                             // Not enough experiences yet — this is normal early on
                         }
+                    }
+                }
+
+                // ── Self-Compressing Distributed Sync (every 2nd cycle = ~60s) ──
+                // Export compressed model weights for peer distribution.
+                // The AI compresses ITSELF using SovereignCodec, the same codec
+                // it optimizes through its routing decisions.
+                if cycle_count % 2 == 0 {
+                    let dist = distributed_clone.read().await;
+
+                    // Export RL Router (most important — drives routing)
+                    if let Ok(raw) = router_clone.read().await.save_model() {
+                        let compressed = dist.export_compressed_model(
+                            lib_neural_mesh::distributed::ModelId::RlRouter, &raw
+                        ).await;
+                        info!(
+                            "🧠📦 Self-compressed RL Router: {} → {} bytes ({:.1}x) — cycle {}",
+                            compressed.raw_size, compressed.compressed_weights.len(),
+                            compressed.compression_ratio, cycle_count
+                        );
+                        dist.record_local_training(
+                            lib_neural_mesh::distributed::ModelId::RlRouter,
+                            stats_clone.read().await.routing_decisions
+                        ).await;
+                    }
+
+                    // Export LSTM Prefetcher (every 4th cycle = ~120s)
+                    if cycle_count % 4 == 0 {
+                        if let Ok(raw) = prefetcher_clone.read().await.save_model() {
+                            let compressed = dist.export_compressed_model(
+                                lib_neural_mesh::distributed::ModelId::Prefetcher, &raw
+                            ).await;
+                            info!(
+                                "🧠📦 Self-compressed Prefetcher: {} → {} bytes ({:.1}x)",
+                                compressed.raw_size, compressed.compressed_weights.len(),
+                                compressed.compression_ratio
+                            );
+                        }
+                    }
+
+                    // Export Anomaly Sentry (every 6th cycle = ~180s)
+                    if cycle_count % 6 == 0 {
+                        if let Ok(raw) = anomaly_export_clone.read().await.save_model() {
+                            let compressed = dist.export_compressed_model(
+                                lib_neural_mesh::distributed::ModelId::AnomalySentry, &raw
+                            ).await;
+                            info!(
+                                "🧠📦 Self-compressed Anomaly Sentry: {} → {} bytes ({:.1}x)",
+                                compressed.raw_size, compressed.compressed_weights.len(),
+                                compressed.compression_ratio
+                            );
+                        }
+                    }
+
+                    // Log self-optimization loop metrics
+                    let metrics = dist.loop_metrics().await;
+                    if metrics.fedavg_rounds > 0 || metrics.total_model_bytes_raw > 0 {
+                        info!("{}", metrics.summary());
                     }
                 }
             }
@@ -542,6 +741,51 @@ impl Component for NeuralMeshComponent {
                             Err(e) => warn!("Model import failed: {}", e),
                         }
                     }
+                    // ── Distributed Training Operations ──
+                    "receive_peer_model" => {
+                        // Receive compressed model from a peer for FedAvg
+                        if let Ok(msg) = ModelSyncMessage::from_bytes(&data) {
+                            match msg {
+                                ModelSyncMessage::BroadcastModel { model, sample_count } => {
+                                    let model_id = model.model_id;
+                                    let ready = self.receive_peer_model(model, sample_count).await;
+                                    if ready {
+                                        info!("🧠🔄 FedAvg threshold reached for {} — merging", model_id);
+                                        if let Err(e) = self.run_federated_average(model_id).await {
+                                            warn!("FedAvg failed for {}: {}", model_id, e);
+                                        }
+                                    }
+                                }
+                                ModelSyncMessage::FedAvgResult { model_id, result } => {
+                                    // Apply FedAvg result from a coordinator node
+                                    match model_id {
+                                        ModelId::RlRouter => {
+                                            let mut router = self.router.write().await;
+                                            let _ = router.load_model(&result.merged_weights, 5, 3);
+                                        }
+                                        ModelId::Prefetcher => {
+                                            let mut pf = self.prefetcher.write().await;
+                                            let _ = pf.load_model(&result.merged_weights);
+                                        }
+                                        ModelId::AnomalySentry => {
+                                            let mut s = self.anomaly.write().await;
+                                            let _ = s.load_model(&result.merged_weights);
+                                        }
+                                    }
+                                    info!("🧠✅ Applied FedAvg result for {} (gen={})", model_id, result.generation);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    "export_compressed_models" => {
+                        let models = self.export_all_compressed_models().await;
+                        info!("🧠📤 Exported {} compressed model bundles for mesh broadcast", models.len());
+                    }
+                    "loop_metrics" => {
+                        let metrics = self.get_loop_metrics().await;
+                        info!("{}", metrics.summary());
+                    }
                     _ => {
                         debug!("Neural mesh: unknown custom operation: {}", op);
                     }
@@ -602,6 +846,29 @@ impl Component for NeuralMeshComponent {
         metrics.insert(
             "avg_routing_confidence".to_string(),
             stats.avg_routing_confidence,
+        );
+        metrics.insert(
+            "distributed_syncs".to_string(),
+            stats.distributed_syncs as f64,
+        );
+        metrics.insert(
+            "fedavg_rounds".to_string(),
+            stats.fedavg_rounds as f64,
+        );
+        metrics.insert(
+            "model_bytes_saved".to_string(),
+            stats.model_bytes_saved as f64,
+        );
+
+        // Add self-optimization loop metrics
+        let loop_metrics = self.distributed.read().await.loop_metrics().await;
+        metrics.insert(
+            "model_compression_ratio".to_string(),
+            loop_metrics.avg_model_compression_ratio as f64,
+        );
+        metrics.insert(
+            "acceleration_factor".to_string(),
+            loop_metrics.acceleration_factor as f64,
         );
 
         Ok(metrics)

@@ -298,6 +298,16 @@ impl AnomalyDetector {
     pub fn threshold(&self) -> f32 {
         self.threshold
     }
+
+    /// Save the internal forest to bytes for distributed sync
+    pub fn save_forest(&self) -> Result<Vec<u8>, String> {
+        self.forest.save()
+    }
+
+    /// Load a forest from bytes (replaces internal state)
+    pub fn load_forest(&mut self, forest: IsolationForest) {
+        self.forest = forest;
+    }
 }
 
 #[cfg(test)]

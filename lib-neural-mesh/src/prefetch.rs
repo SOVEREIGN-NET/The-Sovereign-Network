@@ -219,6 +219,28 @@ impl PredictivePrefetcher {
     pub fn should_prefetch(&self, prediction: &PredictionResult) -> bool {
         prediction.confidence >= self.confidence_threshold
     }
+
+    /// Save LSTM model weights to bytes (compressed-ready for distributed sync)
+    pub fn save_model(&self) -> Result<Vec<u8>> {
+        let lstm = self.lstm.as_ref().ok_or_else(|| {
+            NeuralMeshError::InferenceFailed("No LSTM initialized".to_string())
+        })?;
+        lstm.save().map_err(|e| NeuralMeshError::InferenceFailed(e))
+    }
+
+    /// Load LSTM model weights from bytes (from compressed distributed sync)
+    pub fn load_model(&mut self, data: &[u8]) -> Result<()> {
+        let lstm = LstmNetwork::load(data)
+            .map_err(|e| NeuralMeshError::InferenceFailed(e))?;
+        self.lstm = Some(lstm);
+        self.enabled = true;
+        Ok(())
+    }
+
+    /// Get the byte size of the current model weights
+    pub fn model_size_bytes(&self) -> usize {
+        self.save_model().map(|v| v.len()).unwrap_or(0)
+    }
 }
 
 impl Default for PredictivePrefetcher {
