@@ -1690,4 +1690,47 @@ bootstrap_peers = ["10.0.0.1:9334", "10.0.0.2:9334"]
             );
         }
     }
+
+    #[test]
+    fn test_apply_cli_overrides_sets_data_directory() {
+        let mut config = NodeConfig::default();
+        let args = crate::config::CliArgs {
+            mesh_port: None,
+            pure_mesh: false,
+            config: std::path::PathBuf::from("zhtp/configs/dev-node.toml"),
+            environment: Environment::Development,
+            log_level: "info".to_string(),
+            data_dir: std::path::PathBuf::from("/tmp/zhtp-custom-data"),
+            emergency_restore_from_local: false,
+            allow_emergency_restore_genesis_mismatch: false,
+        };
+
+        config
+            .apply_cli_overrides(&args)
+            .expect("cli overrides should apply");
+
+        assert_eq!(config.data_directory, "/tmp/zhtp-custom-data");
+    }
+
+    #[test]
+    fn test_apply_cli_overrides_sets_mesh_port_and_data_directory_together() {
+        let mut config = NodeConfig::default();
+        let args = crate::config::CliArgs {
+            mesh_port: Some(44555),
+            pure_mesh: false,
+            config: std::path::PathBuf::from("zhtp/configs/dev-node.toml"),
+            environment: Environment::Development,
+            log_level: "info".to_string(),
+            data_dir: std::path::PathBuf::from("/tmp/zhtp-override"),
+            emergency_restore_from_local: false,
+            allow_emergency_restore_genesis_mismatch: false,
+        };
+
+        config
+            .apply_cli_overrides(&args)
+            .expect("cli overrides should apply");
+
+        assert_eq!(config.network_config.mesh_port, 44555);
+        assert_eq!(config.data_directory, "/tmp/zhtp-override");
+    }
 }
