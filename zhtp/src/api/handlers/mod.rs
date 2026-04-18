@@ -14,6 +14,7 @@ pub mod guardian;
 pub mod identity;
 pub mod marketplace;
 pub mod mesh;
+pub mod nft;
 pub mod mobile_auth;
 pub mod monitor;
 pub mod network;
