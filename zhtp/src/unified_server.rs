@@ -1006,6 +1006,7 @@ impl ZhtpUnifiedServer {
         let wallet_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(BearerAuthMiddleware::new(
             Arc::new(WalletHandler::new(identity_manager.clone())),
             mobile_auth_store.clone(),
+            node_did.clone(),
         ));
         zhtp_router.register_handler("/api/v1/wallet".to_string(), wallet_handler);
 
@@ -1013,6 +1014,7 @@ impl ZhtpUnifiedServer {
         let token_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(BearerAuthMiddleware::new(
             Arc::new(TokenHandler::new()),
             mobile_auth_store.clone(),
+            node_did.clone(),
         ));
         zhtp_router.register_handler("/api/v1/token".to_string(), token_handler);
 
@@ -1020,6 +1022,7 @@ impl ZhtpUnifiedServer {
         let cbe_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(BearerAuthMiddleware::new(
             Arc::new(CbeHandler::new()),
             mobile_auth_store.clone(),
+            node_did.clone(),
         ));
         zhtp_router.register_handler("/api/v1/cbe".to_string(), cbe_handler);
 
@@ -1030,6 +1033,7 @@ impl ZhtpUnifiedServer {
                     crate::api::handlers::bonding_curve::api_v1::BondingCurveApiHandler::new(),
                 ),
                 mobile_auth_store.clone(),
+                node_did.clone(),
             ));
         zhtp_router.register_handler(
             "/api/v1/bonding-curve".to_string(),
@@ -1047,6 +1051,7 @@ impl ZhtpUnifiedServer {
         let oracle_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(BearerAuthMiddleware::new(
             Arc::new(crate::api::handlers::oracle::OracleHandler::new()),
             mobile_auth_store.clone(),
+            node_did.clone(),
         ));
         zhtp_router.register_handler("/api/v1/oracle".to_string(), oracle_handler);
 
@@ -1054,6 +1059,7 @@ impl ZhtpUnifiedServer {
         let crypto_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(BearerAuthMiddleware::new(
             Arc::new(crate::api::handlers::CryptoHandler::new(identity_manager.clone())),
             mobile_auth_store.clone(),
+            node_did.clone(),
         ));
         zhtp_router.register_handler("/api/v1/crypto".to_string(), crypto_handler);
 
@@ -1133,6 +1139,7 @@ impl ZhtpUnifiedServer {
                 Arc::clone(&identity_manager),
             )),
             mobile_auth_store.clone(),
+            node_did.clone(),
         ));
         zhtp_router.register_handler("/api/marketplace".to_string(), marketplace_handler);
 
@@ -1190,7 +1197,7 @@ impl ZhtpUnifiedServer {
         let mobile_auth_store =
             Arc::new(lib_identity::auth::mobile_delegation::MobileAuthStore::new());
         let mobile_auth_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::MobileAuthHandler::new(mobile_auth_store.clone()),
+            crate::api::handlers::MobileAuthHandler::with_endpoint(mobile_auth_store.clone(), &node_did),
         );
         // Prefix routes — the handler's dispatch() does exact matching internally
         zhtp_router.register_handler(

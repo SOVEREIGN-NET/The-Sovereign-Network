@@ -19,11 +19,13 @@ use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 pub struct BearerAuthMiddleware {
     inner: Arc<dyn ZhtpRequestHandler>,
     store: Arc<MobileAuthStore>,
+    /// DID of this node — used for channel binding (#2160).
+    node_did: String,
 }
 
 impl BearerAuthMiddleware {
-    pub fn new(inner: Arc<dyn ZhtpRequestHandler>, store: Arc<MobileAuthStore>) -> Self {
-        Self { inner, store }
+    pub fn new(inner: Arc<dyn ZhtpRequestHandler>, store: Arc<MobileAuthStore>, node_did: String) -> Self {
+        Self { inner, store, node_did }
     }
 }
 
@@ -38,7 +40,7 @@ impl ZhtpRequestHandler for BearerAuthMiddleware {
         let ip = extract_ip(&request);
         let ua = extract_ua(&request);
 
-        if let Err(e) = self.store.validate_access_token(&token, &ip, &ua).await {
+        if let Err(e) = self.store.validate_access_token(&token, &ip, &ua, &self.node_did).await {
             return Ok(err_401(&e.to_string()));
         }
 
@@ -127,10 +129,12 @@ mod tests {
         }
     }
 
+    const TEST_NODE_DID: &str = "did:zhtp:test-node";
+
     #[tokio::test]
     async fn missing_bearer_returns_401() {
         let store = Arc::new(MobileAuthStore::new());
-        let mw = BearerAuthMiddleware::new(Arc::new(EchoHandler), store);
+        let mw = BearerAuthMiddleware::new(Arc::new(EchoHandler), store, TEST_NODE_DID.to_string());
         let resp = mw.handle_request(make_request(None)).await.unwrap();
         assert_eq!(resp.status, ZhtpStatus::Unauthorized);
     }
@@ -138,7 +142,7 @@ mod tests {
     #[tokio::test]
     async fn invalid_bearer_returns_401() {
         let store = Arc::new(MobileAuthStore::new());
-        let mw = BearerAuthMiddleware::new(Arc::new(EchoHandler), store);
+        let mw = BearerAuthMiddleware::new(Arc::new(EchoHandler), store, TEST_NODE_DID.to_string());
         let resp = mw.handle_request(make_request(Some("bogus_token"))).await.unwrap();
         assert_eq!(resp.status, ZhtpStatus::Unauthorized);
     }
@@ -160,9 +164,10 @@ mod tests {
             challenge_session_id: "cs7".to_string(),
             device_id: None,
             revoked: false,
+            bound_node_did: TEST_NODE_DID.to_string(),
         }).await;
 
-        let mw = BearerAuthMiddleware::new(Arc::new(EchoHandler), store);
+        let mw = BearerAuthMiddleware::new(Arc::new(EchoHandler), store, TEST_NODE_DID.to_string());
         let resp = mw.handle_request(make_request(Some("valid_tok"))).await.unwrap();
         assert_eq!(resp.status, ZhtpStatus::Ok);
     }
@@ -184,10 +189,11 @@ mod tests {
             challenge_session_id: "cs8".to_string(),
             device_id: None,
             revoked: false,
+            bound_node_did: TEST_NODE_DID.to_string(),
         }).await;
         store.revoke_session("revoked_tok", "test").await.unwrap();
 
-        let mw = BearerAuthMiddleware::new(Arc::new(EchoHandler), store);
+        let mw = BearerAuthMiddleware::new(Arc::new(EchoHandler), store, TEST_NODE_DID.to_string());
         let resp = mw.handle_request(make_request(Some("revoked_tok"))).await.unwrap();
         assert_eq!(resp.status, ZhtpStatus::Unauthorized);
     }
