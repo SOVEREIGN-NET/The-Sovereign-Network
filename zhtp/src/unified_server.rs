@@ -806,6 +806,58 @@ impl ZhtpUnifiedServer {
     )> {
         info!("📝 Registering API handlers on ZHTP router (QUIC is the only entry point)...");
 
+        // -----------------------------------------------------------------------
+        // ENDPOINT PROTECTION MATRIX (#2156)
+        //
+        // PUBLIC — no bearer token required:
+        //   /api/v1/auth/mobile/challenge    — start of auth flow (issues QR/nonce)
+        //   /api/v1/auth/mobile/verify       — completes auth flow (returns bearer)
+        //   /api/v1/dns                      — DNS resolution, read-only
+        //   /api/v1/web4                     — Web4 content serving, read-only
+        //   /api/v1/web4/gateway             — HTTPS gateway for browsers
+        //   /api/v1/dht                      — DHT peer discovery, read-only
+        //   /api/v1/protocol                 — protocol metadata, read-only
+        //   /api/v1/blockchain (GET)         — read chain state, no mutation
+        //   /api/v1/chain (GET)              — alias for blockchain, read-only
+        //   /api/v1/monitor                  — health/metrics, read-only
+        //   /api/v1/observer                 — consensus anomaly read, read-only
+        //
+        // PROTECTED — valid bearer token required (401 if missing/invalid):
+        //   /api/v1/auth/mobile/session      — read own session info
+        //   /api/v1/auth/mobile/signout      — revoke own session
+        //   /api/v1/auth/mobile/refresh      — rotate refresh token
+        //   /api/v1/auth/delegate            — issue/list/revoke delegation certs
+        //   /api/v1/tx/prepare               — prepare delegated tx (+ SubmitTx cap)
+        //   /api/v1/tx/submit-delegated      — submit mobile-signed tx
+        //   /api/v1/wallet                   — balance reads and transfers
+        //   /api/v1/token                    — token operations (mint/transfer/burn)
+        //   /api/v1/storage (write)          — content storage mutations
+        //   /api/v1/identity (write)         — identity mutations (read is public)
+        //   /api/v1/identity/guardians       — guardian management
+        //   /api/v1/identity/recovery        — recovery operations
+        //   /api/v1/zkp                      — ZKP proof generation/verification
+        //   /api/v1/dao                      — governance voting and proposals
+        //   /api/v1/pouw                     — proof-of-useful-work submission
+        //   /api/v1/cbe                      — contract-based execution
+        //   /api/v1/bonding-curve (write)    — AMM/liquidity mutations
+        //   /api/v1/oracle (write)           — oracle data submission
+        //   /api/v1/crypto                   — key operations
+        //   /api/v1/marketplace (write)      — marketplace listings/purchases
+        //
+        // NODE-INTERNAL — QUIC mesh auth only, no user bearer token:
+        //   /api/v1/network                  — peer mesh networking
+        //   /api/v1/mesh                     — mesh routing
+        //   /api/v1/blockchain/network       — cross-node sync
+        //   /api/v1/blockchain/sync          — block sync
+        //   /api/v1/validator                — validator operations
+        //
+        // ERROR RESPONSES:
+        //   401 Unauthorized — missing or invalid bearer token
+        //   403 Forbidden    — valid token but insufficient capability
+        //
+        // Implementation: bearer middleware is wired in #2157.
+        // -----------------------------------------------------------------------
+
         // Blockchain operations
         let environment = detect_environment();
         let blockchain_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(BlockchainHandler::new(
