@@ -563,6 +563,11 @@ pub struct RuntimeOrchestrator {
 
     /// Node role determines what services this node can run (mining, validation, etc.)
     node_role: Arc<RwLock<node_runtime::NodeRole>>,
+
+    /// Channel for server-layer code to emit events to the NeuralMesh component.
+    /// Call `emit_neural_event(msg)` to fire a `ComponentMessage` that reaches the
+    /// NeuralMeshComponent's `handle_message()` via the message bus.
+    neural_mesh_tx: Arc<Mutex<mpsc::UnboundedSender<ComponentMessage>>>,
 }
 
 impl RuntimeOrchestrator {
@@ -570,6 +575,7 @@ impl RuntimeOrchestrator {
     pub async fn new(config: NodeConfig) -> Result<Self> {
         let (message_tx, mut message_rx) = mpsc::unbounded_channel();
         let (shutdown_tx, mut shutdown_rx) = mpsc::unbounded_channel();
+        let (neural_tx, mut neural_rx) = mpsc::unbounded_channel::<ComponentMessage>();
 
         // Spawn shutdown monitor task
         let shutdown_monitor = tokio::spawn(async move {
@@ -629,6 +635,7 @@ impl RuntimeOrchestrator {
             edge_max_headers: Arc::new(RwLock::new(500)), // Default 500 headers (~100 KB)
             pending_identity: Arc::new(RwLock::new(None)),
             node_role: Arc::new(RwLock::new(node_role)),
+            neural_mesh_tx: Arc::new(Mutex::new(neural_tx)),
             startup_order: vec![
                 ComponentId::Crypto,     // Foundation layer
                 ComponentId::ZK,         // Zero-knowledge proofs
@@ -651,6 +658,21 @@ impl RuntimeOrchestrator {
                 if let Some(component) = components.get(&component_id) {
                     if let Err(e) = component.handle_message(message).await {
                         error!("Component {} failed to handle message: {}", component_id, e);
+                    }
+                }
+            }
+        });
+
+        // Relay neural mesh events from the server layer → NeuralMeshComponent
+        // Server-layer code (mesh, QUIC, DHT) calls emit_neural_event() which
+        // pushes into neural_rx. This task forwards to the NeuralMeshComponent.
+        let neural_components = orchestrator.components.clone();
+        tokio::spawn(async move {
+            while let Some(message) = neural_rx.recv().await {
+                let components = neural_components.read().await;
+                if let Some(component) = components.get(&ComponentId::NeuralMesh) {
+                    if let Err(e) = component.handle_message(message).await {
+                        debug!("Neural mesh event relay error: {}", e);
                     }
                 }
             }
@@ -3661,6 +3683,23 @@ impl RuntimeOrchestrator {
         Ok(())
     }
 
+    /// Emit a neural mesh event from the server/mesh layer.
+    /// This is the primary entry point for live network events to reach the
+    /// ML models (RL Router, Anomaly Sentry, Prefetcher, Compressor).
+    pub async fn emit_neural_event(&self, message: ComponentMessage) {
+        let tx = self.neural_mesh_tx.lock().await;
+        if tx.send(message).is_err() {
+            debug!("Neural mesh event channel closed (component may be stopped)");
+        }
+    }
+
+    /// Get a clone of the neural mesh event sender.
+    /// Returns an UnboundedSender that server-layer code can use to emit
+    /// events without awaiting a lock on every call.
+    pub async fn get_neural_mesh_sender(&self) -> mpsc::UnboundedSender<ComponentMessage> {
+        self.neural_mesh_tx.lock().await.clone()
+    }
+
     /// Broadcast a message to all components
     pub async fn broadcast_message(&self, message: ComponentMessage) -> Result<()> {
         let components = self.components.read().await;
@@ -4536,8 +4575,23 @@ impl RuntimeOrchestrator {
 
         // Register the runtime handlers on the protocols component
         protocols_component
-            .register_runtime_handlers(runtime_arc)
-            .await
+            .register_runtime_handlers(runtime_arc.clone())
+            .await?;
+
+        // Wire neural mesh event sender into the global MeshRouter so that live
+        // network events (peer connect/disconnect, blocks, shard access) reach
+        // the RL Router, Anomaly Sentry, Prefetcher, and Compressor for training.
+        let neural_tx = runtime_arc.get_neural_mesh_sender().await;
+        if let Ok(mesh_router) =
+            crate::runtime::mesh_router_provider::get_global_mesh_router().await
+        {
+            mesh_router.set_neural_mesh_sender(neural_tx).await;
+            info!("🧠 Neural mesh live-training wired into MeshRouter");
+        } else {
+            warn!("MeshRouter not available — neural mesh will not receive live events");
+        }
+
+        Ok(())
     }
 
     /// Stop the unified reward orchestrator

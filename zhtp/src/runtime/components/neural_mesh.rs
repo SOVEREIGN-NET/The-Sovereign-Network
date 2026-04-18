@@ -257,7 +257,65 @@ impl Component for NeuralMeshComponent {
         *self.start_time.write().await = Some(Instant::now());
         *self.status.write().await = ComponentStatus::Running;
 
-        info!("🧠 Neural Mesh component running — all 4 sub-components active");
+        // Spawn background training loop — periodically trains anomaly baseline
+        // and updates routing policy from accumulated experiences.
+        let status_clone = self.status.clone();
+        let anomaly_clone = self.anomaly.clone();
+        let router_clone = self.router.clone();
+        let baseline_clone = self.baseline_metrics.clone();
+        let stats_clone = self.stats.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+
+                // Check if still running
+                if !matches!(*status_clone.read().await, ComponentStatus::Running) {
+                    break;
+                }
+
+                // Train anomaly baseline if we have enough samples
+                let baseline_count = baseline_clone.read().await.len();
+                if baseline_count >= 10 {
+                    let baselines = baseline_clone.read().await.clone();
+                    let mut sentry = anomaly_clone.write().await;
+                    match sentry.train_baseline(baselines) {
+                        Ok(()) => {
+                            info!(
+                                "🧠 Auto-trained anomaly baseline on {} samples",
+                                baseline_count
+                            );
+                        }
+                        Err(e) => {
+                            debug!("Auto anomaly training: {}", e);
+                        }
+                    }
+                }
+
+                // Update routing policy if experiences accumulated
+                {
+                    let mut router = router_clone.write().await;
+                    match router.update_policy() {
+                        Ok(loss) => {
+                            if !loss.is_nan() {
+                                let mut stats = stats_clone.write().await;
+                                stats.training_episodes += 1;
+                                info!(
+                                    "🧠 Auto-updated routing policy: loss={:.4}, episodes={}",
+                                    loss, stats.training_episodes
+                                );
+                            }
+                        }
+                        Err(_) => {
+                            // Not enough experiences yet — this is normal early on
+                        }
+                    }
+                }
+            }
+            debug!("Neural mesh background training loop exited");
+        });
+
+        info!("🧠 Neural Mesh component running — all 4 sub-components active + background training");
         Ok(())
     }
 
@@ -303,12 +361,12 @@ impl Component for NeuralMeshComponent {
 
     async fn handle_message(&self, message: ComponentMessage) -> Result<()> {
         match message {
-            // ── Peer lifecycle events → Anomaly Sentry baseline ──
+            // ── Peer lifecycle events → Anomaly Sentry baseline + RL Router training ──
             ComponentMessage::PeerConnected(peer_id) => {
                 info!("Neural mesh: peer connected — {}", peer_id);
                 // Seed baseline metrics for the new peer
                 self.add_baseline_metrics(NodeMetrics {
-                    node_id: peer_id,
+                    node_id: peer_id.clone(),
                     response_time: 100.0,   // default 100ms
                     success_rate: 1.0,       // assume healthy
                     corruption_rate: 0.0,
@@ -316,11 +374,64 @@ impl Component for NeuralMeshComponent {
                     reputation: 0.5,         // neutral starting reputation
                 })
                 .await;
+
+                // Generate a routing experience from the peer connection event
+                // This feeds the RL router with real network topology changes
+                {
+                    let state = NetworkState {
+                        latencies: std::collections::HashMap::from([
+                            (peer_id.clone(), 100.0),
+                        ]),
+                        bandwidth: std::collections::HashMap::from([
+                            (peer_id.clone(), 1000.0),
+                        ]),
+                        packet_loss: std::collections::HashMap::new(),
+                        energy_scores: std::collections::HashMap::new(),
+                        congestion: 0.3,
+                    };
+                    let mut router = self.router.write().await;
+                    if let Ok(action) = router.select_action(&state) {
+                        // Reward for accepting a new peer (expanding the network)
+                        let reward = 0.5;
+                        let next_state = NetworkState {
+                            congestion: 0.25,
+                            ..state
+                        };
+                        let _ = router.provide_reward(reward, &next_state, false);
+                        let mut stats = self.stats.write().await;
+                        stats.routing_decisions += 1;
+                        stats.total_reward += reward as f64;
+                        debug!(
+                            "Neural mesh: RL episode from peer connect — action={}, reward={}",
+                            action.action_id, reward
+                        );
+                    }
+                }
                 Ok(())
             }
 
             ComponentMessage::PeerDisconnected(peer_id) => {
                 info!("Neural mesh: peer disconnected — {}", peer_id);
+                // Negative reward — losing a peer is penalized
+                {
+                    let state = NetworkState {
+                        latencies: std::collections::HashMap::new(),
+                        bandwidth: std::collections::HashMap::new(),
+                        packet_loss: std::collections::HashMap::new(),
+                        energy_scores: std::collections::HashMap::new(),
+                        congestion: 0.6,
+                    };
+                    let mut router = self.router.write().await;
+                    if let Ok(_action) = router.select_action(&state) {
+                        let next_state = NetworkState {
+                            congestion: 0.7,
+                            ..state
+                        };
+                        let _ = router.provide_reward(-0.3, &next_state, false);
+                        let mut stats = self.stats.write().await;
+                        stats.total_reward -= 0.3;
+                    }
+                }
                 Ok(())
             }
 

@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use anyhow::Result;
 use lib_crypto::PublicKey;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::debug;
+use tracing::{debug, info};
 use uuid::Uuid;
 
 /// Rate limiting state for ZHTP getter requests (100 req/30s per identity)
@@ -159,6 +159,11 @@ pub struct MeshRouter {
 
     // MEDIUM-3 FIX: Identity verification cache for routing
     pub identity_verification_cache: Arc<IdentityVerificationCache>,
+
+    /// Neural mesh event sender — fires ComponentMessages to the NeuralMeshComponent
+    /// for live ML training (routing, anomaly detection, prefetching).
+    /// Set after RuntimeOrchestrator is available via `set_neural_mesh_sender()`.
+    pub neural_mesh_tx: Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<crate::runtime::ComponentMessage>>>>,
 }
 
 impl MeshRouter {
@@ -291,12 +296,32 @@ impl MeshRouter {
 
             // MEDIUM-3 FIX: Initialize identity verification cache
             identity_verification_cache: Arc::new(IdentityVerificationCache::new()),
+
+            // Neural mesh event sender — wired after RuntimeOrchestrator is available
+            neural_mesh_tx: Arc::new(RwLock::new(None)),
         }
     }
 
     /// Expose the shared DHT storage handle for consumers that need to index data.
     pub fn dht_storage(&self) -> DhtStorageHandle {
         self.dht_storage.clone()
+    }
+
+    /// Set the neural mesh event sender (called after RuntimeOrchestrator is available)
+    pub async fn set_neural_mesh_sender(
+        &self,
+        tx: tokio::sync::mpsc::UnboundedSender<crate::runtime::ComponentMessage>,
+    ) {
+        *self.neural_mesh_tx.write().await = Some(tx);
+        info!("🧠 Neural mesh event sender wired into MeshRouter");
+    }
+
+    /// Emit an event to the neural mesh for live ML training.
+    /// Non-blocking, fire-and-forget. Silently drops if channel not yet wired.
+    pub async fn emit_neural_event(&self, msg: crate::runtime::ComponentMessage) {
+        if let Some(tx) = self.neural_mesh_tx.read().await.as_ref() {
+            let _ = tx.send(msg);
+        }
     }
 
     /// Get broadcast metrics
@@ -498,6 +523,7 @@ impl Clone for MeshRouter {
             zhtp_rate_limits: self.zhtp_rate_limits.clone(),
             connection_rate_limiter: self.connection_rate_limiter.clone(),
             identity_verification_cache: self.identity_verification_cache.clone(),
+            neural_mesh_tx: self.neural_mesh_tx.clone(),
         }
     }
 }

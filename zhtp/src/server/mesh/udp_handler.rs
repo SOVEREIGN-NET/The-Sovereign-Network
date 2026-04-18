@@ -199,6 +199,11 @@ impl MeshRouter {
             };
             connections.insert(sender.clone(), connection);
             info!("✅ Registered new authenticated UDP mesh peer from {}", addr);
+
+            // 🧠 Neural mesh: notify ML models about new peer for baseline training
+            self.emit_neural_event(crate::runtime::ComponentMessage::PeerConnected(
+                addr.to_string(),
+            )).await;
         } else {
             // Update existing peer's address and timestamp
             if let Some(conn) = connections.get_mut(sender) {
@@ -603,6 +608,12 @@ impl MeshRouter {
                             ChainMergeResult::ImportedAdopted | ChainMergeResult::Merged => {
                                 info!("✅ Block {} accepted into blockchain", height);
                                 
+                                // 🧠 Neural mesh: block accepted → train routing on propagation quality
+                                self.emit_neural_event(crate::runtime::ComponentMessage::Custom(
+                                    "block_accepted".to_string(),
+                                    format!("{{\"height\":{},\"sender\":\"{}\"}}", height, &sender_key[..16]).into_bytes(),
+                                )).await;
+
                                 let mut reputations = self.peer_reputations.write().await;
                                 if let Some(reputation) = reputations.get_mut(&sender_key) {
                                     reputation.record_block_accepted();
@@ -863,6 +874,12 @@ impl MeshRouter {
               key.len(), value.len(), ttl);
         
         let success = crate::integration::store_dht_value(&self.dht_storage, key, value).await;
+
+        // 🧠 Neural mesh: shard stored → train prefetcher on access patterns
+        if success {
+            let key_hex = hex::encode(&key[..key.len().min(16)]);
+            self.emit_neural_event(crate::runtime::ComponentMessage::FileStored(key_hex)).await;
+        }
         
         let stored_count = if success { 1 } else { 0 };
         
@@ -889,6 +906,12 @@ impl MeshRouter {
         info!("🔍 DHT FindValue request: key={} bytes, max_hops={}", key.len(), max_hops);
         
         let (found, value) = crate::integration::fetch_dht_value(&self.dht_storage, key).await.unwrap_or((false, None));
+
+        // 🧠 Neural mesh: shard requested → train prefetcher on access patterns
+        {
+            let key_hex = hex::encode(&key[..key.len().min(16)]);
+            self.emit_neural_event(crate::runtime::ComponentMessage::FileRequested(key_hex)).await;
+        }
         
         let closer_nodes: Vec<lib_crypto::PublicKey> = Vec::new();
         
