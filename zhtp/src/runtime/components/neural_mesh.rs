@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::runtime::{Component, ComponentHealth, ComponentId, ComponentMessage, ComponentStatus};
 use lib_neural_mesh::{
@@ -631,7 +631,7 @@ impl NeuralMeshComponent {
         stats: Arc<RwLock<NeuralMeshStats>>,
         status: Arc<RwLock<ComponentStatus>>,
     ) {
-        tokio::spawn(async move {
+        let sim_handle = tokio::spawn(async move {
             info!("🌐🧪 Multi-Node Simulation starting — 4 virtual peer nodes");
             info!("🌐🧪   sim-node-alpha  (JSON/API workload)");
             info!("🌐🧪   sim-node-beta   (Binary/model weights)");
@@ -729,9 +729,10 @@ impl NeuralMeshComponent {
                 }
 
                 // ── Phase 2: Sim nodes export + compress models, send to local node ──
+                // CRITICAL: Release distributed.read() before acquiring router.write()
+                // to prevent lock contention with the main training loop.
                 for (idx, sim_router) in sim_routers.iter().enumerate() {
                     if let Ok(raw_weights) = sim_router.save_model() {
-                        let dist = distributed.read().await;
                         let compressed = CompressedModel::compress(
                             ModelId::RlRouter,
                             &raw_weights,
@@ -747,17 +748,22 @@ impl NeuralMeshComponent {
                             compressed.compressed_weights.len(),
                             compressed.compression_ratio,
                         );
-                        let ready = dist.receive_peer_model(compressed, sample_count).await;
+                        // Acquire and release distributed lock quickly for receive
+                        let ready = distributed.read().await
+                            .receive_peer_model(compressed, sample_count).await;
                         if ready {
                             info!("🌐🧪 🔄 FedAvg threshold reached! Merging {} peer models...", idx + 1);
-                            // Get local weights and run FedAvg
-                            if let Ok(local_weights) = router.read().await.save_model() {
-                                match dist.federated_average(ModelId::RlRouter, &local_weights).await {
+                            // Get local weights (acquire/release router.read quickly)
+                            let local_weights = router.read().await.save_model();
+                            if let Ok(local_weights) = local_weights {
+                                // Run FedAvg (acquire/release distributed.read quickly)
+                                let result = distributed.read().await
+                                    .federated_average(ModelId::RlRouter, &local_weights).await;
+                                match result {
                                     Ok(result) => {
-                                        let mut r = router.write().await;
-                                        if r.load_model(&result.merged_weights, 5, 3).is_ok() {
-                                            let mut s = stats.write().await;
-                                            s.fedavg_rounds += 1;
+                                        // Now safe to acquire router.write — no other locks held
+                                        if router.write().await.load_model(&result.merged_weights, 5, 3).is_ok() {
+                                            stats.write().await.fedavg_rounds += 1;
                                             info!(
                                                 "🌐🧪 ✅ FedAvg complete: gen={}, {} contributors, {} total samples",
                                                 result.generation, result.num_contributors, result.total_samples
@@ -768,13 +774,13 @@ impl NeuralMeshComponent {
                                 }
                             }
                         }
-                        drop(dist);
                     }
                 }
 
                 // ── Phase 3: Feed the local RL router with multi-hop routing ──
                 // Simulate routing decisions between the 4 sim nodes + local
                 {
+                    let mut routing_count = 0u64;
                     let mut r = router.write().await;
                     for (idx, name) in node_names.iter().enumerate() {
                         let hop_latency = [15.0_f32, 80.0, 40.0, 150.0][idx];
@@ -797,11 +803,14 @@ impl NeuralMeshComponent {
                             let reward = if action.confidence > 0.5 { 0.8 } else { 0.2 };
                             let next_state = NetworkState { congestion: state.congestion * 0.9, ..state };
                             let _ = r.provide_reward(reward, &next_state, false);
-                            let mut s = stats.write().await;
-                            s.routing_decisions += 1;
+                            routing_count += 1;
                         }
                     }
                     let _ = r.update_policy();
+                    drop(r); // Release router lock before acquiring stats lock
+                    if routing_count > 0 {
+                        stats.write().await.routing_decisions += routing_count;
+                    }
                 }
 
                 // ── Phase 4: Generate diverse compression workloads ──
@@ -873,17 +882,17 @@ impl NeuralMeshComponent {
                             shard_count: 1,
                             shards_compressed: 1,
                         });
-
-                        let mut s = stats.write().await;
-                        s.codec_adaptations += 1;
                     }
 
                     // Train after each cycle's batch of observations
-                    if let Some(loss) = learner.train() {
-                        let epsilon = learner.exploration_rate();
+                    let train_result = learner.train();
+                    let (epsilon, steps) = (learner.exploration_rate(), learner.training_steps());
+                    drop(learner); // Release codec_learner lock before acquiring stats
+                    stats.write().await.codec_adaptations += 4; // 4 workloads per cycle
+                    if let Some(loss) = train_result {
                         info!(
                             "🌐🧪 🎯 Codec Learner updated: loss={:.4}, ε={:.3}, step={}",
-                            loss, epsilon, learner.training_steps()
+                            loss, epsilon, steps
                         );
                     }
                 }
@@ -997,6 +1006,28 @@ impl NeuralMeshComponent {
                             wire.zhtp_compressed.load(std::sync::atomic::Ordering::Relaxed));
                     }
                     info!("🌐🧪 ═══════════════════════════════════════════════════════");
+                }
+            }
+        });
+        // Watch the sim task's JoinHandle so panics are logged instead of silently swallowed
+        tokio::spawn(async move {
+            match sim_handle.await {
+                Ok(()) => info!("🌐🧪 Multi-node simulation task completed normally"),
+                Err(e) => {
+                    if e.is_panic() {
+                        let panic_info = e.into_panic();
+                        let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                            s.to_string()
+                        } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                            s.clone()
+                        } else {
+                            format!("{:?}", panic_info)
+                        };
+                        error!("🌐🧪 ❌ MULTI-NODE SIMULATION PANICKED: {}", msg);
+                        error!("🌐🧪 ❌ Set RUST_BACKTRACE=1 for full backtrace");
+                    } else {
+                        error!("🌐🧪 ❌ Multi-node simulation task was cancelled");
+                    }
                 }
             }
         });
@@ -1300,7 +1331,7 @@ impl Component for NeuralMeshComponent {
         let anomaly_export_clone = self.anomaly.clone();
         let codec_learner_clone = self.codec_learner.clone();
         let persist_dir = self.persist_dir.clone();
-        tokio::spawn(async move {
+        let train_handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
             let mut cycle_count: u64 = 0;
             loop {
@@ -1700,6 +1731,28 @@ impl Component for NeuralMeshComponent {
                 }
             }
             debug!("Neural mesh background training loop exited");
+        });
+        // Watch the training loop's JoinHandle so panics are logged
+        tokio::spawn(async move {
+            match train_handle.await {
+                Ok(()) => info!("🧠 Training loop task completed normally"),
+                Err(e) => {
+                    if e.is_panic() {
+                        let panic_info = e.into_panic();
+                        let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                            s.to_string()
+                        } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                            s.clone()
+                        } else {
+                            format!("{:?}", panic_info)
+                        };
+                        error!("🧠 ❌ TRAINING LOOP PANICKED: {}", msg);
+                        error!("🧠 ❌ Set RUST_BACKTRACE=1 for full backtrace");
+                    } else {
+                        error!("🧠 ❌ Training loop task was cancelled");
+                    }
+                }
+            }
         });
 
         info!("🧠 Neural Mesh component running — all 5 sub-components active + background training");
