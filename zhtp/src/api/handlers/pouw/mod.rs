@@ -707,7 +707,105 @@ impl PouwHandler {
         Ok(ZhtpResponse::json(&body, None).map_err(|e| anyhow::anyhow!(e))?)
     }
 
-    /// Handle GET /pouw/stats — global POUW statistics
+    /// Handle GET /pouw/status — comprehensive public status endpoint.
+    ///
+    /// Returns epoch info, budget state, NAI, proof multipliers, payout stats.
+    /// All u128 amounts serialized as strings. No authentication required.
+    async fn handle_get_status(&self) -> ZhtpResult<ZhtpResponse> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let current_epoch = self.reward_calculator.current_epoch();
+        let epoch_start = self.reward_calculator.epoch_start(current_epoch);
+        let epoch_end = self.reward_calculator.epoch_end(current_epoch);
+
+        let budget = self.reward_calculator.get_budget_state().await;
+        let budget_remaining = budget.remaining();
+        let utilization_pct = if budget.budget_cap_atoms > 0 {
+            (budget.total_paid_atoms as f64 / budget.budget_cap_atoms as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        let rewards = self.reward_calculator.get_all_rewards().await;
+        let total_calculated = rewards.len();
+        let total_paid = rewards
+            .iter()
+            .filter(|r| r.payout_status == crate::pouw::rewards::PayoutStatus::Paid)
+            .count();
+        let total_pending = rewards
+            .iter()
+            .filter(|r| r.payout_status == crate::pouw::rewards::PayoutStatus::Pending)
+            .count();
+        let total_failed = rewards
+            .iter()
+            .filter(|r| r.payout_status == crate::pouw::rewards::PayoutStatus::Failed)
+            .count();
+        let total_sov_distributed: u128 = rewards
+            .iter()
+            .filter(|r| r.payout_status == crate::pouw::rewards::PayoutStatus::Paid)
+            .map(|r| r.final_amount)
+            .fold(0u128, |acc, x| acc.saturating_add(x));
+
+        let unique_earners: std::collections::HashSet<&str> = rewards
+            .iter()
+            .map(|r| r.client_did.as_str())
+            .collect();
+
+        let suspicious = self.reward_calculator.get_suspicious_dids().await;
+
+        let body = serde_json::json!({
+            "epoch": {
+                "current": current_epoch,
+                "duration_secs": crate::pouw::rewards::DEFAULT_EPOCH_DURATION_SECS,
+                "started_at": epoch_start,
+                "ends_at": epoch_end,
+                "remaining_secs": epoch_end.saturating_sub(now),
+            },
+            "budget": {
+                "pouw_total_budget": crate::pouw::rewards::POUW_TOTAL_BUDGET.to_string(),
+                "pouw_total_paid": budget.total_paid_atoms.to_string(),
+                "pouw_remaining": budget_remaining.to_string(),
+                "pouw_utilization_pct": utilization_pct,
+                "dev_grant_pool_ceiling": crate::rewards::nai::DEV_GRANT_POOL_CEILING.to_string(),
+                "budget_state": if budget_remaining > 0 { "active" } else { "exhausted" },
+            },
+            "epoch_pool": {
+                "base_pool": crate::pouw::rewards::POUW_EPOCH_POOL.to_string(),
+                "per_node_cap": crate::pouw::rewards::POUW_PER_NODE_EPOCH_CAP.to_string(),
+                "expected_active_nodes": crate::pouw::rewards::EXPECTED_ACTIVE_NODES,
+            },
+            "multipliers": {
+                "hash": 1,
+                "merkle": 2,
+                "signature": 3,
+                "web4_manifest_route": 2,
+                "web4_content_served": 3,
+                "base_reward_unit": crate::pouw::rewards::BASE_REWARD_UNIT.to_string(),
+            },
+            "stats": {
+                "total_rewards_calculated": total_calculated,
+                "total_rewards_paid": total_paid,
+                "total_rewards_pending": total_pending,
+                "total_rewards_failed": total_failed,
+                "total_sov_distributed": total_sov_distributed.to_string(),
+                "suspicious_dids": suspicious.len(),
+                "unique_earners": unique_earners.len(),
+            },
+            "payout": {
+                "interval_secs": crate::pouw::rewards::DEFAULT_EPOCH_DURATION_SECS,
+            },
+            "eligibility": {
+                "min_identity_age_secs": MIN_IDENTITY_AGE_SECS,
+            },
+        });
+
+        Ok(ZhtpResponse::json(&body, None).map_err(|e| anyhow::anyhow!(e))?)
+    }
+
+    /// Handle GET /pouw/stats — global POUW statistics (legacy, use /pouw/status instead)
     async fn handle_get_stats(&self) -> ZhtpResult<ZhtpResponse> {
         let rewards = self.reward_calculator.get_all_rewards().await;
         let total_rewards = rewards.len() as u64;
@@ -990,6 +1088,7 @@ impl ZhtpRequestHandler for PouwHandler {
             ("GET", "/pouw/challenge") => self.handle_get_challenge(&request).await,
             ("POST", "/pouw/submit") => self.handle_submit_receipt(&request).await,
             ("GET", "/pouw/health") => self.handle_health_check().await,
+            ("GET", "/pouw/status") => self.handle_get_status().await,
             ("GET", "/pouw/stats") => self.handle_get_stats().await,
             ("GET", "/pouw/epochs") => self.handle_list_epochs(&request).await,
             _ => Ok(ZhtpResponse::error(
