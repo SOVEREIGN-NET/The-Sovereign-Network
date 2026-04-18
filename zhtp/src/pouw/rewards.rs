@@ -521,6 +521,16 @@ impl RewardCalculator {
         }
     }
 
+    /// Count DIDs that submitted PoUW work in the current epoch.
+    pub async fn active_nodes_current_epoch(&self) -> u64 {
+        let current = self.current_epoch();
+        let history = self.did_history.read().await;
+        history
+            .values()
+            .filter(|records| records.back().map(|r| r.epoch == current).unwrap_or(false))
+            .count() as u64
+    }
+
     /// Get the set of DIDs flagged as suspicious for manual review
     pub async fn get_suspicious_dids(&self) -> Vec<String> {
         self.suspicious_dids.read().await.iter().cloned().collect()
