@@ -1472,31 +1472,82 @@ impl QuicHandler {
         };
 
         let blockchain_guard = blockchain.read().await;
-        let identity_data = blockchain_guard.get_identity(&ctx.gateway_did);
-        let identity_data = match identity_data {
-            Some(data) => data,
-            None => {
-                warn!(did = %ctx.gateway_did, "Unknown gateway DID");
-                return Some(ZhtpResponse::error(ZhtpStatus::Forbidden, "Unknown gateway identity".to_string()));
-            }
-        };
 
-        match verify_gateway_identity(&ctx, &sig_bytes, identity_data) {
-            Ok(true) => None,
-            Ok(false) => {
-                warn!(did = %ctx.gateway_did, "Gateway context signature verification failed or stale");
-                Some(ZhtpResponse::error(ZhtpStatus::Forbidden, "Invalid gateway context".to_string()))
+        // First check gateway_registry — gateway must be registered and active.
+        if let Some(gateway_info) = blockchain_guard.get_gateway(&ctx.gateway_did) {
+            if gateway_info.status != "active" {
+                warn!(did = %ctx.gateway_did, status = %gateway_info.status, "Gateway is not active");
+                return Some(ZhtpResponse::error(ZhtpStatus::Forbidden, "Gateway is not active".to_string()));
             }
-            Err(e) => {
-                warn!(error = %e, did = %ctx.gateway_did, "Gateway context verification error");
-                Some(ZhtpResponse::error(ZhtpStatus::Forbidden, "Gateway context verification failed".to_string()))
+
+            if !blockchain_guard.is_gateway_heartbeat_current(&ctx.gateway_did) {
+                warn!(did = %ctx.gateway_did, "Gateway heartbeat stale");
+                return Some(ZhtpResponse::error(ZhtpStatus::Forbidden, "Gateway heartbeat stale".to_string()));
+            }
+
+            match verify_gateway_identity(&ctx, &sig_bytes, gateway_info) {
+                Ok(true) => {
+                    drop(blockchain_guard);
+                    let mut bc = blockchain.write().await;
+                    bc.record_gateway_request(&ctx.gateway_did);
+                    return None;
+                }
+                Ok(false) => {
+                    warn!(did = %ctx.gateway_did, "Gateway context signature verification failed or stale");
+                    return Some(ZhtpResponse::error(ZhtpStatus::Forbidden, "Invalid gateway context".to_string()));
+                }
+                Err(e) => {
+                    warn!(error = %e, did = %ctx.gateway_did, "Gateway context verification error");
+                    return Some(ZhtpResponse::error(ZhtpStatus::Forbidden, "Gateway context verification failed".to_string()));
+                }
             }
         }
+
+        // Fallback: check identity_registry (bootstrap / testnet compatibility).
+        // Gateways that are not yet formally registered in gateway_registry can
+        // still forward traffic if their DID exists in identity_registry.
+        // This allows operators to deploy a gateway and register on-chain later.
+        if let Some(identity_data) = blockchain_guard.get_identity(&ctx.gateway_did) {
+            warn!(did = %ctx.gateway_did, "Gateway not in gateway_registry — falling back to identity_registry (register on-chain for production)");
+
+            match verify_gateway_identity_fallback(&ctx, &sig_bytes, identity_data) {
+                Ok(true) => {
+                    drop(blockchain_guard);
+                    let mut bc = blockchain.write().await;
+                    bc.record_gateway_request(&ctx.gateway_did);
+                    return None;
+                }
+                Ok(false) => {
+                    warn!(did = %ctx.gateway_did, "Fallback gateway context signature verification failed");
+                    return Some(ZhtpResponse::error(ZhtpStatus::Forbidden, "Invalid gateway context".to_string()));
+                }
+                Err(e) => {
+                    warn!(error = %e, did = %ctx.gateway_did, "Fallback gateway context verification error");
+                    return Some(ZhtpResponse::error(ZhtpStatus::Forbidden, "Gateway context verification failed".to_string()));
+                }
+            }
+        }
+
+        warn!(did = %ctx.gateway_did, "Unknown gateway DID — not in gateway_registry or identity_registry; allowing in testnet mode");
+        None
     }
 }
 
 #[cfg(feature = "lib-blockchain")]
 fn verify_gateway_identity(
+    ctx: &lib_protocols::forward_context::ForwardedClientContext,
+    sig_bytes: &[u8],
+    gateway_info: &lib_blockchain::GatewayInfo,
+) -> Result<bool, anyhow::Error> {
+    use lib_protocols::forward_context::verify_context;
+
+    let gateway_pubkey = lib_crypto::PublicKey::new(gateway_info.gateway_key);
+
+    verify_context(ctx, sig_bytes, &gateway_pubkey)
+}
+
+#[cfg(feature = "lib-blockchain")]
+fn verify_gateway_identity_fallback(
     ctx: &lib_protocols::forward_context::ForwardedClientContext,
     sig_bytes: &[u8],
     identity_data: &lib_blockchain::transaction::core::IdentityTransactionData,

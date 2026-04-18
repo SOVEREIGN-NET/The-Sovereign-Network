@@ -710,6 +710,11 @@ pub mod utils {
                 // Validator transactions - no specific validation needed here
                 // Validation will be handled during transaction validation
             }
+            TransactionType::GatewayRegistration
+            | TransactionType::GatewayUpdate
+            | TransactionType::GatewayUnregister => {
+                // Gateway transactions - validation handled during transaction validation
+            }
             TransactionType::DaoProposal
             | TransactionType::DaoVote
             | TransactionType::DaoExecution

@@ -62,10 +62,8 @@ async fn main() -> anyhow::Result<()> {
             RuntimeOrchestrator::start_relay(config).await?
         }
         NodeType::Gateway => {
-            anyhow::bail!(
-                "Gateway mode is not supported by the zhtp binary. \
-                 Use the zhtp-daemon binary for gateway/ingress-proxy operation."
-            )
+            tracing::info!("Starting node as Gateway (QUIC ingress proxy, no blockchain state)");
+            RuntimeOrchestrator::start_gateway(config).await?
         }
     };
 

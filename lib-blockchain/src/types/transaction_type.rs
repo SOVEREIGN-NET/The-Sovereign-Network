@@ -163,14 +163,19 @@ pub enum TransactionType {
     /// Block processor updates record in `Blockchain::domain_registry`.
     DomainUpdate = 47,
 
+    // Gateway registry (remote QUIC ingress nodes)
+    GatewayRegistration = 48,
+    GatewayUpdate = 49,
+    GatewayUnregister = 50,
+
     /// Create a new NFT collection.
-    NftCreateCollection = 48,
+    NftCreateCollection = 51,
     /// Mint a new NFT in a collection.
-    NftMint = 49,
+    NftMint = 52,
     /// Transfer NFT ownership.
-    NftTransfer = 50,
+    NftTransfer = 53,
     /// Burn (destroy) an NFT.
-    NftBurn = 51,
+    NftBurn = 54,
 }
 
 impl TransactionType {
@@ -337,6 +342,9 @@ impl TransactionType {
             TransactionType::DomainUpdate => {
                 "Update Web4 domain manifest (new deployment)"
             }
+            TransactionType::GatewayRegistration => "Gateway node registration",
+            TransactionType::GatewayUpdate => "Gateway node information update",
+            TransactionType::GatewayUnregister => "Gateway node unregistration",
             TransactionType::NftCreateCollection => "Create a new NFT collection",
             TransactionType::NftMint => "Mint a new NFT in a collection",
             TransactionType::NftTransfer => "Transfer NFT ownership",
@@ -395,6 +403,9 @@ impl TransactionType {
             TransactionType::DaoUnstake => "dao_unstake",
             TransactionType::DomainRegistration => "domain_registration",
             TransactionType::DomainUpdate => "domain_update",
+            TransactionType::GatewayRegistration => "gateway_registration",
+            TransactionType::GatewayUpdate => "gateway_update",
+            TransactionType::GatewayUnregister => "gateway_unregister",
             TransactionType::NftCreateCollection => "nft_create_collection",
             TransactionType::NftMint => "nft_mint",
             TransactionType::NftTransfer => "nft_transfer",
@@ -453,6 +464,9 @@ impl TransactionType {
             "dao_unstake" => Some(TransactionType::DaoUnstake),
             "domain_registration" => Some(TransactionType::DomainRegistration),
             "domain_update" => Some(TransactionType::DomainUpdate),
+            "gateway_registration" => Some(TransactionType::GatewayRegistration),
+            "gateway_update" => Some(TransactionType::GatewayUpdate),
+            "gateway_unregister" => Some(TransactionType::GatewayUnregister),
             "nft_create_collection" => Some(TransactionType::NftCreateCollection),
             "nft_mint" => Some(TransactionType::NftMint),
             "nft_transfer" => Some(TransactionType::NftTransfer),
