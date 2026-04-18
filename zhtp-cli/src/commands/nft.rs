@@ -128,6 +128,108 @@ pub async fn handle_nft_command(args: NftArgs, cli: &ZhtpCli) -> CliResult<()> {
             Ok(())
         }
 
+        NftAction::Transfer {
+            collection,
+            token_id,
+            to,
+            keystore,
+        } => {
+            let identity = load_identity(&keystore)?;
+            let collection_id = parse_hex32(&collection, "--collection")?;
+            let recipient = parse_hex32(&to, "--to")?;
+            // The 'from' is the signer's own key_id
+            let signer_pk = zhtp_client::token_tx::create_public_key_with_kyber(
+                identity.public_key.clone(),
+                identity.kyber_public_key.clone(),
+            );
+            let from = signer_pk.key_id;
+
+            eprintln!(
+                "Transferring NFT token {} from collection {} to {}",
+                token_id,
+                &collection[..16],
+                &to[..16.min(to.len())],
+            );
+
+            let tx_hex = zhtp_client::nft_tx::build_nft_transfer_tx(
+                &identity,
+                collection_id,
+                token_id,
+                from,
+                recipient,
+                3,
+            )
+            .map_err(|e| CliError::ConfigError(e))?;
+
+            let body = serde_json::json!({ "signed_tx": tx_hex });
+            let response = client
+                .post_json("/api/v1/nft/transfer", &body)
+                .await
+                .map_err(|e| CliError::ApiCallFailed {
+                    endpoint: "/api/v1/nft/transfer".to_string(),
+                    status: 0,
+                    reason: e.to_string(),
+                })?;
+
+            let result: serde_json::Value = ZhtpClient::parse_json(&response)
+                .map_err(|e| CliError::ApiCallFailed {
+                    endpoint: "/api/v1/nft/transfer".to_string(),
+                    status: 0,
+                    reason: format!("Failed to parse response: {}", e),
+                })?;
+            println!("{}", format_output(&result, &cli.format)?);
+            Ok(())
+        }
+
+        NftAction::Burn {
+            collection,
+            token_id,
+            keystore,
+        } => {
+            let identity = load_identity(&keystore)?;
+            let collection_id = parse_hex32(&collection, "--collection")?;
+            // The 'owner' is the signer's own key_id
+            let signer_pk = zhtp_client::token_tx::create_public_key_with_kyber(
+                identity.public_key.clone(),
+                identity.kyber_public_key.clone(),
+            );
+            let owner = signer_pk.key_id;
+
+            eprintln!(
+                "Burning NFT token {} from collection {}",
+                token_id,
+                &collection[..16],
+            );
+
+            let tx_hex = zhtp_client::nft_tx::build_nft_burn_tx(
+                &identity,
+                collection_id,
+                token_id,
+                owner,
+                3,
+            )
+            .map_err(|e| CliError::ConfigError(e))?;
+
+            let body = serde_json::json!({ "signed_tx": tx_hex });
+            let response = client
+                .post_json("/api/v1/nft/burn", &body)
+                .await
+                .map_err(|e| CliError::ApiCallFailed {
+                    endpoint: "/api/v1/nft/burn".to_string(),
+                    status: 0,
+                    reason: e.to_string(),
+                })?;
+
+            let result: serde_json::Value = ZhtpClient::parse_json(&response)
+                .map_err(|e| CliError::ApiCallFailed {
+                    endpoint: "/api/v1/nft/burn".to_string(),
+                    status: 0,
+                    reason: format!("Failed to parse response: {}", e),
+                })?;
+            println!("{}", format_output(&result, &cli.format)?);
+            Ok(())
+        }
+
         NftAction::List => {
             let response = client
                 .get("/api/v1/nft/collections")

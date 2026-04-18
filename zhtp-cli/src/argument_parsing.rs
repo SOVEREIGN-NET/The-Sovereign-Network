@@ -185,6 +185,33 @@ pub enum NftAction {
         #[arg(long)]
         keystore: Option<String>,
     },
+    /// Transfer an NFT to another wallet
+    Transfer {
+        /// Collection ID (64-char hex)
+        #[arg(long)]
+        collection: String,
+        /// Token ID (integer)
+        #[arg(long)]
+        token_id: u64,
+        /// Recipient wallet ID (64-char hex)
+        #[arg(long)]
+        to: String,
+        /// Path to keystore directory
+        #[arg(long)]
+        keystore: Option<String>,
+    },
+    /// Burn (destroy) an NFT
+    Burn {
+        /// Collection ID (64-char hex)
+        #[arg(long)]
+        collection: String,
+        /// Token ID (integer)
+        #[arg(long)]
+        token_id: u64,
+        /// Path to keystore directory
+        #[arg(long)]
+        keystore: Option<String>,
+    },
     /// List collections
     List,
     /// List NFTs owned by a wallet

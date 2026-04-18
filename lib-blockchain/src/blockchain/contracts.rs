@@ -1094,13 +1094,20 @@ impl Blockchain {
                             data.max_supply,
                             tx.signature.timestamp,
                         );
-                        info!(
-                            "🎨 NFT collection created: {} ({}) id={}",
-                            data.name,
-                            data.symbol,
-                            hex::encode(&collection_id[..8]),
-                        );
-                        self.nft_collections.insert(collection_id, contract);
+                        if self.nft_collections.contains_key(&collection_id) {
+                            warn!(
+                                "NFT collection already exists, skipping: id={}",
+                                hex::encode(&collection_id[..8]),
+                            );
+                        } else {
+                            info!(
+                                "🎨 NFT collection created: {} ({}) id={}",
+                                data.name,
+                                data.symbol,
+                                hex::encode(&collection_id[..8]),
+                            );
+                            self.nft_collections.insert(collection_id, contract);
+                        }
                     }
                 }
                 TransactionType::NftMint => {
@@ -1136,7 +1143,13 @@ impl Blockchain {
                 }
                 TransactionType::NftTransfer => {
                     if let Some(data) = tx.nft_transfer_data() {
-                        if let Some(collection) = self.nft_collections.get_mut(&data.collection_id) {
+                        if tx.signature.public_key.key_id != data.from {
+                            warn!(
+                                "NFT transfer rejected: signer {} is not the owner {}",
+                                hex::encode(&tx.signature.public_key.key_id[..8]),
+                                hex::encode(&data.from[..8]),
+                            );
+                        } else if let Some(collection) = self.nft_collections.get_mut(&data.collection_id) {
                             if let Err(e) = collection.transfer(data.token_id, &data.from, data.to) {
                                 warn!("NFT transfer failed: {}", e);
                             } else {
@@ -1152,7 +1165,13 @@ impl Blockchain {
                 }
                 TransactionType::NftBurn => {
                     if let Some(data) = tx.nft_burn_data() {
-                        if let Some(collection) = self.nft_collections.get_mut(&data.collection_id) {
+                        if tx.signature.public_key.key_id != data.owner {
+                            warn!(
+                                "NFT burn rejected: signer {} is not the owner {}",
+                                hex::encode(&tx.signature.public_key.key_id[..8]),
+                                hex::encode(&data.owner[..8]),
+                            );
+                        } else if let Some(collection) = self.nft_collections.get_mut(&data.collection_id) {
                             if let Err(e) = collection.burn(data.token_id, &data.owner) {
                                 warn!("NFT burn failed: {}", e);
                             } else {

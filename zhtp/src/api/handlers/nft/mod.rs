@@ -56,8 +56,10 @@ impl NftHandler {
 
     /// GET /api/v1/nft/collection/{id}
     async fn handle_get_collection(&self, collection_id_hex: &str) -> Result<ZhtpResponse> {
-        let id = hex::decode(collection_id_hex)
-            .map_err(|_| anyhow::anyhow!("invalid collection_id hex"))?;
+        let id = match hex::decode(collection_id_hex) {
+            Ok(v) => v,
+            Err(_) => return Ok(err(ZhtpStatus::BadRequest, "invalid collection_id hex".into())),
+        };
         if id.len() != 32 {
             return Ok(err(ZhtpStatus::BadRequest, "collection_id must be 32 bytes".into()));
         }
@@ -100,17 +102,20 @@ impl NftHandler {
         collection_id_hex: &str,
         token_id_str: &str,
     ) -> Result<ZhtpResponse> {
-        let id = hex::decode(collection_id_hex)
-            .map_err(|_| anyhow::anyhow!("invalid collection_id hex"))?;
+        let id = match hex::decode(collection_id_hex) {
+            Ok(v) => v,
+            Err(_) => return Ok(err(ZhtpStatus::BadRequest, "invalid collection_id hex".into())),
+        };
         if id.len() != 32 {
             return Ok(err(ZhtpStatus::BadRequest, "collection_id must be 32 bytes".into()));
         }
         let mut arr = [0u8; 32];
         arr.copy_from_slice(&id);
 
-        let token_id: u64 = token_id_str
-            .parse()
-            .map_err(|_| anyhow::anyhow!("invalid token_id"))?;
+        let token_id: u64 = match token_id_str.parse() {
+            Ok(v) => v,
+            Err(_) => return Ok(err(ZhtpStatus::BadRequest, "invalid token_id".into())),
+        };
 
         let bc = self.blockchain.read().await;
         match bc.nft_collections.get(&arr) {
@@ -141,8 +146,10 @@ impl NftHandler {
 
     /// GET /api/v1/nft/owned/{wallet_id}
     async fn handle_get_owned(&self, wallet_id_hex: &str) -> Result<ZhtpResponse> {
-        let id = hex::decode(wallet_id_hex)
-            .map_err(|_| anyhow::anyhow!("invalid wallet_id hex"))?;
+        let id = match hex::decode(wallet_id_hex) {
+            Ok(v) => v,
+            Err(_) => return Ok(err(ZhtpStatus::BadRequest, "invalid wallet_id hex".into())),
+        };
         if id.len() != 32 {
             return Ok(err(ZhtpStatus::BadRequest, "wallet_id must be 32 bytes".into()));
         }
@@ -172,13 +179,19 @@ impl NftHandler {
         struct Req {
             signed_tx: String,
         }
-        let body: Req = serde_json::from_slice(&request.body)
-            .map_err(|e| anyhow::anyhow!("invalid request: {}", e))?;
+        let body: Req = match serde_json::from_slice(&request.body) {
+            Ok(v) => v,
+            Err(e) => return Ok(err(ZhtpStatus::BadRequest, format!("invalid request: {}", e))),
+        };
 
-        let tx_bytes = hex::decode(&body.signed_tx)
-            .map_err(|_| anyhow::anyhow!("invalid hex"))?;
-        let tx: lib_blockchain::transaction::Transaction = bincode::deserialize(&tx_bytes)
-            .map_err(|e| anyhow::anyhow!("invalid transaction: {}", e))?;
+        let tx_bytes = match hex::decode(&body.signed_tx) {
+            Ok(v) => v,
+            Err(_) => return Ok(err(ZhtpStatus::BadRequest, "invalid hex".into())),
+        };
+        let tx: lib_blockchain::transaction::Transaction = match bincode::deserialize(&tx_bytes) {
+            Ok(v) => v,
+            Err(e) => return Ok(err(ZhtpStatus::BadRequest, format!("invalid transaction: {}", e))),
+        };
 
         if tx.transaction_type != lib_blockchain::types::transaction_type::TransactionType::NftCreateCollection {
             return Ok(err(ZhtpStatus::BadRequest, "Expected NftCreateCollection tx".into()));
@@ -186,7 +199,7 @@ impl NftHandler {
 
         let tx_hash = hex::encode(tx.hash().as_bytes());
         let mut bc = self.blockchain.write().await;
-        bc.add_system_transaction(tx)
+        bc.add_pending_transaction(tx)
             .map_err(|e| anyhow::anyhow!("submit failed: {}", e))?;
 
         info!("NFT collection creation submitted: {}", tx_hash);
@@ -199,13 +212,19 @@ impl NftHandler {
         struct Req {
             signed_tx: String,
         }
-        let body: Req = serde_json::from_slice(&request.body)
-            .map_err(|e| anyhow::anyhow!("invalid request: {}", e))?;
+        let body: Req = match serde_json::from_slice(&request.body) {
+            Ok(v) => v,
+            Err(e) => return Ok(err(ZhtpStatus::BadRequest, format!("invalid request: {}", e))),
+        };
 
-        let tx_bytes = hex::decode(&body.signed_tx)
-            .map_err(|_| anyhow::anyhow!("invalid hex"))?;
-        let tx: lib_blockchain::transaction::Transaction = bincode::deserialize(&tx_bytes)
-            .map_err(|e| anyhow::anyhow!("invalid transaction: {}", e))?;
+        let tx_bytes = match hex::decode(&body.signed_tx) {
+            Ok(v) => v,
+            Err(_) => return Ok(err(ZhtpStatus::BadRequest, "invalid hex".into())),
+        };
+        let tx: lib_blockchain::transaction::Transaction = match bincode::deserialize(&tx_bytes) {
+            Ok(v) => v,
+            Err(e) => return Ok(err(ZhtpStatus::BadRequest, format!("invalid transaction: {}", e))),
+        };
 
         if tx.transaction_type != lib_blockchain::types::transaction_type::TransactionType::NftMint {
             return Ok(err(ZhtpStatus::BadRequest, "Expected NftMint tx".into()));
@@ -213,7 +232,7 @@ impl NftHandler {
 
         let tx_hash = hex::encode(tx.hash().as_bytes());
         let mut bc = self.blockchain.write().await;
-        bc.add_system_transaction(tx)
+        bc.add_pending_transaction(tx)
             .map_err(|e| anyhow::anyhow!("submit failed: {}", e))?;
 
         info!("NFT mint submitted: {}", tx_hash);
@@ -226,13 +245,19 @@ impl NftHandler {
         struct Req {
             signed_tx: String,
         }
-        let body: Req = serde_json::from_slice(&request.body)
-            .map_err(|e| anyhow::anyhow!("invalid request: {}", e))?;
+        let body: Req = match serde_json::from_slice(&request.body) {
+            Ok(v) => v,
+            Err(e) => return Ok(err(ZhtpStatus::BadRequest, format!("invalid request: {}", e))),
+        };
 
-        let tx_bytes = hex::decode(&body.signed_tx)
-            .map_err(|_| anyhow::anyhow!("invalid hex"))?;
-        let tx: lib_blockchain::transaction::Transaction = bincode::deserialize(&tx_bytes)
-            .map_err(|e| anyhow::anyhow!("invalid transaction: {}", e))?;
+        let tx_bytes = match hex::decode(&body.signed_tx) {
+            Ok(v) => v,
+            Err(_) => return Ok(err(ZhtpStatus::BadRequest, "invalid hex".into())),
+        };
+        let tx: lib_blockchain::transaction::Transaction = match bincode::deserialize(&tx_bytes) {
+            Ok(v) => v,
+            Err(e) => return Ok(err(ZhtpStatus::BadRequest, format!("invalid transaction: {}", e))),
+        };
 
         if tx.transaction_type != lib_blockchain::types::transaction_type::TransactionType::NftTransfer {
             return Ok(err(ZhtpStatus::BadRequest, "Expected NftTransfer tx".into()));
@@ -240,10 +265,43 @@ impl NftHandler {
 
         let tx_hash = hex::encode(tx.hash().as_bytes());
         let mut bc = self.blockchain.write().await;
-        bc.add_system_transaction(tx)
+        bc.add_pending_transaction(tx)
             .map_err(|e| anyhow::anyhow!("submit failed: {}", e))?;
 
         info!("NFT transfer submitted: {}", tx_hash);
+        json_ok(json!({ "success": true, "tx_hash": tx_hash }))
+    }
+
+    /// POST /api/v1/nft/burn
+    async fn handle_burn(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        #[derive(serde::Deserialize)]
+        struct Req {
+            signed_tx: String,
+        }
+        let body: Req = match serde_json::from_slice(&request.body) {
+            Ok(v) => v,
+            Err(e) => return Ok(err(ZhtpStatus::BadRequest, format!("invalid request: {}", e))),
+        };
+
+        let tx_bytes = match hex::decode(&body.signed_tx) {
+            Ok(v) => v,
+            Err(_) => return Ok(err(ZhtpStatus::BadRequest, "invalid hex".into())),
+        };
+        let tx: lib_blockchain::transaction::Transaction = match bincode::deserialize(&tx_bytes) {
+            Ok(v) => v,
+            Err(e) => return Ok(err(ZhtpStatus::BadRequest, format!("invalid transaction: {}", e))),
+        };
+
+        if tx.transaction_type != lib_blockchain::types::transaction_type::TransactionType::NftBurn {
+            return Ok(err(ZhtpStatus::BadRequest, "Expected NftBurn tx".into()));
+        }
+
+        let tx_hash = hex::encode(tx.hash().as_bytes());
+        let mut bc = self.blockchain.write().await;
+        bc.add_pending_transaction(tx)
+            .map_err(|e| anyhow::anyhow!("submit failed: {}", e))?;
+
+        info!("NFT burn submitted: {}", tx_hash);
         json_ok(json!({ "success": true, "tx_hash": tx_hash }))
     }
 }
@@ -286,6 +344,9 @@ impl ZhtpRequestHandler for NftHandler {
             }
             (ZhtpMethod::Post, "/api/v1/nft/transfer") => {
                 self.handle_transfer(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/nft/burn") => {
+                self.handle_burn(request).await
             }
             _ => Ok(err(
                 ZhtpStatus::NotFound,

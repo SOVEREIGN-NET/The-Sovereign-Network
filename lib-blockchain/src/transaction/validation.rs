@@ -407,12 +407,23 @@ impl TransactionValidator {
                     return Err(ValidationError::InvalidMemo);
                 }
             }
-            TransactionType::NftCreateCollection
-            | TransactionType::NftMint
-            | TransactionType::NftTransfer
-            | TransactionType::NftBurn => {
-                // NFT transactions - check payload is present
-                if transaction.memo.is_empty() && matches!(transaction.payload, crate::transaction::TransactionPayload::None) {
+            TransactionType::NftCreateCollection => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftCreateCollection(_)) {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::NftMint => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftMint(_)) {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::NftTransfer => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftTransfer(_)) {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::NftBurn => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftBurn(_)) {
                     return Err(ValidationError::MissingRequiredData);
                 }
             }
@@ -666,12 +677,23 @@ impl TransactionValidator {
                     return Err(ValidationError::InvalidMemo);
                 }
             }
-            TransactionType::NftCreateCollection
-            | TransactionType::NftMint
-            | TransactionType::NftTransfer
-            | TransactionType::NftBurn => {
-                // NFT transactions - check payload is present
-                if transaction.memo.is_empty() && matches!(transaction.payload, crate::transaction::TransactionPayload::None) {
+            TransactionType::NftCreateCollection => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftCreateCollection(_)) {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::NftMint => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftMint(_)) {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::NftTransfer => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftTransfer(_)) {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::NftBurn => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftBurn(_)) {
                     return Err(ValidationError::MissingRequiredData);
                 }
             }
@@ -1913,12 +1935,23 @@ impl<'a> StatefulTransactionValidator<'a> {
                     }
                 }
             }
-            TransactionType::NftCreateCollection
-            | TransactionType::NftMint
-            | TransactionType::NftTransfer
-            | TransactionType::NftBurn => {
-                // NFT transactions - full validation deferred to executor
-                if transaction.memo.is_empty() && matches!(transaction.payload, crate::transaction::TransactionPayload::None) {
+            TransactionType::NftCreateCollection => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftCreateCollection(_)) {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::NftMint => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftMint(_)) {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::NftTransfer => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftTransfer(_)) {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::NftBurn => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftBurn(_)) {
                     return Err(ValidationError::MissingRequiredData);
                 }
             }
@@ -3171,12 +3204,17 @@ pub mod utils {
                     && transaction.inputs.is_empty()
                     && transaction.outputs.is_empty()
             }
-            TransactionType::NftCreateCollection
-            | TransactionType::NftMint
-            | TransactionType::NftTransfer
-            | TransactionType::NftBurn => {
-                // NFT transactions - payload must be present
-                !transaction.memo.is_empty() || !matches!(transaction.payload, crate::transaction::TransactionPayload::None)
+            TransactionType::NftCreateCollection => {
+                matches!(transaction.payload, crate::transaction::TransactionPayload::NftCreateCollection(_))
+            }
+            TransactionType::NftMint => {
+                matches!(transaction.payload, crate::transaction::TransactionPayload::NftMint(_))
+            }
+            TransactionType::NftTransfer => {
+                matches!(transaction.payload, crate::transaction::TransactionPayload::NftTransfer(_))
+            }
+            TransactionType::NftBurn => {
+                matches!(transaction.payload, crate::transaction::TransactionPayload::NftBurn(_))
             }
         }
     }
