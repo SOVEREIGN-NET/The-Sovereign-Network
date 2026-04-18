@@ -162,6 +162,15 @@ pub enum TransactionType {
     /// Payload: `DOMUPD1:` prefix + bincode(DomainUpdatePayload) in memo field.
     /// Block processor updates record in `Blockchain::domain_registry`.
     DomainUpdate = 47,
+
+    /// Create a new NFT collection.
+    NftCreateCollection = 48,
+    /// Mint a new NFT in a collection.
+    NftMint = 49,
+    /// Transfer NFT ownership.
+    NftTransfer = 50,
+    /// Burn (destroy) an NFT.
+    NftBurn = 51,
 }
 
 impl TransactionType {
@@ -328,6 +337,10 @@ impl TransactionType {
             TransactionType::DomainUpdate => {
                 "Update Web4 domain manifest (new deployment)"
             }
+            TransactionType::NftCreateCollection => "Create a new NFT collection",
+            TransactionType::NftMint => "Mint a new NFT in a collection",
+            TransactionType::NftTransfer => "Transfer NFT ownership",
+            TransactionType::NftBurn => "Burn (destroy) an NFT",
         }
     }
 
@@ -382,6 +395,10 @@ impl TransactionType {
             TransactionType::DaoUnstake => "dao_unstake",
             TransactionType::DomainRegistration => "domain_registration",
             TransactionType::DomainUpdate => "domain_update",
+            TransactionType::NftCreateCollection => "nft_create_collection",
+            TransactionType::NftMint => "nft_mint",
+            TransactionType::NftTransfer => "nft_transfer",
+            TransactionType::NftBurn => "nft_burn",
         }
     }
 
@@ -436,6 +453,10 @@ impl TransactionType {
             "dao_unstake" => Some(TransactionType::DaoUnstake),
             "domain_registration" => Some(TransactionType::DomainRegistration),
             "domain_update" => Some(TransactionType::DomainUpdate),
+            "nft_create_collection" => Some(TransactionType::NftCreateCollection),
+            "nft_mint" => Some(TransactionType::NftMint),
+            "nft_transfer" => Some(TransactionType::NftTransfer),
+            "nft_burn" => Some(TransactionType::NftBurn),
             _ => None,
         }
     }

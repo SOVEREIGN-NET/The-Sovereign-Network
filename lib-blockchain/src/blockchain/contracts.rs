@@ -1066,6 +1066,129 @@ impl Blockchain {
         }
     }
 
+    /// Process NFT transactions from a committed block.
+    pub fn process_nft_transactions(&mut self, block: &Block) {
+        use crate::contracts::nft::{NftContract, NftMetadata};
+
+        for tx in &block.transactions {
+            match tx.transaction_type {
+                TransactionType::NftCreateCollection => {
+                    if let Some(data) = tx.nft_create_collection_data() {
+                        let collection_id = lib_crypto::hash_blake3(
+                            &format!(
+                                "nft_collection:{}:{}:{}",
+                                data.name,
+                                data.symbol,
+                                hex::encode(tx.signature.public_key.key_id)
+                            )
+                            .as_bytes(),
+                        );
+                        let contract = NftContract::new(
+                            collection_id,
+                            data.name.clone(),
+                            data.symbol.clone(),
+                            format!("did:zhtp:{}", hex::encode(
+                                lib_crypto::hashing::hash_blake3(&tx.signature.public_key.dilithium_pk)
+                            )),
+                            tx.signature.public_key.key_id,
+                            data.max_supply,
+                            tx.signature.timestamp,
+                        );
+                        if self.nft_collections.contains_key(&collection_id) {
+                            warn!(
+                                "NFT collection already exists, skipping: id={}",
+                                hex::encode(&collection_id[..8]),
+                            );
+                        } else {
+                            info!(
+                                "🎨 NFT collection created: {} ({}) id={}",
+                                data.name,
+                                data.symbol,
+                                hex::encode(&collection_id[..8]),
+                            );
+                            self.nft_collections.insert(collection_id, contract);
+                        }
+                    }
+                }
+                TransactionType::NftMint => {
+                    if let Some(data) = tx.nft_mint_data() {
+                        if let Some(collection) = self.nft_collections.get_mut(&data.collection_id) {
+                            let metadata = NftMetadata {
+                                name: data.name.clone(),
+                                description: data.description.clone(),
+                                image_cid: data.image_cid.clone(),
+                                attributes: data.attributes.clone(),
+                                creator_did: collection.creator_did.clone(),
+                                created_at: tx.signature.timestamp,
+                            };
+                            match collection.mint(
+                                &tx.signature.public_key.key_id,
+                                data.recipient,
+                                metadata,
+                            ) {
+                                Ok(token_id) => {
+                                    info!(
+                                        "🎨 NFT minted: collection={} token_id={} to={}",
+                                        hex::encode(&data.collection_id[..8]),
+                                        token_id,
+                                        hex::encode(&data.recipient[..8]),
+                                    );
+                                }
+                                Err(e) => {
+                                    warn!("NFT mint failed: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+                TransactionType::NftTransfer => {
+                    if let Some(data) = tx.nft_transfer_data() {
+                        if tx.signature.public_key.key_id != data.from {
+                            warn!(
+                                "NFT transfer rejected: signer {} is not the owner {}",
+                                hex::encode(&tx.signature.public_key.key_id[..8]),
+                                hex::encode(&data.from[..8]),
+                            );
+                        } else if let Some(collection) = self.nft_collections.get_mut(&data.collection_id) {
+                            if let Err(e) = collection.transfer(data.token_id, &data.from, data.to) {
+                                warn!("NFT transfer failed: {}", e);
+                            } else {
+                                info!(
+                                    "🎨 NFT transferred: collection={} token={} to={}",
+                                    hex::encode(&data.collection_id[..8]),
+                                    data.token_id,
+                                    hex::encode(&data.to[..8]),
+                                );
+                            }
+                        }
+                    }
+                }
+                TransactionType::NftBurn => {
+                    if let Some(data) = tx.nft_burn_data() {
+                        if tx.signature.public_key.key_id != data.owner {
+                            warn!(
+                                "NFT burn rejected: signer {} is not the owner {}",
+                                hex::encode(&tx.signature.public_key.key_id[..8]),
+                                hex::encode(&data.owner[..8]),
+                            );
+                        } else if let Some(collection) = self.nft_collections.get_mut(&data.collection_id) {
+                            if let Err(e) = collection.burn(data.token_id, &data.owner) {
+                                warn!("NFT burn failed: {}", e);
+                            } else {
+                                info!(
+                                    "🎨 NFT burned: collection={} token={}",
+                                    hex::encode(&data.collection_id[..8]),
+                                    data.token_id,
+                                );
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Get the authoritative on-chain domain registry.
     pub fn get_all_domains(&self) -> &HashMap<String, crate::transaction::OnChainDomainRecord> {
         &self.domain_registry
