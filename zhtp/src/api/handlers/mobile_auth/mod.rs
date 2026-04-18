@@ -18,6 +18,10 @@
 //! - `POST /api/v1/auth/delegate/:cert_id/revoke` → revoke a certificate
 //! - `GET  /api/v1/auth/delegate/list`     → list all active certs for a DID
 //!
+//! ## Phase 4 — Transaction delegation (#2074)
+//! - `POST /api/v1/tx/prepare`          → prepare a tx, enforces SubmitTx cap + amount limit
+//! - `POST /api/v1/tx/submit-delegated` → submit a mobile-signed tx (see #2154)
+//!
 //! ## Security controls enforced here
 //! - Rate limiting: 3 challenge requests per IP per minute
 //! - Session binding: IP + User-Agent checked on every request
@@ -27,7 +31,9 @@
 use anyhow::anyhow;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use lib_identity::auth::mobile_delegation::{
     AuditEventKind, AuditLogEntry, Capability, CrossDeviceSessionBinder, DelegationCertificate,
@@ -39,10 +45,25 @@ use rand::RngCore;
 
 const NODE_ENDPOINT: &str = "http://localhost:9334"; // overrideable via config
 
+/// Short-lived transaction prepared by `/tx/prepare`, awaiting mobile signature.
+/// Expires after 5 minutes — mobile must sign within this window.
+#[derive(Debug, Clone)]
+pub struct PendingTx {
+    pub tx_id: String,
+    pub identity_id_hex: String,
+    pub recipient_did: String,
+    pub amount_tokens: u64,
+    pub memo: Option<String>,
+    pub nonce: u64,
+    pub expires_at: u64,
+}
+
 /// Public API surface for the mobile auth handler.
 pub struct MobileAuthHandler {
     store: Arc<MobileAuthStore>,
     node_endpoint: String,
+    /// Pending prepared transactions awaiting mobile signature (tx_id → PendingTx)
+    pending_txs: Arc<RwLock<HashMap<String, PendingTx>>>,
 }
 
 impl MobileAuthHandler {
@@ -50,6 +71,7 @@ impl MobileAuthHandler {
         Self {
             store,
             node_endpoint: NODE_ENDPOINT.to_string(),
+            pending_txs: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -57,6 +79,7 @@ impl MobileAuthHandler {
         Self {
             store,
             node_endpoint: endpoint.to_string(),
+            pending_txs: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -119,6 +142,11 @@ impl MobileAuthHandler {
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/auth/delegate/") => {
                 let cert_id = path.strip_prefix("/api/v1/auth/delegate/").unwrap_or("");
                 self.handle_delegate_get(cert_id).await
+            }
+            // Phase 4 — Transaction delegation (#2074-C)
+            (ZhtpMethod::Post, "/api/v1/tx/prepare") => {
+                self.handle_tx_prepare(&request.body, &request.headers, &client_ip, &user_agent)
+                    .await
             }
             _ => Ok(json_error(ZhtpStatus::NotFound, "Not found")),
         }
@@ -666,6 +694,170 @@ impl MobileAuthHandler {
     }
 }
 
+    // -----------------------------------------------------------------------
+    // Phase 4: Prepare a transaction (requires bearer + SubmitTx capability)
+    // POST /api/v1/tx/prepare
+    // Requires: Bearer token with SubmitTx capability granted
+    // Body: {
+    //   "recipient_did": "did:zhtp:...",
+    //   "amount_tokens": 1000,
+    //   "memo": "optional"
+    // }
+    // Returns: { "tx_id": "...", "expires_at": ..., "nonce": ..., "amount_tokens": ... }
+    // The caller must forward tx_id + nonce to the mobile device for signing,
+    // then call /api/v1/tx/submit-delegated with the mobile signature.
+    // -----------------------------------------------------------------------
+
+    async fn handle_tx_prepare(
+        &self,
+        body: &[u8],
+        headers: &ZhtpHeaders,
+        client_ip: &str,
+        user_agent: &str,
+    ) -> ZhtpResult<ZhtpResponse> {
+        #[derive(Deserialize)]
+        struct TxPrepareRequest {
+            recipient_did: String,
+            amount_tokens: u64,
+            memo: Option<String>,
+        }
+
+        // Require bearer token
+        let token = match extract_bearer(headers) {
+            Some(t) => t,
+            None => return Ok(json_error(ZhtpStatus::Unauthorized, "Missing Bearer token")),
+        };
+
+        // Validate session (also enforces IP+UA binding)
+        let session = match self
+            .store
+            .validate_access_token(&token, client_ip, user_agent)
+            .await
+        {
+            Err(e) => {
+                let entry = AuditLogEntry::new(
+                    AuditEventKind::SessionBindingViolation,
+                    Some(&token[..std::cmp::min(16, token.len())]),
+                    None,
+                    client_ip,
+                    &e.to_string(),
+                );
+                self.store.append_audit(entry).await;
+                return Ok(json_error(ZhtpStatus::Unauthorized, &e.to_string()));
+            }
+            Ok(s) => s,
+        };
+
+        // Parse request body
+        let req: TxPrepareRequest = match serde_json::from_slice(body) {
+            Ok(r) => r,
+            Err(e) => return Ok(json_error(ZhtpStatus::BadRequest, &e.to_string())),
+        };
+
+        // Enforce SubmitTx capability and amount limit
+        let max_allowed = session
+            .granted_capabilities
+            .iter()
+            .find_map(|cap| match cap {
+                Capability::SubmitTx { max_amount_tokens } => Some(*max_amount_tokens),
+                _ => None,
+            });
+
+        let max_amount = match max_allowed {
+            Some(m) => m,
+            None => {
+                let entry = AuditLogEntry::new(
+                    AuditEventKind::SessionBindingViolation,
+                    Some(&token[..std::cmp::min(16, token.len())]),
+                    Some(&hex::encode(session.identity_id.as_ref())),
+                    client_ip,
+                    "tx_prepare_denied: missing SubmitTx capability",
+                );
+                self.store.append_audit(entry).await;
+                return Ok(json_error(
+                    ZhtpStatus::Forbidden,
+                    "SubmitTx capability not granted",
+                ));
+            }
+        };
+
+        if req.amount_tokens > max_amount {
+            let entry = AuditLogEntry::new(
+                AuditEventKind::SessionBindingViolation,
+                Some(&token[..std::cmp::min(16, token.len())]),
+                Some(&hex::encode(session.identity_id.as_ref())),
+                client_ip,
+                &format!(
+                    "tx_prepare_denied: amount {} exceeds cap {}",
+                    req.amount_tokens, max_amount
+                ),
+            );
+            self.store.append_audit(entry).await;
+            return Ok(json_error(
+                ZhtpStatus::Forbidden,
+                &format!(
+                    "Amount {} exceeds SubmitTx cap of {}",
+                    req.amount_tokens, max_amount
+                ),
+            ));
+        }
+
+        // Generate a tx_id and nonce for mobile signing
+        let mut tx_id_bytes = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut tx_id_bytes);
+        let tx_id = hex::encode(tx_id_bytes);
+
+        let mut nonce_bytes = [0u8; 8];
+        rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce = u64::from_le_bytes(nonce_bytes);
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        // Prepared tx expires in 5 minutes — mobile must sign within this window
+        let expires_at = now + 300;
+
+        // Store prepared tx so submit-delegated can validate it
+        {
+            let mut pending = self.pending_txs.write().await;
+            pending.insert(
+                tx_id.clone(),
+                PendingTx {
+                    tx_id: tx_id.clone(),
+                    identity_id_hex: hex::encode(session.identity_id.as_ref()),
+                    recipient_did: req.recipient_did.clone(),
+                    amount_tokens: req.amount_tokens,
+                    memo: req.memo.clone(),
+                    nonce,
+                    expires_at,
+                },
+            );
+        }
+
+        let entry = AuditLogEntry::new(
+            AuditEventKind::DelegationIssued,
+            None,
+            Some(&hex::encode(session.identity_id.as_ref())),
+            client_ip,
+            &format!(
+                "tx_prepared: tx_id={} recipient={} amount={}",
+                tx_id, req.recipient_did, req.amount_tokens
+            ),
+        );
+        self.store.append_audit(entry).await;
+
+        Ok(json_ok(json!({
+            "tx_id": tx_id,
+            "nonce": nonce,
+            "expires_at": expires_at,
+            "recipient_did": req.recipient_did,
+            "amount_tokens": req.amount_tokens,
+            "memo": req.memo,
+        })))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // ZhtpRequestHandler impl
 // ---------------------------------------------------------------------------
@@ -678,7 +870,9 @@ impl ZhtpRequestHandler for MobileAuthHandler {
 
     fn can_handle(&self, request: &ZhtpRequest) -> bool {
         let uri = request.uri.trim_end_matches('/');
-        uri.starts_with("/api/v1/auth/mobile") || uri.starts_with("/api/v1/auth/delegate")
+        uri.starts_with("/api/v1/auth/mobile")
+            || uri.starts_with("/api/v1/auth/delegate")
+            || uri.starts_with("/api/v1/tx/")
     }
 }
 
@@ -893,5 +1087,151 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status, ZhtpStatus::NotFound);
+    }
+
+    // Phase 4 — tx/prepare: missing bearer → 401
+    #[tokio::test]
+    async fn tx_prepare_no_bearer_returns_401() {
+        let h = make_handler();
+        let req = post(
+            "/api/v1/tx/prepare",
+            json!({
+                "recipient_did": "did:zhtp:bob",
+                "amount_tokens": 100,
+            }),
+        );
+        let resp = h.handle_request(req).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::Unauthorized);
+    }
+
+    // Phase 4 — tx/prepare: bearer present but invalid → 401
+    #[tokio::test]
+    async fn tx_prepare_invalid_bearer_returns_401() {
+        let h = make_handler();
+        let mut req = post(
+            "/api/v1/tx/prepare",
+            json!({
+                "recipient_did": "did:zhtp:bob",
+                "amount_tokens": 100,
+            }),
+        );
+        req.headers.authorization = Some("Bearer invalid_token_xyz".to_string());
+        let resp = h.handle_request(req).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::Unauthorized);
+    }
+
+    // Phase 4 — tx/prepare: valid bearer but no SubmitTx cap → 403
+    #[tokio::test]
+    async fn tx_prepare_missing_submit_tx_cap_returns_403() {
+        let store = Arc::new(MobileAuthStore::new());
+        let h = MobileAuthHandler::new(store.clone());
+
+        use lib_identity::auth::mobile_delegation::MobileDelegatedSession;
+        use lib_crypto::Hash;
+        let session = MobileDelegatedSession {
+            access_token: "tok_read_only".to_string(),
+            refresh_token: "ref1".to_string(),
+            identity_id: Hash::from_bytes(&[1u8; 32]),
+            public_key_hex: "aa".repeat(1312),
+            granted_capabilities: vec![Capability::ReadBalance],
+            created_at: 0,
+            access_expires_at: u64::MAX,
+            refresh_expires_at: u64::MAX,
+            bound_ip: "unknown".to_string(),
+            bound_user_agent: "unknown".to_string(),
+            challenge_session_id: "s1".to_string(),
+            device_id: None,
+            revoked: false,
+        };
+        store.insert_session_for_test(session).await;
+
+        let mut req = post(
+            "/api/v1/tx/prepare",
+            json!({ "recipient_did": "did:zhtp:bob", "amount_tokens": 100 }),
+        );
+        req.headers.authorization = Some("Bearer tok_read_only".to_string());
+        let resp = h.handle_request(req).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::Forbidden);
+        let body: Value = serde_json::from_slice(&resp.body).unwrap();
+        assert!(body["error"].as_str().unwrap().contains("SubmitTx"));
+    }
+
+    // Phase 4 — tx/prepare: amount exceeds cap → 403
+    #[tokio::test]
+    async fn tx_prepare_amount_over_cap_returns_403() {
+        let store = Arc::new(MobileAuthStore::new());
+        let h = MobileAuthHandler::new(store.clone());
+
+        use lib_identity::auth::mobile_delegation::MobileDelegatedSession;
+        use lib_crypto::Hash;
+        let session = MobileDelegatedSession {
+            access_token: "tok_submit_500".to_string(),
+            refresh_token: "ref2".to_string(),
+            identity_id: Hash::from_bytes(&[2u8; 32]),
+            public_key_hex: "bb".repeat(1312),
+            granted_capabilities: vec![Capability::SubmitTx { max_amount_tokens: 500 }],
+            created_at: 0,
+            access_expires_at: u64::MAX,
+            refresh_expires_at: u64::MAX,
+            bound_ip: "unknown".to_string(),
+            bound_user_agent: "unknown".to_string(),
+            challenge_session_id: "s2".to_string(),
+            device_id: None,
+            revoked: false,
+        };
+        store.insert_session_for_test(session).await;
+
+        let mut req = post(
+            "/api/v1/tx/prepare",
+            json!({ "recipient_did": "did:zhtp:bob", "amount_tokens": 1000 }),
+        );
+        req.headers.authorization = Some("Bearer tok_submit_500".to_string());
+        let resp = h.handle_request(req).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::Forbidden);
+        let body: Value = serde_json::from_slice(&resp.body).unwrap();
+        assert!(body["error"].as_str().unwrap().contains("cap"));
+    }
+
+    // Phase 4 — tx/prepare: valid bearer + sufficient SubmitTx cap → 200 with tx_id
+    #[tokio::test]
+    async fn tx_prepare_valid_returns_tx_id() {
+        let store = Arc::new(MobileAuthStore::new());
+        let h = MobileAuthHandler::new(store.clone());
+
+        use lib_identity::auth::mobile_delegation::MobileDelegatedSession;
+        use lib_crypto::Hash;
+        let session = MobileDelegatedSession {
+            access_token: "tok_submit_ok".to_string(),
+            refresh_token: "ref3".to_string(),
+            identity_id: Hash::from_bytes(&[3u8; 32]),
+            public_key_hex: "cc".repeat(1312),
+            granted_capabilities: vec![Capability::SubmitTx { max_amount_tokens: 10_000 }],
+            created_at: 0,
+            access_expires_at: u64::MAX,
+            refresh_expires_at: u64::MAX,
+            bound_ip: "unknown".to_string(),
+            bound_user_agent: "unknown".to_string(),
+            challenge_session_id: "s3".to_string(),
+            device_id: None,
+            revoked: false,
+        };
+        store.insert_session_for_test(session).await;
+
+        let mut req = post(
+            "/api/v1/tx/prepare",
+            json!({
+                "recipient_did": "did:zhtp:alice",
+                "amount_tokens": 500,
+                "memo": "test payment",
+            }),
+        );
+        req.headers.authorization = Some("Bearer tok_submit_ok".to_string());
+        let resp = h.handle_request(req).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::Ok);
+        let body: Value = serde_json::from_slice(&resp.body).unwrap();
+        assert!(body["tx_id"].is_string());
+        assert!(body["nonce"].is_number());
+        assert_eq!(body["amount_tokens"], 500);
+        assert_eq!(body["recipient_did"], "did:zhtp:alice");
     }
 }
