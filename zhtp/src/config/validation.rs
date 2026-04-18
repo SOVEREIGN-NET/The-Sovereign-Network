@@ -94,6 +94,8 @@ fn validate_role_transport_gateway_invariants(config: &NodeConfig) -> Result<()>
         .into());
     }
 
+    validate_macos_transport_profile(config)?;
+
     // Role and consensus invariants.
     match config.runtime_role {
         RuntimeRole::Validator => {
@@ -139,6 +141,77 @@ fn validate_role_transport_gateway_invariants(config: &NodeConfig) -> Result<()>
     }
 
     Ok(())
+}
+
+fn is_truthy_env_var(value: Option<&str>) -> bool {
+    matches!(
+        value.map(|v| v.trim().to_ascii_lowercase()),
+        Some(v) if matches!(v.as_str(), "1" | "true" | "yes" | "on")
+    )
+}
+
+fn collect_experimental_macos_transports(config: &NodeConfig) -> Vec<String> {
+    let mut experimental = Vec::new();
+    let mac_experimental_protocols = ["bluetooth", "bluetooth_le", "wifi_direct", "lorawan"];
+
+    for protocol in &config.network_config.protocols {
+        if mac_experimental_protocols
+            .iter()
+            .any(|p| protocol.eq_ignore_ascii_case(p))
+        {
+            experimental.push(protocol.to_lowercase());
+        }
+    }
+
+    if config.protocols_config.enable_bluetooth
+        && !experimental.iter().any(|p| p == "bluetooth")
+    {
+        experimental.push("bluetooth".to_string());
+    }
+
+    experimental.sort();
+    experimental.dedup();
+    experimental
+}
+
+fn validate_macos_transport_profile(config: &NodeConfig) -> Result<()> {
+    validate_macos_transport_profile_with_env(
+        config,
+        cfg!(target_os = "macos"),
+        std::env::var("ZHTP_ENABLE_EXPERIMENTAL_MAC_TRANSPORTS").ok(),
+    )
+}
+
+fn validate_macos_transport_profile_with_env(
+    config: &NodeConfig,
+    is_macos: bool,
+    opt_in_value: Option<String>,
+) -> Result<()> {
+    if !is_macos {
+        return Ok(());
+    }
+
+    let experimental = collect_experimental_macos_transports(config);
+    if experimental.is_empty() {
+        return Ok(());
+    }
+
+    if is_truthy_env_var(opt_in_value.as_deref()) {
+        warn!(
+            "macOS experimental transport opt-in enabled via ZHTP_ENABLE_EXPERIMENTAL_MAC_TRANSPORTS=1: {}",
+            experimental.join(", ")
+        );
+        return Ok(());
+    }
+
+    Err(ConfigError::InvalidMeshMode {
+        reason: format!(
+            "macOS QUIC-first profile enforced. Experimental transports configured: {}. \
+Set ZHTP_ENABLE_EXPERIMENTAL_MAC_TRANSPORTS=1 to opt in explicitly.",
+            experimental.join(", ")
+        ),
+    }
+    .into())
 }
 /// Validate that no packages are using conflicting ports
 fn validate_port_assignments(config: &NodeConfig) -> Result<()> {
@@ -622,6 +695,7 @@ mod tests {
     #[test]
     fn service_role_with_gateway_enabled_passes() {
         let mut config = NodeConfig::default();
+        config.network_config.protocols = vec!["quic".to_string()];
         config.runtime_role = crate::config::aggregation::RuntimeRole::Service;
         config.protocols_config.gateway_enabled = true;
         let result = validate_role_transport_gateway_invariants(&config);
@@ -634,6 +708,7 @@ mod tests {
     #[test]
     fn validator_role_requires_validator_enabled() {
         let mut config = NodeConfig::default();
+        config.network_config.protocols = vec!["quic".to_string()];
         config.runtime_role = crate::config::aggregation::RuntimeRole::Validator;
         config.consensus_config.validator_enabled = false;
         let result = validate_role_transport_gateway_invariants(&config);
@@ -641,5 +716,39 @@ mod tests {
             result.is_err(),
             "VALIDATOR role must require validator_enabled=true"
         );
+    }
+
+    #[test]
+    fn mac_profile_rejects_experimental_transports_without_opt_in() {
+        let mut config = NodeConfig::default();
+        config.network_config.protocols = vec!["quic".to_string(), "wifi_direct".to_string()];
+
+        let result = validate_macos_transport_profile_with_env(&config, true, None);
+        assert!(result.is_err(), "macOS experimental transport must be opt-in");
+    }
+
+    #[test]
+    fn mac_profile_allows_experimental_transports_with_explicit_opt_in() {
+        let mut config = NodeConfig::default();
+        config.network_config.protocols = vec!["quic".to_string(), "bluetooth".to_string()];
+
+        let result = validate_macos_transport_profile_with_env(
+            &config,
+            true,
+            Some("true".to_string()),
+        );
+        assert!(
+            result.is_ok(),
+            "macOS experimental transport should pass with explicit opt-in"
+        );
+    }
+
+    #[test]
+    fn mac_profile_allows_quic_only_without_opt_in() {
+        let mut config = NodeConfig::default();
+        config.network_config.protocols = vec!["quic".to_string()];
+
+        let result = validate_macos_transport_profile_with_env(&config, true, None);
+        assert!(result.is_ok(), "quic-only profile should pass on macOS");
     }
 }
