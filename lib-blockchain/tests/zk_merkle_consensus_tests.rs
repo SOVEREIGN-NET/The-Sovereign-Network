@@ -5,6 +5,9 @@
 //! merkle_leaf outputs.
 
 use anyhow::Result;
+
+mod common;
+
 use lib_blockchain::{
     integration::crypto_integration::SignatureAlgorithm,
     storage::{BlockchainStore, OutPoint, SledStore},
@@ -14,35 +17,9 @@ use lib_blockchain::{
 use lib_proofs::transaction::ZkTransactionProof;
 use std::sync::Arc;
 
-fn test_public_key(seed: u8) -> lib_crypto::PublicKey {
-    lib_crypto::PublicKey::new([seed; 2592])
-}
-
-fn test_signature(seed: u8) -> lib_crypto::Signature {
-    lib_crypto::Signature {
-        signature: vec![seed; 64],
-        public_key: test_public_key(seed),
-        algorithm: SignatureAlgorithm::DEFAULT,
-        timestamp: 1,
-    }
-}
-
-fn build_block_with_transactions(parent: &Block, txs: Vec<Transaction>) -> Block {
-    let merkle_root =
-        lib_blockchain::transaction::hashing::calculate_transaction_merkle_root(&txs);
-    let header = BlockHeader {
-        version: 1,
-        previous_hash: parent.hash().into(),
-        data_helix_root: merkle_root.as_array(),
-        timestamp: parent.timestamp() + 10,
-        height: parent.height() + 1,
-        verification_helix_root: [0u8; 32],
-        state_root: Hash::default().into(),
-        bft_quorum_root: [0u8; 32],
-        block_hash: Hash::default(),
-    };
-    Block::new(header, txs)
-}
+fn test_public_key(seed: u8) -> lib_crypto::PublicKey { common::crypto_fixtures::seeded_public_key(seed) }
+fn test_signature(seed: u8) -> lib_crypto::Signature { common::crypto_fixtures::seeded_signature(seed) }
+fn build_block_with_transactions(parent: &Block, txs: Vec<Transaction>) -> Block { common::block_builders::child_block(parent, txs) }
 
 fn create_output_with_leaf(seed: u8, merkle_leaf: [u8; 32]) -> TransactionOutput {
     TransactionOutput {

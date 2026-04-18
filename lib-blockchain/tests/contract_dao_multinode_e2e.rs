@@ -8,18 +8,10 @@ use lib_blockchain::types::{ContractCall, ContractType, Hash};
 use lib_blockchain::{Block, BlockHeader, Blockchain, TransactionType};
 use lib_crypto::{PublicKey, Signature, SignatureAlgorithm};
 
-fn test_public_key(seed: u8) -> PublicKey {
-    PublicKey::new([seed; 2592])
-}
+mod common;
 
-fn test_signature(seed: u8) -> Signature {
-    Signature {
-        signature: vec![seed; 64],
-        public_key: test_public_key(seed),
-        algorithm: SignatureAlgorithm::DEFAULT,
-        timestamp: 1,
-    }
-}
+fn test_public_key(seed: u8) -> PublicKey { common::crypto_fixtures::seeded_public_key(seed) }
+fn test_signature(seed: u8) -> Signature { common::crypto_fixtures::seeded_signature(seed) }
 
 fn mk_output(seed: u8) -> TransactionOutput {
     TransactionOutput {

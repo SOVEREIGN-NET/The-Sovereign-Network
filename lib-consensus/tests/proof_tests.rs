@@ -10,10 +10,9 @@ use lib_storage::proofs::{
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Helper function to create test identity
-fn create_test_identity(name: &str) -> IdentityId {
-    Hash::from_bytes(&hash_blake3(name.as_bytes()))
-}
+mod common;
+
+fn create_test_identity(name: &str) -> IdentityId { common::consensus_fixtures::named_identity(name) }
 
 /// Helper function to create test network state
 fn create_test_network_state() -> NetworkState {

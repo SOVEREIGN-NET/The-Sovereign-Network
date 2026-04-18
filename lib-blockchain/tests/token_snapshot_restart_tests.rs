@@ -12,17 +12,11 @@ use lib_blockchain::transaction::{
 use lib_blockchain::types::Hash;
 use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
-fn test_pubkey(id: u8) -> PublicKey {
-    PublicKey::new([0u8; 2592])
-}
+mod common;
 
+fn test_pubkey(_id: u8) -> PublicKey { common::crypto_fixtures::dummy_public_key() }
 fn test_signature(pubkey: &PublicKey) -> Signature {
-    Signature {
-        signature: vec![0u8; 64],
-        public_key: pubkey.clone(),
-        algorithm: SignatureAlgorithm::DEFAULT,
-        timestamp: 1_700_000_000,
-    }
+    Signature { signature: vec![0u8; 64], public_key: pubkey.clone(), algorithm: SignatureAlgorithm::DEFAULT, timestamp: 0 }
 }
 
 fn wallet_registration_tx(wallet_id: [u8; 32], owner_pubkey: &PublicKey) -> Transaction {
@@ -79,43 +73,8 @@ fn token_mint_tx(signer: &PublicKey, token_id: [u8; 32], to: [u8; 32], amount: u
     )
 }
 
-fn create_genesis_block() -> Block {
-    let mut hash_bytes = [0u8; 32];
-    hash_bytes[0] = 0x01;
-    let block_hash = Hash::new(hash_bytes);
-
-    let header = BlockHeader {
-        version: 1,
-        previous_hash: Hash::default().into(),
-        data_helix_root: Hash::default().into(),
-        timestamp: 1_700_000_000,
-        height: 0,
-        verification_helix_root: [0u8; 32],
-        state_root: Hash::default().into(),
-        bft_quorum_root: [0u8; 32],
-        block_hash,
-    };
-    Block::new(header, vec![])
-}
-
-fn create_block_at_height(height: u64, prev_hash: Hash, txs: Vec<Transaction>) -> Block {
-    let mut hash_bytes = [0u8; 32];
-    hash_bytes[0] = height as u8 + 1;
-    let block_hash = Hash::new(hash_bytes);
-
-    let header = BlockHeader {
-        version: 1,
-        previous_hash: prev_hash.into(),
-        data_helix_root: Hash::default().into(),
-        timestamp: 1_700_000_000 + height,
-        height,
-        verification_helix_root: [0u8; 32],
-        state_root: Hash::default().into(),
-        bft_quorum_root: [0u8; 32],
-        block_hash,
-    };
-    Block::new(header, txs)
-}
+fn create_genesis_block() -> Block { common::block_builders::genesis_block() }
+fn create_block_at_height(height: u64, prev_hash: Hash, txs: Vec<Transaction>) -> Block { common::block_builders::block_at_height_with_txs(height, prev_hash, txs) }
 
 fn wallet_key(wallet_id: &[u8; 32]) -> PublicKey {
     // Match the executor's wallet_key_for_sov format:

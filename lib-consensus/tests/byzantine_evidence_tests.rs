@@ -14,61 +14,14 @@ use lib_consensus::network::LivenessMonitor;
 use lib_consensus::types::{ConsensusVote, VoteType};
 use lib_crypto::{hash_blake3, Hash, PostQuantumSignature, PublicKey, SignatureAlgorithm};
 use lib_identity::IdentityId;
-use std::sync::atomic::{AtomicU64, Ordering};
 
-// Counter for generating unique test IDs
-static TEST_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
+mod common;
 
-fn create_unique_identity() -> IdentityId {
-    let id = TEST_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
-    Hash::from_bytes(&hash_blake3(format!("test-validator-{}", id).as_bytes()))
-}
-
-fn current_timestamp() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-}
-
-fn create_test_signature(timestamp: u64) -> PostQuantumSignature {
-    let mut sig_bytes = vec![timestamp as u8; 64];
-    for i in 0..32 {
-        sig_bytes[i] = sig_bytes[i].wrapping_add(i as u8);
-    }
-
-    PostQuantumSignature {
-        signature: sig_bytes,
-        public_key: PublicKey {
-            dilithium_pk: [0u8; 2592],
-            kyber_pk: [0u8; 1568],
-            key_id: [0u8; 32],
-        },
-        algorithm: SignatureAlgorithm::DEFAULT,
-        timestamp,
-    }
-}
-
-fn create_test_vote(
-    validator: &IdentityId,
-    height: u64,
-    round: u32,
-    vote_type: VoteType,
-    proposal_id: &Hash,
-    timestamp: u64,
-) -> ConsensusVote {
-    ConsensusVote {
-        id: Hash::from_bytes(&hash_blake3(
-            format!("vote-{}-{}-{}", height, round, timestamp).as_bytes(),
-        )),
-        voter: validator.clone(),
-        height,
-        round,
-        vote_type,
-        proposal_id: proposal_id.clone(),
-        timestamp,
-        signature: create_test_signature(timestamp),
-    }
+fn create_unique_identity() -> IdentityId { common::consensus_fixtures::unique_identity() }
+fn current_timestamp() -> u64 { common::consensus_fixtures::current_timestamp() }
+fn create_test_signature(timestamp: u64) -> PostQuantumSignature { common::consensus_fixtures::test_signature(timestamp) }
+fn create_test_vote(validator: &IdentityId, height: u64, round: u32, vote_type: VoteType, proposal_id: &Hash, timestamp: u64) -> ConsensusVote {
+    common::consensus_fixtures::test_vote(validator, proposal_id, vote_type, height, round, timestamp)
 }
 
 // Helper to detect equivocation and verify evidence
