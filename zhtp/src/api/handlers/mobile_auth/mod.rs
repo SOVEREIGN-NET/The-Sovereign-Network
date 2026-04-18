@@ -143,10 +143,19 @@ impl MobileAuthHandler {
                 let cert_id = path.strip_prefix("/api/v1/auth/delegate/").unwrap_or("");
                 self.handle_delegate_get(cert_id).await
             }
-            // Phase 4 — Transaction delegation (#2074-C)
+            // Phase 4 — Transaction delegation (#2074-C / #2074-D)
             (ZhtpMethod::Post, "/api/v1/tx/prepare") => {
                 self.handle_tx_prepare(&request.body, &request.headers, &client_ip, &user_agent)
                     .await
+            }
+            (ZhtpMethod::Post, "/api/v1/tx/submit-delegated") => {
+                self.handle_tx_submit_delegated(
+                    &request.body,
+                    &request.headers,
+                    &client_ip,
+                    &user_agent,
+                )
+                .await
             }
             _ => Ok(json_error(ZhtpStatus::NotFound, "Not found")),
         }
@@ -856,6 +865,178 @@ impl MobileAuthHandler {
             "memo": req.memo,
         })))
     }
+
+    // -----------------------------------------------------------------------
+    // Phase 4: Submit a mobile-signed delegated transaction (#2074-D)
+    // POST /api/v1/tx/submit-delegated
+    // Requires: Bearer token (same session that called /tx/prepare)
+    // Body: {
+    //   "tx_id": "...",        ← from /tx/prepare response
+    //   "signature_hex": "..." ← Dilithium sig over signing_message (see below)
+    // }
+    //
+    // Signing message (mobile must produce this):
+    //   bytes = nonce_as_u64_le || hex::decode(tx_id)
+    //   signature = dilithium_sign(hex::encode(bytes), mobile_private_key)
+    //
+    // This binds the signature to both the unique nonce and the specific tx_id,
+    // preventing replay or substitution attacks.
+    // -----------------------------------------------------------------------
+
+    async fn handle_tx_submit_delegated(
+        &self,
+        body: &[u8],
+        headers: &ZhtpHeaders,
+        client_ip: &str,
+        user_agent: &str,
+    ) -> ZhtpResult<ZhtpResponse> {
+        #[derive(Deserialize)]
+        struct TxSubmitRequest {
+            tx_id: String,
+            signature_hex: String,
+        }
+
+        // Require bearer token
+        let token = match extract_bearer(headers) {
+            Some(t) => t,
+            None => return Ok(json_error(ZhtpStatus::Unauthorized, "Missing Bearer token")),
+        };
+
+        // Validate session (IP+UA binding enforced)
+        let session = match self
+            .store
+            .validate_access_token(&token, client_ip, user_agent)
+            .await
+        {
+            Err(e) => {
+                let entry = AuditLogEntry::new(
+                    AuditEventKind::SessionBindingViolation,
+                    Some(&token[..std::cmp::min(16, token.len())]),
+                    None,
+                    client_ip,
+                    &e.to_string(),
+                );
+                self.store.append_audit(entry).await;
+                return Ok(json_error(ZhtpStatus::Unauthorized, &e.to_string()));
+            }
+            Ok(s) => s,
+        };
+
+        let req: TxSubmitRequest = match serde_json::from_slice(body) {
+            Ok(r) => r,
+            Err(e) => return Ok(json_error(ZhtpStatus::BadRequest, &e.to_string())),
+        };
+
+        // Look up the prepared tx
+        let pending = {
+            let map = self.pending_txs.read().await;
+            map.get(&req.tx_id).cloned()
+        };
+
+        let pending_tx = match pending {
+            None => {
+                return Ok(json_error(
+                    ZhtpStatus::NotFound,
+                    "Prepared transaction not found or already submitted",
+                ))
+            }
+            Some(p) => p,
+        };
+
+        // Check expiry
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now > pending_tx.expires_at {
+            // Evict expired tx
+            self.pending_txs.write().await.remove(&req.tx_id);
+            return Ok(json_error(
+                ZhtpStatus::BadRequest,
+                "Prepared transaction expired — call /tx/prepare again",
+            ));
+        }
+
+        // Verify this session owns the prepared tx
+        let caller_identity_hex = hex::encode(session.identity_id.as_ref());
+        if caller_identity_hex != pending_tx.identity_id_hex {
+            let entry = AuditLogEntry::new(
+                AuditEventKind::SessionBindingViolation,
+                Some(&token[..std::cmp::min(16, token.len())]),
+                Some(&caller_identity_hex),
+                client_ip,
+                &format!("tx_submit_denied: identity mismatch for tx_id={}", req.tx_id),
+            );
+            self.store.append_audit(entry).await;
+            return Ok(json_error(ZhtpStatus::Forbidden, "Transaction not owned by this session"));
+        }
+
+        // Build canonical signing message: nonce_as_u64_le || tx_id_bytes
+        // Mobile must sign over hex(nonce_le_bytes || tx_id_bytes)
+        let tx_id_bytes = match hex::decode(&pending_tx.tx_id) {
+            Ok(b) => b,
+            Err(_) => return Ok(json_error(ZhtpStatus::InternalServerError, "Invalid tx_id encoding")),
+        };
+        let mut signing_bytes = Vec::with_capacity(8 + tx_id_bytes.len());
+        signing_bytes.extend_from_slice(&pending_tx.nonce.to_le_bytes());
+        signing_bytes.extend_from_slice(&tx_id_bytes);
+        let signing_message_hex = hex::encode(&signing_bytes);
+
+        // Verify Dilithium signature from mobile
+        match CrossDeviceSessionBinder::verify_cross_device_binding(
+            &signing_message_hex,
+            &session.public_key_hex,
+            &req.signature_hex,
+        ) {
+            Err(e) => {
+                let entry = AuditLogEntry::new(
+                    AuditEventKind::ChallengeSigned,
+                    Some(&req.tx_id[..std::cmp::min(16, req.tx_id.len())]),
+                    Some(&caller_identity_hex),
+                    client_ip,
+                    &format!("tx_sig_error: {}", e),
+                );
+                self.store.append_audit(entry).await;
+                return Ok(json_error(ZhtpStatus::BadRequest, &format!("Signature error: {}", e)));
+            }
+            Ok(false) => {
+                let entry = AuditLogEntry::new(
+                    AuditEventKind::ChallengeSigned,
+                    Some(&req.tx_id[..std::cmp::min(16, req.tx_id.len())]),
+                    Some(&caller_identity_hex),
+                    client_ip,
+                    "tx_sig_invalid",
+                );
+                self.store.append_audit(entry).await;
+                return Ok(json_error(ZhtpStatus::Unauthorized, "Invalid mobile signature"));
+            }
+            Ok(true) => {}
+        }
+
+        // Consume the pending tx — single-use, prevents replay
+        self.pending_txs.write().await.remove(&req.tx_id);
+
+        // Audit accepted submission
+        let entry = AuditLogEntry::new(
+            AuditEventKind::DelegationIssued,
+            None,
+            Some(&caller_identity_hex),
+            client_ip,
+            &format!(
+                "tx_submitted: tx_id={} recipient={} amount={}",
+                req.tx_id, pending_tx.recipient_did, pending_tx.amount_tokens
+            ),
+        );
+        self.store.append_audit(entry).await;
+
+        Ok(json_ok(json!({
+            "accepted": true,
+            "tx_id": req.tx_id,
+            "recipient_did": pending_tx.recipient_did,
+            "amount_tokens": pending_tx.amount_tokens,
+            "memo": pending_tx.memo,
+        })))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1233,5 +1414,167 @@ mod tests {
         assert!(body["nonce"].is_number());
         assert_eq!(body["amount_tokens"], 500);
         assert_eq!(body["recipient_did"], "did:zhtp:alice");
+    }
+
+    // Phase 4 — tx/submit-delegated: missing bearer → 401
+    #[tokio::test]
+    async fn tx_submit_no_bearer_returns_401() {
+        let h = make_handler();
+        let req = post(
+            "/api/v1/tx/submit-delegated",
+            json!({ "tx_id": "abc", "signature_hex": "00" }),
+        );
+        let resp = h.handle_request(req).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::Unauthorized);
+    }
+
+    // Phase 4 — tx/submit-delegated: valid bearer but unknown tx_id → 404
+    #[tokio::test]
+    async fn tx_submit_unknown_tx_id_returns_404() {
+        let store = Arc::new(MobileAuthStore::new());
+        let h = MobileAuthHandler::new(store.clone());
+
+        use lib_identity::auth::mobile_delegation::MobileDelegatedSession;
+        use lib_crypto::Hash;
+        let session = MobileDelegatedSession {
+            access_token: "tok_for_submit".to_string(),
+            refresh_token: "ref_s".to_string(),
+            identity_id: Hash::from_bytes(&[4u8; 32]),
+            public_key_hex: "dd".repeat(1312),
+            granted_capabilities: vec![Capability::SubmitTx { max_amount_tokens: 10_000 }],
+            created_at: 0,
+            access_expires_at: u64::MAX,
+            refresh_expires_at: u64::MAX,
+            bound_ip: "unknown".to_string(),
+            bound_user_agent: "unknown".to_string(),
+            challenge_session_id: "s4".to_string(),
+            device_id: None,
+            revoked: false,
+        };
+        store.insert_session_for_test(session).await;
+
+        let mut req = post(
+            "/api/v1/tx/submit-delegated",
+            json!({ "tx_id": "does_not_exist", "signature_hex": "00" }),
+        );
+        req.headers.authorization = Some("Bearer tok_for_submit".to_string());
+        let resp = h.handle_request(req).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::NotFound);
+    }
+
+    // Phase 4 — tx/submit-delegated: expired pending tx → 400
+    #[tokio::test]
+    async fn tx_submit_expired_tx_returns_400() {
+        let store = Arc::new(MobileAuthStore::new());
+        let h = MobileAuthHandler::new(store.clone());
+
+        use lib_identity::auth::mobile_delegation::MobileDelegatedSession;
+        use lib_crypto::Hash;
+        let identity = Hash::from_bytes(&[5u8; 32]);
+        let session = MobileDelegatedSession {
+            access_token: "tok_exp_test".to_string(),
+            refresh_token: "ref_e".to_string(),
+            identity_id: identity.clone(),
+            public_key_hex: "ee".repeat(1312),
+            granted_capabilities: vec![Capability::SubmitTx { max_amount_tokens: 10_000 }],
+            created_at: 0,
+            access_expires_at: u64::MAX,
+            refresh_expires_at: u64::MAX,
+            bound_ip: "unknown".to_string(),
+            bound_user_agent: "unknown".to_string(),
+            challenge_session_id: "s5".to_string(),
+            device_id: None,
+            revoked: false,
+        };
+        store.insert_session_for_test(session).await;
+
+        // Insert an already-expired pending tx directly
+        {
+            let mut pending = h.pending_txs.write().await;
+            pending.insert(
+                "expired_tx_001".to_string(),
+                PendingTx {
+                    tx_id: "expired_tx_001".to_string(),
+                    identity_id_hex: hex::encode(identity.as_ref()),
+                    recipient_did: "did:zhtp:nobody".to_string(),
+                    amount_tokens: 1,
+                    memo: None,
+                    nonce: 999,
+                    expires_at: 1, // epoch 1 — always expired
+                },
+            );
+        }
+
+        let mut req = post(
+            "/api/v1/tx/submit-delegated",
+            json!({ "tx_id": "expired_tx_001", "signature_hex": "00" }),
+        );
+        req.headers.authorization = Some("Bearer tok_exp_test".to_string());
+        let resp = h.handle_request(req).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::BadRequest);
+        let body: Value = serde_json::from_slice(&resp.body).unwrap();
+        assert!(body["error"].as_str().unwrap().contains("expired"));
+    }
+
+    // Phase 4 — tx/submit-delegated: invalid signature → 401
+    #[tokio::test]
+    async fn tx_submit_bad_signature_returns_401() {
+        let store = Arc::new(MobileAuthStore::new());
+        let h = MobileAuthHandler::new(store.clone());
+
+        use lib_identity::auth::mobile_delegation::MobileDelegatedSession;
+        use lib_crypto::Hash;
+        let identity = Hash::from_bytes(&[6u8; 32]);
+        let tx_id_bytes = [0xabu8; 32];
+        let tx_id = hex::encode(tx_id_bytes);
+
+        let session = MobileDelegatedSession {
+            access_token: "tok_bad_sig".to_string(),
+            refresh_token: "ref_bs".to_string(),
+            identity_id: identity.clone(),
+            public_key_hex: "ff".repeat(1312),
+            granted_capabilities: vec![Capability::SubmitTx { max_amount_tokens: 10_000 }],
+            created_at: 0,
+            access_expires_at: u64::MAX,
+            refresh_expires_at: u64::MAX,
+            bound_ip: "unknown".to_string(),
+            bound_user_agent: "unknown".to_string(),
+            challenge_session_id: "s6".to_string(),
+            device_id: None,
+            revoked: false,
+        };
+        store.insert_session_for_test(session).await;
+
+        {
+            let mut pending = h.pending_txs.write().await;
+            pending.insert(
+                tx_id.clone(),
+                PendingTx {
+                    tx_id: tx_id.clone(),
+                    identity_id_hex: hex::encode(identity.as_ref()),
+                    recipient_did: "did:zhtp:carol".to_string(),
+                    amount_tokens: 42,
+                    memo: None,
+                    nonce: 12345,
+                    expires_at: u64::MAX,
+                },
+            );
+        }
+
+        let mut req = post(
+            "/api/v1/tx/submit-delegated",
+            json!({
+                "tx_id": tx_id,
+                // Wrong Dilithium signature size — will fail key-size check or verify
+                "signature_hex": "cd".repeat(2420),
+            }),
+        );
+        req.headers.authorization = Some("Bearer tok_bad_sig".to_string());
+        let resp = h.handle_request(req).await.unwrap();
+        // Bad sig on wrong key → BadRequest (sig error) or Unauthorized (sig invalid)
+        assert!(
+            resp.status == ZhtpStatus::Unauthorized || resp.status == ZhtpStatus::BadRequest,
+            "Expected 401 or 400, got {:?}", resp.status
+        );
     }
 }
