@@ -143,6 +143,9 @@ impl FeeModelV2 {
             | TransactionType::IdentityRevocation => TxKind::Governance,
             TransactionType::ValidatorRegistration
             | TransactionType::ValidatorUpdate
+            | TransactionType::GatewayRegistration
+            | TransactionType::GatewayUpdate
+            | TransactionType::GatewayUnregister
             | TransactionType::DaoProposal
             | TransactionType::DaoVote
             | TransactionType::DaoExecution
@@ -983,6 +986,9 @@ impl BlockExecutor {
             | TransactionType::ValidatorRegistration
             | TransactionType::ValidatorUpdate
             | TransactionType::ValidatorUnregister
+            | TransactionType::GatewayRegistration
+            | TransactionType::GatewayUpdate
+            | TransactionType::GatewayUnregister
             | TransactionType::SessionCreation
             | TransactionType::SessionTermination
             | TransactionType::ContentUpload

@@ -246,6 +246,21 @@ impl TransactionValidator {
                     return Err(ValidationError::InvalidValidatorData);
                 }
             }
+            TransactionType::GatewayRegistration => {
+                if transaction.gateway_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::GatewayUpdate => {
+                if transaction.gateway_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::GatewayUnregister => {
+                if transaction.gateway_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
             TransactionType::DaoProposal
             | TransactionType::DaoVote
             | TransactionType::DaoExecution
@@ -537,6 +552,21 @@ impl TransactionValidator {
                 // Validator unregister - validate validator data exists
                 if transaction.validator_data().is_none() {
                     return Err(ValidationError::InvalidValidatorData);
+                }
+            }
+            TransactionType::GatewayRegistration => {
+                if transaction.gateway_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::GatewayUpdate => {
+                if transaction.gateway_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::GatewayUnregister => {
+                if transaction.gateway_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
                 }
             }
             TransactionType::DaoProposal
@@ -1637,6 +1667,12 @@ impl<'a> StatefulTransactionValidator<'a> {
             | TransactionType::ValidatorUpdate
             | TransactionType::ValidatorUnregister => {
                 // Validator transactions - validate with stateless validator
+                stateless_validator.validate_transaction(transaction)?;
+            }
+            TransactionType::GatewayRegistration
+            | TransactionType::GatewayUpdate
+            | TransactionType::GatewayUnregister => {
+                // Gateway transactions - validate with stateless validator
                 stateless_validator.validate_transaction(transaction)?;
             }
             TransactionType::DaoProposal
@@ -3079,6 +3115,12 @@ pub mod utils {
             | TransactionType::ValidatorUnregister => {
                 // Validator transactions should have validator_data
                 transaction.validator_data().is_some()
+            }
+            TransactionType::GatewayRegistration
+            | TransactionType::GatewayUpdate
+            | TransactionType::GatewayUnregister => {
+                // Gateway transactions should have gateway_data
+                transaction.gateway_data().is_some()
             }
             TransactionType::DaoProposal => transaction.dao_proposal_data().is_some(),
             TransactionType::DaoVote => transaction.dao_vote_data().is_some(),

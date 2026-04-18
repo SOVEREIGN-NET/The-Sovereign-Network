@@ -337,7 +337,29 @@ impl ZhtpDaemonService {
         Ok(response.body)
     }
 
-    async fn attach_forwarded_context(&self, request: ZhtpRequest, client_ip: Option<String>) -> Result<ZhtpRequest> {
+    /// Forward a generic ZHTP request to a backend, attaching the gateway forwarding context.
+    pub async fn forward_zhtp_request(&self, request: ZhtpRequest, client_ip: Option<String>) -> Result<ZhtpResponse> {
+        let request = self.attach_forwarded_context(request, client_ip).await?;
+
+        let backend = self.backend_pool.pick_backend(&request).await?;
+        let start = std::time::Instant::now();
+
+        let result = backend.client.read().await.request(request).await;
+        match result {
+            Ok(response) => {
+                self.backend_pool
+                    .report_success(&backend.addr, start.elapsed().as_millis() as u64)
+                    .await;
+                Ok(response)
+            }
+            Err(e) => {
+                self.backend_pool.report_failure(&backend.addr).await;
+                Err(anyhow!("Backend request failed on {}: {}", backend.addr, e))
+            }
+        }
+    }
+
+    pub(crate) async fn attach_forwarded_context(&self, request: ZhtpRequest, client_ip: Option<String>) -> Result<ZhtpRequest> {
         let ttl_ms = self.config.effective_gateway_config().request_timeout_ms;
         let ctx = ForwardedClientContext::new(
             self.identity.did.clone(),

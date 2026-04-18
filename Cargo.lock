@@ -9339,6 +9339,7 @@ dependencies = [
  "warp",
  "windows 0.51.1",
  "zeroize",
+ "zhtp-daemon",
 ]
 
 [[package]]
@@ -9396,6 +9397,7 @@ dependencies = [
  "anyhow",
  "axum",
  "base64 0.22.1",
+ "ciborium",
  "dirs",
  "hex",
  "lib-crypto",
@@ -9403,6 +9405,10 @@ dependencies = [
  "lib-network",
  "lib-protocols",
  "lib-types",
+ "quinn",
+ "rcgen 0.14.7",
+ "rustls",
+ "rustls-pemfile 2.2.0",
  "serde",
  "serde_json",
  "tokio",
