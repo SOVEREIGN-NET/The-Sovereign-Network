@@ -450,7 +450,7 @@ impl BackendPool {
         // First try to send a lightweight request through the existing client.
         let existing_ok = {
             let client_guard = entry.client.read().await;
-            let req = ZhtpRequest::get("/healthz".to_string(), Some(identity.id.clone()))?;
+            let req = ZhtpRequest::get("/api/v1/network/ping".to_string(), Some(identity.id.clone()))?;
             match tokio::time::timeout(
                 Duration::from_millis(2000),
                 client_guard.request(req),
@@ -472,7 +472,7 @@ impl BackendPool {
         *client_guard = new_client;
 
         // Verify with a request after reconnect.
-        let req = ZhtpRequest::get("/healthz".to_string(), Some(identity.id.clone()))?;
+        let req = ZhtpRequest::get("/api/v1/network/ping".to_string(), Some(identity.id.clone()))?;
         let resp = tokio::time::timeout(Duration::from_millis(2000), client_guard.request(req))
             .await
             .map_err(|_| anyhow!("Health probe request timed out after reconnect"))?
@@ -495,7 +495,7 @@ impl BackendPool {
     ) -> Result<Web4Client> {
         let client_config = Web4ClientConfig {
             allow_bootstrap: trust_config.bootstrap_mode,
-            cache_dir: Some(crate::config::DaemonConfig::root_dir()?.join("client-cache")),
+            cache_dir: Some(crate::config::DaemonConfig::root_dir()?.join("client-cache").join(addr.replace(['/', ':'], "_"))),
             session_id: Some(format!("gateway-backend-{}", addr.replace(['/', ':'], "_"))),
         };
 

@@ -36,6 +36,7 @@ mod init;
 mod oracle;
 mod persistence;
 mod validators;
+mod gateways;
 mod wallets;
 
 pub use persistence::PersistenceStats;
@@ -166,6 +167,12 @@ pub struct Blockchain {
     /// Validator registration block heights (identity_id -> block_height)
     #[serde(default)]
     pub validator_blocks: HashMap<String, u64>,
+    /// On-chain gateway registry (identity_id -> Gateway info)
+    #[serde(default)]
+    pub gateway_registry: HashMap<String, GatewayInfo>,
+    /// Gateway registration block heights (identity_id -> block_height)
+    #[serde(default)]
+    pub gateway_blocks: HashMap<String, u64>,
     /// DAO treasury wallet ID (stores collected fees for governance)
     #[serde(default)]
     pub dao_treasury_wallet_id: Option<String>,
@@ -519,6 +526,39 @@ pub struct ValidatorInfo {
     pub oracle_key_id: Option<[u8; 32]>,
 }
 
+/// Gateway registry entry
+/// Tracks a gateway node's registration, stake, and operational status.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayInfo {
+    /// Gateway identity ID (same as DID)
+    pub identity_id: String,
+    /// Staked amount (in micro-SOV)
+    pub stake: u64,
+    /// Dilithium5 public key used to sign forwarded client context.
+    /// Fixed size [u8; 2592].
+    #[serde(with = "serde_arrays")]
+    pub gateway_key: [u8; 2592],
+    /// Public QUIC endpoint(s) for clients (comma-separated host:port)
+    pub endpoints: String,
+    /// Commission rate percentage (0-100) taken from routed DAO fees
+    pub commission_rate: u8,
+    /// Gateway status: "active", "inactive", "slashed"
+    pub status: String,
+    /// Registration timestamp (block height)
+    pub registered_at: u64,
+    /// Last heartbeat / activity timestamp (block height)
+    pub last_activity: u64,
+    /// Total requests forwarded (approximate counter)
+    pub requests_forwarded: u64,
+    /// Slash count
+    pub slash_count: u32,
+    /// Revenue earned in micro-SOV (accumulated, not yet claimed)
+    pub accumulated_revenue: u64,
+    /// Source of gateway admission
+    #[serde(default)]
+    pub admission_source: String,
+}
+
 /// UBI (Universal Basic Income) registry entry
 /// Tracks a citizen's UBI eligibility and payout status
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -572,6 +612,8 @@ pub struct BlockchainImport {
     pub identity_registry: HashMap<String, IdentityTransactionData>,
     pub wallet_references: HashMap<String, crate::transaction::WalletReference>, // Only minimal references
     pub validator_registry: HashMap<String, ValidatorInfo>,
+    #[serde(default)]
+    pub gateway_registry: HashMap<String, GatewayInfo>,
     pub token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
     pub web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
     pub contract_blocks: HashMap<[u8; 32], u64>,
@@ -985,6 +1027,7 @@ impl Blockchain {
                     self.blocks.push(block.clone());
                     self.height += 1;
                     self.process_validator_registration_transactions(&block);
+                    self.process_gateway_transactions(&block);
                     // Rebuild wallet_registry and in-memory SOV balances from WalletRegistration
                     // transactions in this block. The BlockExecutor handles SledStore state but
                     // does NOT update the in-memory wallet_registry or token_contracts mints.
@@ -1141,6 +1184,7 @@ impl Blockchain {
         self.process_contract_transactions(&block)?;
         self.process_token_transactions(&block)?;
         self.process_validator_registration_transactions(&block);
+        self.process_gateway_transactions(&block);
         for tx in &block.transactions {
             self.index_dao_registry_entry_from_tx(tx, block.header.height);
         }
@@ -4288,6 +4332,7 @@ impl Blockchain {
             identity_registry: HashMap<String, IdentityTransactionData>,
             wallet_references: HashMap<String, crate::transaction::WalletReference>, // Only public references
             validator_registry: HashMap<String, ValidatorInfo>,
+            gateway_registry: HashMap<String, GatewayInfo>,
             token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
             web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
             contract_blocks: HashMap<[u8; 32], u64>,
@@ -4321,6 +4366,7 @@ impl Blockchain {
             identity_registry: self.identity_registry.clone(),
             wallet_references, // Only minimal wallet references (no sensitive data)
             validator_registry: self.validator_registry.clone(),
+            gateway_registry: self.gateway_registry.clone(),
             token_contracts: self.token_contracts.clone(),
             web4_contracts: self.web4_contracts.clone(),
             contract_blocks: self.contract_blocks.clone(),

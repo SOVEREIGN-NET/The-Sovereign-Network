@@ -17,6 +17,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::{timeout, Duration};
 use tracing::{debug, info, warn};
 
@@ -26,6 +27,121 @@ use lib_network::protocols::quic_handshake;
 use lib_network::protocols::types::session::V2Session;
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::wire::{read_request, write_response, ZhtpResponseWire};
+
+/// ZHTP native protocol magic bytes (used by mobile app public requests).
+const ZHTP_MAGIC: &[u8; 4] = b"ZHTP";
+const ZHTP_VERSION: u8 = 1;
+const MAX_ZHTP_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
+
+/// Payload format inside a ZHTP frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PayloadFormat {
+    Cbor,
+    Json,
+}
+
+impl PayloadFormat {
+    fn detect(data: &[u8]) -> Self {
+        if data.is_empty() {
+            return PayloadFormat::Cbor;
+        }
+        let first_non_ws = data
+            .iter()
+            .find(|&&b| !matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
+            .copied()
+            .unwrap_or(0);
+        if first_non_ws == b'{' || first_non_ws == b'[' {
+            return PayloadFormat::Json;
+        }
+        let major_type = data[0] >> 5;
+        if major_type == 5 || major_type == 4 {
+            return PayloadFormat::Cbor;
+        }
+        PayloadFormat::Cbor
+    }
+}
+
+/// Read a ZHTP-framed request ([ZHTP][ver][len][payload]) from a QUIC stream.
+async fn read_zhtp_frame<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<(ZhtpRequest, PayloadFormat)> {
+    let mut header = [0u8; 9];
+    reader
+        .read_exact(&mut header)
+        .await
+        .context("Failed to read ZHTP header")?;
+
+    if &header[0..4] != ZHTP_MAGIC {
+        return Err(anyhow!(
+            "Invalid ZHTP magic: expected ZHTP, got {:?}",
+            &header[0..4]
+        ));
+    }
+    if header[4] != ZHTP_VERSION {
+        return Err(anyhow!("Unsupported ZHTP version: {}", header[4]));
+    }
+
+    let len = u32::from_be_bytes([header[5], header[6], header[7], header[8]]) as usize;
+    if len > MAX_ZHTP_MESSAGE_SIZE {
+        return Err(anyhow!(
+            "Message too large: {} bytes (max {})",
+            len,
+            MAX_ZHTP_MESSAGE_SIZE
+        ));
+    }
+
+    let mut payload = vec![0u8; len];
+    reader
+        .read_exact(&mut payload)
+        .await
+        .context("Failed to read ZHTP payload")?;
+
+    let format = PayloadFormat::detect(&payload);
+    let request = match format {
+        PayloadFormat::Cbor => ciborium::from_reader(&payload[..])
+            .context("Failed to deserialize ZhtpRequest from CBOR")?,
+        PayloadFormat::Json => serde_json::from_slice(&payload)
+            .context("Failed to deserialize ZhtpRequest from JSON")?,
+    };
+
+    Ok((request, format))
+}
+
+/// Write a ZHTP-framed response ([ZHTP][ver][len][payload]) to a QUIC stream.
+async fn write_zhtp_frame<W: AsyncWriteExt + Unpin>(
+    writer: &mut W,
+    response: &ZhtpResponse,
+    format: PayloadFormat,
+) -> Result<()> {
+    let payload = match format {
+        PayloadFormat::Cbor => {
+            let mut buf = Vec::new();
+            ciborium::into_writer(response, &mut buf)
+                .context("Failed to serialize ZhtpResponse as CBOR")?;
+            buf
+        }
+        PayloadFormat::Json => serde_json::to_vec(response)
+            .context("Failed to serialize ZhtpResponse as JSON")?,
+    };
+
+    if payload.len() > MAX_ZHTP_MESSAGE_SIZE {
+        return Err(anyhow!(
+            "Response too large: {} bytes (max {})",
+            payload.len(),
+            MAX_ZHTP_MESSAGE_SIZE
+        ));
+    }
+
+    let mut frame = Vec::with_capacity(9 + payload.len());
+    frame.extend_from_slice(ZHTP_MAGIC);
+    frame.push(ZHTP_VERSION);
+    frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    frame.extend_from_slice(&payload);
+
+    writer
+        .write_all(&frame)
+        .await
+        .context("Failed to write ZHTP frame")?;
+    Ok(())
+}
 
 use crate::service::ZhtpDaemonService;
 
@@ -223,29 +339,28 @@ impl QuicGatewayServer {
         mut send: quinn::SendStream,
         peer_addr: SocketAddr,
     ) -> Result<()> {
-        let wire_request = read_request(&mut recv)
+        let (request, format) = read_zhtp_frame(&mut recv)
             .await
-            .context("Failed to read public ZHTP wire request")?;
+            .context("Failed to read public ZHTP request")?;
 
         debug!(
-            request_id = %wire_request.request_id_hex(),
-            uri = %wire_request.request.uri,
-            method = ?wire_request.request.method,
+            uri = %request.uri,
+            method = ?request.method,
+            format = ?format,
             "Public ZHTP request"
         );
 
         let response = self
-            .forward_request(wire_request.request, peer_addr)
+            .forward_request(request, peer_addr)
             .await
             .unwrap_or_else(|e| {
                 warn!("Forward failed: {}", e);
                 ZhtpResponse::error(ZhtpStatus::BadGateway, format!("Gateway forward error: {}", e))
             });
 
-        let wire_response = ZhtpResponseWire::success(wire_request.request_id, response);
-        write_response(&mut send, &wire_response)
+        write_zhtp_frame(&mut send, &response, format)
             .await
-            .context("Failed to write public ZHTP wire response")?;
+            .context("Failed to write public ZHTP response")?;
 
         send.finish().ok();
         Ok(())

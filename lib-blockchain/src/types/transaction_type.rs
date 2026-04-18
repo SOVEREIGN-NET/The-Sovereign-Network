@@ -162,6 +162,18 @@ pub enum TransactionType {
     /// Payload: `DOMUPD1:` prefix + bincode(DomainUpdatePayload) in memo field.
     /// Block processor updates record in `Blockchain::domain_registry`.
     DomainUpdate = 47,
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Gateway registry (remote QUIC ingress nodes)
+    // ═══════════════════════════════════════════════════════════════════════
+    /// Register a new gateway node on-chain.
+    /// Requires an existing identity, minimum stake, and a valid gateway key.
+    /// Block processor inserts into `Blockchain::gateway_registry`.
+    GatewayRegistration = 48,
+    /// Update an existing gateway record (endpoint, commission, status).
+    GatewayUpdate = 49,
+    /// Unregister a gateway and release stake.
+    GatewayUnregister = 50,
 }
 
 impl TransactionType {
@@ -328,6 +340,9 @@ impl TransactionType {
             TransactionType::DomainUpdate => {
                 "Update Web4 domain manifest (new deployment)"
             }
+            TransactionType::GatewayRegistration => "Gateway node registration",
+            TransactionType::GatewayUpdate => "Gateway node information update",
+            TransactionType::GatewayUnregister => "Gateway node unregistration",
         }
     }
 
@@ -382,6 +397,9 @@ impl TransactionType {
             TransactionType::DaoUnstake => "dao_unstake",
             TransactionType::DomainRegistration => "domain_registration",
             TransactionType::DomainUpdate => "domain_update",
+            TransactionType::GatewayRegistration => "gateway_registration",
+            TransactionType::GatewayUpdate => "gateway_update",
+            TransactionType::GatewayUnregister => "gateway_unregister",
         }
     }
 
@@ -436,6 +454,9 @@ impl TransactionType {
             "dao_unstake" => Some(TransactionType::DaoUnstake),
             "domain_registration" => Some(TransactionType::DomainRegistration),
             "domain_update" => Some(TransactionType::DomainUpdate),
+            "gateway_registration" => Some(TransactionType::GatewayRegistration),
+            "gateway_update" => Some(TransactionType::GatewayUpdate),
+            "gateway_unregister" => Some(TransactionType::GatewayUnregister),
             _ => None,
         }
     }

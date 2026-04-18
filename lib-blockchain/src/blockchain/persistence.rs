@@ -149,6 +149,10 @@ pub(super) struct BlockchainV1 {
     pub contract_blocks: HashMap<[u8; 32], u64>,
     pub validator_registry: HashMap<String, ValidatorInfo>,
     pub validator_blocks: HashMap<String, u64>,
+    #[serde(default)]
+    pub gateway_registry: HashMap<String, super::GatewayInfo>,
+    #[serde(default)]
+    pub gateway_blocks: HashMap<String, u64>,
     pub dao_treasury_wallet_id: Option<String>,
     pub welfare_services: HashMap<String, lib_consensus::WelfareService>,
     pub welfare_service_blocks: HashMap<String, u64>,
@@ -209,6 +213,8 @@ impl BlockchainV1 {
             dao_registry_index: HashMap::new(),
             validator_registry: self.validator_registry,
             validator_blocks: self.validator_blocks,
+            gateway_registry: self.gateway_registry,
+            gateway_blocks: self.gateway_blocks,
             dao_treasury_wallet_id: self.dao_treasury_wallet_id,
             welfare_services: self.welfare_services,
             welfare_service_blocks: self.welfare_service_blocks,
@@ -317,6 +323,10 @@ pub(super) struct BlockchainStorageV3 {
     pub validator_registry: HashMap<String, ValidatorInfo>,
     #[serde(default)]
     pub validator_blocks: HashMap<String, u64>,
+    #[serde(default)]
+    pub gateway_registry: HashMap<String, super::GatewayInfo>,
+    #[serde(default)]
+    pub gateway_blocks: HashMap<String, u64>,
     #[serde(default)]
     pub dao_treasury_wallet_id: Option<String>,
     #[serde(default)]
@@ -451,6 +461,8 @@ impl BlockchainStorageV3 {
             dao_registry_index: bc.dao_registry_index.clone(),
             validator_registry: bc.validator_registry.clone(),
             validator_blocks: bc.validator_blocks.clone(),
+            gateway_registry: bc.gateway_registry.clone(),
+            gateway_blocks: bc.gateway_blocks.clone(),
             dao_treasury_wallet_id: bc.dao_treasury_wallet_id.clone(),
             welfare_services: bc.welfare_services.clone(),
             welfare_service_blocks: bc.welfare_service_blocks.clone(),
@@ -524,6 +536,8 @@ impl BlockchainStorageV3 {
             dao_registry_index: self.dao_registry_index,
             validator_registry: self.validator_registry,
             validator_blocks: self.validator_blocks,
+            gateway_registry: self.gateway_registry,
+            gateway_blocks: self.gateway_blocks,
             dao_treasury_wallet_id: self.dao_treasury_wallet_id,
             welfare_services: self.welfare_services,
             welfare_service_blocks: self.welfare_service_blocks,

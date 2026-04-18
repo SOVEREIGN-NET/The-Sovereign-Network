@@ -579,6 +579,42 @@ pub enum ValidatorOperation {
     Unregister,
 }
 
+/// Gateway registration transaction data.
+///
+/// Gateways are remote QUIC ingress nodes that forward native ZHTP traffic
+/// to validators.  They must stake SOV, maintain liveness, and sign all
+/// forwarded client context with their Dilithium5 key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayTransactionData {
+    /// Identity ID of the gateway (must be pre-registered)
+    pub identity_id: String,
+    /// Staked amount in micro-SOV
+    pub stake: u64,
+    /// Dilithium5 public key used to sign forwarded client context.
+    /// Fixed size [u8; 2592] on-chain; serialized as Vec<u8> in tx.
+    pub gateway_key: Vec<u8>,
+    /// Public QUIC endpoint(s) for clients to connect to.
+    /// Comma-separated host:port list.
+    pub endpoints: String,
+    /// Commission rate percentage (0-100) taken from routed DAO fees.
+    pub commission_rate: u8,
+    /// Gateway operation type
+    pub operation: GatewayOperation,
+    /// Timestamp of registration/update
+    pub timestamp: u64,
+}
+
+/// Gateway operation types
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum GatewayOperation {
+    /// Register as a new gateway
+    Register,
+    /// Update gateway information
+    Update,
+    /// Unregister and exit
+    Unregister,
+}
+
 impl Transaction {
     /// Create a new standard transfer transaction
     pub fn new(
@@ -884,6 +920,70 @@ impl Transaction {
         }
     }
 
+    /// Create a new gateway registration transaction
+    pub fn new_gateway_registration(
+        gateway_data: GatewayTransactionData,
+        outputs: Vec<TransactionOutput>, // For stake locking
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id: 0x03, // Default to development network
+            transaction_type: TransactionType::GatewayRegistration,
+            inputs: Vec::new(), // Gateway registration via staking
+            outputs,
+            fee: 0, // Fee paid via stake
+            signature,
+            memo,
+            payload: TransactionPayload::Gateway(gateway_data),
+        }
+    }
+
+    /// Create a new gateway update transaction
+    pub fn new_gateway_update(
+        gateway_data: GatewayTransactionData,
+        inputs: Vec<TransactionInput>, // Authorization
+        outputs: Vec<TransactionOutput>,
+        fee: u64,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id: 0x03, // Default to development network
+            transaction_type: TransactionType::GatewayUpdate,
+            inputs,
+            outputs,
+            fee,
+            signature,
+            memo,
+            payload: TransactionPayload::Gateway(gateway_data),
+        }
+    }
+
+    /// Create a new gateway unregister transaction
+    pub fn new_gateway_unregister(
+        gateway_data: GatewayTransactionData,
+        inputs: Vec<TransactionInput>,   // Authorization
+        outputs: Vec<TransactionOutput>, // Stake return
+        fee: u64,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id: 0x03, // Default to development network
+            transaction_type: TransactionType::GatewayUnregister,
+            inputs,
+            outputs,
+            fee,
+            signature,
+            memo,
+            payload: TransactionPayload::Gateway(gateway_data),
+        }
+    }
+
     /// Create a new DAO proposal transaction
     pub fn new_dao_proposal(
         proposal_data: DaoProposalData,
@@ -1132,6 +1232,12 @@ impl Transaction {
     pub fn validator_data(&self) -> Option<&ValidatorTransactionData> {
         match &self.payload {
             TransactionPayload::Validator(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn gateway_data(&self) -> Option<&GatewayTransactionData> {
+        match &self.payload {
+            TransactionPayload::Gateway(d) => Some(d),
             _ => None,
         }
     }
@@ -2241,6 +2347,7 @@ pub enum TransactionPayload {
     Identity(IdentityTransactionData),
     Wallet(WalletTransactionData),
     Validator(ValidatorTransactionData),
+    Gateway(GatewayTransactionData),
     DaoProposal(DaoProposalData),
     DaoVote(DaoVoteData),
     DaoExecution(DaoExecutionData),
