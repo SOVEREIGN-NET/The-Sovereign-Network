@@ -6,6 +6,7 @@
 use anyhow::Result;
 use tracing::{debug, info, warn};
 
+use crate::compression::{compress_for_wire, decompress_from_wire, DataCategory};
 use crate::integration::dht_dispatcher::latest_dht_payload_sender;
 use crate::integration::dht_integration::DhtStorageHandle;
 
@@ -33,12 +34,22 @@ pub async fn drain_dht_payloads<F>(
 }
 
 /// Store a DHT value through the integration-held storage handle.
+/// SovereignCodec compression — Neural Mesh compresses ALL DHT content.
 pub async fn store_dht_value(dht_storage: &DhtStorageHandle, key: &[u8], value: &[u8]) -> bool {
     let key_str = hex::encode(key);
+    // Compress DHT values with SovereignCodec before storing
+    let compressed_value = compress_for_wire(value, DataCategory::Dht);
+    let raw_len = value.len();
+    let comp_len = compressed_value.len();
+    if comp_len < raw_len {
+        debug!("📦 DHT compressed: {} → {} bytes ({:.1}x) key={}",
+            raw_len, comp_len, raw_len as f64 / comp_len as f64,
+            &key_str[0..key_str.len().min(16)]);
+    }
     match dht_storage
         .lock()
         .await
-        .store(key_str.clone(), value.to_vec(), None)
+        .store(key_str.clone(), compressed_value, None)
         .await
     {
         Ok(()) => {
@@ -56,6 +67,7 @@ pub async fn store_dht_value(dht_storage: &DhtStorageHandle, key: &[u8], value: 
 }
 
 /// Fetch a DHT value through the integration-held storage handle.
+/// Transparently decompresses SovereignCodec-compressed values.
 pub async fn fetch_dht_value(
     dht_storage: &DhtStorageHandle,
     key: &[u8],
@@ -63,11 +75,14 @@ pub async fn fetch_dht_value(
     let key_str = hex::encode(key);
     match dht_storage.lock().await.get(&key_str).await {
         Ok(Some(dht_value)) => {
+            // Decompress SFC-compressed DHT values transparently
+            let decompressed = decompress_from_wire(&dht_value)
+                .unwrap_or(dht_value);
             debug!(
                 "✅ DHT value found via integration: key={}",
                 &key_str[0..key_str.len().min(16)]
             );
-            Ok((true, Some(dht_value)))
+            Ok((true, Some(decompressed)))
         }
         Ok(None) => {
             debug!("⚠️ DHT value not found locally via integration");

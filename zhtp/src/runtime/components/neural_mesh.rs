@@ -608,6 +608,400 @@ impl NeuralMeshComponent {
         restored
     }
 
+    // ── Multi-Node Simulation ──
+
+    /// Spawns a background task that simulates 4 virtual peer nodes, each with
+    /// different workload profiles. These simulated nodes:
+    /// 1. Train their own local RL routers on distinct network conditions
+    /// 2. Compress their model weights using SovereignCodec (SFC7/SFC9)
+    /// 3. Send compressed models to this node via receive_peer_model()
+    /// 4. Trigger real Federated Averaging when enough peers contribute
+    /// 5. Generate diverse compression workloads for the Adaptive Codec Learner
+    /// 6. Inject anomalous node metrics to test the Anomaly Sentry
+    /// 7. Generate access patterns for the Predictive Prefetcher
+    ///
+    /// This lets you see the entire distributed system working on a single machine.
+    fn spawn_multi_node_simulation(
+        distributed: Arc<RwLock<DistributedTrainingCoordinator>>,
+        router: Arc<RwLock<RlRouter>>,
+        anomaly: Arc<RwLock<AnomalySentry>>,
+        prefetcher: Arc<RwLock<PredictivePrefetcher>>,
+        codec_learner: Arc<RwLock<AdaptiveCodecLearner>>,
+        baseline_metrics: Arc<RwLock<Vec<NodeMetrics>>>,
+        stats: Arc<RwLock<NeuralMeshStats>>,
+        status: Arc<RwLock<ComponentStatus>>,
+    ) {
+        tokio::spawn(async move {
+            info!("🌐🧪 Multi-Node Simulation starting — 4 virtual peer nodes");
+            info!("🌐🧪   sim-node-alpha  (JSON/API workload)");
+            info!("🌐🧪   sim-node-beta   (Binary/model weights)");
+            info!("🌐🧪   sim-node-gamma  (Mixed text + markup)");
+            info!("🌐🧪   sim-node-delta  (High-entropy adversarial)");
+
+            // Give the main training loop time to initialize
+            tokio::time::sleep(Duration::from_secs(10)).await;
+
+            // Each sim node has its own RL router that trains on different conditions
+            let node_names = ["sim-node-alpha", "sim-node-beta", "sim-node-gamma", "sim-node-delta"];
+            let mut sim_routers: Vec<RlRouter> = (0..4).map(|_| {
+                let mut r = RlRouter::new();
+                r.enable(5, 3);
+                r
+            }).collect();
+
+            // Warm up each sim router with different network profiles
+            for (idx, sim_router) in sim_routers.iter_mut().enumerate() {
+                let base_congestion = [0.1, 0.4, 0.25, 0.6][idx];
+                let base_latency = [15.0_f32, 80.0, 40.0, 150.0][idx];
+                let base_bw = [2000.0_f32, 500.0, 1200.0, 300.0][idx];
+                for i in 0..30u32 {
+                    let jitter = (i as f32) * 0.01;
+                    let state = NetworkState {
+                        latencies: HashMap::from([
+                            (node_names[idx].into(), base_latency + jitter * 20.0),
+                            ("local-node".into(), 5.0 + jitter * 10.0),
+                        ]),
+                        bandwidth: HashMap::from([
+                            (node_names[idx].into(), base_bw - jitter * 50.0),
+                            ("local-node".into(), 1500.0),
+                        ]),
+                        packet_loss: HashMap::from([
+                            (node_names[idx].into(), 0.005 + jitter * 0.01),
+                        ]),
+                        energy_scores: HashMap::from([
+                            (node_names[idx].into(), 0.7 - jitter * 0.1),
+                        ]),
+                        congestion: base_congestion + jitter,
+                    };
+                    if sim_router.select_action(&state).is_ok() {
+                        let reward = if base_congestion < 0.3 { 0.5 } else { -0.2 };
+                        let next = NetworkState { congestion: base_congestion, ..state };
+                        let _ = sim_router.provide_reward(reward, &next, i == 29);
+                    }
+                }
+                let _ = sim_router.update_policy();
+            }
+
+            let compressor = SovereignCodecCompressor;
+            let mut sim_cycle: u64 = 0;
+
+            loop {
+                // 15-second interval (offset from the main 30s loop)
+                tokio::time::sleep(Duration::from_secs(15)).await;
+                sim_cycle += 1;
+
+                if !matches!(*status.read().await, ComponentStatus::Running) {
+                    info!("🌐🧪 Multi-node simulation stopping (component no longer running)");
+                    break;
+                }
+
+                info!("🌐🧪 ═══ Simulation cycle {} ═══", sim_cycle);
+
+                // ── Phase 1: Each sim node trains on its workload ──
+                for (idx, sim_router) in sim_routers.iter_mut().enumerate() {
+                    let profiles: Vec<(f32, f32, f32)> = match idx {
+                        0 => vec![(0.1, 12.0, 2200.0), (0.15, 18.0, 2000.0), (0.08, 10.0, 2500.0)],
+                        1 => vec![(0.5, 90.0, 400.0), (0.55, 100.0, 350.0), (0.45, 85.0, 450.0)],
+                        2 => vec![(0.25, 35.0, 1100.0), (0.3, 45.0, 1000.0), (0.2, 30.0, 1300.0)],
+                        _ => vec![(0.7, 180.0, 200.0), (0.75, 200.0, 150.0), (0.65, 160.0, 250.0)],
+                    };
+                    for (cong, lat, bw) in &profiles {
+                        let state = NetworkState {
+                            latencies: HashMap::from([
+                                (node_names[idx].into(), *lat),
+                                ("local-node".into(), 5.0),
+                            ]),
+                            bandwidth: HashMap::from([
+                                (node_names[idx].into(), *bw),
+                                ("local-node".into(), 1500.0),
+                            ]),
+                            packet_loss: HashMap::from([(node_names[idx].into(), cong * 0.05)]),
+                            energy_scores: HashMap::from([(node_names[idx].into(), 1.0 - cong)]),
+                            congestion: *cong,
+                        };
+                        if sim_router.select_action(&state).is_ok() {
+                            let reward = 1.0 - cong * 2.0;
+                            let next = NetworkState { congestion: cong * 0.95, ..state };
+                            let _ = sim_router.provide_reward(reward, &next, false);
+                        }
+                    }
+                    let _ = sim_router.update_policy();
+                }
+
+                // ── Phase 2: Sim nodes export + compress models, send to local node ──
+                for (idx, sim_router) in sim_routers.iter().enumerate() {
+                    if let Ok(raw_weights) = sim_router.save_model() {
+                        let dist = distributed.read().await;
+                        let compressed = CompressedModel::compress(
+                            ModelId::RlRouter,
+                            &raw_weights,
+                            node_names[idx],
+                            sim_cycle,
+                            &compressor,
+                        );
+                        let sample_count = 30 + sim_cycle * 3;
+                        info!(
+                            "🌐🧪 {} sent RL Router: {} → {} bytes ({:.1}x)",
+                            node_names[idx],
+                            compressed.raw_size,
+                            compressed.compressed_weights.len(),
+                            compressed.compression_ratio,
+                        );
+                        let ready = dist.receive_peer_model(compressed, sample_count).await;
+                        if ready {
+                            info!("🌐🧪 🔄 FedAvg threshold reached! Merging {} peer models...", idx + 1);
+                            // Get local weights and run FedAvg
+                            if let Ok(local_weights) = router.read().await.save_model() {
+                                match dist.federated_average(ModelId::RlRouter, &local_weights).await {
+                                    Ok(result) => {
+                                        let mut r = router.write().await;
+                                        if r.load_model(&result.merged_weights, 5, 3).is_ok() {
+                                            let mut s = stats.write().await;
+                                            s.fedavg_rounds += 1;
+                                            info!(
+                                                "🌐🧪 ✅ FedAvg complete: gen={}, {} contributors, {} total samples",
+                                                result.generation, result.num_contributors, result.total_samples
+                                            );
+                                        }
+                                    }
+                                    Err(e) => warn!("🌐🧪 FedAvg failed: {}", e),
+                                }
+                            }
+                        }
+                        drop(dist);
+                    }
+                }
+
+                // ── Phase 3: Feed the local RL router with multi-hop routing ──
+                // Simulate routing decisions between the 4 sim nodes + local
+                {
+                    let mut r = router.write().await;
+                    for (idx, name) in node_names.iter().enumerate() {
+                        let hop_latency = [15.0_f32, 80.0, 40.0, 150.0][idx];
+                        let hop_bw = [2000.0_f32, 500.0, 1200.0, 300.0][idx];
+                        let jitter = ((sim_cycle * (idx as u64 + 1)) % 20) as f32;
+                        let state = NetworkState {
+                            latencies: HashMap::from([
+                                (name.to_string(), hop_latency + jitter),
+                                ("local".into(), 2.0),
+                            ]),
+                            bandwidth: HashMap::from([
+                                (name.to_string(), hop_bw - jitter * 5.0),
+                                ("local".into(), 2000.0),
+                            ]),
+                            packet_loss: HashMap::from([(name.to_string(), 0.01 * (idx as f32 + 1.0))]),
+                            energy_scores: HashMap::from([(name.to_string(), 0.9 - (idx as f32) * 0.1)]),
+                            congestion: 0.1 + (idx as f32) * 0.15 + jitter * 0.005,
+                        };
+                        if let Ok(action) = r.select_action(&state) {
+                            let reward = if action.confidence > 0.5 { 0.8 } else { 0.2 };
+                            let next_state = NetworkState { congestion: state.congestion * 0.9, ..state };
+                            let _ = r.provide_reward(reward, &next_state, false);
+                            let mut s = stats.write().await;
+                            s.routing_decisions += 1;
+                        }
+                    }
+                    let _ = r.update_policy();
+                }
+
+                // ── Phase 4: Generate diverse compression workloads ──
+                // Each sim node specializes in a different content type
+                {
+                    let mut learner = codec_learner.write().await;
+                    let workloads: Vec<(lib_neural_mesh::ContentType, f32, f32, usize)> = vec![
+                        // (content_type, entropy, text_ratio, size)
+                        (lib_neural_mesh::ContentType::Json, 3.8 + (sim_cycle % 10) as f32 * 0.1, 0.94, 60_000),
+                        (lib_neural_mesh::ContentType::Binary, 6.8 + (sim_cycle % 5) as f32 * 0.2, 0.12, 500_000),
+                        (lib_neural_mesh::ContentType::Text, 4.2 + (sim_cycle % 8) as f32 * 0.15, 0.90, 120_000),
+                        (lib_neural_mesh::ContentType::Markup, 4.0 + (sim_cycle % 6) as f32 * 0.1, 0.85, 80_000),
+                    ];
+                    for (ct, entropy, text_ratio, size) in &workloads {
+                        let profile = ContentProfile {
+                            content_type: *ct,
+                            entropy: *entropy,
+                            size: *size,
+                            text_ratio: *text_ratio,
+                            unique_bytes: ((*entropy * 30.0) as u16).min(256),
+                            avg_delta: entropy * 10.0,
+                        };
+                        let params = learner.predict_params(&profile);
+
+                        // Actually compress synthetic data to get real feedback
+                        let synthetic_data: Vec<u8> = (0..*size).map(|i| {
+                            match ct {
+                                lib_neural_mesh::ContentType::Json => {
+                                    let json_bytes = b"{{\"key\":\"value\",\"num\":12345,\"arr\":[1,2,3]}}";
+                                    json_bytes[i % json_bytes.len()]
+                                }
+                                lib_neural_mesh::ContentType::Text => {
+                                    let text = b"The quick brown fox jumps over the lazy dog. ";
+                                    text[i % text.len()]
+                                }
+                                lib_neural_mesh::ContentType::Markup => {
+                                    let html = b"<div class=\"container\"><p>Hello World</p></div>";
+                                    html[i % html.len()]
+                                }
+                                _ => ((i * 7 + 13) % 256) as u8,
+                            }
+                        }).collect();
+
+                        let codec_params = lib_compression::CodecParams {
+                            rescale_limit: params.rescale_limit,
+                            freq_step: params.freq_step,
+                            init_freq_zero: params.init_freq_zero,
+                        };
+                        let start = std::time::Instant::now();
+                        let compressed = lib_compression::SovereignCodec::encode_with_params(
+                            &synthetic_data, &codec_params,
+                        );
+                        let elapsed = start.elapsed().as_secs_f64();
+                        let ratio = synthetic_data.len() as f64 / compressed.len().max(1) as f64;
+                        let throughput = (synthetic_data.len() as f64 / 1_048_576.0) / elapsed.max(0.0001);
+
+                        // Verify round-trip integrity
+                        let integrity_ok = lib_compression::SovereignCodec::decode(&compressed)
+                            .map(|d| d == synthetic_data)
+                            .unwrap_or(false);
+
+                        learner.observe_result(&CompressionFeedback {
+                            profile,
+                            ratio,
+                            total_ratio: ratio * 0.95,
+                            time_secs: elapsed,
+                            throughput_mbps: throughput,
+                            integrity_ok,
+                            shard_count: 1,
+                            shards_compressed: 1,
+                        });
+
+                        let mut s = stats.write().await;
+                        s.codec_adaptations += 1;
+                    }
+
+                    // Train after each cycle's batch of observations
+                    if let Some(loss) = learner.train() {
+                        let epsilon = learner.exploration_rate();
+                        info!(
+                            "🌐🧪 🎯 Codec Learner updated: loss={:.4}, ε={:.3}, step={}",
+                            loss, epsilon, learner.training_steps()
+                        );
+                    }
+                }
+
+                // ── Phase 5: Anomaly detection — inject one bad node per cycle ──
+                {
+                    let mut baselines = baseline_metrics.write().await;
+                    // Normal sim nodes
+                    for name in &node_names[..3] {
+                        baselines.push(NodeMetrics {
+                            node_id: name.to_string(),
+                            response_time: 30.0 + (sim_cycle % 10) as f32 * 5.0,
+                            success_rate: 0.97,
+                            corruption_rate: 0.001,
+                            participation_rate: 0.92,
+                            reputation: 0.85,
+                        });
+                    }
+                    // sim-node-delta is adversarial — alternates between suspicious behaviors
+                    let anomaly_type = sim_cycle % 4;
+                    baselines.push(NodeMetrics {
+                        node_id: "sim-node-delta".into(),
+                        response_time: if anomaly_type == 0 { 800.0 } else { 50.0 }, // SlowNode
+                        success_rate: if anomaly_type == 1 { 0.40 } else { 0.95 },    // Unreliable
+                        corruption_rate: if anomaly_type == 2 { 0.15 } else { 0.002 },// DataCorruption
+                        participation_rate: if anomaly_type == 3 { 0.20 } else { 0.90 },// Selfish
+                        reputation: 0.3,
+                    });
+                    drop(baselines);
+
+                    // Run anomaly detection on sim-node-delta
+                    let sentry = anomaly.read().await;
+                    let report = sentry.detect_anomaly(&NodeMetrics {
+                        node_id: "sim-node-delta".into(),
+                        response_time: if anomaly_type == 0 { 800.0 } else { 50.0 },
+                        success_rate: if anomaly_type == 1 { 0.40 } else { 0.95 },
+                        corruption_rate: if anomaly_type == 2 { 0.15 } else { 0.002 },
+                        participation_rate: if anomaly_type == 3 { 0.20 } else { 0.90 },
+                        reputation: 0.3,
+                    });
+                    if let Ok(report) = report {
+                        if report.score > 0.5 {
+                            let mut s = stats.write().await;
+                            s.anomalies_detected += 1;
+                            info!(
+                                "🌐🧪 🛡️  Anomaly detected: {} — score={:.2}, threat={:?}, severity={:?}",
+                                report.node_id, report.score, report.threat_type, report.severity
+                            );
+                        } else {
+                            info!(
+                                "🌐🧪 ✅ {} passed anomaly check (score={:.2})",
+                                report.node_id, report.score
+                            );
+                        }
+                    }
+                }
+
+                // ── Phase 6: Prefetcher access patterns ──
+                {
+                    let mut pf = prefetcher.write().await;
+                    let shard_names = ["shard-blockchain-001", "shard-identity-002", "shard-model-003", "shard-storage-004"];
+                    for (idx, _name) in node_names.iter().enumerate() {
+                        let shard = shard_names[idx];
+                        pf.record_access(lib_neural_mesh::AccessPattern {
+                            shard_id: shard.into(),
+                            timestamp: sim_cycle * 15_000 + (idx as u64) * 1000,
+                            context: format!("{}-workload", node_names[idx]),
+                        });
+                    }
+                    // Predict next accesses
+                    if let Ok(predictions) = pf.predict_next("sim-node-alpha-workload", 3) {
+                        for pred in &predictions {
+                            if pf.should_prefetch(pred) {
+                                let mut s = stats.write().await;
+                                s.prefetch_predictions += 1;
+                                info!(
+                                    "🌐🧪 📡 Prefetch: {} (confidence={:.2})",
+                                    pred.shard_id, pred.confidence
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // ── Summary every 4 cycles ──
+                if sim_cycle % 4 == 0 {
+                    let s = stats.read().await;
+                    let metrics = distributed.read().await.loop_metrics().await;
+                    info!("🌐🧪 ═══════════════════════════════════════════════════════");
+                    info!("🌐🧪 MULTI-NODE SIMULATION STATUS (cycle {})", sim_cycle);
+                    info!("🌐🧪   Routing decisions:   {}", s.routing_decisions);
+                    info!("🌐🧪   FedAvg rounds:       {}", s.fedavg_rounds);
+                    info!("🌐🧪   Anomalies detected:  {}", s.anomalies_detected);
+                    info!("🌐🧪   Prefetch predictions: {}", s.prefetch_predictions);
+                    info!("🌐🧪   Codec adaptations:   {}", s.codec_adaptations);
+                    info!("🌐🧪   Distributed syncs:   {}", s.distributed_syncs);
+                    if metrics.total_model_bytes_raw > 0 {
+                        info!("🌐🧪   Model compression:   {:.1}x avg", metrics.avg_model_compression_ratio);
+                        info!("🌐🧪   Bytes saved:         {}", metrics.total_model_bytes_raw - metrics.total_model_bytes_compressed);
+                    }
+                    // System-wide wire compression stats
+                    let wire = &crate::compression::WIRE_STATS;
+                    let wire_ops = wire.total_ops.load(std::sync::atomic::Ordering::Relaxed);
+                    if wire_ops > 0 {
+                        info!("🌐🧪   Wire compression:    {} ops, {:.1}x avg, {} bytes saved",
+                            wire_ops, wire.avg_ratio(), wire.total_bytes_saved());
+                        info!("🌐🧪   Blocks: {} | Txs: {} | DHT: {} | ZHTP: {}",
+                            wire.blocks_compressed.load(std::sync::atomic::Ordering::Relaxed),
+                            wire.txs_compressed.load(std::sync::atomic::Ordering::Relaxed),
+                            wire.dht_compressed.load(std::sync::atomic::Ordering::Relaxed),
+                            wire.zhtp_compressed.load(std::sync::atomic::Ordering::Relaxed));
+                    }
+                    info!("🌐🧪 ═══════════════════════════════════════════════════════");
+                }
+            }
+        });
+    }
+
     // ── Warm-up ──
 
     /// Generate synthetic training experiences so the RL router can start
@@ -875,6 +1269,23 @@ impl Component for NeuralMeshComponent {
         *self.start_time.write().await = Some(Instant::now());
         *self.status.write().await = ComponentStatus::Running;
 
+        // ── Multi-Node Simulation (option 5) ──
+        // When ZHTP_MULTI_NODE_SIM=1 is set, launch 4 virtual peer nodes that
+        // train independently, compress + broadcast models, and trigger FedAvg.
+        if std::env::var("ZHTP_MULTI_NODE_SIM").as_deref() == Ok("1") {
+            info!("🌐🧪 Multi-node simulation mode detected — launching 4 virtual peers");
+            Self::spawn_multi_node_simulation(
+                self.distributed.clone(),
+                self.router.clone(),
+                self.anomaly.clone(),
+                self.prefetcher.clone(),
+                self.codec_learner.clone(),
+                self.baseline_metrics.clone(),
+                self.stats.clone(),
+                self.status.clone(),
+            );
+        }
+
         // Spawn background training loop — periodically trains anomaly baseline,
         // updates routing policy, and exports compressed models for distributed sync.
         // This is the self-optimizing loop:
@@ -1129,6 +1540,144 @@ impl Component for NeuralMeshComponent {
                     let metrics = dist.loop_metrics().await;
                     if metrics.fedavg_rounds > 0 || metrics.total_model_bytes_raw > 0 {
                         info!("{}", metrics.summary());
+                    }
+                }
+
+                // ── Exercise wire compression on representative data (every 3rd cycle) ──
+                // Even on a solo dev node, this ensures all compression paths are
+                // active and stats are visible.  The sample data mimics what a
+                // real multi-node network would be compressing on every hop.
+                if cycle_count % 3 == 0 {
+                    use crate::compression::{compress_for_wire, decompress_from_wire, DataCategory};
+
+                    // 1) Simulated block (JSON-like header + binary body)
+                    let block_json = format!(
+                        r#"{{"height":{},"hash":"0xdeadbeef{:04x}","prev":"0xcafe","timestamp":{},"txs":[{{"from":"sovereign1abc","to":"sovereign1xyz","amount":42,"fee":1}},{{"from":"sovereign1def","to":"sovereign1ghi","amount":100,"fee":2}}],"state_root":"0x1234567890abcdef","validator":"node-alpha","signature":"sig..."}}"#,
+                        cycle_count * 100, cycle_count, std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
+                    );
+                    // Pad to realistic block size (~2 KB)
+                    let mut block_data = block_json.into_bytes();
+                    block_data.resize(2048, b'0');
+                    let block_compressed = compress_for_wire(&block_data, DataCategory::Block);
+                    let _ = decompress_from_wire(&block_compressed); // verify round-trip
+
+                    // 2) Simulated transaction batch (binary serialized)
+                    let tx_payload: Vec<u8> = (0..512u16).flat_map(|i| i.to_le_bytes()).collect();
+                    let tx_compressed = compress_for_wire(&tx_payload, DataCategory::Transaction);
+                    let _ = decompress_from_wire(&tx_compressed);
+
+                    // 3) Simulated DHT record (identity + routing table)
+                    let dht_record = format!(
+                        r#"{{"did":"did:sovereign:node-{:04x}","endpoints":["quic://10.0.0.1:4433","zhtp://10.0.0.1:8080"],"public_key":"ed25519:AAAA","routing_table":[{{"peer":"node-beta","latency_ms":12}},{{"peer":"node-gamma","latency_ms":28}}],"timestamp":{}}}"#,
+                        cycle_count, std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
+                    );
+                    let mut dht_data = dht_record.into_bytes();
+                    dht_data.resize(1024, b' ');
+                    let dht_compressed = compress_for_wire(&dht_data, DataCategory::Dht);
+                    let _ = decompress_from_wire(&dht_compressed);
+
+                    // 4) Simulated ZHTP response (HTML content)
+                    let zhtp_body = format!(
+                        "<html><head><title>Sovereign Node</title></head><body>\
+                         <h1>Node Status</h1><p>Cycle: {}</p>\
+                         <table><tr><td>Peers</td><td>4</td></tr>\
+                         <tr><td>Blocks</td><td>{}</td></tr>\
+                         <tr><td>Latency</td><td>12ms</td></tr></table>\
+                         <script>console.log('health ok');</script></body></html>",
+                        cycle_count, cycle_count * 100
+                    );
+                    let mut zhtp_data = zhtp_body.into_bytes();
+                    zhtp_data.resize(1500, b' ');
+                    let zhtp_compressed = compress_for_wire(&zhtp_data, DataCategory::Zhtp);
+                    let _ = decompress_from_wire(&zhtp_compressed);
+
+                    let total_raw = block_data.len() + tx_payload.len() + dht_data.len() + zhtp_data.len();
+                    let total_compressed = block_compressed.len() + tx_compressed.len()
+                        + dht_compressed.len() + zhtp_compressed.len();
+                    let ratio = total_raw as f64 / total_compressed as f64;
+                    info!(
+                        "📦 Wire compression exercise: {} → {} bytes ({:.1}x) \
+                         [Block {:.1}x | Tx {:.1}x | DHT {:.1}x | ZHTP {:.1}x]",
+                        total_raw, total_compressed, ratio,
+                        block_data.len() as f64 / block_compressed.len().max(1) as f64,
+                        tx_payload.len() as f64 / tx_compressed.len().max(1) as f64,
+                        dht_data.len() as f64 / dht_compressed.len().max(1) as f64,
+                        zhtp_data.len() as f64 / zhtp_compressed.len().max(1) as f64,
+                    );
+                }
+
+                // ── Log system-wide wire compression stats (every 5th cycle) ──
+                if cycle_count % 5 == 0 {
+                    crate::compression::WIRE_STATS.log_summary();
+                    crate::integration::distributed_shards::SHARD_STATS.log_summary();
+                }
+
+                // ── Network-as-Disk: distributed shard store/fetch/prove (every 6th cycle) ──
+                // Exercises the FULL pipeline: content → erasure encode → SFC compress
+                // → store shards in DHT → fetch back → erasure decode → verify → prove
+                if cycle_count % 6 == 0 {
+                    if let Ok(mesh_router) =
+                        crate::runtime::mesh_router_provider::get_global_mesh_router().await
+                    {
+                        let dht = mesh_router.dht_storage();
+                        let node_id = format!("{}", mesh_router.server_id);
+
+                        match crate::integration::distributed_shards::DistributedShardManager::with_defaults(node_id) {
+                            Ok(shard_mgr) => {
+                                // 1) Store a realistic block payload via network-as-disk
+                                let block_payload = format!(
+                                    r#"{{"height":{},"hash":"0x{:016x}","prev":"0xcafe","timestamp":{},"validator":"sovereign-node","tx_count":42,"state_root":"0xabcdef","body":{}}}"#,
+                                    cycle_count * 100,
+                                    cycle_count * 0xDEAD,
+                                    std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default().as_secs(),
+                                    // Include enough body data to trigger erasure coding
+                                    "\"".to_string() + &"A".repeat(500) + "\""
+                                );
+                                let content = block_payload.as_bytes();
+
+                                match shard_mgr.store_content(content, &dht).await {
+                                    Ok(content_hash) => {
+                                        // 2) Fetch it back — exercises full reconstruct path
+                                        match shard_mgr.fetch_content(&content_hash, &dht).await {
+                                            Ok(fetched) => {
+                                                if fetched == content {
+                                                    // 3) Generate storage proof for shard 0
+                                                    let nonce = cycle_count * 7919; // deterministic challenge
+                                                    match shard_mgr.generate_shard_proof(&content_hash, 0, nonce, &dht).await {
+                                                        Ok(proof) => {
+                                                            // 4) Verify the proof
+                                                            if let Ok(Some(manifest)) = shard_mgr.get_manifest(&content_hash, &dht).await {
+                                                                let valid = shard_mgr.verify_shard_proof(&proof, &manifest.merkle_root);
+                                                                info!(
+                                                                    "🌐 Network-as-Disk cycle {}: store ✅ fetch ✅ proof {} ({} shards, {:.1}x effective)",
+                                                                    cycle_count,
+                                                                    if valid { "✅" } else { "❌" },
+                                                                    manifest.total_shards(),
+                                                                    content.len() as f64 / manifest.compressed_shard_sizes.iter().sum::<usize>().max(1) as f64,
+                                                                );
+                                                            }
+                                                        }
+                                                        Err(e) => debug!("🌐 Proof generation: {}", e),
+                                                    }
+                                                } else {
+                                                    warn!("🌐❌ Fetch content mismatch — {}/{} bytes match",
+                                                        fetched.iter().zip(content).filter(|(a, b)| a == b).count(),
+                                                        content.len()
+                                                    );
+                                                }
+                                            }
+                                            Err(e) => debug!("🌐 Fetch: {}", e),
+                                        }
+                                    }
+                                    Err(e) => debug!("🌐 Store: {}", e),
+                                }
+                            }
+                            Err(e) => debug!("🌐 Shard manager init: {}", e),
+                        }
                     }
                 }
 
@@ -1504,6 +2053,50 @@ impl Component for NeuralMeshComponent {
                             rewards[0], rewards[1], rewards[2], rewards[4]
                         );
                     }
+                    // ── Model Broadcast & Shard Streaming ──
+                    "broadcast_model" => {
+                        // Wire-compress the model sync payload for peer transmission
+                        use crate::compression::{compress_for_wire, DataCategory};
+                        let compressed = compress_for_wire(&data, DataCategory::Block);
+                        let ratio = if compressed.len() > 0 {
+                            data.len() as f64 / compressed.len() as f64
+                        } else { 1.0 };
+                        info!(
+                            "🧠📡 Model broadcast: {} → {} bytes ({:.1}x wire compression)",
+                            data.len(), compressed.len(), ratio
+                        );
+                        // On a real multi-node network the compressed payload
+                        // would be sent to peers via QUIC mesh protocol here.
+                        // For now, feed the result back as a receive_peer_model
+                        // so FedAvg can accumulate even on a solo node.
+                        if let Ok(msg) = ModelSyncMessage::from_bytes(&data) {
+                            match msg {
+                                ModelSyncMessage::BroadcastModel { model, sample_count } => {
+                                    let model_id = model.model_id;
+                                    let ready = self.receive_peer_model(model, sample_count).await;
+                                    if ready {
+                                        info!("🧠🔄 FedAvg threshold reached for {} — merging", model_id);
+                                        if let Err(e) = self.run_federated_average(model_id).await {
+                                            warn!("FedAvg failed for {}: {}", model_id, e);
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    "shard_stream" => {
+                        // Wire-compress each shard for parallel QUIC streaming
+                        use crate::compression::{compress_for_wire, DataCategory};
+                        let compressed = compress_for_wire(&data, DataCategory::Block);
+                        let ratio = if compressed.len() > 0 {
+                            data.len() as f64 / compressed.len() as f64
+                        } else { 1.0 };
+                        debug!(
+                            "🧠⚡ Shard stream: {} → {} bytes ({:.1}x wire compression)",
+                            data.len(), compressed.len(), ratio
+                        );
+                    }
                     _ => {
                         debug!("Neural mesh: unknown custom operation: {}", op);
                     }
@@ -1606,6 +2199,54 @@ impl Component for NeuralMeshComponent {
         metrics.insert(
             "codec_learner_buffer".to_string(),
             learner.buffer_len() as f64,
+        );
+
+        // System-wide wire compression stats
+        let wire = &crate::compression::WIRE_STATS;
+        metrics.insert(
+            "wire_compression_ops".to_string(),
+            wire.total_ops.load(std::sync::atomic::Ordering::Relaxed) as f64,
+        );
+        metrics.insert(
+            "wire_compression_ratio".to_string(),
+            wire.avg_ratio(),
+        );
+        metrics.insert(
+            "wire_bytes_saved".to_string(),
+            wire.total_bytes_saved() as f64,
+        );
+
+        // Network-as-Disk distributed shard stats
+        let shards = &crate::integration::distributed_shards::SHARD_STATS;
+        metrics.insert(
+            "shard_store_ops".to_string(),
+            shards.store_ops.load(std::sync::atomic::Ordering::Relaxed) as f64,
+        );
+        metrics.insert(
+            "shard_fetch_ops".to_string(),
+            shards.fetch_ops.load(std::sync::atomic::Ordering::Relaxed) as f64,
+        );
+        metrics.insert(
+            "shard_dedup_hits".to_string(),
+            shards.dedup_hits.load(std::sync::atomic::Ordering::Relaxed) as f64,
+        );
+        metrics.insert(
+            "shard_erasure_reconstructions".to_string(),
+            shards.erasure_reconstructions.load(std::sync::atomic::Ordering::Relaxed) as f64,
+        );
+        let content_bytes = shards.total_content_bytes.load(std::sync::atomic::Ordering::Relaxed) as f64;
+        let compressed_bytes = shards.total_compressed_shard_bytes.load(std::sync::atomic::Ordering::Relaxed) as f64;
+        metrics.insert(
+            "shard_effective_compression".to_string(),
+            if compressed_bytes > 0.0 { content_bytes / compressed_bytes } else { 1.0 },
+        );
+        metrics.insert(
+            "shard_proof_challenges".to_string(),
+            shards.proof_challenges_issued.load(std::sync::atomic::Ordering::Relaxed) as f64,
+        );
+        metrics.insert(
+            "shard_proofs_verified".to_string(),
+            shards.proof_challenges_verified.load(std::sync::atomic::Ordering::Relaxed) as f64,
         );
 
         Ok(metrics)

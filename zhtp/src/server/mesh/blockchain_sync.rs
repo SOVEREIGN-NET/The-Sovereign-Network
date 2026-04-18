@@ -11,6 +11,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, error, info, warn};
 
+use crate::compression::{compress_for_wire, DataCategory};
+
 use super::core::MeshRouter;
 
 impl MeshRouter {
@@ -55,6 +57,15 @@ impl MeshRouter {
                                 continue;
                             }
                         };
+
+                        // SovereignCodec compression — Neural Mesh compresses ALL blockchain data
+                        let raw_size = block_data.len();
+                        let block_data = compress_for_wire(&block_data, DataCategory::Block);
+                        if block_data.len() < raw_size {
+                            info!("📦 Block {} compressed: {} → {} bytes ({:.1}x)",
+                                block.height(), raw_size, block_data.len(),
+                                raw_size as f64 / block_data.len() as f64);
+                        }
 
                         // Get local node's public key from identity manager
                         let sender_pubkey = if let Some(identity_mgr) = identity_manager.as_ref() {
@@ -141,6 +152,15 @@ impl MeshRouter {
                                 continue;
                             }
                         };
+
+                        // SovereignCodec compression — Neural Mesh compresses ALL transaction data
+                        let raw_size = tx_data.len();
+                        let tx_data = compress_for_wire(&tx_data, DataCategory::Transaction);
+                        if tx_data.len() < raw_size {
+                            debug!("📦 Tx {} compressed: {} → {} bytes ({:.1}x)",
+                                tx.hash(), raw_size, tx_data.len(),
+                                raw_size as f64 / tx_data.len() as f64);
+                        }
 
                         // Get local node's public key from identity manager
                         let sender_pubkey = if let Some(identity_mgr) = identity_manager.as_ref() {

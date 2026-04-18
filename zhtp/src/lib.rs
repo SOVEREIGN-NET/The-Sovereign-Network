@@ -30,6 +30,7 @@ pub fn node_data_dir() -> PathBuf {
 }
 
 pub mod config;
+pub mod compression;
 pub mod integration;
 pub mod monitoring;
 pub mod pouw;

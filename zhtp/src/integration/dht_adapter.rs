@@ -8,6 +8,7 @@ use lib_storage::dht::backend::{HashMapBackend, SledBackend};
 use lib_storage::dht::DhtStorage;
 use lib_storage::types::NodeId;
 use serde::{Deserialize, Serialize};
+use crate::compression::{compress_for_wire, decompress_from_wire, DataCategory};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -170,7 +171,9 @@ impl DhtIntegrationAdapter {
         ttl_secs: u64,
     ) -> Result<String> {
         let key = format!("{}:{}", domain, path);
-        self.storage.store(key.clone(), content).await?;
+        // SovereignCodec compression — Neural Mesh compresses ALL DHT content
+        let compressed = compress_for_wire(&content, DataCategory::Dht);
+        self.storage.store(key.clone(), compressed).await?;;
 
         if ttl_secs > 0 {
             let expiry = now_secs().saturating_add(ttl_secs);
@@ -181,7 +184,14 @@ impl DhtIntegrationAdapter {
     }
 
     pub async fn fetch_content(&mut self, key: &str) -> Result<Option<Vec<u8>>> {
-        self.storage.get(key).await
+        match self.storage.get(key).await? {
+            Some(data) => {
+                // Transparently decompress SFC-compressed DHT content
+                let decompressed = decompress_from_wire(&data).unwrap_or(data);
+                Ok(Some(decompressed))
+            }
+            None => Ok(None),
+        }
     }
 
     pub async fn resolve_content(&mut self, domain: &str, path: &str) -> Result<Option<Vec<u8>>> {

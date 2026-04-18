@@ -15,6 +15,8 @@ use lib_network::dht::protocol::ZhtpRelayQuery;
 use lib_network::MeshConnection;
 use lib_economy::EconomicModel;
 
+use crate::compression::{decompress_from_wire, DataCategory};
+
 use super::core::MeshRouter;
 use crate::server::monitoring::{PeerReputation, PeerRateLimit};
 
@@ -460,7 +462,9 @@ impl MeshRouter {
         height: u64,
         timestamp: u64
     ) -> Result<()> {
-        info!("🧱 Received NewBlock at height {} from {:?}", height, hex::encode(&sender.key_id[0..8]));
+        // SovereignCodec decompression — transparently decompress SFC-compressed blocks
+        let block = &decompress_from_wire(block).unwrap_or_else(|_| block.to_vec());
+        info!("🧱 Received NewBlock at height {} from {:?} ({} bytes)", height, hex::encode(&sender.key_id[0..8]), block.len());
         
         // Track performance metrics
         self.track_block_latency(timestamp).await;
@@ -684,8 +688,10 @@ impl MeshRouter {
         tx_hash: [u8; 32],
         fee: u64
     ) -> Result<()> {
-        info!("💸 Received NewTransaction {:?} (fee: {}) from {:?}", 
-              hex::encode(&tx_hash[0..8]), fee, hex::encode(&sender.key_id[0..8]));
+        // SovereignCodec decompression — transparently decompress SFC-compressed transactions
+        let transaction = &decompress_from_wire(transaction).unwrap_or_else(|_| transaction.to_vec());
+        info!("💸 Received NewTransaction {:?} (fee: {}, {} bytes) from {:?}", 
+              hex::encode(&tx_hash[0..8]), fee, transaction.len(), hex::encode(&sender.key_id[0..8]));
         
         // Track transaction latency if timestamp is embedded
         if transaction.len() >= 8 {

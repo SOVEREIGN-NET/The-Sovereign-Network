@@ -560,6 +560,7 @@ pub enum WalletStartupChoice {
     ImportFromSeedPhrase,
     ImportFromMesh,
     QuickStart,
+    MultiNodeSimulation,
 }
 
 /// Result from wallet startup containing node identity and wallet information
@@ -766,6 +767,30 @@ impl WalletStartupManager {
                 }
             }
             WalletStartupChoice::QuickStart => Self::quick_start_wallet().await?,
+            WalletStartupChoice::MultiNodeSimulation => {
+                // Set env flag so neural mesh component spawns multi-node sim
+                std::env::set_var("ZHTP_MULTI_NODE_SIM", "1");
+                println!();
+                println!("═══════════════════════════════════════════");
+                println!("   Multi-Node Simulation Mode");
+                println!("═══════════════════════════════════════════");
+                println!();
+                println!("  4 virtual peer nodes will be simulated:");
+                println!("    • sim-node-alpha  — JSON/API workload");
+                println!("    • sim-node-beta   — Binary/model weights");
+                println!("    • sim-node-gamma  — Mixed text + markup");
+                println!("    • sim-node-delta  — High-entropy adversarial");
+                println!();
+                println!("  You will see:");
+                println!("    🧠🔄 Federated averaging merging peer models");
+                println!("    🧠📡 Peer model broadcasts + receive");
+                println!("    🧠🎯 Codec learner adapting per content type");
+                println!("    🧠📦 Self-compression of AI model weights");
+                println!("    🛡️  Anomaly detection flagging bad nodes");
+                println!("    🔀 RL router learning optimal paths");
+                println!();
+                Self::quick_start_wallet().await?
+            }
         };
 
         // ════════════════════════════════════════════════════════════════════
@@ -799,10 +824,11 @@ impl WalletStartupManager {
         println!("2) Import existing wallet from 20-word seed phrase");
         println!("3) Import from mesh network (if available)");
         println!("4) Quick start (auto-generate for testing)");
+        println!("5) Multi-node simulation (simulates 4 peer nodes for federated learning demo)");
         println!();
 
         loop {
-            print!("Enter your choice (1-4): ");
+            print!("Enter your choice (1-5): ");
             io::stdout().flush()?;
 
             let mut input = String::new();
@@ -814,8 +840,9 @@ impl WalletStartupManager {
                 "2" => return Ok(WalletStartupChoice::ImportFromSeedPhrase),
                 "3" => return Ok(WalletStartupChoice::ImportFromMesh),
                 "4" => return Ok(WalletStartupChoice::QuickStart),
+                "5" => return Ok(WalletStartupChoice::MultiNodeSimulation),
                 _ => {
-                    println!("Invalid choice. Please enter 1-4.");
+                    println!("Invalid choice. Please enter 1-5.");
                     continue;
                 }
             }

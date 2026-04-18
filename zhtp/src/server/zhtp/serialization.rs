@@ -13,11 +13,16 @@ use anyhow::{Context, Result};
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse};
 use tracing::debug;
 
+use crate::compression::{compress_for_wire, decompress_from_wire, DataCategory};
+
 /// ZHTP protocol magic bytes
 pub const ZHTP_MAGIC: &[u8; 4] = b"ZHTP";
 
 /// ZHTP protocol version
 pub const ZHTP_VERSION: u8 = 1;
+
+/// ZHTP protocol version with SovereignCodec compression
+pub const ZHTP_VERSION_COMPRESSED: u8 = 2;
 
 /// Maximum message size (10 MB)
 pub const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
@@ -102,19 +107,22 @@ pub fn serialize_request_with_format(
         ));
     }
 
+    // SovereignCodec compression — the Neural Mesh compresses ALL ZHTP traffic
+    let body = compress_for_wire(&body, DataCategory::Zhtp);
+
     // Build message with header
     let mut message = Vec::with_capacity(9 + body.len());
 
     // Magic bytes (4 bytes)
     message.extend_from_slice(ZHTP_MAGIC);
 
-    // Version (1 byte)
-    message.push(ZHTP_VERSION);
+    // Version (1 byte) — 2 = SFC-compressed body
+    message.push(ZHTP_VERSION_COMPRESSED);
 
     // Message length (4 bytes, big-endian)
     message.extend_from_slice(&(body.len() as u32).to_be_bytes());
 
-    // Request body
+    // Request body (SFC-compressed if beneficial)
     message.extend_from_slice(&body);
 
     Ok(message)
@@ -136,9 +144,9 @@ pub fn deserialize_request_with_format(data: &[u8]) -> Result<(ZhtpRequest, Payl
         return Err(anyhow::anyhow!("Invalid ZHTP magic bytes"));
     }
 
-    // Validate version
+    // Validate version (1 = uncompressed, 2 = SFC-compressed)
     let version = data[4];
-    if version != ZHTP_VERSION {
+    if version != ZHTP_VERSION && version != ZHTP_VERSION_COMPRESSED {
         return Err(anyhow::anyhow!("Unsupported ZHTP version: {}", version));
     }
 
@@ -162,7 +170,12 @@ pub fn deserialize_request_with_format(data: &[u8]) -> Result<(ZhtpRequest, Payl
         ));
     }
 
-    let payload = &data[9..9 + length];
+    let raw_payload = &data[9..9 + length];
+
+    // SovereignCodec decompression — transparently handles both compressed and uncompressed
+    let payload_vec = decompress_from_wire(raw_payload)
+        .unwrap_or_else(|_| raw_payload.to_vec());
+    let payload = &payload_vec;
 
     // Detect format and deserialize
     let format = PayloadFormat::detect(payload);
@@ -170,7 +183,7 @@ pub fn deserialize_request_with_format(data: &[u8]) -> Result<(ZhtpRequest, Payl
 
     let request = match format {
         PayloadFormat::Cbor => {
-            ciborium::from_reader(payload).context("Failed to deserialize ZhtpRequest from CBOR")?
+            ciborium::from_reader(payload.as_slice()).context("Failed to deserialize ZhtpRequest from CBOR")?
         }
         PayloadFormat::Json => serde_json::from_slice(payload)
             .context("Failed to deserialize ZhtpRequest from JSON")?,
@@ -219,19 +232,22 @@ pub fn serialize_response_with_format(
         ));
     }
 
+    // SovereignCodec compression — the Neural Mesh compresses ALL ZHTP traffic
+    let body = compress_for_wire(&body, DataCategory::Zhtp);
+
     // Build message with header
     let mut message = Vec::with_capacity(9 + body.len());
 
     // Magic bytes (4 bytes)
     message.extend_from_slice(ZHTP_MAGIC);
 
-    // Version (1 byte)
-    message.push(ZHTP_VERSION);
+    // Version (1 byte) — 2 = SFC-compressed body
+    message.push(ZHTP_VERSION_COMPRESSED);
 
     // Message length (4 bytes, big-endian)
     message.extend_from_slice(&(body.len() as u32).to_be_bytes());
 
-    // Response body
+    // Response body (SFC-compressed if beneficial)
     message.extend_from_slice(&body);
 
     Ok(message)
@@ -252,9 +268,9 @@ pub fn deserialize_response_with_format(data: &[u8]) -> Result<(ZhtpResponse, Pa
         return Err(anyhow::anyhow!("Invalid ZHTP magic bytes"));
     }
 
-    // Validate version
+    // Validate version (1 = uncompressed, 2 = SFC-compressed)
     let version = data[4];
-    if version != ZHTP_VERSION {
+    if version != ZHTP_VERSION && version != ZHTP_VERSION_COMPRESSED {
         return Err(anyhow::anyhow!("Unsupported ZHTP version: {}", version));
     }
 
@@ -278,13 +294,18 @@ pub fn deserialize_response_with_format(data: &[u8]) -> Result<(ZhtpResponse, Pa
         ));
     }
 
-    let payload = &data[9..9 + length];
+    let raw_payload = &data[9..9 + length];
+
+    // SovereignCodec decompression — transparently handles both compressed and uncompressed
+    let payload_vec = decompress_from_wire(raw_payload)
+        .unwrap_or_else(|_| raw_payload.to_vec());
+    let payload = &payload_vec;
 
     // Detect format and deserialize
     let format = PayloadFormat::detect(payload);
 
     let response = match format {
-        PayloadFormat::Cbor => ciborium::from_reader(payload)
+        PayloadFormat::Cbor => ciborium::from_reader(payload.as_slice())
             .context("Failed to deserialize ZhtpResponse from CBOR")?,
         PayloadFormat::Json => serde_json::from_slice(payload)
             .context("Failed to deserialize ZhtpResponse from JSON")?,

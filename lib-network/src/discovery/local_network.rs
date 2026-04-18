@@ -478,6 +478,10 @@ async fn listen_for_announcements(
             .parse::<std::net::SocketAddr>()?
             .into(),
     )?;
+    // Dilithium5-signed announcements can be ~10-12 KB (2592-byte pk + 4627-byte sig,
+    // base64-encoded in JSON).  Set a generous OS-level receive buffer so Windows
+    // doesn't drop oversized datagrams (error 10040 / WSAEMSGSIZE).
+    let _ = socket.set_recv_buffer_size(128 * 1024); // 128 KB OS recv buffer
     socket.set_nonblocking(true)?;
     let socket: std::net::UdpSocket = socket.into();
     let socket = UdpSocket::from_std(socket)?;
@@ -493,7 +497,8 @@ async fn listen_for_announcements(
     );
     info!("   Joined multicast group successfully");
 
-    let mut buf = [0; 1024];
+    // Max UDP datagram = 65535 bytes — large enough for Dilithium5-signed announcements
+    let mut buf = [0u8; 65535];
     let mut discovery_count = 0;
     let mut packet_count = 0;
 

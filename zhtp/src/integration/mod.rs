@@ -10,6 +10,7 @@ pub mod dht_integration;
 pub mod dht_mesh_transport;
 pub mod dht_persistent_backend;
 pub mod dht_payload_handler;
+pub mod distributed_shards;
 pub mod event_bus;
 pub mod service_container;
 
