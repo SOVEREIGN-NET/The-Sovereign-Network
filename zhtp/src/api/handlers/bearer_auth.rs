@@ -9,10 +9,10 @@
 
 use std::sync::Arc;
 
+use crate::api::auth_errors::{err_401};
 use lib_identity::auth::mobile_delegation::MobileAuthStore;
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
-use serde_json::json;
 
 /// Wraps an inner handler with bearer token enforcement.
 /// Returns 401 if the Authorization header is missing or the token is invalid.
@@ -32,14 +32,14 @@ impl ZhtpRequestHandler for BearerAuthMiddleware {
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         let token = match extract_bearer(&request) {
             Some(t) => t,
-            None => return Ok(unauthorized("Missing Bearer token")),
+            None => return Ok(err_401("Missing Bearer token")),
         };
 
         let ip = extract_ip(&request);
         let ua = extract_ua(&request);
 
         if let Err(e) = self.store.validate_access_token(&token, &ip, &ua).await {
-            return Ok(unauthorized(&e.to_string()));
+            return Ok(err_401(&e.to_string()));
         }
 
         self.inner.handle_request(request).await
@@ -86,10 +86,6 @@ fn extract_ua(request: &ZhtpRequest) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-fn unauthorized(message: &str) -> ZhtpResponse {
-    ZhtpResponse::error_json(ZhtpStatus::Unauthorized, &json!({ "error": message }))
-        .unwrap_or_else(|_| ZhtpResponse::error(ZhtpStatus::Unauthorized, message.to_string()))
-}
 
 // ---------------------------------------------------------------------------
 // Tests

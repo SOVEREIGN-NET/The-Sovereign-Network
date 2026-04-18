@@ -29,6 +29,7 @@
 //! - Audit log: every action written to immutable in-memory log
 
 use anyhow::anyhow;
+use crate::api::auth_errors::{err_401, err_403};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -734,7 +735,7 @@ impl MobileAuthHandler {
         // Require bearer token
         let token = match extract_bearer(headers) {
             Some(t) => t,
-            None => return Ok(json_error(ZhtpStatus::Unauthorized, "Missing Bearer token")),
+            None => return Ok(err_401("Missing Bearer token")),
         };
 
         // Validate session (also enforces IP+UA binding)
@@ -752,7 +753,7 @@ impl MobileAuthHandler {
                     &e.to_string(),
                 );
                 self.store.append_audit(entry).await;
-                return Ok(json_error(ZhtpStatus::Unauthorized, &e.to_string()));
+                return Ok(err_401(&e.to_string()));
             }
             Ok(s) => s,
         };
@@ -783,10 +784,7 @@ impl MobileAuthHandler {
                     "tx_prepare_denied: missing SubmitTx capability",
                 );
                 self.store.append_audit(entry).await;
-                return Ok(json_error(
-                    ZhtpStatus::Forbidden,
-                    "SubmitTx capability not granted",
-                ));
+                return Ok(err_403("SubmitTx capability not granted"));
             }
         };
 
@@ -802,13 +800,10 @@ impl MobileAuthHandler {
                 ),
             );
             self.store.append_audit(entry).await;
-            return Ok(json_error(
-                ZhtpStatus::Forbidden,
-                &format!(
-                    "Amount {} exceeds SubmitTx cap of {}",
-                    req.amount_tokens, max_amount
-                ),
-            ));
+            return Ok(err_403(&format!(
+                "Amount {} exceeds SubmitTx cap of {}",
+                req.amount_tokens, max_amount
+            )));
         }
 
         // Generate a tx_id and nonce for mobile signing
@@ -899,7 +894,7 @@ impl MobileAuthHandler {
         // Require bearer token
         let token = match extract_bearer(headers) {
             Some(t) => t,
-            None => return Ok(json_error(ZhtpStatus::Unauthorized, "Missing Bearer token")),
+            None => return Ok(err_401("Missing Bearer token")),
         };
 
         // Validate session (IP+UA binding enforced)
@@ -917,7 +912,7 @@ impl MobileAuthHandler {
                     &e.to_string(),
                 );
                 self.store.append_audit(entry).await;
-                return Ok(json_error(ZhtpStatus::Unauthorized, &e.to_string()));
+                return Ok(err_401(&e.to_string()));
             }
             Ok(s) => s,
         };
@@ -968,7 +963,7 @@ impl MobileAuthHandler {
                 &format!("tx_submit_denied: identity mismatch for tx_id={}", req.tx_id),
             );
             self.store.append_audit(entry).await;
-            return Ok(json_error(ZhtpStatus::Forbidden, "Transaction not owned by this session"));
+            return Ok(err_403("Transaction not owned by this session"));
         }
 
         // Build canonical signing message: nonce_as_u64_le || tx_id_bytes
