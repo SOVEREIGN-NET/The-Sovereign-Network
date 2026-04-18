@@ -173,7 +173,7 @@ async fn handle_node_command_impl(
                 },
                 Err(e) => {
                     output.warning(&format!("Cannot connect to node at {}: {}", cli.server, e))?;
-                    output.print("Is the node running? Start it with: zhtp node start")?;
+                    output.print("Is the node running? Start it with: zhtp-cli node start")?;
                 }
             }
             Ok(())
@@ -206,7 +206,9 @@ async fn start_node_impl(
     let cli_args = CliArgs {
         mesh_port: port_override,
         pure_mesh,
-        config: PathBuf::from(config_path.unwrap_or_else(|| "./config".to_string())),
+        config: PathBuf::from(
+            config_path.unwrap_or_else(|| "zhtp/configs/dev-node.toml".to_string()),
+        ),
         environment: network_env,
         log_level: if dev_mode {
             "debug".to_string()

@@ -1,5 +1,5 @@
 # Bootstrap configuration for Mac to connect to Windows node
-# Use this on the Mac: ./target/debug/zhtp node start --config configs/mac-bootstrap.toml
+# Use this on the Mac: ./target/debug/zhtp --config zhtp/configs/mac-bootstrap.toml
 
 [network]
 bootstrap_peers = ["192.168.1.245:9333"]
