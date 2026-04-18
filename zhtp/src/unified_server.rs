@@ -859,6 +859,70 @@ impl ZhtpUnifiedServer {
         // Implementation: bearer middleware is wired in #2157.
         // -----------------------------------------------------------------------
 
+        // -----------------------------------------------------------------------
+        // TLS / TRANSPORT SECURITY REQUIREMENTS (#2159)
+        //
+        // ARCHITECTURE DECISION: QUIC-TLS is the mandatory transport layer.
+        // Classical TLS 1.2/1.3 is only used at the HTTPS gateway boundary
+        // so that browsers (which cannot initiate QUIC-TLS) can reach Web4 content.
+        // Every QUIC connection is authenticated with Kyber (KEM) + node identity
+        // before any application-layer handler is reached.
+        //
+        // ENDPOINT CLASS A — ALL ENDPOINTS (baseline):
+        //   Requirement  : QUIC-TLS 1.3 with Kyber key exchange (mandatory)
+        //   Who enforces : QuicMeshProtocol before the request reaches any handler
+        //   Fallback     : Connection REFUSED — no cleartext fallback exists
+        //
+        // ENDPOINT CLASS B — PUBLIC read-only endpoints:
+        //   Examples     : /dns, /web4 (read), /dht, /blockchain (GET), /monitor
+        //   Requirement  : QUIC-TLS (Class A) sufficient
+        //   Extra layer  : none — data is not secret, no mutation possible
+        //
+        // ENDPOINT CLASS C — PROTECTED endpoints (bearer token required):
+        //   Examples     : /wallet, /token, /storage (write), /identity (write)
+        //   Requirement  : QUIC-TLS (Class A) + valid bearer token (#2157)
+        //   Extra layer  : bearer token bound to (ip, user-agent) at issuance;
+        //                  binding is validated on every protected request
+        //
+        // ENDPOINT CLASS D — SENSITIVE-OP endpoints (tx + delegation):
+        //   Examples     : /tx/prepare, /tx/submit-delegated, /auth/delegate
+        //   Requirement  : QUIC-TLS (Class A) + bearer token (Class C) +
+        //                  Dilithium signature over canonical message
+        //                  (hex(nonce_le || tx_id_bytes) for tx endpoints)
+        //   Extra layer  : Dilithium sig ties the mobile device's private key to
+        //                  the specific tx, preventing relay or substitution attacks
+        //                  even if the bearer token is somehow captured.
+        //   Replay guard : pending tx is single-use (consumed on submit);
+        //                  nonce is random per prepare request
+        //
+        // ENDPOINT CLASS E — HTTPS gateway (browsers only):
+        //   Path         : /api/v1/web4/gateway
+        //   Requirement  : Classical TLS 1.3 at the gateway boundary (browsers
+        //                  cannot initiate QUIC-TLS); internally the gateway
+        //                  communicates with the node over QUIC-TLS.
+        //   Scope limit  : Gateway serves Web4 content only — it cannot trigger
+        //                  any Class C or D operations on behalf of the browser.
+        //
+        // ENDPOINT CLASS F — NODE-INTERNAL (mesh/sync/validator):
+        //   Examples     : /network, /mesh, /blockchain/sync, /validator
+        //   Requirement  : QUIC-TLS (Class A) + node identity (UHP) verified by
+        //                  QuicMeshProtocol at connection accept time
+        //   Extra layer  : Peer identity pinned to known-node registry;
+        //                  unknown peers are quarantined (see IdentityRegistryVerifier)
+        //
+        // DECISION LOG:
+        //   - Additional TLS layer over QUIC-TLS: REJECTED. QUIC-TLS 1.3 with Kyber
+        //     is post-quantum and provides equivalent or stronger guarantees than
+        //     classical TLS. Double-wrapping would add latency without security gain.
+        //   - Classical TLS on internal paths: REJECTED. Only the browser-facing
+        //     gateway uses classical TLS; all node↔node and mobile↔node paths use
+        //     QUIC-TLS.
+        //   - Channel binding (#2160): ACCEPTED for Class D. Dilithium sig binds the
+        //     operation to the device key, providing channel-independent integrity.
+        //
+        // Agent 8 review: required before PR merge (#2159 acceptance criterion).
+        // -----------------------------------------------------------------------
+
         // Blockchain operations
         let environment = detect_environment();
         let blockchain_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(BlockchainHandler::new(
