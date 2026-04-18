@@ -52,10 +52,9 @@ lazy_static = "1.4"
 
 # Performance optimizations
 rayon = "1.10"          # Parallel iterators for multi-core compression
+memchr = "2.7"          # SIMD-accelerated byte scanning for RLE
 ahash = "0.8"           # Faster hashing for pattern lookups
-memchr = "2.7"          # SIMD-accelerated pattern matching
 dashmap = "6.1"         # Concurrent hash maps for thread-safe caching
-once_cell = "1.19"      # Efficient lazy initialization
 flate2 = "1.0"           # Gzip baseline for Weissman Score calculation
 
 [dev-dependencies]

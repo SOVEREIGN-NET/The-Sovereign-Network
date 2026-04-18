@@ -323,95 +323,19 @@ impl PpoAgent {
                     l / batch.len() as f32
                 };
                 
-                // Update policy_w1
-                let (rows, cols) = (self.network.policy_w1.nrows(), self.network.policy_w1.ncols());
-                for r in 0..rows {
-                    for c in 0..cols {
-                        let orig = self.network.policy_w1[[r, c]];
-                        self.network.policy_w1[[r, c]] = orig + eps;
-                        let loss_plus = batch_loss_fn(&self.network);
-                        self.network.policy_w1[[r, c]] = orig - eps;
-                        let loss_minus = batch_loss_fn(&self.network);
-                        let grad = (loss_plus - loss_minus) / (2.0 * eps);
-                        self.network.policy_w1[[r, c]] = orig - lr * grad;
-                    }
-                }
+                use super::gradient::{update_matrix_fd, update_bias_fd};
                 
-                // Update policy_w2
-                let (rows, cols) = (self.network.policy_w2.nrows(), self.network.policy_w2.ncols());
-                for r in 0..rows {
-                    for c in 0..cols {
-                        let orig = self.network.policy_w2[[r, c]];
-                        self.network.policy_w2[[r, c]] = orig + eps;
-                        let loss_plus = batch_loss_fn(&self.network);
-                        self.network.policy_w2[[r, c]] = orig - eps;
-                        let loss_minus = batch_loss_fn(&self.network);
-                        let grad = (loss_plus - loss_minus) / (2.0 * eps);
-                        self.network.policy_w2[[r, c]] = orig - lr * grad;
-                    }
-                }
+                // Update policy weights
+                update_matrix_fd!(self.network.policy_w1, eps, lr, batch_loss_fn(&self.network));
+                update_matrix_fd!(self.network.policy_w2, eps, lr, batch_loss_fn(&self.network));
+                update_bias_fd!(self.network.policy_b1, eps, lr, batch_loss_fn(&self.network));
+                update_bias_fd!(self.network.policy_b2, eps, lr, batch_loss_fn(&self.network));
                 
-                // Update policy biases
-                for i in 0..self.network.policy_b1.len() {
-                    let orig = self.network.policy_b1[i];
-                    self.network.policy_b1[i] = orig + eps;
-                    let lp = batch_loss_fn(&self.network);
-                    self.network.policy_b1[i] = orig - eps;
-                    let lm = batch_loss_fn(&self.network);
-                    self.network.policy_b1[i] = orig - lr * ((lp - lm) / (2.0 * eps));
-                }
-                for i in 0..self.network.policy_b2.len() {
-                    let orig = self.network.policy_b2[i];
-                    self.network.policy_b2[i] = orig + eps;
-                    let lp = batch_loss_fn(&self.network);
-                    self.network.policy_b2[i] = orig - eps;
-                    let lm = batch_loss_fn(&self.network);
-                    self.network.policy_b2[i] = orig - lr * ((lp - lm) / (2.0 * eps));
-                }
-                
-                // Update value_w1
-                let (rows, cols) = (self.network.value_w1.nrows(), self.network.value_w1.ncols());
-                for r in 0..rows {
-                    for c in 0..cols {
-                        let orig = self.network.value_w1[[r, c]];
-                        self.network.value_w1[[r, c]] = orig + eps;
-                        let lp = batch_loss_fn(&self.network);
-                        self.network.value_w1[[r, c]] = orig - eps;
-                        let lm = batch_loss_fn(&self.network);
-                        self.network.value_w1[[r, c]] = orig - lr * ((lp - lm) / (2.0 * eps));
-                    }
-                }
-                
-                // Update value_w2
-                let (rows, cols) = (self.network.value_w2.nrows(), self.network.value_w2.ncols());
-                for r in 0..rows {
-                    for c in 0..cols {
-                        let orig = self.network.value_w2[[r, c]];
-                        self.network.value_w2[[r, c]] = orig + eps;
-                        let lp = batch_loss_fn(&self.network);
-                        self.network.value_w2[[r, c]] = orig - eps;
-                        let lm = batch_loss_fn(&self.network);
-                        self.network.value_w2[[r, c]] = orig - lr * ((lp - lm) / (2.0 * eps));
-                    }
-                }
-                
-                // Update value biases
-                for i in 0..self.network.value_b1.len() {
-                    let orig = self.network.value_b1[i];
-                    self.network.value_b1[i] = orig + eps;
-                    let lp = batch_loss_fn(&self.network);
-                    self.network.value_b1[i] = orig - eps;
-                    let lm = batch_loss_fn(&self.network);
-                    self.network.value_b1[i] = orig - lr * ((lp - lm) / (2.0 * eps));
-                }
-                for i in 0..self.network.value_b2.len() {
-                    let orig = self.network.value_b2[i];
-                    self.network.value_b2[i] = orig + eps;
-                    let lp = batch_loss_fn(&self.network);
-                    self.network.value_b2[i] = orig - eps;
-                    let lm = batch_loss_fn(&self.network);
-                    self.network.value_b2[i] = orig - lr * ((lp - lm) / (2.0 * eps));
-                }
+                // Update value weights
+                update_matrix_fd!(self.network.value_w1, eps, lr, batch_loss_fn(&self.network));
+                update_matrix_fd!(self.network.value_w2, eps, lr, batch_loss_fn(&self.network));
+                update_bias_fd!(self.network.value_b1, eps, lr, batch_loss_fn(&self.network));
+                update_bias_fd!(self.network.value_b2, eps, lr, batch_loss_fn(&self.network));
             }
         }
         

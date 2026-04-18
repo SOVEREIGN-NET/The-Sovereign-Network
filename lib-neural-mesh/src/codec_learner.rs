@@ -460,49 +460,13 @@ impl AdaptiveCodecLearner {
             loss / batch.len() as f32
         };
 
-        // Update actor_w1
-        for r in 0..self.network.actor_w1.nrows() {
-            for c in 0..self.network.actor_w1.ncols() {
-                let orig = self.network.actor_w1[[r, c]];
-                self.network.actor_w1[[r, c]] = orig + eps;
-                let lp = actor_loss_fn(&self.network);
-                self.network.actor_w1[[r, c]] = orig - eps;
-                let lm = actor_loss_fn(&self.network);
-                let grad = (lp - lm) / (2.0 * eps);
-                self.network.actor_w1[[r, c]] = orig - lr * grad;
-            }
-        }
+        use crate::ml::gradient::{update_matrix_fd, update_bias_fd};
 
-        // Update actor_w2
-        for r in 0..self.network.actor_w2.nrows() {
-            for c in 0..self.network.actor_w2.ncols() {
-                let orig = self.network.actor_w2[[r, c]];
-                self.network.actor_w2[[r, c]] = orig + eps;
-                let lp = actor_loss_fn(&self.network);
-                self.network.actor_w2[[r, c]] = orig - eps;
-                let lm = actor_loss_fn(&self.network);
-                let grad = (lp - lm) / (2.0 * eps);
-                self.network.actor_w2[[r, c]] = orig - lr * grad;
-            }
-        }
-
-        // Update actor biases
-        for i in 0..self.network.actor_b1.len() {
-            let orig = self.network.actor_b1[i];
-            self.network.actor_b1[i] = orig + eps;
-            let lp = actor_loss_fn(&self.network);
-            self.network.actor_b1[i] = orig - eps;
-            let lm = actor_loss_fn(&self.network);
-            self.network.actor_b1[i] = orig - lr * ((lp - lm) / (2.0 * eps));
-        }
-        for i in 0..self.network.actor_b2.len() {
-            let orig = self.network.actor_b2[i];
-            self.network.actor_b2[i] = orig + eps;
-            let lp = actor_loss_fn(&self.network);
-            self.network.actor_b2[i] = orig - eps;
-            let lm = actor_loss_fn(&self.network);
-            self.network.actor_b2[i] = orig - lr * ((lp - lm) / (2.0 * eps));
-        }
+        // Update actor weights & biases
+        update_matrix_fd!(self.network.actor_w1, eps, lr, actor_loss_fn(&self.network));
+        update_matrix_fd!(self.network.actor_w2, eps, lr, actor_loss_fn(&self.network));
+        update_bias_fd!(self.network.actor_b1, eps, lr, actor_loss_fn(&self.network));
+        update_bias_fd!(self.network.actor_b2, eps, lr, actor_loss_fn(&self.network));
 
         total_loss += actor_loss_fn(&self.network);
 
@@ -516,49 +480,11 @@ impl AdaptiveCodecLearner {
             loss / batch.len() as f32
         };
 
-        // Update critic_w1
-        for r in 0..self.network.critic_w1.nrows() {
-            for c in 0..self.network.critic_w1.ncols() {
-                let orig = self.network.critic_w1[[r, c]];
-                self.network.critic_w1[[r, c]] = orig + eps;
-                let lp = critic_loss_fn(&self.network);
-                self.network.critic_w1[[r, c]] = orig - eps;
-                let lm = critic_loss_fn(&self.network);
-                let grad = (lp - lm) / (2.0 * eps);
-                self.network.critic_w1[[r, c]] = orig - lr * grad;
-            }
-        }
-
-        // Update critic_w2
-        for r in 0..self.network.critic_w2.nrows() {
-            for c in 0..self.network.critic_w2.ncols() {
-                let orig = self.network.critic_w2[[r, c]];
-                self.network.critic_w2[[r, c]] = orig + eps;
-                let lp = critic_loss_fn(&self.network);
-                self.network.critic_w2[[r, c]] = orig - eps;
-                let lm = critic_loss_fn(&self.network);
-                let grad = (lp - lm) / (2.0 * eps);
-                self.network.critic_w2[[r, c]] = orig - lr * grad;
-            }
-        }
-
-        // Update critic biases
-        for i in 0..self.network.critic_b1.len() {
-            let orig = self.network.critic_b1[i];
-            self.network.critic_b1[i] = orig + eps;
-            let lp = critic_loss_fn(&self.network);
-            self.network.critic_b1[i] = orig - eps;
-            let lm = critic_loss_fn(&self.network);
-            self.network.critic_b1[i] = orig - lr * ((lp - lm) / (2.0 * eps));
-        }
-        for i in 0..self.network.critic_b2.len() {
-            let orig = self.network.critic_b2[i];
-            self.network.critic_b2[i] = orig + eps;
-            let lp = critic_loss_fn(&self.network);
-            self.network.critic_b2[i] = orig - eps;
-            let lm = critic_loss_fn(&self.network);
-            self.network.critic_b2[i] = orig - lr * ((lp - lm) / (2.0 * eps));
-        }
+        // Update critic weights & biases
+        update_matrix_fd!(self.network.critic_w1, eps, lr, critic_loss_fn(&self.network));
+        update_matrix_fd!(self.network.critic_w2, eps, lr, critic_loss_fn(&self.network));
+        update_bias_fd!(self.network.critic_b1, eps, lr, critic_loss_fn(&self.network));
+        update_bias_fd!(self.network.critic_b2, eps, lr, critic_loss_fn(&self.network));
 
         total_loss += critic_loss_fn(&self.network);
 

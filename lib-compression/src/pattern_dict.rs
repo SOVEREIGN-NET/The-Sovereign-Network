@@ -6,7 +6,7 @@
 
 use crate::patterns::{Pattern, PatternId, PatternStats};
 use bytes::Bytes;
-use std::collections::{HashMap, BTreeMap};
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use serde::{Deserialize, Serialize};
 use anyhow::{Result, anyhow};

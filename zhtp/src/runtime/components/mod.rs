@@ -9,6 +9,7 @@ pub mod network;
 pub mod neural_mesh;
 pub mod oracle;
 pub mod protocols;
+pub mod simulation;
 pub mod storage;
 pub mod zk;
 

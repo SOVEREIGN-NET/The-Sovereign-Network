@@ -2,6 +2,7 @@
 //!
 //! This module contains actual ML implementations for neural mesh operations.
 
+pub mod gradient;
 pub mod ppo;
 pub mod lstm;
 pub mod isolation_forest;

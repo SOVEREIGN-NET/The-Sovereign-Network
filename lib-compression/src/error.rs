@@ -44,7 +44,4 @@ pub enum CompressionError {
     
     #[error("Transport failed: {0}")]
     TransportFailed(String),
-    
-    #[error("Serialization failed: {0}")]
-    Serialization(String),
 }

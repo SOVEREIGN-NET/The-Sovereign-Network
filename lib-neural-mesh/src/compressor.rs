@@ -262,26 +262,6 @@ impl NeuroCompressor {
         Ok(embedding)
     }
     
-    /// Calculate cosine similarity between embeddings - SIMD optimized
-    pub fn cosine_similarity(&self, a: &[f32], b: &[f32]) -> f32 {
-        if a.len() != b.len() {
-            return 0.0;
-        }
-        
-        // Use parallel dot product for large embeddings
-        if a.len() > 128 {
-            a.par_iter()
-                .zip(b.par_iter())
-                .map(|(x, y)| x * y)
-                .sum()
-        } else {
-            a.iter()
-                .zip(b.iter())
-                .map(|(x, y)| x * y)
-                .sum()
-        }
-    }
-    
     /// Extract statistical features from data - OPTIMIZED
     fn extract_statistical_features(&self, data: &[u8], dim: usize) -> Vec<f32> {
         let mut features = Vec::with_capacity(dim);

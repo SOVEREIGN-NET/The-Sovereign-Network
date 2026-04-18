@@ -20,20 +20,13 @@ blake3 = "1.5"
 ndarray = { version = "0.16", features = ["serde"] }
 ndarray-rand = "0.15"
 bincode = "1.3"
-linfa = "0.7"
-linfa-clustering = "0.7"
-linfa-nn = "0.7"
-smartcore = { version = "0.3", features = ["serde"] }  # For LSTM/neural networks
 tract-onnx = "0.21"  # ONNX Runtime alternative (pure Rust)
 
 # Performance optimizations
 rayon = "1.10"          # Parallel processing
-ahash = "0.8"           # Fast hashing
-simsimd = "5.9"         # SIMD vector operations for embeddings
 
 # Utilities
 tracing = "0.1"
-lazy_static = "1.5"
 
 [dev-dependencies]
 criterion = "0.5"

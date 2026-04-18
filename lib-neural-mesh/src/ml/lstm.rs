@@ -247,177 +247,32 @@ impl LstmNetwork {
         };
         
         // Macro-style weight update via finite differences for each weight matrix
-        // Update w_out (output projection — most impactful, always update)
-        let (rows, cols) = (self.w_out.nrows(), self.w_out.ncols());
-        for r in 0..rows {
-            for c in 0..cols {
-                let orig = self.w_out[[r, c]];
-                self.w_out[[r, c]] = orig + eps;
-                let lp = compute_loss(self);
-                self.w_out[[r, c]] = orig - eps;
-                let lm = compute_loss(self);
-                self.w_out[[r, c]] = orig - lr * ((lp - lm) / (2.0 * eps));
-            }
-        }
-        // Update b_out
-        for i in 0..self.b_out.len() {
-            let orig = self.b_out[i];
-            self.b_out[i] = orig + eps;
-            let lp = compute_loss(self);
-            self.b_out[i] = orig - eps;
-            let lm = compute_loss(self);
-            self.b_out[i] = orig - lr * ((lp - lm) / (2.0 * eps));
-        }
+        // Uses shared gradient macros to eliminate duplicated loops.
+        use super::gradient::{update_matrix_fd, update_bias_fd};
         
-        // Update gate weights (input gate)
-        let _update_matrix = |mat: &mut Array2<f32>, net_ref: &LstmNetwork, eps: f32, lr: f32,
-                             compute: &dyn Fn(&LstmNetwork) -> f32| {
-            let (rows, cols) = (mat.nrows(), mat.ncols());
-            for r in 0..rows {
-                for c in 0..cols {
-                    let orig = mat[[r, c]];
-                    mat[[r, c]] = orig + eps;
-                    let lp = compute(unsafe { &*(net_ref as *const LstmNetwork) });
-                    mat[[r, c]] = orig - eps;
-                    let lm = compute(unsafe { &*(net_ref as *const LstmNetwork) });
-                    mat[[r, c]] = orig - lr * ((lp - lm) / (2.0 * eps));
-                }
-            }
-        };
+        // Output projection (most impactful — always update first)
+        update_matrix_fd!(self.w_out, eps, lr, compute_loss(self));
+        update_bias_fd!(self.b_out, eps, lr, compute_loss(self));
         
-        // Since we can't use the unsafe approach cleanly, we update each gate
-        // weight matrix using the same pattern as w_out above.
-        // For efficiency on our small network, update all 8 gate weight matrices:
-        
-        // Input gate: w_ii
-        let (rows, cols) = (self.w_ii.nrows(), self.w_ii.ncols());
-        for r in 0..rows {
-            for c in 0..cols {
-                let orig = self.w_ii[[r, c]];
-                self.w_ii[[r, c]] = orig + eps;
-                let lp = compute_loss(self);
-                self.w_ii[[r, c]] = orig - eps;
-                let lm = compute_loss(self);
-                self.w_ii[[r, c]] = orig - lr * ((lp - lm) / (2.0 * eps));
-            }
-        }
-        // Input gate: w_hi
-        let (rows, cols) = (self.w_hi.nrows(), self.w_hi.ncols());
-        for r in 0..rows {
-            for c in 0..cols {
-                let orig = self.w_hi[[r, c]];
-                self.w_hi[[r, c]] = orig + eps;
-                let lp = compute_loss(self);
-                self.w_hi[[r, c]] = orig - eps;
-                let lm = compute_loss(self);
-                self.w_hi[[r, c]] = orig - lr * ((lp - lm) / (2.0 * eps));
-            }
-        }
-        // Input gate bias
-        for i in 0..self.b_i.len() {
-            let orig = self.b_i[i];
-            self.b_i[i] = orig + eps;
-            let lp = compute_loss(self);
-            self.b_i[i] = orig - eps;
-            let lm = compute_loss(self);
-            self.b_i[i] = orig - lr * ((lp - lm) / (2.0 * eps));
-        }
+        // Input gate: w_ii, w_hi, b_i
+        update_matrix_fd!(self.w_ii, eps, lr, compute_loss(self));
+        update_matrix_fd!(self.w_hi, eps, lr, compute_loss(self));
+        update_bias_fd!(self.b_i, eps, lr, compute_loss(self));
         
         // Forget gate: w_if, w_hf, b_f
-        let (rows, cols) = (self.w_if.nrows(), self.w_if.ncols());
-        for r in 0..rows {
-            for c in 0..cols {
-                let orig = self.w_if[[r, c]];
-                self.w_if[[r, c]] = orig + eps;
-                let lp = compute_loss(self);
-                self.w_if[[r, c]] = orig - eps;
-                let lm = compute_loss(self);
-                self.w_if[[r, c]] = orig - lr * ((lp - lm) / (2.0 * eps));
-            }
-        }
-        let (rows, cols) = (self.w_hf.nrows(), self.w_hf.ncols());
-        for r in 0..rows {
-            for c in 0..cols {
-                let orig = self.w_hf[[r, c]];
-                self.w_hf[[r, c]] = orig + eps;
-                let lp = compute_loss(self);
-                self.w_hf[[r, c]] = orig - eps;
-                let lm = compute_loss(self);
-                self.w_hf[[r, c]] = orig - lr * ((lp - lm) / (2.0 * eps));
-            }
-        }
-        for i in 0..self.b_f.len() {
-            let orig = self.b_f[i];
-            self.b_f[i] = orig + eps;
-            let lp = compute_loss(self);
-            self.b_f[i] = orig - eps;
-            let lm = compute_loss(self);
-            self.b_f[i] = orig - lr * ((lp - lm) / (2.0 * eps));
-        }
+        update_matrix_fd!(self.w_if, eps, lr, compute_loss(self));
+        update_matrix_fd!(self.w_hf, eps, lr, compute_loss(self));
+        update_bias_fd!(self.b_f, eps, lr, compute_loss(self));
         
         // Cell gate: w_ig, w_hg, b_g
-        let (rows, cols) = (self.w_ig.nrows(), self.w_ig.ncols());
-        for r in 0..rows {
-            for c in 0..cols {
-                let orig = self.w_ig[[r, c]];
-                self.w_ig[[r, c]] = orig + eps;
-                let lp = compute_loss(self);
-                self.w_ig[[r, c]] = orig - eps;
-                let lm = compute_loss(self);
-                self.w_ig[[r, c]] = orig - lr * ((lp - lm) / (2.0 * eps));
-            }
-        }
-        let (rows, cols) = (self.w_hg.nrows(), self.w_hg.ncols());
-        for r in 0..rows {
-            for c in 0..cols {
-                let orig = self.w_hg[[r, c]];
-                self.w_hg[[r, c]] = orig + eps;
-                let lp = compute_loss(self);
-                self.w_hg[[r, c]] = orig - eps;
-                let lm = compute_loss(self);
-                self.w_hg[[r, c]] = orig - lr * ((lp - lm) / (2.0 * eps));
-            }
-        }
-        for i in 0..self.b_g.len() {
-            let orig = self.b_g[i];
-            self.b_g[i] = orig + eps;
-            let lp = compute_loss(self);
-            self.b_g[i] = orig - eps;
-            let lm = compute_loss(self);
-            self.b_g[i] = orig - lr * ((lp - lm) / (2.0 * eps));
-        }
+        update_matrix_fd!(self.w_ig, eps, lr, compute_loss(self));
+        update_matrix_fd!(self.w_hg, eps, lr, compute_loss(self));
+        update_bias_fd!(self.b_g, eps, lr, compute_loss(self));
         
         // Output gate: w_io, w_ho, b_o
-        let (rows, cols) = (self.w_io.nrows(), self.w_io.ncols());
-        for r in 0..rows {
-            for c in 0..cols {
-                let orig = self.w_io[[r, c]];
-                self.w_io[[r, c]] = orig + eps;
-                let lp = compute_loss(self);
-                self.w_io[[r, c]] = orig - eps;
-                let lm = compute_loss(self);
-                self.w_io[[r, c]] = orig - lr * ((lp - lm) / (2.0 * eps));
-            }
-        }
-        let (rows, cols) = (self.w_ho.nrows(), self.w_ho.ncols());
-        for r in 0..rows {
-            for c in 0..cols {
-                let orig = self.w_ho[[r, c]];
-                self.w_ho[[r, c]] = orig + eps;
-                let lp = compute_loss(self);
-                self.w_ho[[r, c]] = orig - eps;
-                let lm = compute_loss(self);
-                self.w_ho[[r, c]] = orig - lr * ((lp - lm) / (2.0 * eps));
-            }
-        }
-        for i in 0..self.b_o.len() {
-            let orig = self.b_o[i];
-            self.b_o[i] = orig + eps;
-            let lp = compute_loss(self);
-            self.b_o[i] = orig - eps;
-            let lm = compute_loss(self);
-            self.b_o[i] = orig - lr * ((lp - lm) / (2.0 * eps));
-        }
+        update_matrix_fd!(self.w_io, eps, lr, compute_loss(self));
+        update_matrix_fd!(self.w_ho, eps, lr, compute_loss(self));
+        update_bias_fd!(self.b_o, eps, lr, compute_loss(self));
         
         base_loss
     }

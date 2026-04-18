@@ -7,7 +7,7 @@
 // OPTIMIZED VERSION with parallel processing and hash-based lookups
 
 use bytes::Bytes;
-use std::collections::{HashMap, BTreeMap};
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use blake3::Hash as Blake3Hash;
 use ahash::AHashMap; // Faster hash map
