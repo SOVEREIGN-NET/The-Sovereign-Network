@@ -1388,6 +1388,34 @@ impl Transaction {
         }
     }
 
+    pub fn nft_create_collection_data(&self) -> Option<&NftCreateCollectionData> {
+        match &self.payload {
+            TransactionPayload::NftCreateCollection(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    pub fn nft_mint_data(&self) -> Option<&NftMintData> {
+        match &self.payload {
+            TransactionPayload::NftMint(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    pub fn nft_transfer_data(&self) -> Option<&NftTransferData> {
+        match &self.payload {
+            TransactionPayload::NftTransfer(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    pub fn nft_burn_data(&self) -> Option<&NftBurnData> {
+        match &self.payload {
+            TransactionPayload::NftBurn(d) => Some(d),
+            _ => None,
+        }
+    }
+
     /// Get the size of the transaction in bytes
     pub fn size(&self) -> usize {
         bincode::serialize(self).map(|data| data.len()).unwrap_or(0)
@@ -2331,6 +2359,46 @@ pub struct DaoUnstakeData {
 }
 
 // ============================================================================
+// NFT payload structs
+// ============================================================================
+
+/// Create a new NFT collection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NftCreateCollectionData {
+    pub name: String,
+    pub symbol: String,
+    pub max_supply: Option<u64>,
+}
+
+/// Mint a new NFT in a collection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NftMintData {
+    pub collection_id: [u8; 32],
+    pub recipient: [u8; 32],
+    pub name: String,
+    pub description: String,
+    pub image_cid: String,
+    pub attributes: Vec<(String, String)>,
+}
+
+/// Transfer an NFT to a new owner.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NftTransferData {
+    pub collection_id: [u8; 32],
+    pub token_id: u64,
+    pub from: [u8; 32],
+    pub to: [u8; 32],
+}
+
+/// Burn (destroy) an NFT.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NftBurnData {
+    pub collection_id: [u8; 32],
+    pub token_id: u64,
+    pub owner: [u8; 32],
+}
+
+// ============================================================================
 // TransactionPayload enum
 // ============================================================================
 
@@ -2374,4 +2442,12 @@ pub enum TransactionPayload {
     DaoStake(DaoStakeData),
     /// SOV unstake from a sector DAO wallet (appended after DaoStake)
     DaoUnstake(DaoUnstakeData),
+    /// Create a new NFT collection
+    NftCreateCollection(NftCreateCollectionData),
+    /// Mint a new NFT
+    NftMint(NftMintData),
+    /// Transfer an NFT
+    NftTransfer(NftTransferData),
+    /// Burn an NFT
+    NftBurn(NftBurnData),
 }

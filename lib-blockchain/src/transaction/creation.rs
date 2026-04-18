@@ -808,6 +808,18 @@ pub mod utils {
                     return Err(TransactionCreateError::InvalidOutputs);
                 }
             }
+            TransactionType::NftCreateCollection
+            | TransactionType::NftMint
+            | TransactionType::NftTransfer
+            | TransactionType::NftBurn => {
+                // NFT transactions - no inputs/outputs required
+                if !inputs.is_empty() {
+                    return Err(TransactionCreateError::InvalidInputs);
+                }
+                if !outputs.is_empty() {
+                    return Err(TransactionCreateError::InvalidOutputs);
+                }
+            }
         }
 
         Ok(())

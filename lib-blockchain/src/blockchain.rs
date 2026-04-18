@@ -150,6 +150,9 @@ pub struct Blockchain {
     /// Smart contract registry - Web4 Website contracts (contract_id -> Web4Contract)
     #[serde(default)]
     pub web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
+    /// NFT collection registry (collection_id -> NftContract)
+    #[serde(default)]
+    pub nft_collections: HashMap<[u8; 32], crate::contracts::nft::NftContract>,
     /// Authoritative on-chain domain registry (domain name -> record).
     /// Populated from DomainRegistration / DomainUpdate transactions committed to blocks.
     /// This is the canonical source of truth; sled/DHT DomainRegistry is a cache.
@@ -1042,6 +1045,7 @@ impl Blockchain {
                         warn!("process_employment_contract_transactions in executor path: {}", e);
                     }
                     self.process_domain_transactions(&block);
+                    self.process_nft_transactions(&block);
                     for tx in &block.transactions {
                         self.index_dao_registry_entry_from_tx(tx, block.header.height);
                         // Executor returns LegacySystem for ValidatorRegistration — update registry here
@@ -1181,6 +1185,7 @@ impl Blockchain {
         self.process_entity_registry_transactions(&block)?;
         self.process_employment_contract_transactions(&block)?;
         self.process_domain_transactions(&block);
+        self.process_nft_transactions(&block);
         self.process_contract_transactions(&block)?;
         self.process_token_transactions(&block)?;
         self.process_validator_registration_transactions(&block);

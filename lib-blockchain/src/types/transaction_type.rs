@@ -163,17 +163,19 @@ pub enum TransactionType {
     /// Block processor updates record in `Blockchain::domain_registry`.
     DomainUpdate = 47,
 
-    // ═══════════════════════════════════════════════════════════════════════
     // Gateway registry (remote QUIC ingress nodes)
-    // ═══════════════════════════════════════════════════════════════════════
-    /// Register a new gateway node on-chain.
-    /// Requires an existing identity, minimum stake, and a valid gateway key.
-    /// Block processor inserts into `Blockchain::gateway_registry`.
     GatewayRegistration = 48,
-    /// Update an existing gateway record (endpoint, commission, status).
     GatewayUpdate = 49,
-    /// Unregister a gateway and release stake.
     GatewayUnregister = 50,
+
+    /// Create a new NFT collection.
+    NftCreateCollection = 51,
+    /// Mint a new NFT in a collection.
+    NftMint = 52,
+    /// Transfer NFT ownership.
+    NftTransfer = 53,
+    /// Burn (destroy) an NFT.
+    NftBurn = 54,
 }
 
 impl TransactionType {
@@ -343,6 +345,10 @@ impl TransactionType {
             TransactionType::GatewayRegistration => "Gateway node registration",
             TransactionType::GatewayUpdate => "Gateway node information update",
             TransactionType::GatewayUnregister => "Gateway node unregistration",
+            TransactionType::NftCreateCollection => "Create a new NFT collection",
+            TransactionType::NftMint => "Mint a new NFT in a collection",
+            TransactionType::NftTransfer => "Transfer NFT ownership",
+            TransactionType::NftBurn => "Burn (destroy) an NFT",
         }
     }
 
@@ -400,6 +406,10 @@ impl TransactionType {
             TransactionType::GatewayRegistration => "gateway_registration",
             TransactionType::GatewayUpdate => "gateway_update",
             TransactionType::GatewayUnregister => "gateway_unregister",
+            TransactionType::NftCreateCollection => "nft_create_collection",
+            TransactionType::NftMint => "nft_mint",
+            TransactionType::NftTransfer => "nft_transfer",
+            TransactionType::NftBurn => "nft_burn",
         }
     }
 
@@ -457,6 +467,10 @@ impl TransactionType {
             "gateway_registration" => Some(TransactionType::GatewayRegistration),
             "gateway_update" => Some(TransactionType::GatewayUpdate),
             "gateway_unregister" => Some(TransactionType::GatewayUnregister),
+            "nft_create_collection" => Some(TransactionType::NftCreateCollection),
+            "nft_mint" => Some(TransactionType::NftMint),
+            "nft_transfer" => Some(TransactionType::NftTransfer),
+            "nft_burn" => Some(TransactionType::NftBurn),
             _ => None,
         }
     }
