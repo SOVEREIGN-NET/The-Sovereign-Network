@@ -19,6 +19,7 @@ pub mod interactive;
 pub mod isolation;
 pub mod man;
 pub mod monitor;
+pub mod nft;
 pub mod network;
 pub mod node;
 pub mod oracle;
