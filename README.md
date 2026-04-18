@@ -67,8 +67,11 @@ All proof serialization includes version markers for forward compatibility.
 # Build all crates in release mode
 cargo build --release --workspace
 
-# Run the orchestrator
+# Run the orchestrator node binary directly
 ./target/release/zhtp --config zhtp/configs/test-node1.toml
+
+# Or start from the CLI command surface
+./target/release/zhtp-cli node start --config zhtp/configs/test-node1.toml
 ```
 
 ### Multi-node Testing

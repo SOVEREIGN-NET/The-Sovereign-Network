@@ -95,38 +95,29 @@ This directory contains pre-configured templates for different types of ZHTP nod
 ### Quick Start Commands
 
 ```bash
-# Using node type shortcuts (recommended)
-zhtp --node-type full      # Full node
-zhtp --node-type validator # Validator node  
-zhtp --node-type storage   # Storage node
-zhtp --node-type edge      # Edge node
-zhtp --node-type relay     # Relay node (routing only)
-zhtp --node-type dev       # Development node
+# Start node directly with the zhtp binary
+zhtp --config zhtp/configs/full-node.toml
+zhtp --config zhtp/configs/validator-node.toml
+zhtp --config zhtp/configs/storage-node.toml
+zhtp --config zhtp/configs/edge-node.toml
+zhtp --config zhtp/configs/relay-node.toml
+zhtp --config zhtp/configs/dev-node.toml
 
-# Using explicit config files
-zhtp node start --config ./configs/full-node.toml
-zhtp node start --config ./configs/validator-node.toml
-zhtp node start --config ./configs/storage-node.toml
-zhtp node start --config ./configs/edge-node.toml
-zhtp node start --config ./configs/relay-node.toml
-zhtp node start --config ./configs/dev-node.toml
-
-# Using helper scripts
-./start-node.sh    # Interactive node type selection (Linux/Mac)
-./start-node.bat   # Interactive node type selection (Windows)
+# Or use the zhtp-cli command surface
+zhtp-cli node start --config zhtp/configs/full-node.toml
 ```
 
 ### Advanced Usage
 
 ```bash
 # Override specific settings
-zhtp node start --config ./configs/validator-node.toml --validator --port 8081
+zhtp --config zhtp/configs/validator-node.toml --mesh-port 8081
 
 # Pure mesh mode
-zhtp node start --config ./configs/edge-node.toml --pure-mesh
+zhtp --config zhtp/configs/edge-node.toml --pure-mesh
 
 # Development with custom data directory
-zhtp node start --config ./configs/dev-node.toml --data-dir ./my-test-data
+zhtp --config zhtp/configs/dev-node.toml --data-dir ./my-test-data
 ```
 
 ## Configuration Customization
@@ -138,7 +129,7 @@ You can override configuration values using environment variables:
 export ZHTP_MESH_PORT=33445
 export ZHTP_STORAGE_CAPACITY_GB=2000
 export ZHTP_MAX_PEERS=300
-zhtp node start --config ./configs/full-node.toml
+zhtp --config zhtp/configs/full-node.toml
 ```
 
 ### Custom Configurations
@@ -152,7 +143,7 @@ cp configs/full-node.toml configs/my-custom-node.toml
 ./configs/validate-config.sh configs/my-custom-node.toml
 
 # Start with custom configuration
-zhtp node start --config ./configs/my-custom-node.toml
+zhtp --config zhtp/configs/my-custom-node.toml
 ```
 
 ## Node Role Requirements

@@ -656,7 +656,7 @@ async fn verify_identity_impl(
     // For now, provide guidance on the process
     output.warning(
         "Identity verification requires a running ZHTP node.\n\
-         Use 'zhtp node start' to launch the node first.",
+         Use 'zhtp-cli node start' to launch the node first.",
     )?;
 
     Ok(())
@@ -670,7 +670,7 @@ async fn list_identities_impl(cli: &ZhtpCli, output: &dyn Output) -> CliResult<(
     // This would normally establish a QUIC connection and fetch identities
     output.warning(
         "Identity listing requires a running ZHTP node.\n\
-         Use 'zhtp node start' to launch the node first.",
+         Use 'zhtp-cli node start' to launch the node first.",
     )?;
 
     Ok(())
