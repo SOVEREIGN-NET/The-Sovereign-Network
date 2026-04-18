@@ -11,6 +11,7 @@ use crate::argument_parsing::ServiceAction;
 use crate::error::{CliError, CliResult};
 
 use std::path::PathBuf;
+use std::process::Command;
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -136,7 +137,7 @@ WantedBy=multi-user.target
 /// Generate launchd plist content
 ///
 /// Pure function - template generation only
-pub fn generate_launchd_plist(binary_path: &str) -> String {
+pub fn generate_launchd_plist(binary_path: &str, stdout_log: &str, stderr_log: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -144,10 +145,9 @@ pub fn generate_launchd_plist(binary_path: &str) -> String {
 <dict>
     <key>Label</key>
     <string>network.zhtp.node</string>
-    <key>Program</key>
-    <string>{}</string>
-    <key>Arguments</key>
+    <key>ProgramArguments</key>
     <array>
+        <string>{}</string>
         <string>node</string>
         <string>start</string>
     </array>
@@ -156,13 +156,13 @@ pub fn generate_launchd_plist(binary_path: &str) -> String {
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/var/log/zhtp-cli.log</string>
+    <string>{}</string>
     <key>StandardErrorPath</key>
-    <string>/var/log/zhtp-cli.error.log</string>
+    <string>{}</string>
 </dict>
 </plist>
 "#,
-        binary_path
+        binary_path, stdout_log, stderr_log
     )
 }
 
@@ -185,6 +185,42 @@ pub fn get_launchd_service_name() -> &'static str {
 /// Pure function - constant value
 pub fn get_windows_service_name() -> &'static str {
     "ZhtpNode"
+}
+
+/// Current user launch agent plist path.
+pub fn get_launchd_plist_path() -> CliResult<PathBuf> {
+    let home = std::env::var("HOME")
+        .map_err(|_| CliError::ConfigError("HOME is not set".to_string()))?;
+    Ok(PathBuf::from(home)
+        .join("Library")
+        .join("LaunchAgents")
+        .join(format!("{}.plist", get_launchd_service_name())))
+}
+
+/// Current user log paths used by launchd.
+pub fn get_launchd_log_paths() -> CliResult<(PathBuf, PathBuf)> {
+    let home = std::env::var("HOME")
+        .map_err(|_| CliError::ConfigError("HOME is not set".to_string()))?;
+    let log_dir = PathBuf::from(home).join(".zhtp").join("logs");
+    Ok((
+        log_dir.join("zhtp-cli.launchd.log"),
+        log_dir.join("zhtp-cli.launchd.error.log"),
+    ))
+}
+
+/// Return launchctl target domain for current user GUI session.
+pub fn get_launchctl_domain() -> CliResult<String> {
+    let output = Command::new("id")
+        .arg("-u")
+        .output()
+        .map_err(|e| CliError::ConfigError(format!("Failed to get user id: {}", e)))?;
+    if !output.status.success() {
+        return Err(CliError::ConfigError(
+            "Failed to resolve current user id for launchctl".to_string(),
+        ));
+    }
+    let uid = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok(format!("gui/{}", uid))
 }
 
 // ============================================================================
@@ -269,25 +305,76 @@ async fn install_launchd_service(enable: bool) -> CliResult<()> {
         CliError::ConfigError(format!("Failed to get current executable path: {}", e))
     })?;
 
-    let plist_content = generate_launchd_plist(binary_path.to_string_lossy().as_ref());
-    let plist_path = PathBuf::from(format!(
-        "{}/.local/share/launchd/{}.plist",
-        std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
-        get_launchd_service_name()
-    ));
+    let plist_path = get_launchd_plist_path()?;
+    let (stdout_log, stderr_log) = get_launchd_log_paths()?;
+    let plist_content = generate_launchd_plist(
+        binary_path.to_string_lossy().as_ref(),
+        stdout_log.to_string_lossy().as_ref(),
+        stderr_log.to_string_lossy().as_ref(),
+    );
 
     println!("Installing ZHTP node as launchd service...");
     println!("Service name: {}", get_launchd_service_name());
     println!("Binary: {}", binary_path.display());
 
-    println!("\nPlist file location: {}", plist_path.display());
-    println!("Content:\n{}", plist_content);
-
-    if enable {
-        println!("\nTo enable: launchctl load {}", plist_path.display());
+    if let Some(parent) = plist_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            CliError::ConfigError(format!("Failed to create LaunchAgents directory: {}", e))
+        })?;
+    }
+    if let Some(parent) = stdout_log.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            CliError::ConfigError(format!("Failed to create log directory: {}", e))
+        })?;
     }
 
-    println!("\nNote: For system-wide service, place plist in /Library/LaunchDaemons/");
+    std::fs::write(&plist_path, plist_content).map_err(|e| {
+        CliError::ConfigError(format!(
+            "Failed to write launchd plist at {}: {}",
+            plist_path.display(),
+            e
+        ))
+    })?;
+
+    println!("\nPlist file written: {}", plist_path.display());
+    println!("StandardOutPath: {}", stdout_log.display());
+    println!("StandardErrorPath: {}", stderr_log.display());
+
+    if enable {
+        let domain = get_launchctl_domain()?;
+        // Best effort unload first to avoid "service already loaded" failures.
+        let _ = Command::new("launchctl")
+            .args(["bootout", &domain, plist_path.to_string_lossy().as_ref()])
+            .output();
+
+        let bootstrap = Command::new("launchctl")
+            .args(["bootstrap", &domain, plist_path.to_string_lossy().as_ref()])
+            .output()
+            .map_err(|e| {
+                CliError::ConfigError(format!("Failed to execute launchctl bootstrap: {}", e))
+            })?;
+        if !bootstrap.status.success() {
+            return Err(CliError::ConfigError(format!(
+                "launchctl bootstrap failed: {}",
+                String::from_utf8_lossy(&bootstrap.stderr)
+            )));
+        }
+
+        let _ = Command::new("launchctl")
+            .args(["kickstart", "-k", &format!("{}/{}", domain, get_launchd_service_name())])
+            .output();
+
+        println!("launchd service bootstrapped in {}", domain);
+    } else {
+        println!("\nService installed but not bootstrapped.");
+        println!(
+            "To enable later: launchctl bootstrap {} {}",
+            get_launchctl_domain()?,
+            plist_path.display()
+        );
+    }
+
+    println!("\nFor system-wide service, use /Library/LaunchDaemons/ with root privileges.");
 
     Ok(())
 }
@@ -340,15 +427,24 @@ async fn uninstall_service_impl(platform: Platform, _force: bool) -> CliResult<(
             Ok(())
         }
         Platform::MacOS => {
-            println!("To uninstall launchd service:");
-            println!(
-                "  launchctl unload ~/Library/LaunchAgents/{}.plist",
-                get_launchd_service_name()
-            );
-            println!(
-                "  rm ~/Library/LaunchAgents/{}.plist",
-                get_launchd_service_name()
-            );
+            let plist_path = get_launchd_plist_path()?;
+            let domain = get_launchctl_domain()?;
+
+            let _ = Command::new("launchctl")
+                .args(["bootout", &domain, plist_path.to_string_lossy().as_ref()])
+                .output();
+
+            if plist_path.exists() {
+                std::fs::remove_file(&plist_path).map_err(|e| {
+                    CliError::ConfigError(format!(
+                        "Failed to remove plist {}: {}",
+                        plist_path.display(),
+                        e
+                    ))
+                })?;
+            }
+
+            println!("launchd service uninstalled: {}", get_launchd_service_name());
             Ok(())
         }
         Platform::Windows => {
@@ -377,8 +473,19 @@ async fn start_service_impl(platform: Platform) -> CliResult<()> {
             Ok(())
         }
         Platform::MacOS => {
-            println!("To start the service:");
-            println!("  launchctl start {}", get_launchd_service_name());
+            let domain = get_launchctl_domain()?;
+            let target = format!("{}/{}", domain, get_launchd_service_name());
+            println!("Starting launchd service: {}", target);
+            let output = Command::new("launchctl")
+                .args(["kickstart", "-k", &target])
+                .output()
+                .map_err(|e| CliError::ConfigError(format!("Failed to run launchctl: {}", e)))?;
+            if !output.status.success() {
+                return Err(CliError::ConfigError(format!(
+                    "launchctl kickstart failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                )));
+            }
             Ok(())
         }
         Platform::Windows => {
@@ -404,8 +511,19 @@ async fn stop_service_impl(platform: Platform) -> CliResult<()> {
             Ok(())
         }
         Platform::MacOS => {
-            println!("To stop the service:");
-            println!("  launchctl stop {}", get_launchd_service_name());
+            let domain = get_launchctl_domain()?;
+            let target = format!("{}/{}", domain, get_launchd_service_name());
+            println!("Stopping launchd service: {}", target);
+            let output = Command::new("launchctl")
+                .args(["kill", "SIGTERM", &target])
+                .output()
+                .map_err(|e| CliError::ConfigError(format!("Failed to run launchctl: {}", e)))?;
+            if !output.status.success() {
+                return Err(CliError::ConfigError(format!(
+                    "launchctl kill failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                )));
+            }
             Ok(())
         }
         Platform::Windows => {
@@ -431,8 +549,21 @@ async fn status_service_impl(platform: Platform) -> CliResult<()> {
             Ok(())
         }
         Platform::MacOS => {
-            println!("Checking launchd service status...");
-            println!("Run: launchctl list | grep {}", get_launchd_service_name());
+            let domain = get_launchctl_domain()?;
+            let target = format!("{}/{}", domain, get_launchd_service_name());
+            println!("Checking launchd service status: {}", target);
+            let output = Command::new("launchctl")
+                .args(["print", &target])
+                .output()
+                .map_err(|e| CliError::ConfigError(format!("Failed to run launchctl: {}", e)))?;
+            if output.status.success() {
+                println!("{}", String::from_utf8_lossy(&output.stdout));
+            } else {
+                return Err(CliError::ConfigError(format!(
+                    "launchctl print failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                )));
+            }
             Ok(())
         }
         Platform::Windows => {
@@ -461,10 +592,11 @@ async fn logs_service_impl(platform: Platform, lines: usize, _follow: bool) -> C
             Ok(())
         }
         Platform::MacOS => {
+            let (stdout_log, _stderr_log) = get_launchd_log_paths()?;
             println!("Viewing launchd service logs (last {} lines):", lines);
-            println!("Run: tail -n {} /var/log/zhtp-cli.log", lines);
+            println!("Run: tail -n {} {}", lines, stdout_log.display());
             println!("\nFor continuous logs:");
-            println!("  tail -f /var/log/zhtp-cli.log");
+            println!("  tail -f {}", stdout_log.display());
             Ok(())
         }
         Platform::Windows => {
@@ -541,10 +673,15 @@ mod tests {
 
     #[test]
     fn test_generate_launchd_plist() {
-        let content = generate_launchd_plist("/usr/local/bin/zhtp-cli");
+        let content = generate_launchd_plist(
+            "/usr/local/bin/zhtp-cli",
+            "/tmp/zhtp-cli.log",
+            "/tmp/zhtp-cli.error.log",
+        );
         assert!(content.contains("<?xml"));
         assert!(content.contains("plist"));
         assert!(content.contains("/usr/local/bin/zhtp-cli"));
+        assert!(content.contains("ProgramArguments"));
         assert!(content.contains("node"));
         assert!(content.contains("start"));
     }
