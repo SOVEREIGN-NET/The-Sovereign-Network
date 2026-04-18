@@ -778,6 +778,20 @@ impl MobileAuthStore {
             let _ = self.revoke_session(&token, "session_limit_enforced").await;
         }
     }
+
+    /// Insert a session directly — only available in tests (bypasses challenge/verify flow)
+    #[cfg(test)]
+    pub async fn insert_session_for_test(&self, session: MobileDelegatedSession) {
+        let token = session.access_token.clone();
+        let identity_id = session.identity_id.clone();
+        self.sessions.write().await.insert(token.clone(), session);
+        self.identity_sessions
+            .write()
+            .await
+            .entry(identity_id)
+            .or_default()
+            .push(token);
+    }
 }
 
 // ---------------------------------------------------------------------------

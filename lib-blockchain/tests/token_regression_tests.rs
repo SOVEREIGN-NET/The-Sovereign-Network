@@ -19,26 +19,16 @@ use lib_blockchain::Blockchain;
 use lib_crypto::types::keys::PublicKey;
 use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
+mod common;
+
 // ============================================================================
 // Test helpers
 // ============================================================================
 
-/// Create a test public key with deterministic key_id from an id byte.
-fn test_pubkey(id: u8) -> PublicKey {
-    let mut dilithium_pk = [0u8; 2592];
-    let mut kyber_pk = [0u8; 1568];
-    dilithium_pk[0] = id;
-    kyber_pk[0] = id;
-    PublicKey::new(dilithium_pk)
-}
+fn test_pubkey(id: u8) -> PublicKey { common::crypto_fixtures::seeded_public_key(id) }
+fn test_signature(pubkey: &PublicKey) -> Signature { common::crypto_fixtures::signature_for(pubkey) }
 
-/// Create a test signature with the given public key.
-fn test_signature(pubkey: &PublicKey) -> Signature {
-    Signature {
-        signature: vec![0u8; 64],
-        public_key: pubkey.clone(),
-        algorithm: SignatureAlgorithm::DEFAULT,
-        timestamp: 1_700_000_000,
+// suppress unused import warning — SignatureAlgorithm kept for any inline uses below
     }
 }
 

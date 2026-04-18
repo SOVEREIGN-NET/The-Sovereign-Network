@@ -5,18 +5,10 @@ use lib_consensus::{SlashType, ValidatorManager, ValidatorStatus};
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 
-/// Helper function to create test identity
-fn create_test_identity(name: &str) -> IdentityId {
-    Hash::from_bytes(&hash_blake3(name.as_bytes()))
-}
+mod common;
 
-fn validator_keys(seed: u8) -> ([u8; 2592], Vec<u8>, Vec<u8>) {
-    (
-        [seed; 2592],
-        vec![seed.wrapping_add(64); 32],
-        vec![seed.wrapping_add(128); 32],
-    )
-}
+fn create_test_identity(name: &str) -> IdentityId { common::consensus_fixtures::named_identity(name) }
+fn validator_keys(seed: u8) -> ([u8; 2592], Vec<u8>, Vec<u8>) { common::consensus_fixtures::validator_keys(seed) }
 
 #[test]
 fn test_validator_manager_initialization() {

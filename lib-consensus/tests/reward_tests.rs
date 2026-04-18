@@ -5,10 +5,9 @@ use lib_consensus::{RewardCalculator, UsefulWorkType, ValidatorManager};
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 
-/// Helper function to create test identity
-fn create_test_identity(name: &str) -> IdentityId {
-    Hash::from_bytes(&hash_blake3(name.as_bytes()))
-}
+mod common;
+
+fn create_test_identity(name: &str) -> IdentityId { common::consensus_fixtures::named_identity(name) }
 
 fn register_test_validator(
     manager: &mut ValidatorManager,

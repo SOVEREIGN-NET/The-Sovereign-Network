@@ -2,6 +2,7 @@
 //!
 //! Clean, minimal handler modules for ZHTP API
 
+pub mod bearer_auth;
 pub mod blockchain;
 pub mod bonding_curve;
 pub mod cbe;
@@ -30,6 +31,7 @@ pub mod wallet_content;
 pub mod web4;
 pub mod zkp;
 
+pub use bearer_auth::BearerAuthMiddleware;
 pub use blockchain::BlockchainHandler;
 pub use cbe::CbeHandler;
 pub use crypto::CryptoHandler;

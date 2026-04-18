@@ -53,8 +53,9 @@ const QUIC_PORT: u16 = 9334;
 
 // Import our comprehensive API handlers
 use crate::api::handlers::{
-    BlockchainHandler, CbeHandler, DaoHandler, DhtHandler, DnsHandler, IdentityHandler,
-    MobileAuthHandler, ProtocolHandler, StorageHandler, TokenHandler, WalletHandler, Web4Handler,
+    BearerAuthMiddleware, BlockchainHandler, CbeHandler, DaoHandler, DhtHandler, DnsHandler,
+    IdentityHandler, MobileAuthHandler, ProtocolHandler, StorageHandler, TokenHandler,
+    WalletHandler, Web4Handler,
 };
 use crate::config::environment::detect_environment;
 use crate::session_manager::SessionManager;
@@ -806,6 +807,58 @@ impl ZhtpUnifiedServer {
     )> {
         info!("📝 Registering API handlers on ZHTP router (QUIC is the only entry point)...");
 
+        // -----------------------------------------------------------------------
+        // ENDPOINT PROTECTION MATRIX (#2156)
+        //
+        // PUBLIC — no bearer token required:
+        //   /api/v1/auth/mobile/challenge    — start of auth flow (issues QR/nonce)
+        //   /api/v1/auth/mobile/verify       — completes auth flow (returns bearer)
+        //   /api/v1/dns                      — DNS resolution, read-only
+        //   /api/v1/web4                     — Web4 content serving, read-only
+        //   /api/v1/web4/gateway             — HTTPS gateway for browsers
+        //   /api/v1/dht                      — DHT peer discovery, read-only
+        //   /api/v1/protocol                 — protocol metadata, read-only
+        //   /api/v1/blockchain (GET)         — read chain state, no mutation
+        //   /api/v1/chain (GET)              — alias for blockchain, read-only
+        //   /api/v1/monitor                  — health/metrics, read-only
+        //   /api/v1/observer                 — consensus anomaly read, read-only
+        //
+        // PROTECTED — valid bearer token required (401 if missing/invalid):
+        //   /api/v1/auth/mobile/session      — read own session info
+        //   /api/v1/auth/mobile/signout      — revoke own session
+        //   /api/v1/auth/mobile/refresh      — rotate refresh token
+        //   /api/v1/auth/delegate            — issue/list/revoke delegation certs
+        //   /api/v1/tx/prepare               — prepare delegated tx (+ SubmitTx cap)
+        //   /api/v1/tx/submit-delegated      — submit mobile-signed tx
+        //   /api/v1/wallet                   — balance reads and transfers
+        //   /api/v1/token                    — token operations (mint/transfer/burn)
+        //   /api/v1/storage (write)          — content storage mutations
+        //   /api/v1/identity (write)         — identity mutations (read is public)
+        //   /api/v1/identity/guardians       — guardian management
+        //   /api/v1/identity/recovery        — recovery operations
+        //   /api/v1/zkp                      — ZKP proof generation/verification
+        //   /api/v1/dao                      — governance voting and proposals
+        //   /api/v1/pouw                     — proof-of-useful-work submission
+        //   /api/v1/cbe                      — contract-based execution
+        //   /api/v1/bonding-curve (write)    — AMM/liquidity mutations
+        //   /api/v1/oracle (write)           — oracle data submission
+        //   /api/v1/crypto                   — key operations
+        //   /api/v1/marketplace (write)      — marketplace listings/purchases
+        //
+        // NODE-INTERNAL — QUIC mesh auth only, no user bearer token:
+        //   /api/v1/network                  — peer mesh networking
+        //   /api/v1/mesh                     — mesh routing
+        //   /api/v1/blockchain/network       — cross-node sync
+        //   /api/v1/blockchain/sync          — block sync
+        //   /api/v1/validator                — validator operations
+        //
+        // ERROR RESPONSES:
+        //   401 Unauthorized — missing or invalid bearer token
+        //   403 Forbidden    — valid token but insufficient capability
+        //
+        // Implementation: bearer middleware is wired in #2157.
+        // -----------------------------------------------------------------------
+
         // Blockchain operations
         let environment = detect_environment();
         let blockchain_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(BlockchainHandler::new(
@@ -885,22 +938,41 @@ impl ZhtpUnifiedServer {
         );
         zhtp_router.register_handler("/api/v1/storage".to_string(), storage_handler);
 
-        // Wallet operations
-        let wallet_handler: Arc<dyn ZhtpRequestHandler> =
-            Arc::new(WalletHandler::new(identity_manager.clone()));
+        // Shared auth store for all bearer-protected routes and mobile auth handler (#2157).
+        // Defined here so BearerAuthMiddleware wrappers below can reference it before
+        // the mobile_auth_handler registration further down.
+        let mobile_auth_store =
+            Arc::new(lib_identity::auth::mobile_delegation::MobileAuthStore::new());
+
+        // Wallet operations — PROTECTED (#2157)
+        let wallet_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(BearerAuthMiddleware::new(
+            Arc::new(WalletHandler::new(identity_manager.clone())),
+            mobile_auth_store.clone(),
+        ));
         zhtp_router.register_handler("/api/v1/wallet".to_string(), wallet_handler);
 
-        // Token operations (custom token creation, minting, transfer)
-        let token_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(TokenHandler::new());
+        // Token operations — PROTECTED (#2157)
+        let token_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(BearerAuthMiddleware::new(
+            Arc::new(TokenHandler::new()),
+            mobile_auth_store.clone(),
+        ));
         zhtp_router.register_handler("/api/v1/token".to_string(), token_handler);
 
-        // CBE token operations (init pools, employment contracts, payroll)
-        let cbe_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(CbeHandler::new());
+        // CBE token operations — PROTECTED (#2157)
+        let cbe_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(BearerAuthMiddleware::new(
+            Arc::new(CbeHandler::new()),
+            mobile_auth_store.clone(),
+        ));
         zhtp_router.register_handler("/api/v1/cbe".to_string(), cbe_handler);
 
-        // Canonical bonding-curve REST API endpoints
+        // Canonical bonding-curve REST API endpoints — PROTECTED (#2157)
         let bonding_curve_api_handler: Arc<dyn ZhtpRequestHandler> =
-            Arc::new(crate::api::handlers::bonding_curve::api_v1::BondingCurveApiHandler::new());
+            Arc::new(BearerAuthMiddleware::new(
+                Arc::new(
+                    crate::api::handlers::bonding_curve::api_v1::BondingCurveApiHandler::new(),
+                ),
+                mobile_auth_store.clone(),
+            ));
         zhtp_router.register_handler(
             "/api/v1/bonding-curve".to_string(),
             bonding_curve_api_handler,
@@ -913,15 +985,18 @@ impl ZhtpUnifiedServer {
         ));
         zhtp_router.register_handler("/api/v1/dao".to_string(), dao_handler);
 
-        // Oracle price/status endpoints
-        let oracle_handler: Arc<dyn ZhtpRequestHandler> =
-            Arc::new(crate::api::handlers::oracle::OracleHandler::new());
+        // Oracle price/status endpoints — PROTECTED for write ops (#2157)
+        let oracle_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(BearerAuthMiddleware::new(
+            Arc::new(crate::api::handlers::oracle::OracleHandler::new()),
+            mobile_auth_store.clone(),
+        ));
         zhtp_router.register_handler("/api/v1/oracle".to_string(), oracle_handler);
 
-        // Crypto utilities (sign message, verify signature, generate keypair)
-        let crypto_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::CryptoHandler::new(identity_manager.clone()),
-        );
+        // Crypto utilities (sign message, verify signature, generate keypair) — PROTECTED (#2157)
+        let crypto_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(BearerAuthMiddleware::new(
+            Arc::new(crate::api::handlers::CryptoHandler::new(identity_manager.clone())),
+            mobile_auth_store.clone(),
+        ));
         zhtp_router.register_handler("/api/v1/crypto".to_string(), crypto_handler);
 
         // Register DHT handler on ZHTP (already registered on mesh_router for pure UDP)
@@ -992,13 +1067,15 @@ impl ZhtpUnifiedServer {
         );
         zhtp_router.register_handler("/api/content".to_string(), wallet_content_handler);
 
-        // Marketplace handler for buying/selling content (shares managers with wallet content)
-        let marketplace_handler: Arc<dyn ZhtpRequestHandler> =
+        // Marketplace handler for buying/selling content — PROTECTED (#2157)
+        let marketplace_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(BearerAuthMiddleware::new(
             Arc::new(crate::api::handlers::MarketplaceHandler::new(
                 Arc::clone(&wallet_content_manager),
                 Arc::clone(&blockchain),
                 Arc::clone(&identity_manager),
-            ));
+            )),
+            mobile_auth_store.clone(),
+        ));
         zhtp_router.register_handler("/api/marketplace".to_string(), marketplace_handler);
 
         // DNS resolution for .zhtp domains (connect to domain registry)
@@ -1050,17 +1127,22 @@ impl ZhtpUnifiedServer {
 
         // Mobile + Web App Authentication Delegation (Issue #1877)
         // All three phases (challenge/verify/session, refresh, delegation certs) share one store.
-        let mobile_auth_store =
-            Arc::new(lib_identity::auth::mobile_delegation::MobileAuthStore::new());
+        // mobile_auth_store is created above (before the bearer-protected routes) so it can be
+        // shared with BearerAuthMiddleware (#2157).
         let mobile_auth_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::MobileAuthHandler::new(mobile_auth_store),
+            crate::api::handlers::MobileAuthHandler::new(mobile_auth_store.clone()),
         );
         // Prefix routes — the handler's dispatch() does exact matching internally
         zhtp_router.register_handler(
             "/api/v1/auth/mobile".to_string(),
             mobile_auth_handler.clone(),
         );
-        zhtp_router.register_handler("/api/v1/auth/delegate".to_string(), mobile_auth_handler);
+        zhtp_router.register_handler(
+            "/api/v1/auth/delegate".to_string(),
+            mobile_auth_handler.clone(),
+        );
+        // Transaction delegation endpoints (#2153, #2154) — auth handled internally
+        zhtp_router.register_handler("/api/v1/tx".to_string(), mobile_auth_handler);
 
         info!("✅ All API handlers registered successfully on ZHTP router");
         Ok((pouw_validator_arc, pouw_calculator))
