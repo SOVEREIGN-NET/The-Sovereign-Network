@@ -29,7 +29,7 @@ fn test_transaction_creation() -> Result<()> {
     );
 
     // Verify transaction properties
-    assert_eq!(transaction.version, 1);
+    assert_eq!(transaction.version, TX_VERSION_V8);
     assert_eq!(transaction.transaction_type, TransactionType::Transfer);
     assert_eq!(transaction.outputs.len(), 1);
     assert_eq!(transaction.fee, 100);
@@ -257,7 +257,7 @@ fn test_transaction_input_output() -> Result<()> {
 
     assert!(output.is_to_recipient(&recipient_key));
 
-    let other_key = crypto_integration::PublicKey::new([0u8; 2592]);
+    let other_key = crypto_integration::PublicKey::new([1u8; 2592]);
     assert!(!output.is_to_recipient(&other_key));
 
     Ok(())

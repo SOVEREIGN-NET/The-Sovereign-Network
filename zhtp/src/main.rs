@@ -78,6 +78,10 @@ async fn async_main() -> anyhow::Result<()> {
             tracing::info!("Starting node as Relay (routing only, no blockchain state)");
             RuntimeOrchestrator::start_relay(config).await?
         }
+        NodeType::Gateway => {
+            tracing::info!("Starting node as Gateway (QUIC ingress proxy, no blockchain state)");
+            RuntimeOrchestrator::start_gateway(config).await?
+        }
     };
 
     // Wrap orchestrator in Arc for shared ownership (needed by runtime handlers)

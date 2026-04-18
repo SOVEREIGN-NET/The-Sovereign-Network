@@ -246,6 +246,21 @@ impl TransactionValidator {
                     return Err(ValidationError::InvalidValidatorData);
                 }
             }
+            TransactionType::GatewayRegistration => {
+                if transaction.gateway_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::GatewayUpdate => {
+                if transaction.gateway_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::GatewayUnregister => {
+                if transaction.gateway_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
             TransactionType::DaoProposal
             | TransactionType::DaoVote
             | TransactionType::DaoExecution
@@ -407,6 +422,26 @@ impl TransactionValidator {
                     return Err(ValidationError::InvalidMemo);
                 }
             }
+            TransactionType::NftCreateCollection => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftCreateCollection(_)) {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::NftMint => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftMint(_)) {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::NftTransfer => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftTransfer(_)) {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::NftBurn => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftBurn(_)) {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
         }
 
         // Signature validation:
@@ -517,6 +552,21 @@ impl TransactionValidator {
                 // Validator unregister - validate validator data exists
                 if transaction.validator_data().is_none() {
                     return Err(ValidationError::InvalidValidatorData);
+                }
+            }
+            TransactionType::GatewayRegistration => {
+                if transaction.gateway_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::GatewayUpdate => {
+                if transaction.gateway_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::GatewayUnregister => {
+                if transaction.gateway_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
                 }
             }
             TransactionType::DaoProposal
@@ -655,6 +705,26 @@ impl TransactionValidator {
                     .starts_with(crate::transaction::DOMAIN_UPDATE_PREFIX)
                 {
                     return Err(ValidationError::InvalidMemo);
+                }
+            }
+            TransactionType::NftCreateCollection => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftCreateCollection(_)) {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::NftMint => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftMint(_)) {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::NftTransfer => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftTransfer(_)) {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::NftBurn => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftBurn(_)) {
+                    return Err(ValidationError::MissingRequiredData);
                 }
             }
         }
@@ -1599,6 +1669,12 @@ impl<'a> StatefulTransactionValidator<'a> {
                 // Validator transactions - validate with stateless validator
                 stateless_validator.validate_transaction(transaction)?;
             }
+            TransactionType::GatewayRegistration
+            | TransactionType::GatewayUpdate
+            | TransactionType::GatewayUnregister => {
+                // Gateway transactions - validate with stateless validator
+                stateless_validator.validate_transaction(transaction)?;
+            }
             TransactionType::DaoProposal
             | TransactionType::DaoVote
             | TransactionType::DaoExecution
@@ -1893,6 +1969,26 @@ impl<'a> StatefulTransactionValidator<'a> {
                             return Err(ValidationError::InvalidTransaction);
                         }
                     }
+                }
+            }
+            TransactionType::NftCreateCollection => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftCreateCollection(_)) {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::NftMint => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftMint(_)) {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::NftTransfer => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftTransfer(_)) {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::NftBurn => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftBurn(_)) {
+                    return Err(ValidationError::MissingRequiredData);
                 }
             }
         }
@@ -3020,6 +3116,12 @@ pub mod utils {
                 // Validator transactions should have validator_data
                 transaction.validator_data().is_some()
             }
+            TransactionType::GatewayRegistration
+            | TransactionType::GatewayUpdate
+            | TransactionType::GatewayUnregister => {
+                // Gateway transactions should have gateway_data
+                transaction.gateway_data().is_some()
+            }
             TransactionType::DaoProposal => transaction.dao_proposal_data().is_some(),
             TransactionType::DaoVote => transaction.dao_vote_data().is_some(),
             TransactionType::DaoExecution => transaction.dao_execution_data().is_some(),
@@ -3143,6 +3245,18 @@ pub mod utils {
                     .starts_with(crate::transaction::DOMAIN_UPDATE_PREFIX)
                     && transaction.inputs.is_empty()
                     && transaction.outputs.is_empty()
+            }
+            TransactionType::NftCreateCollection => {
+                matches!(transaction.payload, crate::transaction::TransactionPayload::NftCreateCollection(_))
+            }
+            TransactionType::NftMint => {
+                matches!(transaction.payload, crate::transaction::TransactionPayload::NftMint(_))
+            }
+            TransactionType::NftTransfer => {
+                matches!(transaction.payload, crate::transaction::TransactionPayload::NftTransfer(_))
+            }
+            TransactionType::NftBurn => {
+                matches!(transaction.payload, crate::transaction::TransactionPayload::NftBurn(_))
             }
         }
     }

@@ -710,6 +710,11 @@ pub mod utils {
                 // Validator transactions - no specific validation needed here
                 // Validation will be handled during transaction validation
             }
+            TransactionType::GatewayRegistration
+            | TransactionType::GatewayUpdate
+            | TransactionType::GatewayUnregister => {
+                // Gateway transactions - validation handled during transaction validation
+            }
             TransactionType::DaoProposal
             | TransactionType::DaoVote
             | TransactionType::DaoExecution
@@ -796,6 +801,18 @@ pub mod utils {
             | TransactionType::DomainRegistration
             | TransactionType::DomainUpdate => {
                 // Threshold-approval, staking, domain, and legacy CBE transactions - no inputs/outputs
+                if !inputs.is_empty() {
+                    return Err(TransactionCreateError::InvalidInputs);
+                }
+                if !outputs.is_empty() {
+                    return Err(TransactionCreateError::InvalidOutputs);
+                }
+            }
+            TransactionType::NftCreateCollection
+            | TransactionType::NftMint
+            | TransactionType::NftTransfer
+            | TransactionType::NftBurn => {
+                // NFT transactions - no inputs/outputs required
                 if !inputs.is_empty() {
                     return Err(TransactionCreateError::InvalidInputs);
                 }

@@ -36,6 +36,7 @@ mod init;
 mod oracle;
 mod persistence;
 mod validators;
+mod gateways;
 mod wallets;
 
 pub use persistence::PersistenceStats;
@@ -149,6 +150,9 @@ pub struct Blockchain {
     /// Smart contract registry - Web4 Website contracts (contract_id -> Web4Contract)
     #[serde(default)]
     pub web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
+    /// NFT collection registry (collection_id -> NftContract)
+    #[serde(default)]
+    pub nft_collections: HashMap<[u8; 32], crate::contracts::nft::NftContract>,
     /// Authoritative on-chain domain registry (domain name -> record).
     /// Populated from DomainRegistration / DomainUpdate transactions committed to blocks.
     /// This is the canonical source of truth; sled/DHT DomainRegistry is a cache.
@@ -166,6 +170,12 @@ pub struct Blockchain {
     /// Validator registration block heights (identity_id -> block_height)
     #[serde(default)]
     pub validator_blocks: HashMap<String, u64>,
+    /// On-chain gateway registry (identity_id -> Gateway info)
+    #[serde(default)]
+    pub gateway_registry: HashMap<String, GatewayInfo>,
+    /// Gateway registration block heights (identity_id -> block_height)
+    #[serde(default)]
+    pub gateway_blocks: HashMap<String, u64>,
     /// DAO treasury wallet ID (stores collected fees for governance)
     #[serde(default)]
     pub dao_treasury_wallet_id: Option<String>,
@@ -519,6 +529,39 @@ pub struct ValidatorInfo {
     pub oracle_key_id: Option<[u8; 32]>,
 }
 
+/// Gateway registry entry
+/// Tracks a gateway node's registration, stake, and operational status.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayInfo {
+    /// Gateway identity ID (same as DID)
+    pub identity_id: String,
+    /// Staked amount (in micro-SOV)
+    pub stake: u64,
+    /// Dilithium5 public key used to sign forwarded client context.
+    /// Fixed size [u8; 2592].
+    #[serde(with = "serde_arrays")]
+    pub gateway_key: [u8; 2592],
+    /// Public QUIC endpoint(s) for clients (comma-separated host:port)
+    pub endpoints: String,
+    /// Commission rate percentage (0-100) taken from routed DAO fees
+    pub commission_rate: u8,
+    /// Gateway status: "active", "inactive", "slashed"
+    pub status: String,
+    /// Registration timestamp (block height)
+    pub registered_at: u64,
+    /// Last heartbeat / activity timestamp (block height)
+    pub last_activity: u64,
+    /// Total requests forwarded (approximate counter)
+    pub requests_forwarded: u64,
+    /// Slash count
+    pub slash_count: u32,
+    /// Revenue earned in micro-SOV (accumulated, not yet claimed)
+    pub accumulated_revenue: u64,
+    /// Source of gateway admission
+    #[serde(default)]
+    pub admission_source: String,
+}
+
 /// UBI (Universal Basic Income) registry entry
 /// Tracks a citizen's UBI eligibility and payout status
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -572,6 +615,8 @@ pub struct BlockchainImport {
     pub identity_registry: HashMap<String, IdentityTransactionData>,
     pub wallet_references: HashMap<String, crate::transaction::WalletReference>, // Only minimal references
     pub validator_registry: HashMap<String, ValidatorInfo>,
+    #[serde(default)]
+    pub gateway_registry: HashMap<String, GatewayInfo>,
     pub token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
     pub web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
     pub contract_blocks: HashMap<[u8; 32], u64>,
@@ -985,6 +1030,7 @@ impl Blockchain {
                     self.blocks.push(block.clone());
                     self.height += 1;
                     self.process_validator_registration_transactions(&block);
+                    self.process_gateway_transactions(&block);
                     // Rebuild wallet_registry and in-memory SOV balances from WalletRegistration
                     // transactions in this block. The BlockExecutor handles SledStore state but
                     // does NOT update the in-memory wallet_registry or token_contracts mints.
@@ -999,6 +1045,7 @@ impl Blockchain {
                         warn!("process_employment_contract_transactions in executor path: {}", e);
                     }
                     self.process_domain_transactions(&block);
+                    self.process_nft_transactions(&block);
                     for tx in &block.transactions {
                         self.index_dao_registry_entry_from_tx(tx, block.header.height);
                         // Executor returns LegacySystem for ValidatorRegistration — update registry here
@@ -1138,9 +1185,11 @@ impl Blockchain {
         self.process_entity_registry_transactions(&block)?;
         self.process_employment_contract_transactions(&block)?;
         self.process_domain_transactions(&block);
+        self.process_nft_transactions(&block);
         self.process_contract_transactions(&block)?;
         self.process_token_transactions(&block)?;
         self.process_validator_registration_transactions(&block);
+        self.process_gateway_transactions(&block);
         for tx in &block.transactions {
             self.index_dao_registry_entry_from_tx(tx, block.header.height);
         }
@@ -4288,6 +4337,7 @@ impl Blockchain {
             identity_registry: HashMap<String, IdentityTransactionData>,
             wallet_references: HashMap<String, crate::transaction::WalletReference>, // Only public references
             validator_registry: HashMap<String, ValidatorInfo>,
+            gateway_registry: HashMap<String, GatewayInfo>,
             token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
             web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
             contract_blocks: HashMap<[u8; 32], u64>,
@@ -4321,6 +4371,7 @@ impl Blockchain {
             identity_registry: self.identity_registry.clone(),
             wallet_references, // Only minimal wallet references (no sensitive data)
             validator_registry: self.validator_registry.clone(),
+            gateway_registry: self.gateway_registry.clone(),
             token_contracts: self.token_contracts.clone(),
             web4_contracts: self.web4_contracts.clone(),
             contract_blocks: self.contract_blocks.clone(),
@@ -6448,30 +6499,46 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Mint SOV tokens for a POUW reward recipient.
+    /// Mint SOV tokens for a POUW reward recipient via a system transaction.
     ///
-    /// This is an out-of-block kernel operation that mirrors the UBI engine pattern.
-    /// The recipient is identified by a 32-byte key_id derived from their DID.
-    /// After minting, the caller must call `save_to_file()` to persist the updated balance.
+    /// Creates a TokenMint transaction and adds it to the pending pool so it is
+    /// included in the next block. Returns the transaction hash on success.
     pub fn mint_sov_for_pouw(
         &mut self,
         recipient_key_id: [u8; 32],
         amount: u128,
-    ) -> anyhow::Result<()> {
-        self.ensure_sov_token_contract();
-        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
-        let token = self.token_contracts.get_mut(&sov_token_id).ok_or_else(|| {
-            anyhow::anyhow!("SOV token contract not found after ensure_sov_token_contract")
-        })?;
-        let recipient = crate::integration::crypto_integration::PublicKey {
-            dilithium_pk: [0u8; 2592],
-            kyber_pk: [0u8; 1568],
-            key_id: recipient_key_id,
+    ) -> anyhow::Result<Hash> {
+        let mint_data = crate::transaction::TokenMintData {
+            token_id: crate::contracts::utils::generate_lib_token_id(),
+            to: recipient_key_id,
+            amount,
         };
-        token
-            .mint(&recipient, amount)
-            .map_err(|e| anyhow::anyhow!("POUW SOV mint failed: {}", e))?;
-        Ok(())
+
+        let signature = Signature {
+            signature: Vec::new(),
+            public_key: PublicKey {
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
+                key_id: [0u8; 32],
+            },
+            algorithm: SignatureAlgorithm::Dilithium5,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        };
+
+        let memo = format!(
+            "pouw:mint:{}:{}",
+            hex::encode(recipient_key_id),
+            amount
+        )
+        .into_bytes();
+
+        let mint_tx = Transaction::new_token_mint(mint_data, signature, memo);
+        let tx_hash = mint_tx.hash();
+        self.add_system_transaction(mint_tx)?;
+        Ok(tx_hash)
     }
 }
 

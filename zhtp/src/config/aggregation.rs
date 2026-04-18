@@ -23,6 +23,8 @@ pub struct PartialConfig {
     #[serde(default)]
     pub environment: Option<super::Environment>,
     #[serde(default)]
+    pub node_type: Option<NodeType>,
+    #[serde(default)]
     pub runtime_role: Option<RuntimeRole>,
     #[serde(default)]
     pub network: Option<PartialNetworkConfig>,
@@ -1093,6 +1095,10 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
                     if let Some(env) = partial.environment {
                         tracing::info!("Loaded environment = {:?} from config file", env);
                         config.environment = env;
+                    }
+                    if let Some(node_type) = partial.node_type {
+                        tracing::info!("Loaded node_type = {:?} from config file", node_type);
+                        config.node_type = Some(node_type);
                     }
                     if let Some(role) = partial.runtime_role {
                         tracing::info!("Loaded runtime_role = {:?} from config file", role);

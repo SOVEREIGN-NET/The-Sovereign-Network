@@ -563,6 +563,10 @@ impl ZhtpUnifiedServer {
         // Wire PoUW session log into QuicHandler for proof-of-presence recording
         let quic_handler = quic_handler.with_pouw_session_log(pouw_session_log.clone());
 
+        // Wire blockchain into QuicHandler for gateway forwarding context verification
+        #[cfg(feature = "lib-blockchain")]
+        let quic_handler = quic_handler.with_blockchain(blockchain.clone());
+
         let quic_handler = Arc::new(quic_handler);
         info!(" QUIC handler initialized for native ZHTP-over-QUIC");
 
@@ -1083,7 +1087,7 @@ impl ZhtpUnifiedServer {
         // This enables mesh-based blockchain synchronization for new nodes joining the network
         crate::network_output_dispatcher::spawn_app_network_output_processor();
 
-        // Restore persisted POUW rewards from disk
+        // Restore persisted POUW rewards and budget from disk
         let rewards_path = crate::pouw::RewardCalculator::rewards_path_for(std::path::Path::new(
             &crate::config::environment::Environment::default().blockchain_data_path(),
         ));
@@ -1093,6 +1097,16 @@ impl ZhtpUnifiedServer {
             .await
         {
             tracing::warn!("Failed to load POUW rewards from disk: {}", e);
+        }
+        let budget_path = crate::pouw::RewardCalculator::budget_path_for(std::path::Path::new(
+            &crate::config::environment::Environment::default().blockchain_data_path(),
+        ));
+        if let Err(e) = self
+            .pouw_calculator_arc
+            .load_budget_from_file(&budget_path)
+            .await
+        {
+            tracing::warn!("Failed to load POUW budget from disk: {}", e);
         }
 
         // STEP 1: Apply network isolation to block internet access
@@ -1128,6 +1142,7 @@ impl ZhtpUnifiedServer {
                 crate::runtime::NodeRole::BootstrapNode => "BootstrapNode",
                 crate::runtime::NodeRole::Observer => "Observer",
                 crate::runtime::NodeRole::ArchivalNode => "ArchivalNode",
+                crate::runtime::NodeRole::Gateway => "Gateway",
             }
         );
 
@@ -1513,11 +1528,15 @@ impl ZhtpUnifiedServer {
         // WiFi Direct already initialized above with mDNS
         self.start_lorawan_handler().await?;
 
-        // Periodic POUW rewards persistence (every 60 seconds)
+        // Periodic POUW rewards + budget persistence (every 60 seconds)
         {
             let calc = self.pouw_calculator_arc.clone();
             let rewards_path =
                 crate::pouw::RewardCalculator::rewards_path_for(std::path::Path::new(
+                    &crate::config::environment::Environment::default().blockchain_data_path(),
+                ));
+            let budget_path =
+                crate::pouw::RewardCalculator::budget_path_for(std::path::Path::new(
                     &crate::config::environment::Environment::default().blockchain_data_path(),
                 ));
             tokio::spawn(async move {
@@ -1528,6 +1547,9 @@ impl ZhtpUnifiedServer {
                     if let Err(e) = calc.save_rewards_to_file(&rewards_path).await {
                         tracing::warn!("Failed to save POUW rewards to disk: {}", e);
                     }
+                    if let Err(e) = calc.save_budget_to_file(&budget_path).await {
+                        tracing::warn!("Failed to save POUW budget to disk: {}", e);
+                    }
                 }
             });
         }
@@ -1536,9 +1558,6 @@ impl ZhtpUnifiedServer {
         crate::pouw::spawn_pouw_payout_task(
             self.pouw_calculator_arc.clone(),
             self.blockchain.clone(),
-            std::path::PathBuf::from(
-                crate::config::environment::Environment::default().blockchain_data_path(),
-            ),
             crate::pouw::rewards::DEFAULT_EPOCH_DURATION_SECS,
         );
         info!(

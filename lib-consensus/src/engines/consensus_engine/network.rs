@@ -523,8 +523,8 @@ impl ConsensusEngine {
                     payload_hash.clone(),
                     current_time,
                 ) {
-                    tracing::warn!(
-                        "⚠️  REPLAY: Validator {} sent duplicate message {} times",
+                    tracing::trace!(
+                        "Duplicate message from {} (count={})",
                         vote.voter,
                         replay_evidence.replay_count
                     );

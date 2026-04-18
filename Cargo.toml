@@ -66,6 +66,15 @@ opt-level = 3
 [profile.dev.package.lib-neural-mesh]
 opt-level = 2
 
+[profile.dev-release]
+# Fast deployable build for development/testnet. Optimized but no LTO.
+# Use: cargo build --profile dev-release
+# Prod: cargo build --release (full LTO, single codegen unit)
+inherits = "release"
+opt-level = 2
+lto = false
+codegen-units = 8
+
 [profile.rpi]
 # Raspberry Pi optimized: lower memory usage during compilation
 inherits = "release"

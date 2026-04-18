@@ -135,6 +135,90 @@ pub enum ZhtpCommand {
 
     /// CBE token operations (init pools, employment, payroll)
     Cbe(CbeArgs),
+
+    /// NFT operations (create collection, mint, transfer)
+    Nft(NftArgs),
+}
+
+/// NFT operation commands
+#[derive(Args, Debug, Clone)]
+pub struct NftArgs {
+    #[command(subcommand)]
+    pub action: NftAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum NftAction {
+    /// Create a new NFT collection
+    CreateCollection {
+        /// Collection name
+        #[arg(long)]
+        name: String,
+        /// Short symbol (e.g. ART)
+        #[arg(long)]
+        symbol: String,
+        /// Max tokens in collection (omit for unlimited)
+        #[arg(long)]
+        max_supply: Option<u64>,
+        /// Path to keystore directory
+        #[arg(long)]
+        keystore: Option<String>,
+    },
+    /// Mint a new NFT in a collection
+    Mint {
+        /// Collection ID (64-char hex)
+        #[arg(long)]
+        collection: String,
+        /// Recipient wallet ID (64-char hex)
+        #[arg(long)]
+        to: String,
+        /// Token name
+        #[arg(long)]
+        name: String,
+        /// Description
+        #[arg(long, default_value = "")]
+        description: String,
+        /// Web4 content CID for the image
+        #[arg(long, default_value = "")]
+        image_cid: String,
+        /// Path to keystore directory
+        #[arg(long)]
+        keystore: Option<String>,
+    },
+    /// Transfer an NFT to another wallet
+    Transfer {
+        /// Collection ID (64-char hex)
+        #[arg(long)]
+        collection: String,
+        /// Token ID (integer)
+        #[arg(long)]
+        token_id: u64,
+        /// Recipient wallet ID (64-char hex)
+        #[arg(long)]
+        to: String,
+        /// Path to keystore directory
+        #[arg(long)]
+        keystore: Option<String>,
+    },
+    /// Burn (destroy) an NFT
+    Burn {
+        /// Collection ID (64-char hex)
+        #[arg(long)]
+        collection: String,
+        /// Token ID (integer)
+        #[arg(long)]
+        token_id: u64,
+        /// Path to keystore directory
+        #[arg(long)]
+        keystore: Option<String>,
+    },
+    /// List collections
+    List,
+    /// List NFTs owned by a wallet
+    Owned {
+        /// Wallet ID (64-char hex)
+        wallet_id: String,
+    },
 }
 
 /// Node management commands
@@ -1789,6 +1873,9 @@ pub async fn run_cli() -> Result<()> {
             .await
             .map_err(anyhow::Error::msg),
         ZhtpCommand::Cbe(args) => commands::cbe::handle_cbe_command(args.clone(), &cli)
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Nft(args) => commands::nft::handle_nft_command(args.clone(), &cli)
             .await
             .map_err(anyhow::Error::msg),
     }

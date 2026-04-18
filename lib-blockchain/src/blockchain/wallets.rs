@@ -702,9 +702,10 @@ impl Blockchain {
                                 }
                             }
                         }
-                        // Sled persistence happens during block commit (begin_block/commit_block).
-                        // The in-memory mint above is authoritative; sled is updated when the
-                        // wallet registration transaction is included in a block.
+                        // In-memory mint is sufficient — the block commit persists all state.
+                        // Do NOT call put_token_contract here: it requires an active sled
+                        // block transaction which may not exist when register_wallet() is
+                        // called from the API handler outside block processing.
                     }
                 }
             }

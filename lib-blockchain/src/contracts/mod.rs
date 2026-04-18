@@ -34,6 +34,7 @@ pub mod executor;
 pub mod files;
 #[cfg(feature = "contracts")]
 pub mod governance;
+pub mod nft;
 #[cfg(feature = "contracts")]
 pub mod groups;
 #[cfg(feature = "contracts")]

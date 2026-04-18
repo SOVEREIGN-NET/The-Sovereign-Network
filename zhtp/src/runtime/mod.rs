@@ -763,6 +763,11 @@ impl RuntimeOrchestrator {
                 // treat them as Observer to avoid breaking existing code
                 NodeRole::Observer
             }
+            crate::config::NodeType::Gateway => {
+                // Gateway nodes are public ingress proxies; they do not
+                // maintain blockchain state and have their own NodeRole.
+                NodeRole::Gateway
+            }
         }
     }
 
@@ -1749,6 +1754,118 @@ impl RuntimeOrchestrator {
         orchestrator.start_component(ComponentId::Network).await?;
 
         info!("Relay node initialized (routing-only mode - ready for routing)");
+
+        Ok(orchestrator)
+    }
+
+    /// Start a Gateway node (remote QUIC ingress proxy).
+    ///
+    /// Gateways accept native ZHTP over QUIC from clients, perform UHP v2
+    /// handshake when required, and forward requests to backend validators
+    /// via `BackendPool` / `Web4Client`.  No blockchain state, no consensus,
+    /// no mining — pure ingress + forwarding.
+    ///
+    /// Configuration:
+    /// - Uses `config.network_config.bootstrap_peers` as static backends.
+    /// - Listens on UDP `0.0.0.0:7840` for QUIC (configurable via `ZHTP_GATEWAY_ADDR`).
+    /// - Loads or creates a gateway identity in the node data directory.
+    pub async fn start_gateway(config: NodeConfig) -> Result<Self> {
+        Self::validate_node_type(&config, crate::config::NodeType::Gateway)?;
+
+        let orchestrator = Self::new(config.clone()).await?;
+
+        use crate::runtime::components::{CryptoComponent, NetworkComponent};
+
+        info!("Starting Gateway Node - QUIC ingress proxy (no blockchain state)");
+
+        // Initialize crypto and network components
+        orchestrator
+            .register_component(Arc::new(CryptoComponent::new()))
+            .await?;
+        orchestrator.start_component(ComponentId::Crypto).await?;
+
+        orchestrator
+            .register_component(Arc::new(NetworkComponent::new()))
+            .await?;
+        orchestrator.start_component(ComponentId::Network).await?;
+
+        // ------------------------------------------------------------------
+        // Gateway-specific: load identity, create service, start QUIC server
+        // ------------------------------------------------------------------
+        let data_dir = std::path::PathBuf::from(&config.data_directory);
+        let identity = zhtp_daemon::identity::load_or_create(&data_dir)
+            .context("Failed to load gateway identity")?;
+
+        let _ = lib_identity::types::node_id::try_set_network_genesis(
+            lib_identity::constants::TESTNET_GENESIS_HASH,
+        );
+
+        // Build a minimal daemon config from NodeConfig
+        let bootstrap_peers = config.network_config.bootstrap_peers.clone();
+        let daemon_config = zhtp_daemon::config::DaemonConfig {
+            listen_addr: std::env::var("ZHTP_GATEWAY_HTTP_ADDR")
+                .unwrap_or_else(|_| "127.0.0.1:7840".to_string()),
+            backend_nodes: bootstrap_peers.clone(),
+            trust: zhtp_daemon::config::TrustSettings::default(),
+            gateway: Some(zhtp_daemon::config::GatewayConfig {
+                listen_addr: std::env::var("ZHTP_GATEWAY_HTTP_ADDR")
+                    .unwrap_or_else(|_| "127.0.0.1:7840".to_string()),
+                quic_listen_addr: std::env::var("ZHTP_GATEWAY_ADDR")
+                    .unwrap_or_else(|_| "0.0.0.0:7840".to_string()),
+                request_timeout_ms: 8000,
+                connect_timeout_ms: 1500,
+                backend_selection: zhtp_daemon::config::BackendSelectionPolicy::LowestLatency,
+                retry_idempotent_requests: true,
+                static_backends: bootstrap_peers,
+                dynamic_backend_discovery: false,
+                dynamic_backend_routing: false,
+                health_check_interval_ms: 5000,
+                unhealthy_threshold: 3,
+                recovery_threshold: 2,
+                cooldown_ms: 15000,
+                max_in_flight_per_backend: 200,
+            }),
+        };
+
+        let service = Arc::new(
+            zhtp_daemon::service::ZhtpDaemonService::new(daemon_config.clone(), identity.clone())
+                .await
+                .context("Failed to create gateway service")?,
+        );
+
+        let gateway_cfg = daemon_config.effective_gateway_config();
+        let quic_bind: std::net::SocketAddr = gateway_cfg
+            .quic_listen_addr
+            .parse()
+            .with_context(|| format!("Invalid quic_listen_addr: {}", gateway_cfg.quic_listen_addr))?;
+
+        let cert_path = data_dir.join("gateway-cert.pem");
+        let key_path = data_dir.join("gateway-key.pem");
+
+        let quic_server = zhtp_daemon::quic_server::QuicGatewayServer::new(
+            quic_bind,
+            service.clone(),
+            Arc::new(identity),
+            &cert_path,
+            &key_path,
+        )
+        .await
+        .context("Failed to create QUIC gateway server")?;
+
+        info!(
+            quic_addr = %quic_bind,
+            backends = %gateway_cfg.static_backends.len(),
+            "Gateway QUIC server starting"
+        );
+
+        // Spawn QUIC server into background; orchestrator keeps ownership.
+        tokio::spawn(async move {
+            if let Err(e) = quic_server.run().await {
+                tracing::error!("QUIC gateway server error: {}", e);
+            }
+        });
+
+        info!("Gateway node initialized and listening");
 
         Ok(orchestrator)
     }

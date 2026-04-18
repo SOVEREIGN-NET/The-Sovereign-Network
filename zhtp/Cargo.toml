@@ -34,6 +34,7 @@ lib-economy = { path = "../lib-economy" }
 lib-protocols = { path = "../lib-protocols" }
 lib-neural-mesh = { path = "../lib-neural-mesh" }
 lib-compression = { path = "../lib-compression" }
+zhtp-daemon = { path = "../zhtp-daemon" }
 # Note: lib-api and lib-contracts will be added when available
 
 # Core async runtime

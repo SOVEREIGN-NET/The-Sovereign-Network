@@ -34,6 +34,7 @@ pub mod compression;
 pub mod integration;
 pub mod monitoring;
 pub mod pouw;
+pub mod rewards;
 pub mod runtime; // Proof-of-Useful-Work (Phase 1: Challenge Generation)
                  // CLI module moved to separate zhtp-cli crate
 pub mod api;

@@ -87,7 +87,7 @@ impl RewardCalculator {
             self.reward_history.remove(0);
         }
 
-        tracing::info!(
+        tracing::debug!(
             "Calculated round rewards: {} SOV total to {} validators",
             total_rewards,
             validator_rewards.len()
@@ -168,7 +168,7 @@ impl RewardCalculator {
             // 3. Handle delegation rewards
             // 4. Update staking pools
 
-            tracing::info!(
+            tracing::debug!(
                 " Distributed {} SOV to validator {:?} (base: {}, work: {}, participation: {})",
                 reward.total_reward,
                 validator_id,

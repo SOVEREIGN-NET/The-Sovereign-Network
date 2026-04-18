@@ -55,6 +55,9 @@ use lib_network::protocols::quic_handshake::{self};
 use lib_network::protocols::quic_mesh::{PeerConnection, PqcQuicConnection, QuicMeshProtocol};
 use lib_network::types::mesh_message::ZhtpMeshMessage;
 
+#[cfg(feature = "lib-blockchain")]
+use lib_blockchain::Blockchain;
+
 use super::zhtp::serialization::ZHTP_MAGIC;
 use super::zhtp::ZhtpRouter;
 
@@ -230,6 +233,10 @@ pub struct QuicHandler {
     identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
     /// Optional POUW session log — records authenticated sessions for proof-of-presence
     pouw_session_log: Option<crate::pouw::SharedSessionLog>,
+
+    /// Optional blockchain reference for gateway context verification.
+    #[cfg(feature = "lib-blockchain")]
+    blockchain: Option<Arc<RwLock<Blockchain>>>,
 }
 
 impl QuicHandler {
@@ -246,12 +253,21 @@ impl QuicHandler {
             handshake_rate_limits: Arc::new(RwLock::new(HashMap::new())),
             identity_manager,
             pouw_session_log: None,
+            #[cfg(feature = "lib-blockchain")]
+            blockchain: None,
         }
     }
 
     /// Attach a POUW session log for proof-of-presence recording
     pub fn with_pouw_session_log(mut self, session_log: crate::pouw::SharedSessionLog) -> Self {
         self.pouw_session_log = Some(session_log);
+        self
+    }
+
+    /// Attach a blockchain reference for verifying gateway forwarding contexts.
+    #[cfg(feature = "lib-blockchain")]
+    pub fn with_blockchain(mut self, blockchain: Arc<RwLock<Blockchain>>) -> Self {
+        self.blockchain = Some(blockchain);
         self
     }
 
@@ -721,6 +737,16 @@ impl QuicHandler {
             .custom
             .insert("peer_addr_source".to_string(), "quic".to_string());
 
+        #[cfg(feature = "lib-blockchain")]
+        if let Some(gw_error_response) = self.verify_gateway_context(&request).await {
+            let wire_response = ZhtpResponseWire::success(wire_request.request_id, gw_error_response);
+            write_response(&mut send, &wire_response)
+                .await
+                .context("Failed to write ZHTP wire response")?;
+            send.finish().context("Failed to finish QUIC stream")?;
+            return Ok(());
+        }
+
         let router = self.zhtp_router.read().await;
         let response = router.route_request(request).await.unwrap_or_else(|e| {
             warn!("Handler error: {}", e);
@@ -804,50 +830,62 @@ impl QuicHandler {
     ) {
         let peer_did = &peer_identity.did;
 
-        // Check if identity already exists
         let identity_id = match lib_identity::did::parse_did_to_identity_id(peer_did) {
             Ok(id) => id,
             Err(e) => {
-                warn!(peer_did = %peer_did, error = %e, "Invalid DID format, cannot check identity");
+                warn!(peer_did = %peer_did, error = %e, "Invalid DID format");
                 return;
             }
         };
 
+        // Already in identity manager — nothing to do
         {
             let identity_mgr = self.identity_manager.read().await;
             if identity_mgr.get_identity(&identity_id).is_some() {
-                debug!(
-                    peer_did = %peer_did,
-                    "Peer identity already registered, updating last_seen"
-                );
-                // TODO: Update last_seen timestamp
                 return;
             }
         }
 
-        // Create observed identity from handshake
-        // Note: peer_identity.node_id is already a lib_identity::NodeId
+        // Load created_at from the blockchain identity_registry (on-chain, survives restarts).
+        // Falls back to handshake time only if identity is not registered on-chain.
+        let chain_created_at = match crate::runtime::blockchain_provider::get_global_blockchain().await {
+            Ok(blockchain_arc) => {
+                let blockchain = blockchain_arc.read().await;
+                blockchain
+                    .identity_registry
+                    .get(peer_did)
+                    .map(|id| id.created_at)
+            }
+            Err(_) => None,
+        };
+
         match lib_identity::ZhtpIdentity::from_observed_handshake(
             peer_identity.did.clone(),
             peer_identity.public_key.clone(),
             peer_identity.device_id.clone(),
             peer_identity.node_id.clone(),
         ) {
-            Ok(observed_identity) => {
+            Ok(mut identity) => {
+                // Use on-chain created_at if available — prevents age reset on node restart
+                if let Some(on_chain_ts) = chain_created_at {
+                    identity.created_at = on_chain_ts;
+                }
+
                 let mut identity_mgr = self.identity_manager.write().await;
-                identity_mgr.add_identity(observed_identity.clone());
+                identity_mgr.add_identity(identity);
                 drop(identity_mgr);
 
-                info!(
+                debug!(
                     peer_did = %peer_did,
-                    "📝 Auto-registered authenticated peer identity (observed, unprivileged)"
+                    on_chain = chain_created_at.is_some(),
+                    "Peer identity loaded into identity manager"
                 );
             }
             Err(e) => {
                 warn!(
                     peer_did = %peer_did,
                     error = %e,
-                    "Failed to auto-register peer identity"
+                    "Failed to create peer identity"
                 );
             }
         }
@@ -1410,6 +1448,124 @@ impl QuicHandler {
             || buffer.starts_with(b"CONNECT ")
             || buffer.starts_with(b"TRACE ")
     }
+
+    #[cfg(feature = "lib-blockchain")]
+    async fn verify_gateway_context(&self, request: &lib_protocols::types::ZhtpRequest) -> Option<lib_protocols::types::ZhtpResponse> {
+        use lib_protocols::forward_context::parse_context;
+        use lib_protocols::types::{ZhtpResponse, ZhtpStatus};
+
+        let (ctx, sig_bytes) = match parse_context(request) {
+            Ok(Some(v)) => v,
+            Ok(None) => return None, // direct client, accept
+            Err(e) => {
+                warn!(error = %e, "Malformed gateway forwarding headers");
+                return Some(ZhtpResponse::error(ZhtpStatus::BadRequest, "Malformed gateway context".to_string()));
+            }
+        };
+
+        let blockchain = match self.blockchain.as_ref() {
+            Some(b) => b,
+            None => {
+                warn!("Gateway context present but no blockchain available for verification");
+                return Some(ZhtpResponse::error(ZhtpStatus::InternalServerError, "Gateway verification unavailable".to_string()));
+            }
+        };
+
+        let blockchain_guard = blockchain.read().await;
+
+        // First check gateway_registry — gateway must be registered and active.
+        if let Some(gateway_info) = blockchain_guard.get_gateway(&ctx.gateway_did) {
+            if gateway_info.status != "active" {
+                warn!(did = %ctx.gateway_did, status = %gateway_info.status, "Gateway is not active");
+                return Some(ZhtpResponse::error(ZhtpStatus::Forbidden, "Gateway is not active".to_string()));
+            }
+
+            if !blockchain_guard.is_gateway_heartbeat_current(&ctx.gateway_did) {
+                warn!(did = %ctx.gateway_did, "Gateway heartbeat stale");
+                return Some(ZhtpResponse::error(ZhtpStatus::Forbidden, "Gateway heartbeat stale".to_string()));
+            }
+
+            match verify_gateway_identity(&ctx, &sig_bytes, gateway_info) {
+                Ok(true) => {
+                    drop(blockchain_guard);
+                    let mut bc = blockchain.write().await;
+                    bc.record_gateway_request(&ctx.gateway_did);
+                    return None;
+                }
+                Ok(false) => {
+                    warn!(did = %ctx.gateway_did, "Gateway context signature verification failed or stale");
+                    return Some(ZhtpResponse::error(ZhtpStatus::Forbidden, "Invalid gateway context".to_string()));
+                }
+                Err(e) => {
+                    warn!(error = %e, did = %ctx.gateway_did, "Gateway context verification error");
+                    return Some(ZhtpResponse::error(ZhtpStatus::Forbidden, "Gateway context verification failed".to_string()));
+                }
+            }
+        }
+
+        // Fallback: check identity_registry (bootstrap / testnet compatibility).
+        // Gateways that are not yet formally registered in gateway_registry can
+        // still forward traffic if their DID exists in identity_registry.
+        // This allows operators to deploy a gateway and register on-chain later.
+        if let Some(identity_data) = blockchain_guard.get_identity(&ctx.gateway_did) {
+            warn!(did = %ctx.gateway_did, "Gateway not in gateway_registry — falling back to identity_registry (register on-chain for production)");
+
+            match verify_gateway_identity_fallback(&ctx, &sig_bytes, identity_data) {
+                Ok(true) => {
+                    drop(blockchain_guard);
+                    let mut bc = blockchain.write().await;
+                    bc.record_gateway_request(&ctx.gateway_did);
+                    return None;
+                }
+                Ok(false) => {
+                    warn!(did = %ctx.gateway_did, "Fallback gateway context signature verification failed");
+                    return Some(ZhtpResponse::error(ZhtpStatus::Forbidden, "Invalid gateway context".to_string()));
+                }
+                Err(e) => {
+                    warn!(error = %e, did = %ctx.gateway_did, "Fallback gateway context verification error");
+                    return Some(ZhtpResponse::error(ZhtpStatus::Forbidden, "Gateway context verification failed".to_string()));
+                }
+            }
+        }
+
+        warn!(did = %ctx.gateway_did, "Unknown gateway DID — not in gateway_registry or identity_registry; allowing in testnet mode");
+        None
+    }
+}
+
+#[cfg(feature = "lib-blockchain")]
+fn verify_gateway_identity(
+    ctx: &lib_protocols::forward_context::ForwardedClientContext,
+    sig_bytes: &[u8],
+    gateway_info: &lib_blockchain::GatewayInfo,
+) -> Result<bool, anyhow::Error> {
+    use lib_protocols::forward_context::verify_context;
+
+    let gateway_pubkey = lib_crypto::PublicKey::new(gateway_info.gateway_key);
+
+    verify_context(ctx, sig_bytes, &gateway_pubkey)
+}
+
+#[cfg(feature = "lib-blockchain")]
+fn verify_gateway_identity_fallback(
+    ctx: &lib_protocols::forward_context::ForwardedClientContext,
+    sig_bytes: &[u8],
+    identity_data: &lib_blockchain::transaction::core::IdentityTransactionData,
+) -> Result<bool, anyhow::Error> {
+    use lib_protocols::forward_context::verify_context;
+
+    if identity_data.public_key.len() != 2592 {
+        return Err(anyhow::anyhow!(
+            "Registered identity does not have a full Dilithium public key (len={})",
+            identity_data.public_key.len()
+        ));
+    }
+
+    let mut dilithium_pk = [0u8; 2592];
+    dilithium_pk.copy_from_slice(&identity_data.public_key);
+    let gateway_pubkey = lib_crypto::PublicKey::new(dilithium_pk);
+
+    verify_context(ctx, sig_bytes, &gateway_pubkey)
 }
 
 impl Clone for QuicHandler {
@@ -1421,6 +1577,8 @@ impl Clone for QuicHandler {
             handshake_rate_limits: self.handshake_rate_limits.clone(),
             identity_manager: self.identity_manager.clone(),
             pouw_session_log: self.pouw_session_log.clone(),
+            #[cfg(feature = "lib-blockchain")]
+            blockchain: self.blockchain.clone(),
         }
     }
 }
@@ -1539,4 +1697,100 @@ mod tests {
     //     let n = buffered.read(&mut buf).await.unwrap().unwrap();
     //     assert_eq!(&buf[..n], b"world");
     // }
+
+    #[cfg(feature = "lib-blockchain")]
+    mod gateway_identity_tests {
+        use super::super::verify_gateway_identity;
+        use lib_blockchain::transaction::core::IdentityTransactionData;
+        use lib_blockchain::types::Hash;
+        use lib_identity::ZhtpIdentity;
+        use lib_protocols::forward_context::{ForwardedClientContext, sign_context};
+
+        fn test_gateway_identity() -> ZhtpIdentity {
+            ZhtpIdentity::new_unified(
+                lib_identity::IdentityType::Device,
+                None,
+                None,
+                "test-device",
+                Some([0u8; 64]),
+            )
+            .expect("test identity")
+        }
+
+        fn identity_data_from_identity(identity: &ZhtpIdentity) -> IdentityTransactionData {
+            IdentityTransactionData {
+                did: identity.did.clone(),
+                display_name: "Test Gateway".to_string(),
+                public_key: identity.public_key.as_bytes().to_vec(),
+                ownership_proof: vec![],
+                identity_type: "Device".to_string(),
+                did_document_hash: Hash::new([0u8; 32]),
+                created_at: 0,
+                registration_fee: 0,
+                dao_fee: 0,
+                controlled_nodes: vec![],
+                owned_wallets: vec![],
+            }
+        }
+
+        #[test]
+        fn verify_gateway_identity_accepts_valid_signature() {
+            let identity = test_gateway_identity();
+            let ctx = ForwardedClientContext::new(
+                identity.did.clone(),
+                Some("client-123".to_string()),
+                Some("10.0.0.1".to_string()),
+                60_000,
+            );
+            let sig = sign_context(&identity, &ctx).expect("sign");
+            let id_data = identity_data_from_identity(&identity);
+            assert!(verify_gateway_identity(&ctx, &sig, &id_data).expect("verify"));
+        }
+
+        #[test]
+        fn verify_gateway_identity_rejects_wrong_key_length() {
+            let identity = test_gateway_identity();
+            let ctx = ForwardedClientContext::new(
+                identity.did.clone(),
+                None,
+                None,
+                60_000,
+            );
+            let sig = sign_context(&identity, &ctx).expect("sign");
+            let mut id_data = identity_data_from_identity(&identity);
+            id_data.public_key = vec![1u8; 100]; // wrong length
+            let result = verify_gateway_identity(&ctx, &sig, &id_data);
+            assert!(result.is_err(), "expected error for invalid key length");
+        }
+
+        #[test]
+        fn verify_gateway_identity_rejects_stale_context() {
+            let identity = test_gateway_identity();
+            let mut ctx = ForwardedClientContext::new(
+                identity.did.clone(),
+                None,
+                None,
+                0,
+            );
+            ctx.received_at_ms = 0; // force stale
+            let sig = sign_context(&identity, &ctx).expect("sign");
+            let id_data = identity_data_from_identity(&identity);
+            assert!(!verify_gateway_identity(&ctx, &sig, &id_data).expect("verify"));
+        }
+
+        #[test]
+        fn verify_gateway_identity_rejects_bad_signature() {
+            let identity = test_gateway_identity();
+            let ctx = ForwardedClientContext::new(
+                identity.did.clone(),
+                None,
+                None,
+                60_000,
+            );
+            let id_data = identity_data_from_identity(&identity);
+            let mut sig = sign_context(&identity, &ctx).expect("sign");
+            sig[0] ^= 0xFF; // corrupt signature
+            assert!(!verify_gateway_identity(&ctx, &sig, &id_data).expect("verify"));
+        }
+    }
 }

@@ -84,6 +84,8 @@ pub enum NodeRole {
     BootstrapNode,
     /// Archival node - stores all historical data
     ArchivalNode,
+    /// Gateway node - public ingress proxy, no blockchain state
+    Gateway,
 }
 
 impl Default for NodeRole {
@@ -309,6 +311,7 @@ pub trait NodeRuntime: Send + Sync {
             NodeRole::LightNode | NodeRole::MobileNode => 4,
             NodeRole::BootstrapNode => 32,
             NodeRole::ArchivalNode => 8,
+            NodeRole::Gateway => 0,
         }
     }
 
@@ -524,6 +527,10 @@ impl NodeRuntime for DefaultNodeRuntime {
                 // Archival nodes want data from everywhere (but still require valid addresses)
                 true
             }
+            NodeRole::Gateway => {
+                // Gateways do not sync blockchain state
+                false
+            }
         }
     }
 
@@ -532,7 +539,7 @@ impl NodeRuntime for DefaultNodeRuntime {
         let max_attempts = match self.get_role() {
             NodeRole::BootstrapNode | NodeRole::FullValidator => 10,
             NodeRole::Observer | NodeRole::ArchivalNode => 8,
-            NodeRole::LightNode | NodeRole::MobileNode => 3,
+            NodeRole::LightNode | NodeRole::MobileNode | NodeRole::Gateway => 3,
         };
 
         attempt < max_attempts

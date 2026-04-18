@@ -579,6 +579,42 @@ pub enum ValidatorOperation {
     Unregister,
 }
 
+/// Gateway registration transaction data.
+///
+/// Gateways are remote QUIC ingress nodes that forward native ZHTP traffic
+/// to validators.  They must stake SOV, maintain liveness, and sign all
+/// forwarded client context with their Dilithium5 key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayTransactionData {
+    /// Identity ID of the gateway (must be pre-registered)
+    pub identity_id: String,
+    /// Staked amount in micro-SOV
+    pub stake: u64,
+    /// Dilithium5 public key used to sign forwarded client context.
+    /// Fixed size [u8; 2592] on-chain; serialized as Vec<u8> in tx.
+    pub gateway_key: Vec<u8>,
+    /// Public QUIC endpoint(s) for clients to connect to.
+    /// Comma-separated host:port list.
+    pub endpoints: String,
+    /// Commission rate percentage (0-100) taken from routed DAO fees.
+    pub commission_rate: u8,
+    /// Gateway operation type
+    pub operation: GatewayOperation,
+    /// Timestamp of registration/update
+    pub timestamp: u64,
+}
+
+/// Gateway operation types
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum GatewayOperation {
+    /// Register as a new gateway
+    Register,
+    /// Update gateway information
+    Update,
+    /// Unregister and exit
+    Unregister,
+}
+
 impl Transaction {
     /// Create a new standard transfer transaction
     pub fn new(
@@ -884,6 +920,70 @@ impl Transaction {
         }
     }
 
+    /// Create a new gateway registration transaction
+    pub fn new_gateway_registration(
+        gateway_data: GatewayTransactionData,
+        outputs: Vec<TransactionOutput>, // For stake locking
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id: 0x03, // Default to development network
+            transaction_type: TransactionType::GatewayRegistration,
+            inputs: Vec::new(), // Gateway registration via staking
+            outputs,
+            fee: 0, // Fee paid via stake
+            signature,
+            memo,
+            payload: TransactionPayload::Gateway(gateway_data),
+        }
+    }
+
+    /// Create a new gateway update transaction
+    pub fn new_gateway_update(
+        gateway_data: GatewayTransactionData,
+        inputs: Vec<TransactionInput>, // Authorization
+        outputs: Vec<TransactionOutput>,
+        fee: u64,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id: 0x03, // Default to development network
+            transaction_type: TransactionType::GatewayUpdate,
+            inputs,
+            outputs,
+            fee,
+            signature,
+            memo,
+            payload: TransactionPayload::Gateway(gateway_data),
+        }
+    }
+
+    /// Create a new gateway unregister transaction
+    pub fn new_gateway_unregister(
+        gateway_data: GatewayTransactionData,
+        inputs: Vec<TransactionInput>,   // Authorization
+        outputs: Vec<TransactionOutput>, // Stake return
+        fee: u64,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id: 0x03, // Default to development network
+            transaction_type: TransactionType::GatewayUnregister,
+            inputs,
+            outputs,
+            fee,
+            signature,
+            memo,
+            payload: TransactionPayload::Gateway(gateway_data),
+        }
+    }
+
     /// Create a new DAO proposal transaction
     pub fn new_dao_proposal(
         proposal_data: DaoProposalData,
@@ -1135,6 +1235,12 @@ impl Transaction {
             _ => None,
         }
     }
+    pub fn gateway_data(&self) -> Option<&GatewayTransactionData> {
+        match &self.payload {
+            TransactionPayload::Gateway(d) => Some(d),
+            _ => None,
+        }
+    }
     pub fn dao_proposal_data(&self) -> Option<&DaoProposalData> {
         match &self.payload {
             TransactionPayload::DaoProposal(d) => Some(d),
@@ -1278,6 +1384,34 @@ impl Transaction {
     pub fn dao_unstake_data(&self) -> Option<&DaoUnstakeData> {
         match &self.payload {
             TransactionPayload::DaoUnstake(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    pub fn nft_create_collection_data(&self) -> Option<&NftCreateCollectionData> {
+        match &self.payload {
+            TransactionPayload::NftCreateCollection(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    pub fn nft_mint_data(&self) -> Option<&NftMintData> {
+        match &self.payload {
+            TransactionPayload::NftMint(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    pub fn nft_transfer_data(&self) -> Option<&NftTransferData> {
+        match &self.payload {
+            TransactionPayload::NftTransfer(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    pub fn nft_burn_data(&self) -> Option<&NftBurnData> {
+        match &self.payload {
+            TransactionPayload::NftBurn(d) => Some(d),
             _ => None,
         }
     }
@@ -2225,6 +2359,46 @@ pub struct DaoUnstakeData {
 }
 
 // ============================================================================
+// NFT payload structs
+// ============================================================================
+
+/// Create a new NFT collection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NftCreateCollectionData {
+    pub name: String,
+    pub symbol: String,
+    pub max_supply: Option<u64>,
+}
+
+/// Mint a new NFT in a collection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NftMintData {
+    pub collection_id: [u8; 32],
+    pub recipient: [u8; 32],
+    pub name: String,
+    pub description: String,
+    pub image_cid: String,
+    pub attributes: Vec<(String, String)>,
+}
+
+/// Transfer an NFT to a new owner.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NftTransferData {
+    pub collection_id: [u8; 32],
+    pub token_id: u64,
+    pub from: [u8; 32],
+    pub to: [u8; 32],
+}
+
+/// Burn (destroy) an NFT.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NftBurnData {
+    pub collection_id: [u8; 32],
+    pub token_id: u64,
+    pub owner: [u8; 32],
+}
+
+// ============================================================================
 // TransactionPayload enum
 // ============================================================================
 
@@ -2241,6 +2415,7 @@ pub enum TransactionPayload {
     Identity(IdentityTransactionData),
     Wallet(WalletTransactionData),
     Validator(ValidatorTransactionData),
+    Gateway(GatewayTransactionData),
     DaoProposal(DaoProposalData),
     DaoVote(DaoVoteData),
     DaoExecution(DaoExecutionData),
@@ -2267,4 +2442,12 @@ pub enum TransactionPayload {
     DaoStake(DaoStakeData),
     /// SOV unstake from a sector DAO wallet (appended after DaoStake)
     DaoUnstake(DaoUnstakeData),
+    /// Create a new NFT collection
+    NftCreateCollection(NftCreateCollectionData),
+    /// Mint a new NFT
+    NftMint(NftMintData),
+    /// Transfer an NFT
+    NftTransfer(NftTransferData),
+    /// Burn an NFT
+    NftBurn(NftBurnData),
 }

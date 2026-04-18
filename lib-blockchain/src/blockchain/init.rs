@@ -26,6 +26,8 @@ impl Blockchain {
             dao_registry_index: HashMap::new(),
             validator_registry: HashMap::new(),
             validator_blocks: HashMap::new(),
+            gateway_registry: HashMap::new(),
+            gateway_blocks: HashMap::new(),
             dao_treasury_wallet_id: None,
             welfare_services: HashMap::new(),
             welfare_service_blocks: HashMap::new(),
@@ -97,6 +99,7 @@ impl Blockchain {
                 crate::contracts::economics::fee_router::DAO_HEALTHCARE_KEY_ID,
             ),
             domain_registry: HashMap::new(),
+            nft_collections: HashMap::new(),
         }
     }
 
@@ -469,6 +472,9 @@ impl Blockchain {
                     // Replay CBE pool initialization from on-chain InitCbeToken transactions.
                     // Replay domain registration/update transactions.
                     blockchain.process_domain_transactions(&block);
+
+                    // Replay gateway registration/update transactions.
+                    blockchain.process_gateway_transactions(&block);
 
                     // Replay employment contract creation so employment_registry is populated.
                     if let Err(e) = blockchain.process_employment_contract_transactions(&block) {
