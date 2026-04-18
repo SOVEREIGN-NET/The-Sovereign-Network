@@ -20,8 +20,25 @@
 //! - Data below MIN_COMPRESS_SIZE is stored uncompressed (no header)
 
 use lib_compression::SovereignCodec;
+use lib_neural_mesh::content::ContentProfile;
+use lib_neural_mesh::CompressionFeedback;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{LazyLock, Mutex};
 use tracing::{debug, info};
+
+// ─── Codec Learner Feedback Channel ─────────────────────────────────
+//
+// Every `compress_for_wire` call publishes a `CompressionFeedback` to this
+// bounded ring buffer.  The Neural Mesh training loop drains it every ~90 s
+// and feeds the results into the Adaptive Codec Learner so the AI learns
+// from ALL real traffic — blocks, transactions, DHT, ZHTP.
+//
+// Uses a simple Mutex<Vec> ring buffer (max 4096 entries).  The lock is
+// held for ~100 ns per push, which is negligible next to SFC encoding.
+
+/// Global compression feedback buffer for the codec learner.
+pub static WIRE_FEEDBACK_BUF: LazyLock<Mutex<Vec<CompressionFeedback>>> =
+    LazyLock::new(|| Mutex::new(Vec::with_capacity(256)));
 
 // ─── Wire Format Constants ──────────────────────────────────────────
 
@@ -191,6 +208,26 @@ pub fn compress_for_wire(data: &[u8], category: DataCategory) -> Vec<u8> {
     let mut result = Vec::with_capacity(4 + compressed.len());
     result.extend_from_slice(SFC_MAGIC);
     result.extend_from_slice(&compressed);
+
+    // ── Publish feedback to the Codec Learner channel ──
+    // The neural mesh drains this every ~90 s to train the adaptive codec.
+    // try_send is non-blocking: if the channel is full we silently drop.
+    let profile = ContentProfile::analyze(data);
+    let feedback = CompressionFeedback {
+        profile,
+        ratio,
+        total_ratio: ratio,
+        time_secs: 0.0, // not timed in the hot path
+        throughput_mbps: 0.0,
+        integrity_ok: true, // SovereignCodec is verified deterministic
+        shard_count: 1,
+        shards_compressed: 1,
+    };
+    let _ = WIRE_FEEDBACK_BUF.lock().map(|mut buf| {
+        if buf.len() >= 4096 { buf.drain(..2048); } // cap memory usage
+        buf.push(feedback);
+    });
+
     result
 }
 

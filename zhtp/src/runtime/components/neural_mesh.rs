@@ -939,6 +939,62 @@ impl Component for NeuralMeshComponent {
                     }
                 }
 
+                // ── Gather REAL network metrics from live peer connections ──
+                // Query the mesh router's PeerRegistry for actual latency,
+                // bandwidth, and peer count — then feed to the RL router as a
+                // NetworkUpdate so it trains on real observed conditions.
+                {
+                    if let Ok(mesh_router) =
+                        crate::runtime::mesh_router_provider::get_global_mesh_router().await
+                    {
+                        let registry = mesh_router.connections.read().await;
+                        let peer_count = registry.count();
+                        if peer_count > 0 {
+                            let mut latencies = std::collections::HashMap::new();
+                            let mut bandwidth = std::collections::HashMap::new();
+                            let mut total_stability = 0.0f32;
+                            for peer in registry.all_peers() {
+                                let pid = peer.peer_id.did().to_string();
+                                let cm = &peer.connection_metrics;
+                                latencies.insert(pid.clone(), cm.latency_ms as f32);
+                                bandwidth.insert(pid.clone(), cm.bandwidth_capacity as f32 / 1000.0);
+                                total_stability += cm.stability_score as f32;
+                            }
+                            // Estimate congestion: ratio of active peers to a soft cap
+                            let congestion = (peer_count as f32 / 50.0).clamp(0.01, 0.95);
+                            let state = lib_neural_mesh::NetworkState {
+                                latencies,
+                                bandwidth,
+                                packet_loss: std::collections::HashMap::new(),
+                                energy_scores: std::collections::HashMap::new(),
+                                congestion,
+                            };
+                            let mut router = router_clone.write().await;
+                            if let Ok(action) = router.select_action(&state) {
+                                // Multi-factor reward from real metrics
+                                let avg_lat = state.latencies.values().sum::<f32>()
+                                    / state.latencies.len().max(1) as f32;
+                                let lat_r = 1.0 - (avg_lat / 250.0).clamp(0.0, 2.0);
+                                let cong_r = 1.0 - 2.0 * state.congestion;
+                                let stab_r = (total_stability / peer_count as f32).clamp(0.0, 1.0);
+                                let reward = 0.4 * lat_r + 0.3 * cong_r + 0.3 * stab_r;
+                                let next_state = lib_neural_mesh::NetworkState {
+                                    congestion: (state.congestion - 0.02).max(0.01),
+                                    ..state
+                                };
+                                let _ = router.provide_reward(reward, &next_state, false);
+                                let mut stats = stats_clone.write().await;
+                                stats.routing_decisions += 1;
+                                stats.total_reward += reward as f64;
+                                debug!(
+                                    "🧠📊 RL from live peers: {} peers, lat={:.0}ms, congestion={:.2}, reward={:.3}",
+                                    peer_count, avg_lat, congestion, reward
+                                );
+                            }
+                        }
+                    }
+                }
+
                 // Update routing policy if experiences accumulated
                 {
                     let mut router = router_clone.write().await;
@@ -983,6 +1039,26 @@ impl Component for NeuralMeshComponent {
                 // When enough experiences are buffered, run a gradient update
                 // on the actor-critic network that predicts optimal SFC params.
                 if cycle_count % 3 == 0 {
+                    // ── Drain real compression feedback from wire traffic ──
+                    // compress_for_wire() publishes feedback to a global buffer;
+                    // we drain it here and feed it to the codec learner so the AI
+                    // learns from EVERY real block/tx/DHT/ZHTP compression.
+                    {
+                        let mut learner = codec_learner_clone.write().await;
+                        let drained: Vec<lib_neural_mesh::CompressionFeedback> =
+                            crate::compression::WIRE_FEEDBACK_BUF
+                                .lock()
+                                .map(|mut buf| buf.drain(..).collect())
+                                .unwrap_or_default();
+                        let fed = drained.len();
+                        for feedback in &drained {
+                            learner.observe_result(feedback);
+                        }
+                        if fed > 0 {
+                            debug!("🧠📦 Fed {} real wire-compression results to codec learner", fed);
+                        }
+                    }
+
                     let mut learner = codec_learner_clone.write().await;
                     if let Some(loss) = learner.train() {
                         let mut stats = stats_clone.write().await;
