@@ -33,6 +33,8 @@ const MIN_BWT_SIZE: usize = 64;
 /// in ~1-2s on modern hardware (O(n log n) with ~30 byte comparisons).
 const MAX_BWT_SIZE: usize = 1048576;
 
+
+
 /// Magic bytes for stored (passthrough) data
 const SFC_MAGIC_STORED: &[u8; 4] = b"SFC0";
 
@@ -56,6 +58,10 @@ const SFC_MAGIC_ADAPTIVE: &[u8; 4] = b"SFC6";
 
 /// Magic bytes for BWT + MTF + RLE + Adaptive Order-1 Range coder (best of both)
 const SFC_MAGIC_ADAPTIVE_RLE: &[u8; 4] = b"SFC7";
+
+/// Magic bytes for blocked sub-encoding (splits large data into MAX_BWT_SIZE blocks)
+/// Each block goes through the full SFC7 pipeline instead of falling back to Huffman.
+const SFC_MAGIC_BLOCKED: &[u8; 4] = b"SFC8";
 
 /// A Huffman code for a single byte value
 #[derive(Debug, Clone, Copy)]
@@ -97,10 +103,11 @@ impl SovereignCodec {
             return stored;
         }
         if data.len() > MAX_BWT_SIZE {
-            // Huffman fallback for large data — no BWT size restriction
-            let huffman = Self::encode_huffman(data);
-            if huffman.len() < stored.len() {
-                return huffman;
+            // Sub-block encoding: split into MAX_BWT_SIZE chunks, each gets full SFC7 pipeline.
+            // This is much better than Huffman fallback for structured data (images, etc.).
+            let blocked = Self::encode_blocked(data);
+            if blocked.len() < stored.len() {
+                return blocked;
             }
             return stored;
         }
@@ -150,6 +157,9 @@ impl SovereignCodec {
         if magic == SFC_MAGIC_ADAPTIVE_RLE {
             return Self::decode_adaptive_o1_rle(data);
         }
+        if magic == SFC_MAGIC_BLOCKED {
+            return Self::decode_blocked(data);
+        }
 
         Err(format!(
             "Invalid SFC magic: {:02X}{:02X}{:02X}{:02X}",
@@ -167,7 +177,8 @@ impl SovereignCodec {
                 || data[0..4] == *SFC_MAGIC_LZ77
                 || data[0..4] == *SFC_MAGIC_CTX1
                 || data[0..4] == *SFC_MAGIC_ADAPTIVE
-                || data[0..4] == *SFC_MAGIC_ADAPTIVE_RLE)
+                || data[0..4] == *SFC_MAGIC_ADAPTIVE_RLE
+                || data[0..4] == *SFC_MAGIC_BLOCKED)
     }
 
     /// Create SFC0 (stored/passthrough) format
@@ -176,6 +187,117 @@ impl SovereignCodec {
         out.extend_from_slice(SFC_MAGIC_STORED);
         out.extend_from_slice(data);
         out
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  SFC8: Blocked Sub-Encoding (for data > MAX_BWT_SIZE)
+    // ══════════════════════════════════════════════════════════
+
+    /// Encode large data by splitting into MAX_BWT_SIZE sub-blocks.
+    /// Each block gets the full SFC7 pipeline (BWT→MTF→RLE→Adaptive O1 Range).
+    ///
+    /// Format: [SFC8][orig_len:u32][num_blocks:u32][block0_len:u32][block0_data]...[blockN_len:u32][blockN_data]
+    fn encode_blocked(data: &[u8]) -> Vec<u8> {
+        let num_blocks = (data.len() + MAX_BWT_SIZE - 1) / MAX_BWT_SIZE;
+
+        // Encode each block through the full SFC7 pipeline in parallel
+        let encoded_blocks: Vec<Vec<u8>> = (0..num_blocks)
+            .into_par_iter()
+            .map(|i| {
+                let start = i * MAX_BWT_SIZE;
+                let end = std::cmp::min(start + MAX_BWT_SIZE, data.len());
+                let block = &data[start..end];
+
+                if block.len() < MIN_BWT_SIZE {
+                    // Tiny trailing block — store raw
+                    Self::make_stored(block)
+                } else {
+                    // Full SFC7 pipeline
+                    let (bwt_output, bwt_index) = Self::bwt_forward(block);
+                    let mtf_output = Self::mtf_forward(&bwt_output);
+                    let rle_output = Self::rle_encode(&mtf_output);
+                    let sfc7 = Self::encode_adaptive_o1_rle(block.len(), bwt_index, &rle_output);
+
+                    let stored = Self::make_stored(block);
+                    if sfc7.len() < stored.len() {
+                        sfc7
+                    } else {
+                        stored
+                    }
+                }
+            })
+            .collect();
+
+        // Assemble: header + block lengths + block data
+        let total_encoded: usize = encoded_blocks.iter().map(|b| 4 + b.len()).sum();
+        let mut out = Vec::with_capacity(4 + 4 + 4 + total_encoded);
+        out.extend_from_slice(SFC_MAGIC_BLOCKED);
+        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(num_blocks as u32).to_le_bytes());
+
+        for block in &encoded_blocks {
+            out.extend_from_slice(&(block.len() as u32).to_le_bytes());
+            out.extend_from_slice(block);
+        }
+
+        out
+    }
+
+    /// Decode SFC8 blocked format back to original data
+    fn decode_blocked(data: &[u8]) -> Result<Vec<u8>, String> {
+        if data.len() < 12 {
+            return Err("SFC8 blocked: data too short for header".into());
+        }
+
+        let orig_len = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
+        let num_blocks = u32::from_le_bytes([data[8], data[9], data[10], data[11]]) as usize;
+
+        if num_blocks == 0 || num_blocks > 1024 {
+            return Err(format!("SFC8 blocked: invalid block count {}", num_blocks));
+        }
+
+        // Parse block boundaries first
+        let mut offsets = Vec::with_capacity(num_blocks);
+        let mut pos = 12;
+        for i in 0..num_blocks {
+            if pos + 4 > data.len() {
+                return Err(format!("SFC8 blocked: truncated at block {} header", i));
+            }
+            let block_len = u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+            pos += 4;
+            if pos + block_len > data.len() {
+                return Err(format!("SFC8 blocked: truncated at block {} data (need {} more bytes)", i, (pos + block_len) - data.len()));
+            }
+            offsets.push((pos, block_len));
+            pos += block_len;
+        }
+
+        // Decode blocks in parallel
+        let decoded_blocks: Vec<Result<Vec<u8>, String>> = offsets
+            .par_iter()
+            .map(|&(offset, len)| {
+                Self::decode(&data[offset..offset + len])
+            })
+            .collect();
+
+        // Assemble in order
+        let mut result = Vec::with_capacity(orig_len);
+        for (i, block_result) in decoded_blocks.into_iter().enumerate() {
+            match block_result {
+                Ok(block_data) => result.extend_from_slice(&block_data),
+                Err(e) => return Err(format!("SFC8 blocked: failed to decode block {}: {}", i, e)),
+            }
+        }
+
+        if result.len() != orig_len {
+            return Err(format!(
+                "SFC8 blocked: length mismatch: expected {} got {}",
+                orig_len,
+                result.len()
+            ));
+        }
+
+        Ok(result)
     }
 
     // ══════════════════════════════════════════════════════════
@@ -1144,10 +1266,11 @@ impl SovereignCodec {
     /// Returns (transformed_data, primary_index) where primary_index
     /// identifies the original string's position in the sorted rotations.
     ///
-    /// OPTIMIZATIONS:
-    ///   1. Doubled data buffer eliminates modular arithmetic in comparisons
-    ///   2. Rayon par_sort splits the O(n log n) sort across all CPU cores
-    ///   3. Early-out comparison resolves most rotations in <20 bytes
+    /// ADAPTIVE SORT: Probes data repetitiveness to choose optimal algorithm.
+    ///   - High-entropy data (JSON, text): memcmp sort — one pass, SIMD memcmp,
+    ///     comparisons terminate in ~10 bytes. ~2× faster than prefix-doubling.
+    ///   - Repetitive data (BMP, binary): prefix-doubling sort — O(n log²n),
+    ///     immune to pathological deep comparisons on repeated patterns.
     fn bwt_forward(data: &[u8]) -> (Vec<u8>, u32) {
         let n = data.len();
         if n == 0 {
@@ -1157,34 +1280,126 @@ impl SovereignCodec {
             return (data.to_vec(), 0);
         }
 
-        // Create doubled buffer: [data | data] so cyclic rotations become
-        // simple slices — no modular arithmetic in the hot comparison loop.
+        if Self::is_data_repetitive(data) {
+            Self::bwt_forward_prefix_doubling(data)
+        } else {
+            Self::bwt_forward_memcmp(data)
+        }
+    }
+
+    /// Quick probe: sample 16 pseudo-random position pairs and measure
+    /// how many bytes match before diverging (capped at 256).
+    /// If average match length >= 64 bytes, data is "repetitive" and
+    /// the memcmp sort would have pathological O(n) comparisons.
+    /// Cost: ~4 KB of reads — negligible.
+    fn is_data_repetitive(data: &[u8]) -> bool {
+        let n = data.len();
+        if n < 256 {
+            return false; // Too small for pathological behavior
+        }
+
+        let num_probes = 16;
+        let mut total_match = 0usize;
+        for i in 0..num_probes {
+            // Pseudo-random positions using prime multiplier for spread
+            let a = (i * 7919 + 104729) % n;
+            let b = (i * 48611 + 7307) % n;
+            let mut m = 0;
+            while m < 256 {
+                if data[(a + m) % n] != data[(b + m) % n] {
+                    break;
+                }
+                m += 1;
+            }
+            total_match += m;
+        }
+
+        let avg_match = total_match / num_probes;
+        avg_match >= 64
+    }
+
+    /// Fast BWT sort using parallel memcmp on a doubled buffer.
+    /// Best for high-entropy data where comparisons terminate quickly.
+    fn bwt_forward_memcmp(data: &[u8]) -> (Vec<u8>, u32) {
+        let n = data.len();
+
+        // Doubled buffer: [data | data] — cyclic rotations become simple slices
         let mut doubled = Vec::with_capacity(n * 2);
         doubled.extend_from_slice(data);
         doubled.extend_from_slice(data);
 
-        // Build sorted suffix array for cyclic rotations
         let mut indices: Vec<u32> = (0..n as u32).collect();
 
-        // Parallel sort across all CPU cores via Rayon.
-        // Each comparison is a straight memcmp on the doubled buffer —
-        // no branches for wrap-around, and the CPU prefetcher loves it.
+        // Single-pass parallel sort — SIMD memcmp, early termination
         indices.par_sort_unstable_by(|&a, &b| {
             let a = a as usize;
             let b = b as usize;
-            // Compare slices directly — Rust's slice cmp uses SIMD memcmp internally
             doubled[a..a + n].cmp(&doubled[b..b + n])
         });
 
-        // Extract last column (the BWT output)
         let output: Vec<u8> = indices
             .iter()
             .map(|&i| data[((i as usize) + n - 1) % n])
             .collect();
-
-        // Find where the original string ended up after sorting
         let bwt_index = indices.iter().position(|&i| i == 0).unwrap() as u32;
+        (output, bwt_index)
+    }
 
+    /// Prefix-doubling BWT sort — O(n log²n), immune to repetitive data.
+    /// Each comparison is O(1) using integer ranks instead of O(n) memcmp.
+    fn bwt_forward_prefix_doubling(data: &[u8]) -> (Vec<u8>, u32) {
+        let n = data.len();
+
+        let mut rank = vec![0u32; n];
+        let mut new_rank = vec![0u32; n];
+        let mut sa: Vec<u32> = (0..n as u32).collect();
+
+        // Initial ranks from byte values
+        for i in 0..n {
+            rank[i] = data[i] as u32;
+        }
+
+        let mut k = 1usize;
+        loop {
+            let rank_ref = &rank;
+            let nn = n;
+            let kk = k;
+            sa.par_sort_unstable_by(|&a, &b| {
+                let a = a as usize;
+                let b = b as usize;
+                let cmp1 = rank_ref[a].cmp(&rank_ref[b]);
+                if cmp1 != std::cmp::Ordering::Equal {
+                    return cmp1;
+                }
+                rank_ref[(a + kk) % nn].cmp(&rank_ref[(b + kk) % nn])
+            });
+
+            new_rank[sa[0] as usize] = 0;
+            for i in 1..n {
+                let prev = sa[i - 1] as usize;
+                let curr = sa[i] as usize;
+                let same = rank[curr] == rank[prev]
+                    && rank[(curr + k) % n] == rank[(prev + k) % n];
+                new_rank[curr] = new_rank[prev] + if same { 0 } else { 1 };
+            }
+
+            std::mem::swap(&mut rank, &mut new_rank);
+
+            if rank[sa[n - 1] as usize] as usize == n - 1 {
+                break;
+            }
+
+            k *= 2;
+            if k >= n {
+                break;
+            }
+        }
+
+        let output: Vec<u8> = sa
+            .iter()
+            .map(|&i| data[((i as usize) + n - 1) % n])
+            .collect();
+        let bwt_index = sa.iter().position(|&i| i == 0).unwrap() as u32;
         (output, bwt_index)
     }
 

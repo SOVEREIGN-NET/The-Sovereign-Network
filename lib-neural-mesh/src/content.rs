@@ -59,6 +59,10 @@ impl ContentType {
             if data.len() >= 8 && &data[4..8] == b"ftyp" { return ContentType::Compressed; }
             // RIFF (AVI, WebP, WAV)
             if magic4 == *b"RIFF" { return ContentType::Compressed; }
+            // BMP — uncompressed raster image (magic: "BM")
+            if magic4[..2] == [0x42, 0x4D] { return ContentType::Binary; }
+            // TIFF — uncompressed raster image (II or MM byte order)
+            if magic4[..2] == [0x49, 0x49] || magic4[..2] == [0x4D, 0x4D] { return ContentType::Binary; }
             // XZ
             if data.len() >= 6 && data[..6] == [0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00] {
                 return ContentType::Compressed;

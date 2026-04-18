@@ -3016,9 +3016,12 @@ name = "integration-tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "lib-compression",
  "lib-crypto",
  "lib-identity",
  "lib-network",
+ "lib-neural-mesh",
+ "rand 0.8.5",
  "serde",
  "serde_json",
  "tempfile",
@@ -9938,6 +9941,7 @@ dependencies = [
  "lib-identity",
  "lib-identity-core",
  "lib-network",
+ "lib-neural-mesh",
  "lib-proofs",
  "lib-protocols",
  "lib-storage",

@@ -464,6 +464,7 @@ pub enum ComponentId {
     Identity,
     Storage,
     Network,
+    NeuralMesh,
     Blockchain,
     Consensus,
     Economics,
@@ -482,6 +483,7 @@ impl std::fmt::Display for ComponentId {
             ComponentId::Blockchain => write!(f, "blockchain"),
             ComponentId::Consensus => write!(f, "consensus"),
             ComponentId::Economics => write!(f, "economics"),
+            ComponentId::NeuralMesh => write!(f, "neural_mesh"),
             ComponentId::Protocols => write!(f, "protocols"),
             ComponentId::Api => write!(f, "api"),
         }
@@ -633,6 +635,7 @@ impl RuntimeOrchestrator {
                 ComponentId::Identity,   // Identity management
                 ComponentId::Storage,    // Distributed storage
                 ComponentId::Network,    // Mesh networking
+                ComponentId::NeuralMesh, // ML/AI optimization (routing, prefetch, anomaly)
                 ComponentId::Blockchain, // Blockchain layer
                 ComponentId::Protocols, // High-level protocols - MUST start before Consensus for mesh router
                 ComponentId::Consensus, // Consensus mechanism - uses mesh router from Protocols
@@ -842,6 +845,13 @@ impl RuntimeOrchestrator {
         if !is_registered(ComponentId::Network).await {
             self.register_component(Arc::new(NetworkComponent::new()))
                 .await?;
+        }
+
+        if !is_registered(ComponentId::NeuralMesh).await {
+            self.register_component(Arc::new(
+                crate::runtime::components::NeuralMeshComponent::new(),
+            ))
+            .await?;
         }
 
         if !is_registered(ComponentId::Blockchain).await {
@@ -1754,6 +1764,13 @@ impl RuntimeOrchestrator {
         self.register_component(Arc::new(NetworkComponent::new()))
             .await?;
         self.start_component(ComponentId::Network).await?;
+
+        // Start Neural Mesh (ML/AI optimization layer)
+        self.register_component(Arc::new(
+            crate::runtime::components::NeuralMeshComponent::new(),
+        ))
+        .await?;
+        self.start_component(ComponentId::NeuralMesh).await?;
 
         // Give network time to initialize
         tokio::time::sleep(Duration::from_secs(2)).await;

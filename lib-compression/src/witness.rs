@@ -470,10 +470,23 @@ impl ZkWitness {
         Ok(())
     }
 
+    /// Serialize witness to compact binary (bincode)
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        bincode::serialize(self)
+            .map_err(|e| CompressionError::SerializationError(e.to_string()))
+    }
+
+    /// Deserialize witness from compact binary (bincode)
+    pub fn from_bytes(data: &[u8]) -> Result<Self> {
+        let witness: Self = bincode::deserialize(data)
+            .map_err(|e| CompressionError::SerializationError(e.to_string()))?;
+        witness.verify()?;
+        Ok(witness)
+    }
+
     /// Save witness to file
     pub async fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let data = serde_json::to_vec(self)
-            .map_err(|e| CompressionError::SerializationError(e.to_string()))?;
+        let data = self.to_bytes()?;
         
         fs::write(path.as_ref(), data)
             .await
@@ -490,19 +503,16 @@ impl ZkWitness {
             .await
             .map_err(|e| CompressionError::Io(e))?;
         
-        let witness: Self = serde_json::from_slice(&data)
-            .map_err(|e| CompressionError::SerializationError(e.to_string()))?;
-        
-        witness.verify()?;
+        let witness = Self::from_bytes(&data)?;
         
         info!("Loaded witness from {}", path.as_ref().display());
         
         Ok(witness)
     }
 
-    /// Get witness size in bytes (JSON serialized size)
+    /// Get witness size in bytes (bincode serialized size)
     pub fn size(&self) -> usize {
-        serde_json::to_vec(self).map(|v| v.len()).unwrap_or(0)
+        bincode::serialized_size(self).unwrap_or(0) as usize
     }
 
     /// Calculate compression ratio (original size / witness size)

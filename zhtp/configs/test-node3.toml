@@ -28,7 +28,7 @@ recovery_modes = ["mnemonic"]
 reputation_enabled = true
 
 [storage_config]
-dht_port = 9003
+dht_port = 19003
 storage_capacity_gb = 50
 replication_factor = 2
 erasure_coding = false
@@ -38,7 +38,7 @@ pricing_tier = "hot"
 mesh_port = 9003
 max_peers = 50
 protocols = ["quic", "bluetooth", "wifi_direct"]
-bootstrap_peers = ["127.0.0.1:9001"]  # Connect to Node 1
+bootstrap_peers = ["127.0.0.1:9001"]  # Node 1 mesh port
 long_range_relays = false
 
 [blockchain_config]
@@ -72,7 +72,7 @@ reward_pool_percentage = 20.0
 [protocols_config]
 lib_enabled = true
 zdns_enabled = true
-api_port = 8082
+api_port = 9103
 max_connections = 100
 request_timeout_ms = 10000
 

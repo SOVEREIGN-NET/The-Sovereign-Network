@@ -32,6 +32,7 @@ lib-blockchain = { path = "../lib-blockchain", features = ["contracts"], optiona
 lib-consensus = { path = "../lib-consensus" }
 lib-economy = { path = "../lib-economy" }
 lib-protocols = { path = "../lib-protocols" }
+lib-neural-mesh = { path = "../lib-neural-mesh" }
 # Note: lib-api and lib-contracts will be added when available
 
 # Core async runtime

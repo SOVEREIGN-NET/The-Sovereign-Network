@@ -244,6 +244,169 @@
             margin-bottom: 10px;
         }
         
+        .folder-browser {
+            margin-top: 20px;
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        
+        .folder-browser-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 600;
+        }
+        
+        .folder-browser-header .file-count {
+            font-size: 0.85em;
+            opacity: 0.9;
+        }
+        
+        .file-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .file-item {
+            display: flex;
+            align-items: center;
+            padding: 10px 20px;
+            border-bottom: 1px solid #f0f0f0;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        
+        .file-item:hover {
+            background: #f8f9ff;
+        }
+        
+        .file-item.selected {
+            background: #eef0ff;
+            border-left: 3px solid #667eea;
+        }
+        
+        .file-item .file-icon {
+            font-size: 1.3em;
+            margin-right: 12px;
+            min-width: 24px;
+            text-align: center;
+        }
+        
+        .file-item .file-info {
+            flex: 1;
+            min-width: 0;
+        }
+        
+        .file-item .file-name {
+            font-weight: 500;
+            color: #1e293b;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .file-item .file-path {
+            font-size: 0.8em;
+            color: #94a3b8;
+        }
+        
+        .file-item .file-size {
+            font-size: 0.85em;
+            color: #667eea;
+            font-weight: 500;
+            margin-left: 12px;
+            white-space: nowrap;
+        }
+        
+        .file-item .file-actions {
+            margin-left: 12px;
+        }
+        
+        .file-item .file-actions button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 5px 12px;
+            font-size: 0.8em;
+            cursor: pointer;
+            transition: opacity 0.15s;
+        }
+        
+        .file-item .file-actions button:hover {
+            opacity: 0.85;
+        }
+        
+        .preview-panel {
+            margin-top: 16px;
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        
+        .preview-header {
+            background: #f8f9ff;
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        
+        .preview-header .preview-title {
+            font-weight: 600;
+            color: #1e293b;
+        }
+        
+        .preview-header .preview-close {
+            cursor: pointer;
+            font-size: 1.2em;
+            color: #94a3b8;
+        }
+        
+        .preview-header .preview-close:hover {
+            color: #ef4444;
+        }
+        
+        .preview-body {
+            padding: 20px;
+            max-height: 500px;
+            overflow: auto;
+            background: #fafbfc;
+        }
+        
+        .preview-body pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+            line-height: 1.5;
+            color: #1e293b;
+        }
+        
+        .preview-body img {
+            max-width: 100%;
+            border-radius: 8px;
+        }
+        
+        .preview-body .binary-notice {
+            text-align: center;
+            color: #94a3b8;
+            padding: 40px;
+        }
+        
+        .download-all-bar {
+            margin-top: 16px;
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+        
         .network-potential {
             margin-top: 40px;
             padding: 30px;
@@ -798,6 +961,49 @@
             <button class="btn" onclick="resetForm()" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">Compress Another File</button>
         </div>
         
+        <div class="decompress-section" id="zkfolderSection">
+            <h2>📂 Open .zkfolder Archive</h2>
+            <p class="subtitle">Upload a .zkfolder file to browse, preview, and download individual files</p>
+            
+            <div class="drop-zone" id="zkfolderZone">
+                <div class="drop-icon">📂</div>
+                <div class="drop-text">Upload .zkfolder Archive</div>
+                <div class="drop-subtext">Drag & drop or click to browse</div>
+            </div>
+            <input type="file" id="zkfolderInput" accept=".zkfolder">
+            
+            <div class="results" id="zkfolderResults">
+                <div class="result-header">
+                    <h2>📂 Archive Contents</h2>
+                    <p class="filename" id="zkfolderName"></p>
+                </div>
+                
+                <div id="zkfolderBrowser">
+                    <div class="folder-browser">
+                        <div class="folder-browser-header">
+                            <span>📂 <span id="zkfolderBrowserTitle">Folder Contents</span></span>
+                            <span class="file-count" id="zkfolderFileCount">0 files</span>
+                        </div>
+                        <div class="file-list" id="zkfolderFileList"></div>
+                    </div>
+                    
+                    <div class="preview-panel" id="zkfolderPreviewPanel" style="display:none;">
+                        <div class="preview-header">
+                            <span class="preview-title" id="zkfolderPreviewTitle">Preview</span>
+                            <span class="preview-close" onclick="closeZkfolderPreview()">✕</span>
+                        </div>
+                        <div class="preview-body" id="zkfolderPreviewBody"></div>
+                    </div>
+                    
+                    <div class="download-all-bar">
+                        <button class="btn" onclick="downloadAllZkfolderIndividual()">💾 Download Each File</button>
+                    </div>
+                </div>
+                
+                <button class="btn" onclick="resetZkfolder()" style="background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%); margin-top: 12px;">🔄 Open Another Archive</button>
+            </div>
+        </div>
+
         <div class="decompress-section" id="decompressSection">
             <h2>🔓 Decompress & Verify</h2>
             <p class="subtitle">Upload a .zkw witness file to decompress and verify integrity</p>
@@ -841,8 +1047,36 @@
                 
                 <div class="verified" id="decompressVerified">File reconstructed successfully</div>
                 
-                <button class="btn" id="downloadOrigBtn" onclick="downloadReconstructed()">💾 Download Original File</button>
-                <button class="btn" onclick="resetDecompress()" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">Decompress Another File</button>
+                <!-- Single-file download (hidden for folders) -->
+                <div id="singleFileDownload">
+                    <button class="btn" id="downloadOrigBtn" onclick="downloadReconstructed()">💾 Download Original File</button>
+                </div>
+                
+                <!-- Folder file browser (hidden for single files) -->
+                <div id="folderBrowser" style="display:none;">
+                    <div class="folder-browser">
+                        <div class="folder-browser-header">
+                            <span>📂 <span id="folderBrowserTitle">Folder Contents</span></span>
+                            <span class="file-count" id="folderFileCount">0 files</span>
+                        </div>
+                        <div class="file-list" id="folderFileList"></div>
+                    </div>
+                    
+                    <div class="preview-panel" id="previewPanel" style="display:none;">
+                        <div class="preview-header">
+                            <span class="preview-title" id="previewTitle">Preview</span>
+                            <span class="preview-close" onclick="closePreview()">✕</span>
+                        </div>
+                        <div class="preview-body" id="previewBody"></div>
+                    </div>
+                    
+                    <div class="download-all-bar">
+                        <button class="btn" onclick="downloadAsZkfolder()">📦 Download All (.zkfolder)</button>
+                        <button class="btn" onclick="downloadAllIndividual()" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">💾 Download Each File</button>
+                    </div>
+                </div>
+                
+                <button class="btn" onclick="resetDecompress()" style="background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%); margin-top: 12px;">🔄 Decompress Another File</button>
             </div>
         </div>
     </div>
@@ -1340,17 +1574,19 @@
             }
         }
         
+        let currentFolderFiles = null;
+        
         function displayDecompressResults(data) {
             decompressProcessing.style.display = 'none';
             decompressResults.style.display = 'block';
             
             currentReconstructedData = data.reconstructed_bytes;
             currentOriginalFilename = data.original_filename || 'unknown';
+            currentFolderFiles = data.folder_files || null;
             
             document.getElementById('decompressFilename').textContent = data.witness_filename || 'unknown';
             document.getElementById('origFilename').textContent = data.original_filename || 'unknown';
             
-            // Safe handling of reconstructed_size with null checks
             const reconstructedSize = data.reconstructed_size || 0;
             document.getElementById('reconstructedSize').innerHTML = formatBytes(reconstructedSize) + ' <span class="stat-unit">(' + reconstructedSize.toLocaleString() + ' bytes)</span>';
             document.getElementById('shardCount').textContent = data.shard_count || 0;
@@ -1362,6 +1598,207 @@
                 document.getElementById('integrityStatus').innerHTML = '<span style="color: #ef4444;">✗ FAILED</span>';
                 document.getElementById('decompressVerified').textContent = '⚠ Warning: Integrity check failed!';
             }
+            
+            // Show folder browser or single-file download
+            if (data.is_folder && currentFolderFiles && currentFolderFiles.length > 0) {
+                document.getElementById('singleFileDownload').style.display = 'none';
+                document.getElementById('folderBrowser').style.display = 'block';
+                renderFolderBrowser(currentFolderFiles);
+            } else {
+                document.getElementById('singleFileDownload').style.display = 'block';
+                document.getElementById('folderBrowser').style.display = 'none';
+            }
+        }
+        
+        function renderFolderBrowser(files) {
+            const folderName = currentOriginalFilename.replace('.zkfolder', '');
+            document.getElementById('folderBrowserTitle').textContent = folderName;
+            document.getElementById('folderFileCount').textContent = files.length + ' file' + (files.length !== 1 ? 's' : '');
+            
+            const list = document.getElementById('folderFileList');
+            list.innerHTML = '';
+            
+            files.forEach((file, index) => {
+                const item = document.createElement('div');
+                item.className = 'file-item';
+                item.onclick = (e) => {
+                    if (e.target.tagName === 'BUTTON') return;
+                    previewFile(index);
+                };
+                
+                const icon = getFileIcon(file.path);
+                const name = file.path.split('/').pop() || file.path;
+                const dir = file.path.includes('/') ? file.path.substring(0, file.path.lastIndexOf('/')) : '';
+                
+                item.innerHTML = `
+                    <span class="file-icon">${icon}</span>
+                    <div class="file-info">
+                        <div class="file-name">${escapeHtml(name)}</div>
+                        ${dir ? '<div class="file-path">' + escapeHtml(dir) + '</div>' : ''}
+                    </div>
+                    <span class="file-size">${formatBytes(file.size)}</span>
+                    <div class="file-actions">
+                        <button onclick="downloadSingleFile(${index})">💾</button>
+                    </div>
+                `;
+                list.appendChild(item);
+            });
+        }
+        
+        function getFileIcon(path) {
+            const ext = path.split('.').pop().toLowerCase();
+            const icons = {
+                'json': '📋', 'js': '📜', 'ts': '📜', 'rs': '🦀', 'py': '🐍',
+                'html': '🌐', 'css': '🎨', 'md': '📝', 'txt': '📄', 'toml': '⚙️',
+                'yml': '⚙️', 'yaml': '⚙️', 'xml': '📰', 'csv': '📊',
+                'jpg': '🖼️', 'jpeg': '🖼️', 'png': '🖼️', 'gif': '🖼️', 'bmp': '🖼️', 'svg': '🖼️', 'webp': '🖼️',
+                'mp3': '🎵', 'wav': '🎵', 'mp4': '🎬', 'mov': '🎬',
+                'pdf': '📕', 'zip': '📦', 'tar': '📦', 'gz': '📦',
+            };
+            return icons[ext] || '📄';
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        function previewFile(index) {
+            if (!currentFolderFiles || !currentFolderFiles[index]) return;
+            const file = currentFolderFiles[index];
+            const name = file.path.split('/').pop() || file.path;
+            const ext = name.split('.').pop().toLowerCase();
+            
+            // Highlight selected item
+            document.querySelectorAll('.file-item').forEach((el, i) => {
+                el.classList.toggle('selected', i === index);
+            });
+            
+            document.getElementById('previewTitle').textContent = name + ' (' + formatBytes(file.size) + ')';
+            const body = document.getElementById('previewBody');
+            
+            const textExts = ['json', 'js', 'ts', 'rs', 'py', 'html', 'css', 'md', 'txt', 'toml', 'yml', 'yaml', 'xml', 'csv', 'log', 'sh', 'bat', 'ps1', 'cfg', 'ini', 'env', 'lock'];
+            const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp', 'ico'];
+            
+            if (textExts.includes(ext)) {
+                // Decode and show text
+                try {
+                    const bytes = Uint8Array.from(atob(file.data_base64), c => c.charCodeAt(0));
+                    const text = new TextDecoder('utf-8').decode(bytes);
+                    let displayText = text;
+                    
+                    // Pretty-print JSON
+                    if (ext === 'json') {
+                        try {
+                            displayText = JSON.stringify(JSON.parse(text), null, 2);
+                        } catch(e) { /* use raw text */ }
+                    }
+                    
+                    body.innerHTML = '<pre>' + escapeHtml(displayText) + '</pre>';
+                } catch(e) {
+                    body.innerHTML = '<div class="binary-notice">⚠️ Could not decode as text</div>';
+                }
+            } else if (imageExts.includes(ext)) {
+                const mimeMap = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', bmp: 'image/bmp', svg: 'image/svg+xml', webp: 'image/webp', ico: 'image/x-icon' };
+                const mime = mimeMap[ext] || 'image/png';
+                body.innerHTML = '<img src="data:' + mime + ';base64,' + file.data_base64 + '" alt="' + escapeHtml(name) + '">';
+            } else {
+                body.innerHTML = '<div class="binary-notice">📦 Binary file (' + formatBytes(file.size) + ')<br><br><button class="btn" onclick="downloadSingleFile(' + index + ')" style="display:inline-block;">💾 Download to view</button></div>';
+            }
+            
+            document.getElementById('previewPanel').style.display = 'block';
+            document.getElementById('previewPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+        
+        function closePreview() {
+            document.getElementById('previewPanel').style.display = 'none';
+            document.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected'));
+        }
+        
+        function downloadSingleFile(index) {
+            if (!currentFolderFiles || !currentFolderFiles[index]) return;
+            const file = currentFolderFiles[index];
+            const name = file.path.split('/').pop() || file.path;
+            const bytes = Uint8Array.from(atob(file.data_base64), c => c.charCodeAt(0));
+            const blob = new Blob([bytes], { type: 'application/octet-stream' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = name;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+        
+        function downloadAllIndividual() {
+            if (!currentFolderFiles) return;
+            currentFolderFiles.forEach((_, i) => {
+                setTimeout(() => downloadSingleFile(i), i * 200);
+            });
+        }
+        
+        function downloadAsZkfolder() {
+            // For decompressed folders, use the raw reconstructed bundle (exact .zkfolder format)
+            if (currentReconstructedData) {
+                const bytes = Uint8Array.from(atob(currentReconstructedData), c => c.charCodeAt(0));
+                const blob = new Blob([bytes], { type: 'application/octet-stream' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = currentOriginalFilename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                return;
+            }
+            
+            // Fallback: rebuild from folder_files
+            if (!currentFolderFiles) return;
+            
+            // Rebuild the .zkfolder binary format:
+            // [file_count:u32] [path_len:u16 path:bytes content_len:u64 content:bytes]...
+            const parts = [];
+            const fileCount = currentFolderFiles.length;
+            
+            // Write file count as u32 LE
+            const countBuf = new ArrayBuffer(4);
+            new DataView(countBuf).setUint32(0, fileCount, true);
+            parts.push(new Uint8Array(countBuf));
+            
+            currentFolderFiles.forEach(file => {
+                const pathBytes = new TextEncoder().encode(file.path);
+                const contentBytes = Uint8Array.from(atob(file.data_base64), c => c.charCodeAt(0));
+                
+                // path_len: u16 LE
+                const pathLenBuf = new ArrayBuffer(2);
+                new DataView(pathLenBuf).setUint16(0, pathBytes.length, true);
+                parts.push(new Uint8Array(pathLenBuf));
+                
+                // path bytes
+                parts.push(pathBytes);
+                
+                // content_len: u64 LE (use BigInt for safety)
+                const contentLenBuf = new ArrayBuffer(8);
+                new DataView(contentLenBuf).setBigUint64(0, BigInt(contentBytes.length), true);
+                parts.push(new Uint8Array(contentLenBuf));
+                
+                // content bytes
+                parts.push(contentBytes);
+            });
+            
+            const blob = new Blob(parts, { type: 'application/octet-stream' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            const folderName = currentOriginalFilename.replace('.zkfolder', '');
+            a.download = folderName + '.zkfolder';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
         }
         
         function downloadReconstructed() {
@@ -1370,7 +1807,6 @@
                 return;
             }
             
-            // Convert base64 to bytes
             const bytes = Uint8Array.from(atob(currentReconstructedData), c => c.charCodeAt(0));
             const blob = new Blob([bytes], { type: 'application/octet-stream' });
             const url = URL.createObjectURL(blob);
@@ -1386,8 +1822,196 @@
         function resetDecompress() {
             decompressProcessing.style.display = 'none';
             decompressResults.style.display = 'none';
+            document.getElementById('folderBrowser').style.display = 'none';
+            document.getElementById('previewPanel').style.display = 'none';
             witnessInput.value = '';
             currentReconstructedData = null;
+            currentFolderFiles = null;
+        }
+        
+        // ═══════════════════════════════════════════════════════════
+        // .ZKFOLDER ARCHIVE OPENER (client-side only, no server)
+        // ═══════════════════════════════════════════════════════════
+        
+        const zkfolderZone = document.getElementById('zkfolderZone');
+        const zkfolderInput = document.getElementById('zkfolderInput');
+        let currentZkfolderFiles = null;
+        
+        zkfolderZone.addEventListener('click', () => zkfolderInput.click());
+        zkfolderZone.addEventListener('dragover', (e) => { e.preventDefault(); zkfolderZone.classList.add('dragover'); });
+        zkfolderZone.addEventListener('dragleave', () => zkfolderZone.classList.remove('dragover'));
+        zkfolderZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            zkfolderZone.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file) openZkfolder(file);
+        });
+        zkfolderInput.addEventListener('change', (e) => {
+            if (e.target.files[0]) openZkfolder(e.target.files[0]);
+        });
+        
+        async function openZkfolder(file) {
+            const buffer = await file.arrayBuffer();
+            const data = new Uint8Array(buffer);
+            const dv = new DataView(buffer);
+            
+            if (data.length < 4) { alert('Invalid .zkfolder file'); return; }
+            
+            const fileCount = dv.getUint32(0, true);
+            let offset = 4;
+            const files = [];
+            
+            try {
+                for (let i = 0; i < fileCount; i++) {
+                    if (offset + 2 > data.length) throw new Error('Truncated at path_len');
+                    const pathLen = dv.getUint16(offset, true);
+                    offset += 2;
+                    
+                    if (offset + pathLen > data.length) throw new Error('Truncated at path');
+                    const pathBytes = data.slice(offset, offset + pathLen);
+                    const path = new TextDecoder('utf-8').decode(pathBytes);
+                    offset += pathLen;
+                    
+                    if (offset + 8 > data.length) throw new Error('Truncated at content_len');
+                    const contentLen = Number(dv.getBigUint64(offset, true));
+                    offset += 8;
+                    
+                    if (offset + contentLen > data.length) throw new Error('Truncated at content');
+                    const content = data.slice(offset, offset + contentLen);
+                    offset += contentLen;
+                    
+                    // Convert to base64
+                    let binary = '';
+                    const chunk = 8192;
+                    for (let j = 0; j < content.length; j += chunk) {
+                        binary += String.fromCharCode.apply(null, content.subarray(j, Math.min(j + chunk, content.length)));
+                    }
+                    const base64 = btoa(binary);
+                    
+                    files.push({ path, size: contentLen, data_base64: base64 });
+                }
+            } catch(e) {
+                alert('Error parsing .zkfolder: ' + e.message);
+                return;
+            }
+            
+            currentZkfolderFiles = files;
+            const folderName = file.name.replace('.zkfolder', '');
+            
+            zkfolderZone.style.display = 'none';
+            document.getElementById('zkfolderResults').style.display = 'block';
+            document.getElementById('zkfolderName').textContent = file.name + ' (' + files.length + ' files, ' + formatBytes(data.length) + ')';
+            document.getElementById('zkfolderBrowserTitle').textContent = folderName;
+            document.getElementById('zkfolderFileCount').textContent = files.length + ' file' + (files.length !== 1 ? 's' : '');
+            
+            renderZkfolderBrowser(files);
+        }
+        
+        function renderZkfolderBrowser(files) {
+            const list = document.getElementById('zkfolderFileList');
+            list.innerHTML = '';
+            
+            files.forEach((file, index) => {
+                const item = document.createElement('div');
+                item.className = 'file-item';
+                item.onclick = (e) => {
+                    if (e.target.tagName === 'BUTTON') return;
+                    previewZkfolderFile(index);
+                };
+                
+                const icon = getFileIcon(file.path);
+                const name = file.path.split('/').pop() || file.path;
+                const dir = file.path.includes('/') ? file.path.substring(0, file.path.lastIndexOf('/')) : '';
+                
+                item.innerHTML = `
+                    <span class="file-icon">${icon}</span>
+                    <div class="file-info">
+                        <div class="file-name">${escapeHtml(name)}</div>
+                        ${dir ? '<div class="file-path">' + escapeHtml(dir) + '</div>' : ''}
+                    </div>
+                    <span class="file-size">${formatBytes(file.size)}</span>
+                    <div class="file-actions">
+                        <button onclick="downloadZkfolderFile(${index})">💾</button>
+                    </div>
+                `;
+                list.appendChild(item);
+            });
+        }
+        
+        function previewZkfolderFile(index) {
+            if (!currentZkfolderFiles || !currentZkfolderFiles[index]) return;
+            const file = currentZkfolderFiles[index];
+            const name = file.path.split('/').pop() || file.path;
+            const ext = name.split('.').pop().toLowerCase();
+            
+            document.querySelectorAll('#zkfolderFileList .file-item').forEach((el, i) => {
+                el.classList.toggle('selected', i === index);
+            });
+            
+            document.getElementById('zkfolderPreviewTitle').textContent = name + ' (' + formatBytes(file.size) + ')';
+            const body = document.getElementById('zkfolderPreviewBody');
+            
+            const textExts = ['json', 'js', 'ts', 'rs', 'py', 'html', 'css', 'md', 'txt', 'toml', 'yml', 'yaml', 'xml', 'csv', 'log', 'sh', 'bat', 'ps1', 'cfg', 'ini', 'env', 'lock'];
+            const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp', 'ico'];
+            
+            if (textExts.includes(ext)) {
+                try {
+                    const bytes = Uint8Array.from(atob(file.data_base64), c => c.charCodeAt(0));
+                    const text = new TextDecoder('utf-8').decode(bytes);
+                    let displayText = text;
+                    if (ext === 'json') {
+                        try { displayText = JSON.stringify(JSON.parse(text), null, 2); } catch(e) {}
+                    }
+                    body.innerHTML = '<pre>' + escapeHtml(displayText) + '</pre>';
+                } catch(e) {
+                    body.innerHTML = '<div class="binary-notice">⚠️ Could not decode as text</div>';
+                }
+            } else if (imageExts.includes(ext)) {
+                const mimeMap = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', bmp: 'image/bmp', svg: 'image/svg+xml', webp: 'image/webp', ico: 'image/x-icon' };
+                const mime = mimeMap[ext] || 'image/png';
+                body.innerHTML = '<img src="data:' + mime + ';base64,' + file.data_base64 + '" alt="' + escapeHtml(name) + '">';
+            } else {
+                body.innerHTML = '<div class="binary-notice">📦 Binary file (' + formatBytes(file.size) + ')<br><br><button class="btn" onclick="downloadZkfolderFile(' + index + ')" style="display:inline-block;">💾 Download to view</button></div>';
+            }
+            
+            document.getElementById('zkfolderPreviewPanel').style.display = 'block';
+            document.getElementById('zkfolderPreviewPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+        
+        function closeZkfolderPreview() {
+            document.getElementById('zkfolderPreviewPanel').style.display = 'none';
+            document.querySelectorAll('#zkfolderFileList .file-item').forEach(el => el.classList.remove('selected'));
+        }
+        
+        function downloadZkfolderFile(index) {
+            if (!currentZkfolderFiles || !currentZkfolderFiles[index]) return;
+            const file = currentZkfolderFiles[index];
+            const name = file.path.split('/').pop() || file.path;
+            const bytes = Uint8Array.from(atob(file.data_base64), c => c.charCodeAt(0));
+            const blob = new Blob([bytes], { type: 'application/octet-stream' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = name;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+        
+        function downloadAllZkfolderIndividual() {
+            if (!currentZkfolderFiles) return;
+            currentZkfolderFiles.forEach((_, i) => {
+                setTimeout(() => downloadZkfolderFile(i), i * 200);
+            });
+        }
+        
+        function resetZkfolder() {
+            document.getElementById('zkfolderResults').style.display = 'none';
+            document.getElementById('zkfolderPreviewPanel').style.display = 'none';
+            zkfolderZone.style.display = 'block';
+            zkfolderInput.value = '';
+            currentZkfolderFiles = null;
         }
     </script>
 </body>

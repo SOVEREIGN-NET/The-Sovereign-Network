@@ -42,6 +42,17 @@ pub struct PredictivePrefetcher {
     next_shard_id: usize,
 }
 
+impl std::fmt::Debug for PredictivePrefetcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PredictivePrefetcher")
+            .field("enabled", &self.enabled)
+            .field("history_len", &self.history.len())
+            .field("confidence_threshold", &self.confidence_threshold)
+            .field("has_lstm", &self.lstm.is_some())
+            .finish()
+    }
+}
+
 impl PredictivePrefetcher {
     /// Create new predictive prefetcher
     pub fn new() -> Self {

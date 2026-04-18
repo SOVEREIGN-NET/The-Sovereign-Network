@@ -156,6 +156,13 @@ struct ScaleProjection {
 }
 
 #[derive(Serialize, Deserialize)]
+struct FolderFile {
+    path: String,
+    size: usize,
+    data_base64: String,
+}
+
+#[derive(Serialize, Deserialize)]
 struct DecompressionResult {
     witness_filename: String,
     original_filename: String,
@@ -163,6 +170,8 @@ struct DecompressionResult {
     shard_count: usize,
     integrity_verified: bool,
     reconstructed_bytes: String, // base64 encoded
+    is_folder: bool,
+    folder_files: Option<Vec<FolderFile>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -638,8 +647,8 @@ async fn compress_file(mut multipart: Multipart, shard_cache: ShardCache, patter
             println!("✅ Stored {} patterns for session {:?}", patterns.len(), session_id);
         }
         
-        // Serialize witness only (no shard data - stays small!)
-        let witness_bytes = match serde_json::to_vec(&witness) {
+        // Serialize witness only (compact bincode - no shard data, stays small!)
+        let witness_bytes = match witness.to_bytes() {
             Ok(b) => b,
             Err(e) => {
                 eprintln!("❌ Serialization error: {}", e);
@@ -1113,6 +1122,7 @@ async fn compress_folder(
     let compress_time = compress_start.elapsed();
     
     // Store in caches
+    let session_id = shards[0].id.clone(); // Use first shard ID as session identifier
     {
         let mut cache = shard_cache.write().map_err(lock_err)?;
         let mut flags = compression_flags.write().map_err(lock_err)?;
@@ -1121,6 +1131,18 @@ async fn compress_folder(
             flags.insert(compressed_shard.original_id.clone(), compressed_shard.is_compressed);
             cache.insert(zkc_shard.id.clone(), zkc_shard);
         }
+    }
+    
+    // Export and store pattern dictionary for this session (REQUIRED for decompression!)
+    {
+        let patterns = GLOBAL_PATTERN_DICT.export_patterns()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
+                error: "PatternExportError".to_string(),
+                message: format!("Failed to export patterns: {}", e),
+            })))?;
+        let mut pattern_storage = pattern_cache.write().map_err(lock_err)?;
+        pattern_storage.insert(session_id.clone(), patterns);
+        println!("📘 Stored pattern dictionary for folder session {:?}", session_id);
     }
     
     // Generate witness
@@ -1162,8 +1184,8 @@ async fn compress_folder(
     let decompress_time = decompress_start.elapsed();
     let integrity_verified = reconstructed == data.as_ref();
     
-    // Serialize and measure
-    let witness_bytes = serde_json::to_vec(&witness).unwrap_or_default();
+    // Serialize and measure (compact bincode)
+    let witness_bytes = witness.to_bytes().unwrap_or_default();
     let witness_size = witness_bytes.len();
     let compressed_shards_size = zkc_stats.total_compressed_size;
     let total_storage = witness_size + compressed_shards_size;
@@ -1294,9 +1316,8 @@ async fn decompress_witness(mut multipart: Multipart, shard_cache: ShardCache, p
         
         println!("📥 Received witness: {} ({} bytes)", witness_filename, data.len());
         
-        // Deserialize witness (small file - no shard data!)
-        // Witnesses are serialized as JSON (serde_json), not bincode
-        let witness: ZkWitness = match serde_json::from_slice(&data) {
+        // Deserialize witness (compact bincode - no shard data!)
+        let witness: ZkWitness = match ZkWitness::from_bytes(&data) {
             Ok(w) => w,
             Err(e) => {
                 eprintln!("❌ Deserialization error: {}", e);
@@ -1418,13 +1439,33 @@ async fn decompress_witness(mut multipart: Multipart, shard_cache: ShardCache, p
         }
         
         let reconstructed_size = reconstructed_data.len();
-        let reconstructed_base64 = general_purpose::STANDARD.encode(&reconstructed_data);
         
         // Verify witness integrity
         let integrity_verified = witness.verify().is_ok();
         
         println!("✅ Witness verified: {} (integrity: {})", 
                  witness_filename, integrity_verified);
+        
+        // Check if this is a folder bundle — unpack individual files
+        let is_folder = original_filename.ends_with(".zkfolder");
+        let reconstructed_base64 = general_purpose::STANDARD.encode(&reconstructed_data);
+        let folder_files = if is_folder {
+            match unpack_folder_bundle(&reconstructed_data) {
+                Ok(files) => {
+                    println!("📂 Unpacked folder: {} files", files.len());
+                    for f in &files {
+                        println!("   📄 {} ({} bytes)", f.path, f.size);
+                    }
+                    Some(files)
+                }
+                Err(e) => {
+                    eprintln!("⚠️ Failed to unpack folder bundle: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
         
         return Ok(Json(DecompressionResult {
             witness_filename,
@@ -1433,7 +1474,62 @@ async fn decompress_witness(mut multipart: Multipart, shard_cache: ShardCache, p
             shard_count,
             integrity_verified,
             reconstructed_bytes: reconstructed_base64,
+            is_folder,
+            folder_files,
         }));
+}
+
+/// Unpack a folder bundle created by compress_folder back into individual files.
+/// Format: [file_count:u32] [path_len:u16 path:bytes content_len:u64 content:bytes]...
+fn unpack_folder_bundle(data: &[u8]) -> Result<Vec<FolderFile>, String> {
+    if data.len() < 4 {
+        return Err("Bundle too small".into());
+    }
+    let file_count = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+    let mut offset = 4;
+    let mut files = Vec::with_capacity(file_count);
+    
+    for i in 0..file_count {
+        // Read path length (u16)
+        if offset + 2 > data.len() {
+            return Err(format!("Unexpected end of bundle at file {} path_len", i));
+        }
+        let path_len = u16::from_le_bytes([data[offset], data[offset + 1]]) as usize;
+        offset += 2;
+        
+        // Read path
+        if offset + path_len > data.len() {
+            return Err(format!("Unexpected end of bundle at file {} path", i));
+        }
+        let path = String::from_utf8_lossy(&data[offset..offset + path_len]).to_string();
+        offset += path_len;
+        
+        // Read content length (u64)
+        if offset + 8 > data.len() {
+            return Err(format!("Unexpected end of bundle at file {} content_len", i));
+        }
+        let content_len = u64::from_le_bytes([
+            data[offset], data[offset+1], data[offset+2], data[offset+3],
+            data[offset+4], data[offset+5], data[offset+6], data[offset+7],
+        ]) as usize;
+        offset += 8;
+        
+        // Read content
+        if offset + content_len > data.len() {
+            return Err(format!("Unexpected end of bundle at file {} content (need {} bytes, have {})", 
+                             i, content_len, data.len() - offset));
+        }
+        let content = &data[offset..offset + content_len];
+        offset += content_len;
+        
+        files.push(FolderFile {
+            path,
+            size: content_len,
+            data_base64: general_purpose::STANDARD.encode(content),
+        });
+    }
+    
+    Ok(files)
 }
 
 fn detect_mime_type(filename: &str) -> String {

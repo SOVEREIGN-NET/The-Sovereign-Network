@@ -2,10 +2,11 @@
 
 use crate::error::{NeuralMeshError, Result};
 use crate::ml::{IsolationForestConfig, AnomalyDetector};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Node behavioral metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeMetrics {
     /// Node ID
     pub node_id: String,
@@ -80,6 +81,17 @@ pub struct AnomalySentry {
     baseline: HashMap<String, NodeMetrics>,
     anomaly_threshold: f32,
     detector: Option<AnomalyDetector>,
+}
+
+impl std::fmt::Debug for AnomalySentry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AnomalySentry")
+            .field("enabled", &self.enabled)
+            .field("baseline_count", &self.baseline.len())
+            .field("threshold", &self.anomaly_threshold)
+            .field("has_detector", &self.detector.is_some())
+            .finish()
+    }
 }
 
 impl AnomalySentry {

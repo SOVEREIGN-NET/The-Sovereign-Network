@@ -44,6 +44,16 @@ pub struct NeuroCompressor {
     inference_engine: Option<InferenceEngine>,
 }
 
+impl std::fmt::Debug for NeuroCompressor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NeuroCompressor")
+            .field("enabled", &self.enabled)
+            .field("embedding_dim", &self.embedding_dim)
+            .field("has_model", &self.inference_engine.is_some())
+            .finish()
+    }
+}
+
 impl NeuroCompressor {
     /// Create new neural compressor
     pub fn new() -> Self {

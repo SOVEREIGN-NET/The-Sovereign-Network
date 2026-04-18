@@ -2,10 +2,11 @@
 
 use crate::error::Result;
 use crate::ml::{PpoAgent, PpoConfig, Experience};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Network state for RL decision making
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkState {
     pub latencies: HashMap<String, f32>,
     pub bandwidth: HashMap<String, f32>,
@@ -90,6 +91,16 @@ pub struct RlRouter {
     last_action: Option<usize>,
     last_log_prob: Option<f32>,
     last_value: Option<f32>,
+}
+
+impl std::fmt::Debug for RlRouter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RlRouter")
+            .field("enabled", &self.enabled)
+            .field("has_agent", &self.agent.is_some())
+            .field("node_list", &self.node_list)
+            .finish()
+    }
 }
 
 impl RlRouter {
