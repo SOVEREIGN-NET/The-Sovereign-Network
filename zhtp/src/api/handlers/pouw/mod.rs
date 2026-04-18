@@ -776,6 +776,7 @@ impl PouwHandler {
                 "base_pool": crate::pouw::rewards::POUW_EPOCH_POOL.to_string(),
                 "per_node_cap": crate::pouw::rewards::POUW_PER_NODE_EPOCH_CAP.to_string(),
                 "expected_active_nodes": crate::pouw::rewards::EXPECTED_ACTIVE_NODES,
+                "active_nodes": self.reward_calculator.active_nodes_current_epoch().await,
             },
             "multipliers": {
                 "hash": 1,
