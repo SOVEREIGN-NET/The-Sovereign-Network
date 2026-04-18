@@ -1,0 +1,89 @@
+# Development Validator Node Configuration
+# Single-node standalone validator for local testing
+# Can bootstrap alone without needing existing peers
+
+# Core Node Settings
+mesh_mode = "Hybrid"
+security_level = "Medium"
+runtime_role = "VALIDATOR"
+data_directory = "./data/dev-validator"
+
+[crypto_config]
+post_quantum_enabled = false
+dilithium_level = 2
+kyber_level = 512
+hybrid_mode = false
+memory_security = false
+
+[zk_config]
+plonky2_enabled = true
+proof_cache_size = 100
+circuit_cache_enabled = false
+parallel_proving = false
+verification_threads = 2
+
+[identity_config]
+auto_citizenship = true
+ubi_registration = true
+dao_auto_join = true
+recovery_modes = ["mnemonic"]
+reputation_enabled = false
+
+[storage_config]
+dht_port = 33442
+storage_capacity_gb = 10
+replication_factor = 1
+erasure_coding = false
+pricing_tier = "hot"
+
+[network_config]
+mesh_port = 33444
+max_peers = 20
+protocols = ["quic"]
+bootstrap_peers = []
+long_range_relays = false
+
+[blockchain_config]
+network_id = "zhtp-dev"
+block_time_seconds = 2
+max_block_size = 1048576
+zk_transactions = false
+smart_contracts = true
+
+[consensus_config]
+consensus_type = "Hybrid"
+dao_enabled = true
+validator_enabled = true
+min_stake = 100
+reward_multipliers = {}
+
+[economics_config]
+ubi_enabled = true
+daily_ubi_amount = 100
+dao_fee_percentage = 1.0
+mesh_rewards = false
+
+[economics_config.token_economics]
+total_supply = 1000000
+inflation_rate = 0.0
+burn_rate = 0.0
+reward_pool_percentage = 5.0
+
+[protocols_config]
+lib_enabled = true
+zdns_enabled = true
+api_port = 9333
+max_connections = 100
+request_timeout_ms = 10000
+
+[resource_allocations]
+max_memory_mb = 512
+max_cpu_threads = 2
+max_disk_gb = 50
+bandwidth_allocation = {}
+
+[integration_settings]
+event_bus_enabled = true
+service_discovery = true
+health_check_interval_ms = 10000
+cross_package_timeouts = {}

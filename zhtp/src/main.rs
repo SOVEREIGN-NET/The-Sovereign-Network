@@ -9,8 +9,25 @@ use tracing_subscriber;
 use zhtp::config::{load_configuration, CliArgs, Environment, NodeType};
 use zhtp::runtime::RuntimeOrchestrator;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    // Spawn the actual async main on a thread with 32 MB stack to prevent
+    // stack overflow from deeply nested initialization and large structs.
+    let builder = std::thread::Builder::new()
+        .name("zhtp-main".to_string())
+        .stack_size(32 * 1024 * 1024); // 32 MB
+
+    let handler = builder.spawn(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to build tokio runtime")
+            .block_on(async_main())
+    })?;
+
+    handler.join().map_err(|e| anyhow::anyhow!("Main thread panicked: {:?}", e))?
+}
+
+async fn async_main() -> anyhow::Result<()> {
     // Initialize logging
     let filter = env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
 

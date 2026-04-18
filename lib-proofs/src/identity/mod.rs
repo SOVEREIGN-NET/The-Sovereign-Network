@@ -6,6 +6,7 @@
 pub mod circuit;
 pub mod credential_proof;
 pub mod identity_proof;
+pub mod storage_circuit;
 pub mod verification;
 
 // Re-export main types
@@ -18,3 +19,8 @@ pub use verification::{
 // Re-export circuit helpers when real-proofs is enabled
 #[cfg(feature = "real-proofs")]
 pub use circuit::real::{compute_identity_commitment, prove_identity, verify_identity};
+
+#[cfg(feature = "real-proofs")]
+pub use storage_circuit::real::{
+    compute_access_commitment, prove_storage_access, verify_storage_access,
+};

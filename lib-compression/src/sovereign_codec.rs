@@ -17,6 +17,7 @@
 use std::collections::BinaryHeap;
 use std::cmp::Reverse;
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// Maximum Huffman code length in bits (prevents degenerate trees)
 const MAX_CODE_LENGTH: u8 = 24;
@@ -63,6 +64,11 @@ const SFC_MAGIC_ADAPTIVE_RLE: &[u8; 4] = b"SFC7";
 /// Each block goes through the full SFC7 pipeline instead of falling back to Huffman.
 const SFC_MAGIC_BLOCKED: &[u8; 4] = b"SFC8";
 
+/// Magic bytes for parametric adaptive encoding (content-adaptive SFC9).
+/// Same pipeline as SFC7 (BWT+MTF+RLE+Adaptive O1 Range) but with tunable
+/// range coder parameters embedded in the header, learned by the neural mesh.
+const SFC_MAGIC_PARAMETRIC: &[u8; 4] = b"SFC9";
+
 /// A Huffman code for a single byte value
 #[derive(Debug, Clone, Copy)]
 struct HuffCode {
@@ -70,6 +76,105 @@ struct HuffCode {
     code: u32,
     /// Number of valid bits in `code`
     length: u8,
+}
+
+/// Tunable parameters for the content-adaptive SovereignCodec (SFC9).
+///
+/// The neural mesh learns optimal params per content type:
+/// - **JSON**: high rescale_limit for stable repeating keys → better ratio
+/// - **Binary**: lower rescale_limit for faster adaptation → handles varied patterns
+/// - **Text**: moderate settings with strong zero-bias → ideal for BWT+MTF output
+///
+/// Default values match the current SFC7 hardcoded constants, giving identical
+/// output when no tuning has been applied.
+///
+/// ## Header format (SFC9)
+///
+/// ```text
+/// [SFC9(4)] [rescale/4 : u16 LE] [freq_step : u8] [init_f0 : u8]
+/// [orig_len : u32 LE] [bwt_idx : u32 LE] [rle_len : u32 LE]
+/// ```
+///
+/// Total: 20 bytes (4 more than SFC7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodecParams {
+    /// Rescale threshold for the adaptive frequency model.
+    ///
+    /// Higher values keep more history (better for stationary data like JSON with
+    /// repeating keys). Lower values forget faster (better for non-stationary or
+    /// mixed-content data).
+    ///
+    /// Must be a multiple of 4 in range [1024, 262140].
+    /// Default: 65536 (stored as 16384 in the SFC9 header)
+    pub rescale_limit: u32,
+
+    /// Frequency increment per symbol observation.
+    ///
+    /// Higher values make the model converge faster on dominant symbols but
+    /// risk overfitting to local patterns. Lower values are more conservative.
+    ///
+    /// Range: [1, 16]. Default: 2
+    pub freq_step: u8,
+
+    /// Initial frequency for symbol 0 (dominant after BWT+MTF).
+    ///
+    /// Higher values assume stronger zero-dominance (true for text/JSON).
+    /// Lower values assume a flatter distribution (better for random binary).
+    /// Symbols 1–7 are scaled proportionally: `init_freq[k] ≈ f0 * base[k] / 128`.
+    ///
+    /// Range: [1, 255]. Default: 128
+    pub init_freq_zero: u8,
+}
+
+impl Default for CodecParams {
+    fn default() -> Self {
+        Self {
+            rescale_limit: 65536,
+            freq_step: 2,
+            init_freq_zero: 128,
+        }
+    }
+}
+
+impl CodecParams {
+    /// Whether these params exactly match the SFC7 defaults.
+    ///
+    /// When true, `encode_with_params` can emit SFC7 instead of SFC9
+    /// for zero header overhead.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Clamp all fields to their valid ranges.
+    pub fn clamp(&mut self) {
+        self.rescale_limit = (self.rescale_limit / 4 * 4).clamp(1024, 262140);
+        self.freq_step = self.freq_step.clamp(1, 16);
+        self.init_freq_zero = self.init_freq_zero.max(1);
+    }
+
+    /// Create clamped copy.
+    pub fn clamped(&self) -> Self {
+        let mut p = *self;
+        p.clamp();
+        p
+    }
+
+    /// Serialize to the 4-byte SFC9 param header.
+    fn to_header_bytes(&self) -> [u8; 4] {
+        let rescale_u16 = (self.rescale_limit / 4) as u16;
+        let le = rescale_u16.to_le_bytes();
+        [le[0], le[1], self.freq_step, self.init_freq_zero]
+    }
+
+    /// Deserialize from the 4-byte SFC9 param header.
+    fn from_header_bytes(b: &[u8]) -> Self {
+        let rescale_u16 = u16::from_le_bytes([b[0], b[1]]);
+        Self {
+            rescale_limit: rescale_u16 as u32 * 4,
+            freq_step: b[2],
+            init_freq_zero: b[3],
+        }
+    }
 }
 
 /// Sovereign Frequency Coder — from-scratch BWT + MTF + Huffman implementation
@@ -125,6 +230,56 @@ impl SovereignCodec {
         stored
     }
 
+    /// Encode data using content-adaptive parameters (SFC9 format).
+    ///
+    /// Uses the same BWT → MTF → RLE → Adaptive O1 Range pipeline as SFC7,
+    /// but with **tunable** range coder parameters embedded in the SFC9 header.
+    /// The decoder reads these params to reconstruct the exact adaptive model.
+    ///
+    /// When `params` matches the SFC7 defaults, emits standard SFC7 for zero
+    /// header overhead. Otherwise emits SFC9 (20-byte header, 4 more than SFC7).
+    ///
+    /// The neural mesh's `AdaptiveCodecLearner` calls this with learned params
+    /// that are optimized per content type (JSON, text, binary, etc.).
+    pub fn encode_with_params(data: &[u8], params: &CodecParams) -> Vec<u8> {
+        // Fast path: default params → standard SFC7 with no extra overhead
+        if params.is_default() {
+            return Self::encode(data);
+        }
+
+        let params = params.clamped();
+
+        if data.is_empty() {
+            return Vec::new();
+        }
+        if data.len() > u32::MAX as usize {
+            return Self::make_stored(data);
+        }
+        if data.len() < MIN_ENCODE_SIZE {
+            return Self::make_stored(data);
+        }
+
+        let stored = Self::make_stored(data);
+
+        if data.len() < MIN_BWT_SIZE {
+            return stored;
+        }
+        if data.len() > MAX_BWT_SIZE {
+            let blocked = Self::encode_blocked(data);
+            return if blocked.len() < stored.len() { blocked } else { stored };
+        }
+
+        // Pipeline: BWT → MTF → RLE → Parametric Adaptive O1 Range (SFC9)
+        let (bwt_output, bwt_index) = Self::bwt_forward(data);
+        let mtf_output = Self::mtf_forward(&bwt_output);
+        let rle_output = Self::rle_encode(&mtf_output);
+        let sfc9 = Self::encode_adaptive_o1_rle_parametric(
+            data.len(), bwt_index, &rle_output, &params,
+        );
+
+        if sfc9.len() < stored.len() { sfc9 } else { stored }
+    }
+
     /// Decode SFC-encoded data back to original bytes
     pub fn decode(data: &[u8]) -> Result<Vec<u8>, String> {
         if data.len() < 4 {
@@ -160,6 +315,9 @@ impl SovereignCodec {
         if magic == SFC_MAGIC_BLOCKED {
             return Self::decode_blocked(data);
         }
+        if magic == SFC_MAGIC_PARAMETRIC {
+            return Self::decode_parametric(data);
+        }
 
         Err(format!(
             "Invalid SFC magic: {:02X}{:02X}{:02X}{:02X}",
@@ -178,7 +336,8 @@ impl SovereignCodec {
                 || data[0..4] == *SFC_MAGIC_CTX1
                 || data[0..4] == *SFC_MAGIC_ADAPTIVE
                 || data[0..4] == *SFC_MAGIC_ADAPTIVE_RLE
-                || data[0..4] == *SFC_MAGIC_BLOCKED)
+                || data[0..4] == *SFC_MAGIC_BLOCKED
+                || data[0..4] == *SFC_MAGIC_PARAMETRIC)
     }
 
     /// Create SFC0 (stored/passthrough) format
@@ -1248,6 +1407,197 @@ impl SovereignCodec {
         if (bwt_index as usize) >= bwt_output.len() {
             return Err(format!(
                 "SFC7 decode error: bwt_index {} >= decoded len {}",
+                bwt_index, bwt_output.len()
+            ));
+        }
+
+        let original = Self::bwt_inverse(&bwt_output, bwt_index);
+
+        Ok(original)
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  SFC9: Parametric Adaptive O1 Range (content-adaptive)
+    //
+    //  Same pipeline as SFC7 (BWT+MTF+RLE+Adaptive O1 Range) but
+    //  with tunable parameters stored in a 4-byte header extension.
+    //  The neural mesh learns optimal params per content type.
+    //
+    //  Format: [SFC9][rescale/4:u16][freq_step:u8][init_f0:u8]
+    //          [orig_len:u32][bwt_idx:u32][rle_len:u32][range_body]
+    //  Total header: 20 bytes (4 more than SFC7)
+    // ══════════════════════════════════════════════════════════
+
+    /// Build parametric initial frequency distribution.
+    ///
+    /// Symbol 0 gets `init_f0` as its initial count. Symbols 1–7 are
+    /// scaled proportionally to maintain the same relative shape as the
+    /// default distribution, just stretched by `init_f0 / 128`.
+    fn adaptive_init_freq_parametric(init_f0: u8) -> [u32; 256] {
+        let mut freq = [1u32; 256];
+        let f0 = init_f0 as f32;
+        let scale = f0 / 128.0;
+        freq[0] = init_f0 as u32;
+        freq[1] = (16.0 * scale).max(1.0) as u32;
+        freq[2] = (8.0 * scale).max(1.0) as u32;
+        freq[3] = (4.0 * scale).max(1.0) as u32;
+        freq[4] = (3.0 * scale).max(1.0) as u32;
+        freq[5] = (2.0 * scale).max(1.0) as u32;
+        freq[6] = (2.0 * scale).max(1.0) as u32;
+        freq[7] = (2.0 * scale).max(1.0) as u32;
+        freq
+    }
+
+    /// Encode BWT+MTF+RLE output using parametric adaptive order-1 range coder (SFC9).
+    ///
+    /// Identical algorithm to `encode_adaptive_o1_rle` but uses params from
+    /// `CodecParams` instead of hardcoded constants.
+    fn encode_adaptive_o1_rle_parametric(
+        orig_len: usize,
+        bwt_index: u32,
+        rle_output: &[u8],
+        params: &CodecParams,
+    ) -> Vec<u8> {
+        if rle_output.len() < 2 {
+            return Self::make_stored(&vec![0u8; orig_len]);
+        }
+
+        let rescale_limit = params.rescale_limit;
+        let freq_step = params.freq_step as u32;
+
+        let init_freq = Self::adaptive_init_freq_parametric(params.init_freq_zero);
+        let init_total: u32 = init_freq.iter().sum();
+
+        let mut freq: Vec<[u32; 256]> = vec![init_freq; 256];
+        let mut total: [u32; 256] = [init_total; 256];
+
+        // Pre-build cumulative frequency tables for O(1) lookup during encoding.
+        let mut cum: Vec<[u32; 257]> = Vec::with_capacity(256);
+        for ctx in 0..256 {
+            let mut c = [0u32; 257];
+            for i in 0..256 {
+                c[i + 1] = c[i] + freq[ctx][i];
+            }
+            cum.push(c);
+        }
+
+        let mut enc = RangeEncoderState::new(rle_output.len());
+        let mut prev = 0usize;
+
+        for &b in rle_output {
+            let sym = b as usize;
+            let ctx = prev;
+
+            let sym_cum = cum[ctx][sym];
+            let f = freq[ctx][sym];
+
+            enc.encode(sym_cum, f, total[ctx]);
+
+            // Update model with parametric step
+            freq[ctx][sym] += freq_step;
+            total[ctx] += freq_step;
+            for i in (sym + 1)..257 {
+                cum[ctx][i] += freq_step;
+            }
+
+            if total[ctx] >= rescale_limit {
+                total[ctx] = 0;
+                for i in 0..256 {
+                    freq[ctx][i] = (freq[ctx][i] + 1) / 2;
+                    total[ctx] += freq[ctx][i];
+                }
+                cum[ctx][0] = 0;
+                for i in 0..256 {
+                    cum[ctx][i + 1] = cum[ctx][i] + freq[ctx][i];
+                }
+            }
+
+            prev = sym;
+        }
+
+        let range_body = enc.finish();
+
+        // SFC9 header: magic(4) + params(4) + standard(12) = 20 bytes
+        let total_size = 20 + range_body.len();
+        if total_size >= orig_len + 4 {
+            return Self::make_stored(&vec![0u8; orig_len]);
+        }
+
+        let mut output = Vec::with_capacity(total_size);
+        output.extend_from_slice(SFC_MAGIC_PARAMETRIC);
+        let param_hdr = params.to_header_bytes();
+        output.extend_from_slice(&param_hdr);
+        output.extend_from_slice(&(orig_len as u32).to_le_bytes());
+        output.extend_from_slice(&bwt_index.to_le_bytes());
+        output.extend_from_slice(&(rle_output.len() as u32).to_le_bytes());
+        output.extend_from_slice(&range_body);
+        output
+    }
+
+    /// Decode SFC9 (parametric BWT+MTF+RLE+Adaptive Order-1 Range) data.
+    ///
+    /// Reads the 4-byte param header to reconstruct the encoder's adaptive
+    /// model, then decodes identically to SFC7.
+    fn decode_parametric(data: &[u8]) -> Result<Vec<u8>, String> {
+        if data.len() < 20 {
+            return Err("SFC9 header too short".into());
+        }
+
+        // Read param header (bytes 4..8)
+        let params = CodecParams::from_header_bytes(&data[4..8]);
+        let rescale_limit = params.rescale_limit;
+        let freq_step = params.freq_step as u32;
+
+        let _orig_len = u32::from_le_bytes([data[8], data[9], data[10], data[11]]) as usize;
+        let bwt_index = u32::from_le_bytes([data[12], data[13], data[14], data[15]]);
+        let rle_len = u32::from_le_bytes([data[16], data[17], data[18], data[19]]) as usize;
+
+        let range_body = &data[20..];
+
+        // Must match encoder initialization exactly
+        let init_freq = Self::adaptive_init_freq_parametric(params.init_freq_zero);
+        let init_total: u32 = init_freq.iter().sum();
+
+        let mut freq: Vec<[u32; 256]> = vec![init_freq; 256];
+        let mut total: [u32; 256] = [init_total; 256];
+
+        let mut dec = RangeDecoderState::new(range_body);
+        let mut rle_output = Vec::with_capacity(rle_len);
+        let mut prev = 0usize;
+
+        for _ in 0..rle_len {
+            let ctx = prev;
+
+            let mut cum = [0u32; 257];
+            for i in 0..256 {
+                cum[i + 1] = cum[i] + freq[ctx][i];
+            }
+
+            let sym = dec.decode_symbol(&cum, total[ctx]);
+            rle_output.push(sym as u8);
+
+            // Update model (must match encoder exactly)
+            freq[ctx][sym] += freq_step;
+            total[ctx] += freq_step;
+
+            if total[ctx] >= rescale_limit {
+                total[ctx] = 0;
+                for i in 0..256 {
+                    freq[ctx][i] = (freq[ctx][i] + 1) / 2;
+                    total[ctx] += freq[ctx][i];
+                }
+            }
+
+            prev = sym;
+        }
+
+        // Inverse RLE → Inverse MTF → Inverse BWT
+        let mtf_output = Self::rle_decode(&rle_output);
+        let bwt_output = Self::mtf_inverse(&mtf_output);
+
+        if (bwt_index as usize) >= bwt_output.len() {
+            return Err(format!(
+                "SFC9 decode error: bwt_index {} >= decoded len {}",
                 bwt_index, bwt_output.len()
             ));
         }
@@ -3620,5 +3970,90 @@ mod tests {
         let decoded = SovereignCodec::decode(&best).unwrap();
         assert_eq!(decoded, data, "Real file roundtrip failed");
         println!("  WINNER: {} — {} bytes ({:.2}:1)", best_tag, best.len(), data.len() as f64 / best.len() as f64);
+    }
+
+    // ─── SFC9 Parametric Tests ───
+
+    #[test]
+    fn test_sfc9_default_params_uses_sfc7() {
+        // Default params should produce standard SFC7 output (fast path)
+        let data = b"The quick brown fox jumps over the lazy dog. Repeated text for BWT context.".repeat(20);
+        let default_params = CodecParams::default();
+        let sfc7 = SovereignCodec::encode(&data);
+        let sfc9 = SovereignCodec::encode_with_params(&data, &default_params);
+        assert_eq!(sfc7, sfc9, "Default params should produce identical SFC7 output");
+    }
+
+    #[test]
+    fn test_sfc9_custom_params_roundtrip() {
+        // Non-default params should produce SFC9 format that decodes correctly
+        let data = b"JSON-like structured data: {\"key\": \"value\", \"numbers\": [1,2,3,4,5]}".repeat(30);
+        let params = CodecParams {
+            rescale_limit: 32768,
+            freq_step: 4,
+            init_freq_zero: 200,
+        };
+        let compressed = SovereignCodec::encode_with_params(&data, &params);
+        assert!(&compressed[..4] == b"SFC9", "Should use SFC9 format for non-default params");
+
+        let decoded = SovereignCodec::decode(&compressed).unwrap();
+        assert_eq!(decoded, data, "SFC9 roundtrip failed");
+    }
+
+    #[test]
+    fn test_sfc9_various_param_combos() {
+        let data = b"Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(50);
+        let combos = vec![
+            CodecParams { rescale_limit: 4096,   freq_step: 1,  init_freq_zero: 64 },
+            CodecParams { rescale_limit: 16384,  freq_step: 8,  init_freq_zero: 32 },
+            CodecParams { rescale_limit: 131072, freq_step: 3,  init_freq_zero: 255 },
+            CodecParams { rescale_limit: 262140, freq_step: 16, init_freq_zero: 1 },
+        ];
+        for (i, params) in combos.iter().enumerate() {
+            let compressed = SovereignCodec::encode_with_params(&data, params);
+            let decoded = SovereignCodec::decode(&compressed).unwrap();
+            assert_eq!(decoded, data, "SFC9 roundtrip failed for combo {}", i);
+            println!("  Combo {}: rescale={}, step={}, f0={} → {} bytes ({:.2}:1)",
+                i, params.rescale_limit, params.freq_step, params.init_freq_zero,
+                compressed.len(), data.len() as f64 / compressed.len() as f64);
+        }
+    }
+
+    #[test]
+    fn test_sfc9_binary_data_roundtrip() {
+        // Binary data with high entropy
+        let data: Vec<u8> = (0..=255).cycle().take(8192).collect();
+        let params = CodecParams {
+            rescale_limit: 8192,
+            freq_step: 2,
+            init_freq_zero: 10,
+        };
+        let compressed = SovereignCodec::encode_with_params(&data, &params);
+        let decoded = SovereignCodec::decode(&compressed).unwrap();
+        assert_eq!(decoded, data, "SFC9 binary roundtrip failed");
+    }
+
+    #[test]
+    fn test_codec_params_header_roundtrip() {
+        let params = CodecParams {
+            rescale_limit: 49152,
+            freq_step: 7,
+            init_freq_zero: 180,
+        };
+        let bytes = params.to_header_bytes();
+        assert_eq!(bytes.len(), 4);
+        let recovered = CodecParams::from_header_bytes(&bytes);
+        assert_eq!(recovered.rescale_limit, params.rescale_limit);
+        assert_eq!(recovered.freq_step, params.freq_step);
+        assert_eq!(recovered.init_freq_zero, params.init_freq_zero);
+    }
+
+    #[test]
+    fn test_codec_params_clamp() {
+        let p = CodecParams { rescale_limit: 500, freq_step: 0, init_freq_zero: 0 };
+        let c = p.clamped();
+        assert!(c.rescale_limit >= 1024);
+        assert!(c.freq_step >= 1);
+        assert!(c.init_freq_zero >= 1);
     }
 }

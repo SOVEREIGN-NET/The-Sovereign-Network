@@ -220,6 +220,77 @@ impl PredictivePrefetcher {
         prediction.confidence >= self.confidence_threshold
     }
 
+    /// Train the LSTM on accumulated access history.
+    ///
+    /// Converts the recorded access patterns into input→target sequence pairs
+    /// and calls the underlying LSTM `train()` method. Without this, the LSTM
+    /// runs inference on random Xavier-initialized weights forever.
+    ///
+    /// Returns `(loss, num_sequences)` — the MSE loss and how many training
+    /// sequences were generated from history.
+    pub fn train_from_history(&mut self) -> Result<(f32, usize)> {
+        if !self.enabled {
+            return Err(NeuralMeshError::TrainingFailed(
+                "Predictive prefetcher not enabled".to_string(),
+            ));
+        }
+
+        let lstm = self.lstm.as_mut().ok_or_else(|| {
+            NeuralMeshError::TrainingFailed("No LSTM network initialized".to_string())
+        })?;
+
+        // Need at least sequence_length + 1 patterns to form one training pair
+        let min_len = self.sequence_length + 1;
+        if self.history.len() < min_len {
+            return Err(NeuralMeshError::TrainingFailed(
+                format!(
+                    "Not enough history to train: have {}, need at least {}",
+                    self.history.len(),
+                    min_len
+                ),
+            ));
+        }
+
+        // Convert history into feature vectors
+        let mut feature_vecs: Vec<Vec<f32>> = Vec::with_capacity(self.history.len());
+        let mut prev_time = 0u64;
+        for pattern in self.history.iter() {
+            let feat = pattern.to_feature_vector(&self.shard_to_id, prev_time);
+            prev_time = pattern.timestamp;
+            feature_vecs.push(feat);
+        }
+
+        // Create overlapping sequence→target pairs using a sliding window
+        // Input: feature_vecs[i..i+seq_len], Target: feature_vecs[i+1..i+seq_len+1]
+        let mut sequences: Vec<Vec<Vec<f32>>> = Vec::new();
+        let mut targets: Vec<Vec<Vec<f32>>> = Vec::new();
+
+        let max_pairs = 32usize; // Cap training pairs per call to keep latency bounded
+        let total = feature_vecs.len();
+        let stride = if total - self.sequence_length > max_pairs {
+            (total - self.sequence_length) / max_pairs
+        } else {
+            1
+        };
+
+        let mut i = 0;
+        while i + self.sequence_length < total && sequences.len() < max_pairs {
+            let seq: Vec<Vec<f32>> = feature_vecs[i..i + self.sequence_length].to_vec();
+            let tgt: Vec<Vec<f32>> = feature_vecs[i + 1..i + self.sequence_length + 1].to_vec();
+            sequences.push(seq);
+            targets.push(tgt);
+            i += stride;
+        }
+
+        let num_sequences = sequences.len();
+        if num_sequences == 0 {
+            return Ok((0.0, 0));
+        }
+
+        let loss = lstm.train(&sequences, &targets);
+        Ok((loss, num_sequences))
+    }
+
     /// Save LSTM model weights to bytes (compressed-ready for distributed sync)
     pub fn save_model(&self) -> Result<Vec<u8>> {
         let lstm = self.lstm.as_ref().ok_or_else(|| {

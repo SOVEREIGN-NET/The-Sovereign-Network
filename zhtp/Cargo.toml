@@ -11,7 +11,7 @@ repository = "https://github.com/zhtp/zhtp"
 [lib]
 name = "zhtp"
 path = "src/lib.rs"
-crate-type = ["rlib", "cdylib", "staticlib"]  # rlib for Rust, cdylib for Android, staticlib for iOS
+crate-type = ["rlib"]  # rlib for Rust (cdylib for Android, staticlib for iOS - disabled to reduce build memory)
 
 # Binary executable
 [[bin]]

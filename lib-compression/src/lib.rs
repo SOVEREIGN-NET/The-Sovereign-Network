@@ -76,6 +76,7 @@ pub use pattern_dict::{PatternDictionary, DictionaryEntry, GLOBAL_PATTERN_DICT};
 pub use zkc_compressor::{ZkcCompressor, CompressedShard, CompressionStats};
 pub use zkc_decompressor::{ZkcDecompressor, DecompressionStats};
 pub use sovereign_codec::SovereignCodec;
+pub use sovereign_codec::CodecParams;
 
 /// Version of the compression protocol
 pub const PROTOCOL_VERSION: u32 = 1;

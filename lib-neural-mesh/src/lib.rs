@@ -45,7 +45,9 @@ pub mod inference;
 pub mod error;
 pub mod ml; // ML implementations
 pub mod content; // Content analysis and compression feedback
+pub mod codec_learner; // Adaptive codec parameter learning (content-adaptive SFC9)
 pub mod distributed; // Distributed training + self-compressing neural mesh
+pub mod parallel_shard_stream; // Multi-channel QUIC parallel shard compression + streaming
 
 // Re-export all public types
 pub use router::{RlRouter, NetworkState, RoutingAction};
@@ -55,9 +57,16 @@ pub use anomaly::{AnomalySentry, NodeMetrics, AnomalyReport, AnomalySeverity, Th
 pub use inference::InferenceEngine;
 pub use error::{NeuralMeshError, Result};
 pub use content::{ContentType, ContentProfile, CompressionFeedback};
+pub use codec_learner::{AdaptiveCodecLearner, CodecLearnerConfig, LearnedCodecParams};
 pub use distributed::{
     DistributedTrainingCoordinator, CompressedModel, ModelId,
     FedAvgResult, ModelSyncMessage, SelfOptimizingMetrics,
+    DifferentialPrivacyConfig, ModelCompressor, ModelEncryptor,
+    Blake3StreamEncryptor, IdentityEncryptor, IdentityCompressor,
+};
+pub use parallel_shard_stream::{
+    parallel_shard_compress, parallel_shard_decompress,
+    CompressedShard, ShardedModel, ShardReassembler, ShardStreamMessage,
 };
 
 /// Neural mesh protocol version

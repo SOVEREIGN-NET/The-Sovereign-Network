@@ -39,21 +39,35 @@ ZhtpIdentity::new_unified(identity_type, age, jurisdiction, primary_device, seed
 All proof serialization includes version markers for forward compatibility.
 
 ### Core Libraries (`lib-*`)
-- **lib-blockchain** — Blockchain data structures, BFT consensus, sled-backed storage
-- **lib-consensus** — Tendermint-style BFT consensus engine
-- **lib-crypto** — Cryptographic primitives with post-quantum support (Dilithium5, Kyber1024, BLAKE3)
+- **lib-access-control** — Permission and capability management
+- **lib-blockchain** — Blockchain data structures, UTXO transactions, sled-backed storage
+- **lib-client** — Client SDK with UniFFI bindings and React Native bridge
+- **lib-compression** — SovereignCodec (SFC0–SFC9), content-defined chunking, global shard dedup, ZK-Witness
+- **lib-consensus** — Multi-layer consensus: PoS + BFT + PoUW with slashing
+- **lib-crypto** — Post-quantum cryptography (Dilithium5, Kyber1024, BLAKE3)
 - **lib-dht** — Distributed Hash Table for peer discovery
 - **lib-dns** — DNS resolution and management
-- **lib-economy** — Economic models and SOV token management
-- **lib-identity** — Seed-anchored identity and authentication (ADR-0001)
-- **lib-network** — QUIC mesh networking and UHP v2 handshake
-- **lib-proofs** — Versioned zero-knowledge proofs (ADR-0003)
+- **lib-economy** — SOV token economics and UBI distribution
+- **lib-fees** — Dynamic fee calculation
+- **lib-governance** — On-chain DAO governance, proposals, voting
+- **lib-identity** — ZK-DID identity, social recovery, selective-disclosure credentials
+- **lib-identity-core** — Shared identity primitives and core types
+- **lib-mempool** — Transaction pool management
+- **lib-network** — QUIC mesh networking with UHP v2 handshake
+- **lib-neural-mesh** — On-device AI: RL routing, anomaly detection, predictive prefetching, adaptive codec tuning, federated learning with DP
+- **lib-proofs** — Zero-knowledge proofs: Plonky2 circuits (tx, identity, storage) + Bulletproofs range proofs
 - **lib-protocols** — Protocol definitions and handlers
 - **lib-storage** — Distributed storage layer
+- **lib-tokens** — Multi-token support
+- **lib-types** — Shared type definitions across crates
+- **lib-utxo** — UTXO set management
 
 ### Main Application
 - **zhtp** — ZHTP Orchestrator node (main binary)
 - **zhtp-cli** — Command-line interface for interacting with nodes
+- **zhtp-daemon** — Systemd service wrapper
+
+> See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full system architecture, layer diagram, and crate reference.
 
 ## 🚀 Quick Start
 
@@ -114,26 +128,38 @@ The hook prevents staging of:
 
 ### Project Structure
 ```
-sovereign-mono-repo/
+sovereign-network/
 ├── Cargo.toml              # Workspace configuration
 ├── scripts/                # Build and validation scripts
+├── docs/                   # Architecture & design docs
 ├── lib-blockchain/         # Blockchain library
-├── lib-consensus/          # Consensus library
-├── lib-crypto/             # Crypto library
+├── lib-compression/        # Lossless codec + network dedup
+├── lib-consensus/          # Multi-layer BFT consensus
+├── lib-crypto/             # Post-quantum crypto
 ├── lib-dht/                # DHT library
 ├── lib-dns/                # DNS library
-├── lib-economy/            # Economy library
-├── lib-identity/           # Identity library
-├── lib-network/            # Network library
-├── lib-proofs/             # Proofs library
-├── lib-protocols/          # Protocols library
-├── lib-storage/            # Storage library
-├── tools/                  # Operator tooling (sled-recovery, etc.)
+├── lib-economy/            # SOV tokenomics
+├── lib-fees/               # Fee calculation
+├── lib-governance/         # On-chain governance
+├── lib-identity/           # ZK identity + DID
+├── lib-identity-core/      # Shared identity primitives
+├── lib-mempool/            # Transaction pool
+├── lib-network/            # P2P mesh networking
+├── lib-neural-mesh/        # AI subsystems (routing, anomaly, compression)
+├── lib-proofs/             # ZK proofs (Plonky2 + Bulletproofs)
+├── lib-protocols/          # Protocol definitions
+├── lib-storage/            # Distributed storage
+├── lib-tokens/             # Token management
+├── lib-utxo/               # UTXO management
+├── lib-access-control/     # Permission system
+├── lib-client/             # Client SDK (UniFFI + React Native)
+├── explorer/               # Block explorer (Trunk/WASM)
+├── browser-extension/      # Browser extension
+├── tools/                  # Operator tooling
+├── tests/                  # Integration & E2E tests
 ├── zhtp/                   # Main orchestrator
-│   ├── src/                # Source code
-│   ├── configs/            # Configuration files
-│   └── Cargo.toml          # Package manifest
 ├── zhtp-cli/               # CLI tool
+├── zhtp-daemon/            # Systemd daemon
 └── target/                 # Build artifacts (gitignored)
 ```
 
@@ -151,11 +177,18 @@ cargo build --workspace --verbose
 
 ### Running Tests
 ```bash
-# Run all tests
+# Run all 365 tests
 cargo test --workspace
 
-# Run tests with output
-cargo test --workspace -- --nocapture
+# By subsystem
+cargo test -p lib-compression --lib             # 85 compression tests
+cargo test -p lib-neural-mesh --lib             # 76 neural mesh tests
+cargo test -p lib-proofs --lib                  # 185 proof tests
+
+# Integration & E2E
+cargo test --test test_full_stack_e2e           # 8 end-to-end tests
+cargo test --test test_neural_mesh_integration  # 7 neural mesh integration
+cargo test --test test_orchestrator_integration # 4 orchestrator tests
 ```
 
 ## 📊 Node Status Indicators
@@ -173,8 +206,12 @@ When a node starts successfully, you'll see:
 - **Post-quantum cryptography** — Dilithium5 signatures, Kyber1024 key exchange
 - **Zero-trust security model** — On-chain identity verification at QUIC handshake
 - **Encrypted mesh networking** — QUIC + UHP v2 + Kyber KEM defense-in-depth
+- **Zero-knowledge proofs** — Plonky2 circuits for transactions, identity, and storage; Bulletproofs for range proofs
+- **Neural anomaly detection** — Isolation Forest detects byzantine/selfish/malicious nodes
+- **Federated learning with DP** — (ε,δ)-differential privacy on all model weight aggregation
+- **BLAKE3 authenticated encryption** — XOF-based stream cipher for model sync messages
 - **DHT-based peer discovery** — No central authority
-- **BFT consensus** — Tendermint-style finality with 2f+1 quorum
+- **BFT consensus** — Tendermint-style finality with slashing and jail/ban mechanics
 
 ## 🛠️ Troubleshooting
 

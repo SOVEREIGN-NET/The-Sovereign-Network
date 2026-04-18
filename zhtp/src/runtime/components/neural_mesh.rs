@@ -27,9 +27,14 @@ use crate::runtime::{Component, ComponentHealth, ComponentId, ComponentMessage, 
 use lib_neural_mesh::{
     AnomalyReport, AnomalySentry, NetworkState, NeuroCompressor, NodeMetrics,
     PredictivePrefetcher, RlRouter, RoutingAction,
+    AdaptiveCodecLearner, CodecLearnerConfig, LearnedCodecParams,
+    content::{ContentProfile, CompressionFeedback},
     distributed::{
         CompressedModel, DistributedTrainingCoordinator, ModelCompressor, ModelId,
         ModelSyncMessage, SelfOptimizingMetrics,
+    },
+    parallel_shard_stream::{
+        parallel_shard_compress, ShardStreamMessage, DEFAULT_SHARD_COUNT,
     },
 };
 
@@ -55,6 +60,40 @@ impl ModelCompressor for SovereignCodecCompressor {
     }
 }
 
+/// Content-adaptive compressor that uses the neural mesh's learned params (SFC9).
+/// Falls back to standard SFC7 when no learner is available or for default params.
+pub struct AdaptiveCodecCompressor {
+    params: lib_compression::CodecParams,
+}
+
+impl AdaptiveCodecCompressor {
+    /// Create with learned params converted from the neural mesh.
+    pub fn with_params(learned: &LearnedCodecParams) -> Self {
+        Self {
+            params: lib_compression::CodecParams {
+                rescale_limit: learned.rescale_limit,
+                freq_step: learned.freq_step,
+                init_freq_zero: learned.init_freq_zero,
+            },
+        }
+    }
+}
+
+impl ModelCompressor for AdaptiveCodecCompressor {
+    fn compress(&self, data: &[u8]) -> Vec<u8> {
+        lib_compression::SovereignCodec::encode_with_params(data, &self.params)
+    }
+
+    fn decompress(&self, data: &[u8]) -> std::result::Result<Vec<u8>, String> {
+        // decode() handles both SFC7 and SFC9 transparently
+        lib_compression::SovereignCodec::decode(data)
+    }
+
+    fn name(&self) -> &str {
+        "SovereignCodec-SFC9-Adaptive"
+    }
+}
+
 /// Statistics tracked during operation
 #[derive(Debug, Default, Clone)]
 pub struct NeuralMeshStats {
@@ -68,6 +107,8 @@ pub struct NeuralMeshStats {
     pub distributed_syncs: u64,
     pub fedavg_rounds: u64,
     pub model_bytes_saved: u64,
+    pub codec_learner_steps: u64,
+    pub codec_adaptations: u64,
 }
 
 /// Neural Mesh runtime component
@@ -86,6 +127,10 @@ pub struct NeuralMeshComponent {
     // More nodes = faster training because FedAvg merges gradients from all peers
     // The AI's own model weights are ZKC-compressed by SovereignCodec
     distributed: Arc<RwLock<DistributedTrainingCoordinator>>,
+
+    // Adaptive codec parameter learner — learns optimal SFC params per content type
+    // The neural mesh tunes the very codec that compresses its own weights
+    codec_learner: Arc<RwLock<AdaptiveCodecLearner>>,
 
     // Operational stats
     stats: Arc<RwLock<NeuralMeshStats>>,
@@ -119,6 +164,7 @@ impl NeuralMeshComponent {
             prefetcher: Arc::new(RwLock::new(PredictivePrefetcher::new())),
             compressor: Arc::new(RwLock::new(NeuroCompressor::new())),
             distributed: Arc::new(RwLock::new(coordinator)),
+            codec_learner: Arc::new(RwLock::new(AdaptiveCodecLearner::new(CodecLearnerConfig::default()))),
             stats: Arc::new(RwLock::new(NeuralMeshStats::default())),
             baseline_metrics: Arc::new(RwLock::new(Vec::new())),
             persist_dir,
@@ -212,6 +258,91 @@ impl NeuralMeshComponent {
         let mut stats = self.stats.write().await;
         stats.embeddings_computed += 1;
         Ok(embedding)
+    }
+
+    // ── Content-Adaptive Compression (Codec Learner) ──
+
+    /// Predict optimal codec parameters for the given data.
+    ///
+    /// Analyzes the content, queries the neural mesh's adaptive learner, and returns
+    /// `CodecParams` tuned for this specific content type. Use with
+    /// `SovereignCodec::encode_with_params()` for content-adaptive compression.
+    pub async fn predict_codec_params(&self, data: &[u8]) -> lib_compression::CodecParams {
+        let profile = ContentProfile::analyze(data);
+        let mut learner = self.codec_learner.write().await;
+        let learned = learner.predict_params(&profile);
+        let mut stats = self.stats.write().await;
+        stats.codec_adaptations += 1;
+        lib_compression::CodecParams {
+            rescale_limit: learned.rescale_limit,
+            freq_step: learned.freq_step,
+            init_freq_zero: learned.init_freq_zero,
+        }
+    }
+
+    /// Compress data using content-adaptive parameters from the neural mesh.
+    ///
+    /// This is the main entry point for intelligent compression: the AI analyzes
+    /// the content, selects optimal codec parameters, and produces SFC9-encoded output.
+    /// Returns `(compressed_bytes, feedback)` — the feedback should be fed back
+    /// via `observe_compression_result()` to close the learning loop.
+    pub async fn compress_adaptive(&self, data: &[u8]) -> (Vec<u8>, CompressionFeedback) {
+        let profile = ContentProfile::analyze(data);
+        let params = {
+            let mut learner = self.codec_learner.write().await;
+            let learned = learner.predict_params(&profile);
+            lib_compression::CodecParams {
+                rescale_limit: learned.rescale_limit,
+                freq_step: learned.freq_step,
+                init_freq_zero: learned.init_freq_zero,
+            }
+        };
+
+        let start = std::time::Instant::now();
+        let compressed = lib_compression::SovereignCodec::encode_with_params(data, &params);
+        let elapsed = start.elapsed().as_secs_f64();
+
+        let ratio = if compressed.len() > 0 {
+            data.len() as f64 / compressed.len() as f64
+        } else {
+            1.0
+        };
+        let throughput = data.len() as f64 / elapsed / 1_000_000.0;
+
+        // Verify roundtrip integrity
+        let integrity_ok = lib_compression::SovereignCodec::decode(&compressed)
+            .map(|decoded| decoded == data)
+            .unwrap_or(false);
+
+        let feedback = CompressionFeedback {
+            profile,
+            ratio,
+            total_ratio: ratio,
+            time_secs: elapsed,
+            throughput_mbps: throughput,
+            integrity_ok,
+            shard_count: 1,
+            shards_compressed: if ratio > 1.0 { 1 } else { 0 },
+        };
+
+        // Auto-observe the result to close the learning loop
+        {
+            let mut learner = self.codec_learner.write().await;
+            learner.observe_result(&feedback);
+        }
+        let mut stats = self.stats.write().await;
+        stats.codec_adaptations += 1;
+
+        (compressed, feedback)
+    }
+
+    /// Feed compression results back to the codec learner for training.
+    ///
+    /// Call this after using `predict_codec_params()` + manual compression.
+    /// Not needed if you use `compress_adaptive()` (which auto-observes).
+    pub async fn observe_compression_result(&self, feedback: &CompressionFeedback) {
+        let mut learner = self.codec_learner.write().await;
+        learner.observe_result(feedback);
     }
 
     /// Add baseline metrics for anomaly detection training
@@ -389,6 +520,15 @@ impl NeuralMeshComponent {
                 info!("💾 Persisted Anomaly Sentry: {} bytes", bytes.len());
             }
         }
+
+        // Adaptive Codec Learner
+        if let Ok(bytes) = self.codec_learner.read().await.save() {
+            if let Err(e) = std::fs::write(self.model_path("codec_learner.bin"), &bytes) {
+                warn!("Failed to persist Codec Learner: {}", e);
+            } else {
+                info!("💾 Persisted Codec Learner: {} bytes", bytes.len());
+            }
+        }
     }
 
     /// Restore model weights from disk (if available).
@@ -444,6 +584,24 @@ impl NeuralMeshComponent {
                     }
                 }
                 Err(e) => warn!("Failed to read Anomaly Sentry checkpoint: {}", e),
+            }
+        }
+
+        // Adaptive Codec Learner
+        let path = self.model_path("codec_learner.bin");
+        if path.exists() {
+            match std::fs::read(&path) {
+                Ok(bytes) => {
+                    let mut learner = self.codec_learner.write().await;
+                    if learner.load(&bytes).is_ok() {
+                        info!("🔄 Restored Codec Learner from disk: {} bytes (step={})",
+                            bytes.len(), learner.training_steps());
+                        restored += 1;
+                    } else {
+                        warn!("Corrupted Codec Learner checkpoint — starting fresh");
+                    }
+                }
+                Err(e) => warn!("Failed to read Codec Learner checkpoint: {}", e),
             }
         }
 
@@ -545,6 +703,84 @@ impl NeuralMeshComponent {
         }
 
         info!("🧠🔥 Warm-up complete: 80 RL experiences + 15 anomaly baselines seeded");
+
+        // ── Seed codec learner with synthetic compression experiences ──
+        // Generates diverse content + compression feedback so the learner
+        // can start differentiating content types immediately.
+        {
+            let mut learner = self.codec_learner.write().await;
+
+            // JSON-like (high text ratio, medium entropy)
+            for i in 0..6u32 {
+                let profile = ContentProfile {
+                    content_type: lib_neural_mesh::ContentType::Json,
+                    entropy: 3.5 + (i as f32) * 0.3,
+                    size: 50_000 + (i as usize) * 20_000,
+                    text_ratio: 0.92,
+                    unique_bytes: 80 + (i as u16) * 5,
+                    avg_delta: 30.0,
+                };
+                let _p = learner.predict_params(&profile);
+                learner.observe_result(&CompressionFeedback {
+                    profile,
+                    ratio: 5.0 + (i as f64) * 0.5,
+                    total_ratio: 4.8 + (i as f64) * 0.4,
+                    time_secs: 0.05,
+                    throughput_mbps: 80.0,
+                    integrity_ok: true,
+                    shard_count: 1,
+                    shards_compressed: 1,
+                });
+            }
+
+            // Text (logs, CSV)
+            for i in 0..6u32 {
+                let profile = ContentProfile {
+                    content_type: lib_neural_mesh::ContentType::Text,
+                    entropy: 4.0 + (i as f32) * 0.2,
+                    size: 100_000 + (i as usize) * 50_000,
+                    text_ratio: 0.88,
+                    unique_bytes: 90 + (i as u16) * 3,
+                    avg_delta: 35.0,
+                };
+                let _p = learner.predict_params(&profile);
+                learner.observe_result(&CompressionFeedback {
+                    profile,
+                    ratio: 3.5 + (i as f64) * 0.3,
+                    total_ratio: 3.3 + (i as f64) * 0.3,
+                    time_secs: 0.08,
+                    throughput_mbps: 120.0,
+                    integrity_ok: true,
+                    shard_count: 1,
+                    shards_compressed: 1,
+                });
+            }
+
+            // Binary (model weights, executables)
+            for i in 0..6u32 {
+                let profile = ContentProfile {
+                    content_type: lib_neural_mesh::ContentType::Binary,
+                    entropy: 6.5 + (i as f32) * 0.2,
+                    size: 200_000 + (i as usize) * 100_000,
+                    text_ratio: 0.15,
+                    unique_bytes: 240 + (i as u16),
+                    avg_delta: 80.0,
+                };
+                let _p = learner.predict_params(&profile);
+                learner.observe_result(&CompressionFeedback {
+                    profile,
+                    ratio: 1.8 + (i as f64) * 0.1,
+                    total_ratio: 1.7 + (i as f64) * 0.1,
+                    time_secs: 0.15,
+                    throughput_mbps: 200.0,
+                    integrity_ok: true,
+                    shard_count: 1,
+                    shards_compressed: 1,
+                });
+            }
+
+            info!("🧠🔥 Codec learner seeded with 18 synthetic compression experiences");
+        }
     }
 }
 
@@ -651,6 +887,7 @@ impl Component for NeuralMeshComponent {
         let distributed_clone = self.distributed.clone();
         let prefetcher_clone = self.prefetcher.clone();
         let anomaly_export_clone = self.anomaly.clone();
+        let codec_learner_clone = self.codec_learner.clone();
         let persist_dir = self.persist_dir.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
@@ -699,6 +936,52 @@ impl Component for NeuralMeshComponent {
                         Err(_) => {
                             // Not enough experiences yet — this is normal early on
                         }
+                    }
+                }
+
+                // ── Train LSTM Prefetcher on accumulated access patterns ──
+                // Without this the LSTM runs inference on random weights forever.
+                {
+                    let mut pf = prefetcher_clone.write().await;
+                    match pf.train_from_history() {
+                        Ok((loss, num_seqs)) => {
+                            if num_seqs > 0 {
+                                info!(
+                                    "🧠 LSTM Prefetcher trained: loss={:.6}, sequences={}",
+                                    loss, num_seqs
+                                );
+                            }
+                        }
+                        Err(_) => {
+                            // Not enough history yet — normal in early cycles
+                        }
+                    }
+                }
+
+                // ── Train Adaptive Codec Learner (every 3rd cycle = ~90s) ──
+                // The learner accumulates compression feedback from all sources.
+                // When enough experiences are buffered, run a gradient update
+                // on the actor-critic network that predicts optimal SFC params.
+                if cycle_count % 3 == 0 {
+                    let mut learner = codec_learner_clone.write().await;
+                    if let Some(loss) = learner.train() {
+                        let mut stats = stats_clone.write().await;
+                        stats.codec_learner_steps += 1;
+                        let epsilon = learner.exploration_rate();
+                        let counts = learner.type_sample_counts();
+                        let rewards = learner.type_best_rewards();
+                        info!(
+                            "🧠🎯 Codec Learner trained: loss={:.4}, step={}, ε={:.3}",
+                            loss, learner.training_steps(), epsilon
+                        );
+                        info!(
+                            "  Type samples: JSON={} Text={} Markup={} Compressed={} Binary={} Unknown={}",
+                            counts[0], counts[1], counts[2], counts[3], counts[4], counts[5]
+                        );
+                        info!(
+                            "  Best rewards: JSON={:.2} Text={:.2} Binary={:.2}",
+                            rewards[0], rewards[1], rewards[4]
+                        );
                     }
                 }
 
@@ -793,6 +1076,55 @@ impl Component for NeuralMeshComponent {
                         }
                     }
 
+                    // ── Parallel Shard Streaming (every 8th cycle = ~240s) ──
+                    // Uses multi-channel QUIC: split model → compress shards in parallel
+                    // → stream each shard over a separate QUIC stream for max throughput
+                    if cycle_count % 8 == 0 {
+                        let compressor = SovereignCodecCompressor;
+                        // Shard-compress the RL Router for parallel streaming
+                        if let Ok(raw) = router_clone.read().await.save_model() {
+                            let sharded = parallel_shard_compress(
+                                lib_neural_mesh::distributed::ModelId::RlRouter,
+                                &raw,
+                                "local",
+                                cycle_count,
+                                &compressor,
+                                DEFAULT_SHARD_COUNT,
+                            );
+                            info!(
+                                "🧠⚡ Parallel shard compress RL Router: {} → {} bytes ({:.1}x) in {} shards",
+                                sharded.total_raw_size, sharded.total_compressed_size,
+                                sharded.compression_ratio, sharded.shards.len()
+                            );
+
+                            // Stream each shard independently over QUIC
+                            let sample_count = stats_clone.read().await.routing_decisions;
+                            for shard in &sharded.shards {
+                                let msg = ShardStreamMessage {
+                                    shard: shard.clone(),
+                                    model_hash: sharded.model_hash,
+                                    sample_count,
+                                };
+                                if let Ok(bytes) = msg.to_bytes() {
+                                    if let Ok(mesh_router) =
+                                        crate::runtime::mesh_router_provider::get_global_mesh_router().await
+                                    {
+                                        mesh_router.emit_neural_event(
+                                            ComponentMessage::Custom(
+                                                "shard_stream".to_string(),
+                                                bytes,
+                                            ),
+                                        ).await;
+                                    }
+                                }
+                            }
+                            debug!(
+                                "🧠📡 Streamed {} shards for RL Router via parallel QUIC channels",
+                                sharded.shards.len()
+                            );
+                        }
+                    }
+
                     // Log self-optimization loop metrics
                     let metrics = dist.loop_metrics().await;
                     if metrics.fedavg_rounds > 0 || metrics.total_model_bytes_raw > 0 {
@@ -812,13 +1144,16 @@ impl Component for NeuralMeshComponent {
                     if let Ok(bytes) = anomaly_export_clone.read().await.save_model() {
                         let _ = std::fs::write(persist_dir.join("anomaly_sentry.bin"), &bytes);
                     }
+                    if let Ok(bytes) = codec_learner_clone.read().await.save() {
+                        let _ = std::fs::write(persist_dir.join("codec_learner.bin"), &bytes);
+                    }
                     debug!("💾 Periodic model checkpoint saved (cycle {})", cycle_count);
                 }
             }
             debug!("Neural mesh background training loop exited");
         });
 
-        info!("🧠 Neural Mesh component running — all 4 sub-components active + background training");
+        info!("🧠 Neural Mesh component running — all 5 sub-components active + background training");
         Ok(())
     }
 
@@ -884,10 +1219,12 @@ impl Component for NeuralMeshComponent {
                     };
                     let mut router = self.router.write().await;
                     if let Ok(action) = router.select_action(&state) {
-                        // Reward for accepting a new peer (expanding the network)
-                        let reward = 0.5;
+                        // Reward based on network expansion: lower congestion = better
+                        // More peers generally improves path diversity → positive base reward
+                        // But reward is scaled by how congested we are (overloaded = less benefit)
+                        let reward = 0.6 * (1.0 - state.congestion);
                         let next_state = NetworkState {
-                            congestion: 0.25,
+                            congestion: (state.congestion - 0.05).max(0.01),
                             ..state
                         };
                         let _ = router.provide_reward(reward, &next_state, false);
@@ -895,7 +1232,7 @@ impl Component for NeuralMeshComponent {
                         stats.routing_decisions += 1;
                         stats.total_reward += reward as f64;
                         debug!(
-                            "Neural mesh: RL episode from peer connect — action={}, reward={}",
+                            "Neural mesh: RL episode from peer connect — action={}, reward={:.3}",
                             action.action_id, reward
                         );
                     }
@@ -905,7 +1242,8 @@ impl Component for NeuralMeshComponent {
 
             ComponentMessage::PeerDisconnected(peer_id) => {
                 info!("Neural mesh: peer disconnected — {}", peer_id);
-                // Negative reward — losing a peer is penalized
+                // Negative reward scaled by congestion — losing a peer when
+                // already congested is much worse than when network is healthy
                 {
                     let state = NetworkState {
                         latencies: std::collections::HashMap::new(),
@@ -916,28 +1254,78 @@ impl Component for NeuralMeshComponent {
                     };
                     let mut router = self.router.write().await;
                     if let Ok(_action) = router.select_action(&state) {
+                        // Higher congestion at disconnect time → worse penalty
+                        let reward = -0.2 - 0.5 * state.congestion;
                         let next_state = NetworkState {
-                            congestion: 0.7,
+                            congestion: (state.congestion + 0.1).min(1.0),
                             ..state
                         };
-                        let _ = router.provide_reward(-0.3, &next_state, false);
+                        let _ = router.provide_reward(reward, &next_state, false);
                         let mut stats = self.stats.write().await;
-                        stats.total_reward -= 0.3;
+                        stats.total_reward += reward as f64;
                     }
                 }
                 Ok(())
             }
 
-            // ── Network state update → RL Router training ──
+            // ── Network state update → RL Router training with REAL reward ──
             ComponentMessage::NetworkUpdate(state_json) => {
                 debug!("Neural mesh: network state update");
                 // Parse the network state and provide to the router
                 if let Ok(state) = serde_json::from_str::<NetworkState>(&state_json) {
+                    // Select a route using the current policy
                     match self.select_route(&state).await {
                         Ok(action) => {
                             debug!(
                                 "Neural mesh route decision: {:?} (confidence: {:.2})",
                                 action.nodes, action.confidence
+                            );
+
+                            // ── Compute REAL reward from actual network metrics ──
+                            // Low congestion → positive reward
+                            // Low latency → positive reward
+                            // Low packet loss → positive reward
+                            // High bandwidth → positive reward
+                            let avg_latency = if state.latencies.is_empty() {
+                                100.0
+                            } else {
+                                state.latencies.values().sum::<f32>()
+                                    / state.latencies.len() as f32
+                            };
+                            let avg_loss_rate = if state.packet_loss.is_empty() {
+                                0.0
+                            } else {
+                                state.packet_loss.values().sum::<f32>()
+                                    / state.packet_loss.len() as f32
+                            };
+                            let avg_bw = if state.bandwidth.is_empty() {
+                                500.0
+                            } else {
+                                state.bandwidth.values().sum::<f32>()
+                                    / state.bandwidth.len() as f32
+                            };
+
+                            // Reward function: normalize each metric to [-1, 1] range
+                            // latency: 0-500ms mapped to [+1, -1]
+                            let latency_reward = 1.0 - (avg_latency / 250.0).clamp(0.0, 2.0);
+                            // congestion: 0-1 mapped to [+1, -1]
+                            let congestion_reward = 1.0 - 2.0 * state.congestion;
+                            // packet loss: 0-0.1 mapped to [+1, -1]
+                            let loss_reward = 1.0 - (avg_loss_rate * 20.0).clamp(0.0, 2.0);
+                            // bandwidth: use log scale, 100-10000 mapped to [0, 1]
+                            let bw_reward = ((avg_bw.max(1.0).ln() - 4.6) / 4.6).clamp(-1.0, 1.0);
+
+                            // Weighted combination
+                            let reward = 0.35 * latency_reward
+                                + 0.30 * congestion_reward
+                                + 0.20 * loss_reward
+                                + 0.15 * bw_reward;
+
+                            let next_state = state.clone();
+                            let _ = self.provide_routing_reward(reward, &next_state, false).await;
+                            debug!(
+                                "Neural mesh: real reward={:.3} (lat={:.1}ms, cong={:.2}, loss={:.4}, bw={:.0})",
+                                reward, avg_latency, state.congestion, avg_loss_rate, avg_bw
                             );
                         }
                         Err(e) => {
@@ -1080,6 +1468,42 @@ impl Component for NeuralMeshComponent {
                         let metrics = self.get_loop_metrics().await;
                         info!("{}", metrics.summary());
                     }
+                    // ── Adaptive Codec Compression Operations ──
+                    "compress_adaptive" => {
+                        // Compress data using content-adaptive SFC9 params
+                        let (compressed, feedback) = self.compress_adaptive(&data).await;
+                        info!(
+                            "🧠🎯 Adaptive compression: {} → {} bytes ({:.1}x, {:.0} MB/s, {} → SFC9)",
+                            data.len(), compressed.len(), feedback.ratio,
+                            feedback.throughput_mbps,
+                            feedback.profile.content_type.label()
+                        );
+                    }
+                    "compression_feedback" => {
+                        // Feed back compression results to the codec learner
+                        if let Ok(feedback) = serde_json::from_slice::<CompressionFeedback>(&data) {
+                            self.observe_compression_result(&feedback).await;
+                            debug!("🧠 Codec learner observed: {}x on {}",
+                                feedback.ratio, feedback.profile.content_type.label());
+                        }
+                    }
+                    "codec_learner_stats" => {
+                        let learner = self.codec_learner.read().await;
+                        let counts = learner.type_sample_counts();
+                        let rewards = learner.type_best_rewards();
+                        info!(
+                            "🧠🎯 Codec Learner: step={}, ε={:.3}, buffer={}",
+                            learner.training_steps(), learner.exploration_rate(), learner.buffer_len()
+                        );
+                        info!(
+                            "  Samples: JSON={} Text={} Markup={} Compressed={} Binary={} Unknown={}",
+                            counts[0], counts[1], counts[2], counts[3], counts[4], counts[5]
+                        );
+                        info!(
+                            "  Rewards: JSON={:.2} Text={:.2} Markup={:.2} Binary={:.2}",
+                            rewards[0], rewards[1], rewards[2], rewards[4]
+                        );
+                    }
                     _ => {
                         debug!("Neural mesh: unknown custom operation: {}", op);
                     }
@@ -1163,6 +1587,25 @@ impl Component for NeuralMeshComponent {
         metrics.insert(
             "acceleration_factor".to_string(),
             loop_metrics.acceleration_factor as f64,
+        );
+
+        // Add codec learner metrics
+        let learner = self.codec_learner.read().await;
+        metrics.insert(
+            "codec_learner_steps".to_string(),
+            learner.training_steps() as f64,
+        );
+        metrics.insert(
+            "codec_learner_epsilon".to_string(),
+            learner.exploration_rate() as f64,
+        );
+        metrics.insert(
+            "codec_adaptations".to_string(),
+            stats.codec_adaptations as f64,
+        );
+        metrics.insert(
+            "codec_learner_buffer".to_string(),
+            learner.buffer_len() as f64,
         );
 
         Ok(metrics)

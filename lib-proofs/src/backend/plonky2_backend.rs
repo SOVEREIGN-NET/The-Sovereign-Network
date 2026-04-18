@@ -148,24 +148,67 @@ impl ProofBackend for Plonky2Backend {
         required_jurisdiction: u64,
         verification_level: u64,
     ) -> Result<BackendProof> {
-        let plonky2_proof = self.inner.prove_identity(
-            identity_secret,
-            age,
-            jurisdiction_hash,
-            credential_hash,
-            min_age,
-            required_jurisdiction,
-            verification_level,
-        )?;
-        Ok(BackendProof {
-            proof_system: plonky2_proof.proof_system.clone(),
-            data: Self::encode(&plonky2_proof)?,
-        })
+        #[cfg(feature = "real-proofs")]
+        {
+            // Real Plonky2 identity circuit: Poseidon commitment + selective disclosure
+            // claim_bitmap = 0b111: assert all three claims (age, jurisdiction, kyc)
+            let claim_bitmap: u8 = {
+                let mut b = 0u8;
+                if min_age > 0 { b |= 1; }               // claim age
+                if required_jurisdiction > 0 { b |= 2; }  // claim jurisdiction
+                if verification_level > 0 { b |= 4; }     // claim KYC level
+                b
+            };
+            let (proof_bytes, _public_inputs) = crate::identity::circuit::real::prove_identity(
+                identity_secret,
+                age,
+                jurisdiction_hash,
+                credential_hash,      // re-used as kyc_level
+                min_age,
+                required_jurisdiction,
+                verification_level,
+                claim_bitmap,
+            )?;
+            Ok(BackendProof {
+                proof_system: "plonky2-real-identity".to_string(),
+                data: proof_bytes,
+            })
+        }
+        #[cfg(not(feature = "real-proofs"))]
+        {
+            let plonky2_proof = self.inner.prove_identity(
+                identity_secret,
+                age,
+                jurisdiction_hash,
+                credential_hash,
+                min_age,
+                required_jurisdiction,
+                verification_level,
+            )?;
+            Ok(BackendProof {
+                proof_system: plonky2_proof.proof_system.clone(),
+                data: Self::encode(&plonky2_proof)?,
+            })
+        }
     }
 
     fn verify_identity(&self, proof: &BackendProof) -> Result<bool> {
-        let plonky2_proof = Self::decode(&proof.data)?;
-        self.inner.verify_identity(&plonky2_proof)
+        #[cfg(feature = "real-proofs")]
+        {
+            if proof.proof_system == "plonky2-real-identity" {
+                crate::identity::circuit::real::verify_identity(&proof.data)
+                    .map(|_| true)
+            } else {
+                // Fallback: old stub proof format
+                let plonky2_proof = Self::decode(&proof.data)?;
+                self.inner.verify_identity(&plonky2_proof)
+            }
+        }
+        #[cfg(not(feature = "real-proofs"))]
+        {
+            let plonky2_proof = Self::decode(&proof.data)?;
+            self.inner.verify_identity(&plonky2_proof)
+        }
     }
 
     fn prove_range(
@@ -215,22 +258,53 @@ impl ProofBackend for Plonky2Backend {
         permission_level: u64,
         required_permission: u64,
     ) -> Result<BackendProof> {
-        let plonky2_proof = self.inner.prove_storage_access(
-            access_key,
-            requester_secret,
-            data_hash,
-            permission_level,
-            required_permission,
-        )?;
-        Ok(BackendProof {
-            proof_system: plonky2_proof.proof_system.clone(),
-            data: Self::encode(&plonky2_proof)?,
-        })
+        #[cfg(feature = "real-proofs")]
+        {
+            let (proof_bytes, _public_inputs) =
+                crate::identity::storage_circuit::real::prove_storage_access(
+                    access_key,
+                    requester_secret,
+                    data_hash,
+                    permission_level,
+                    required_permission,
+                )?;
+            Ok(BackendProof {
+                proof_system: "plonky2-real-storage-access".to_string(),
+                data: proof_bytes,
+            })
+        }
+        #[cfg(not(feature = "real-proofs"))]
+        {
+            let plonky2_proof = self.inner.prove_storage_access(
+                access_key,
+                requester_secret,
+                data_hash,
+                permission_level,
+                required_permission,
+            )?;
+            Ok(BackendProof {
+                proof_system: plonky2_proof.proof_system.clone(),
+                data: Self::encode(&plonky2_proof)?,
+            })
+        }
     }
 
     fn verify_storage_access(&self, proof: &BackendProof) -> Result<bool> {
-        let plonky2_proof = Self::decode(&proof.data)?;
-        self.inner.verify_storage_access(&plonky2_proof)
+        #[cfg(feature = "real-proofs")]
+        {
+            if proof.proof_system == "plonky2-real-storage-access" {
+                crate::identity::storage_circuit::real::verify_storage_access(&proof.data)
+                    .map(|_| true)
+            } else {
+                let plonky2_proof = Self::decode(&proof.data)?;
+                self.inner.verify_storage_access(&plonky2_proof)
+            }
+        }
+        #[cfg(not(feature = "real-proofs"))]
+        {
+            let plonky2_proof = Self::decode(&proof.data)?;
+            self.inner.verify_storage_access(&plonky2_proof)
+        }
     }
 
     fn prove_merkle(

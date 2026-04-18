@@ -57,7 +57,7 @@ name = "lib_proofs"
 path = "src/lib.rs"
 
 [features]
-default = ["std"]
+default = ["std", "real-proofs"]
 std = []
 # Enable real cryptographic proof backends (required for production builds)
 real-proofs = ["plonky2", "plonky2_field"]

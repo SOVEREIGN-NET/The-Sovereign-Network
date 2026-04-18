@@ -10,11 +10,13 @@ lib-identity = { path = "../../lib-identity" }
 lib-network = { path = "../../lib-network" }
 lib-neural-mesh = { path = "../../lib-neural-mesh" }
 lib-compression = { path = "../../lib-compression" }
+lib-proofs = { path = "../../lib-proofs" }
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 rand = "0.8"
+std-semaphore = "0.1"
 
 [[test]]
 name = "test_orchestrator_restart_determinism"
@@ -23,3 +25,7 @@ path = "test_orchestrator_restart_determinism.rs"
 [[test]]
 name = "test_neural_mesh_network"
 path = "test_neural_mesh_network.rs"
+
+[[test]]
+name = "test_full_stack_e2e"
+path = "test_full_stack_e2e.rs"
