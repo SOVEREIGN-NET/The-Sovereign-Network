@@ -1875,7 +1875,7 @@ impl RuntimeOrchestrator {
 
         // Phase 3: Use SledStore for persistent blockchain storage
         // This replaces the deprecated file-based storage with incremental Sled DB
-        let sled_path = crate::node_data_dir().join("sled");
+        let sled_path = self.config.data_directory.join("sled");
 
         info!("📂 Opening SledStore at {:?}", sled_path);
 
