@@ -150,4 +150,4 @@ fi
 
 echo
 echo "Configuration validation completed!"
-echo "Start your node with: zhtp node start --config $CONFIG_FILE"
+echo "Start your node with: zhtp --config $CONFIG_FILE"
