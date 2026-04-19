@@ -46,6 +46,7 @@ pub mod crypto;
 pub mod dao_tx;
 pub mod error;
 pub mod handshake;
+pub mod nft_tx;
 pub mod identity;
 pub mod request;
 pub mod session;

@@ -23,6 +23,8 @@ pub struct PartialConfig {
     #[serde(default)]
     pub environment: Option<super::Environment>,
     #[serde(default)]
+    pub node_type: Option<NodeType>,
+    #[serde(default)]
     pub runtime_role: Option<RuntimeRole>,
     #[serde(default)]
     pub network: Option<PartialNetworkConfig>,
@@ -41,6 +43,8 @@ pub struct PartialConfig {
 /// Partial network configuration (matches user-friendly [network_config] section)
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct PartialNetworkConfig {
+    #[serde(default)]
+    pub protocols: Option<Vec<String>>,
     #[serde(default)]
     pub bootstrap_peers: Vec<String>,
     /// Optional SPKI SHA-256 pins for bootstrap peers (hex-encoded).
@@ -744,13 +748,7 @@ impl Default for NodeConfig {
             network_config: NetworkConfig {
                 mesh_port: 33444, // DEFAULT_MESH_PORT
                 max_peers: 100,
-                protocols: vec![
-                    "mesh".to_string(),
-                    "bluetooth".to_string(),
-                    "wifi_direct".to_string(),
-                    "lorawan".to_string(),
-                    "quic".to_string(),
-                ],
+                protocols: vec!["quic".to_string()],
                 bootstrap_peers: vec!["127.0.0.1:9333".to_string(), "127.0.0.1:9334".to_string()],
                 long_range_relays: false,
                 bootstrap_peer_pins: HashMap::new(),
@@ -1094,6 +1092,10 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
                         tracing::info!("Loaded environment = {:?} from config file", env);
                         config.environment = env;
                     }
+                    if let Some(node_type) = partial.node_type {
+                        tracing::info!("Loaded node_type = {:?} from config file", node_type);
+                        config.node_type = Some(node_type);
+                    }
                     if let Some(role) = partial.runtime_role {
                         tracing::info!("Loaded runtime_role = {:?} from config file", role);
                         config.runtime_role = role;
@@ -1101,6 +1103,15 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
 
                     // Merge [network] section (legacy support)
                     if let Some(network) = partial.network {
+                        if let Some(protocols) = network.protocols {
+                            if !protocols.is_empty() {
+                                tracing::info!(
+                                    "Loaded {} protocol(s) from [network] section",
+                                    protocols.len()
+                                );
+                                config.network_config.protocols = protocols;
+                            }
+                        }
                         if !network.bootstrap_peers.is_empty() {
                             tracing::info!(
                                 "Loaded {} bootstrap peer(s) from [network] section",
@@ -1140,6 +1151,15 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
 
                     // Merge [network_config] section
                     if let Some(network) = partial.network_config {
+                        if let Some(protocols) = network.protocols {
+                            if !protocols.is_empty() {
+                                tracing::info!(
+                                    "Loaded {} protocol(s) from [network_config] section",
+                                    protocols.len()
+                                );
+                                config.network_config.protocols = protocols;
+                            }
+                        }
                         if !network.bootstrap_peers.is_empty() {
                             tracing::info!(
                                 "Loaded {} bootstrap peer(s) from [network_config] section",
@@ -1618,6 +1638,25 @@ bootstrap_peers = ["10.0.0.1:9334", "10.0.0.2:9334"]
             .network_config
             .expect("network_config should be present");
         assert_eq!(network.bootstrap_peer_pins.len(), 2);
+    }
+
+    #[test]
+    fn test_partial_network_config_parses_protocols() {
+        let toml_str = r#"
+[network_config]
+protocols = ["quic", "wifi_direct"]
+bootstrap_peers = ["10.0.0.1:9334"]
+"#;
+
+        let partial: PartialConfig =
+            toml::from_str(toml_str).expect("Failed to parse network_config protocols");
+        let network = partial
+            .network_config
+            .expect("network_config should be present");
+        assert_eq!(
+            network.protocols,
+            Some(vec!["quic".to_string(), "wifi_direct".to_string()])
+        );
     }
 
     /// Test that explicitly configured Relay node type is preserved (Issue #454)

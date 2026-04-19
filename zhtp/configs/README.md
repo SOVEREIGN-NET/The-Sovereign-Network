@@ -85,7 +85,7 @@ This directory contains pre-configured templates for different types of ZHTP nod
 - Fast block times (2 seconds)
 - Lower resource requirements
 - Simplified configuration
-- TCP-only networking
+- QUIC-first networking
 - Local bootstrap peers
 
 **Resources**: 512MB RAM, 2 CPU threads, 50GB storage
@@ -106,6 +106,28 @@ zhtp --config zhtp/configs/dev-node.toml
 # Or use the zhtp-cli command surface
 zhtp-cli node start --config zhtp/configs/full-node.toml
 ```
+
+### macOS Transport Baseline (QUIC-first)
+
+For first-run node bring-up on macOS, use the QUIC-only baseline profile:
+
+```bash
+zhtp --config zhtp/configs/mac-bootstrap.toml
+```
+
+For a full validated bring-up checklist, see `zhtp/configs/MAC_NODE_QUICKSTART.md`.
+
+Experimental transports (`bluetooth`, `bluetooth_le`, `wifi_direct`, `lorawan`) are opt-in on macOS:
+
+```bash
+export ZHTP_ENABLE_EXPERIMENTAL_MAC_TRANSPORTS=1
+zhtp --config zhtp/configs/full-node.toml
+```
+
+Transport support matrix for mac startup:
+
+- Stable default: `quic`
+- Experimental / explicit opt-in: `bluetooth`, `bluetooth_le`, `wifi_direct`, `lorawan`
 
 ### Advanced Usage
 
@@ -136,11 +158,11 @@ zhtp --config zhtp/configs/full-node.toml
 Copy any template and modify it for your specific needs:
 
 ```bash
-cp configs/full-node.toml configs/my-custom-node.toml
+cp zhtp/configs/full-node.toml zhtp/configs/my-custom-node.toml
 # Edit my-custom-node.toml
 
 # Validate your configuration
-./configs/validate-config.sh configs/my-custom-node.toml
+bash zhtp/configs/validate-config.sh zhtp/configs/my-custom-node.toml
 
 # Start with custom configuration
 zhtp --config zhtp/configs/my-custom-node.toml
@@ -222,14 +244,14 @@ Before starting a node, validate your configuration:
 
 ```bash
 # Validate any configuration file
-./configs/validate-config.sh ./configs/full-node.toml
-./configs/validate-config.sh ./configs/my-custom-node.toml
+bash zhtp/configs/validate-config.sh zhtp/configs/full-node.toml
+bash zhtp/configs/validate-config.sh zhtp/configs/my-custom-node.toml
 ```
 
 ### Support
 - Check logs in `./data/[node-type]/logs/`
-- Use `zhtp node status` for quick diagnostics
-- Validate configurations with `./configs/validate-config.sh`
+- Use `zhtp-cli node status` for quick diagnostics
+- Validate configurations with `bash zhtp/configs/validate-config.sh`
 - Monitor system resources and network connectivity
 
 ## Architecture Overview

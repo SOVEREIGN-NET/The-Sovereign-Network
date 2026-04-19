@@ -1,11 +1,13 @@
-# Bootstrap configuration for Mac to connect to Windows node
-# Use this on the Mac: ./target/debug/zhtp --config zhtp/configs/mac-bootstrap.toml
+# Bootstrap configuration for Mac to connect to an existing node.
+# Use this on macOS: ./target/debug/zhtp --config zhtp/configs/mac-bootstrap.toml
+#
+# QUIC-first profile:
+# - Stable default for mac node bring-up
+# - Non-ready mesh transports stay opt-in
+# - To opt in to experimental transports on macOS:
+#   export ZHTP_ENABLE_EXPERIMENTAL_MAC_TRANSPORTS=1
 
-[network]
+[network_config]
+protocols = ["quic"]
 bootstrap_peers = ["192.168.1.245:9333"]
 mesh_port = 9333
-
-[discovery]
-# Still enable multicast in case router gets fixed
-enable_multicast = true
-multicast_interval_secs = 30
