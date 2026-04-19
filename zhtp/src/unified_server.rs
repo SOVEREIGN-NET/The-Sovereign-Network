@@ -104,7 +104,7 @@ pub struct ZhtpUnifiedServer {
     // POUW reward calculator (shared for persistence)
     pouw_calculator_arc: Arc<crate::pouw::RewardCalculator>,
 
-    // Monitoring system (metrics, health, alerts, dashboard)
+    // Monitoring system (metrics, health, alerts)
     monitoring_system: Option<MonitoringSystem>,
 
     // Protocol configuration (AUTHORITATIVE CONFIG LAYER)

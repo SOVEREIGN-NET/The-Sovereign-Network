@@ -117,7 +117,6 @@ pub fn show_success_message() {
     println!("Zero-knowledge privacy protection active");
     println!("Mesh networking ready for ISP replacement");
     println!();
-    println!("Monitoring dashboard: http://localhost:8081");
     println!("CLI commands available - type 'help' for assistance");
     println!();
 }
