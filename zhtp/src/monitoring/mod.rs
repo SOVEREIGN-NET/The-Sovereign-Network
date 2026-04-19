@@ -3,7 +3,6 @@
 //! Provides comprehensive monitoring, logging, and metrics for all ZHTP components
 
 pub mod alerting;
-pub mod dashboard;
 pub mod health_check;
 pub mod metrics;
 
@@ -13,7 +12,6 @@ use std::sync::{Arc, RwLock};
 use tracing::info;
 
 pub use alerting::*;
-pub use dashboard::*;
 pub use health_check::*;
 pub use metrics::*;
 
@@ -89,7 +87,6 @@ pub struct MonitoringSystem {
     metrics_collector: Arc<MetricsCollector>,
     health_monitor: Arc<HealthMonitor>,
     alert_manager: Arc<AlertManager>,
-    _dashboard_server: Option<Arc<DashboardServer>>,
 }
 
 impl MonitoringSystem {
@@ -106,7 +103,6 @@ impl MonitoringSystem {
             metrics_collector,
             health_monitor,
             alert_manager,
-            _dashboard_server: None,
         })
     }
 
@@ -129,11 +125,7 @@ impl MonitoringSystem {
         // This ensures restarts use a new instance, not a stale stopped one
         set_global_alert_manager(self.alert_manager.clone());
 
-        // NOTE: TCP HTTP dashboard removed - ZHTP uses QUIC-only architecture
-        // All monitoring data is available via QUIC protocol endpoints
-        // See: zhtp/src/server/quic_handler.rs for monitoring QUIC handlers
-
-        info!("Monitoring system started successfully (QUIC-only, no TCP dashboard)");
+        info!("Monitoring system started successfully (QUIC-only)");
         Ok(())
     }
 
@@ -144,7 +136,7 @@ impl MonitoringSystem {
     pub async fn stop(&self) -> Result<()> {
         info!("Stopping monitoring system...");
 
-        // Stop other components (no TCP dashboard to stop - QUIC-only)
+        // Stop components
         self.alert_manager.stop().await?;
         self.health_monitor.stop().await?;
         self.metrics_collector.stop().await?;
@@ -191,8 +183,6 @@ pub struct MonitoringConfig {
     pub metrics_enabled: bool,
     pub health_check_interval: std::time::Duration,
     pub alert_thresholds: AlertThresholds,
-    pub dashboard_enabled: bool,
-    pub dashboard_port: u16,
     pub log_level: String,
     pub export_prometheus: bool,
     pub prometheus_port: u16,
@@ -204,8 +194,6 @@ impl Default for MonitoringConfig {
             metrics_enabled: true,
             health_check_interval: std::time::Duration::from_secs(30),
             alert_thresholds: AlertThresholds::default(),
-            dashboard_enabled: false, // TCP dashboard removed - QUIC-only architecture
-            dashboard_port: 0,        // Not used - monitoring via QUIC endpoints
             log_level: "info".to_string(),
             export_prometheus: false,
             prometheus_port: 9090,
