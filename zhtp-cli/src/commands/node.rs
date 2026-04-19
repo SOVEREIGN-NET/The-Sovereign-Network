@@ -218,6 +218,9 @@ async fn start_node_impl(
         allow_emergency_restore_genesis_mismatch: false,
     };
 
+    // Ensure all zhtp internals resolve keystore/sled/runtime paths consistently.
+    zhtp::set_node_data_dir(cli_args.data_dir.clone());
+
     // Load configuration
     let mut node_config = load_configuration(&cli_args)
         .await

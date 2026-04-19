@@ -2320,8 +2320,7 @@ impl Component for ConsensusComponent {
             let trigger = Arc::new(CatchUpSyncChannel { tx: catch_up_tx });
             consensus_engine.set_catch_up_sync_trigger(trigger);
             let blockchain_slot_for_sync = self.blockchain.clone();
-            let sled_path_for_sync =
-                std::path::Path::new(&self.environment.data_directory()).join("sled");
+            let sled_path_for_sync = crate::node_data_dir().join("sled");
             let bft_height_for_sync = bft_active_height.clone();
             tokio::spawn(async move {
                 run_catch_up_sync_task(
