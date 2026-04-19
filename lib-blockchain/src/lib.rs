@@ -93,7 +93,7 @@ pub use block::{
 // Blockchain module
 pub use blockchain::{
     Blockchain, BlockchainBroadcastMessage, BlockchainImport, ConsensusCheckpoint,
-    EconomicsTransaction, ValidatorInfo, ADMISSION_SOURCE_BOOTSTRAP_GENESIS,
+    EconomicsTransaction, ValidatorInfo, GatewayInfo, ADMISSION_SOURCE_BOOTSTRAP_GENESIS,
 };
 #[cfg(feature = "contracts")]
 pub use contracts::AmmPool;

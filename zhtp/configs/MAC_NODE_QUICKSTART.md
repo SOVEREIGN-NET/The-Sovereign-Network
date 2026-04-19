@@ -37,6 +37,16 @@ Expected validation includes:
 ./target/release/zhtp --config zhtp/configs/mac-bootstrap.toml
 ```
 
+## Bootstrap Leader Prerequisites (Clean Boot)
+
+For a brand-new network (empty local `sled/`), only the bootstrap leader is allowed to initialize genesis.
+
+- `network_config.bootstrap_validators[0].identity_id` must be set in config
+- Local keystore identity DID must match that first bootstrap validator DID on the leader machine
+- Non-leader nodes must wait for leader genesis and sync from peers (or copy a healthy `sled/`)
+
+If the prerequisites are not met, startup fails safely with a genesis-gate error and remediation steps.
+
 ## Experimental transport opt-in (macOS)
 
 `quic` is the stable default transport profile on macOS.

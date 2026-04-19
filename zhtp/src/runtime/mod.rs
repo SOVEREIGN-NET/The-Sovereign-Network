@@ -563,6 +563,26 @@ pub struct RuntimeOrchestrator {
     node_role: Arc<RwLock<node_runtime::NodeRole>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BootstrapLeaderStatus {
+    NotConfigured,
+    LeaderMatch {
+        expected_leader_did: String,
+        local_did: String,
+    },
+    LocalIdentityMissing {
+        expected_leader_did: String,
+    },
+    LocalIdentityMismatch {
+        expected_leader_did: String,
+        local_did: String,
+    },
+    LocalIdentityLoadError {
+        expected_leader_did: String,
+        error: String,
+    },
+}
+
 impl RuntimeOrchestrator {
     /// Create a new runtime orchestrator
     pub async fn new(config: NodeConfig) -> Result<Self> {
@@ -1246,22 +1266,119 @@ impl RuntimeOrchestrator {
         }
     }
 
-    /// Returns true when this node matches the first bootstrap validator identity.
-    async fn is_local_bootstrap_leader(&self) -> Result<bool> {
+    async fn inspect_bootstrap_leader_status(&self) -> BootstrapLeaderStatus {
         let leader_did = match self.config.network_config.bootstrap_validators.first() {
             Some(v) => v.identity_id.clone(),
-            None => return Ok(false),
+            None => return BootstrapLeaderStatus::NotConfigured,
         };
 
         let keystore_path = crate::node_data_dir().join("keystore");
+        match crate::runtime::did_startup::load_node_identity_from_keystore(&keystore_path).await {
+            Ok(Some(identity)) if identity.did == leader_did => BootstrapLeaderStatus::LeaderMatch {
+                expected_leader_did: leader_did,
+                local_did: identity.did,
+            },
+            Ok(Some(identity)) => BootstrapLeaderStatus::LocalIdentityMismatch {
+                expected_leader_did: leader_did,
+                local_did: identity.did,
+            },
+            Ok(None) => BootstrapLeaderStatus::LocalIdentityMissing {
+                expected_leader_did: leader_did,
+            },
+            Err(error) => BootstrapLeaderStatus::LocalIdentityLoadError {
+                expected_leader_did: leader_did,
+                error: error.to_string(),
+            },
+        }
+    }
 
-        let local_identity =
-            crate::runtime::did_startup::load_node_identity_from_keystore(&keystore_path).await?;
-        let Some(identity) = local_identity else {
-            return Ok(false);
-        };
+    /// Returns true when this node matches the first bootstrap validator identity.
+    async fn is_local_bootstrap_leader(&self) -> Result<bool> {
+        Ok(matches!(
+            self.inspect_bootstrap_leader_status().await,
+            BootstrapLeaderStatus::LeaderMatch { .. }
+        ))
+    }
 
-        Ok(identity.did == leader_did)
+    fn bootstrap_genesis_remediation(status: &BootstrapLeaderStatus) -> String {
+        let mut lines = vec![
+            "🚫 GENESIS GATE VIOLATION".to_string(),
+            "   This node is not eligible to create genesis from a clean local state.".to_string(),
+            "   Creating genesis is blocked to prevent chain divergence.".to_string(),
+            String::new(),
+        ];
+
+        match status {
+            BootstrapLeaderStatus::NotConfigured => {
+                lines.push(
+                    "   Cause: bootstrap_validators[0] is not configured (no bootstrap leader DID)."
+                        .to_string(),
+                );
+                lines.push(
+                    "   Fix: set network_config.bootstrap_validators[0].identity_id in config."
+                        .to_string(),
+                );
+            }
+            BootstrapLeaderStatus::LocalIdentityMissing {
+                expected_leader_did,
+            } => {
+                lines.push("   Cause: local keystore identity is missing.".to_string());
+                lines.push(format!(
+                    "   Expected bootstrap leader DID: {}",
+                    expected_leader_did
+                ));
+                lines.push(
+                    "   Fix: create/import a keystore identity matching bootstrap_validators[0].identity_id."
+                        .to_string(),
+                );
+            }
+            BootstrapLeaderStatus::LocalIdentityMismatch {
+                expected_leader_did,
+                local_did,
+            } => {
+                lines.push("   Cause: local identity DID does not match bootstrap leader DID.".to_string());
+                lines.push(format!("   Expected: {}", expected_leader_did));
+                lines.push(format!("   Local:    {}", local_did));
+                lines.push(
+                    "   Fix: either run the designated bootstrap leader first, or switch this node to the leader DID."
+                        .to_string(),
+                );
+            }
+            BootstrapLeaderStatus::LocalIdentityLoadError {
+                expected_leader_did,
+                error,
+            } => {
+                lines.push("   Cause: failed to load local keystore identity.".to_string());
+                lines.push(format!(
+                    "   Expected bootstrap leader DID: {}",
+                    expected_leader_did
+                ));
+                lines.push(format!("   Keystore error: {}", error));
+                lines.push(
+                    "   Fix: verify node data dir permissions and keystore integrity, then restart."
+                        .to_string(),
+                );
+            }
+            BootstrapLeaderStatus::LeaderMatch { .. } => {}
+        }
+
+        lines.push(String::new());
+        lines.push("   Safe recovery options:".to_string());
+        lines.push("   1. Start the bootstrap leader node first".to_string());
+        lines.push("   2. Copy the sled/ directory from a healthy node".to_string());
+        lines.push("   3. Ensure at least one peer with committed chain data is reachable".to_string());
+        lines.join("\n")
+    }
+
+    fn can_create_genesis_from_clean_state(
+        bootstrap_leader_status: &BootstrapLeaderStatus,
+        is_validator_node: bool,
+    ) -> bool {
+        is_validator_node
+            || matches!(
+                bootstrap_leader_status,
+                BootstrapLeaderStatus::LeaderMatch { .. }
+            )
     }
 
     /// Returns true if local persistent chain artifacts already exist.
@@ -1725,6 +1842,118 @@ impl RuntimeOrchestrator {
         Ok(orchestrator)
     }
 
+    /// Start a Gateway node (remote QUIC ingress proxy).
+    ///
+    /// Gateways accept native ZHTP over QUIC from clients, perform UHP v2
+    /// handshake when required, and forward requests to backend validators
+    /// via `BackendPool` / `Web4Client`.  No blockchain state, no consensus,
+    /// no mining — pure ingress + forwarding.
+    ///
+    /// Configuration:
+    /// - Uses `config.network_config.bootstrap_peers` as static backends.
+    /// - Listens on UDP `0.0.0.0:7840` for QUIC (configurable via `ZHTP_GATEWAY_ADDR`).
+    /// - Loads or creates a gateway identity in the node data directory.
+    pub async fn start_gateway(config: NodeConfig) -> Result<Self> {
+        Self::validate_node_type(&config, crate::config::NodeType::Gateway)?;
+
+        let orchestrator = Self::new(config.clone()).await?;
+
+        use crate::runtime::components::{CryptoComponent, NetworkComponent};
+
+        info!("Starting Gateway Node - QUIC ingress proxy (no blockchain state)");
+
+        // Initialize crypto and network components
+        orchestrator
+            .register_component(Arc::new(CryptoComponent::new()))
+            .await?;
+        orchestrator.start_component(ComponentId::Crypto).await?;
+
+        orchestrator
+            .register_component(Arc::new(NetworkComponent::new()))
+            .await?;
+        orchestrator.start_component(ComponentId::Network).await?;
+
+        // ------------------------------------------------------------------
+        // Gateway-specific: load identity, create service, start QUIC server
+        // ------------------------------------------------------------------
+        let data_dir = std::path::PathBuf::from(&config.data_directory);
+        let identity = zhtp_daemon::identity::load_or_create(&data_dir)
+            .context("Failed to load gateway identity")?;
+
+        let _ = lib_identity::types::node_id::try_set_network_genesis(
+            lib_identity::constants::TESTNET_GENESIS_HASH,
+        );
+
+        // Build a minimal daemon config from NodeConfig
+        let bootstrap_peers = config.network_config.bootstrap_peers.clone();
+        let daemon_config = zhtp_daemon::config::DaemonConfig {
+            listen_addr: std::env::var("ZHTP_GATEWAY_HTTP_ADDR")
+                .unwrap_or_else(|_| "127.0.0.1:7840".to_string()),
+            backend_nodes: bootstrap_peers.clone(),
+            trust: zhtp_daemon::config::TrustSettings::default(),
+            gateway: Some(zhtp_daemon::config::GatewayConfig {
+                listen_addr: std::env::var("ZHTP_GATEWAY_HTTP_ADDR")
+                    .unwrap_or_else(|_| "127.0.0.1:7840".to_string()),
+                quic_listen_addr: std::env::var("ZHTP_GATEWAY_ADDR")
+                    .unwrap_or_else(|_| "0.0.0.0:7840".to_string()),
+                request_timeout_ms: 8000,
+                connect_timeout_ms: 1500,
+                backend_selection: zhtp_daemon::config::BackendSelectionPolicy::LowestLatency,
+                retry_idempotent_requests: true,
+                static_backends: bootstrap_peers,
+                dynamic_backend_discovery: false,
+                dynamic_backend_routing: false,
+                health_check_interval_ms: 5000,
+                unhealthy_threshold: 3,
+                recovery_threshold: 2,
+                cooldown_ms: 15000,
+                max_in_flight_per_backend: 200,
+            }),
+        };
+
+        let service = Arc::new(
+            zhtp_daemon::service::ZhtpDaemonService::new(daemon_config.clone(), identity.clone())
+                .await
+                .context("Failed to create gateway service")?,
+        );
+
+        let gateway_cfg = daemon_config.effective_gateway_config();
+        let quic_bind: std::net::SocketAddr = gateway_cfg
+            .quic_listen_addr
+            .parse()
+            .with_context(|| format!("Invalid quic_listen_addr: {}", gateway_cfg.quic_listen_addr))?;
+
+        let cert_path = data_dir.join("gateway-cert.pem");
+        let key_path = data_dir.join("gateway-key.pem");
+
+        let quic_server = zhtp_daemon::quic_server::QuicGatewayServer::new(
+            quic_bind,
+            service.clone(),
+            Arc::new(identity),
+            &cert_path,
+            &key_path,
+        )
+        .await
+        .context("Failed to create QUIC gateway server")?;
+
+        info!(
+            quic_addr = %quic_bind,
+            backends = %gateway_cfg.static_backends.len(),
+            "Gateway QUIC server starting"
+        );
+
+        // Spawn QUIC server into background; orchestrator keeps ownership.
+        tokio::spawn(async move {
+            if let Err(e) = quic_server.run().await {
+                tracing::error!("QUIC gateway server error: {}", e);
+            }
+        });
+
+        info!("Gateway node initialized and listening");
+
+        Ok(orchestrator)
+    }
+
     // ========================================================================
     // END CANONICAL STARTUP METHODS
     // ========================================================================
@@ -1849,16 +2078,11 @@ impl RuntimeOrchestrator {
         //
         // Bootstrap leader with local chain data must NOT wait on peer startup/sync.
         // This keeps G1 deterministic across restarts and avoids startup races.
-        let local_is_bootstrap_leader = match self.is_local_bootstrap_leader().await {
-            Ok(v) => v,
-            Err(e) => {
-                warn!(
-                    "Failed to determine bootstrap leader identity from keystore: {}",
-                    e
-                );
-                false
-            }
-        };
+        let bootstrap_leader_status = self.inspect_bootstrap_leader_status().await;
+        let local_is_bootstrap_leader = matches!(
+            bootstrap_leader_status,
+            BootstrapLeaderStatus::LeaderMatch { .. }
+        );
         let leader_has_local_data =
             Self::should_skip_startup_sync(local_is_bootstrap_leader, has_local_chain_data);
         let joined_existing_network = if leader_has_local_data {
@@ -2235,7 +2459,10 @@ impl RuntimeOrchestrator {
 
                 if let Some(bc) = synced_blockchain {
                     (bc, true)
-                } else if local_is_bootstrap_leader || is_validator_node {
+                } else if Self::can_create_genesis_from_clean_state(
+                    &bootstrap_leader_status,
+                    is_validator_node,
+                ) {
                     // ─────────────────────────────────────────────────────────────
                     // GENESIS CREATION: Bootstrap leader or validators with no peer
                     // data may create genesis. Genesis is deterministic (same config
@@ -2278,36 +2505,14 @@ impl RuntimeOrchestrator {
                 } else {
                     // ─────────────────────────────────────────────────────────────
                     // GENESIS GATE: Non-bootstrap leader nodes CANNOT create genesis.
-                    //
-                    // This prevents the "divergent genesis" bug where multiple nodes
-                    // starting with wiped sled produce different genesis blocks.
-                    //
-                    // To fix this, you must either:
-                    // 1. Start the bootstrap leader first (node with identity matching
-                    //    the first entry in bootstrap_validators)
-                    // 2. Copy sled/ directory from a healthy node
-                    // 3. Sync from an existing peer with valid chain data
                     // ─────────────────────────────────────────────────────────────
-                    error!("🚫 GENESIS GATE VIOLATION");
-                    error!("   This node is NOT the bootstrap leader, but has no blockchain data.");
-                    error!("   Creating genesis is forbidden to prevent chain divergence.");
-                    error!("");
-                    error!("   Solutions:");
-                    error!(
-                        "   1. Start the bootstrap leader first (identity: {:?})",
-                        self.config
-                            .network_config
-                            .bootstrap_validators
-                            .first()
-                            .map(|v| &v.identity_id)
+                    let remediation = Self::bootstrap_genesis_remediation(&bootstrap_leader_status);
+                    for line in remediation.lines() {
+                        error!("{}", line);
+                    }
+                    bail!(
+                        "Genesis creation denied for non-leader clean boot. Resolve bootstrap leader prerequisites and retry."
                     );
-                    error!("   2. Copy the 'sled/' directory from a healthy node");
-                    error!("   3. Ensure at least one peer with valid chain data is reachable");
-                    error!("");
-                    error!("   If you ARE the bootstrap leader, verify your identity matches");
-                    error!("   the first entry in bootstrap_validators config.");
-
-                    bail!("Genesis creation denied: this node is not the bootstrap leader. See logs above for solutions.");
                 }
             }
         };
@@ -5178,6 +5383,64 @@ mod runtime_orchestrator_tests {
         assert!(!RuntimeOrchestrator::should_skip_startup_sync(true, false));
         assert!(!RuntimeOrchestrator::should_skip_startup_sync(false, true));
         assert!(!RuntimeOrchestrator::should_skip_startup_sync(false, false));
+    }
+
+    #[test]
+    fn clean_boot_genesis_gate_allows_bootstrap_leader_path() {
+        let status = super::BootstrapLeaderStatus::LeaderMatch {
+            expected_leader_did: "did:zhtp:leader".to_string(),
+            local_did: "did:zhtp:leader".to_string(),
+        };
+
+        assert!(
+            RuntimeOrchestrator::can_create_genesis_from_clean_state(&status, false),
+            "bootstrap leader should be allowed to initialize deterministic genesis from clean state"
+        );
+    }
+
+    #[test]
+    fn clean_boot_genesis_gate_rejects_non_leader_with_actionable_message() {
+        let status = super::BootstrapLeaderStatus::LocalIdentityMismatch {
+            expected_leader_did: "did:zhtp:leader".to_string(),
+            local_did: "did:zhtp:follower".to_string(),
+        };
+
+        assert!(
+            !RuntimeOrchestrator::can_create_genesis_from_clean_state(&status, false),
+            "non-leader clean boot must not create genesis"
+        );
+
+        let remediation = RuntimeOrchestrator::bootstrap_genesis_remediation(&status);
+        assert!(
+            remediation.contains("Expected: did:zhtp:leader"),
+            "remediation should include expected bootstrap leader DID"
+        );
+        assert!(
+            remediation.contains("Local:    did:zhtp:follower"),
+            "remediation should include local DID for mismatch diagnosis"
+        );
+    }
+
+    #[test]
+    fn clean_boot_genesis_gate_rejects_missing_local_identity_with_guidance() {
+        let status = super::BootstrapLeaderStatus::LocalIdentityMissing {
+            expected_leader_did: "did:zhtp:leader".to_string(),
+        };
+
+        assert!(
+            !RuntimeOrchestrator::can_create_genesis_from_clean_state(&status, false),
+            "clean boot without local identity must not create genesis"
+        );
+
+        let remediation = RuntimeOrchestrator::bootstrap_genesis_remediation(&status);
+        assert!(
+            remediation.contains("local keystore identity is missing"),
+            "remediation should explain missing keystore identity prerequisite"
+        );
+        assert!(
+            remediation.contains("bootstrap_validators[0].identity_id"),
+            "remediation should point operators to the leader DID prerequisite"
+        );
     }
 
     #[test]
