@@ -29,17 +29,11 @@ This documentation provides comprehensive coverage of the ZHTP (Zero-Knowledge H
 
 ### 3. [CLI Reference](cli-reference.md)
 **Command-line interface documentation**
-- Node lifecycle management (`zhtp node`)
-- Wallet operations (`zhtp wallet`)
-- DAO governance (`zhtp dao`)
-- Identity management (`zhtp identity`)
-- Network operations (`zhtp network`)
-- Blockchain commands (`zhtp blockchain`)
-- System monitoring (`zhtp monitor`)
-- Component management (`zhtp component`)
-- Interactive shell (`zhtp interactive`)
-- Server management (`zhtp server`)
-- Network isolation (`zhtp isolation`)
+- Node lifecycle management (`zhtp-cli node`)
+- Wallet operations (`zhtp-cli wallet`)
+- DAO governance (`zhtp-cli dao`)
+- Identity management (`zhtp-cli identity`)
+- Network operations (`zhtp-cli network`)
 
 ### 4. [Configuration Guide](configuration-guide.md)
 **Complete configuration system documentation**
@@ -95,32 +89,31 @@ sudo mv zhtp /usr/local/bin/
 ### Basic Usage
 ```bash
 # Start development node
-zhtp node start --dev
+zhtp --config zhtp/configs/dev-node.toml
 
 # Check status
-zhtp node status
-zhtp network status
-zhtp monitor health
+zhtp-cli node status
+zhtp-cli network status
 
 # Create identity and wallet
-zhtp identity create-did "MyIdentity" --identity-type human
-zhtp wallet create --name "MainWallet"
+zhtp-cli identity create-did "MyIdentity" --identity-type human
+zhtp-cli wallet create --name "MainWallet"
 
 # Participate in DAO
-zhtp dao info
-zhtp dao claim-ubi
+zhtp-cli dao info
+zhtp-cli dao claim-ubi
 ```
 
 ### Configuration
 ```bash
 # Create configuration
-cp configs/dev-node.toml my-config.toml
+cp zhtp/configs/dev-node.toml my-config.toml
 
 # Start with custom config
-zhtp node start --config my-config.toml --port 9333
+zhtp --config my-config.toml --mesh-port 9333
 
 # Pure mesh mode ()
-zhtp node start --config configs/pure-mesh.toml --pure-mesh
+zhtp --config zhtp/configs/edge-node.toml --pure-mesh
 ```
 
 ## Key Features

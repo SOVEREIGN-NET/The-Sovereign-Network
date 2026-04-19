@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-nightly-orange.svg)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://github.com/zhtp/zhtp)
 
@@ -114,7 +114,7 @@ The ZHTP orchestrator contains sophisticated internal systems:
 
 ### Prerequisites
 
-1. **Rust 1.70+** - Install from [rustup.rs](https://rustup.rs/)
+1. **Rust nightly** - Install from [rustup.rs](https://rustup.rs/) (repository uses `rust-toolchain.toml`)
 2. **All ZHTP Libraries** - Ensure all 9 lib-* packages are available in parent directory
 3. **System Requirements** - 4GB RAM, 10GB storage minimum
 
@@ -142,7 +142,7 @@ cargo build --release
 4. **Run initial setup:**
 ```bash
 # Create default configuration
-cargo run -- node start --dev
+cargo run -- --config zhtp/configs/dev-node.toml
 ```
 
 ### Quick Start
@@ -166,7 +166,7 @@ zhtp> network status          # Check mesh network status
 #### Method 2: Direct Commands
 ```bash
 # Execute single commands directly
-cargo run -- node start --config config.toml
+cargo run -- --config config.toml
 cargo run -- wallet balance <address>
 cargo run -- dao claim-ubi
 cargo run -- network peers
@@ -178,13 +178,13 @@ cargo run -- network peers
 
 ```bash
 # Start with default settings
-cargo run -- node start
+cargo run -- --config zhtp/configs/dev-node.toml
 
 # Start with custom configuration
-cargo run -- node start --config custom.toml --port 9334 --dev
+cargo run -- --config custom.toml --mesh-port 9334
 
 # Start in pure mesh mode (no TCP/IP fallback)
-cargo run -- node start --pure-mesh
+cargo run -- --config zhtp/configs/edge-node.toml --pure-mesh
 ```
 
 ### Identity Management
@@ -403,10 +403,10 @@ cargo test -- --nocapture
 
 ```bash
 # Start in development mode with enhanced logging
-cargo run -- node start --dev
+cargo run -- --config zhtp/configs/dev-node.toml
 
 # Use custom configuration for development
-cargo run -- node start --config dev-config.toml --dev
+cargo run -- --config dev-config.toml
 ```
 
 ## Security Features

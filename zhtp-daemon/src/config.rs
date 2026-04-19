@@ -31,6 +31,10 @@ pub struct GatewayConfig {
     /// Public listen address for incoming client connections.
     #[serde(default = "default_listen_addr")]
     pub listen_addr: String,
+    /// QUIC listen address for incoming native ZHTP connections.
+    /// Defaults to the same value as `listen_addr` so UDP and TCP share the port.
+    #[serde(default = "default_listen_addr")]
+    pub quic_listen_addr: String,
     /// Total request timeout in milliseconds.
     #[serde(default = "default_request_timeout_ms")]
     pub request_timeout_ms: u64,
@@ -109,6 +113,7 @@ impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
             listen_addr: default_listen_addr(),
+            quic_listen_addr: default_listen_addr(),
             request_timeout_ms: default_request_timeout_ms(),
             connect_timeout_ms: default_connect_timeout_ms(),
             backend_selection: BackendSelectionPolicy::default(),

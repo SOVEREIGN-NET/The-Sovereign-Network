@@ -26,7 +26,8 @@ pub use domain::{
 pub use core::{
     BondingCurveBuyData, BondingCurveDeployData, BondingCurveGraduateData, BondingCurveSellData,
     CreateEmploymentContractData, DaoExecutionData, DaoProposalData, DaoStakeData, DaoUnstakeData,
-    DaoVoteData,
+    DaoVoteData, GatewayOperation, GatewayTransactionData,
+    NftBurnData, NftCreateCollectionData, NftMintData, NftTransferData,
     GovernanceConfigOperation, GovernanceConfigUpdateData, IdentityTransactionData,
     InitCbeTokenData, InitEntityRegistryData, ProcessPayrollData, ProfitDeclarationData,
     RecordOnRampTradeData, RevenueSource, TokenMintData, TokenTransferData, Transaction,
