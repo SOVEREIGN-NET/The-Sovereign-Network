@@ -575,12 +575,34 @@ impl Component for BlockchainComponent {
         match crate::runtime::blockchain_provider::get_global_blockchain().await {
             Ok(shared_blockchain) => {
                 info!("✓ Using existing global blockchain instance");
-                // CRITICAL FIX: Don't clone the blockchain data, just store the reference
-                // Cloning creates a snapshot that disconnects from the global state
-                // Instead, we'll use the global provider directly in mining loop
 
-                // For local access via self.blockchain, we can clone the data once for initialization
-                // but the mining loop MUST use the global provider to see updates
+                // Initialize Treasury Kernel if not restored from persistence.
+                {
+                    let mut bc = shared_blockchain.write().await;
+                    if bc.treasury_kernel.is_none() {
+                        let kernel_init: Option<(lib_crypto::PublicKey, String)> = bc
+                            .council_members
+                            .first()
+                            .and_then(|cm| {
+                                let did = cm.identity_id.clone();
+                                bc.identity_registry.get(&did).map(|id| {
+                                    let pk = lib_crypto::PublicKey::new(
+                                        id.public_key.as_slice().try_into().unwrap_or([0u8; 2592]),
+                                    );
+                                    (pk, did)
+                                })
+                            });
+                        if let Some((authority_pk, authority_did)) = kernel_init {
+                            bc.initialize_treasury_kernel(authority_pk);
+                            info!("🏛️ Treasury Kernel initialized (authority: {})", &authority_did[..40.min(authority_did.len())]);
+                        } else {
+                            warn!("Treasury Kernel not initialized: no council member in registry");
+                        }
+                    } else {
+                        info!("🏛️ Treasury Kernel restored from persistence");
+                    }
+                }
+
                 let blockchain_clone = shared_blockchain.read().await.clone();
                 *self.blockchain.write().await = Some(blockchain_clone);
             }

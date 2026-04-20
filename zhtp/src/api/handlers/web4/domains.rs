@@ -62,9 +62,6 @@ pub struct ManifestDomainRegistrationRequest {
     /// Optional declared fee amount in SOV tokens (minimum 10 SOV)
     #[serde(default)]
     pub fee: Option<u64>,
-    /// Canonical on-chain SOV fee payment transaction (hex-encoded bincode Transaction)
-    #[serde(default)]
-    pub fee_payment_tx: Option<String>,
 }
 
 /// Simple domain registration request (for easier testing)
@@ -87,10 +84,6 @@ pub struct SimpleDomainRegistrationRequest {
     /// Fee amount in SOV tokens (fixed: 10 SOV for domain registration)
     #[serde(default)]
     pub fee: Option<u64>,
-    /// Canonical on-chain SOV fee payment transaction (hex-encoded bincode Transaction)
-    /// Must be a TokenTransfer from owner's Primary wallet to DAO treasury wallet.
-    #[serde(default)]
-    pub fee_payment_tx: Option<String>,
 }
 
 /// Content mapping for simple registration
@@ -381,19 +374,8 @@ impl Web4Handler {
             }
         }
 
-        let fee_payment_tx_raw = simple_request.fee_payment_tx.as_deref().ok_or_else(|| {
-            anyhow!(
-                "fee_payment_tx is required. Submit a signed canonical TokenTransfer \
-                 from owner Primary wallet to DAO treasury wallet for {} SOV.",
-                registration_fee_sov
-            )
-        })?;
         let fee_tx_hash_hex = self
-            .validate_and_submit_domain_fee_tx(
-                &owner_identity,
-                registration_fee_sov,
-                fee_payment_tx_raw,
-            )
+            .create_domain_fee_system_tx(&owner_identity, registration_fee_sov)
             .await?;
 
         info!(" Domain registration payment complete!");
@@ -748,19 +730,8 @@ impl Web4Handler {
                 DOMAIN_REGISTRATION_FEE_SOV_WHOLE
             ));
         }
-        let fee_payment_tx_raw = request.fee_payment_tx.as_deref().ok_or_else(|| {
-            anyhow!(
-                "fee_payment_tx is required. Submit a signed canonical TokenTransfer \
-                 from owner Primary wallet to DAO treasury wallet for {} SOV.",
-                DOMAIN_REGISTRATION_FEE_SOV_WHOLE
-            )
-        })?;
         let fee_tx_hash_hex = self
-            .validate_and_submit_domain_fee_tx(
-                &owner_identity,
-                DOMAIN_REGISTRATION_FEE_ATOMIC,
-                fee_payment_tx_raw,
-            )
+            .create_domain_fee_system_tx(&owner_identity, DOMAIN_REGISTRATION_FEE_ATOMIC)
             .await?;
         info!(
             " Manifest domain registration fee tx accepted: {}",
@@ -880,140 +851,121 @@ impl Web4Handler {
         ))
     }
 
-    /// Validates and submits a domain registration fee payment transaction.
-    ///
-    /// This function ensures the provided fee transaction is a properly signed canonical
-    /// `TokenTransfer` from the owner's Primary wallet to the DAO treasury for the required
-    /// SOV amount. It performs the following validations:
-    ///
-    /// * Transaction type must be `TokenTransfer`
-    /// * Chain ID must be 0x03 (mainnet)
-    /// * Token must be SOV (the canonical token)
-    /// * Transfer amount must exactly match the required registration fee
-    /// * Sender must be the owner's Primary wallet
-    /// * Signature must match the Primary wallet's public key
-    /// * Recipient must be the DAO treasury wallet
-    ///
-    /// If the transaction passes all validations and is not already confirmed or pending,
-    /// it will be submitted to the blockchain's pending transaction pool.
-    ///
-    /// # Arguments
-    ///
-    /// * `owner_identity` - The identity of the domain owner
-    /// * `registration_fee_sov` - The required registration fee in SOV
-    /// * `fee_payment_tx_raw` - Hex-encoded serialized transaction
-    ///
-    /// # Returns
-    ///
-    /// Returns the transaction hash as a hex string on success, or an error if validation fails.
-    async fn validate_and_submit_domain_fee_tx(
+
+    /// Create a system TokenTransfer for the domain registration fee.
+    /// The node builds the transaction server-side using the authenticated user's
+    /// identity, eliminating the need for the app to construct bincode transactions.
+    async fn create_domain_fee_system_tx(
         &self,
         owner_identity: &ZhtpIdentity,
-        registration_fee_sov: u128,
-        fee_payment_tx_raw: &str,
+        fee_sov: u128,
     ) -> anyhow::Result<String> {
-        let fee_payment_tx_bytes = hex::decode(fee_payment_tx_raw)
-            .map_err(|_| anyhow!("Invalid fee_payment_tx hex encoding"))?;
-        let fee_payment_tx: lib_blockchain::transaction::Transaction =
-            bincode::deserialize(&fee_payment_tx_bytes)
-                .map_err(|e| anyhow!("Invalid fee_payment_tx payload: {}", e))?;
+        let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+            .await
+            .map_err(|e| anyhow!("blockchain unavailable: {}", e))?;
+        let mut blockchain = blockchain_arc.write().await;
 
-        let fee_transfer = fee_payment_tx
-            .token_transfer_data()
-            .ok_or_else(|| anyhow!("fee_payment_tx missing token_transfer_data"))?;
-        if fee_payment_tx.transaction_type != lib_blockchain::TransactionType::TokenTransfer {
+        let owner_hash = lib_blockchain::Hash::from_slice(&owner_identity.id.0);
+
+        // Find owner's Primary wallet
+        let owner_wallet = blockchain
+            .wallet_registry
+            .values()
+            .find(|w| {
+                w.owner_identity_id.as_ref() == Some(&owner_hash)
+                    && w.wallet_type == "Primary"
+            })
+            .ok_or_else(|| anyhow!("Primary wallet not found for identity"))?;
+        let from_wallet_id = owner_wallet.wallet_id.as_array();
+        let from_public_key = owner_wallet.public_key.clone();
+
+        // Find treasury wallet
+        let treasury_wallet_id_hex = blockchain
+            .get_dao_treasury_wallet_id()
+            .ok_or_else(|| anyhow!("DAO treasury wallet is not configured"))?;
+        let treasury_bytes = hex::decode(&treasury_wallet_id_hex)
+            .map_err(|_| anyhow!("DAO treasury wallet id is malformed"))?;
+        if treasury_bytes.len() != 32 {
+            return Err(anyhow!("DAO treasury wallet id must be 32 bytes"));
+        }
+        let mut to_wallet = [0u8; 32];
+        to_wallet.copy_from_slice(&treasury_bytes);
+
+        // Check SOV balance
+        let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+        let sender_key = lib_blockchain::integration::crypto_integration::PublicKey {
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
+            key_id: from_wallet_id,
+        };
+        let balance = blockchain
+            .token_contracts
+            .get(&sov_token_id)
+            .map(|t| u128::from(t.balance_of(&sender_key)))
+            .unwrap_or(0);
+        if balance < fee_sov {
             return Err(anyhow!(
-                "fee_payment_tx must use TransactionType::TokenTransfer"
+                "Insufficient SOV balance: have {} atoms, need {} atoms",
+                balance,
+                fee_sov
             ));
         }
-        if fee_payment_tx.chain_id != 0x03 {
-            return Err(anyhow!(
-                "fee_payment_tx must use chain_id 0x03, got {}",
-                fee_payment_tx.chain_id
-            ));
-        }
-        let is_sov = fee_transfer.token_id
-            == lib_blockchain::contracts::utils::generate_lib_token_id()
-            || fee_transfer.token_id == [0u8; 32];
-        if !is_sov {
-            return Err(anyhow!("fee_payment_tx must transfer SOV token"));
-        }
-        if fee_transfer.amount != registration_fee_sov {
-            return Err(anyhow!(
-                "fee_payment_tx amount mismatch: expected {} SOV, got {}",
-                registration_fee_sov,
-                fee_transfer.amount
-            ));
-        }
 
-        let fee_tx_hash = fee_payment_tx.hash();
-        let fee_tx_hash_hex = hex::encode(fee_tx_hash.as_bytes());
+        // Build system TokenTransfer transaction
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
 
-        let owner_identity_hash = lib_blockchain::Hash::from_slice(&owner_identity.id.0);
-        {
-            let blockchain = self.blockchain.read().await;
-            let owner_wallet = blockchain
-                .wallet_registry
-                .values()
-                .find(|wallet| {
-                    wallet.owner_identity_id.as_ref() == Some(&owner_identity_hash)
-                        && wallet.wallet_type == "Primary"
-                })
-                .ok_or_else(|| anyhow!("Primary wallet not found for identity"))?;
-            if fee_transfer.from != owner_wallet.wallet_id.as_array() {
-                return Err(anyhow!(
-                    "fee_payment_tx sender wallet does not match owner Primary wallet"
-                ));
-            }
+        let transfer_data = lib_blockchain::transaction::TokenTransferData {
+            token_id: sov_token_id,
+            from: from_wallet_id,
+            to: to_wallet,
+            amount: fee_sov,
+            nonce: 0,
+        };
 
-            // Compare dilithium_pk directly: the wallet registry stores only the
-            // dilithium public key (2592 bytes), not the full composite key. Constructing
-            // a PublicKey from it would zero the kyber_pk, producing a different key_id
-            // than the transaction signature which carries both dilithium + kyber components.
-            let sig_dilithium = fee_payment_tx.signature.public_key.dilithium_pk.as_slice();
-            if owner_wallet.public_key.len() != 2592
-                || owner_wallet.public_key.as_slice() != sig_dilithium
-            {
-                return Err(anyhow!(
-                    "fee_payment_tx signature does not match owner Primary wallet public key"
-                ));
-            }
+        let dilithium_pk: [u8; 2592] = from_public_key
+            .as_slice()
+            .try_into()
+            .unwrap_or([0u8; 2592]);
 
-            let treasury_wallet_id = blockchain
-                .get_dao_treasury_wallet_id()
-                .ok_or_else(|| anyhow!("DAO treasury wallet is not configured"))?;
-            let treasury_wallet_bytes = hex::decode(treasury_wallet_id)
-                .map_err(|_| anyhow!("DAO treasury wallet id is malformed"))?;
-            if treasury_wallet_bytes.len() != 32 {
-                return Err(anyhow!("DAO treasury wallet id must be 32 bytes"));
-            }
-            let mut treasury_wallet = [0u8; 32];
-            treasury_wallet.copy_from_slice(&treasury_wallet_bytes);
-            if fee_transfer.to != treasury_wallet {
-                return Err(anyhow!(
-                    "fee_payment_tx recipient must be the DAO treasury wallet"
-                ));
-            }
+        let memo = format!("domain_registration_fee:{}", now);
 
-            let already_confirmed = blockchain
-                .blocks
-                .iter()
-                .any(|block| block.transactions.iter().any(|tx| tx.hash() == fee_tx_hash));
-            let already_pending = blockchain
-                .pending_transactions
-                .iter()
-                .any(|tx| tx.hash() == fee_tx_hash);
+        let tx = lib_blockchain::transaction::Transaction {
+            version: lib_blockchain::transaction::TX_VERSION_V8,
+            chain_id: 0x03,
+            transaction_type: lib_blockchain::TransactionType::TokenTransfer,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: lib_blockchain::integration::crypto_integration::Signature {
+                signature: Vec::new(),
+                public_key:
+                    lib_blockchain::integration::crypto_integration::PublicKey::new(dilithium_pk),
+                algorithm:
+                    lib_blockchain::integration::crypto_integration::SignatureAlgorithm::DEFAULT,
+                timestamp: now,
+            },
+            memo: memo.into_bytes(),
+            payload: lib_blockchain::transaction::TransactionPayload::TokenTransfer(
+                transfer_data,
+            ),
+        };
 
-            if !already_confirmed && !already_pending {
-                drop(blockchain);
-                let mut blockchain = self.blockchain.write().await;
-                blockchain
-                    .add_pending_transaction(fee_payment_tx)
-                    .map_err(|e| anyhow!("Failed to submit fee_payment_tx to mempool: {}", e))?;
-            }
-        }
+        let tx_hash = hex::encode(tx.hash().as_bytes());
+        info!(
+            "Domain fee system tx: {} SOV from {} to treasury ({})",
+            fee_sov,
+            hex::encode(&from_wallet_id[..8]),
+            &tx_hash[..16]
+        );
 
-        Ok(fee_tx_hash_hex)
+        blockchain
+            .add_system_transaction(tx)
+            .map_err(|e| anyhow!("Failed to submit domain fee tx: {}", e))?;
+
+        Ok(tx_hash)
     }
 
     /// Register a new Web4 domain
@@ -2215,60 +2167,6 @@ mod tests {
         }
     }
 
-    fn fee_payment_tx(
-        signer: BcPublicKey,
-        signer_private: lib_crypto::PrivateKey,
-        from_wallet: [u8; 32],
-        to_wallet: [u8; 32],
-        amount: u64,
-        nonce: u64,
-    ) -> Transaction {
-        let mut tx = Transaction::new_token_transfer_with_chain_id(
-            0x03,
-            TokenTransferData {
-                token_id: generate_lib_token_id(),
-                from: from_wallet,
-                to: to_wallet,
-                amount: amount as u128,
-                nonce,
-            },
-            BcSignature {
-                signature: vec![],
-                public_key: signer.clone(),
-                algorithm: BcSignatureAlgorithm::DEFAULT,
-                timestamp: 0,
-            },
-            Vec::new(),
-        );
-        // Mempool stateful validator currently enforces minimum fee for non-system txs,
-        // including TokenTransfer in this path.
-        tx.fee = 1_000;
-
-        let keypair = lib_crypto::KeyPair {
-            public_key: signer,
-            private_key: signer_private,
-        };
-        let sign = |tx: &mut Transaction| {
-            let signing_hash = tx.signing_hash();
-            let sig = lib_crypto::sign_message(&keypair, signing_hash.as_bytes())
-                .expect("fee tx should sign");
-            tx.signature.signature = sig.signature;
-            tx.signature.timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("system time should be valid")
-                .as_secs();
-        };
-        sign(&mut tx);
-
-        // Ensure fee meets current minimum based on signed transaction size.
-        let min_fee =
-            lib_blockchain::transaction::creation::utils::calculate_minimum_fee(tx.size());
-        if tx.fee < min_fee {
-            tx.fee = min_fee;
-            sign(&mut tx);
-        }
-        tx
-    }
 
     async fn setup_handler() -> anyhow::Result<(
         Web4Handler,
@@ -2368,7 +2266,6 @@ mod tests {
         owner_identity: &lib_identity::ZhtpIdentity,
         domain: &str,
         html_content: &str,
-        fee_payment_tx: &Transaction,
     ) -> anyhow::Result<serde_json::Value> {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
@@ -2384,26 +2281,16 @@ mod tests {
             },
             "signature": sign_simple_registration(owner_identity, domain, timestamp, 10),
             "timestamp": timestamp,
-            "fee": 10,
-            "fee_payment_tx": hex::encode(bincode::serialize(fee_payment_tx)?)
+            "fee": 10
         }))
     }
+
     #[tokio::test]
-    async fn register_domain_accepts_valid_fee_payment_tx() -> anyhow::Result<()> {
-        let (handler, owner_identity, owner_wallet_id, treasury_wallet_id, owner_private) =
+    async fn register_domain_without_fee_payment_tx_creates_system_tx() -> anyhow::Result<()> {
+        let (handler, owner_identity, _owner_wallet_id, _treasury_wallet_id, _owner_private) =
             setup_handler().await?;
-        let fee_signer = BcPublicKey::new(owner_identity.public_key.dilithium_pk.clone());
-        let tx = fee_payment_tx(
-            fee_signer,
-            owner_private,
-            owner_wallet_id,
-            treasury_wallet_id,
-            10,
-            0,
-        );
-        let tx_hash_hex = hex::encode(tx.hash().as_bytes());
         let request =
-            simple_registration_request(&owner_identity, "valid-fee.zhtp", "<html>ok</html>", &tx)?;
+            simple_registration_request(&owner_identity, "system-fee.zhtp", "<html>ok</html>")?;
 
         let principal = SecurityPrincipal::new(
             owner_identity.did.clone(),
@@ -2416,52 +2303,6 @@ mod tests {
         assert_eq!(response.status, ZhtpStatus::Ok);
         let body: serde_json::Value = serde_json::from_slice(&response.body)?;
         assert_eq!(body["success"], serde_json::Value::Bool(true));
-        assert_eq!(
-            body["blockchain_transaction"],
-            serde_json::Value::String(tx_hash_hex.clone())
-        );
-
-        let blockchain = handler.blockchain.read().await;
-        let found_in_mempool = blockchain
-            .pending_transactions
-            .iter()
-            .any(|pending| hex::encode(pending.hash().as_bytes()) == tx_hash_hex);
-        assert!(found_in_mempool, "fee tx should be submitted to mempool");
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn register_domain_rejects_invalid_fee_payment_tx_amount() -> anyhow::Result<()> {
-        let (handler, owner_identity, owner_wallet_id, treasury_wallet_id, owner_private) =
-            setup_handler().await?;
-        let fee_signer = BcPublicKey::new(owner_identity.public_key.dilithium_pk.clone());
-        let tx = fee_payment_tx(
-            fee_signer,
-            owner_private,
-            owner_wallet_id,
-            treasury_wallet_id,
-            9,
-            0,
-        );
-        let request = simple_registration_request(
-            &owner_identity,
-            "invalid-fee.zhtp",
-            "<html>bad</html>",
-            &tx,
-        )?;
-
-        let principal = SecurityPrincipal::new(
-            owner_identity.did.clone(),
-            Role::Citizen,
-            NodeType::FullNode,
-        );
-        let result = handler
-            .register_domain_simple(serde_json::to_vec(&request)?, &principal)
-            .await;
-        assert!(result.is_err(), "invalid fee tx amount should be rejected");
-        let err = format!("{}", result.err().unwrap());
-        assert!(err.contains("amount mismatch"), "unexpected error: {}", err);
 
         Ok(())
     }

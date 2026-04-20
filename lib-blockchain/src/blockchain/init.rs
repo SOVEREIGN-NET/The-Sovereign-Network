@@ -665,6 +665,31 @@ impl Blockchain {
         // bonding curve, or when the original genesis didn't include it.
         blockchain.initialize_cbe_genesis();
 
+        // Initialize Treasury Kernel if not already present.
+        if blockchain.treasury_kernel.is_none() {
+            let kernel_init: Option<(lib_crypto::PublicKey, String)> = blockchain
+                .council_members
+                .first()
+                .and_then(|cm| {
+                    let did = cm.identity_id.clone();
+                    blockchain.identity_registry.get(&did).map(|id| {
+                        let pk = lib_crypto::PublicKey::new(
+                            id.public_key.as_slice().try_into().unwrap_or([0u8; 2592]),
+                        );
+                        (pk, did)
+                    })
+                });
+            if let Some((authority_pk, authority_did)) = kernel_init {
+                blockchain.initialize_treasury_kernel(authority_pk);
+                info!(
+                    "🏛️ Treasury Kernel initialized (authority: {})",
+                    &authority_did[..40.min(authority_did.len())]
+                );
+            }
+        } else {
+            info!("🏛️ Treasury Kernel restored from persistence");
+        }
+
         info!(
             "📂 Loaded blockchain from SledStore: height={}, identities={}, wallets={}, tokens={}",
             blockchain.height,

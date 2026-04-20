@@ -1206,6 +1206,34 @@ impl RuntimeOrchestrator {
                     }
                 }
             }
+            // Initialize Treasury Kernel if not already loaded from persistence.
+            if blockchain.treasury_kernel.is_none() {
+                let kernel_init_data: Option<(lib_crypto::PublicKey, String)> = blockchain
+                    .council_members
+                    .first()
+                    .and_then(|cm| {
+                        let did = cm.identity_id.clone();
+                        blockchain
+                            .identity_registry
+                            .get(&did)
+                            .map(|id| {
+                                let pk = lib_crypto::PublicKey::new(
+                                    id.public_key.as_slice().try_into().unwrap_or([0u8; 2592]),
+                                );
+                                (pk, did)
+                            })
+                    });
+                if let Some((authority_pk, authority_did)) = kernel_init_data {
+                    blockchain.initialize_treasury_kernel(authority_pk);
+                    info!("🏛️ Treasury Kernel initialized with council authority {}", &authority_did[..40.min(authority_did.len())]);
+                } else if blockchain.council_members.is_empty() {
+                    warn!("Treasury Kernel not initialized: no council members configured");
+                } else {
+                    warn!("Treasury Kernel not initialized: council member not in identity registry");
+                }
+            } else {
+                info!("🏛️ Treasury Kernel restored from persistence");
+            }
         } // Release write lock
 
         info!(" Global blockchain provider initialized with user wallet funding");
@@ -4116,10 +4144,37 @@ impl RuntimeOrchestrator {
                     *self.shared_blockchain.write().await = Some(shared_service);
 
                     // Also set the global blockchain for protocol access
-                    if let Err(e) = set_global_blockchain(blockchain_arc).await {
+                    if let Err(e) = set_global_blockchain(blockchain_arc.clone()).await {
                         warn!("Failed to set global blockchain: {}", e);
                     } else {
                         info!("Global blockchain provider updated");
+                    }
+
+                    // Initialize Treasury Kernel if not restored from persistence.
+                    {
+                        let mut bc = blockchain_arc.write().await;
+                        if bc.treasury_kernel.is_none() {
+                            let kernel_init: Option<(lib_crypto::PublicKey, String)> = bc
+                                .council_members
+                                .first()
+                                .and_then(|cm| {
+                                    let did = cm.identity_id.clone();
+                                    bc.identity_registry.get(&did).map(|id| {
+                                        let pk = lib_crypto::PublicKey::new(
+                                            id.public_key.as_slice().try_into().unwrap_or([0u8; 2592]),
+                                        );
+                                        (pk, did)
+                                    })
+                                });
+                            if let Some((authority_pk, authority_did)) = kernel_init {
+                                bc.initialize_treasury_kernel(authority_pk);
+                                info!("🏛️ Treasury Kernel initialized with council authority {}", &authority_did[..40.min(authority_did.len())]);
+                            } else {
+                                warn!("Treasury Kernel not initialized: no council member in registry");
+                            }
+                        } else {
+                            info!("🏛️ Treasury Kernel restored from persistence");
+                        }
                     }
 
                     info!("Shared blockchain service initialized");
