@@ -514,6 +514,20 @@ impl MeshMessageRouter {
         .await
     }
 
+    /// Determine if a peer is routable based on admission state, trust, auth, and tier.
+    fn is_peer_routable(entry: &crate::peer_registry::PeerEntry) -> bool {
+        use crate::peer_registry::relay_admission::RelayAdmissionState;
+        if let Some(ref admission) = entry.relay_admission {
+            if admission.state == RelayAdmissionState::Blocked {
+                return false;
+            }
+        }
+        entry.authenticated
+            && entry.quantum_secure
+            && entry.trust_score >= 0.3
+            && entry.tier != crate::peer_registry::PeerTier::Untrusted
+    }
+
     /// Find optimal route to destination
     pub async fn find_optimal_route(
         &self,
@@ -543,12 +557,23 @@ impl MeshMessageRouter {
             .get(destination)
             .or_else(|| registry.find_by_public_key(&destination.public_key()));
         if let Some(peer_entry) = peer_entry_opt {
-            // Enforce secure routing only: authenticated + quantum secure
-            if !peer_entry.authenticated || !peer_entry.quantum_secure {
+            if !Self::is_peer_routable(peer_entry) {
                 return Err(anyhow::anyhow!(
-                    "Direct route rejected: insecure transport for peer {}",
-                    destination.to_compact_string()
+                    "Direct route rejected: peer {} is not routable (admission={:?}, trust={:.2}, tier={:?})",
+                    destination.to_compact_string(),
+                    peer_entry.relay_admission.as_ref().map(|a| &a.state),
+                    peer_entry.trust_score,
+                    peer_entry.tier,
                 ));
+            }
+
+            if peer_entry.relay_admission.as_ref().map_or(false, |a| {
+                a.state == crate::peer_registry::relay_admission::RelayAdmissionState::Probation
+            }) {
+                warn!(
+                    peer = %destination.to_compact_string(),
+                    "Direct route to peer on probation — routing with penalty"
+                );
             }
 
             info!("Direct connection available to destination");
@@ -672,20 +697,36 @@ impl MeshMessageRouter {
     /// Calculate edge weight for routing algorithm
     ///
     /// **MIGRATION (Ticket #149):** Updated to use PeerRegistry
+    /// **#2201:** Enforces relay admission policy in edge weighting.
     async fn calculate_edge_weight(
         &self,
         _from: &UnifiedPeerId,
         to: &UnifiedPeerId,
         registry: &crate::peer_registry::PeerRegistry,
     ) -> f64 {
-        // Weight based on latency, stability, and bandwidth
         if let Some(peer_entry) = registry.get(to) {
+            // #2201: Blocked or otherwise non-routable peers are unreachable
+            if !Self::is_peer_routable(peer_entry) {
+                return f64::INFINITY;
+            }
+
             let latency_weight = peer_entry.connection_metrics.latency_ms as f64 / 1000.0; // Convert to seconds
             let stability_weight = 1.0 - peer_entry.connection_metrics.stability_score; // Lower stability = higher weight
             let bandwidth_weight =
                 1.0 / (peer_entry.connection_metrics.bandwidth_capacity as f64 / 1_000_000.0); // Favor higher bandwidth
 
-            latency_weight + stability_weight + bandwidth_weight
+            let base_weight = latency_weight + stability_weight + bandwidth_weight;
+
+            // #2201: Probation peers incur a routing penalty
+            let probation_penalty = if peer_entry.relay_admission.as_ref().map_or(false, |a| {
+                a.state == crate::peer_registry::relay_admission::RelayAdmissionState::Probation
+            }) {
+                1.5
+            } else {
+                1.0
+            };
+
+            base_weight * probation_penalty
         } else {
             f64::INFINITY // No connection
         }
@@ -694,6 +735,7 @@ impl MeshMessageRouter {
     /// Construct route from pathfinding result
     ///
     /// **MIGRATION (Ticket #149):** Updated to use PeerRegistry
+    /// **#2201:** Defensively skips non-routable peers in constructed paths.
     async fn construct_route_from_path(
         &self,
         previous: &HashMap<UnifiedPeerId, Option<UnifiedPeerId>>,
@@ -706,6 +748,15 @@ impl MeshMessageRouter {
         // Trace back from destination to source
         while let Some(Some(prev)) = previous.get(&current) {
             if let Some(peer_entry) = registry.get(&current) {
+                // #2201: Skip non-routable peers defensively (Dijkstra should already exclude them)
+                if !Self::is_peer_routable(peer_entry) {
+                    warn!(
+                        peer = %current.to_compact_string(),
+                        "Skipping non-routable peer in constructed route"
+                    );
+                    current = prev.clone();
+                    continue;
+                }
                 let endpoint = peer_entry
                     .endpoints
                     .first()
@@ -1102,6 +1153,30 @@ impl MeshMessageRouter {
     pub async fn get_delivery_status(&self, message_id: u64) -> Option<DeliveryStatus> {
         let tracking = self.delivery_tracking.read().await;
         tracking.get(&message_id).cloned()
+    }
+
+    // ==================== RELAY ADMISSION (#2201) ====================
+
+    /// Evaluate relay admission for all peers in the registry.
+    pub async fn update_relay_admissions(&self) -> crate::peer_registry::relay_admission::RelayAdmissionSummary {
+        let mut registry = self.peer_registry.write().await;
+        let peer_ids: Vec<_> = registry.all_peers().map(|e| e.peer_id.clone()).collect();
+        for peer_id in peer_ids {
+            let _ = registry.evaluate_and_set_relay_admission(&peer_id);
+        }
+        registry.relay_admission_summary()
+    }
+
+    /// Count of peers currently eligible for relay duties.
+    pub async fn eligible_relay_count(&self) -> usize {
+        let registry = self.peer_registry.read().await;
+        registry.eligible_relays().count()
+    }
+
+    /// Summary of relay admission states across all peers.
+    pub async fn relay_admission_summary(&self) -> crate::peer_registry::relay_admission::RelayAdmissionSummary {
+        let registry = self.peer_registry.read().await;
+        registry.relay_admission_summary()
     }
 
     /// Update routing table with topology information
