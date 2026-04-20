@@ -47,6 +47,9 @@ pub mod optimization;
 // Distributed consistency (Phase F - NEW)
 pub mod consistency;
 
+// Semantic tag index — maps tag ID tuples to shard sets for channeling
+pub mod semantic_tag_index;
+
 // Re-export core types (avoiding conflicts)
 pub use types::{dht_types::*, stats_types::*, storage_types::*};
 
@@ -74,6 +77,7 @@ pub use erasure::*;
 pub use integrity::{ChecksumAlgorithm, IntegrityManager, IntegrityMetadata, IntegrityStatus};
 pub use proofs::{generate_retrieval_proof, generate_storage_proof, RetrievalProof, StorageProof};
 pub use wallet_content_integration::{WalletContentManager, WalletContentStatistics};
+pub use semantic_tag_index::{SemanticTagIndex, TagKey, ShardSet};
 
 use anyhow::{anyhow, Result};
 use lib_crypto::{Hash, PostQuantumSignature};

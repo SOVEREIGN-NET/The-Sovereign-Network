@@ -39,58 +39,23 @@ use lib_neural_mesh::{
 };
 
 // ─── SovereignCodec Compressor ──────────────────────────────────────
-// Implements the ModelCompressor trait using SovereignCodec.
-// This is the SELF-REFERENTIAL part: the AI's own model weights are
-// compressed by the same BWT→MTF→RLE→Range codec that the AI helps optimize.
-
-/// Production compressor that wraps SovereignCodec for model weight compression
-pub struct SovereignCodecCompressor;
-
-impl ModelCompressor for SovereignCodecCompressor {
-    fn compress(&self, data: &[u8]) -> Vec<u8> {
-        lib_compression::SovereignCodec::encode(data)
-    }
-
-    fn decompress(&self, data: &[u8]) -> std::result::Result<Vec<u8>, String> {
-        lib_compression::SovereignCodec::decode(data)
-    }
-
-    fn name(&self) -> &str {
-        "SovereignCodec-SFC7"
-    }
-}
+// Implementations now live in lib-compression::model_compressor.
+// Re-exported here for backward compatibility within zhtp.
+pub use lib_compression::{SovereignCodecCompressor, AdaptiveCodecCompressor as AdaptiveCodecCompressorBase};
 
 /// Content-adaptive compressor that uses the neural mesh's learned params (SFC9).
-/// Falls back to standard SFC7 when no learner is available or for default params.
-pub struct AdaptiveCodecCompressor {
-    params: lib_compression::CodecParams,
-}
+/// Wraps the lib-compression AdaptiveCodecCompressor, constructing it from
+/// LearnedCodecParams (the neural mesh's representation).
+pub struct AdaptiveCodecCompressor;
 
 impl AdaptiveCodecCompressor {
     /// Create with learned params converted from the neural mesh.
-    pub fn with_params(learned: &LearnedCodecParams) -> Self {
-        Self {
-            params: lib_compression::CodecParams {
-                rescale_limit: learned.rescale_limit,
-                freq_step: learned.freq_step,
-                init_freq_zero: learned.init_freq_zero,
-            },
-        }
-    }
-}
-
-impl ModelCompressor for AdaptiveCodecCompressor {
-    fn compress(&self, data: &[u8]) -> Vec<u8> {
-        lib_compression::SovereignCodec::encode_with_params(data, &self.params)
-    }
-
-    fn decompress(&self, data: &[u8]) -> std::result::Result<Vec<u8>, String> {
-        // decode() handles both SFC7 and SFC9 transparently
-        lib_compression::SovereignCodec::decode(data)
-    }
-
-    fn name(&self) -> &str {
-        "SovereignCodec-SFC9-Adaptive"
+    pub fn with_params(learned: &LearnedCodecParams) -> AdaptiveCodecCompressorBase {
+        AdaptiveCodecCompressorBase::from_learned(
+            learned.rescale_limit,
+            learned.freq_step,
+            learned.init_freq_zero,
+        )
     }
 }
 
@@ -439,6 +404,12 @@ impl NeuralMeshComponent {
             ModelId::RlRouter => self.router.read().await.save_model()?,
             ModelId::Prefetcher => self.prefetcher.read().await.save_model()?,
             ModelId::AnomalySentry => self.anomaly.read().await.save_model()?,
+            ModelId::SemanticChanneler => {
+                // SemanticChanneler weights are managed by the semantic channeling
+                // pipeline, not a single ML model. Return empty for now.
+                info!("🧠 SemanticChanneler FedAvg: channeler has no standalone weights to average");
+                return Ok(());
+            }
         };
 
         let dist = self.distributed.read().await;
@@ -462,6 +433,11 @@ impl NeuralMeshComponent {
                 let mut sentry = self.anomaly.write().await;
                 sentry.load_model(&result.merged_weights)?;
                 info!("🧠🔄 FedAvg: Anomaly Sentry updated (gen={}, {} contributors)",
+                    result.generation, result.num_contributors);
+            }
+            ModelId::SemanticChanneler => {
+                // SemanticChanneler doesn't have a single model to load FedAvg into.
+                info!("🧠🔄 FedAvg: SemanticChanneler model update (gen={}, {} contributors)",
                     result.generation, result.num_contributors);
             }
         }
@@ -1708,6 +1684,9 @@ impl Component for NeuralMeshComponent {
                                         ModelId::AnomalySentry => {
                                             let mut s = self.anomaly.write().await;
                                             let _ = s.load_model(&result.merged_weights);
+                                        }
+                                        ModelId::SemanticChanneler => {
+                                            // No standalone model to update for semantic channeler
                                         }
                                     }
                                     info!("🧠✅ Applied FedAvg result for {} (gen={})", model_id, result.generation);

@@ -1700,7 +1700,7 @@ mod tests {
 
     #[cfg(feature = "lib-blockchain")]
     mod gateway_identity_tests {
-        use super::super::verify_gateway_identity;
+        use super::super::verify_gateway_identity_fallback;
         use lib_blockchain::transaction::core::IdentityTransactionData;
         use lib_blockchain::types::Hash;
         use lib_identity::ZhtpIdentity;
@@ -1744,7 +1744,7 @@ mod tests {
             );
             let sig = sign_context(&identity, &ctx).expect("sign");
             let id_data = identity_data_from_identity(&identity);
-            assert!(verify_gateway_identity(&ctx, &sig, &id_data).expect("verify"));
+            assert!(verify_gateway_identity_fallback(&ctx, &sig, &id_data).expect("verify"));
         }
 
         #[test]
@@ -1759,7 +1759,7 @@ mod tests {
             let sig = sign_context(&identity, &ctx).expect("sign");
             let mut id_data = identity_data_from_identity(&identity);
             id_data.public_key = vec![1u8; 100]; // wrong length
-            let result = verify_gateway_identity(&ctx, &sig, &id_data);
+            let result = verify_gateway_identity_fallback(&ctx, &sig, &id_data);
             assert!(result.is_err(), "expected error for invalid key length");
         }
 
@@ -1775,7 +1775,7 @@ mod tests {
             ctx.received_at_ms = 0; // force stale
             let sig = sign_context(&identity, &ctx).expect("sign");
             let id_data = identity_data_from_identity(&identity);
-            assert!(!verify_gateway_identity(&ctx, &sig, &id_data).expect("verify"));
+            assert!(!verify_gateway_identity_fallback(&ctx, &sig, &id_data).expect("verify"));
         }
 
         #[test]
@@ -1790,7 +1790,7 @@ mod tests {
             let id_data = identity_data_from_identity(&identity);
             let mut sig = sign_context(&identity, &ctx).expect("sign");
             sig[0] ^= 0xFF; // corrupt signature
-            assert!(!verify_gateway_identity(&ctx, &sig, &id_data).expect("verify"));
+            assert!(!verify_gateway_identity_fallback(&ctx, &sig, &id_data).expect("verify"));
         }
     }
 }

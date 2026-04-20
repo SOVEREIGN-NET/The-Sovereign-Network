@@ -41,6 +41,9 @@ pub mod zhtp;
 // HTTPS Gateway for browser-based Web4 access
 pub mod https_gateway;
 
+// Semantic Search HTTP API (browser bridge to real channeling engine)
+pub mod semantic_api;
+
 // Layer modules
 pub mod http;
 pub mod mesh;

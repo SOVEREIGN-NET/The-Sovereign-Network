@@ -72,6 +72,10 @@ path = "../examples/compression_demo.rs"
 name = "complete_workflow"
 path = "../examples/complete_workflow.rs"
 
+[[example]]
+name = "semantic_channeling_demo"
+path = "../examples/semantic_channeling_demo.rs"
+
 # Benchmarks will be added later
 # [[bench]]
 # name = "chunking"

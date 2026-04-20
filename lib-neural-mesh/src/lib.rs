@@ -8,6 +8,7 @@
 //! - **Neuro-Compressor**: Neural network semantic deduplication
 //! - **Predictive Prefetcher**: LSTM-based negative latency system
 //! - **Anomaly Sentry**: Byzantine fault detection using ML
+//! - **Semantic Channeler**: Parallel flow-state inference over ZKP-tagged data
 //!
 //! ## Architecture
 //!
@@ -48,15 +49,19 @@ pub mod content; // Content analysis and compression feedback
 pub mod codec_learner; // Adaptive codec parameter learning (content-adaptive SFC9)
 pub mod distributed; // Distributed training + self-compressing neural mesh
 pub mod parallel_shard_stream; // Multi-channel QUIC parallel shard compression + streaming
+pub mod semantic_channeling; // Parallel flow-state semantic inference (the "channeling" layer)
 
 // Re-export all public types
 pub use router::{RlRouter, NetworkState, RoutingAction};
 pub use compressor::{NeuroCompressor, ContentEmbedder, Embedding};
-pub use prefetch::{PredictivePrefetcher, AccessPattern, PredictionResult};
+pub use prefetch::{
+    PredictivePrefetcher, AccessPattern, PredictionResult,
+    SemanticPrefetcher, TagAccessEvent, TagChainPrediction,
+};
 pub use anomaly::{AnomalySentry, NodeMetrics, AnomalyReport, AnomalySeverity, ThreatType};
 pub use inference::InferenceEngine;
 pub use error::{NeuralMeshError, Result};
-pub use content::{ContentType, ContentProfile, CompressionFeedback};
+pub use content::{ContentType, ContentProfile, CompressionFeedback, TagGenerationConfig};
 pub use codec_learner::{AdaptiveCodecLearner, CodecLearnerConfig, LearnedCodecParams};
 pub use distributed::{
     DistributedTrainingCoordinator, CompressedModel, ModelId,
@@ -67,6 +72,13 @@ pub use distributed::{
 pub use parallel_shard_stream::{
     parallel_shard_compress, parallel_shard_decompress,
     CompressedShard, ShardedModel, ShardReassembler, ShardStreamMessage,
+};
+pub use semantic_channeling::{
+    parallel_semantic_channel, channel_query,
+    SemanticTag, TagId, TagGraph, ContentTagBinding,
+    SemanticChannel, ChannelStrategy, ChannelingResult,
+    ConvergencePoint, ThoughtStep, ChannelStreamMessage,
+    ChannelingMetrics, DEFAULT_CHANNEL_STRATEGIES,
 };
 
 /// Neural mesh protocol version

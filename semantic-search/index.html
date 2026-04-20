@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sovereign Network — Semantic Search</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+
+  <!-- ─── Search Bar ─────────────────────────────────────────────── -->
+  <header id="search-bar">
+    <div class="search-brand">
+      <span class="brand-icon">◈</span>
+      <span class="brand-text">Sovereign Search</span>
+    </div>
+    <form id="search-form" autocomplete="off">
+      <div class="search-input-wrap">
+        <svg class="search-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <input id="search-input" type="text" placeholder="Search the sovereign mesh…" autofocus>
+        <button type="submit" class="search-go">↵</button>
+      </div>
+    </form>
+    <div class="search-right">
+      <div class="source-selector" id="source-selector">
+        <select id="source-select" title="Data source">
+          <option value="network" selected>◈ Sovereign Network</option>
+        </select>
+      </div>
+      <div class="search-meta" id="search-meta"></div>
+      <div class="kbd-hint"><span class="kbd">Ctrl</span><span class="kbd">K</span> focus</div>
+    </div>
+  </header>
+
+  <!-- ─── Search History Bar ──────────────────────────────────────── -->
+  <div id="history-bar">
+    <span class="history-label">History</span>
+    <div class="history-chips" id="history-chips"></div>
+  </div>
+
+  <!-- ─── Graph Canvas ───────────────────────────────────────────── -->
+  <main id="graph-container">
+    <svg id="graph-svg"></svg>
+
+    <!-- Zoom controls -->
+    <div class="zoom-controls">
+      <button id="zoom-in" title="Zoom in">+</button>
+      <button id="zoom-reset" title="Reset view">⊙</button>
+      <button id="zoom-out" title="Zoom out">−</button>
+    </div>
+  </main>
+
+  <!-- ─── Stats Bar (bottom center) ──────────────────────────────── -->
+  <div id="stats-bar">
+    <div class="stat-item"><span class="stat-dot s-l1"></span><span class="stat-count" id="stat-l1">0</span> channels</div>
+    <div class="stat-item"><span class="stat-dot s-l2"></span><span class="stat-count" id="stat-l2">0</span> semantic tags</div>
+    <div class="stat-item"><span class="stat-dot s-l3"></span><span class="stat-count" id="stat-l3">0</span> content nodes</div>
+    <div class="stat-item" style="color:var(--text-dim)"><span class="stat-count" id="stat-visible">0</span> visible</div>
+  </div>
+
+  <!-- ─── Detail Panel ───────────────────────────────────────────── -->
+  <aside id="detail-panel" class="panel-hidden">
+    <button id="panel-close" class="panel-close">✕</button>
+    <div id="panel-content">
+      <div class="panel-badge" id="panel-badge">CHANNEL</div>
+      <h2 id="panel-title">Node Title</h2>
+
+      <div class="panel-meta-grid">
+        <div class="panel-meta-item">
+          <div class="panel-meta-label">Relevance</div>
+          <div class="panel-meta-value" id="panel-relevance">95%</div>
+          <div class="relevance-bar"><div class="relevance-fill" id="panel-rel-bar"></div></div>
+        </div>
+        <div class="panel-meta-item">
+          <div class="panel-meta-label">Strategy</div>
+          <div class="panel-meta-value" id="panel-strategy" style="font-size:13px">Causal</div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <h3>Semantic Tags <span class="section-count" id="tag-count">0</span></h3>
+        <div id="panel-tags" class="tag-cloud"></div>
+      </div>
+      <div class="panel-section">
+        <h3>Content Preview</h3>
+        <div id="panel-preview" class="preview-box"></div>
+      </div>
+      <div class="panel-section">
+        <h3>Connections <span class="section-count" id="conn-count">0</span></h3>
+        <ul id="panel-connections"></ul>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ─── Legend ──────────────────────────────────────────────────── -->
+  <div id="legend">
+    <div class="legend-row"><span class="legend-dot query"></span> Search Query</div>
+    <div class="legend-row"><span class="legend-dot l1"></span> Channels (L1)</div>
+    <div class="legend-row"><span class="legend-dot l2"></span> Semantic Tags (L2)</div>
+    <div class="legend-row"><span class="legend-dot l3"></span> Content Nodes (L3)</div>
+    <div class="legend-hint">Click to expand · Drag to move<br>Hover to spotlight · Esc to close</div>
+  </div>
+
+  <!-- ─── Empty State ─────────────────────────────────────────────── -->
+  <div id="empty-state">
+    <div class="empty-orb">
+      <div class="empty-orb-ring"></div>
+      <div class="empty-orb-ring"></div>
+      <div class="empty-orb-inner"></div>
+      <div class="empty-orb-icon">◈</div>
+    </div>
+    <h2>Search the Sovereign Mesh</h2>
+    <p>Explore live semantic channels across the ZHTP neural mesh.<br>
+      Results map as an interactive node graph — real network data, no mock.</p>
+    <div class="empty-examples">
+      <span class="example-chip" data-query="consensus protocol">consensus protocol</span>
+      <span class="example-chip" data-query="decentralized identity">decentralized identity</span>
+      <span class="example-chip" data-query="neural mesh routing">neural mesh routing</span>
+      <span class="example-chip" data-query="neural compression">neural compression</span>
+      <span class="example-chip" data-query="privacy routing">privacy routing</span>
+    </div>
+  </div>
+
+  <!-- ─── Loading overlay ─────────────────────────────────────────── -->
+  <div id="loading-overlay" class="hidden">
+    <div class="loading-orbital">
+      <div class="orbit"></div>
+      <div class="orbit"></div>
+      <div class="orbit"></div>
+      <div class="core"></div>
+    </div>
+    <p>Channeling semantic paths…</p>
+  </div>
+
+  <script src="data.js"></script>
+  <script src="graph.js"></script>
+</body>
+</html>

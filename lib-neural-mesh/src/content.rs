@@ -10,6 +10,8 @@
 //! ratios as reward signals, learning which content types compress well and
 //! predicting outcomes for network resource allocation.
 
+use crate::compressor::{Embedding, NeuroCompressor};
+use crate::semantic_channeling::{ContentTagBinding, SemanticTag, TagId};
 use serde::{Deserialize, Serialize};
 
 /// Detected content type — fast O(n) classification
@@ -254,6 +256,132 @@ impl ContentProfile {
     }
 }
 
+// ─── Semantic Tag Generation ─────────────────────────────────────────
+
+/// Configuration for semantic tag generation from content profiles.
+#[derive(Debug, Clone)]
+pub struct TagGenerationConfig {
+    /// Number of sub-tags to generate per content item via k-means clustering
+    /// of the embedding dimensions. Default: 3
+    pub num_sub_tags: usize,
+    /// Minimum cosine similarity for two sub-tags to be considered distinct.
+    /// Below this, sub-tags are merged. Default: 0.85
+    pub dedup_threshold: f32,
+}
+
+impl Default for TagGenerationConfig {
+    fn default() -> Self {
+        Self {
+            num_sub_tags: 3,
+            dedup_threshold: 0.85,
+        }
+    }
+}
+
+impl ContentProfile {
+    /// Generate semantic tags from this content profile using a NeuroCompressor
+    /// to produce embeddings, then clustering the embedding into discrete
+    /// topic-level and sub-topic-level tags.
+    ///
+    /// Returns:
+    /// - A primary tag capturing the full embedding
+    /// - N sub-tags capturing different facets of the content
+    ///
+    /// The NeuroCompressor must be enabled. Raw data is needed for embedding
+    /// generation — the profile alone doesn't hold the raw bytes.
+    pub fn generate_semantic_tags(
+        &self,
+        compressor: &NeuroCompressor,
+        data: &[u8],
+        config: &TagGenerationConfig,
+    ) -> crate::error::Result<Vec<SemanticTag>> {
+        // Generate full embedding from the raw data
+        let embedding = compressor.embed(data)?;
+        let mut tags = Vec::with_capacity(1 + config.num_sub_tags);
+
+        // Primary tag: the full embedding reduced to 32-D via SemanticTag::from_embedding
+        let primary_label = format!("{}:{:.2}e", self.content_type.label(), self.entropy);
+        let primary = SemanticTag::from_embedding(&embedding, Some(primary_label));
+        tags.push(primary);
+
+        // Sub-tags: partition the embedding into facets via stride-based clustering.
+        // Each sub-tag captures a different "slice" of the semantic space.
+        if config.num_sub_tags > 0 && embedding.len() >= config.num_sub_tags {
+            let sub_embeddings = partition_embedding(&embedding, config.num_sub_tags);
+
+            for (i, sub_emb) in sub_embeddings.iter().enumerate() {
+                let sub_label = format!("facet-{}", i);
+                let sub_tag = SemanticTag::from_embedding(sub_emb, Some(sub_label));
+
+                // Dedup: only add if sufficiently different from existing tags
+                let dominated = tags.iter().any(|existing| {
+                    existing.similarity(&sub_tag) > config.dedup_threshold
+                });
+                if !dominated {
+                    tags.push(sub_tag);
+                }
+            }
+        }
+
+        Ok(tags)
+    }
+
+    /// Generate a complete ContentTagBinding for a piece of data.
+    ///
+    /// This is the full pipeline: content → embedding → semantic tags → binding
+    /// with ZK-style commitment. The binding maps the content's BLAKE3 hash to
+    /// its semantic tags and DHT shard locations.
+    pub fn generate_tag_binding(
+        &self,
+        compressor: &NeuroCompressor,
+        data: &[u8],
+        shard_ids: Vec<[u8; 32]>,
+        config: &TagGenerationConfig,
+    ) -> crate::error::Result<ContentTagBinding> {
+        let tags = self.generate_semantic_tags(compressor, data, config)?;
+        let content_id: [u8; 32] = *blake3::hash(data).as_bytes();
+        let tag_ids: Vec<TagId> = tags.iter().map(|t| t.tag_id).collect();
+
+        Ok(ContentTagBinding::new(content_id, tag_ids, shard_ids))
+    }
+
+    /// Convenience: generate tags with default config.
+    pub fn generate_semantic_tags_default(
+        &self,
+        compressor: &NeuroCompressor,
+        data: &[u8],
+    ) -> crate::error::Result<Vec<SemanticTag>> {
+        self.generate_semantic_tags(compressor, data, &TagGenerationConfig::default())
+    }
+}
+
+/// Partition a high-dimensional embedding into N sub-embeddings.
+/// Each sub-embedding captures a different "facet" of the content by
+/// taking interleaved elements (round-robin partition), preserving
+/// cross-dimensional relationships while reducing dimensionality.
+fn partition_embedding(embedding: &Embedding, n: usize) -> Vec<Embedding> {
+    let mut partitions: Vec<Vec<f32>> = vec![Vec::new(); n];
+
+    for (i, &val) in embedding.iter().enumerate() {
+        partitions[i % n].push(val);
+    }
+
+    // Pad each partition to the full embedding dimension (zero-padded)
+    // so SemanticTag::from_embedding's reduce_embedding works correctly
+    let target_len = embedding.len();
+    for part in &mut partitions {
+        let orig_len = part.len();
+        part.resize(target_len, 0.0);
+        // Scale up non-zero values to compensate for the sparsity
+        let scale = (target_len as f32 / orig_len as f32).sqrt();
+        for v in part.iter_mut().take(orig_len) {
+            *v *= scale;
+        }
+    }
+
+    partitions
+}
+
 /// Post-compression feedback fed back into the neural mesh.
 ///
 /// The RL Router observes these results as *rewards* so it learns which
@@ -378,5 +506,101 @@ mod tests {
             shards_compressed: 1,
         };
         assert!(fb.rl_reward() < 0.0, "integrity failure should give negative reward");
+    }
+
+    // ── Semantic Tag Generation Tests ──
+
+    #[test]
+    fn test_generate_semantic_tags() {
+        let mut compressor = crate::compressor::NeuroCompressor::new();
+        compressor.enable();
+
+        let data = b"The quick brown fox is a JSON payload with transactions";
+        let profile = ContentProfile::analyze(data);
+        let tags = profile.generate_semantic_tags_default(&compressor, data).unwrap();
+
+        // Should have at least 1 primary tag
+        assert!(!tags.is_empty(), "should generate at least one tag");
+        // Primary tag should have a label containing content type
+        assert!(tags[0].label.is_some());
+        // All tags should have 32-D semantic vectors
+        for tag in &tags {
+            assert_eq!(tag.semantic_vector.len(), 32);
+        }
+    }
+
+    #[test]
+    fn test_generate_tag_binding() {
+        let mut compressor = crate::compressor::NeuroCompressor::new();
+        compressor.enable();
+
+        let data = b"Test content for tag binding generation";
+        let profile = ContentProfile::analyze(data);
+        let shard_ids = vec![[0x42; 32], [0x43; 32]];
+
+        let binding = profile.generate_tag_binding(
+            &compressor, data, shard_ids, &TagGenerationConfig::default()
+        ).unwrap();
+
+        // Binding should reference the correct content hash
+        let expected_hash: [u8; 32] = *blake3::hash(data).as_bytes();
+        assert_eq!(binding.content_id, expected_hash);
+        // Should have at least one tag
+        assert!(!binding.tag_ids.is_empty());
+        // Should have the shard IDs we provided
+        assert_eq!(binding.shard_ids.len(), 2);
+        // Commitment should verify
+        assert!(binding.verify_commitment());
+    }
+
+    #[test]
+    fn test_different_content_produces_different_tags() {
+        let mut compressor = crate::compressor::NeuroCompressor::new();
+        compressor.enable();
+
+        let data_a = b"Compression algorithms use BWT and MTF for better entropy";
+        let data_b = b"Routing protocols optimize latency across mesh networks";
+
+        let profile_a = ContentProfile::analyze(data_a);
+        let profile_b = ContentProfile::analyze(data_b);
+
+        let tags_a = profile_a.generate_semantic_tags_default(&compressor, data_a).unwrap();
+        let tags_b = profile_b.generate_semantic_tags_default(&compressor, data_b).unwrap();
+
+        // Primary tags should have different tag IDs
+        assert_ne!(tags_a[0].tag_id, tags_b[0].tag_id,
+            "different content should produce different primary tags");
+    }
+
+    #[test]
+    fn test_tag_generation_config_custom() {
+        let mut compressor = crate::compressor::NeuroCompressor::new();
+        compressor.enable();
+
+        let data = b"Custom configuration test data with enough bytes to analyze";
+        let profile = ContentProfile::analyze(data);
+
+        let config = TagGenerationConfig {
+            num_sub_tags: 5,
+            dedup_threshold: 0.95, // very strict dedup
+        };
+        let tags = profile.generate_semantic_tags(&compressor, data, &config).unwrap();
+
+        // Should have primary + potentially more sub-tags (some may be deduped)
+        assert!(!tags.is_empty());
+        // With strict dedup, we might get fewer sub-tags
+        assert!(tags.len() <= 6, "1 primary + at most 5 sub-tags");
+    }
+
+    #[test]
+    fn test_partition_embedding() {
+        let embedding: Vec<f32> = (0..512).map(|i| i as f32).collect();
+        let parts = partition_embedding(&embedding, 3);
+
+        assert_eq!(parts.len(), 3);
+        // Each partition should be padded to 512
+        for part in &parts {
+            assert_eq!(part.len(), 512);
+        }
     }
 }

@@ -3834,6 +3834,7 @@ dependencies = [
  "ahash 0.8.12",
  "anyhow",
  "bincode",
+ "blake3",
  "bulletproofs",
  "criterion",
  "curve25519-dalek",

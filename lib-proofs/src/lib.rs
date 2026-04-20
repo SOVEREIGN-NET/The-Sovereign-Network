@@ -65,6 +65,13 @@ pub use state::*;
 // NEW: Re-export recursive proof system
 pub use recursive::*;
 
+// NEW: Re-export tag membership proof system
+pub use tag_membership::{
+    TagMembershipProof, TagMembershipProofData, TagMembershipVerification,
+    generate_tag_membership_proof, verify_tag_membership_proof, batch_verify_tag_membership,
+    serialize_proof as serialize_tag_proof, deserialize_proof as deserialize_tag_proof,
+};
+
 // Module declarations
 pub mod backend;
 pub mod circuits;
@@ -85,6 +92,9 @@ pub mod state;
 
 // NEW: Recursive proof system for hierarchical aggregation
 pub mod recursive;
+
+// NEW: ZK tag membership proofs for Semantic Channeling layer
+pub mod tag_membership;
 
 // Type aliases for backward compatibility
 pub use types::zk_proof::ZkProof as ZeroKnowledgeProof;

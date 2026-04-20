@@ -251,6 +251,8 @@ pub enum ModelId {
     Prefetcher,
     /// Isolation forest anomaly detector
     AnomalySentry,
+    /// Semantic channeling tag-chain LSTM
+    SemanticChanneler,
 }
 
 impl std::fmt::Display for ModelId {
@@ -259,6 +261,7 @@ impl std::fmt::Display for ModelId {
             ModelId::RlRouter => write!(f, "rl-router"),
             ModelId::Prefetcher => write!(f, "prefetcher"),
             ModelId::AnomalySentry => write!(f, "anomaly-sentry"),
+            ModelId::SemanticChanneler => write!(f, "semantic-channeler"),
         }
     }
 }
@@ -329,6 +332,59 @@ impl CompressedModel {
             "🧠📦 Compressed {} model via {} (quant→codec): {} → {} → {} bytes ({:.1}x total)",
             model_id, compressor.name(), raw_size, quantized_payload.len(),
             compressed_size, compression_ratio
+        );
+
+        let timestamp_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
+        Self {
+            model_id,
+            raw_size,
+            compressed_weights,
+            compression_ratio,
+            source_node: source_node.to_string(),
+            generation,
+            weight_hash,
+            timestamp_ms,
+        }
+    }
+
+    /// Compress raw model weights **losslessly** using the injected compressor.
+    ///
+    /// Unlike [`compress()`](Self::compress), this skips int8 quantization entirely.
+    /// The raw bytes are passed directly to the `ModelCompressor`, producing a
+    /// bit-perfect roundtrip: `decompress(compress_lossless(x)) == x`.
+    ///
+    /// Use this when exact weight fidelity is required (e.g. cryptographic
+    /// commitments over model weights, cross-node weight equality checks,
+    /// or any non-training context where lossy quantization is unacceptable).
+    ///
+    /// When SovereignCodec (SFC7/SFC9) is injected, the codec is itself lossless,
+    /// so the entire pipeline is fully lossless end-to-end.
+    pub fn compress_lossless(
+        model_id: ModelId,
+        raw_weights: &[u8],
+        source_node: &str,
+        generation: u64,
+        compressor: &dyn ModelCompressor,
+    ) -> Self {
+        let raw_size = raw_weights.len();
+        let weight_hash: [u8; 32] = blake3::hash(raw_weights).into();
+
+        // No quantization — pass raw bytes directly to the codec
+        let compressed_weights = compressor.compress(raw_weights);
+        let compressed_size = compressed_weights.len();
+        let compression_ratio = if compressed_size > 0 {
+            raw_size as f32 / compressed_size as f32
+        } else {
+            1.0
+        };
+
+        debug!(
+            "🧠📦 Compressed {} model via {} (lossless, no quant): {} → {} bytes ({:.1}x)",
+            model_id, compressor.name(), raw_size, compressed_size, compression_ratio
         );
 
         let timestamp_ms = std::time::SystemTime::now()

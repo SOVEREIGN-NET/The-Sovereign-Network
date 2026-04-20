@@ -62,6 +62,7 @@ pub mod pattern_dict;
 pub mod zkc_compressor;
 pub mod zkc_decompressor;
 pub mod sovereign_codec;
+pub mod model_compressor;
 
 pub use chunker::ContentChunker;
 pub use witness::ZkWitness;
@@ -77,6 +78,9 @@ pub use zkc_compressor::{ZkcCompressor, CompressedShard, CompressionStats};
 pub use zkc_decompressor::{ZkcDecompressor, DecompressionStats};
 pub use sovereign_codec::SovereignCodec;
 pub use sovereign_codec::CodecParams;
+
+// ModelCompressor implementations (SovereignCodec ↔ lib-neural-mesh bridge)
+pub use model_compressor::{SovereignCodecCompressor, AdaptiveCodecCompressor};
 
 /// Version of the compression protocol
 pub const PROTOCOL_VERSION: u32 = 1;

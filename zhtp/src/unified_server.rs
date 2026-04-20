@@ -54,7 +54,8 @@ const QUIC_PORT: u16 = 9334;
 // Import our comprehensive API handlers
 use crate::api::handlers::{
     BlockchainHandler, CbeHandler, DaoHandler, DhtHandler, DnsHandler, IdentityHandler,
-    MobileAuthHandler, ProtocolHandler, StorageHandler, TokenHandler, WalletHandler, Web4Handler,
+    MobileAuthHandler, ProtocolHandler, SemanticSearchHandler, StorageHandler, TokenHandler,
+    WalletHandler, Web4Handler,
 };
 use crate::config::environment::detect_environment;
 use crate::session_manager::SessionManager;
@@ -1061,6 +1062,20 @@ impl ZhtpUnifiedServer {
             mobile_auth_handler.clone(),
         );
         zhtp_router.register_handler("/api/v1/auth/delegate".to_string(), mobile_auth_handler);
+
+        // Semantic Search — real lib-neural-mesh channeling engine integration
+        let semantic_handler = SemanticSearchHandler::new();
+        let semantic_graph = semantic_handler.graph(); // share the TagGraph
+        let semantic_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(semantic_handler);
+        zhtp_router.register_handler("/api/v1/semantic".to_string(), semantic_handler);
+        info!("✓ Semantic search handler registered (real channeling engine)");
+
+        // Start standalone HTTP bridge for browser frontend access
+        // Runs on port 9381 with CORS enabled — the frontend calls this
+        tokio::spawn(async move {
+            crate::server::semantic_api::start_semantic_api_server(semantic_graph).await;
+        });
+        info!("✓ Semantic Search HTTP API spawned on port 9381");
 
         info!("✅ All API handlers registered successfully on ZHTP router");
         Ok((pouw_validator_arc, pouw_calculator))
