@@ -1545,6 +1545,10 @@ impl WalletHandler {
             /// from the on-chain identity registry.
             #[serde(default)]
             public_key: Option<String>,
+            /// Optional created_at timestamp (unix seconds). For chain replay: backdate
+            /// identity registration so PoUW maturity is immediate. If omitted, uses now.
+            #[serde(default)]
+            created_at: Option<u64>,
         }
 
         let req: ProvisionRequest = serde_json::from_slice(&request.body)
