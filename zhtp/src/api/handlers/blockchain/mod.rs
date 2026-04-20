@@ -252,6 +252,9 @@ impl ZhtpRequestHandler for BlockchainHandler {
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/blockchain/blocks/") => {
                 self.handle_get_block_range(request).await
             }
+            (ZhtpMethod::Get, path) if path.starts_with("/api/v2/blockchain/blocks/") => {
+                self.handle_get_block_range_v2(request).await
+            }
             // Edge node stats endpoint
             (ZhtpMethod::Get, "/api/v1/blockchain/edge-stats") => {
                 self.handle_edge_stats(request).await
@@ -2809,6 +2812,88 @@ impl BlockchainHandler {
         Ok(ZhtpResponse::success_with_content_type(
             serialized_blocks,
             "application/octet-stream".to_string(),
+            None,
+        ))
+    }
+
+    /// Get block range in v2 envelope format for negotiated sync.
+    async fn handle_get_block_range_v2(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        // Parse start/end from URI: /api/v2/blockchain/blocks/{start}/{end}
+        let parts: Vec<&str> = request.uri.split('/').collect();
+        if parts.len() < 7 {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Invalid block range format. Use: /api/v2/blockchain/blocks/{start}/{end}"
+                    .to_string(),
+            ));
+        }
+
+        let start: u64 = parts[5]
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Invalid start block number"))?;
+        let end: u64 = parts[6]
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Invalid end block number"))?;
+
+        if end < start {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "End block must be >= start block".to_string(),
+            ));
+        }
+
+        if end - start > 1000 {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Block range too large (max 1000 blocks per request)".to_string(),
+            ));
+        }
+
+        let blockchain_arc = self
+            .get_blockchain()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get blockchain: {}", e))?;
+        let blockchain = blockchain_arc.read().await;
+
+        if start as usize >= blockchain.blocks.len() {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::NotFound,
+                format!(
+                    "Start block {} beyond chain height {}",
+                    start, blockchain.height
+                ),
+            ));
+        }
+
+        let actual_end = std::cmp::min(end as usize, blockchain.blocks.len() - 1);
+        let blocks_slice = &blockchain.blocks[start as usize..=actual_end];
+
+        let payload = bincode::serialize(blocks_slice)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize block payload: {}", e))?;
+        let envelope = crate::sync_wire::BlockPageEnvelopeV2 {
+            wire_version: crate::sync_wire::BLOCK_PAGE_WIRE_V2_CBORENVELOPE.to_string(),
+            block_encoding: crate::sync_wire::BLOCK_PAGE_V2_ENCODING_BINCODE.to_string(),
+            tx_encoding: crate::sync_wire::BLOCK_PAGE_V2_TX_ENCODING_V8.to_string(),
+            start,
+            end: actual_end as u64,
+            count: blocks_slice.len(),
+            payload,
+        };
+        let mut encoded = Vec::new();
+        ciborium::ser::into_writer(&envelope, &mut encoded)
+            .map_err(|e| anyhow::anyhow!("Failed to encode v2 block envelope: {}", e))?;
+
+        tracing::info!(
+            " Serving v2 blocks {}-{} ({} blocks, {} bytes)",
+            start,
+            actual_end,
+            blocks_slice.len(),
+            encoded.len()
+        );
+
+        Ok(ZhtpResponse::success_with_content_type(
+            encoded,
+            "application/cbor".to_string(),
             None,
         ))
     }

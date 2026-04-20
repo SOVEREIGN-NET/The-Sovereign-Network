@@ -248,9 +248,14 @@ impl BootstrapService {
             end - start + 1
         );
 
-        // Deserialize blocks
-        let new_blocks: Vec<lib_blockchain::block::Block> =
-            bincode::deserialize(&blocks_data).context("Failed to deserialize blocks")?;
+        // Decode blocks according to negotiated page wire version.
+        let new_blocks: Vec<lib_blockchain::block::Block> = crate::runtime::decode_block_page_for_wire(
+            &block_page_wire,
+            &blocks_data,
+            start,
+            end,
+        )
+        .context("Failed to decode block page")?;
 
         info!("Appending {} new blocks to local chain", new_blocks.len());
 
