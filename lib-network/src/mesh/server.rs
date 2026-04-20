@@ -1550,12 +1550,16 @@ impl ZhtpMeshServer {
         );
         let identity_store = Arc::new(RwLock::new(identity_store));
 
-        // Create message router (Ticket #149: using peer_registry)
+        // Create message router (Ticket #149: using peer_registry, #2209: with multi-hop)
+        let multi_hop_router = Arc::new(RwLock::new(
+            crate::routing::multi_hop::MultiHopRouter::new(),
+        ));
         let message_router = Arc::new(RwLock::new(
             crate::routing::message_routing::MeshMessageRouter::new(
                 self.peer_registry.clone(),
                 self.long_range_relays.clone(),
-            ),
+            )
+            .with_multi_hop_router(multi_hop_router),
         ));
 
         // Set mesh server reference in router for reward tracking
