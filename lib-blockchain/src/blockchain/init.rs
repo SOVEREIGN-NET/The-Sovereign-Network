@@ -666,35 +666,7 @@ impl Blockchain {
         blockchain.initialize_cbe_genesis();
 
         // Initialize Treasury Kernel if not already present.
-        if blockchain.treasury_kernel.is_none() {
-            let kernel_init: Option<(lib_crypto::PublicKey, String)> = blockchain
-                .council_members
-                .first()
-                .and_then(|cm| {
-                    let did = cm.identity_id.clone();
-                    blockchain.identity_registry.get(&did).and_then(|id| {
-                        match id.public_key.as_slice().try_into() {
-                            Ok(pk_bytes) => Some((lib_crypto::PublicKey::new(pk_bytes), did)),
-                            Err(_) => {
-                                warn!(
-                                    "Treasury Kernel skip: council {} has invalid pk length {}",
-                                    &did[..40.min(did.len())], id.public_key.len()
-                                );
-                                None
-                            }
-                        }
-                    })
-                });
-            if let Some((authority_pk, authority_did)) = kernel_init {
-                blockchain.initialize_treasury_kernel(authority_pk);
-                info!(
-                    "🏛️ Treasury Kernel initialized (authority: {})",
-                    &authority_did[..40.min(authority_did.len())]
-                );
-            }
-        } else {
-            info!("🏛️ Treasury Kernel restored from persistence");
-        }
+        blockchain.init_treasury_kernel_if_missing();
 
         // Welfare DAO tokens are initialized after kernel init in the component
         // startup path (council_members not yet loaded at this point).

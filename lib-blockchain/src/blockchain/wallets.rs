@@ -10,10 +10,52 @@ impl Blockchain {
         }
     }
 
+    /// Initialize the Treasury Kernel from the first council member's identity
+    /// if not already loaded from persistence. No-op if kernel is present or
+    /// if council data is unavailable.
+    pub fn init_treasury_kernel_if_missing(&mut self) {
+        if self.treasury_kernel.is_some() {
+            info!("🏛️ Treasury Kernel restored from persistence");
+            return;
+        }
+
+        let kernel_init_data: Option<(lib_crypto::PublicKey, String)> = self
+            .council_members
+            .first()
+            .and_then(|cm| {
+                let did = cm.identity_id.clone();
+                self.identity_registry.get(&did).and_then(|id| {
+                    match id.public_key.as_slice().try_into() {
+                        Ok(pk_bytes) => Some((lib_crypto::PublicKey::new(pk_bytes), did)),
+                        Err(_) => {
+                            warn!(
+                                "Treasury Kernel skip: council pk length {}",
+                                id.public_key.len()
+                            );
+                            None
+                        }
+                    }
+                })
+            });
+
+        if let Some((authority_pk, authority_did)) = kernel_init_data {
+            self.initialize_treasury_kernel(authority_pk);
+            info!(
+                "🏛️ Treasury Kernel initialized with council authority {}",
+                &authority_did[..40.min(authority_did.len())]
+            );
+        } else if self.council_members.is_empty() {
+            warn!("Treasury Kernel not initialized: no council members configured");
+        } else {
+            warn!("Treasury Kernel not initialized: council member not in identity registry");
+        }
+    }
+
     /// Initialize the 5 welfare DAO sector tokens if not already present.
     /// Each token is kernel-controlled (mint/burn only via Treasury Kernel),
-    /// 1:1 SOV-backed, and uses the corresponding sector DAO key_id as its
-    /// reserve wallet address.
+    /// 1:1 SOV-backed, and identified by a deterministic token_id derived from
+    /// (name, symbol). The DAO key_id is used by the executor during
+    /// stake/unstake operations, not by the token itself.
     pub fn ensure_welfare_dao_tokens(&mut self) {
         use crate::contracts::economics::fee_router::{
             DAO_HEALTHCARE_KEY_ID, DAO_EDUCATION_KEY_ID, DAO_ENERGY_KEY_ID,

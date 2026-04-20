@@ -1457,36 +1457,7 @@ impl RuntimeOrchestrator {
                 }
             }
             // Initialize Treasury Kernel if not already loaded from persistence.
-            if blockchain.treasury_kernel.is_none() {
-                let kernel_init_data: Option<(lib_crypto::PublicKey, String)> = blockchain
-                    .council_members
-                    .first()
-                    .and_then(|cm| {
-                        let did = cm.identity_id.clone();
-                        blockchain
-                            .identity_registry
-                            .get(&did)
-                            .and_then(|id| {
-                                match id.public_key.as_slice().try_into() {
-                                    Ok(pk_bytes) => Some((lib_crypto::PublicKey::new(pk_bytes), did)),
-                                    Err(_) => {
-                                        warn!("Treasury Kernel skip: council pk length {}", id.public_key.len());
-                                        None
-                                    }
-                                }
-                            })
-                    });
-                if let Some((authority_pk, authority_did)) = kernel_init_data {
-                    blockchain.initialize_treasury_kernel(authority_pk);
-                    info!("🏛️ Treasury Kernel initialized with council authority {}", &authority_did[..40.min(authority_did.len())]);
-                } else if blockchain.council_members.is_empty() {
-                    warn!("Treasury Kernel not initialized: no council members configured");
-                } else {
-                    warn!("Treasury Kernel not initialized: council member not in identity registry");
-                }
-            } else {
-                info!("🏛️ Treasury Kernel restored from persistence");
-            }
+            blockchain.init_treasury_kernel_if_missing();
             blockchain.ensure_welfare_dao_tokens();
         } // Release write lock
 
@@ -4405,31 +4376,7 @@ impl RuntimeOrchestrator {
                     // Initialize Treasury Kernel if not restored from persistence.
                     {
                         let mut bc = blockchain_arc.write().await;
-                        if bc.treasury_kernel.is_none() {
-                            let kernel_init: Option<(lib_crypto::PublicKey, String)> = bc
-                                .council_members
-                                .first()
-                                .and_then(|cm| {
-                                    let did = cm.identity_id.clone();
-                                    bc.identity_registry.get(&did).and_then(|id| {
-                                        match id.public_key.as_slice().try_into() {
-                                            Ok(pk_bytes) => Some((lib_crypto::PublicKey::new(pk_bytes), did)),
-                                            Err(_) => {
-                                                warn!("Treasury Kernel skip: council pk length {}", id.public_key.len());
-                                                None
-                                            }
-                                        }
-                                    })
-                                });
-                            if let Some((authority_pk, authority_did)) = kernel_init {
-                                bc.initialize_treasury_kernel(authority_pk);
-                                info!("🏛️ Treasury Kernel initialized with council authority {}", &authority_did[..40.min(authority_did.len())]);
-                            } else {
-                                warn!("Treasury Kernel not initialized: no council member in registry");
-                            }
-                        } else {
-                            info!("🏛️ Treasury Kernel restored from persistence");
-                        }
+                        bc.init_treasury_kernel_if_missing();
                     }
 
                     info!("Shared blockchain service initialized");

@@ -99,7 +99,7 @@ All wallets from the snapshot are in `genesis.toml` and get created at node star
 
 ### Run from local machine
 
-The CLI connects over QUIC to g1. Do NOT run from g1 itself — the keystore on g1 has a broken handshake.
+Run provisioning from the local machine (QUIC to g1). Payroll also runs locally with `--keystore /tmp/council_keystore` pointing at the council member keystore.
 
 ---
 

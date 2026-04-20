@@ -916,13 +916,16 @@ impl Web4Handler {
             ));
         }
 
-        // Debit sender, credit treasury (direct balance manipulation)
+        // TODO: Known limitation — direct balance manipulation outside consensus diverges state
+        // across nodes. The fee debit must be moved into block-level processing (like
+        // WalletRegistration initial_balance). The DomainRegistration transaction should carry the
+        // fee amount, and `process_domain_transactions` should debit/credit during block execution.
         let sender_balance = u128::from(token.balance_of(&sender_key));
         let treasury_balance = u128::from(token.balance_of(&treasury_key));
         token.set_balance(&sender_key, sender_balance - fee_sov);
         token.set_balance(&treasury_key, treasury_balance + fee_sov);
 
-        // Generate a deterministic hash for the receipt (not a real tx hash, just audit ID)
+        // Audit receipt ID (non-deterministic — uses wall-clock timestamp)
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -938,8 +941,9 @@ impl Web4Handler {
         );
 
         info!(
-            "Domain fee: {} SOV debited from {} → treasury (receipt: {})",
+            "Domain fee: {} atoms ({} SOV) debited from {} → treasury (receipt: {})",
             fee_sov,
+            fee_sov / 1_000_000_000_000_000_000,
             hex::encode(&from_wallet_id[..8]),
             &receipt_hash[..16]
         );
@@ -2153,6 +2157,7 @@ mod tests {
         [u8; 32],
         [u8; 32],
         lib_crypto::PrivateKey,
+        Arc<RwLock<lib_blockchain::Blockchain>>,
     )> {
         let storage: Arc<dyn UnifiedStorage> = Arc::new(TestStorage::default());
         let registry = Arc::new(DomainRegistry::new(storage.clone()).await?);
@@ -2210,7 +2215,7 @@ mod tests {
             .clone()
             .expect("test identity should include private key");
         let handler =
-            Web4Handler::new_with_registry(registry, publisher, identity_manager, blockchain)
+            Web4Handler::new_with_registry(registry, publisher, identity_manager, blockchain.clone())
                 .await?;
 
         Ok((
@@ -2219,6 +2224,7 @@ mod tests {
             owner_wallet_id,
             treasury_wallet_id,
             owner_private,
+            blockchain,
         ))
     }
 
@@ -2266,7 +2272,7 @@ mod tests {
 
     #[tokio::test]
     async fn register_domain_without_fee_payment_tx_creates_system_tx() -> anyhow::Result<()> {
-        let (handler, owner_identity, _owner_wallet_id, _treasury_wallet_id, _owner_private) =
+        let (handler, owner_identity, owner_wallet_id, treasury_wallet_id, _owner_private, blockchain) =
             setup_handler().await?;
         let request =
             simple_registration_request(&owner_identity, "system-fee.zhtp", "<html>ok</html>")?;
@@ -2282,6 +2288,68 @@ mod tests {
         assert_eq!(response.status, ZhtpStatus::Ok);
         let body: serde_json::Value = serde_json::from_slice(&response.body)?;
         assert_eq!(body["success"], serde_json::Value::Bool(true));
+
+        // Assert balances changed: sender debited, treasury credited
+        let bc = blockchain.read().await;
+        let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+        let token = bc.token_contracts.get(&sov_token_id).unwrap();
+
+        let sender_key = BcPublicKey {
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
+            key_id: owner_wallet_id,
+        };
+        let treasury_key = BcPublicKey {
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
+            key_id: treasury_wallet_id,
+        };
+        // Owner started with 100, fee is 10 → 90 remaining
+        assert_eq!(token.balance_of(&sender_key), 90);
+        // Treasury started with 0, received 10
+        assert_eq!(token.balance_of(&treasury_key), 10);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn register_domain_insufficient_balance_fails() -> anyhow::Result<()> {
+        let (handler, owner_identity, owner_wallet_id, _treasury_wallet_id, _owner_private, blockchain) =
+            setup_handler().await?;
+
+        // Drain the owner balance so fee cannot be paid
+        {
+            let mut bc = blockchain.write().await;
+            let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+            let token = bc.token_contracts.get_mut(&sov_token_id).unwrap();
+            let sender_key = BcPublicKey {
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
+                key_id: owner_wallet_id,
+            };
+            token.set_balance(&sender_key, 0);
+        }
+
+        let request =
+            simple_registration_request(&owner_identity, "broke.zhtp", "<html>no</html>")?;
+
+        let principal = SecurityPrincipal::new(
+            owner_identity.did.clone(),
+            Role::Citizen,
+            NodeType::FullNode,
+        );
+        let response = handler
+            .register_domain_simple(serde_json::to_vec(&request)?, &principal)
+            .await?;
+        // Should fail due to insufficient balance
+        assert_ne!(response.status, ZhtpStatus::Ok);
+        let body: serde_json::Value = serde_json::from_slice(&response.body)?;
+        let error_msg = body["error"].as_str().unwrap_or("");
+        assert!(
+            error_msg.contains("Insufficient SOV balance"),
+            "Expected insufficient balance error, got: {}",
+            error_msg
+        );
 
         Ok(())
     }
