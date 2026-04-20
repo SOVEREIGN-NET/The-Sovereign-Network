@@ -492,9 +492,14 @@ impl BlockchainComponent {
                     ) {
                         Ok(b) => b,
                         Err(e) => {
-                            warn!(
-                                "observer_sync: failed to decode block page {}-{} (wire={}): {}",
-                                from, to, block_page_wire, e
+                            crate::runtime::log_sync_decode_failure(
+                                &peer_quic_addr,
+                                &path,
+                                &block_page_wire,
+                                from,
+                                to,
+                                &blocks_resp.body,
+                                &e,
                             );
                             break 'batches;
                         }
