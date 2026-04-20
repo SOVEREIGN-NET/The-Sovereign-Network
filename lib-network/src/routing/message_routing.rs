@@ -515,6 +515,17 @@ impl MeshMessageRouter {
     }
 
     /// Find optimal route to destination
+    /// Quality gate: check if a peer is acceptable for routing
+    ///
+    /// Rejects unauthenticated, insecure, untrusted, or low-quality peers.
+    fn is_peer_routable(&self, entry: &crate::peer_registry::PeerEntry) -> bool {
+        const MIN_TRUST: f64 = 0.2;
+        entry.authenticated
+            && entry.quantum_secure
+            && entry.trust_score >= MIN_TRUST
+            && entry.tier != crate::peer_registry::PeerTier::Untrusted
+    }
+
     pub async fn find_optimal_route(
         &self,
         destination: &UnifiedPeerId,
@@ -543,15 +554,18 @@ impl MeshMessageRouter {
             .get(destination)
             .or_else(|| registry.find_by_public_key(&destination.public_key()));
         if let Some(peer_entry) = peer_entry_opt {
-            // Enforce secure routing only: authenticated + quantum secure
-            if !peer_entry.authenticated || !peer_entry.quantum_secure {
+            // Enforce secure + quality routing
+            if !self.is_peer_routable(peer_entry) {
                 return Err(anyhow::anyhow!(
-                    "Direct route rejected: insecure transport for peer {}",
+                    "Direct route rejected: low-quality or insecure peer {}",
                     destination.to_compact_string()
                 ));
             }
 
-            info!("Direct connection available to destination");
+            info!(
+                "Direct connection available to destination (trust={:.2}, tier={:?})",
+                peer_entry.trust_score, peer_entry.tier
+            );
             let endpoint = peer_entry
                 .endpoints
                 .first()
@@ -672,20 +686,41 @@ impl MeshMessageRouter {
     /// Calculate edge weight for routing algorithm
     ///
     /// **MIGRATION (Ticket #149):** Updated to use PeerRegistry
+    /// **QUALITY (#2204):** Incorporates trust_score, route_quality, and tier.
     async fn calculate_edge_weight(
         &self,
         _from: &UnifiedPeerId,
         to: &UnifiedPeerId,
         registry: &crate::peer_registry::PeerRegistry,
     ) -> f64 {
-        // Weight based on latency, stability, and bandwidth
         if let Some(peer_entry) = registry.get(to) {
-            let latency_weight = peer_entry.connection_metrics.latency_ms as f64 / 1000.0; // Convert to seconds
-            let stability_weight = 1.0 - peer_entry.connection_metrics.stability_score; // Lower stability = higher weight
-            let bandwidth_weight =
-                1.0 / (peer_entry.connection_metrics.bandwidth_capacity as f64 / 1_000_000.0); // Favor higher bandwidth
+            // Hard reject untrusted or unauthenticated peers
+            if !self.is_peer_routable(peer_entry) {
+                return f64::INFINITY;
+            }
 
-            latency_weight + stability_weight + bandwidth_weight
+            let latency_weight = peer_entry.connection_metrics.latency_ms as f64 / 1000.0;
+            let stability_weight = 1.0 - peer_entry.connection_metrics.stability_score;
+            let bandwidth_weight =
+                1.0 / (peer_entry.connection_metrics.bandwidth_capacity as f64 / 1_000_000.0);
+
+            // Quality penalties (#2204)
+            let trust_penalty = (1.0 - peer_entry.trust_score) * 2.0;
+            let route_quality_penalty = (1.0 - peer_entry.route_quality) * 1.5;
+            let tier_penalty = match peer_entry.tier {
+                crate::peer_registry::PeerTier::Tier1 => 0.0,
+                crate::peer_registry::PeerTier::Tier2 => 0.2,
+                crate::peer_registry::PeerTier::Tier3 => 0.5,
+                crate::peer_registry::PeerTier::Tier4 => 1.0,
+                crate::peer_registry::PeerTier::Untrusted => f64::INFINITY,
+            };
+
+            latency_weight
+                + stability_weight
+                + bandwidth_weight
+                + trust_penalty
+                + route_quality_penalty
+                + tier_penalty
         } else {
             f64::INFINITY // No connection
         }
@@ -1159,9 +1194,20 @@ impl MeshMessageRouter {
 
         // Check for direct connection first (Ticket #149: use peer_registry)
         let registry = self.peer_registry.read().await;
-        if registry.get(destination).is_some() {
-            info!(" Direct connection to destination available");
-            return Ok(destination.clone());
+        if let Some(entry) = registry.get(destination) {
+            if self.is_peer_routable(entry) {
+                info!(
+                    " Direct connection to destination available (trust={:.2})",
+                    entry.trust_score
+                );
+                return Ok(destination.clone());
+            }
+            warn!(
+                " Direct connection exists but peer {} fails quality gate (trust={:.2}, tier={:?})",
+                destination.to_compact_string(),
+                entry.trust_score,
+                entry.tier
+            );
         }
 
         // Check cached route
@@ -1203,6 +1249,8 @@ impl MeshMessageRouter {
     }
 
     /// Calculate route quality score - Phase 2
+    ///
+    /// **QUALITY (#2204):** Blends per-hop trust and stability from registry.
     async fn calculate_route_quality(&self, route: &[RouteHop]) -> f64 {
         if route.is_empty() {
             return 0.0;
@@ -1211,10 +1259,30 @@ impl MeshMessageRouter {
         let total_latency: u32 = route.iter().map(|h| h.latency_ms).sum();
         let hop_count = route.len();
 
-        // Quality = (1 / latency) × (1 / hops) × 1000
-        // Higher is better, normalized to 0.0-1.0
+        // Base score from latency and hop count
         let base_score = 1000.0 / ((total_latency as f64 + 1.0) * (hop_count as f64 + 1.0));
-        base_score.min(1.0).max(0.0)
+        let base_score = base_score.min(1.0).max(0.0);
+
+        // Blend in per-hop trust and stability (#2204)
+        let registry = self.peer_registry.read().await;
+        let avg_trust: f64 = route
+            .iter()
+            .map(|h| registry.get(&h.peer_id).map(|e| e.trust_score).unwrap_or(0.0))
+            .sum::<f64>()
+            / hop_count as f64;
+        let avg_stability: f64 = route
+            .iter()
+            .map(|h| {
+                registry
+                    .get(&h.peer_id)
+                    .map(|e| e.connection_metrics.stability_score)
+                    .unwrap_or(0.0)
+            })
+            .sum::<f64>()
+            / hop_count as f64;
+        drop(registry);
+
+        base_score * (0.5 + 0.25 * avg_trust + 0.25 * avg_stability)
     }
 
     /// Full route execution with forwarding - Phase 2
