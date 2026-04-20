@@ -99,6 +99,20 @@ pub struct Reward {
     pub paid_at: Option<u64>,
     /// Transaction hash (if paid on-chain)
     pub tx_hash: Option<Vec<u8>>,
+    /// Intermediary reward splits (routing receipts only)
+    #[serde(default)]
+    pub intermediary_splits: Vec<IntermediarySplit>,
+}
+
+/// A single intermediary's share of a routing reward.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct IntermediarySplit {
+    /// DID of the intermediary node
+    pub did: String,
+    /// Amount this intermediary receives (atomic SOV)
+    pub amount: u128,
+    /// Whether this split has been paid
+    pub paid: bool,
 }
 
 /// Counts of receipts by proof type
@@ -398,6 +412,10 @@ impl RewardCalculator {
         let mut reward_id = vec![0u8; 16];
         rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut reward_id);
 
+        // Compute intermediary splits for routing receipts
+        let intermediary_splits =
+            Self::calculate_intermediary_splits(&stats.receipts, final_amount);
+
         info!(
             client = %stats.client_did,
             epoch = stats.epoch,
@@ -405,6 +423,7 @@ impl RewardCalculator {
             total_bytes = stats.total_bytes,
             raw_amount = raw_amount,
             final_amount = final_amount,
+            intermediaries = intermediary_splits.len(),
             "Reward calculated"
         );
 
@@ -420,7 +439,48 @@ impl RewardCalculator {
             payout_status: PayoutStatus::Pending,
             paid_at: None,
             tx_hash: None,
+            intermediary_splits,
         }
+    }
+
+    /// Split a routing reward among intermediary nodes.
+    ///
+    /// Collects all unique intermediary DIDs from `Web4ManifestRoute` receipts
+    /// and divides `total_amount` equally among them.  The primary recipient
+    /// (the node that created the receipt) keeps their own share.
+    pub fn calculate_intermediary_splits(
+        receipts: &[super::validation::ValidatedReceipt],
+        total_amount: u128,
+    ) -> Vec<IntermediarySplit> {
+        use std::collections::HashSet;
+
+        let mut unique_dids = HashSet::new();
+        for receipt in receipts {
+            if receipt.proof_type == ProofType::Web4ManifestRoute {
+                for did in &receipt.route_intermediaries {
+                    // Skip the primary client — they get their own reward record
+                    if did != &receipt.client_did {
+                        unique_dids.insert(did.clone());
+                    }
+                }
+            }
+        }
+
+        if unique_dids.is_empty() {
+            return Vec::new();
+        }
+
+        let count = unique_dids.len() as u128;
+        let share = total_amount / count; // integer division — remainder goes to primary
+
+        unique_dids
+            .into_iter()
+            .map(|did| IntermediarySplit {
+                did,
+                amount: share,
+                paid: false,
+            })
+            .collect()
     }
 
     /// Record epoch history for a DID and run anomaly detection
@@ -889,6 +949,7 @@ mod tests {
             manifest_cid: None,
             domain: None,
             route_hops: None,
+            route_intermediaries: vec![],
             served_from_cache: None,
         }
     }
@@ -967,6 +1028,7 @@ mod tests {
         assert_eq!(reward.raw_amount, 7000);
         assert_eq!(reward.final_amount, 7000); // Below cap
         assert_eq!(reward.payout_status, PayoutStatus::Pending);
+        assert!(reward.intermediary_splits.is_empty());
     }
 
     #[test]
@@ -1075,5 +1137,67 @@ mod tests {
 
         // Should be pending again
         assert_eq!(calculator.get_pending_rewards().await.len(), 1);
+    }
+
+    #[test]
+    fn test_intermediary_splits_empty_for_non_routing() {
+        let receipts = vec![
+            create_test_receipt("did:zhtp:alice", ProofType::Hash, 1024, 100),
+        ];
+        let splits = RewardCalculator::calculate_intermediary_splits(&receipts, 10_000);
+        assert!(splits.is_empty());
+    }
+
+    #[test]
+    fn test_intermediary_splits_single_receipt() {
+        let mut receipt = create_test_receipt("did:zhtp:alice", ProofType::Web4ManifestRoute, 1024, 100);
+        receipt.route_intermediaries = vec![
+            "did:zhtp:bob".to_string(),
+            "did:zhtp:charlie".to_string(),
+        ];
+        let splits = RewardCalculator::calculate_intermediary_splits(&[receipt], 10_000);
+        assert_eq!(splits.len(), 2);
+        assert_eq!(splits[0].amount, 5_000);
+        assert_eq!(splits[1].amount, 5_000);
+        assert!(!splits[0].paid);
+        assert!(!splits[1].paid);
+    }
+
+    #[test]
+    fn test_intermediary_splits_skips_primary_client() {
+        let mut receipt = create_test_receipt("did:zhtp:alice", ProofType::Web4ManifestRoute, 1024, 100);
+        receipt.route_intermediaries = vec![
+            "did:zhtp:alice".to_string(), // primary client — should be skipped
+            "did:zhtp:bob".to_string(),
+        ];
+        let splits = RewardCalculator::calculate_intermediary_splits(&[receipt], 10_000);
+        assert_eq!(splits.len(), 1);
+        assert_eq!(splits[0].did, "did:zhtp:bob");
+    }
+
+    #[test]
+    fn test_intermediary_splits_deduplicates() {
+        let mut receipt = create_test_receipt("did:zhtp:alice", ProofType::Web4ManifestRoute, 1024, 100);
+        receipt.route_intermediaries = vec![
+            "did:zhtp:bob".to_string(),
+            "did:zhtp:bob".to_string(), // duplicate
+            "did:zhtp:charlie".to_string(),
+        ];
+        let splits = RewardCalculator::calculate_intermediary_splits(&[receipt], 9_000);
+        assert_eq!(splits.len(), 2);
+        assert_eq!(splits[0].amount, 4_500);
+        assert_eq!(splits[1].amount, 4_500);
+    }
+
+    #[test]
+    fn test_intermediary_splits_multiple_receipts() {
+        let mut r1 = create_test_receipt("did:zhtp:alice", ProofType::Web4ManifestRoute, 1024, 100);
+        r1.route_intermediaries = vec!["did:zhtp:bob".to_string()];
+        let mut r2 = create_test_receipt("did:zhtp:alice", ProofType::Web4ManifestRoute, 1024, 200);
+        r2.route_intermediaries = vec!["did:zhtp:charlie".to_string()];
+        let splits = RewardCalculator::calculate_intermediary_splits(&[r1, r2], 10_000);
+        assert_eq!(splits.len(), 2);
+        assert_eq!(splits[0].amount, 5_000);
+        assert_eq!(splits[1].amount, 5_000);
     }
 }

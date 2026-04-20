@@ -27,7 +27,8 @@ pub use load_test::{run_load_test, LoadTestConfig, LoadTestResults, SyntheticRec
 pub use metrics::{PouwMetrics, PouwMetricsSnapshot, RejectionType};
 pub use rate_limiter::{PouwRateLimiter, RateLimitConfig, RateLimitReason, RateLimitResult};
 pub use rewards::{
-    BudgetState, EpochClientStats, PayoutStatus, Reward, RewardCalculator, RewardTransaction,
+    BudgetState, EpochClientStats, IntermediarySplit, PayoutStatus, Reward, RewardCalculator,
+    RewardTransaction,
 };
 pub use session_log::{new_shared_session_log, SessionLog, SessionLogEntry, SharedSessionLog};
 pub use types::*;
@@ -122,6 +123,65 @@ pub fn spawn_pouw_payout_task(
 
                 match mint_result {
                     Ok(tx_hash) => {
+                        // Pay intermediary nodes for routing receipts
+                        let mut intermediary_results = Vec::new();
+                        for split in &reward.intermediary_splits {
+                            let split_key_result: anyhow::Result<[u8; 32]> = (|| {
+                                let hex_part = split
+                                    .did
+                                    .strip_prefix("did:zhtp:")
+                                    .ok_or_else(|| anyhow::anyhow!("DID missing did:zhtp: prefix"))?;
+                                let bytes = hex::decode(hex_part)
+                                    .map_err(|e| anyhow::anyhow!("Invalid DID hex: {}", e))?;
+                                if bytes.len() != 32 {
+                                    return Err(anyhow::anyhow!(
+                                        "DID key_id must be 32 bytes, got {}",
+                                        bytes.len()
+                                    ));
+                                }
+                                let mut arr = [0u8; 32];
+                                arr.copy_from_slice(&bytes);
+                                Ok(arr)
+                            })();
+
+                            match split_key_result {
+                                Ok(split_key) => {
+                                    let split_mint = {
+                                        let mut bc = blockchain.write().await;
+                                        bc.mint_sov_for_pouw(split_key, split.amount)
+                                    };
+                                    match split_mint {
+                                        Ok(split_tx) => {
+                                            tracing::info!(
+                                                did = %split.did,
+                                                amount = split.amount,
+                                                tx_hash = %split_tx,
+                                                "Intermediary routing reward paid"
+                                            );
+                                            intermediary_results.push((split.did.clone(), true));
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                did = %split.did,
+                                                amount = split.amount,
+                                                error = %e,
+                                                "Intermediary routing reward failed"
+                                            );
+                                            intermediary_results.push((split.did.clone(), false));
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        did = %split.did,
+                                        error = %e,
+                                        "Cannot derive intermediary key_id"
+                                    );
+                                    intermediary_results.push((split.did.clone(), false));
+                                }
+                            }
+                        }
+
                         calculator
                             .mark_paid(&reward_id, Some(tx_hash.as_bytes().to_vec()))
                             .await;
@@ -130,6 +190,8 @@ pub fn spawn_pouw_payout_task(
                             amount = reward.final_amount,
                             epoch = reward.epoch,
                             tx_hash = %tx_hash,
+                            intermediaries_paid = intermediary_results.iter().filter(|(_, ok)| *ok).count(),
+                            intermediaries_failed = intermediary_results.iter().filter(|(_, ok)| !ok).count(),
                             "POUW reward paid -- TokenMint tx queued"
                         );
                     }
