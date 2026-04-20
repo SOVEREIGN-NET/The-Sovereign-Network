@@ -514,6 +514,17 @@ impl MeshMessageRouter {
         .await
     }
 
+    /// Determine if a peer is routable based on security and reachability.
+    ///
+    /// **#2200:** Excludes peers with stale or unreachable NAT state.
+    fn is_peer_routable(entry: &crate::peer_registry::PeerEntry, now: u64) -> bool {
+        let secure = entry.authenticated && entry.quantum_secure;
+        if !secure {
+            return false;
+        }
+        crate::nat::is_reachable(entry.nat_state.as_ref(), now, 3600)
+    }
+
     /// Find optimal route to destination
     pub async fn find_optimal_route(
         &self,
@@ -524,6 +535,11 @@ impl MeshMessageRouter {
             "Finding optimal route to {:?}",
             hex::encode(&destination.public_key().key_id[0..4])
         );
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
 
         // Check route cache first
         if let Some(cached_route) = self.get_cached_route(destination).await {
@@ -543,11 +559,13 @@ impl MeshMessageRouter {
             .get(destination)
             .or_else(|| registry.find_by_public_key(&destination.public_key()));
         if let Some(peer_entry) = peer_entry_opt {
-            // Enforce secure routing only: authenticated + quantum secure
-            if !peer_entry.authenticated || !peer_entry.quantum_secure {
+            if !Self::is_peer_routable(peer_entry, now) {
                 return Err(anyhow::anyhow!(
-                    "Direct route rejected: insecure transport for peer {}",
-                    destination.to_compact_string()
+                    "Direct route rejected: peer {} is not routable (auth={}, quantum={}, nat={:?})",
+                    destination.to_compact_string(),
+                    peer_entry.authenticated,
+                    peer_entry.quantum_secure,
+                    peer_entry.nat_state.as_ref().map(|s| &s.reachability),
                 ));
             }
 
@@ -672,14 +690,22 @@ impl MeshMessageRouter {
     /// Calculate edge weight for routing algorithm
     ///
     /// **MIGRATION (Ticket #149):** Updated to use PeerRegistry
+    /// **#2200:** Returns INFINITY for unreachable peers.
     async fn calculate_edge_weight(
         &self,
         _from: &UnifiedPeerId,
         to: &UnifiedPeerId,
         registry: &crate::peer_registry::PeerRegistry,
     ) -> f64 {
-        // Weight based on latency, stability, and bandwidth
         if let Some(peer_entry) = registry.get(to) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            if !Self::is_peer_routable(peer_entry, now) {
+                return f64::INFINITY;
+            }
+
             let latency_weight = peer_entry.connection_metrics.latency_ms as f64 / 1000.0; // Convert to seconds
             let stability_weight = 1.0 - peer_entry.connection_metrics.stability_score; // Lower stability = higher weight
             let bandwidth_weight =
@@ -694,18 +720,31 @@ impl MeshMessageRouter {
     /// Construct route from pathfinding result
     ///
     /// **MIGRATION (Ticket #149):** Updated to use PeerRegistry
+    /// **#2200:** Defensively skips non-routable peers in constructed paths.
     async fn construct_route_from_path(
         &self,
         previous: &HashMap<UnifiedPeerId, Option<UnifiedPeerId>>,
         destination: &UnifiedPeerId,
         registry: &crate::peer_registry::PeerRegistry,
     ) -> Result<Vec<RouteHop>> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         let mut route = Vec::new();
         let mut current = destination.clone();
 
         // Trace back from destination to source
         while let Some(Some(prev)) = previous.get(&current) {
             if let Some(peer_entry) = registry.get(&current) {
+                if !Self::is_peer_routable(peer_entry, now) {
+                    warn!(
+                        peer = %current.to_compact_string(),
+                        "Skipping non-routable peer in constructed route"
+                    );
+                    current = prev.clone();
+                    continue;
+                }
                 let endpoint = peer_entry
                     .endpoints
                     .first()
@@ -1141,6 +1180,24 @@ impl MeshMessageRouter {
         }
 
         Ok(())
+    }
+
+    // ==================== NAT / REACHABILITY (#2200) ====================
+
+    /// Update NAT state for a peer.
+    pub async fn set_peer_nat_state(
+        &self,
+        peer_id: &UnifiedPeerId,
+        state: crate::nat::NatState,
+    ) -> Result<()> {
+        let mut registry = self.peer_registry.write().await;
+        registry.set_nat_state(peer_id, state)
+    }
+
+    /// Reachability summary across all peers.
+    pub async fn reachability_summary(&self) -> crate::nat::ReachabilitySummary {
+        let registry = self.peer_registry.read().await;
+        registry.reachability_summary()
     }
 
     // ==================== PHASE 2: Multi-Hop Routing Integration ====================

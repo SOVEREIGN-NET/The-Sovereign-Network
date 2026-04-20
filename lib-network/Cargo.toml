@@ -90,6 +90,9 @@ urlencoding = "2.1"
 # Network IP detection
 local-ip-address = "0.5"
 
+# NAT traversal (STUN)
+stun = "0.17"
+
 # Socket options (SO_REUSEADDR for multicast)
 socket2 = "0.5"
 
