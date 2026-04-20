@@ -63,6 +63,7 @@ pub mod dht_indexing;
 pub mod did_startup;
 pub mod edge_state_provider; // Global access to edge node state for header-only sync
 pub mod identity_manager_provider;
+pub mod legacy_block_adapter;
 pub mod mesh_router_provider;
 pub mod network_blockchain_event_receiver;
 pub mod network_blockchain_provider;
@@ -130,13 +131,25 @@ pub(crate) fn decode_block_page_for_wire(
     expected_end: u64,
 ) -> anyhow::Result<Vec<lib_blockchain::Block>> {
     match wire_version {
-        crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW => bincode::deserialize(body)
-            .with_context(|| {
+        crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW => {
+            match bincode::deserialize(body).with_context(|| {
                 format!(
                     "PayloadDecodeFailed: wire={} range={}..{}",
                     wire_version, expected_start, expected_end
                 )
-            }),
+            }) {
+                Ok(blocks) => Ok(blocks),
+                Err(primary_err) => crate::runtime::legacy_block_adapter::decode_legacy_block_page(
+                    body,
+                )
+                .with_context(|| {
+                    format!(
+                        "PayloadDecodeFailed: wire={} range={}..{} primary={} fallback_legacy_decode=true",
+                        wire_version, expected_start, expected_end, primary_err
+                    )
+                }),
+            }
+        }
         crate::sync_wire::BLOCK_PAGE_WIRE_V2_CBORENVELOPE => {
             let envelope: crate::sync_wire::BlockPageEnvelopeV2 =
                 ciborium::de::from_reader(body).with_context(|| {
