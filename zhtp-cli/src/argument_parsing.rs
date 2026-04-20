@@ -489,7 +489,7 @@ pub enum DaoAction {
         #[arg(long)]
         amount: u128,
         /// Lock period in blocks (minimum 100, ~100 seconds)
-        #[arg(long, default_value = "1000")]
+        #[arg(long, default_value = "1000", value_parser = clap::value_parser!(u64).range(100..))]
         lock_blocks: u64,
     },
     /// Unstake SOV from a sector DAO. Burns welfare tokens and returns SOV.

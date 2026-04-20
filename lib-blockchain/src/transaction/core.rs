@@ -9,6 +9,7 @@ use crate::transaction::oracle_governance::{
     OracleConfigUpdateData,
 };
 use crate::types::{transaction_type::TransactionType, Hash};
+use bincode::Options;
 use serde::{Deserialize, Serialize};
 
 /// Zero-knowledge transaction with identity support
@@ -54,8 +55,14 @@ struct TransactionV9Wire {
 }
 
 impl TransactionV9Wire {
-    fn into_transaction(self) -> Transaction {
-        Transaction {
+    fn into_transaction(self) -> Result<Transaction, String> {
+        if self.fee > u64::MAX as u128 {
+            return Err(format!(
+                "V9 fee {} exceeds u64::MAX, cannot convert to on-chain format",
+                self.fee
+            ));
+        }
+        Ok(Transaction {
             version: self.version,
             chain_id: self.chain_id,
             transaction_type: self.transaction_type,
@@ -65,7 +72,7 @@ impl TransactionV9Wire {
             signature: self.signature,
             memo: self.memo,
             payload: self.payload,
-        }
+        })
     }
 }
 
@@ -83,12 +90,18 @@ pub fn decode_client_transaction(bytes: &[u8]) -> Result<Transaction, String> {
     }
     let version = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
 
+    // Use size-limited deserialization to prevent allocator abuse.
+    // Must match legacy bincode encoding (fixint, allow trailing bytes).
+    let opts = bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .allow_trailing_bytes()
+        .with_limit(bytes.len() as u64);
     if version >= TX_VERSION_V9 {
-        bincode::deserialize::<TransactionV9Wire>(bytes)
-            .map(|w| w.into_transaction())
+        opts.deserialize::<TransactionV9Wire>(bytes)
             .map_err(|e| format!("V9 decode failed: {}", e))
+            .and_then(|w| w.into_transaction())
     } else {
-        bincode::deserialize::<Transaction>(bytes)
+        opts.deserialize::<Transaction>(bytes)
             .map_err(|e| format!("V8 decode failed: {}", e))
     }
 }

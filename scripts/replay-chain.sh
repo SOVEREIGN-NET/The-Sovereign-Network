@@ -168,11 +168,11 @@ errors=0
 grep "^PROVISION" /tmp/replay_commands.txt | while IFS='|' read -r _ wid owner wtype bonus pk; do
     count=$((count + 1))
     # Build command
-    cmd="/opt/zhtp/zhtp-cli -s 127.0.0.1:9334 wallet provision --wallet-id $wid --owner $owner --wallet-type $wtype"
+    cmd="$CLI -s $SERVER wallet provision --wallet-id $wid --owner $owner --wallet-type $wtype"
     [ -n "$bonus" ] && cmd="$cmd $bonus"
     [ -n "$pk" ] && cmd="$cmd $pk"
 
-    result=$(ssh zhtp-g1 "$cmd" 2>&1) || {
+    result=$($cmd 2>&1) || {
         err "[$count/$PROVISION_TOTAL] Failed: $wid ($wtype) - $result"
         errors=$((errors + 1))
         continue
@@ -213,7 +213,7 @@ grep "^PAYROLL" /tmp/replay_commands.txt | while IFS='|' read -r _ to amount; do
 
     cmd="$CLI -s $SERVER cbe payroll --contract-id $contract_id --amount-cbe $amount --collaborator $to --deliverable-hash $deliverable_hash --keystore /tmp/council_keystore"
 
-    result=$(ssh zhtp-g1 "$cmd" 2>&1) || {
+    result=$($cmd 2>&1) || {
         err "[$count/$PAYROLL_TOTAL] Failed payroll to $to amount=$amount - $result"
         errors=$((errors + 1))
         continue
@@ -230,7 +230,7 @@ log "Payroll replay complete: $count allocations, $errors errors"
 # ============================================================================
 log ""
 log "=== STEP 4: Verification ==="
-ssh zhtp-g1 "/opt/zhtp/zhtp-cli -s 127.0.0.1:9334 blockchain status" 2>&1 || log "Could not get blockchain status"
+$CLI -s $SERVER blockchain status 2>&1 || log "Could not get blockchain status"
 
 log ""
 log "=== CHAIN REPLAY COMPLETE ==="
