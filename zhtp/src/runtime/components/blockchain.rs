@@ -410,12 +410,29 @@ impl BlockchainComponent {
                     continue;
                 }
 
+                let block_page_wire = match crate::runtime::negotiate_block_page_wire_version(
+                    &client,
+                    &peer_quic_addr,
+                )
+                .await
+                {
+                    Ok(wire) => wire,
+                    Err(e) => {
+                        warn!(
+                            "observer_sync: failed wire negotiation with {}: {}",
+                            peer_quic_addr, e
+                        );
+                        continue;
+                    }
+                };
+
                 info!(
-                    "📥 Observer gap-fill: peer {} height={}, local={}, fetching {} block(s)",
+                    "📥 Observer gap-fill: peer {} height={}, local={}, fetching {} block(s) (wire={})",
                     peer_quic_addr,
                     peer_tip.height,
                     local_height_before_peer,
-                    peer_tip.height - local_height_before_peer
+                    peer_tip.height - local_height_before_peer,
+                    block_page_wire
                 );
 
                 // Fetch and apply missing blocks in batches of 100.
@@ -430,7 +447,18 @@ impl BlockchainComponent {
                     let from = current + 1;
                     let to = std::cmp::min(from + 99, target);
 
-                    let path = format!("/api/v1/blockchain/blocks/{}/{}", from, to);
+                    let path =
+                        match crate::runtime::block_range_path_for_wire(&block_page_wire, from, to)
+                        {
+                            Ok(path) => path,
+                            Err(e) => {
+                                warn!(
+                                    "observer_sync: invalid wire {} for {}: {}",
+                                    block_page_wire, peer_quic_addr, e
+                                );
+                                break 'batches;
+                            }
+                        };
                     let blocks_resp = match tokio::time::timeout(
                         Duration::from_secs(30),
                         client.get(&path),

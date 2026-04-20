@@ -242,6 +242,9 @@ impl ZhtpRequestHandler for BlockchainHandler {
                 self.handle_import_chain(request).await
             }
             // New incremental sync endpoints
+            (ZhtpMethod::Get, "/api/v1/blockchain/sync-capabilities") => {
+                self.handle_get_sync_capabilities(request).await
+            }
             (ZhtpMethod::Get, "/api/v1/blockchain/tip") => self.handle_get_chain_tip(request).await,
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/blockchain/quorum-proof/") => {
                 self.handle_get_quorum_proof(request).await
@@ -2717,6 +2720,20 @@ impl BlockchainHandler {
             tip_info.validator_count
         );
 
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// Get node sync wire capabilities for block page negotiation.
+    async fn handle_get_sync_capabilities(
+        &self,
+        _request: ZhtpRequest,
+    ) -> ZhtpResult<ZhtpResponse> {
+        let caps = crate::sync_wire::SyncCapabilities::local();
+        let json_response = serde_json::to_vec(&caps)?;
         Ok(ZhtpResponse::success_with_content_type(
             json_response,
             "application/json".to_string(),

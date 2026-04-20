@@ -213,10 +213,20 @@ impl BootstrapService {
         // Fetch missing blocks incrementally
         let start = local_height + 1;
         let end = peer_tip.height;
-        let blocks_path = format!("/api/v1/blockchain/blocks/{}/{}", start, end);
+        let block_page_wire = crate::runtime::negotiate_block_page_wire_version(client, peer_label)
+            .await
+            .context("Failed sync wire negotiation")?;
+        let blocks_path =
+            crate::runtime::block_range_path_for_wire(&block_page_wire, start, end)
+                .context("Failed to build block-range path for negotiated wire version")?;
 
         let blocks_response = timeout(Duration::from_secs(30), async {
-            info!("GET {} ({} blocks)", blocks_path, end - start + 1);
+            info!(
+                "GET {} ({} blocks, wire={})",
+                blocks_path,
+                end - start + 1,
+                block_page_wire
+            );
             client.get(&blocks_path).await
         })
         .await
