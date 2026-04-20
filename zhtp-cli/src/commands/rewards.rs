@@ -355,7 +355,7 @@ pub async fn handle_reward_command_impl(
         RewardOperation::Claim => handle_claim_impl(output).await,
         RewardOperation::History => {
             let limit = match args.action {
-                RewardAction::History { limit } => limit,
+                RewardAction::History { limit } => limit.min(1000),
                 _ => 10,
             };
             handle_history_impl(output, limit).await

@@ -308,7 +308,7 @@ impl ZhtpClient {
             ));
         }
 
-        // Use existing trust verifier if available, otherwise create one
+        // Use existing trust verifier if available, otherwise create and store one
         let verifier = match self.trust_verifier {
             Some(ref v) => Arc::clone(v),
             None => {
@@ -316,6 +316,7 @@ impl ZhtpClient {
                     addr.to_string(),
                     self.trust_config.clone(),
                 )?);
+                self.trust_verifier = Some(Arc::clone(&v));
                 v
             }
         };
@@ -342,9 +343,10 @@ impl ZhtpClient {
 
         let peer_did = handshake_result.verified_peer.identity.did.clone();
 
-        // Verify node DID matches trust configuration
+        // Verify node DID matches trust configuration and bind for TOFU anchor updates
         if let Some(ref verifier) = self.trust_verifier {
             verifier.verify_node_did(&peer_did)?;
+            verifier.bind_node_did(&peer_did)?;
         }
 
         // Derive V2 session keys
@@ -481,17 +483,15 @@ impl ZhtpClient {
                 continue;
             }
 
-            // Must have at least one endpoint
-            let Some(endpoint) = entry.endpoints.first() else {
-                continue;
-            };
-
-            // Must have a SocketAddr-compatible address
-            let socket_addr = match &endpoint.address {
-                crate::types::node_address::NodeAddress::Udp(a)
-                | crate::types::node_address::NodeAddress::Tcp(a)
-                | crate::types::node_address::NodeAddress::Quic(a) => *a,
-                _ => continue, // Non-IP addresses not supported for QUIC client
+            // Must have a QUIC-compatible endpoint (UDP or explicit QUIC)
+            // TCP endpoints are not usable by this QUIC-only client.
+            let socket_addr = match entry.endpoints.iter().find_map(|ep| match &ep.address {
+                crate::types::node_address::NodeAddress::Quic(a) => Some(*a),
+                crate::types::node_address::NodeAddress::Udp(a) => Some(*a),
+                _ => None,
+            }) {
+                Some(addr) => addr,
+                None => continue,
             };
 
             // Skip if too stale

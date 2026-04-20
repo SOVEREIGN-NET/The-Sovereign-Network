@@ -1026,7 +1026,7 @@ pub enum RewardAction {
     Claim,
     /// Show reward history / past rounds (placeholder)
     History {
-        /// Number of rounds to show (default: 10)
+        /// Number of rounds to show (default: 10, max: 1000)
         #[arg(short, long, default_value = "10")]
         limit: usize,
     },

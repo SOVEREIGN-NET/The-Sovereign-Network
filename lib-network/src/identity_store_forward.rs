@@ -22,7 +22,7 @@ use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 /// Envelope queued for store-and-forward delivery.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,22 +124,31 @@ impl IdentityStoreForward {
 
     /// Encode a sled key for an envelope.
     ///
-    /// Format: `b'e' || recipient_did_bytes || message_id_be_u64`
+    /// Format: `b'e' || did_len_u16_be || recipient_did_bytes || message_id_be_u64`
+    ///
+    /// The 2-byte length prefix prevents prefix collisions between DIDs of
+    /// different lengths (e.g., "did:zhtp:ab" + id won't collide with "did:zhtp:abc" + id).
     fn envelope_key(recipient_did: &str, message_id: u64) -> Vec<u8> {
-        let mut key = Vec::with_capacity(1 + recipient_did.len() + 8);
+        let did_len = recipient_did.len() as u16;
+        let mut key = Vec::with_capacity(1 + 2 + recipient_did.len() + 8);
         key.push(b'e');
+        key.extend_from_slice(&did_len.to_be_bytes());
         key.extend_from_slice(recipient_did.as_bytes());
         key.extend_from_slice(&message_id.to_be_bytes());
         key
     }
 
     fn parse_envelope_key(key: &[u8]) -> Option<(&str, u64)> {
-        if key.len() < 9 || key[0] != b'e' {
+        // Minimum: 1 (prefix) + 2 (did_len) + 0 (did) + 8 (msg_id) = 11
+        if key.len() < 11 || key[0] != b'e' {
             return None;
         }
-        let did_bytes = &key[1..key.len() - 8];
-        let did = std::str::from_utf8(did_bytes).ok()?;
-        let msg_id = u64::from_be_bytes(key[key.len() - 8..].try_into().ok()?);
+        let did_len = u16::from_be_bytes([key[1], key[2]]) as usize;
+        if key.len() != 1 + 2 + did_len + 8 {
+            return None;
+        }
+        let did = std::str::from_utf8(&key[3..3 + did_len]).ok()?;
+        let msg_id = u64::from_be_bytes(key[3 + did_len..].try_into().ok()?);
         Some((did, msg_id))
     }
 
@@ -164,6 +173,15 @@ impl IdentityStoreForward {
                 .entry(queued.envelope.recipient_did.clone())
                 .or_insert_with(VecDeque::new);
             queue.push_back(queued);
+        }
+
+        // Sort each queue by envelope created_at timestamp to restore FIFO order
+        // (sled iteration order is lexicographic by key, not insertion order)
+        for queue in self.per_recipient.values_mut() {
+            let sorted: Vec<_> = queue.drain(..).collect();
+            let mut sorted = sorted;
+            sorted.sort_by_key(|q| q.envelope.created_at);
+            queue.extend(sorted);
         }
 
         // Enforce per-recipient limits after loading (in case limit changed)
@@ -254,8 +272,10 @@ impl IdentityStoreForward {
         // Remove from sled
         if let Some(db) = &self.db {
             let prefix = {
-                let mut p = Vec::with_capacity(1 + recipient_did.len());
+                let did_len = recipient_did.len() as u16;
+                let mut p = Vec::with_capacity(1 + 2 + recipient_did.len());
                 p.push(b'e');
+                p.extend_from_slice(&did_len.to_be_bytes());
                 p.extend_from_slice(recipient_did.as_bytes());
                 p
             };
@@ -264,7 +284,8 @@ impl IdentityStoreForward {
                 .filter_map(|r| r.ok().map(|(k, _)| k.to_vec()))
                 .collect();
             for key in keys_to_remove {
-                let _ = db.remove(key);
+                db.remove(key)
+                    .map_err(|e| format!("Sled remove error: {}", e))?;
             }
         }
 
@@ -286,12 +307,10 @@ impl IdentityStoreForward {
             None => return Ok(false),
         };
         let original_len = queue.len();
-        let mut found = false;
         queue.retain(|q| {
             if q.envelope.message_id != message_id {
                 return true;
             }
-            found = true;
             if q.envelope.retain_until_ttl {
                 self.stats.retained_after_ack += 1;
                 true
@@ -312,7 +331,8 @@ impl IdentityStoreForward {
         if len_changed {
             if let Some(db) = &self.db {
                 let key = Self::envelope_key(recipient_did, message_id);
-                let _ = db.remove(key);
+                db.remove(key)
+                    .map_err(|e| format!("Sled remove error: {}", e))?;
             }
         }
 
@@ -365,13 +385,14 @@ impl IdentityStoreForward {
             if let Some(evicted) = queue.pop_front() {
                 if let Some(db) = &self.db {
                     let key = Self::envelope_key(&evicted.envelope.recipient_did, evicted.envelope.message_id);
-                    let _ = db.remove(key);
+                    db.remove(key)
+                        .map_err(|e| format!("Sled remove error: {}", e))?;
                 }
             }
         }
 
         let queued = QueuedEnvelope {
-            envelope: envelope.clone(),
+            envelope,
             expires_at,
         };
 
@@ -418,7 +439,8 @@ impl IdentityStoreForward {
         if let Some(db) = &self.db {
             for (recipient_did, message_id) in disk_removals {
                 let key = Self::envelope_key(&recipient_did, message_id);
-                let _ = db.remove(key);
+                db.remove(key)
+                    .map_err(|e| format!("Sled remove error: {}", e))?;
             }
         }
 
