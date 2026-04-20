@@ -110,11 +110,66 @@ pub(crate) fn block_range_path_for_wire(
     end: u64,
 ) -> anyhow::Result<String> {
     match wire_version {
+        crate::sync_wire::BLOCK_PAGE_WIRE_V2_CBORENVELOPE => {
+            Ok(format!("/api/v2/blockchain/blocks/{}/{}", start, end))
+        }
         crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW => {
             Ok(format!("/api/v1/blockchain/blocks/{}/{}", start, end))
         }
         _ => Err(anyhow::anyhow!(
             "unsupported block page wire version: {}",
+            wire_version
+        )),
+    }
+}
+
+pub(crate) fn decode_block_page_for_wire(
+    wire_version: &str,
+    body: &[u8],
+    expected_start: u64,
+    expected_end: u64,
+) -> anyhow::Result<Vec<lib_blockchain::Block>> {
+    match wire_version {
+        crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW => bincode::deserialize(body)
+            .with_context(|| {
+                format!(
+                    "PayloadDecodeFailed: wire={} range={}..{}",
+                    wire_version, expected_start, expected_end
+                )
+            }),
+        crate::sync_wire::BLOCK_PAGE_WIRE_V2_CBORENVELOPE => {
+            let envelope: crate::sync_wire::BlockPageEnvelopeV2 =
+                ciborium::de::from_reader(body).with_context(|| {
+                    format!(
+                        "BlockPageEnvelopeMalformed: failed cbor decode wire={} range={}..{}",
+                        wire_version, expected_start, expected_end
+                    )
+                })?;
+            crate::sync_wire::validate_block_page_envelope_v2(
+                &envelope,
+                expected_start,
+                expected_end,
+            )?;
+            let blocks: Vec<lib_blockchain::Block> = bincode::deserialize(&envelope.payload)
+                .with_context(|| {
+                    format!(
+                        "PayloadDecodeFailed: wire={} range={}..{}",
+                        wire_version, expected_start, expected_end
+                    )
+                })?;
+            if blocks.len() != envelope.count {
+                return Err(anyhow::anyhow!(
+                    "BlockPageEnvelopeMalformed: count={} payload_blocks={} range={}..{}",
+                    envelope.count,
+                    blocks.len(),
+                    expected_start,
+                    expected_end
+                ));
+            }
+            Ok(blocks)
+        }
+        _ => Err(anyhow::anyhow!(
+            "UnsupportedPeerWireVersion: unsupported local wire decode {}",
             wire_version
         )),
     }
@@ -416,17 +471,19 @@ async fn try_initial_sync_from_peer(
                 break;
             }
 
-            let blocks: Vec<lib_blockchain::Block> = match bincode::deserialize(&blocks_resp.body) {
-                Ok(b) => b,
-                Err(e) => {
-                    warn!(
-                        "⚠️  Failed to deserialize blocks {}-{} from {}: {}",
-                        start, end, peer_addr, e
-                    );
-                    page_error = true;
-                    break;
-                }
-            };
+            let blocks: Vec<lib_blockchain::Block> =
+                match decode_block_page_for_wire(&block_page_wire, &blocks_resp.body, start, end)
+                {
+                    Ok(b) => b,
+                    Err(e) => {
+                        warn!(
+                            "⚠️  Failed to decode block page {}-{} from {} (wire={}): {}",
+                            start, end, peer_addr, block_page_wire, e
+                        );
+                        page_error = true;
+                        break;
+                    }
+                };
 
             if blocks.is_empty() {
                 break;

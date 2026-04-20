@@ -484,14 +484,21 @@ impl BlockchainComponent {
                         break 'batches;
                     }
 
-                    let blocks: Vec<lib_blockchain::Block> =
-                        match bincode::deserialize(&blocks_resp.body) {
-                            Ok(b) => b,
-                            Err(e) => {
-                                warn!("observer_sync: failed to deserialize blocks: {}", e);
-                                break 'batches;
-                            }
-                        };
+                    let blocks: Vec<lib_blockchain::Block> = match crate::runtime::decode_block_page_for_wire(
+                        &block_page_wire,
+                        &blocks_resp.body,
+                        from,
+                        to,
+                    ) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            warn!(
+                                "observer_sync: failed to decode block page {}-{} (wire={}): {}",
+                                from, to, block_page_wire, e
+                            );
+                            break 'batches;
+                        }
+                    };
 
                     if blocks.is_empty() {
                         warn!(
