@@ -2427,6 +2427,24 @@ impl ZhtpMeshServer {
         }
     }
 
+    /// Subtract claimed amount from the theoretical tokens counter (partial reset)
+    ///
+    /// This preserves unclaimed accumulated tokens when a claim is capped
+    /// at `max_batch_size`, preventing operator token loss.
+    pub async fn subtract_reward_counter(&self, amount: u64) {
+        let mut stats = self.routing_stats.write().await;
+        let previous = stats.theoretical_tokens_earned;
+        stats.theoretical_tokens_earned = stats.theoretical_tokens_earned.saturating_sub(amount);
+
+        if previous > 0 {
+            info!(
+                " Routing reward counter partial reset: {} SOV claimed, {} SOV remaining",
+                amount,
+                stats.theoretical_tokens_earned
+            );
+        }
+    }
+
     /// Get complete routing statistics snapshot
     ///
     /// Returns a complete snapshot of current routing statistics including:
@@ -2514,6 +2532,24 @@ impl ZhtpMeshServer {
 
         if previous > 0 {
             info!(" Storage reward counter reset: {} SOV claimed", previous);
+        }
+    }
+
+    /// Subtract claimed amount from the storage theoretical tokens counter (partial reset)
+    ///
+    /// This preserves unclaimed accumulated tokens when a claim is capped
+    /// at `max_batch_size`, preventing operator token loss.
+    pub async fn subtract_storage_reward_counter(&self, amount: u64) {
+        let mut stats = self.storage_stats.write().await;
+        let previous = stats.theoretical_tokens_earned;
+        stats.theoretical_tokens_earned = stats.theoretical_tokens_earned.saturating_sub(amount);
+
+        if previous > 0 {
+            info!(
+                " Storage reward counter partial reset: {} SOV claimed, {} SOV remaining",
+                amount,
+                stats.theoretical_tokens_earned
+            );
         }
     }
 
