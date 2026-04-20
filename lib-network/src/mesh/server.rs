@@ -412,6 +412,9 @@ pub struct ZhtpMeshServer {
     /// Message handler for processing received messages
     pub message_handler: Option<Arc<RwLock<crate::messaging::message_handler::MeshMessageHandler>>>,
 
+    // Store-and-forward persistence path (optional)
+    pub store_forward_path: Option<std::path::PathBuf>,
+
     // Blockchain Synchronization
     /// Sync coordinator to prevent duplicate syncs across multiple protocols
     pub sync_coordinator: Arc<crate::blockchain_sync::SyncCoordinator>,
@@ -1251,6 +1254,9 @@ impl ZhtpMeshServer {
             message_router: None,
             message_handler: None,
 
+            // Store-and-forward persistence (default: in-memory)
+            store_forward_path: None,
+
             // Initialize blockchain sync coordinator
             sync_coordinator: Arc::new(crate::blockchain_sync::SyncCoordinator::new()),
 
@@ -1527,8 +1533,18 @@ impl ZhtpMeshServer {
             ),
         ));
 
-        // Create identity store-and-forward queue
-        let mut identity_store = crate::identity_store_forward::IdentityStoreForward::new(128);
+        // Create identity store-and-forward queue (persistent if path configured)
+        let mut identity_store = if let Some(ref path) = self.store_forward_path {
+            match crate::identity_store_forward::IdentityStoreForward::new_persistent(path, 128) {
+                Ok(store) => store,
+                Err(e) => {
+                    warn!("Failed to open persistent store-forward at {:?}: {}. Falling back to in-memory.", path, e);
+                    crate::identity_store_forward::IdentityStoreForward::new(128)
+                }
+            }
+        } else {
+            crate::identity_store_forward::IdentityStoreForward::new(128)
+        };
         identity_store.set_pouw_verifier(
             crate::identity_store_forward::IdentityStoreForward::default_pouw_verifier(),
         );

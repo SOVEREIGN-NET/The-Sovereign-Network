@@ -51,6 +51,16 @@ pub enum CliError {
     #[error("File processing error: {0}")]
     FileProcessingError(String),
 
+    // Reward operations
+    #[error("Reward operation failed: {0}")]
+    RewardError(String),
+
+    #[error("Reward claim failed: {0}")]
+    RewardClaimFailed(String),
+
+    #[error("Reward history unavailable: {0}")]
+    RewardHistoryUnavailable(String),
+
     // Network operations
     #[error("Network error: {0}")]
     NetworkError(String),

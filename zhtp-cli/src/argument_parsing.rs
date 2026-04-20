@@ -1043,6 +1043,14 @@ pub enum RewardAction {
     Storage,
     /// Show reward configuration
     Config,
+    /// Claim pending rewards (placeholder)
+    Claim,
+    /// Show reward history / past rounds (placeholder)
+    History {
+        /// Number of rounds to show (default: 10, max: 1000)
+        #[arg(short, long, default_value = "10")]
+        limit: usize,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
