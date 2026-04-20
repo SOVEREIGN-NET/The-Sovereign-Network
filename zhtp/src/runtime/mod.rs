@@ -78,6 +78,7 @@ pub mod shared_blockchain;
 pub mod shared_dht;
 pub mod storage_provider; // Global access to storage for component sharing
 pub mod storage_rewards;
+pub mod sync_diagnostics;
 #[cfg(test)]
 pub mod test_api_integration;
 pub mod token_utils;
@@ -211,7 +212,9 @@ pub(crate) async fn negotiate_block_page_wire_version(
                 e,
                 crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW
             );
-            return Ok(crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW.to_string());
+            let selected = crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW.to_string();
+            crate::runtime::sync_diagnostics::record_wire_selection(peer_addr, &selected);
+            return Ok(selected);
         }
         Err(_) => {
             warn!(
@@ -219,7 +222,9 @@ pub(crate) async fn negotiate_block_page_wire_version(
                 peer_addr,
                 crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW
             );
-            return Ok(crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW.to_string());
+            let selected = crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW.to_string();
+            crate::runtime::sync_diagnostics::record_wire_selection(peer_addr, &selected);
+            return Ok(selected);
         }
     };
 
@@ -230,7 +235,9 @@ pub(crate) async fn negotiate_block_page_wire_version(
             caps_resp.status_message,
             crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW
         );
-        return Ok(crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW.to_string());
+        let selected = crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW.to_string();
+        crate::runtime::sync_diagnostics::record_wire_selection(peer_addr, &selected);
+        return Ok(selected);
     }
 
     let peer_caps: crate::sync_wire::SyncCapabilities = serde_json::from_slice(&caps_resp.body)
@@ -247,6 +254,7 @@ pub(crate) async fn negotiate_block_page_wire_version(
                 "🔁 Sync wire negotiated with {}: {} (peer_supported={:?}, local_supported={:?})",
                 peer_addr, wire, peer_caps.block_page_wire_versions, local_supported
             );
+            crate::runtime::sync_diagnostics::record_wire_selection(peer_addr, &wire);
             Ok(wire)
         }
         None => Err(anyhow::anyhow!(
@@ -256,6 +264,36 @@ pub(crate) async fn negotiate_block_page_wire_version(
             local_supported
         )),
     }
+}
+
+pub(crate) fn log_sync_decode_failure(
+    peer: &str,
+    endpoint: &str,
+    wire_version: &str,
+    start: u64,
+    end: u64,
+    payload: &[u8],
+    err: &anyhow::Error,
+) {
+    let class = crate::runtime::sync_diagnostics::classify_sync_decode_error(err);
+    crate::runtime::sync_diagnostics::record_decode_failure(peer, wire_version, class);
+
+    let prefix_len = std::cmp::min(payload.len(), 16);
+    let payload_prefix = hex::encode(&payload[..prefix_len]);
+    let payload_hash = hex::encode(blake3::hash(payload).as_bytes());
+
+    warn!(
+        "sync_decode_failure class={} peer={} endpoint={} wire={} range={}..{} payload_prefix={} payload_hash={} err={}",
+        class.as_str(),
+        peer,
+        endpoint,
+        wire_version,
+        start,
+        end,
+        payload_prefix,
+        payload_hash,
+        err
+    );
 }
 
 /// Try to sync blockchain from bootstrap peers using paginated block-range QUIC requests.
@@ -489,9 +527,14 @@ async fn try_initial_sync_from_peer(
                 {
                     Ok(b) => b,
                     Err(e) => {
-                        warn!(
-                            "⚠️  Failed to decode block page {}-{} from {} (wire={}): {}",
-                            start, end, peer_addr, block_page_wire, e
+                        log_sync_decode_failure(
+                            &peer_addr.to_string(),
+                            &url,
+                            &block_page_wire,
+                            start,
+                            end,
+                            &blocks_resp.body,
+                            &e,
                         );
                         page_error = true;
                         break;

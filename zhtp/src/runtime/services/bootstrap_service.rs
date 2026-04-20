@@ -255,7 +255,18 @@ impl BootstrapService {
             start,
             end,
         )
-        .context("Failed to decode block page")?;
+        .map_err(|e| {
+            crate::runtime::log_sync_decode_failure(
+                peer_label,
+                &blocks_path,
+                &block_page_wire,
+                start,
+                end,
+                &blocks_data,
+                &e,
+            );
+            anyhow::anyhow!("Failed to decode block page: {}", e)
+        })?;
 
         info!("Appending {} new blocks to local chain", new_blocks.len());
 
