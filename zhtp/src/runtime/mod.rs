@@ -106,6 +106,16 @@ pub use shared_dht::*;
 
 const SYNC_CAPABILITIES_ENDPOINT: &str = "/api/v1/blockchain/sync-capabilities";
 
+fn strict_sync_wire_mode_enabled() -> bool {
+    std::env::var("ZHTP_SYNC_WIRE_STRICT")
+        .ok()
+        .map(|v| {
+            let normalized = v.trim().to_ascii_lowercase();
+            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
+}
+
 pub(crate) fn block_range_path_for_wire(
     wire_version: &str,
     start: u64,
@@ -193,6 +203,7 @@ pub(crate) async fn negotiate_block_page_wire_version(
     client: &lib_network::client::ZhtpClient,
     peer_addr: &str,
 ) -> anyhow::Result<String> {
+    let strict_mode = strict_sync_wire_mode_enabled();
     let local_supported = crate::sync_wire::LOCAL_BLOCK_PAGE_WIRE_PREFERENCE
         .iter()
         .map(|s| s.to_string())
@@ -206,6 +217,13 @@ pub(crate) async fn negotiate_block_page_wire_version(
     {
         Ok(Ok(resp)) => resp,
         Ok(Err(e)) => {
+            if strict_mode {
+                return Err(anyhow::anyhow!(
+                    "UnsupportedPeerWireVersion: peer={} strict_mode=true fallback_disabled reason=sync_capabilities_request_failed error={}",
+                    peer_addr,
+                    e
+                ));
+            }
             warn!(
                 "⚠️  sync-capabilities request failed for {}: {}; falling back to {}",
                 peer_addr,
@@ -217,6 +235,12 @@ pub(crate) async fn negotiate_block_page_wire_version(
             return Ok(selected);
         }
         Err(_) => {
+            if strict_mode {
+                return Err(anyhow::anyhow!(
+                    "UnsupportedPeerWireVersion: peer={} strict_mode=true fallback_disabled reason=sync_capabilities_timeout",
+                    peer_addr
+                ));
+            }
             warn!(
                 "⚠️  sync-capabilities request timed out for {}; falling back to {}",
                 peer_addr,
@@ -229,6 +253,13 @@ pub(crate) async fn negotiate_block_page_wire_version(
     };
 
     if !caps_resp.is_success() {
+        if strict_mode {
+            return Err(anyhow::anyhow!(
+                "UnsupportedPeerWireVersion: peer={} strict_mode=true fallback_disabled reason=sync_capabilities_status status={}",
+                peer_addr,
+                caps_resp.status_message
+            ));
+        }
         warn!(
             "⚠️  peer {} does not expose sync capabilities (status={}): falling back to {}",
             peer_addr,
