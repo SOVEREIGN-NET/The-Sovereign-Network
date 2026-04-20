@@ -10,6 +10,58 @@ impl Blockchain {
         }
     }
 
+    /// Initialize the 5 welfare DAO sector tokens if not already present.
+    /// Each token is kernel-controlled (mint/burn only via Treasury Kernel),
+    /// 1:1 SOV-backed, and uses the corresponding sector DAO key_id as its
+    /// reserve wallet address.
+    pub fn ensure_welfare_dao_tokens(&mut self) {
+        use crate::contracts::economics::fee_router::{
+            DAO_HEALTHCARE_KEY_ID, DAO_EDUCATION_KEY_ID, DAO_ENERGY_KEY_ID,
+            DAO_HOUSING_KEY_ID, DAO_FOOD_KEY_ID,
+        };
+
+        let kernel_authority = match &self.treasury_kernel {
+            Some(kernel) => kernel.governance_authority().clone(),
+            None => {
+                warn!("Cannot initialize welfare DAO tokens: Treasury Kernel not initialized");
+                return;
+            }
+        };
+
+        let tokens: &[(&str, &str, &[u8; 32])] = &[
+            ("HealthToken", "HEAL", &DAO_HEALTHCARE_KEY_ID),
+            ("EduToken", "EDU", &DAO_EDUCATION_KEY_ID),
+            ("EnergyToken", "ENRG", &DAO_ENERGY_KEY_ID),
+            ("HousingToken", "HOME", &DAO_HOUSING_KEY_ID),
+            ("FoodToken", "FOOD", &DAO_FOOD_KEY_ID),
+        ];
+
+        let mut created = 0;
+        for (name, symbol, _dao_key_id) in tokens {
+            let token_id =
+                crate::contracts::utils::generate_custom_token_id(name, symbol);
+            if self.token_contracts.contains_key(&token_id) {
+                continue;
+            }
+            let token = crate::contracts::TokenContract::new_welfare_token(
+                name.to_string(),
+                symbol.to_string(),
+                kernel_authority.clone(),
+            );
+            info!(
+                "🏥 Welfare DAO token created: {} ({}) id={}",
+                name,
+                symbol,
+                hex::encode(&token_id[..8])
+            );
+            self.token_contracts.insert(token_id, token);
+            created += 1;
+        }
+        if created > 0 {
+            info!("🏛️ Initialized {} welfare DAO sector tokens", created);
+        }
+    }
+
     pub(super) fn ensure_treasury_wallet(&mut self) {
         let wallet_id_bytes = Self::deterministic_treasury_wallet_id().as_array();
         let wallet_id_hex = hex::encode(wallet_id_bytes);

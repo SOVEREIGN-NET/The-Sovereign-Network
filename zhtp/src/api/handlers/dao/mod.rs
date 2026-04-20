@@ -280,11 +280,8 @@ impl DaoHandler {
         if tx_bytes.len() > MAX_CANONICAL_TX_BYTES {
             return Err(anyhow::anyhow!("signed_tx exceeds maximum allowed size"));
         }
-        let tx: Transaction = bincode::DefaultOptions::new()
-            .with_limit(MAX_CANONICAL_TX_BYTES as u64)
-            .deserialize(&tx_bytes)
-            .map_err(|e| anyhow::anyhow!("Invalid signed_tx payload: {}", e))?;
-        Ok(tx)
+        lib_blockchain::transaction::decode_client_transaction(&tx_bytes)
+            .map_err(|e| anyhow::anyhow!("Invalid signed_tx payload: {}", e))
     }
 
     /// Parse proposal type from string

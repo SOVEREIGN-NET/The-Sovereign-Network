@@ -668,7 +668,7 @@ struct ContractSubmissionResponse {
 }
 
 fn estimate_signed_tx_size(raw_tx: &[u8]) -> usize {
-    match bincode::deserialize::<lib_blockchain::transaction::Transaction>(raw_tx) {
+    match lib_blockchain::transaction::decode_client_transaction(raw_tx) {
         Ok(mut tx) => {
             let sig_len = tx.signature.signature.len();
             let pk_len = tx.signature.public_key.dilithium_pk.len();
@@ -2171,7 +2171,7 @@ impl BlockchainHandler {
                     Ok(tx) => tx,
                     Err(_) => {
                         // If JSON parsing fails, try bincode deserialization
-                        match bincode::deserialize::<lib_blockchain::transaction::Transaction>(
+                        match lib_blockchain::transaction::decode_client_transaction(
                             &tx_bytes,
                         ) {
                             Ok(tx) => tx,
