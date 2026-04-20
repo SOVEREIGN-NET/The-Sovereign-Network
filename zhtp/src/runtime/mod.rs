@@ -102,6 +102,94 @@ pub use node_runtime_orchestrator::NodeRuntimeOrchestrator;
 pub use shared_blockchain::*;
 pub use shared_dht::*;
 
+const SYNC_CAPABILITIES_ENDPOINT: &str = "/api/v1/blockchain/sync-capabilities";
+
+pub(crate) fn block_range_path_for_wire(
+    wire_version: &str,
+    start: u64,
+    end: u64,
+) -> anyhow::Result<String> {
+    match wire_version {
+        crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW => {
+            Ok(format!("/api/v1/blockchain/blocks/{}/{}", start, end))
+        }
+        _ => Err(anyhow::anyhow!(
+            "unsupported block page wire version: {}",
+            wire_version
+        )),
+    }
+}
+
+pub(crate) async fn negotiate_block_page_wire_version(
+    client: &lib_network::client::ZhtpClient,
+    peer_addr: &str,
+) -> anyhow::Result<String> {
+    let local_supported = crate::sync_wire::LOCAL_BLOCK_PAGE_WIRE_PREFERENCE
+        .iter()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
+
+    let caps_resp = match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        client.get(SYNC_CAPABILITIES_ENDPOINT),
+    )
+    .await
+    {
+        Ok(Ok(resp)) => resp,
+        Ok(Err(e)) => {
+            warn!(
+                "⚠️  sync-capabilities request failed for {}: {}; falling back to {}",
+                peer_addr,
+                e,
+                crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW
+            );
+            return Ok(crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW.to_string());
+        }
+        Err(_) => {
+            warn!(
+                "⚠️  sync-capabilities request timed out for {}; falling back to {}",
+                peer_addr,
+                crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW
+            );
+            return Ok(crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW.to_string());
+        }
+    };
+
+    if !caps_resp.is_success() {
+        warn!(
+            "⚠️  peer {} does not expose sync capabilities (status={}): falling back to {}",
+            peer_addr,
+            caps_resp.status_message,
+            crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW
+        );
+        return Ok(crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW.to_string());
+    }
+
+    let peer_caps: crate::sync_wire::SyncCapabilities = serde_json::from_slice(&caps_resp.body)
+        .with_context(|| format!("failed to parse sync capabilities from {}", peer_addr))?;
+
+    let selected = crate::sync_wire::select_preferred_block_page_wire(
+        &crate::sync_wire::LOCAL_BLOCK_PAGE_WIRE_PREFERENCE,
+        &peer_caps.block_page_wire_versions,
+    );
+
+    match selected {
+        Some(wire) => {
+            info!(
+                "🔁 Sync wire negotiated with {}: {} (peer_supported={:?}, local_supported={:?})",
+                peer_addr, wire, peer_caps.block_page_wire_versions, local_supported
+            );
+            Ok(wire)
+        }
+        None => Err(anyhow::anyhow!(
+            "UnsupportedPeerWireVersion: peer={} peer_supported={:?} local_supported={:?}",
+            peer_addr,
+            peer_caps.block_page_wire_versions,
+            local_supported
+        )),
+    }
+}
+
 /// Try to sync blockchain from bootstrap peers using paginated block-range QUIC requests.
 ///
 /// Uses the same `/api/v1/blockchain/blocks/{start}/{end}` endpoint as the catch-up
@@ -255,12 +343,20 @@ async fn try_initial_sync_from_peer(
         }
 
         highest_peer_height = highest_peer_height.max(tip.height);
+        let block_page_wire = match negotiate_block_page_wire_version(&client, peer).await {
+            Ok(wire) => wire,
+            Err(e) => {
+                warn!("⚠️  Failed sync wire negotiation with {}: {}", peer_addr, e);
+                continue;
+            }
+        };
         info!(
-            "📥 Peer {} at height {} — fetching blocks {}-{}",
+            "📥 Peer {} at height {} — fetching blocks {}-{} (wire={})",
             peer_addr,
             tip.height,
             local_height + 1,
-            tip.height
+            tip.height,
+            block_page_wire
         );
 
         // Paginated import: 200 blocks per request, same as consensus catch-up.
@@ -276,7 +372,17 @@ async fn try_initial_sync_from_peer(
             }
             let start = next_start;
             let end = tip.height.min(start + BLOCKS_PER_PAGE - 1);
-            let url = format!("/api/v1/blockchain/blocks/{}/{}", start, end);
+            let url = match block_range_path_for_wire(&block_page_wire, start, end) {
+                Ok(path) => path,
+                Err(e) => {
+                    warn!(
+                        "⚠️  Invalid sync wire {} for {}: {}",
+                        block_page_wire, peer_addr, e
+                    );
+                    page_error = true;
+                    break;
+                }
+            };
 
             let blocks_resp =
                 match tokio::time::timeout(std::time::Duration::from_secs(60), client.get(&url))
