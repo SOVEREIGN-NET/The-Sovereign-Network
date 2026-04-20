@@ -149,6 +149,34 @@ impl TokenContract {
         token
     }
 
+    /// Create a welfare DAO sector token (kernel-controlled).
+    ///
+    /// Welfare tokens are 1:1 SOV-backed service access vouchers.
+    /// Only the Treasury Kernel can mint (on SOV stake) and burn (on provider redemption).
+    /// Supply is elastic — always equals SOV locked in the sector reserve.
+    /// Non-tradeable by design (enforced at application layer, not token contract).
+    pub fn new_welfare_token(
+        name: String,
+        symbol: String,
+        kernel_authority: PublicKey,
+    ) -> Self {
+        let token_id = crate::contracts::utils::generate_custom_token_id(&name, &symbol);
+        let creator = PublicKey::new([0u8; 2592]);
+        let mut token = Self::new(
+            token_id,
+            name,
+            symbol,
+            18,                           // 18 decimals (matches SOV for 1:1 backing)
+            u128::MAX,                    // No fixed cap — elastic supply = SOV staked
+            false,
+            0,
+            creator,
+        );
+        token.kernel_mint_authority = Some(kernel_authority);
+        token.kernel_only_mode = true;
+        token
+    }
+
     /// Create a custom token (for dApps)
     pub fn new_custom(
         name: String,

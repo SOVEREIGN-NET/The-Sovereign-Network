@@ -852,18 +852,16 @@ impl Web4Handler {
     }
 
 
-    /// Create a system TokenTransfer for the domain registration fee.
-    /// The node builds the transaction server-side using the authenticated user's
-    /// identity, eliminating the need for the app to construct bincode transactions.
+    /// Debit domain registration fee from owner's Primary wallet and credit to
+    /// DAO treasury. Operates directly on the in-memory SOV token contract —
+    /// no Transaction object needed. The DomainRegistration transaction (which IS
+    /// included in the block) serves as the on-chain audit record of the fee payment.
     async fn create_domain_fee_system_tx(
         &self,
         owner_identity: &ZhtpIdentity,
         fee_sov: u128,
     ) -> anyhow::Result<String> {
-        let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
-            .await
-            .map_err(|e| anyhow!("blockchain unavailable: {}", e))?;
-        let mut blockchain = blockchain_arc.write().await;
+        let mut blockchain = self.blockchain.write().await;
 
         let owner_hash = lib_blockchain::Hash::from_slice(&owner_identity.id.0);
 
@@ -877,12 +875,12 @@ impl Web4Handler {
             })
             .ok_or_else(|| anyhow!("Primary wallet not found for identity"))?;
         let from_wallet_id = owner_wallet.wallet_id.as_array();
-        let from_public_key = owner_wallet.public_key.clone();
 
         // Find treasury wallet
         let treasury_wallet_id_hex = blockchain
             .get_dao_treasury_wallet_id()
-            .ok_or_else(|| anyhow!("DAO treasury wallet is not configured"))?;
+            .ok_or_else(|| anyhow!("DAO treasury wallet is not configured"))?
+            .clone();
         let treasury_bytes = hex::decode(&treasury_wallet_id_hex)
             .map_err(|_| anyhow!("DAO treasury wallet id is malformed"))?;
         if treasury_bytes.len() != 32 {
@@ -891,18 +889,25 @@ impl Web4Handler {
         let mut to_wallet = [0u8; 32];
         to_wallet.copy_from_slice(&treasury_bytes);
 
-        // Check SOV balance
+        // Direct balance transfer via the in-memory SOV token contract.
         let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
         let sender_key = lib_blockchain::integration::crypto_integration::PublicKey {
             dilithium_pk: [0u8; 2592],
             kyber_pk: [0u8; 1568],
             key_id: from_wallet_id,
         };
-        let balance = blockchain
+        let treasury_key = lib_blockchain::integration::crypto_integration::PublicKey {
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
+            key_id: to_wallet,
+        };
+
+        let token = blockchain
             .token_contracts
-            .get(&sov_token_id)
-            .map(|t| u128::from(t.balance_of(&sender_key)))
-            .unwrap_or(0);
+            .get_mut(&sov_token_id)
+            .ok_or_else(|| anyhow!("SOV token contract not initialized"))?;
+
+        let balance = u128::from(token.balance_of(&sender_key));
         if balance < fee_sov {
             return Err(anyhow!(
                 "Insufficient SOV balance: have {} atoms, need {} atoms",
@@ -911,61 +916,35 @@ impl Web4Handler {
             ));
         }
 
-        // Build system TokenTransfer transaction
+        // Debit sender, credit treasury (direct balance manipulation)
+        let sender_balance = u128::from(token.balance_of(&sender_key));
+        let treasury_balance = u128::from(token.balance_of(&treasury_key));
+        token.set_balance(&sender_key, sender_balance - fee_sov);
+        token.set_balance(&treasury_key, treasury_balance + fee_sov);
+
+        // Generate a deterministic hash for the receipt (not a real tx hash, just audit ID)
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-
-        let transfer_data = lib_blockchain::transaction::TokenTransferData {
-            token_id: sov_token_id,
-            from: from_wallet_id,
-            to: to_wallet,
-            amount: fee_sov,
-            nonce: 0,
-        };
-
-        let dilithium_pk: [u8; 2592] = from_public_key
-            .as_slice()
-            .try_into()
-            .unwrap_or([0u8; 2592]);
-
-        let memo = format!("domain_registration_fee:{}", now);
-
-        let tx = lib_blockchain::transaction::Transaction {
-            version: lib_blockchain::transaction::TX_VERSION_V8,
-            chain_id: 0x03,
-            transaction_type: lib_blockchain::TransactionType::TokenTransfer,
-            inputs: vec![],
-            outputs: vec![],
-            fee: 0,
-            signature: lib_blockchain::integration::crypto_integration::Signature {
-                signature: Vec::new(),
-                public_key:
-                    lib_blockchain::integration::crypto_integration::PublicKey::new(dilithium_pk),
-                algorithm:
-                    lib_blockchain::integration::crypto_integration::SignatureAlgorithm::DEFAULT,
-                timestamp: now,
-            },
-            memo: memo.into_bytes(),
-            payload: lib_blockchain::transaction::TransactionPayload::TokenTransfer(
-                transfer_data,
-            ),
-        };
-
-        let tx_hash = hex::encode(tx.hash().as_bytes());
-        info!(
-            "Domain fee system tx: {} SOV from {} to treasury ({})",
-            fee_sov,
+        let receipt_preimage = format!(
+            "domain_fee:{}:{}:{}",
             hex::encode(&from_wallet_id[..8]),
-            &tx_hash[..16]
+            fee_sov,
+            now
+        );
+        let receipt_hash = hex::encode(
+            lib_blockchain::types::hash::blake3_hash(receipt_preimage.as_bytes()).as_bytes(),
         );
 
-        blockchain
-            .add_system_transaction(tx)
-            .map_err(|e| anyhow!("Failed to submit domain fee tx: {}", e))?;
+        info!(
+            "Domain fee: {} SOV debited from {} → treasury (receipt: {})",
+            fee_sov,
+            hex::encode(&from_wallet_id[..8]),
+            &receipt_hash[..16]
+        );
 
-        Ok(tx_hash)
+        Ok(receipt_hash)
     }
 
     /// Register a new Web4 domain

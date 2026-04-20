@@ -2249,6 +2249,31 @@ impl BlockExecutor {
         Ok(())
     }
 
+    /// Map a sector DAO key_id to its welfare token_id.
+    /// Returns the deterministic token_id for the welfare token associated with
+    /// the given DAO, or None if the key_id is not a known sector DAO.
+    fn welfare_token_for_dao(dao_key_id: &[u8; 32]) -> Option<crate::storage::TokenId> {
+        use crate::contracts::economics::fee_router::{
+            DAO_EDUCATION_KEY_ID, DAO_ENERGY_KEY_ID, DAO_FOOD_KEY_ID, DAO_HEALTHCARE_KEY_ID,
+            DAO_HOUSING_KEY_ID,
+        };
+        let (name, symbol) = if *dao_key_id == DAO_HEALTHCARE_KEY_ID {
+            ("HealthToken", "HEAL")
+        } else if *dao_key_id == DAO_EDUCATION_KEY_ID {
+            ("EduToken", "EDU")
+        } else if *dao_key_id == DAO_ENERGY_KEY_ID {
+            ("EnergyToken", "ENRG")
+        } else if *dao_key_id == DAO_HOUSING_KEY_ID {
+            ("HousingToken", "HOME")
+        } else if *dao_key_id == DAO_FOOD_KEY_ID {
+            ("FoodToken", "FOOD")
+        } else {
+            return None;
+        };
+        let id = crate::contracts::utils::generate_custom_token_id(name, symbol);
+        Some(crate::storage::TokenId::new(id))
+    }
+
     fn apply_dao_stake(
         &self,
         mutator: &StateMutator<'_>,
@@ -2314,8 +2339,21 @@ impl BlockExecutor {
         };
         mutator.put_dao_stake(&record)?;
 
+        // Mint welfare token 1:1 to the staker.
+        // The staker locked SOV in the sector reserve; they receive the corresponding
+        // welfare token as a service access voucher.
+        if let Some(welfare_token_id) = Self::welfare_token_for_dao(&data.sector_dao_key_id) {
+            mutator.credit_token(&welfare_token_id, &staker_addr, data.amount)?;
+            tracing::info!(
+                "[DAO_STAKE] minted {} welfare tokens ({}) to staker={}",
+                data.amount,
+                hex::encode(&welfare_token_id.0[..8]),
+                hex::encode(&data.staker[..6]),
+            );
+        }
+
         tracing::info!(
-            "[DAO_STAKE] staker={} dao={} amount={} locked_until={}",
+            "[DAO_STAKE] staker={} dao={} sov={} locked_until={}",
             hex::encode(&data.staker[..6]),
             hex::encode(&data.sector_dao_key_id[..6]),
             data.amount,
@@ -2386,6 +2424,18 @@ impl BlockExecutor {
         // Return locked SOV from DAO wallet back to staker.
         mutator.transfer_token(&sov_token, &dao_addr, &staker_addr, record.amount)?;
 
+        // Burn welfare tokens from staker — they're returning the service access voucher
+        // to reclaim their SOV. Burns exactly the amount that was minted on stake.
+        if let Some(welfare_token_id) = Self::welfare_token_for_dao(&data.sector_dao_key_id) {
+            mutator.debit_token(&welfare_token_id, &staker_addr, record.amount)?;
+            tracing::info!(
+                "[DAO_UNSTAKE] burned {} welfare tokens ({}) from staker={}",
+                record.amount,
+                hex::encode(&welfare_token_id.0[..8]),
+                hex::encode(&data.staker[..6]),
+            );
+        }
+
         // Delete the stake record.
         mutator.delete_dao_stake(&data.sector_dao_key_id, &data.staker)?;
 
@@ -2393,7 +2443,7 @@ impl BlockExecutor {
         mutator.increment_token_nonce(&sov_token, &staker_addr)?;
 
         tracing::info!(
-            "[DAO_UNSTAKE] staker={} dao={} amount={} height={}",
+            "[DAO_UNSTAKE] staker={} dao={} sov={} height={}",
             hex::encode(&data.staker[..6]),
             hex::encode(&data.sector_dao_key_id[..6]),
             record.amount,

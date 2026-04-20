@@ -672,11 +672,17 @@ impl Blockchain {
                 .first()
                 .and_then(|cm| {
                     let did = cm.identity_id.clone();
-                    blockchain.identity_registry.get(&did).map(|id| {
-                        let pk = lib_crypto::PublicKey::new(
-                            id.public_key.as_slice().try_into().unwrap_or([0u8; 2592]),
-                        );
-                        (pk, did)
+                    blockchain.identity_registry.get(&did).and_then(|id| {
+                        match id.public_key.as_slice().try_into() {
+                            Ok(pk_bytes) => Some((lib_crypto::PublicKey::new(pk_bytes), did)),
+                            Err(_) => {
+                                warn!(
+                                    "Treasury Kernel skip: council {} has invalid pk length {}",
+                                    &did[..40.min(did.len())], id.public_key.len()
+                                );
+                                None
+                            }
+                        }
                     })
                 });
             if let Some((authority_pk, authority_did)) = kernel_init {
@@ -689,6 +695,9 @@ impl Blockchain {
         } else {
             info!("🏛️ Treasury Kernel restored from persistence");
         }
+
+        // Welfare DAO tokens are initialized after kernel init in the component
+        // startup path (council_members not yet loaded at this point).
 
         info!(
             "📂 Loaded blockchain from SledStore: height={}, identities={}, wallets={}, tokens={}",

@@ -117,15 +117,19 @@ print(f'To provision: {provision_count}', file=sys.stderr)
 
 # Output CBE payroll commands
 print(f'', file=sys.stderr)
+CBE_ATOM_SCALE = 10 ** 10  # 8-decimal (snapshot) → 18-decimal (payroll)
 print(f'=== CBE PAYROLL ===', file=sys.stderr)
 print(f'Total CBE transfers to replay as payroll: {len(cbe_snapshot)}', file=sys.stderr)
-total_cbe = sum(int(t.get('amount', 0)) for t in cbe_snapshot)
-print(f'Total CBE to allocate: {total_cbe} atoms ({total_cbe / 1e12:.1f} CBE)', file=sys.stderr)
+total_cbe_8dec = sum(int(t.get('amount', 0)) for t in cbe_snapshot)
+total_cbe_18dec = total_cbe_8dec * CBE_ATOM_SCALE
+print(f'Total CBE (8-dec atoms): {total_cbe_8dec} = {total_cbe_8dec / 1e8:.0f} CBE', file=sys.stderr)
+print(f'Total CBE (18-dec atoms): {total_cbe_18dec}', file=sys.stderr)
 
 for t in cbe_snapshot:
     to_wallet = t.get('to', '')
-    amount = t.get('amount', '0')
-    print(f'PAYROLL|{to_wallet}|{amount}')
+    amount_8dec = int(t.get('amount', '0'))
+    amount_18dec = amount_8dec * CBE_ATOM_SCALE
+    print(f'PAYROLL|{to_wallet}|{amount_18dec}')
 " > /tmp/replay_commands.txt 2>&1
 
 # Parse and show summary
@@ -207,7 +211,7 @@ grep "^PAYROLL" /tmp/replay_commands.txt | while IFS='|' read -r _ to amount; do
     contract_id=$(echo -n "replay_contract_$to" | sha256sum | cut -c1-64)
     deliverable_hash=$(echo -n "replay_deliverable_${count}_$to" | sha256sum | cut -c1-64)
 
-    cmd="/opt/zhtp/zhtp-cli -s 127.0.0.1:9334 cbe payroll --contract-id $contract_id --amount-cbe $amount --collaborator $to --deliverable-hash $deliverable_hash"
+    cmd="$CLI -s $SERVER cbe payroll --contract-id $contract_id --amount-cbe $amount --collaborator $to --deliverable-hash $deliverable_hash --keystore /tmp/council_keystore"
 
     result=$(ssh zhtp-g1 "$cmd" 2>&1) || {
         err "[$count/$PAYROLL_TOTAL] Failed payroll to $to amount=$amount - $result"

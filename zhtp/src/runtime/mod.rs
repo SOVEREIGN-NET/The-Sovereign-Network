@@ -1216,11 +1216,14 @@ impl RuntimeOrchestrator {
                         blockchain
                             .identity_registry
                             .get(&did)
-                            .map(|id| {
-                                let pk = lib_crypto::PublicKey::new(
-                                    id.public_key.as_slice().try_into().unwrap_or([0u8; 2592]),
-                                );
-                                (pk, did)
+                            .and_then(|id| {
+                                match id.public_key.as_slice().try_into() {
+                                    Ok(pk_bytes) => Some((lib_crypto::PublicKey::new(pk_bytes), did)),
+                                    Err(_) => {
+                                        warn!("Treasury Kernel skip: council pk length {}", id.public_key.len());
+                                        None
+                                    }
+                                }
                             })
                     });
                 if let Some((authority_pk, authority_did)) = kernel_init_data {
@@ -1234,6 +1237,7 @@ impl RuntimeOrchestrator {
             } else {
                 info!("🏛️ Treasury Kernel restored from persistence");
             }
+            blockchain.ensure_welfare_dao_tokens();
         } // Release write lock
 
         info!(" Global blockchain provider initialized with user wallet funding");
@@ -4159,11 +4163,14 @@ impl RuntimeOrchestrator {
                                 .first()
                                 .and_then(|cm| {
                                     let did = cm.identity_id.clone();
-                                    bc.identity_registry.get(&did).map(|id| {
-                                        let pk = lib_crypto::PublicKey::new(
-                                            id.public_key.as_slice().try_into().unwrap_or([0u8; 2592]),
-                                        );
-                                        (pk, did)
+                                    bc.identity_registry.get(&did).and_then(|id| {
+                                        match id.public_key.as_slice().try_into() {
+                                            Ok(pk_bytes) => Some((lib_crypto::PublicKey::new(pk_bytes), did)),
+                                            Err(_) => {
+                                                warn!("Treasury Kernel skip: council pk length {}", id.public_key.len());
+                                                None
+                                            }
+                                        }
                                     })
                                 });
                             if let Some((authority_pk, authority_did)) = kernel_init {
