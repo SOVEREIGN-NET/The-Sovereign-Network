@@ -153,6 +153,7 @@ impl Web4Handler {
             manifest_cid: None,
             domain: Some(domain.to_string()),
             route_hops: None,
+            route_intermediaries: vec![],
             served_from_cache: Some(true),
         };
         v.read().await.emit_direct(receipt).await;
@@ -181,6 +182,7 @@ impl Web4Handler {
             manifest_cid: None,
             domain: Some(domain.to_string()),
             route_hops: Some(1),
+            route_intermediaries: vec![],
             served_from_cache: None,
         };
         v.read().await.emit_direct(receipt).await;

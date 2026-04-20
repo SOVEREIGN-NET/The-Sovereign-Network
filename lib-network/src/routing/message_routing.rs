@@ -35,6 +35,8 @@ pub struct MeshRoutingEvent {
     pub sender_did: Option<String>,
     /// Unix timestamp of delivery
     pub delivered_at: u64,
+    /// DIDs of intermediary nodes that forwarded this message (hop-by-hop)
+    pub intermediary_nodes: Vec<String>,
 }
 
 /// Intelligent mesh message router
@@ -912,6 +914,10 @@ impl MeshMessageRouter {
 
         // Emit POUW routing event for reward attribution (non-blocking, fire-and-forget)
         if let Some(tx) = &self.pouw_routing_tx {
+            let intermediary_nodes: Vec<String> = route
+                .iter()
+                .map(|hop| hop.peer_id.did().to_string())
+                .collect();
             let event = MeshRoutingEvent {
                 message_size: Self::estimate_message_size(&message) as u64,
                 hop_count: route.len().min(255) as u8,
@@ -920,6 +926,7 @@ impl MeshMessageRouter {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs(),
+                intermediary_nodes,
             };
             // try_send: drop event silently if receiver has closed or buffer is full
             let _ = tx.try_send(event);
