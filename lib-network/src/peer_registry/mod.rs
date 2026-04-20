@@ -484,6 +484,7 @@ impl PeerEndpoint {
             NodeAddress::LoRaWAN { .. } => NetworkProtocol::LoRaWAN,
             NodeAddress::Mesh(_) => NetworkProtocol::WiFiDirect, // Mesh uses WiFi/BT
             NodeAddress::Domain(_) => NetworkProtocol::TCP,      // Default for resolved domains
+            NodeAddress::Satellite { .. } => NetworkProtocol::Satellite,
         }
     }
 

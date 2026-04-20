@@ -69,6 +69,8 @@ pub enum MessageType {
     IdentityDeliveryAck = 31,
     /// Oracle price attestation gossip payload.
     OracleAttestation = 32,
+    /// Relay-routed message envelope for true multi-hop forwarding.
+    RoutedMessage = 33,
 }
 
 /// Message envelope for multi-hop routing
@@ -529,13 +531,20 @@ pub enum ZhtpMeshMessage {
     },
 
     /// Route discovery probe
-    RouteProbe { probe_id: u64, target: PublicKey },
+    RouteProbe {
+        probe_id: u64,
+        target: PublicKey,
+        originator: PublicKey,
+        ttl: u8,
+    },
 
     /// Route discovery response
     RouteResponse {
         probe_id: u64,
         route_quality: f64,
         latency_ms: u32,
+        originator: PublicKey,
+        ttl: u8,
     },
 
     /// Request bootstrap proof for edge node sync (ZK proof + recent headers)
@@ -682,6 +691,20 @@ pub enum ZhtpMeshMessage {
     ///
     /// Contains canonical serialized attestation bytes produced by oracle logic.
     OracleAttestation { payload: Vec<u8> },
+
+    /// Relay-routed message envelope for true multi-hop forwarding.
+    ///
+    /// The originator wraps the inner message and sends it to the first hop;
+    /// each intermediary checks the destination, forwards if not local, or
+    /// deserializes and handles the payload if it is the final recipient.
+    /// TTL and route_history provide loop prevention.
+    RoutedMessage {
+        destination: PublicKey,
+        ttl: u8,
+        hop_count: u8,
+        route_history: Vec<PublicKey>,
+        payload: Vec<u8>,
+    },
 }
 
 /// Acknowledgement for store-and-forward message delivery
@@ -840,17 +863,24 @@ impl ZhtpMeshMessage {
                 MessageType::NewTransaction,
                 bincode::serialize(&(transaction, sender, tx_hash, fee))?,
             ),
-            Self::RouteProbe { probe_id, target } => (
+            Self::RouteProbe {
+                probe_id,
+                target,
+                originator,
+                ttl,
+            } => (
                 MessageType::RouteProbe,
-                bincode::serialize(&(probe_id, target))?,
+                bincode::serialize(&(probe_id, target, originator, ttl))?,
             ),
             Self::RouteResponse {
                 probe_id,
                 route_quality,
                 latency_ms,
+                originator,
+                ttl,
             } => (
                 MessageType::RouteResponse,
-                bincode::serialize(&(probe_id, route_quality, latency_ms))?,
+                bincode::serialize(&(probe_id, route_quality, latency_ms, originator, ttl))?,
             ),
             Self::BootstrapProofRequest {
                 requester,
@@ -978,6 +1008,16 @@ impl ZhtpMeshMessage {
                 // Use raw bytes directly to avoid bincode's 8-byte length prefix overhead
                 (MessageType::OracleAttestation, payload.clone())
             }
+            Self::RoutedMessage {
+                destination,
+                ttl,
+                hop_count,
+                route_history,
+                payload,
+            } => (
+                MessageType::RoutedMessage,
+                bincode::serialize(&(destination, ttl, hop_count, route_history, payload))?,
+            ),
         };
         Ok((msg_type, payload))
     }
@@ -1136,15 +1176,23 @@ impl ZhtpMeshMessage {
                 }
             }
             MessageType::RouteProbe => {
-                let (probe_id, target) = bincode::deserialize(payload)?;
-                Self::RouteProbe { probe_id, target }
+                let (probe_id, target, originator, ttl) = bincode::deserialize(payload)?;
+                Self::RouteProbe {
+                    probe_id,
+                    target,
+                    originator,
+                    ttl,
+                }
             }
             MessageType::RouteResponse => {
-                let (probe_id, route_quality, latency_ms) = bincode::deserialize(payload)?;
+                let (probe_id, route_quality, latency_ms, originator, ttl) =
+                    bincode::deserialize(payload)?;
                 Self::RouteResponse {
                     probe_id,
                     route_quality,
                     latency_ms,
+                    originator,
+                    ttl,
                 }
             }
             MessageType::BootstrapProofRequest => {
@@ -1278,6 +1326,17 @@ impl ZhtpMeshMessage {
                 // Use raw bytes directly (payload is the opaque attestation bytes)
                 Self::OracleAttestation {
                     payload: payload.to_vec(),
+                }
+            }
+            MessageType::RoutedMessage => {
+                let (destination, ttl, hop_count, route_history, payload) =
+                    bincode::deserialize(payload)?;
+                Self::RoutedMessage {
+                    destination,
+                    ttl,
+                    hop_count,
+                    route_history,
+                    payload,
                 }
             }
         };
