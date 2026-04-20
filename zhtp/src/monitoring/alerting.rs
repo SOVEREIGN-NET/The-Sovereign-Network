@@ -112,7 +112,6 @@ pub struct AlertConfig {
     pub enable_email: bool,
     pub enable_webhook: bool,
     pub enable_console: bool,
-    pub enable_dashboard: bool,
 }
 
 impl Default for AlertConfig {
@@ -124,7 +123,6 @@ impl Default for AlertConfig {
             enable_email: false,
             enable_webhook: false,
             enable_console: true,
-            enable_dashboard: true,
         }
     }
 }

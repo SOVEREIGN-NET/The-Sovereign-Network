@@ -63,6 +63,7 @@ pub mod dht_indexing;
 pub mod did_startup;
 pub mod edge_state_provider; // Global access to edge node state for header-only sync
 pub mod identity_manager_provider;
+pub mod legacy_block_adapter;
 pub mod mesh_router_provider;
 pub mod network_blockchain_event_receiver;
 pub mod network_blockchain_provider;
@@ -77,6 +78,7 @@ pub mod shared_blockchain;
 pub mod shared_dht;
 pub mod storage_provider; // Global access to storage for component sharing
 pub mod storage_rewards;
+pub mod sync_diagnostics;
 #[cfg(test)]
 pub mod test_api_integration;
 pub mod token_utils;
@@ -101,6 +103,229 @@ pub use node_runtime::{
 pub use node_runtime_orchestrator::NodeRuntimeOrchestrator;
 pub use shared_blockchain::*;
 pub use shared_dht::*;
+
+const SYNC_CAPABILITIES_ENDPOINT: &str = "/api/v1/blockchain/sync-capabilities";
+
+fn strict_sync_wire_mode_enabled() -> bool {
+    std::env::var("ZHTP_SYNC_WIRE_STRICT")
+        .ok()
+        .map(|v| {
+            let normalized = v.trim().to_ascii_lowercase();
+            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
+}
+
+pub(crate) fn block_range_path_for_wire(
+    wire_version: &str,
+    start: u64,
+    end: u64,
+) -> anyhow::Result<String> {
+    match wire_version {
+        crate::sync_wire::BLOCK_PAGE_WIRE_V2_CBORENVELOPE => {
+            Ok(format!("/api/v2/blockchain/blocks/{}/{}", start, end))
+        }
+        crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW => {
+            Ok(format!("/api/v1/blockchain/blocks/{}/{}", start, end))
+        }
+        _ => Err(anyhow::anyhow!(
+            "unsupported block page wire version: {}",
+            wire_version
+        )),
+    }
+}
+
+pub(crate) fn decode_block_page_for_wire(
+    wire_version: &str,
+    body: &[u8],
+    expected_start: u64,
+    expected_end: u64,
+) -> anyhow::Result<Vec<lib_blockchain::Block>> {
+    match wire_version {
+        crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW => {
+            match bincode::deserialize(body).with_context(|| {
+                format!(
+                    "PayloadDecodeFailed: wire={} range={}..{}",
+                    wire_version, expected_start, expected_end
+                )
+            }) {
+                Ok(blocks) => Ok(blocks),
+                Err(primary_err) => crate::runtime::legacy_block_adapter::decode_legacy_block_page(
+                    body,
+                )
+                .with_context(|| {
+                    format!(
+                        "PayloadDecodeFailed: wire={} range={}..{} primary={} fallback_legacy_decode=true",
+                        wire_version, expected_start, expected_end, primary_err
+                    )
+                }),
+            }
+        }
+        crate::sync_wire::BLOCK_PAGE_WIRE_V2_CBORENVELOPE => {
+            let envelope: crate::sync_wire::BlockPageEnvelopeV2 =
+                ciborium::de::from_reader(body).with_context(|| {
+                    format!(
+                        "BlockPageEnvelopeMalformed: failed cbor decode wire={} range={}..{}",
+                        wire_version, expected_start, expected_end
+                    )
+                })?;
+            crate::sync_wire::validate_block_page_envelope_v2(
+                &envelope,
+                expected_start,
+                expected_end,
+            )?;
+            let blocks: Vec<lib_blockchain::Block> = bincode::deserialize(&envelope.payload)
+                .with_context(|| {
+                    format!(
+                        "PayloadDecodeFailed: wire={} range={}..{}",
+                        wire_version, expected_start, expected_end
+                    )
+                })?;
+            if blocks.len() != envelope.count {
+                return Err(anyhow::anyhow!(
+                    "BlockPageEnvelopeMalformed: count={} payload_blocks={} range={}..{}",
+                    envelope.count,
+                    blocks.len(),
+                    expected_start,
+                    expected_end
+                ));
+            }
+            Ok(blocks)
+        }
+        _ => Err(anyhow::anyhow!(
+            "UnsupportedPeerWireVersion: unsupported local wire decode {}",
+            wire_version
+        )),
+    }
+}
+
+pub(crate) async fn negotiate_block_page_wire_version(
+    client: &lib_network::client::ZhtpClient,
+    peer_addr: &str,
+) -> anyhow::Result<String> {
+    let strict_mode = strict_sync_wire_mode_enabled();
+    let local_supported = crate::sync_wire::LOCAL_BLOCK_PAGE_WIRE_PREFERENCE
+        .iter()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
+
+    let caps_resp = match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        client.get(SYNC_CAPABILITIES_ENDPOINT),
+    )
+    .await
+    {
+        Ok(Ok(resp)) => resp,
+        Ok(Err(e)) => {
+            if strict_mode {
+                return Err(anyhow::anyhow!(
+                    "UnsupportedPeerWireVersion: peer={} strict_mode=true fallback_disabled reason=sync_capabilities_request_failed error={}",
+                    peer_addr,
+                    e
+                ));
+            }
+            warn!(
+                "⚠️  sync-capabilities request failed for {}: {}; falling back to {}",
+                peer_addr,
+                e,
+                crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW
+            );
+            let selected = crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW.to_string();
+            crate::runtime::sync_diagnostics::record_wire_selection(peer_addr, &selected);
+            return Ok(selected);
+        }
+        Err(_) => {
+            if strict_mode {
+                return Err(anyhow::anyhow!(
+                    "UnsupportedPeerWireVersion: peer={} strict_mode=true fallback_disabled reason=sync_capabilities_timeout",
+                    peer_addr
+                ));
+            }
+            warn!(
+                "⚠️  sync-capabilities request timed out for {}; falling back to {}",
+                peer_addr,
+                crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW
+            );
+            let selected = crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW.to_string();
+            crate::runtime::sync_diagnostics::record_wire_selection(peer_addr, &selected);
+            return Ok(selected);
+        }
+    };
+
+    if !caps_resp.is_success() {
+        if strict_mode {
+            return Err(anyhow::anyhow!(
+                "UnsupportedPeerWireVersion: peer={} strict_mode=true fallback_disabled reason=sync_capabilities_status status={}",
+                peer_addr,
+                caps_resp.status_message
+            ));
+        }
+        warn!(
+            "⚠️  peer {} does not expose sync capabilities (status={}): falling back to {}",
+            peer_addr,
+            caps_resp.status_message,
+            crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW
+        );
+        let selected = crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW.to_string();
+        crate::runtime::sync_diagnostics::record_wire_selection(peer_addr, &selected);
+        return Ok(selected);
+    }
+
+    let peer_caps: crate::sync_wire::SyncCapabilities = serde_json::from_slice(&caps_resp.body)
+        .with_context(|| format!("failed to parse sync capabilities from {}", peer_addr))?;
+
+    let selected = crate::sync_wire::select_preferred_block_page_wire(
+        &crate::sync_wire::LOCAL_BLOCK_PAGE_WIRE_PREFERENCE,
+        &peer_caps.block_page_wire_versions,
+    );
+
+    match selected {
+        Some(wire) => {
+            info!(
+                "🔁 Sync wire negotiated with {}: {} (peer_supported={:?}, local_supported={:?})",
+                peer_addr, wire, peer_caps.block_page_wire_versions, local_supported
+            );
+            crate::runtime::sync_diagnostics::record_wire_selection(peer_addr, &wire);
+            Ok(wire)
+        }
+        None => Err(anyhow::anyhow!(
+            "UnsupportedPeerWireVersion: peer={} peer_supported={:?} local_supported={:?}",
+            peer_addr,
+            peer_caps.block_page_wire_versions,
+            local_supported
+        )),
+    }
+}
+
+pub(crate) fn log_sync_decode_failure(
+    peer: &str,
+    endpoint: &str,
+    wire_version: &str,
+    start: u64,
+    end: u64,
+    payload: &[u8],
+    err: &anyhow::Error,
+) {
+    let class = crate::runtime::sync_diagnostics::classify_sync_decode_error(err);
+    crate::runtime::sync_diagnostics::record_decode_failure(peer, wire_version, class);
+
+    let prefix_len = std::cmp::min(payload.len(), 16);
+    let payload_prefix = hex::encode(&payload[..prefix_len]);
+    let payload_hash = hex::encode(blake3::hash(payload).as_bytes());
+
+    warn!(
+        "sync_decode_failure class={} peer={} endpoint={} wire={} range={}..{} payload_prefix={} payload_hash={} err={}",
+        class.as_str(),
+        peer,
+        endpoint,
+        wire_version,
+        start,
+        end,
+        payload_prefix,
+        payload_hash,
+        err
+    );
+}
 
 /// Try to sync blockchain from bootstrap peers using paginated block-range QUIC requests.
 ///
@@ -255,12 +480,20 @@ async fn try_initial_sync_from_peer(
         }
 
         highest_peer_height = highest_peer_height.max(tip.height);
+        let block_page_wire = match negotiate_block_page_wire_version(&client, peer).await {
+            Ok(wire) => wire,
+            Err(e) => {
+                warn!("⚠️  Failed sync wire negotiation with {}: {}", peer_addr, e);
+                continue;
+            }
+        };
         info!(
-            "📥 Peer {} at height {} — fetching blocks {}-{}",
+            "📥 Peer {} at height {} — fetching blocks {}-{} (wire={})",
             peer_addr,
             tip.height,
             local_height + 1,
-            tip.height
+            tip.height,
+            block_page_wire
         );
 
         // Paginated import: 200 blocks per request, same as consensus catch-up.
@@ -276,7 +509,17 @@ async fn try_initial_sync_from_peer(
             }
             let start = next_start;
             let end = tip.height.min(start + BLOCKS_PER_PAGE - 1);
-            let url = format!("/api/v1/blockchain/blocks/{}/{}", start, end);
+            let url = match block_range_path_for_wire(&block_page_wire, start, end) {
+                Ok(path) => path,
+                Err(e) => {
+                    warn!(
+                        "⚠️  Invalid sync wire {} for {}: {}",
+                        block_page_wire, peer_addr, e
+                    );
+                    page_error = true;
+                    break;
+                }
+            };
 
             let blocks_resp =
                 match tokio::time::timeout(std::time::Duration::from_secs(60), client.get(&url))
@@ -310,17 +553,24 @@ async fn try_initial_sync_from_peer(
                 break;
             }
 
-            let blocks: Vec<lib_blockchain::Block> = match bincode::deserialize(&blocks_resp.body) {
-                Ok(b) => b,
-                Err(e) => {
-                    warn!(
-                        "⚠️  Failed to deserialize blocks {}-{} from {}: {}",
-                        start, end, peer_addr, e
-                    );
-                    page_error = true;
-                    break;
-                }
-            };
+            let blocks: Vec<lib_blockchain::Block> =
+                match decode_block_page_for_wire(&block_page_wire, &blocks_resp.body, start, end)
+                {
+                    Ok(b) => b,
+                    Err(e) => {
+                        log_sync_decode_failure(
+                            &peer_addr.to_string(),
+                            &url,
+                            &block_page_wire,
+                            start,
+                            end,
+                            &blocks_resp.body,
+                            &e,
+                        );
+                        page_error = true;
+                        break;
+                    }
+                };
 
             if blocks.is_empty() {
                 break;
@@ -1238,6 +1488,9 @@ impl RuntimeOrchestrator {
                     }
                 }
             }
+            // Initialize Treasury Kernel if not already loaded from persistence.
+            blockchain.init_treasury_kernel_if_missing();
+            blockchain.ensure_welfare_dao_tokens();
         } // Release write lock
 
         info!(" Global blockchain provider initialized with user wallet funding");
@@ -1298,8 +1551,7 @@ impl RuntimeOrchestrator {
 
     /// Returns true if local persistent chain artifacts already exist.
     fn has_local_chain_data(&self) -> bool {
-        let data_dir = self.config.environment.data_directory();
-        let sled_path = std::path::Path::new(&data_dir).join("sled");
+        let sled_path = crate::node_data_dir().join("sled");
         if !sled_path.exists() {
             return false;
         }
@@ -2027,8 +2279,7 @@ impl RuntimeOrchestrator {
 
         // Phase 3: Use SledStore for persistent blockchain storage
         // This replaces the deprecated file-based storage with incremental Sled DB
-        let data_dir = self.config.environment.data_directory();
-        let sled_path = std::path::Path::new(&data_dir).join("sled");
+        let sled_path = crate::node_data_dir().join("sled");
 
         info!("📂 Opening SledStore at {:?}", sled_path);
 
@@ -4172,10 +4423,16 @@ impl RuntimeOrchestrator {
                     *self.shared_blockchain.write().await = Some(shared_service);
 
                     // Also set the global blockchain for protocol access
-                    if let Err(e) = set_global_blockchain(blockchain_arc).await {
+                    if let Err(e) = set_global_blockchain(blockchain_arc.clone()).await {
                         warn!("Failed to set global blockchain: {}", e);
                     } else {
                         info!("Global blockchain provider updated");
+                    }
+
+                    // Initialize Treasury Kernel if not restored from persistence.
+                    {
+                        let mut bc = blockchain_arc.write().await;
+                        bc.init_treasury_kernel_if_missing();
                     }
 
                     info!("Shared blockchain service initialized");

@@ -10,6 +10,100 @@ impl Blockchain {
         }
     }
 
+    /// Initialize the Treasury Kernel from the first council member's identity
+    /// if not already loaded from persistence. No-op if kernel is present or
+    /// if council data is unavailable.
+    pub fn init_treasury_kernel_if_missing(&mut self) {
+        if self.treasury_kernel.is_some() {
+            info!("🏛️ Treasury Kernel restored from persistence");
+            return;
+        }
+
+        let kernel_init_data: Option<(lib_crypto::PublicKey, String)> = self
+            .council_members
+            .first()
+            .and_then(|cm| {
+                let did = cm.identity_id.clone();
+                self.identity_registry.get(&did).and_then(|id| {
+                    match id.public_key.as_slice().try_into() {
+                        Ok(pk_bytes) => Some((lib_crypto::PublicKey::new(pk_bytes), did)),
+                        Err(_) => {
+                            warn!(
+                                "Treasury Kernel skip: council pk length {}",
+                                id.public_key.len()
+                            );
+                            None
+                        }
+                    }
+                })
+            });
+
+        if let Some((authority_pk, authority_did)) = kernel_init_data {
+            self.initialize_treasury_kernel(authority_pk);
+            info!(
+                "🏛️ Treasury Kernel initialized with council authority {}",
+                &authority_did[..40.min(authority_did.len())]
+            );
+        } else if self.council_members.is_empty() {
+            warn!("Treasury Kernel not initialized: no council members configured");
+        } else {
+            warn!("Treasury Kernel not initialized: council member not in identity registry");
+        }
+    }
+
+    /// Initialize the 5 welfare DAO sector tokens if not already present.
+    /// Each token is kernel-controlled (mint/burn only via Treasury Kernel),
+    /// 1:1 SOV-backed, and identified by a deterministic token_id derived from
+    /// (name, symbol). The DAO key_id is used by the executor during
+    /// stake/unstake operations, not by the token itself.
+    pub fn ensure_welfare_dao_tokens(&mut self) {
+        use crate::contracts::economics::fee_router::{
+            DAO_HEALTHCARE_KEY_ID, DAO_EDUCATION_KEY_ID, DAO_ENERGY_KEY_ID,
+            DAO_HOUSING_KEY_ID, DAO_FOOD_KEY_ID,
+        };
+
+        let kernel_authority = match &self.treasury_kernel {
+            Some(kernel) => kernel.governance_authority().clone(),
+            None => {
+                warn!("Cannot initialize welfare DAO tokens: Treasury Kernel not initialized");
+                return;
+            }
+        };
+
+        let tokens: &[(&str, &str, &[u8; 32])] = &[
+            ("HealthToken", "HEAL", &DAO_HEALTHCARE_KEY_ID),
+            ("EduToken", "EDU", &DAO_EDUCATION_KEY_ID),
+            ("EnergyToken", "ENRG", &DAO_ENERGY_KEY_ID),
+            ("HousingToken", "HOME", &DAO_HOUSING_KEY_ID),
+            ("FoodToken", "FOOD", &DAO_FOOD_KEY_ID),
+        ];
+
+        let mut created = 0;
+        for (name, symbol, _dao_key_id) in tokens {
+            let token_id =
+                crate::contracts::utils::generate_custom_token_id(name, symbol);
+            if self.token_contracts.contains_key(&token_id) {
+                continue;
+            }
+            let token = crate::contracts::TokenContract::new_welfare_token(
+                name.to_string(),
+                symbol.to_string(),
+                kernel_authority.clone(),
+            );
+            info!(
+                "🏥 Welfare DAO token created: {} ({}) id={}",
+                name,
+                symbol,
+                hex::encode(&token_id[..8])
+            );
+            self.token_contracts.insert(token_id, token);
+            created += 1;
+        }
+        if created > 0 {
+            info!("🏛️ Initialized {} welfare DAO sector tokens", created);
+        }
+    }
+
     pub(super) fn ensure_treasury_wallet(&mut self) {
         let wallet_id_bytes = Self::deterministic_treasury_wallet_id().as_array();
         let wallet_id_hex = hex::encode(wallet_id_bytes);

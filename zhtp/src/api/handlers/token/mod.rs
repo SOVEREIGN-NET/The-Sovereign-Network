@@ -875,9 +875,8 @@ impl TokenHandler {
     fn decode_signed_tx_raw(&self, signed_tx: &str) -> Result<Transaction> {
         let tx_bytes =
             hex::decode(signed_tx).map_err(|_| anyhow::anyhow!("Invalid signed_tx hex"))?;
-        let tx: Transaction = bincode::deserialize(&tx_bytes)
-            .map_err(|e| anyhow::anyhow!("Invalid signed_tx payload: {}", e))?;
-        Ok(tx)
+        lib_blockchain::transaction::decode_client_transaction(&tx_bytes)
+            .map_err(|e| anyhow::anyhow!("Invalid signed_tx payload: {}", e))
     }
 
     async fn submit_to_mempool(&self, tx: Transaction) -> Result<()> {

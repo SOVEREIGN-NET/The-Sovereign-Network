@@ -97,7 +97,6 @@ The ZHTP orchestrator contains sophisticated internal systems:
 - **metrics.rs** - Real-time system metrics collection
 - **health_check.rs** - Component health monitoring
 - **alerting.rs** - Alert management and notifications
-- **dashboard.rs** - Web dashboard with live visualization
 
 #### Integration Layer (`src/integration/`)
 - **service_container.rs** - Dependency injection container
@@ -316,8 +315,6 @@ daily_ubi_amount = 33000000000000000000    # 33 SOV tokens
 monthly_ubi_amount = 1000000000000000000000 # 1000 SOV tokens
 
 [monitoring]
-enable_dashboard = true
-dashboard_port = 9334
 metrics_interval = 30
 health_check_interval = 60
 
@@ -338,16 +335,6 @@ export ZHTP_ENVIRONMENT="development"
 ```
 
 ## Monitoring & Debugging
-
-### Web Dashboard
-
-Access the live monitoring dashboard at `http://127.0.0.1:9334` when the node is running:
-
-- **System Metrics** - CPU, memory, network usage
-- **Component Health** - Status of all 9 SOV libraries
-- **Network Statistics** - Mesh network connectivity and performance
-- **Economic Metrics** - UBI distribution, transaction volumes
-- **Security Status** - Cryptographic operations, threat detection
 
 ### Log Files
 

@@ -410,12 +410,29 @@ impl BlockchainComponent {
                     continue;
                 }
 
+                let block_page_wire = match crate::runtime::negotiate_block_page_wire_version(
+                    &client,
+                    &peer_quic_addr,
+                )
+                .await
+                {
+                    Ok(wire) => wire,
+                    Err(e) => {
+                        warn!(
+                            "observer_sync: failed wire negotiation with {}: {}",
+                            peer_quic_addr, e
+                        );
+                        continue;
+                    }
+                };
+
                 info!(
-                    "📥 Observer gap-fill: peer {} height={}, local={}, fetching {} block(s)",
+                    "📥 Observer gap-fill: peer {} height={}, local={}, fetching {} block(s) (wire={})",
                     peer_quic_addr,
                     peer_tip.height,
                     local_height_before_peer,
-                    peer_tip.height - local_height_before_peer
+                    peer_tip.height - local_height_before_peer,
+                    block_page_wire
                 );
 
                 // Fetch and apply missing blocks in batches of 100.
@@ -430,7 +447,18 @@ impl BlockchainComponent {
                     let from = current + 1;
                     let to = std::cmp::min(from + 99, target);
 
-                    let path = format!("/api/v1/blockchain/blocks/{}/{}", from, to);
+                    let path =
+                        match crate::runtime::block_range_path_for_wire(&block_page_wire, from, to)
+                        {
+                            Ok(path) => path,
+                            Err(e) => {
+                                warn!(
+                                    "observer_sync: invalid wire {} for {}: {}",
+                                    block_page_wire, peer_quic_addr, e
+                                );
+                                break 'batches;
+                            }
+                        };
                     let blocks_resp = match tokio::time::timeout(
                         Duration::from_secs(30),
                         client.get(&path),
@@ -456,14 +484,26 @@ impl BlockchainComponent {
                         break 'batches;
                     }
 
-                    let blocks: Vec<lib_blockchain::Block> =
-                        match bincode::deserialize(&blocks_resp.body) {
-                            Ok(b) => b,
-                            Err(e) => {
-                                warn!("observer_sync: failed to deserialize blocks: {}", e);
-                                break 'batches;
-                            }
-                        };
+                    let blocks: Vec<lib_blockchain::Block> = match crate::runtime::decode_block_page_for_wire(
+                        &block_page_wire,
+                        &blocks_resp.body,
+                        from,
+                        to,
+                    ) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            crate::runtime::log_sync_decode_failure(
+                                &peer_quic_addr,
+                                &path,
+                                &block_page_wire,
+                                from,
+                                to,
+                                &blocks_resp.body,
+                                &e,
+                            );
+                            break 'batches;
+                        }
+                    };
 
                     if blocks.is_empty() {
                         warn!(
@@ -575,12 +615,15 @@ impl Component for BlockchainComponent {
         match crate::runtime::blockchain_provider::get_global_blockchain().await {
             Ok(shared_blockchain) => {
                 info!("✓ Using existing global blockchain instance");
-                // CRITICAL FIX: Don't clone the blockchain data, just store the reference
-                // Cloning creates a snapshot that disconnects from the global state
-                // Instead, we'll use the global provider directly in mining loop
 
-                // For local access via self.blockchain, we can clone the data once for initialization
-                // but the mining loop MUST use the global provider to see updates
+                // Initialize Treasury Kernel if not restored from persistence.
+                {
+                    let mut bc = shared_blockchain.write().await;
+                    bc.init_treasury_kernel_if_missing();
+                    // Initialize welfare DAO sector tokens (idempotent, requires kernel).
+                    bc.ensure_welfare_dao_tokens();
+                }
+
                 let blockchain_clone = shared_blockchain.read().await.clone();
                 *self.blockchain.write().await = Some(blockchain_clone);
             }

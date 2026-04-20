@@ -9,6 +9,7 @@ use crate::transaction::oracle_governance::{
     OracleConfigUpdateData,
 };
 use crate::types::{transaction_type::TransactionType, Hash};
+use bincode::Options;
 use serde::{Deserialize, Serialize};
 
 /// Zero-knowledge transaction with identity support
@@ -32,6 +33,77 @@ pub struct Transaction {
     pub memo: Vec<u8>,
     /// Typed transaction payload — replaces the old flat Option<FooData> field scatter.
     pub payload: TransactionPayload,
+}
+
+/// V9 transaction wire format: fee widened to u128 for 18-decimal SOV.
+/// V8 and below use u64 fee. The version byte is embedded in the serialized
+/// data — decode reads it first to select the correct layout.
+pub const TX_VERSION_V9: u32 = 9;
+
+/// V9 wire layout — identical to Transaction but with `fee: u128`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct TransactionV9Wire {
+    pub version: u32,
+    pub chain_id: u8,
+    pub transaction_type: TransactionType,
+    pub inputs: Vec<TransactionInput>,
+    pub outputs: Vec<TransactionOutput>,
+    pub fee: u128,
+    pub signature: crate::integration::crypto_integration::Signature,
+    pub memo: Vec<u8>,
+    pub payload: TransactionPayload,
+}
+
+impl TransactionV9Wire {
+    fn into_transaction(self) -> Result<Transaction, String> {
+        if self.fee > u64::MAX as u128 {
+            return Err(format!(
+                "V9 fee {} exceeds u64::MAX, cannot convert to on-chain format",
+                self.fee
+            ));
+        }
+        Ok(Transaction {
+            version: self.version,
+            chain_id: self.chain_id,
+            transaction_type: self.transaction_type,
+            inputs: self.inputs,
+            outputs: self.outputs,
+            fee: self.fee as u64,
+            signature: self.signature,
+            memo: self.memo,
+            payload: self.payload,
+        })
+    }
+}
+
+/// Version-gated decode for client-built signed transactions.
+///
+/// Reads the tx version (first 4 bytes) and branches:
+/// - V9+: u128 fee (16 bytes) — app FFI after 18-decimal SOV migration
+/// - V8 and below: u64 fee (8 bytes) — historical blocks, legacy clients, CLI
+///
+/// Returns the canonical `Transaction` with fee as u64 (on-chain format).
+/// All API decode points must use this function — no direct `bincode::deserialize`.
+pub fn decode_client_transaction(bytes: &[u8]) -> Result<Transaction, String> {
+    if bytes.len() < 4 {
+        return Err("transaction too short to contain version".to_string());
+    }
+    let version = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+
+    // Use size-limited deserialization to prevent allocator abuse.
+    // Must match legacy bincode encoding (fixint, allow trailing bytes).
+    let opts = bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .allow_trailing_bytes()
+        .with_limit(bytes.len() as u64);
+    if version >= TX_VERSION_V9 {
+        opts.deserialize::<TransactionV9Wire>(bytes)
+            .map_err(|e| format!("V9 decode failed: {}", e))
+            .and_then(|w| w.into_transaction())
+    } else {
+        opts.deserialize::<Transaction>(bytes)
+            .map_err(|e| format!("V8 decode failed: {}", e))
+    }
 }
 
 /// Transaction wire-format version constants.

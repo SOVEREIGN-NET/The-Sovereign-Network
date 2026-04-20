@@ -478,6 +478,27 @@ pub enum DaoAction {
         #[arg(long)]
         dao_id: String,
     },
+    /// Stake SOV into a sector DAO. Locks SOV in the DAO reserve and mints
+    /// 1:1 welfare tokens to your wallet. Sectors: healthcare, education,
+    /// energy, housing, food.
+    Stake {
+        /// Target sector: healthcare, education, energy, housing, food
+        #[arg(long)]
+        sector: String,
+        /// SOV amount to stake (in whole SOV, e.g. 100)
+        #[arg(long)]
+        amount: u128,
+        /// Lock period in blocks (minimum 100, ~100 seconds)
+        #[arg(long, default_value = "1000", value_parser = clap::value_parser!(u64).range(100..))]
+        lock_blocks: u64,
+    },
+    /// Unstake SOV from a sector DAO. Burns welfare tokens and returns SOV.
+    /// Only works after the lock period has expired.
+    Unstake {
+        /// Target sector: healthcare, education, energy, housing, food
+        #[arg(long)]
+        sector: String,
+    },
     /// Create DAO via canonical factory DaoExecution tx broadcast
     FactoryCreate {
         /// Token ID (32-byte hex)
@@ -1022,6 +1043,14 @@ pub enum RewardAction {
     Storage,
     /// Show reward configuration
     Config,
+    /// Claim pending rewards (placeholder)
+    Claim,
+    /// Show reward history / past rounds (placeholder)
+    History {
+        /// Number of rounds to show (default: 10, max: 1000)
+        #[arg(short, long, default_value = "10")]
+        limit: usize,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
