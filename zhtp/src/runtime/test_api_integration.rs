@@ -101,7 +101,6 @@ mod api_integration_tests {
         storage_config.storage_config.dht_persist_path = Some(db_path.clone());
 
         let storage = UnifiedStorageSystem::new_persistent(storage_config, db_path.clone())
-            .await
             .expect("failed to create storage");
 
         let identity_manager = Arc::new(RwLock::new(IdentityManager::new()));

@@ -2173,7 +2173,6 @@ mod tests {
             lib_storage::UnifiedStorageConfig::default(),
             path,
         )
-        .await
         .expect("persistent storage init");
         Arc::new(RwLock::new(system))
     }
