@@ -529,13 +529,20 @@ pub enum ZhtpMeshMessage {
     },
 
     /// Route discovery probe
-    RouteProbe { probe_id: u64, target: PublicKey },
+    RouteProbe {
+        probe_id: u64,
+        target: PublicKey,
+        originator: PublicKey,
+        ttl: u8,
+    },
 
     /// Route discovery response
     RouteResponse {
         probe_id: u64,
         route_quality: f64,
         latency_ms: u32,
+        originator: PublicKey,
+        ttl: u8,
     },
 
     /// Request bootstrap proof for edge node sync (ZK proof + recent headers)
@@ -840,17 +847,24 @@ impl ZhtpMeshMessage {
                 MessageType::NewTransaction,
                 bincode::serialize(&(transaction, sender, tx_hash, fee))?,
             ),
-            Self::RouteProbe { probe_id, target } => (
+            Self::RouteProbe {
+                probe_id,
+                target,
+                originator,
+                ttl,
+            } => (
                 MessageType::RouteProbe,
-                bincode::serialize(&(probe_id, target))?,
+                bincode::serialize(&(probe_id, target, originator, ttl))?,
             ),
             Self::RouteResponse {
                 probe_id,
                 route_quality,
                 latency_ms,
+                originator,
+                ttl,
             } => (
                 MessageType::RouteResponse,
-                bincode::serialize(&(probe_id, route_quality, latency_ms))?,
+                bincode::serialize(&(probe_id, route_quality, latency_ms, originator, ttl))?,
             ),
             Self::BootstrapProofRequest {
                 requester,
@@ -1136,15 +1150,23 @@ impl ZhtpMeshMessage {
                 }
             }
             MessageType::RouteProbe => {
-                let (probe_id, target) = bincode::deserialize(payload)?;
-                Self::RouteProbe { probe_id, target }
+                let (probe_id, target, originator, ttl) = bincode::deserialize(payload)?;
+                Self::RouteProbe {
+                    probe_id,
+                    target,
+                    originator,
+                    ttl,
+                }
             }
             MessageType::RouteResponse => {
-                let (probe_id, route_quality, latency_ms) = bincode::deserialize(payload)?;
+                let (probe_id, route_quality, latency_ms, originator, ttl) =
+                    bincode::deserialize(payload)?;
                 Self::RouteResponse {
                     probe_id,
                     route_quality,
                     latency_ms,
+                    originator,
+                    ttl,
                 }
             }
             MessageType::BootstrapProofRequest => {
