@@ -4,6 +4,7 @@
 //! It handles connection establishment, UHP handshake, and request/response framing.
 
 use anyhow::{anyhow, Context, Result};
+use dashmap::DashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -49,12 +50,19 @@ impl Default for ZhtpClientConfig {
 ///
 /// This is the only transport allowed for mutating operations.
 /// All CLI commands must use this client.
+///
+/// **CONNECTION POOL (#2197):** Holds multiple authenticated connections
+/// keyed by remote address, enabling concurrent communication with
+/// several nodes from a single client instance.
 pub struct ZhtpClient {
     /// QUIC endpoint
     endpoint: Endpoint,
 
-    /// Authenticated connection to node
-    connection: Option<AuthenticatedConnection>,
+    /// Authenticated connections to nodes (address → connection)
+    connections: Arc<DashMap<SocketAddr, AuthenticatedConnection>>,
+
+    /// Most recently connected address — used by `request()` as default
+    primary_addr: Option<SocketAddr>,
 
     /// Client identity (for signing requests)
     identity: Arc<ZhtpIdentity>,
@@ -206,7 +214,8 @@ impl ZhtpClient {
 
         Ok(Self {
             endpoint,
-            connection: None,
+            connections: Arc::new(DashMap::new()),
+            primary_addr: None,
             identity: Arc::new(identity),
             handshake_ctx,
             trust_config,
@@ -271,14 +280,34 @@ impl ZhtpClient {
         &self.identity
     }
 
-    /// Get the verified peer DID from current connection
-    pub fn peer_did(&self) -> Option<&str> {
-        self.connection.as_ref().map(|c| c.peer_did.as_str())
+    /// Get the verified peer DID from the primary connection
+    pub fn peer_did(&self) -> Option<String> {
+        self.primary_addr
+            .and_then(|addr| self.connections.get(&addr))
+            .map(|c| c.peer_did.clone())
+    }
+
+    /// Get peer DIDs for all active connections
+    pub fn peer_dids(&self) -> Vec<String> {
+        self.connections
+            .iter()
+            .map(|e| e.value().peer_did.clone())
+            .collect()
     }
 
     /// Check if connected
     pub fn is_connected(&self) -> bool {
-        self.connection.is_some()
+        !self.connections.is_empty()
+    }
+
+    /// Check if connected to a specific address
+    pub fn is_connected_to(&self, addr: &SocketAddr) -> bool {
+        self.connections.contains_key(addr)
+    }
+
+    /// Number of active connections in the pool
+    pub fn connection_count(&self) -> usize {
+        self.connections.len()
     }
 
     /// Check if in bootstrap mode
@@ -362,13 +391,15 @@ impl ZhtpClient {
             "Authenticated with node (PQC encryption active)"
         );
 
-        self.connection = Some(AuthenticatedConnection {
+        let conn = AuthenticatedConnection {
             quic_conn: connection,
             mac_key: v2_keys.mac_key,
             peer_did,
             session_id: handshake_result.session_id,
             sequence: AtomicU64::new(1), // Start at 1 (server's last_counter starts at 0)
-        });
+        };
+        self.connections.insert(socket_addr, conn);
+        self.primary_addr = Some(socket_addr);
 
         Ok(())
     }
@@ -397,12 +428,34 @@ impl ZhtpClient {
         Ok(config)
     }
 
-    /// Send a request and receive response
-    pub async fn request(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+    /// Send a request to a specific connected node and receive response
+    pub async fn request_to(&self, addr: &SocketAddr, request: ZhtpRequest) -> Result<ZhtpResponse> {
         let conn = self
-            .connection
-            .as_ref()
-            .ok_or_else(|| anyhow!("Not connected to node"))?;
+            .connections
+            .get(addr)
+            .ok_or_else(|| anyhow!("Not connected to node at {}", addr))?;
+        self.send_on_connection(&conn, request).await
+    }
+
+    /// Send a request and receive response
+    ///
+    /// Uses the primary (most recently connected) connection.
+    pub async fn request(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let addr = self
+            .primary_addr
+            .ok_or_else(|| anyhow!("Not connected to any node"))?;
+        let conn = self
+            .connections
+            .get(&addr)
+            .ok_or_else(|| anyhow!("Primary connection to {} no longer active", addr))?;
+        self.send_on_connection(&conn, request).await
+    }
+
+    async fn send_on_connection(
+        &self,
+        conn: &AuthenticatedConnection,
+        request: ZhtpRequest,
+    ) -> Result<ZhtpResponse> {
 
         // V2 protocol requires auth on ALL requests (not just mutations)
         let seq = conn.next_sequence();
@@ -439,6 +492,7 @@ impl ZhtpClient {
             request_id = %wire_request.request_id_hex(),
             uri = %wire_request.request.uri,
             has_auth = wire_request.auth_context.is_some(),
+            peer_did = %conn.peer_did,
             "Sending request"
         );
 
@@ -503,11 +557,23 @@ impl ZhtpClient {
         self.request(request).await
     }
 
-    /// Close the connection gracefully
-    pub async fn close(&mut self) {
-        if let Some(conn) = self.connection.take() {
+    /// Close a specific connection gracefully
+    pub async fn close_connection(&mut self, addr: &SocketAddr) {
+        if let Some((_, conn)) = self.connections.remove(addr) {
             conn.quic_conn.close(0u32.into(), b"client closed");
         }
+        if self.primary_addr == Some(*addr) {
+            self.primary_addr = self.connections.iter().next().map(|e| *e.key());
+        }
+    }
+
+    /// Close all connections gracefully
+    pub async fn close(&mut self) {
+        for entry in self.connections.iter() {
+            entry.value().quic_conn.close(0u32.into(), b"client closed");
+        }
+        self.connections.clear();
+        self.primary_addr = None;
     }
 
     /// Parse JSON response body
@@ -525,8 +591,9 @@ impl ZhtpClient {
 
 impl Drop for ZhtpClient {
     fn drop(&mut self) {
-        if let Some(conn) = self.connection.take() {
-            conn.quic_conn.close(0u32.into(), b"client dropped");
+        for entry in self.connections.iter() {
+            entry.value().quic_conn.close(0u32.into(), b"client dropped");
         }
+        self.connections.clear();
     }
 }
