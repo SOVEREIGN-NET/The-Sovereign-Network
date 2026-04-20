@@ -504,7 +504,7 @@ impl UnifiedStorageSystem<dht::backend::SledBackend> {
     ///     "./data/dht".into(),
     /// ).await?;
     /// ```
-    pub async fn new_persistent<P: AsRef<Path>>(
+    pub fn new_persistent<P: AsRef<Path>>(
         config: UnifiedStorageConfig,
         db_path: P,
     ) -> Result<Self> {

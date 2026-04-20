@@ -424,6 +424,56 @@ fn save_to_keystore(
     Ok(())
 }
 
+async fn load_from_keystore_async(
+    keystore_path: PathBuf,
+) -> std::result::Result<WalletStartupResult, KeystoreError> {
+    let path_for_error = keystore_path.clone();
+    tokio::task::spawn_blocking(move || load_from_keystore(&keystore_path))
+        .await
+        .map_err(|e| KeystoreError::IoError(path_for_error, std::io::Error::other(e.to_string())))?
+}
+
+async fn save_to_keystore_async(
+    keystore_path: PathBuf,
+    result: WalletStartupResult,
+) -> std::result::Result<(), KeystoreError> {
+    let path_for_error = keystore_path.clone();
+    tokio::task::spawn_blocking(move || save_to_keystore(&keystore_path, &result))
+        .await
+        .map_err(|e| KeystoreError::IoError(path_for_error, std::io::Error::other(e.to_string())))?
+}
+
+fn map_keystore_error(keystore_path: &Path, error: KeystoreError) -> anyhow::Error {
+    match error {
+        KeystoreError::Corrupt(path, reason) => anyhow!(
+            "FATAL: Keystore corrupt at {:?}: {}\n\
+            Manual recovery required. Options:\n\
+            1. Restore from backup\n\
+            2. Delete {:?} and re-import from seed phrase\n\
+            3. Delete {:?} to start fresh (WARNING: loses identity)",
+            path,
+            reason,
+            keystore_path,
+            keystore_path
+        ),
+        KeystoreError::PermissionDenied(path) => anyhow!(
+            "FATAL: Permission denied accessing keystore at {:?}\n\
+            Check file permissions and ownership.",
+            path
+        ),
+        KeystoreError::IoError(path, e) => anyhow!(
+            "FATAL: IO error reading keystore at {:?}: {}\n\
+            Check disk space and file system health.",
+            path,
+            e
+        ),
+        KeystoreError::NotFound(_) => anyhow!(
+            "No keystore found at {:?} (this should have been handled by caller)",
+            keystore_path
+        ),
+    }
+}
+
 /// Write file with restrictive permissions (0600)
 fn write_file_with_permissions(
     path: &Path,
@@ -588,7 +638,21 @@ impl WalletStartupManager {
     /// 3. Save newly created identity to keystore
     /// 4. Fatal errors (corrupt keystore, permission denied) abort startup
     pub async fn handle_startup_wallet_flow() -> Result<WalletStartupResult> {
-        Self::handle_startup_wallet_flow_with_keystore(None).await
+        let keystore_path = get_default_keystore_path()?;
+
+        match load_from_keystore_async(keystore_path.clone()).await {
+            Ok(result) => {
+                println!("\n✓ Loaded existing identity from {:?}", keystore_path);
+                println!("   User Identity: {}", result.user_identity.did);
+                println!("   Node Identity: {}", result.node_identity.did);
+                println!("   Wallet: {}", result.wallet_address);
+                Ok(result)
+            }
+            Err(KeystoreError::NotFound(_)) => {
+                Self::handle_startup_wallet_flow_with_keystore(Some(keystore_path)).await
+            }
+            Err(err) => Err(map_keystore_error(&keystore_path, err)),
+        }
     }
 
     /// Main entry point with custom keystore path
@@ -604,7 +668,7 @@ impl WalletStartupManager {
         // ════════════════════════════════════════════════════════════════════
         // STEP 1: Try to load existing identity from keystore
         // ════════════════════════════════════════════════════════════════════
-        match load_from_keystore(&keystore_path) {
+        match load_from_keystore_async(keystore_path.clone()).await {
             Ok(result) => {
                 println!("\n✓ Loaded existing identity from {:?}", keystore_path);
                 println!("   User Identity: {}", result.user_identity.did);
@@ -617,35 +681,7 @@ impl WalletStartupManager {
                 println!("  Proceeding to identity creation...");
                 // Continue to interactive creation
             }
-            Err(KeystoreError::Corrupt(path, reason)) => {
-                // FATAL: Corrupt keystore - do not silently create new identity
-                return Err(anyhow!(
-                    "FATAL: Keystore corrupt at {:?}: {}\n\
-                    Manual recovery required. Options:\n\
-                    1. Restore from backup\n\
-                    2. Delete {:?} and re-import from seed phrase\n\
-                    3. Delete {:?} to start fresh (WARNING: loses identity)",
-                    path,
-                    reason,
-                    keystore_path,
-                    keystore_path
-                ));
-            }
-            Err(KeystoreError::PermissionDenied(path)) => {
-                return Err(anyhow!(
-                    "FATAL: Permission denied accessing keystore at {:?}\n\
-                    Check file permissions and ownership.",
-                    path
-                ));
-            }
-            Err(KeystoreError::IoError(path, e)) => {
-                return Err(anyhow!(
-                    "FATAL: IO error reading keystore at {:?}: {}\n\
-                    Check disk space and file system health.",
-                    path,
-                    e
-                ));
-            }
+            Err(err) => return Err(map_keystore_error(&keystore_path, err)),
         }
 
         // ════════════════════════════════════════════════════════════════════
@@ -671,7 +707,8 @@ impl WalletStartupManager {
             let result = Self::quick_start_wallet().await?;
 
             // Save auto-generated wallet to keystore
-            save_to_keystore(&keystore_path, &result)
+            save_to_keystore_async(keystore_path.clone(), result.clone())
+                .await
                 .map_err(|e| anyhow!("Failed to save identity to keystore: {}", e))?;
             println!("✓ Identity saved to {:?}", keystore_path);
 
@@ -772,7 +809,8 @@ impl WalletStartupManager {
         // STEP 3: Save newly created identity to keystore
         // ════════════════════════════════════════════════════════════════════
         println!("\n💾 Saving identity to keystore...");
-        save_to_keystore(&keystore_path, &result)
+        save_to_keystore_async(keystore_path.clone(), result.clone())
+            .await
             .map_err(|e| anyhow!("Failed to save identity to keystore: {}", e))?;
         println!("✓ Identity saved to {:?}", keystore_path);
 
