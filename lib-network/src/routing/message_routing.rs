@@ -919,14 +919,20 @@ impl MeshMessageRouter {
         let mut best_relay = None;
         let mut best_score = 0.0f64;
 
-        // Find best relay for this destination
+        // Find best relay for this destination, factoring in health
         for (relay_id, relay) in relays.iter() {
-            // Score based on coverage, throughput, and cost
+            // Skip unhealthy relays (health score below threshold)
+            if relay.health_score < 0.2 {
+                continue;
+            }
+
+            // Score based on coverage, throughput, cost, and health
             let coverage_score = (relay.coverage_radius_km / 1000.0).min(1.0); // Normalize to 1000km
             let throughput_score = (relay.max_throughput_mbps as f64 / 100.0).min(1.0); // Normalize to 100 Mbps
             let cost_score = 1.0 / (relay.cost_per_mb_tokens as f64 / 10.0 + 1.0); // Lower cost = higher score
+            let health_score = relay.health_score as f64;
 
-            let total_score = (coverage_score + throughput_score + cost_score) / 3.0;
+            let total_score = (coverage_score + throughput_score + cost_score + health_score) / 4.0;
 
             if total_score > best_score {
                 best_score = total_score;
@@ -934,17 +940,17 @@ impl MeshMessageRouter {
             }
         }
 
-        if let Some((relay_id, _relay)) = best_relay {
+        if let Some((relay_id, relay)) = best_relay {
             info!(
-                "Selected relay {} for long-range routing (score: {:.2})",
-                relay_id, best_score
+                "Selected relay {} for long-range routing (score: {:.2}, health: {:.2})",
+                relay_id, best_score, relay.health_score
             );
 
             Ok(vec![RouteHop {
                 peer_id: destination.clone(),
                 protocol: NetworkProtocol::LoRaWAN, // Long-range protocol
                 relay_id: Some(relay_id),
-                latency_ms: 500, // Typical long-range latency
+                latency_ms: if relay.avg_latency_ms > 0 { relay.avg_latency_ms } else { 500 },
             }])
         } else {
             Err(anyhow!("No suitable long-range relay found"))
@@ -958,28 +964,42 @@ impl MeshMessageRouter {
         debug!("🛰️ Searching for satellite uplink route");
 
         let relays = self.long_range_relays.read().await;
+        let mut best_relay = None;
+        let mut best_health = 0.0f32;
 
-        // Find satellite relay
+        // Find healthiest satellite relay
         for (relay_id, relay) in relays.iter() {
             if matches!(
                 relay.relay_type,
                 crate::types::relay_type::LongRangeRelayType::Satellite
             ) {
-                info!(
-                    "🛰️ Found satellite uplink {} - GLOBAL reach enabled!",
-                    relay_id
-                );
-
-                return Ok(vec![RouteHop {
-                    peer_id: destination.clone(),
-                    protocol: NetworkProtocol::Satellite,
-                    relay_id: Some(relay_id.clone()),
-                    latency_ms: 600, // Satellite latency (LEO satellites)
-                }]);
+                // Skip unhealthy relays
+                if relay.health_score < 0.2 {
+                    continue;
+                }
+                // Prefer healthier relays
+                if relay.health_score > best_health {
+                    best_health = relay.health_score;
+                    best_relay = Some((relay_id.clone(), relay.clone()));
+                }
             }
         }
 
-        Err(anyhow!("No satellite uplink available"))
+        if let Some((relay_id, relay)) = best_relay {
+            info!(
+                "🛰️ Found satellite uplink {} (health: {:.2}) - GLOBAL reach enabled!",
+                relay_id, relay.health_score
+            );
+
+            Ok(vec![RouteHop {
+                peer_id: destination.clone(),
+                protocol: NetworkProtocol::Satellite,
+                relay_id: Some(relay_id),
+                latency_ms: if relay.avg_latency_ms > 0 { relay.avg_latency_ms } else { 600 },
+            }])
+        } else {
+            Err(anyhow!("No satellite uplink available"))
+        }
     }
 
     /// Execute routing with selected route
@@ -1194,7 +1214,7 @@ impl MeshMessageRouter {
         };
 
         let manager = self.transport_manager()?;
-        manager
+        let send_result = manager
             .send(
                 &NetworkProtocol::Satellite,
                 &endpoint,
@@ -1202,7 +1222,20 @@ impl MeshMessageRouter {
                 message,
                 &message_bytes,
             )
-            .await?;
+            .await;
+
+        // Update relay health based on send result
+        {
+            let mut relays = self.long_range_relays.write().await;
+            if let Some(relay) = relays.get_mut(relay_id) {
+                match &send_result {
+                    Ok(()) => relay.record_success(hop.latency_ms),
+                    Err(_) => relay.record_failure(),
+                }
+            }
+        }
+
+        send_result?;
 
         info!("📡 Satellite transmission completed for message {}", message_id);
 
@@ -1265,7 +1298,7 @@ impl MeshMessageRouter {
         };
 
         let manager = self.transport_manager()?;
-        manager
+        let send_result = manager
             .send(
                 &NetworkProtocol::LoRaWAN,
                 &endpoint,
@@ -1273,7 +1306,20 @@ impl MeshMessageRouter {
                 message,
                 &message_bytes,
             )
-            .await?;
+            .await;
+
+        // Update relay health based on send result
+        {
+            let mut relays = self.long_range_relays.write().await;
+            if let Some(relay) = relays.get_mut(relay_id) {
+                match &send_result {
+                    Ok(()) => relay.record_success(hop.latency_ms),
+                    Err(_) => relay.record_failure(),
+                }
+            }
+        }
+
+        send_result?;
 
         info!("📡 Long-range transmission completed for message {}", message_id);
 
@@ -1791,5 +1837,94 @@ mod tests {
         let cached = router.get_cached_route(&destination).await;
         assert!(cached.is_some());
         assert_eq!(cached.unwrap().hops.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_long_range_relay_health_tracking() {
+        use crate::relays::long_range_relay::LongRangeRelay;
+        use crate::types::relay_type::LongRangeRelayType;
+
+        let mut relay = LongRangeRelay::new(
+            "test_relay".to_string(),
+            LongRangeRelayType::LoRaWAN,
+            15.0,
+            1,
+            10,
+            PublicKey::new([0u8; 2592]),
+            20.0,
+        );
+
+        assert_eq!(relay.health_score, 1.0);
+        assert_eq!(relay.health_state(), crate::relays::long_range_relay::RelayHealthState::Healthy);
+
+        relay.record_success(250);
+        assert_eq!(relay.consecutive_successes, 1);
+        assert_eq!(relay.consecutive_failures, 0);
+        assert_eq!(relay.total_messages_routed, 1);
+        assert!(relay.avg_latency_ms > 0);
+
+        relay.record_failure();
+        relay.record_failure();
+        relay.record_failure();
+        assert_eq!(relay.consecutive_failures, 3);
+        assert!(relay.health_score < 0.7);
+
+        // After enough failures, health drops below 0.2
+        for _ in 0..10 {
+            relay.record_failure();
+        }
+        assert_eq!(relay.health_state(), crate::relays::long_range_relay::RelayHealthState::Unhealthy);
+    }
+
+    #[tokio::test]
+    async fn test_find_long_range_route_skips_unhealthy() {
+        use crate::relays::long_range_relay::LongRangeRelay;
+        use crate::types::relay_type::LongRangeRelayType;
+        use std::collections::HashMap;
+
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
+        let mut relays_map = HashMap::new();
+
+        // Healthy relay
+        let healthy = LongRangeRelay::new(
+            "healthy_lora".to_string(),
+            LongRangeRelayType::LoRaWAN,
+            50.0,
+            1,
+            10,
+            PublicKey::new([1u8; 2592]),
+            20.0,
+        );
+
+        // Unhealthy relay (force low health)
+        let mut unhealthy = LongRangeRelay::new(
+            "unhealthy_lora".to_string(),
+            LongRangeRelayType::LoRaWAN,
+            100.0,
+            10,
+            5,
+            PublicKey::new([2u8; 2592]),
+            20.0,
+        );
+        for _ in 0..20 {
+            unhealthy.record_failure();
+        }
+        assert!(unhealthy.health_score < 0.2);
+
+        relays_map.insert(healthy.relay_id.clone(), healthy);
+        relays_map.insert(unhealthy.relay_id.clone(), unhealthy);
+
+        let long_range_relays = Arc::new(RwLock::new(relays_map));
+        let router = MeshMessageRouter::new(peer_registry, long_range_relays);
+
+        let dest_key = PublicKey::new([3u8; 2592]);
+        let destination = crate::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(dest_key);
+
+        // Should select the healthy relay, skipping the unhealthy one
+        let route = router.find_long_range_route(&destination).await;
+        assert!(route.is_ok());
+        let hops = route.unwrap();
+        assert_eq!(hops.len(), 1);
+        assert_eq!(hops[0].relay_id, Some("healthy_lora".to_string()));
     }
 }

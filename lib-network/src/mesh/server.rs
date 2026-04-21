@@ -1412,15 +1412,15 @@ impl ZhtpMeshServer {
 
             relays.insert(
                 gateway_id.clone(),
-                LongRangeRelay {
-                    relay_id: gateway_id.clone(),
-                    relay_type: LongRangeRelayType::LoRaWAN,
-                    coverage_radius_km: gateway_info.coverage_radius_km,
-                    max_throughput_mbps: 1, // LoRaWAN is low throughput
-                    cost_per_mb_tokens: 10,
-                    operator: gateway_info.operator_key,
-                    ubi_share_percentage: 20.0,
-                },
+                LongRangeRelay::new(
+                    gateway_id.clone(),
+                    LongRangeRelayType::LoRaWAN,
+                    gateway_info.coverage_radius_km,
+                    1, // LoRaWAN is low throughput
+                    10,
+                    gateway_info.operator_key,
+                    20.0,
+                ),
             );
 
             println!(
@@ -1452,15 +1452,15 @@ impl ZhtpMeshServer {
 
             relays.insert(
                 uplink_id.clone(),
-                LongRangeRelay {
-                    relay_id: uplink_id.clone(),
-                    relay_type: LongRangeRelayType::Satellite,
-                    coverage_radius_km: satellite_info.coverage_radius_km,
-                    max_throughput_mbps: satellite_info.max_throughput_mbps,
-                    cost_per_mb_tokens: 100, // Satellites are more expensive
-                    operator: satellite_info.operator_key,
-                    ubi_share_percentage: 15.0,
-                },
+                LongRangeRelay::new(
+                    uplink_id.clone(),
+                    LongRangeRelayType::Satellite,
+                    satellite_info.coverage_radius_km,
+                    satellite_info.max_throughput_mbps,
+                    100, // Satellites are more expensive
+                    satellite_info.operator_key,
+                    15.0,
+                ),
             );
 
             println!(
@@ -1487,15 +1487,15 @@ impl ZhtpMeshServer {
 
             relays.insert(
                 relay_id.clone(),
-                LongRangeRelay {
-                    relay_id: relay_id.clone(),
-                    relay_type: LongRangeRelayType::WiFiRelay,
-                    coverage_radius_km: 0.1, // WiFi has short range but high bandwidth
-                    max_throughput_mbps: wifi_info.bandwidth_estimate_mbps,
-                    cost_per_mb_tokens: 5, // P2P mesh relay cost
-                    operator: lib_crypto::PublicKey::new([0u8; 2592]), // Placeholder operator key
-                    ubi_share_percentage: 25.0,
-                },
+                LongRangeRelay::new(
+                    relay_id.clone(),
+                    LongRangeRelayType::WiFiRelay,
+                    0.1, // WiFi has short range but high bandwidth
+                    wifi_info.bandwidth_estimate_mbps,
+                    5, // P2P mesh relay cost
+                    lib_crypto::PublicKey::new([0u8; 2592]), // Placeholder operator key
+                    25.0,
+                ),
             );
 
             println!(
