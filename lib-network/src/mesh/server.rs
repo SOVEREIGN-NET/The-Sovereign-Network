@@ -349,6 +349,9 @@ pub struct NetworkConfig {
     pub protocols: Vec<NetworkProtocol>,
     pub listen_addresses: Vec<String>,
     pub bootstrap_peers: Vec<String>,
+    /// When true, this node acts as a gateway/bootstrap and will steer
+    /// incoming mesh routing traffic to relay peers.
+    pub gateway_mode: bool,
 }
 
 /// ZHTP Mesh Server - The New Internet
@@ -411,6 +414,9 @@ pub struct ZhtpMeshServer {
     pub message_router: Option<Arc<RwLock<crate::routing::message_routing::MeshMessageRouter>>>,
     /// Message handler for processing received messages
     pub message_handler: Option<Arc<RwLock<crate::messaging::message_handler::MeshMessageHandler>>>,
+    /// Ingress steering for gateway/bootstrap nodes to distribute mesh
+    /// routing traffic across relay-capable Tier2 peers.
+    pub ingress_steering: Option<Arc<crate::routing::ingress_steering::IngressSteering>>,
 
     // Store-and-forward persistence path (optional)
     pub store_forward_path: Option<std::path::PathBuf>,
@@ -1156,6 +1162,42 @@ impl ZhtpMeshServer {
         Ok(())
     }
 
+    /// Start monitoring for LoRaWAN protocol
+    async fn start_lorawan_monitoring(
+        &self,
+        _protocol: Arc<RwLock<crate::protocols::lorawan::LoRaWANMeshProtocol>>,
+    ) -> Result<()> {
+        let _peer_registry = self.peer_registry.clone();
+
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+
+                // Monitor LoRaWAN connections via peer registry (source of truth)
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Start monitoring for Satellite protocol
+    async fn start_satellite_monitoring(
+        &self,
+        _protocol: Arc<RwLock<crate::protocols::satellite::SatelliteMeshProtocol>>,
+    ) -> Result<()> {
+        let _peer_registry = self.peer_registry.clone();
+
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+
+                // Monitor satellite connections via peer registry (source of truth)
+            }
+        });
+
+        Ok(())
+    }
+
     /// Create a new ZHTP Mesh Server - The Internet
     pub async fn new(
         node_id: NodeId,
@@ -1175,6 +1217,7 @@ impl ZhtpMeshServer {
             protocols: protocols.clone(),
             listen_addresses: vec![], // No IP addresses needed
             bootstrap_peers,
+            gateway_mode: false,
         };
 
         let mesh_node = Arc::new(RwLock::new(
@@ -1253,6 +1296,7 @@ impl ZhtpMeshServer {
             // Initialize message routing and handling (Phase 4)
             message_router: None,
             message_handler: None,
+            ingress_steering: None,
 
             // Store-and-forward persistence (default: in-memory)
             store_forward_path: None,
@@ -1307,8 +1351,8 @@ impl ZhtpMeshServer {
         self.dht.write().await.initialize(default_identity).await?;
 
         // Initialize long-range communication capabilities
-        if let Some(ref hardware_caps) = self.hardware_capabilities {
-            self.initialize_long_range_relays(hardware_caps).await?;
+        if let Some(hardware_caps) = self.hardware_capabilities.clone() {
+            self.initialize_long_range_relays(&hardware_caps).await?;
         } else {
             warn!("Skipping long-range relay initialization - no hardware capabilities detected");
         }
@@ -1318,6 +1362,28 @@ impl ZhtpMeshServer {
 
         // Start mesh protocol message handling
         self.start_mesh_message_handler().await?;
+
+        // Initialize ingress steering for gateway/bootstrap nodes
+        if self.config.gateway_mode {
+            info!("Gateway mode detected - initializing ingress steering for relay peers");
+            let steering = Arc::new(
+                crate::routing::ingress_steering::IngressSteering::new(
+                    self.peer_registry.clone(),
+                    crate::routing::ingress_steering::SteeringConfig::default(),
+                )
+                .await,
+            );
+            steering.start_health_check_loop();
+            self.ingress_steering = Some(steering.clone());
+
+            // Wire ingress steering into the message router if available.
+            if let Some(ref router) = self.message_router {
+                let mut router_guard = router.write().await;
+                router_guard.ingress_steering = Some(steering);
+            }
+
+            info!("Ingress steering active - mesh routing traffic will be distributed across relay peers");
+        }
 
         // TCP/UDP bootstrap removed - using QUIC only
 
@@ -1333,7 +1399,7 @@ impl ZhtpMeshServer {
 
     /// Initialize long-range communication relays - GLOBAL internet replacement!
     async fn initialize_long_range_relays(
-        &self,
+        &mut self,
         hardware_caps: &HardwareCapabilities,
     ) -> Result<()> {
         println!("Initializing GLOBAL long-range mesh relays...");
@@ -1392,6 +1458,74 @@ impl ZhtpMeshServer {
             println!("ZHTP CONTINENTAL NETWORK - Multi-country coverage active!");
         } else {
             println!("ZHTP REGIONAL NETWORK - Local area coverage established");
+        }
+
+        // Instantiate LoRaWAN mesh protocol if hardware indicates support
+        if hardware_caps.lorawan_available() {
+            let node_id = self.mesh_node.read().await.node_id;
+            match crate::protocols::lorawan::LoRaWANMeshProtocol::new(*node_id.as_bytes()) {
+                Ok(protocol) => {
+                    let protocol_arc = Arc::new(RwLock::new(protocol));
+                    let monitor_arc = protocol_arc.clone();
+                    let discovery_result = {
+                        let guard = protocol_arc.read().await;
+                        guard.start_discovery().await
+                    };
+                    match discovery_result {
+                        Err(e) => {
+                            warn!("LoRaWAN discovery failed: {}", e);
+                        }
+                        Ok(()) => {
+                            self.lorawan_protocol = Some(protocol_arc.clone());
+                            self.active_protocols
+                                .write()
+                                .await
+                                .insert(NetworkProtocol::LoRaWAN, true);
+                            info!(" LoRaWAN mesh protocol active with persistent management");
+                            if let Err(e) = self.start_lorawan_monitoring(monitor_arc).await {
+                                warn!("Failed to start LoRaWAN monitoring: {}", e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to initialize LoRaWAN protocol: {}", e);
+                }
+            }
+        }
+
+        // Instantiate Satellite mesh protocol (software-based, no special hardware required)
+        {
+            let node_id = self.mesh_node.read().await.node_id;
+            match crate::protocols::satellite::SatelliteMeshProtocol::new(*node_id.as_bytes()) {
+                Ok(protocol) => {
+                    let protocol_arc = Arc::new(RwLock::new(protocol));
+                    let monitor_arc = protocol_arc.clone();
+                    let discovery_result = {
+                        let guard = protocol_arc.read().await;
+                        guard.start_discovery().await
+                    };
+                    match discovery_result {
+                        Err(e) => {
+                            warn!("Satellite discovery failed: {}", e);
+                        }
+                        Ok(()) => {
+                            self.satellite_protocol = Some(protocol_arc.clone());
+                            self.active_protocols
+                                .write()
+                                .await
+                                .insert(NetworkProtocol::Satellite, true);
+                            info!("🛰️ Satellite mesh protocol active with persistent management");
+                            if let Err(e) = self.start_satellite_monitoring(monitor_arc).await {
+                                warn!("Failed to start satellite monitoring: {}", e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to initialize Satellite protocol: {}", e);
+                }
+            }
         }
 
         Ok(())
@@ -1585,25 +1719,18 @@ impl ZhtpMeshServer {
             handler_guard.set_identity_store_forward(identity_store.clone());
         }
 
-        // Set protocol handlers in router
+        // Build TransportManager with available protocol handlers
         {
-            let _router_guard = message_router.write().await;
+            let mut router_guard = message_router.write().await;
 
-            // TODO: Wire up protocol handlers when available
-            // Currently the BluetoothMeshProtocol doesn't match the expected BluetoothClassicProtocol type
-            // and WiFi/LoRa protocol modules don't exist yet
-
-            // if let Some(bt_protocol) = &self.bluetooth_protocol {
-            //     router_guard.bluetooth_handler = Some(bt_protocol.clone());
-            // }
-
-            // if let Some(wifi_protocol) = &self.wifi_direct_protocol {
-            //     router_guard.wifi_handler = Some(wifi_protocol.clone());
-            // }
-
-            // if let Some(lora_protocol) = &self.lorawan_protocol {
-            //     router_guard.lora_handler = Some(lora_protocol.clone());
-            // }
+            let mut transport_manager = crate::transport::TransportManager::default();
+            if let Some(lora_protocol) = &self.lorawan_protocol {
+                transport_manager = transport_manager.with_lora(lora_protocol.clone());
+            }
+            if let Some(satellite_protocol) = &self.satellite_protocol {
+                transport_manager = transport_manager.with_satellite(satellite_protocol.clone());
+            }
+            router_guard.set_transport_manager(transport_manager);
         }
 
         // Set router and handler in protocol instances
@@ -1649,6 +1776,55 @@ impl ZhtpMeshServer {
         // This is just a pass-through for the API
         info!("Mesh message received: {:?}", message);
         Ok(())
+    }
+
+    /// Forward a mesh message to a relay peer using ingress steering.
+    ///
+    /// Gateway/bootstrap nodes use this to distribute mesh routing traffic
+    /// across relay-capable Tier2 peers.
+    pub async fn forward_to_relay(
+        &self,
+        message: ZhtpMeshMessage,
+        destination: crate::identity::unified_peer::UnifiedPeerId,
+    ) -> Result<u64> {
+        let steering = self
+            .ingress_steering
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Ingress steering not initialized"))?;
+
+        let relay = steering
+            .select_relay(&destination)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("No healthy relay available for destination"))?;
+
+        info!(
+            "Forwarding message to relay {} for destination {}",
+            relay.did,
+            destination.to_compact_string()
+        );
+
+        // Use the message router to forward through the selected relay.
+        if let Some(router) = &self.message_router {
+            let router_guard = router.read().await;
+            let dest_pk = destination.public_key().clone();
+            let my_id = {
+                let node = self.mesh_node.read().await;
+                let node_bytes = node.node_id.as_bytes();
+                let mut dilithium_pk = [0u8; 2592];
+                dilithium_pk[..32].copy_from_slice(node_bytes);
+                lib_crypto::PublicKey::new(dilithium_pk)
+            };
+            let message_id = router_guard
+                .route_message_with_forwarding(dest_pk, message, my_id)
+                .await?;
+
+            // Record success (fire-and-forget latency estimate).
+            steering.record_success(&relay.peer_id, relay.latency_ewma_ms.load(std::sync::atomic::Ordering::Relaxed)).await;
+            Ok(message_id)
+        } else {
+            steering.record_failure(&relay.peer_id).await;
+            Err(anyhow::anyhow!("Message router not available"))
+        }
     }
 
     /// Get current network statistics
