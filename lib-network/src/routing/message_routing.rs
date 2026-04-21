@@ -916,6 +916,7 @@ impl MeshMessageRouter {
         if let Some(tx) = &self.pouw_routing_tx {
             let intermediary_nodes: Vec<String> = route
                 .iter()
+                .take(route.len().saturating_sub(1))
                 .map(|hop| hop.peer_id.did().to_string())
                 .collect();
             let event = MeshRoutingEvent {

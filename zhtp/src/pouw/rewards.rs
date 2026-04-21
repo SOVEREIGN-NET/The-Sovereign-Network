@@ -452,9 +452,9 @@ impl RewardCalculator {
         receipts: &[super::validation::ValidatedReceipt],
         total_amount: u128,
     ) -> Vec<IntermediarySplit> {
-        use std::collections::HashSet;
+        use std::collections::BTreeSet;
 
-        let mut unique_dids = HashSet::new();
+        let mut unique_dids = BTreeSet::new();
         for receipt in receipts {
             if receipt.proof_type == ProofType::Web4ManifestRoute {
                 for did in &receipt.route_intermediaries {
