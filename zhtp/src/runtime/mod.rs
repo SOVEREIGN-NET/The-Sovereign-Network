@@ -1756,6 +1756,42 @@ impl RuntimeOrchestrator {
         Ok(orchestrator)
     }
 
+    /// Start a gateway node - THE canonical way
+    ///
+    /// Gateway nodes act as public ingress proxies, providing QUIC-based access
+    /// to the network for external clients. They do NOT maintain blockchain state
+    /// or validate blocks - they forward requests to backend nodes.
+    ///
+    /// # Errors
+    /// Returns an error if config.node_type is not Gateway.
+    pub async fn start_gateway(config: NodeConfig) -> Result<Self> {
+        Self::validate_node_type(&config, crate::config::NodeType::Gateway)?;
+
+        let orchestrator = Self::new(config).await?;
+
+        // For gateway nodes, initialize ONLY mesh routing/networking components,
+        // NOT the full blockchain startup sequence. Gateways should not maintain
+        // blockchain state - they proxy requests to backend nodes.
+        use crate::runtime::components::{CryptoComponent, NetworkComponent};
+
+        info!("Starting Gateway Node - initializing mesh/routing only (no blockchain state)");
+
+        // Initialize crypto and network components for routing
+        orchestrator
+            .register_component(Arc::new(CryptoComponent::new()))
+            .await?;
+        orchestrator.start_component(ComponentId::Crypto).await?;
+
+        orchestrator
+            .register_component(Arc::new(NetworkComponent::new()))
+            .await?;
+        orchestrator.start_component(ComponentId::Network).await?;
+
+        info!("Gateway node initialized (routing-only mode - ready for routing)");
+
+        Ok(orchestrator)
+    }
+
     // ========================================================================
     // END CANONICAL STARTUP METHODS
     // ========================================================================
