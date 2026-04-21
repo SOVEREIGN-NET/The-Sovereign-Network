@@ -323,6 +323,10 @@ pub struct PeerEntry {
     /// Trust score (0.0 - 1.0)
     pub trust_score: f64,
 
+    // === NAT / Reachability (#2200) ===
+    /// NAT and reachability state for this peer.
+    pub nat_state: Option<crate::nat::NatState>,
+
     // === Statistics (use atomic counters for lock-free updates) ===
     /// Total data transferred (atomic for lock-free updates)
     #[serde(skip)]
@@ -391,6 +395,8 @@ impl PeerEntry {
             last_seen,
             tier,
             trust_score,
+            // Initialize NAT state as unknown
+            nat_state: None,
             // Initialize atomic counters
             data_transferred: Arc::new(AtomicU64::new(0)),
             tokens_earned: Arc::new(AtomicU64::new(0)),
@@ -458,6 +464,14 @@ pub struct PeerEndpoint {
     pub signal_strength: f64,
     /// Latency in milliseconds
     pub latency_ms: u32,
+
+    // === NAT / Reachability (#2200) ===
+    /// Detected NAT type for this endpoint.
+    pub nat_type: Option<crate::nat::NatType>,
+    /// Public endpoint discovered via STUN (if NAT'd).
+    pub public_endpoint: Option<std::net::SocketAddr>,
+    /// Relay endpoint for TURN or long-range relay fallback.
+    pub relay_endpoint: Option<std::net::SocketAddr>,
 }
 
 impl PeerEndpoint {
@@ -469,6 +483,9 @@ impl PeerEndpoint {
             protocol,
             signal_strength: 1.0,
             latency_ms: 0,
+            nat_type: None,
+            public_endpoint: None,
+            relay_endpoint: None,
         }
     }
 
@@ -1212,6 +1229,36 @@ impl PeerRegistry {
         }
     }
 
+    // ========== NAT / REACHABILITY (#2200) ==========
+
+    /// Set NAT state for a peer.
+    pub fn set_nat_state(&mut self, peer_id: &UnifiedPeerId, state: crate::nat::NatState) -> Result<()> {
+        let entry = self.peers.get_mut(peer_id).ok_or_else(|| anyhow!("Peer not found"))?;
+        entry.nat_state = Some(state);
+        Ok(())
+    }
+
+    /// Get NAT state for a peer.
+    pub fn nat_state(&self, peer_id: &UnifiedPeerId) -> Option<crate::nat::NatState> {
+        self.peers.get(peer_id)?.nat_state.clone()
+    }
+
+    /// Reachability summary across all peers.
+    pub fn reachability_summary(&self) -> crate::nat::ReachabilitySummary {
+        let mut summary = crate::nat::ReachabilitySummary::default();
+        for entry in self.peers.values() {
+            match entry.nat_state.as_ref().map(|s| &s.reachability) {
+                Some(crate::nat::ReachabilityState::Direct) => summary.direct += 1,
+                Some(crate::nat::ReachabilityState::NatTraversable) => summary.nat_traversable += 1,
+                Some(crate::nat::ReachabilityState::RelayRequired) => summary.relay_required += 1,
+                Some(crate::nat::ReachabilityState::Unknown) => summary.unknown += 1,
+                Some(crate::nat::ReachabilityState::Unreachable) => summary.unreachable += 1,
+                None => summary.unknown += 1,
+            }
+        }
+        summary
+    }
+
     // ========== UNIFIED ADDRESS RESOLUTION METHODS ==========
     //
     // These methods integrate the unified AddressResolver with the PeerRegistry
@@ -1678,6 +1725,7 @@ mod tests {
             },
             location: None,
             reliability_score: 0.92,
+            nat_state: None,
             dht_info: None,
             discovery_method: DiscoveryMethod::MeshScan,
             first_seen: 0,

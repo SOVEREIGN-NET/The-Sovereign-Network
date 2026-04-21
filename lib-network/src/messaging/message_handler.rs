@@ -638,6 +638,9 @@ impl MeshMessageHandler {
                 protocol: crate::protocols::NetworkProtocol::BluetoothLE,
                 signal_strength: 0.8,
                 latency_ms: 50,
+                nat_type: None,
+                public_endpoint: None,
+                relay_endpoint: None,
             }],
             vec![crate::protocols::NetworkProtocol::BluetoothLE],
             crate::peer_registry::ConnectionMetrics {
@@ -1979,6 +1982,9 @@ mod tests {
                     protocol: crate::protocols::NetworkProtocol::BluetoothLE,
                     signal_strength: 0.5,
                     latency_ms: 100,
+                    nat_type: None,
+                    public_endpoint: None,
+                    relay_endpoint: None,
                 }],
                 vec![crate::protocols::NetworkProtocol::BluetoothLE],
                 crate::peer_registry::ConnectionMetrics {
