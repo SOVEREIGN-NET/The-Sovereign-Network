@@ -317,6 +317,22 @@ pub struct Blockchain {
     /// On-chain employment contract registry — populated by CreateEmploymentContract txs.
     #[serde(default)]
     pub employment_registry: crate::contracts::employment::EmploymentRegistry,
+
+    // =========================================================================
+    // Observer Admission Registry (observer-admission-3)
+    // =========================================================================
+    /// Canonical observer admission registry.
+    ///
+    /// Keyed by observer node DID string. This is the authoritative in-memory
+    /// view; sled-backed persistence mirrors it record-by-record via
+    /// `put_observer_record` / `get_observer_record` in the executor.
+    ///
+    /// Eligibility MUST be checked here — never inferred from local config.
+    #[serde(default)]
+    pub observer_registry: HashMap<String, lib_types::ObserverAdmissionRecord>,
+    /// Observer node DID → block height at which the record was first committed.
+    #[serde(default)]
+    pub observer_blocks: HashMap<String, u64>,
     // =========================================================================
     // DAO Treasury Execution (dao-2)
     // =========================================================================

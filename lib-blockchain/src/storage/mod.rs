@@ -1550,4 +1550,40 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     ) -> StorageResult<Vec<DaoStakeRecord>> {
         Ok(vec![])
     }
+
+    // =========================================================================
+    // Observer Admission Operations (default no-ops for non-sled backends)
+    // =========================================================================
+
+    /// Retrieve an observer admission record by node DID hash.
+    ///
+    /// `did_hash` is `blake3(observer_node_did_string)`.
+    fn get_observer_record(
+        &self,
+        _did_hash: &[u8; 32],
+    ) -> StorageResult<Option<lib_types::ObserverAdmissionRecord>> {
+        Ok(None)
+    }
+
+    /// Persist (upsert) an observer admission record within the current block transaction.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn put_observer_record(
+        &self,
+        _did_hash: &[u8; 32],
+        _record: &lib_types::ObserverAdmissionRecord,
+    ) -> StorageResult<()> {
+        Ok(())
+    }
+
+    /// Delete an observer admission record within the current block transaction.
+    ///
+    /// Used when a record is superseded (currently unused, reserved for future purge).
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn delete_observer_record(&self, _did_hash: &[u8; 32]) -> StorageResult<()> {
+        Ok(())
+    }
 }

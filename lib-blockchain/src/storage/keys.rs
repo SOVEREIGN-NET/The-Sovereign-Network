@@ -280,6 +280,18 @@ pub fn dao_stake_key(sector_dao_key_id: &[u8; 32], staker: &[u8; 32]) -> [u8; 64
 }
 
 // =============================================================================
+// OBSERVER ADMISSION KEYS
+// =============================================================================
+
+/// Key for the `observer_registry` sled tree: did_hash (32 bytes) → ObserverAdmissionRecord.
+///
+/// `did_hash` is `blake3(observer_node_did_string)`.  Callers must hash first.
+#[inline]
+pub fn observer_record_key(did_hash: &[u8; 32]) -> &[u8; 32] {
+    did_hash
+}
+
+// =============================================================================
 // TESTS
 // =============================================================================
 

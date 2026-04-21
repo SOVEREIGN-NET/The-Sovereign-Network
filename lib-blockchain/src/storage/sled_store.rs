@@ -48,6 +48,7 @@ const TREE_CBE_ACCOUNTS: &str = "cbe_accounts"; // Canonical CBE account states 
 const TREE_PENDING_TRANSACTIONS: &str = "pending_transactions"; // Non-consensus restart recovery
 const TREE_QUORUM_PROOFS: &str = "quorum_proofs"; // BFT quorum proofs by height
 const TREE_DAO_STAKES: &str = "dao_stakes"; // SOV stakes to sector DAOs: dao_key_id||staker → DaoStakeRecord
+const TREE_OBSERVER_REGISTRY: &str = "observer_registry"; // Observer admission records: did_hash → ObserverAdmissionRecord
 const TREE_META: &str = "meta";
 
 /// Sled-based implementation of BlockchainStore
@@ -75,6 +76,7 @@ pub struct SledStore {
     pending_transactions: Tree,  // Non-consensus mempool recovery state
     quorum_proofs: Tree,         // BFT quorum proofs by height
     dao_stakes: Tree,            // SOV stakes: dao_key_id (32) || staker (32) → DaoStakeRecord
+    observer_registry: Tree,     // Observer admission: did_hash (32) → ObserverAdmissionRecord
     utxo_merkle_leaves: Tree,    // leaf_index (u64 BE) → [u8; 32] leaf hash
     utxo_merkle_index: Tree,     // outpoint (36 bytes) → leaf_index (u64 BE)
     utxo_merkle_meta: Tree,      // metadata: next_leaf_index, current_root
@@ -108,6 +110,7 @@ struct PendingBatch {
     bonding_curve_symbols: Batch,
     cbe_accounts: Batch,
     dao_stakes: Batch,
+    observer_registry: Batch,
     utxo_merkle_leaves: Batch,
     utxo_merkle_index: Batch,
     utxo_merkle_meta: Batch,
@@ -140,6 +143,7 @@ impl PendingBatch {
             bonding_curve_symbols: Batch::default(),
             cbe_accounts: Batch::default(),
             dao_stakes: Batch::default(),
+            observer_registry: Batch::default(),
             utxo_merkle_leaves: Batch::default(),
             utxo_merkle_index: Batch::default(),
             utxo_merkle_meta: Batch::default(),
@@ -246,6 +250,9 @@ impl SledStore {
         let dao_stakes = db
             .open_tree(TREE_DAO_STAKES)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let observer_registry = db
+            .open_tree(TREE_OBSERVER_REGISTRY)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
         let utxo_merkle_leaves = db
             .open_tree(TREE_UTXO_MERKLE_LEAVES)
             .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -281,6 +288,7 @@ impl SledStore {
             pending_transactions,
             quorum_proofs,
             dao_stakes,
+            observer_registry,
             utxo_merkle_leaves,
             utxo_merkle_index,
             utxo_merkle_meta,
@@ -1637,6 +1645,10 @@ impl BlockchainStore for SledStore {
             .apply_batch(batch.dao_stakes)
             .map_err(|e| StorageError::Database(e.to_string()))?;
 
+        self.observer_registry
+            .apply_batch(batch.observer_registry)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
         // Commit point: update latest_height last. If any batch above failed,
         // latest_height stays at the previous value and the node will re-apply
         // this block on next restart.
@@ -1996,6 +2008,57 @@ impl BlockchainStore for SledStore {
             }
         }
         Ok(records)
+    }
+
+    // =========================================================================
+    // Observer Admission (observer-admission-3)
+    // =========================================================================
+
+    fn get_observer_record(
+        &self,
+        did_hash: &[u8; 32],
+    ) -> StorageResult<Option<lib_types::ObserverAdmissionRecord>> {
+        match self.observer_registry.get(did_hash) {
+            Ok(Some(bytes)) => {
+                let record: lib_types::ObserverAdmissionRecord = Self::deserialize(&bytes)?;
+                Ok(Some(record))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_observer_record(
+        &self,
+        did_hash: &[u8; 32],
+        record: &lib_types::ObserverAdmissionRecord,
+    ) -> StorageResult<()> {
+        let bytes = Self::serialize(record)?;
+        let mut guard = self.tx_batch.lock().map_err(|e| {
+            StorageError::Database(format!("lock poisoned in put_observer_record: {e}"))
+        })?;
+        if let Some(batch) = guard.as_mut() {
+            batch.observer_registry.insert(did_hash.as_slice(), bytes);
+            Ok(())
+        } else {
+            Err(StorageError::Database(
+                "put_observer_record called outside begin_block/commit_block".to_owned(),
+            ))
+        }
+    }
+
+    fn delete_observer_record(&self, did_hash: &[u8; 32]) -> StorageResult<()> {
+        let mut guard = self.tx_batch.lock().map_err(|e| {
+            StorageError::Database(format!("lock poisoned in delete_observer_record: {e}"))
+        })?;
+        if let Some(batch) = guard.as_mut() {
+            batch.observer_registry.remove(did_hash.as_slice());
+            Ok(())
+        } else {
+            Err(StorageError::Database(
+                "delete_observer_record called outside begin_block/commit_block".to_owned(),
+            ))
+        }
     }
 }
 

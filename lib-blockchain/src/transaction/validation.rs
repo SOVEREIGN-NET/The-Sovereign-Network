@@ -47,6 +47,19 @@ pub enum ValidationError {
     ThresholdNotMet,
     /// Stake is still locked - cannot unstake yet.
     StakeStillLocked { locked_until: u64, remaining: u64 },
+    // =========================================================================
+    // Observer Admission Errors (observer-admission-3)
+    // =========================================================================
+    /// An observer with this node DID is already registered.
+    ObserverAlreadyRegistered,
+    /// No observer admission record exists for the given node DID.
+    ObserverNotFound,
+    /// The requested observer lifecycle transition is not permitted from the
+    /// current status (e.g. reauthorize while Active, or suspend while Revoked).
+    InvalidObserverLifecycleTransition,
+    /// The sponsor DID in the transaction does not match the binding recorded
+    /// in the canonical registry (or is empty on a new registration).
+    InvalidSponsorBinding,
 }
 
 impl std::fmt::Display for ValidationError {
@@ -81,6 +94,18 @@ impl std::fmt::Display for ValidationError {
             ValidationError::ThresholdNotMet => write!(f, "Approval threshold not met"),
             ValidationError::StakeStillLocked { locked_until, remaining } => {
                 write!(f, "Stake still locked until block {} ({} blocks remaining)", locked_until, remaining)
+            }
+            ValidationError::ObserverAlreadyRegistered => {
+                write!(f, "An observer with this node DID is already registered")
+            }
+            ValidationError::ObserverNotFound => {
+                write!(f, "No observer admission record found for the given node DID")
+            }
+            ValidationError::InvalidObserverLifecycleTransition => {
+                write!(f, "Invalid observer lifecycle transition from current status")
+            }
+            ValidationError::InvalidSponsorBinding => {
+                write!(f, "Sponsor DID does not match the canonical sponsor binding")
             }
         }
     }
@@ -406,6 +431,51 @@ impl TransactionValidator {
             TransactionType::DaoUnstake => {
                 // Full validation deferred to stateful validator (lock check, record existence, etc.)
             }
+
+            // =================================================================
+            // Observer Admission (observer-admission-3)
+            // =================================================================
+            TransactionType::RegisterObserver => {
+                if transaction.register_observer_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+            }
+            TransactionType::UpdateObserverMetadata => {
+                if transaction.update_observer_metadata_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+            }
+            TransactionType::SuspendObserver => {
+                if transaction.suspend_observer_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+            }
+            TransactionType::RevokeObserver => {
+                if transaction.revoke_observer_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+            }
+            TransactionType::ReauthorizeObserver => {
+                if transaction.reauthorize_observer_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+            }
+
             TransactionType::DomainRegistration => {
                 if !transaction
                     .memo
@@ -691,6 +761,51 @@ impl TransactionValidator {
             TransactionType::DaoUnstake => {
                 // Full validation deferred to stateful validator (lock check, record existence, etc.)
             }
+
+            // =================================================================
+            // Observer Admission (observer-admission-3)
+            // =================================================================
+            TransactionType::RegisterObserver => {
+                if transaction.register_observer_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+            }
+            TransactionType::UpdateObserverMetadata => {
+                if transaction.update_observer_metadata_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+            }
+            TransactionType::SuspendObserver => {
+                if transaction.suspend_observer_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+            }
+            TransactionType::RevokeObserver => {
+                if transaction.revoke_observer_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+            }
+            TransactionType::ReauthorizeObserver => {
+                if transaction.reauthorize_observer_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+            }
+
             TransactionType::DomainRegistration => {
                 if !transaction
                     .memo
@@ -1905,14 +2020,40 @@ impl<'a> StatefulTransactionValidator<'a> {
             TransactionType::DaoUnstake => {
                 self.validate_dao_unstake(transaction)?;
             }
-            TransactionType::DomainRegistration => {
-                if !transaction
-                    .memo
-                    .starts_with(crate::transaction::DOMAIN_REGISTRATION_PREFIX)
-                {
-                    return Err(ValidationError::InvalidMemo);
+
+            // =================================================================
+            // Observer Admission (observer-admission-3)
+            // Stateful checks (duplicate, lifecycle, sponsor) are deferred to the
+            // executor's apply_* methods which have mutable access to store.
+            // Here we only re-confirm payload presence (idempotent with stateless).
+            // =================================================================
+            TransactionType::RegisterObserver => {
+                if transaction.register_observer_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
                 }
-                // Authorization: the owner_did in the payload must match the signer's key_id.
+            }
+            TransactionType::UpdateObserverMetadata => {
+                if transaction.update_observer_metadata_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::SuspendObserver => {
+                if transaction.suspend_observer_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::RevokeObserver => {
+                if transaction.revoke_observer_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::ReauthorizeObserver => {
+                if transaction.reauthorize_observer_data().is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+
+            TransactionType::DomainRegistration => {
                 // This prevents a malicious actor from claiming ownership of a domain under a
                 // DID they don't control.
                 let payload =
@@ -2019,6 +2160,9 @@ impl<'a> StatefulTransactionValidator<'a> {
             && transaction.transaction_type != TransactionType::DaoUnstake
             && transaction.transaction_type != TransactionType::DomainRegistration // owner_did↔signer binding enforced above
             && transaction.transaction_type != TransactionType::DomainUpdate // owner_did↔signer binding enforced above
+            // Observer transactions: sponsor binding is validated in executor; signer may be
+            // the observer node itself which may not have a registered identity yet.
+            && !transaction.transaction_type.is_observer_transaction()
             && !is_token_contract_execution(transaction)
         {
             tracing::debug!("[BREADCRUMB] validate_sender_identity_exists CALL");
@@ -3232,6 +3376,36 @@ pub mod utils {
                     && transaction.inputs.is_empty()
                     && transaction.outputs.is_empty()
             }
+
+            // =================================================================
+            // Observer Admission (observer-admission-3)
+            // =================================================================
+            TransactionType::RegisterObserver => {
+                transaction.register_observer_data().is_some()
+                    && transaction.inputs.is_empty()
+                    && transaction.outputs.is_empty()
+            }
+            TransactionType::UpdateObserverMetadata => {
+                transaction.update_observer_metadata_data().is_some()
+                    && transaction.inputs.is_empty()
+                    && transaction.outputs.is_empty()
+            }
+            TransactionType::SuspendObserver => {
+                transaction.suspend_observer_data().is_some()
+                    && transaction.inputs.is_empty()
+                    && transaction.outputs.is_empty()
+            }
+            TransactionType::RevokeObserver => {
+                transaction.revoke_observer_data().is_some()
+                    && transaction.inputs.is_empty()
+                    && transaction.outputs.is_empty()
+            }
+            TransactionType::ReauthorizeObserver => {
+                transaction.reauthorize_observer_data().is_some()
+                    && transaction.inputs.is_empty()
+                    && transaction.outputs.is_empty()
+            }
+
             TransactionType::DomainRegistration => {
                 transaction
                     .memo

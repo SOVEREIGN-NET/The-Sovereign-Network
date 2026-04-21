@@ -799,7 +799,12 @@ pub mod utils {
             | TransactionType::DaoStake
             | TransactionType::DaoUnstake
             | TransactionType::DomainRegistration
-            | TransactionType::DomainUpdate => {
+            | TransactionType::DomainUpdate
+            | TransactionType::RegisterObserver
+            | TransactionType::UpdateObserverMetadata
+            | TransactionType::SuspendObserver
+            | TransactionType::RevokeObserver
+            | TransactionType::ReauthorizeObserver => {
                 // Threshold-approval, staking, domain, and legacy CBE transactions - no inputs/outputs
                 if !inputs.is_empty() {
                     return Err(TransactionCreateError::InvalidInputs);

@@ -339,6 +339,34 @@ impl<'a> StateMutator<'a> {
     }
 
     // =========================================================================
+    // Observer Admission Primitives (observer-admission-3)
+    // =========================================================================
+
+    /// Retrieve an observer admission record by node DID hash.
+    pub fn get_observer_record(
+        &self,
+        did_hash: &[u8; 32],
+    ) -> TxApplyResult<Option<lib_types::ObserverAdmissionRecord>> {
+        Ok(self.store.get_observer_record(did_hash)?)
+    }
+
+    /// Persist (upsert) an observer admission record within the current block transaction.
+    pub fn put_observer_record(
+        &self,
+        did_hash: &[u8; 32],
+        record: &lib_types::ObserverAdmissionRecord,
+    ) -> TxApplyResult<()> {
+        self.store.put_observer_record(did_hash, record)?;
+        Ok(())
+    }
+
+    /// Delete an observer admission record within the current block transaction.
+    pub fn delete_observer_record(&self, did_hash: &[u8; 32]) -> TxApplyResult<()> {
+        self.store.delete_observer_record(did_hash)?;
+        Ok(())
+    }
+
+    // =========================================================================
     // Contract State Primitives
     // =========================================================================
 

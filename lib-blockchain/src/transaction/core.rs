@@ -1821,6 +1821,154 @@ impl Transaction {
             payload: TransactionPayload::DaoUnstake(data),
         }
     }
+
+    // =========================================================================
+    // Observer Admission Constructors
+    // =========================================================================
+
+    /// Build a RegisterObserver transaction.
+    pub fn new_register_observer(
+        chain_id: u8,
+        data: RegisterObserverData,
+        signature: Signature,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::RegisterObserver,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo: b"ZHTP_REGISTER_OBSERVER".to_vec(),
+            payload: TransactionPayload::RegisterObserver(data),
+        }
+    }
+
+    /// Build an UpdateObserverMetadata transaction.
+    pub fn new_update_observer_metadata(
+        chain_id: u8,
+        data: UpdateObserverMetadataData,
+        signature: Signature,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::UpdateObserverMetadata,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo: b"ZHTP_UPDATE_OBSERVER_META".to_vec(),
+            payload: TransactionPayload::UpdateObserverMetadata(data),
+        }
+    }
+
+    /// Build a SuspendObserver transaction.
+    pub fn new_suspend_observer(
+        chain_id: u8,
+        data: SuspendObserverData,
+        signature: Signature,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::SuspendObserver,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo: b"ZHTP_SUSPEND_OBSERVER".to_vec(),
+            payload: TransactionPayload::SuspendObserver(data),
+        }
+    }
+
+    /// Build a RevokeObserver transaction.
+    pub fn new_revoke_observer(
+        chain_id: u8,
+        data: RevokeObserverData,
+        signature: Signature,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::RevokeObserver,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo: b"ZHTP_REVOKE_OBSERVER".to_vec(),
+            payload: TransactionPayload::RevokeObserver(data),
+        }
+    }
+
+    /// Build a ReauthorizeObserver transaction.
+    pub fn new_reauthorize_observer(
+        chain_id: u8,
+        data: ReauthorizeObserverData,
+        signature: Signature,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::ReauthorizeObserver,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo: b"ZHTP_REAUTHORIZE_OBSERVER".to_vec(),
+            payload: TransactionPayload::ReauthorizeObserver(data),
+        }
+    }
+
+    // =========================================================================
+    // Observer Admission Accessors
+    // =========================================================================
+
+    /// Extract `RegisterObserverData` from the payload, if present.
+    pub fn register_observer_data(&self) -> Option<&RegisterObserverData> {
+        if let TransactionPayload::RegisterObserver(ref d) = self.payload {
+            Some(d)
+        } else {
+            None
+        }
+    }
+
+    /// Extract `UpdateObserverMetadataData` from the payload, if present.
+    pub fn update_observer_metadata_data(&self) -> Option<&UpdateObserverMetadataData> {
+        if let TransactionPayload::UpdateObserverMetadata(ref d) = self.payload {
+            Some(d)
+        } else {
+            None
+        }
+    }
+
+    /// Extract `SuspendObserverData` from the payload, if present.
+    pub fn suspend_observer_data(&self) -> Option<&SuspendObserverData> {
+        if let TransactionPayload::SuspendObserver(ref d) = self.payload {
+            Some(d)
+        } else {
+            None
+        }
+    }
+
+    /// Extract `RevokeObserverData` from the payload, if present.
+    pub fn revoke_observer_data(&self) -> Option<&RevokeObserverData> {
+        if let TransactionPayload::RevokeObserver(ref d) = self.payload {
+            Some(d)
+        } else {
+            None
+        }
+    }
+
+    /// Extract `ReauthorizeObserverData` from the payload, if present.
+    pub fn reauthorize_observer_data(&self) -> Option<&ReauthorizeObserverData> {
+        if let TransactionPayload::ReauthorizeObserver(ref d) = self.payload {
+            Some(d)
+        } else {
+            None
+        }
+    }
 }
 
 impl TransactionInput {
@@ -2471,6 +2619,124 @@ pub struct NftBurnData {
 }
 
 // ============================================================================
+// Observer Admission Payload Types (observer-admission-3)
+// ============================================================================
+//
+// Rule: canonical shape lives here; lifecycle policy lives in the executor.
+// Sponsor DID binding and proof-level are stored verbatim so they can be
+// replayed deterministically without querying live identity state.
+// ============================================================================
+
+/// Payload for `RegisterObserver`.
+///
+/// Creates a new `ObserverAdmissionRecord` in `Pending` status.
+/// The signer must match `sponsor_user_did` (the tx signature public key's
+/// key_id must correspond to the sponsoring user's registered identity).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisterObserverData {
+    /// DID of the observer node (`did:zhtp:…`).
+    pub observer_node_did: String,
+    /// Raw Dilithium5 public key of the observer node.
+    pub observer_public_key: Vec<u8>,
+    /// Advertised endpoints (`host:port`).
+    #[serde(default)]
+    pub endpoints: Vec<String>,
+    /// DID of the sponsoring user (must match the transaction signer's identity).
+    pub sponsor_user_did: String,
+    /// Sponsor's proof level at enrollment time (snapshotted for determinism).
+    pub sponsor_proof_level: lib_types::ObserverProofLevel,
+    /// Sponsor signature over the enrollment statement.
+    pub sponsor_signature: Vec<u8>,
+    /// Network / environment this observer is admitted for.
+    pub allowed_network: String,
+    /// Optional sync scope tag (e.g. `"full"` or `"light"`).
+    #[serde(default)]
+    pub trusted_sync_scope: Option<String>,
+    /// Rate-limit tier requested at enrollment.
+    pub rate_limit_tier: lib_types::ObserverRateLimitTier,
+    /// Optional expiry unix-seconds; `None` = no expiry.
+    #[serde(default)]
+    pub expires_at: Option<u64>,
+    /// Monotonic nonce on the sponsoring user DID (replay protection).
+    pub nonce: u64,
+}
+
+/// Payload for `UpdateObserverMetadata`.
+///
+/// Only the sponsoring user DID may submit this.
+/// Status transitions are NOT performed here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateObserverMetadataData {
+    /// Observer node DID to update.
+    pub observer_node_did: String,
+    /// Replacement endpoint list (replaces the entire existing list).
+    #[serde(default)]
+    pub new_endpoints: Vec<String>,
+    /// Updated network / sync-scope binding. `None` = no change.
+    #[serde(default)]
+    pub new_network: Option<ObserverNetworkUpdate>,
+    /// Updated rate-limit tier. `None` = no change.
+    #[serde(default)]
+    pub new_rate_limit_tier: Option<lib_types::ObserverRateLimitTier>,
+    /// Updated expiry. `None` = no change, `Some(None)` = remove expiry.
+    #[serde(default)]
+    pub new_expires_at: Option<Option<u64>>,
+    /// Monotonic nonce on the sponsoring user DID (replay protection).
+    pub nonce: u64,
+}
+
+/// Inline network / sync-scope update for `UpdateObserverMetadata`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObserverNetworkUpdate {
+    pub allowed_network: String,
+    pub trusted_sync_scope: Option<String>,
+}
+
+/// Payload for `SuspendObserver`.
+///
+/// Valid transition: `Active → Suspended`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SuspendObserverData {
+    /// Observer node DID to suspend.
+    pub observer_node_did: String,
+    /// DID of the actor initiating the suspension (sponsor or governance).
+    pub actor_did: String,
+    /// Human-readable reason for the suspension.
+    pub reason: String,
+    /// Monotonic nonce on the actor's identity (replay protection).
+    pub nonce: u64,
+}
+
+/// Payload for `RevokeObserver`.
+///
+/// Valid transitions: `Pending → Revoked`, `Active → Revoked`, `Suspended → Revoked`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RevokeObserverData {
+    /// Observer node DID to revoke.
+    pub observer_node_did: String,
+    /// DID of the actor initiating revocation (sponsor or governance).
+    pub actor_did: String,
+    /// Human-readable reason for the revocation.
+    pub reason: String,
+    /// Monotonic nonce on the actor's identity (replay protection).
+    pub nonce: u64,
+}
+
+/// Payload for `ReauthorizeObserver`.
+///
+/// Valid transition: `Suspended → Active`.
+/// Only the original sponsor user DID may reauthorize.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReauthorizeObserverData {
+    /// Observer node DID to reauthorize.
+    pub observer_node_did: String,
+    /// DID of the sponsoring user reauthorizing the observer.
+    pub sponsor_user_did: String,
+    /// Monotonic nonce on the sponsoring user DID (replay protection).
+    pub nonce: u64,
+}
+
+// ============================================================================
 // TransactionPayload enum
 // ============================================================================
 
@@ -2522,4 +2788,10 @@ pub enum TransactionPayload {
     NftTransfer(NftTransferData),
     /// Burn an NFT
     NftBurn(NftBurnData),
+    // Observer admission payloads (observer-admission-3)
+    RegisterObserver(RegisterObserverData),
+    UpdateObserverMetadata(UpdateObserverMetadataData),
+    SuspendObserver(SuspendObserverData),
+    RevokeObserver(RevokeObserverData),
+    ReauthorizeObserver(ReauthorizeObserverData),
 }

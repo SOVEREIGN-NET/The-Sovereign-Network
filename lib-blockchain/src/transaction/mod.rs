@@ -34,6 +34,9 @@ pub use core::{
     TransactionInput, TransactionOutput, TransactionPayload, TreasuryAllocationData, UbiClaimData,
     ValidatorOperation, ValidatorTransactionData, WalletPrivateData, WalletReference,
     WalletTransactionData, TX_VERSION_V3, TX_VERSION_V7, TX_VERSION_V8, TX_VERSION_V9,
+    // Observer admission (observer-admission-3)
+    RegisterObserverData, UpdateObserverMetadataData, ObserverNetworkUpdate,
+    SuspendObserverData, RevokeObserverData, ReauthorizeObserverData,
 };
 
 // Re-exports from threshold_approval module

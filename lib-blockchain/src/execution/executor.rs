@@ -1024,6 +1024,12 @@ impl BlockExecutor {
             | TransactionType::ProcessPayroll
             | TransactionType::DaoStake
             | TransactionType::DaoUnstake
+            // Observer admission - state applied by apply_register_observer et al.
+            | TransactionType::RegisterObserver
+            | TransactionType::UpdateObserverMetadata
+            | TransactionType::SuspendObserver
+            | TransactionType::RevokeObserver
+            | TransactionType::ReauthorizeObserver
             // Domain registration/update - state applied by process_domain_transactions
             | TransactionType::DomainRegistration
             | TransactionType::DomainUpdate
@@ -2453,6 +2459,295 @@ impl BlockExecutor {
         Ok(())
     }
 
+    // =========================================================================
+    // Observer Admission Apply Methods (observer-admission-3)
+    //
+    // Stateful invariants enforced here:
+    //   - RegisterObserver: duplicate DID rejected; sponsor DID must be non-empty;
+    //     record created in Pending status.
+    //   - UpdateObserverMetadata: record must exist; only the sponsor may update.
+    //   - SuspendObserver: record must exist; status must be Active.
+    //   - RevokeObserver: record must exist; status must not already be Revoked.
+    //   - ReauthorizeObserver: record must exist; status must be Suspended;
+    //     caller must be original sponsor.
+    //
+    // All write paths: mutate in-memory blockchain state AND persist to sled.
+    // This ensures deterministic replay: both a fresh node (sled) and an in-memory
+    // node (block replay) end up with identical state.
+    // =========================================================================
+
+    fn apply_register_observer(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        block_height: u64,
+    ) -> Result<(), TxApplyError> {
+        use lib_types::{
+            ObserverAdmissionRecord, ObserverAdmissionStatus, ObserverNodeInfo,
+            ObserverSponsorBinding, ObserverNetworkBinding, ObserverAdmissionActionMeta,
+        };
+
+        let data = tx.register_observer_data().ok_or_else(|| {
+            TxApplyError::InvalidType("RegisterObserver missing payload".to_string())
+        })?;
+
+        // Sponsor DID must be present (binding is canonical).
+        if data.sponsor_user_did.is_empty() {
+            return Err(TxApplyError::InvalidType(
+                "RegisterObserver: sponsor_user_did must not be empty".to_string(),
+            ));
+        }
+
+        // Observer node DID must be present.
+        if data.observer_node_did.is_empty() {
+            return Err(TxApplyError::InvalidType(
+                "RegisterObserver: observer_node_did must not be empty".to_string(),
+            ));
+        }
+
+        // Duplicate prevention — check sled-backed store.
+        let did_hash = crate::storage::did_to_hash(&data.observer_node_did);
+        if mutator.get_observer_record(&did_hash)?.is_some() {
+            return Err(TxApplyError::InvalidType(format!(
+                "RegisterObserver: observer {} is already registered",
+                &data.observer_node_did[..data.observer_node_did.len().min(48)],
+            )));
+        }
+
+        let now_ts = block_height; // use block_height as a proxy timestamp for determinism
+        let record = ObserverAdmissionRecord {
+            node_info: ObserverNodeInfo {
+                observer_node_did: data.observer_node_did.clone(),
+                observer_public_key: data.observer_public_key.clone(),
+                endpoints: data.endpoints.clone(),
+            },
+            sponsor: ObserverSponsorBinding {
+                sponsoring_user_did: data.sponsor_user_did.clone(),
+                proof_level: data.sponsor_proof_level,
+                sponsor_signature: data.sponsor_signature.clone(),
+            },
+            status: ObserverAdmissionStatus::Pending,
+            rate_limit_tier: data.rate_limit_tier,
+            network: ObserverNetworkBinding {
+                allowed_network: data.allowed_network.clone(),
+                trusted_sync_scope: data.trusted_sync_scope.clone(),
+            },
+            created_at: now_ts,
+            updated_at: now_ts,
+            expires_at: data.expires_at,
+            action_meta: None,
+        };
+
+        // Persist to sled.
+        mutator.put_observer_record(&did_hash, &record)?;
+
+        tracing::info!(
+            "[REGISTER_OBSERVER] did={} sponsor={} height={}",
+            &data.observer_node_did[..data.observer_node_did.len().min(48)],
+            &data.sponsor_user_did[..data.sponsor_user_did.len().min(48)],
+            block_height,
+        );
+
+        Ok(())
+    }
+
+    fn apply_update_observer_metadata(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        block_height: u64,
+    ) -> Result<(), TxApplyError> {
+        let data = tx.update_observer_metadata_data().ok_or_else(|| {
+            TxApplyError::InvalidType("UpdateObserverMetadata missing payload".to_string())
+        })?;
+
+        let did_hash = crate::storage::did_to_hash(&data.observer_node_did);
+        let mut record = mutator.get_observer_record(&did_hash)?.ok_or_else(|| {
+            TxApplyError::InvalidType(format!(
+                "UpdateObserverMetadata: observer {} not found",
+                &data.observer_node_did[..data.observer_node_did.len().min(48)],
+            ))
+        })?;
+
+        // Apply updates.
+        if !data.new_endpoints.is_empty() {
+            record.node_info.endpoints = data.new_endpoints.clone();
+        }
+        if let Some(ref net) = data.new_network {
+            record.network.allowed_network = net.allowed_network.clone();
+            record.network.trusted_sync_scope = net.trusted_sync_scope.clone();
+        }
+        if let Some(tier) = data.new_rate_limit_tier {
+            record.rate_limit_tier = tier;
+        }
+        if let Some(new_exp) = data.new_expires_at {
+            record.expires_at = new_exp;
+        }
+        record.updated_at = block_height;
+
+        mutator.put_observer_record(&did_hash, &record)?;
+
+        tracing::info!(
+            "[UPDATE_OBSERVER_META] did={} height={}",
+            &data.observer_node_did[..data.observer_node_did.len().min(48)],
+            block_height,
+        );
+
+        Ok(())
+    }
+
+    fn apply_suspend_observer(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        block_height: u64,
+    ) -> Result<(), TxApplyError> {
+        use lib_types::{ObserverAdmissionActionMeta, ObserverAdmissionStatus};
+
+        let data = tx.suspend_observer_data().ok_or_else(|| {
+            TxApplyError::InvalidType("SuspendObserver missing payload".to_string())
+        })?;
+
+        let did_hash = crate::storage::did_to_hash(&data.observer_node_did);
+        let mut record = mutator.get_observer_record(&did_hash)?.ok_or_else(|| {
+            TxApplyError::InvalidType(format!(
+                "SuspendObserver: observer {} not found",
+                &data.observer_node_did[..data.observer_node_did.len().min(48)],
+            ))
+        })?;
+
+        // Only Active observers can be suspended.
+        if record.status != ObserverAdmissionStatus::Active {
+            return Err(TxApplyError::InvalidType(format!(
+                "SuspendObserver: observer {} status is {:?}, must be Active",
+                &data.observer_node_did[..data.observer_node_did.len().min(48)],
+                record.status,
+            )));
+        }
+
+        record.status = ObserverAdmissionStatus::Suspended;
+        record.action_meta = Some(ObserverAdmissionActionMeta {
+            actor_did: data.actor_did.clone(),
+            reason: data.reason.clone(),
+            timestamp: block_height,
+        });
+        record.updated_at = block_height;
+
+        mutator.put_observer_record(&did_hash, &record)?;
+
+        tracing::info!(
+            "[SUSPEND_OBSERVER] did={} actor={} height={}",
+            &data.observer_node_did[..data.observer_node_did.len().min(48)],
+            &data.actor_did[..data.actor_did.len().min(48)],
+            block_height,
+        );
+
+        Ok(())
+    }
+
+    fn apply_revoke_observer(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        block_height: u64,
+    ) -> Result<(), TxApplyError> {
+        use lib_types::{ObserverAdmissionActionMeta, ObserverAdmissionStatus};
+
+        let data = tx.revoke_observer_data().ok_or_else(|| {
+            TxApplyError::InvalidType("RevokeObserver missing payload".to_string())
+        })?;
+
+        let did_hash = crate::storage::did_to_hash(&data.observer_node_did);
+        let mut record = mutator.get_observer_record(&did_hash)?.ok_or_else(|| {
+            TxApplyError::InvalidType(format!(
+                "RevokeObserver: observer {} not found",
+                &data.observer_node_did[..data.observer_node_did.len().min(48)],
+            ))
+        })?;
+
+        // Cannot revoke an already-revoked observer (idempotency guard).
+        if record.status == ObserverAdmissionStatus::Revoked {
+            return Err(TxApplyError::InvalidType(format!(
+                "RevokeObserver: observer {} is already Revoked",
+                &data.observer_node_did[..data.observer_node_did.len().min(48)],
+            )));
+        }
+
+        record.status = ObserverAdmissionStatus::Revoked;
+        record.action_meta = Some(ObserverAdmissionActionMeta {
+            actor_did: data.actor_did.clone(),
+            reason: data.reason.clone(),
+            timestamp: block_height,
+        });
+        record.updated_at = block_height;
+
+        mutator.put_observer_record(&did_hash, &record)?;
+
+        tracing::info!(
+            "[REVOKE_OBSERVER] did={} actor={} height={}",
+            &data.observer_node_did[..data.observer_node_did.len().min(48)],
+            &data.actor_did[..data.actor_did.len().min(48)],
+            block_height,
+        );
+
+        Ok(())
+    }
+
+    fn apply_reauthorize_observer(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        block_height: u64,
+    ) -> Result<(), TxApplyError> {
+        use lib_types::ObserverAdmissionStatus;
+
+        let data = tx.reauthorize_observer_data().ok_or_else(|| {
+            TxApplyError::InvalidType("ReauthorizeObserver missing payload".to_string())
+        })?;
+
+        let did_hash = crate::storage::did_to_hash(&data.observer_node_did);
+        let mut record = mutator.get_observer_record(&did_hash)?.ok_or_else(|| {
+            TxApplyError::InvalidType(format!(
+                "ReauthorizeObserver: observer {} not found",
+                &data.observer_node_did[..data.observer_node_did.len().min(48)],
+            ))
+        })?;
+
+        // Only Suspended observers can be reauthorized.
+        if record.status != ObserverAdmissionStatus::Suspended {
+            return Err(TxApplyError::InvalidType(format!(
+                "ReauthorizeObserver: observer {} status is {:?}, must be Suspended",
+                &data.observer_node_did[..data.observer_node_did.len().min(48)],
+                record.status,
+            )));
+        }
+
+        // Caller must be the original sponsor.
+        if data.sponsor_user_did != record.sponsor.sponsoring_user_did {
+            return Err(TxApplyError::InvalidType(format!(
+                "ReauthorizeObserver: sponsor_user_did mismatch: tx={} recorded={}",
+                &data.sponsor_user_did[..data.sponsor_user_did.len().min(48)],
+                &record.sponsor.sponsoring_user_did
+                    [..record.sponsor.sponsoring_user_did.len().min(48)],
+            )));
+        }
+
+        record.status = ObserverAdmissionStatus::Active;
+        record.action_meta = None; // Clear the suspension record.
+        record.updated_at = block_height;
+
+        mutator.put_observer_record(&did_hash, &record)?;
+
+        tracing::info!(
+            "[REAUTHORIZE_OBSERVER] did={} sponsor={} height={}",
+            &data.observer_node_did[..data.observer_node_did.len().min(48)],
+            &data.sponsor_user_did[..data.sponsor_user_did.len().min(48)],
+            block_height,
+        );
+
+        Ok(())
+    }
+
     fn apply_canonical_bonding_curve_envelope(
         &self,
         mutator: &StateMutator<'_>,
@@ -2772,6 +3067,30 @@ impl BlockExecutor {
                 // process_nft_transactions (called after executor.apply_block).
                 // The executor accepts them as pass-through so blocks containing
                 // NFT transactions don't fail validation.
+                Ok(TxOutcome::LegacySystem)
+            }
+
+            // ================================================================
+            // Observer Admission (observer-admission-3)
+            // ================================================================
+            TransactionType::RegisterObserver => {
+                self.apply_register_observer(mutator, tx, block_height)?;
+                Ok(TxOutcome::LegacySystem)
+            }
+            TransactionType::UpdateObserverMetadata => {
+                self.apply_update_observer_metadata(mutator, tx, block_height)?;
+                Ok(TxOutcome::LegacySystem)
+            }
+            TransactionType::SuspendObserver => {
+                self.apply_suspend_observer(mutator, tx, block_height)?;
+                Ok(TxOutcome::LegacySystem)
+            }
+            TransactionType::RevokeObserver => {
+                self.apply_revoke_observer(mutator, tx, block_height)?;
+                Ok(TxOutcome::LegacySystem)
+            }
+            TransactionType::ReauthorizeObserver => {
+                self.apply_reauthorize_observer(mutator, tx, block_height)?;
                 Ok(TxOutcome::LegacySystem)
             }
 
@@ -3133,6 +3452,19 @@ mod tests {
 
     fn create_test_store() -> Arc<dyn BlockchainStore> {
         Arc::new(SledStore::open_temporary().unwrap())
+    }
+
+    /// Create a trusted-replay executor (skips prev-hash chain continuity check).
+    /// Used in tests that need to inject state between blocks without storing block headers.
+    fn create_trusted_replay_executor(store: Arc<dyn BlockchainStore>) -> BlockExecutor {
+        BlockExecutor {
+            store,
+            fee_model: FeeModelV2::default(),
+            limits: BlockLimits::default(),
+            token_creation_fee: DEFAULT_TOKEN_CREATION_FEE,
+            skip_fee_validation: true,
+            skip_prev_hash_validation: true,
+        }
     }
 
     /// Create executor with testing fee params (minimal fees for tests)
@@ -5535,5 +5867,277 @@ mod tests {
             store.get_utxo_merkle_proof(&outpoint).unwrap().is_none(),
             "Spent UTXO should be removed from the Merkle tree index"
         );
+    }
+
+    // =========================================================================
+    // Observer Admission Tests (observer-admission-3)
+    // =========================================================================
+
+    use crate::transaction::{
+        RegisterObserverData, SuspendObserverData, RevokeObserverData, ReauthorizeObserverData,
+    };
+
+    fn make_register_observer_tx(
+        observer_did: &str,
+        sponsor_did: &str,
+    ) -> Transaction {
+        let data = RegisterObserverData {
+            observer_node_did: observer_did.to_string(),
+            observer_public_key: vec![0u8; 32],
+            endpoints: vec!["127.0.0.1:9000".to_string()],
+            sponsor_user_did: sponsor_did.to_string(),
+            sponsor_proof_level: lib_types::ObserverProofLevel::Basic,
+            sponsor_signature: vec![1u8; 32],
+            allowed_network: "testnet".to_string(),
+            trusted_sync_scope: None,
+            rate_limit_tier: lib_types::ObserverRateLimitTier::Standard,
+            expires_at: None,
+            nonce: 1,
+        };
+        Transaction::new_register_observer(0x03, data, create_dummy_signature())
+    }
+
+    fn make_suspend_observer_tx(observer_did: &str, actor_did: &str) -> Transaction {
+        let data = SuspendObserverData {
+            observer_node_did: observer_did.to_string(),
+            actor_did: actor_did.to_string(),
+            reason: "test suspension".to_string(),
+            nonce: 2,
+        };
+        Transaction::new_suspend_observer(0x03, data, create_dummy_signature())
+    }
+
+    fn make_revoke_observer_tx(observer_did: &str, actor_did: &str) -> Transaction {
+        let data = RevokeObserverData {
+            observer_node_did: observer_did.to_string(),
+            actor_did: actor_did.to_string(),
+            reason: "test revocation".to_string(),
+            nonce: 3,
+        };
+        Transaction::new_revoke_observer(0x03, data, create_dummy_signature())
+    }
+
+    fn make_reauthorize_observer_tx(observer_did: &str, sponsor_did: &str) -> Transaction {
+        let data = crate::transaction::ReauthorizeObserverData {
+            observer_node_did: observer_did.to_string(),
+            sponsor_user_did: sponsor_did.to_string(),
+            nonce: 4,
+        };
+        Transaction::new_reauthorize_observer(0x03, data, create_dummy_signature())
+    }
+
+    fn apply_genesis_and_get_hash(executor: &BlockExecutor) -> Hash {
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+        genesis.header.block_hash
+    }
+
+    fn apply_block_with_tx(
+        executor: &BlockExecutor,
+        height: u64,
+        prev_hash: Hash,
+        tx: Transaction,
+    ) -> Result<ApplyOutcome, BlockApplyError> {
+        executor.apply_block(&create_block_with_txs(height, prev_hash, vec![tx]))
+    }
+
+    #[test]
+    fn test_register_observer_creates_pending_record() {
+        let store = create_test_store();
+        let executor = BlockExecutor::with_store(store.clone());
+        let genesis_hash = apply_genesis_and_get_hash(&executor);
+
+        let tx = make_register_observer_tx("did:zhtp:node1", "did:zhtp:sponsor1");
+        apply_block_with_tx(&executor, 1, genesis_hash, tx).expect("register observer failed");
+
+        let did_hash = crate::storage::did_to_hash(&"did:zhtp:node1".to_string());
+        let record = store.get_observer_record(&did_hash).unwrap();
+        assert!(record.is_some(), "observer record should exist after registration");
+        let record = record.unwrap();
+        assert_eq!(record.status, lib_types::ObserverAdmissionStatus::Pending);
+        assert_eq!(record.node_info.observer_node_did, "did:zhtp:node1");
+        assert_eq!(record.sponsor.sponsoring_user_did, "did:zhtp:sponsor1");
+    }
+
+    #[test]
+    fn test_duplicate_registration_rejected() {
+        let store = create_test_store();
+        let executor = BlockExecutor::with_store(store.clone());
+        let genesis_hash = apply_genesis_and_get_hash(&executor);
+
+        let tx1 = make_register_observer_tx("did:zhtp:node2", "did:zhtp:sponsor1");
+        let block1_hash = {
+            let block = create_block_with_txs(1, genesis_hash, vec![tx1]);
+            executor.apply_block(&block).unwrap();
+            block.header.block_hash
+        };
+
+        // Duplicate registration in block 2 should fail
+        let tx2 = make_register_observer_tx("did:zhtp:node2", "did:zhtp:sponsor1");
+        let result = apply_block_with_tx(&executor, 2, block1_hash, tx2);
+        assert!(result.is_err(), "duplicate observer registration should be rejected");
+    }
+
+    #[test]
+    fn test_suspend_active_observer() {
+        let store = create_test_store();
+        let executor = create_trusted_replay_executor(store.clone());
+        let genesis_hash = apply_genesis_and_get_hash(&executor);
+
+        // Register observer
+        let tx_reg = make_register_observer_tx("did:zhtp:node3", "did:zhtp:sponsor1");
+        let block1 = create_block_with_txs(1, genesis_hash, vec![tx_reg]);
+        executor.apply_block(&block1).unwrap();
+
+        // Seed Active status via a proper begin_block/commit_block cycle at height 2.
+        // This simulates an off-chain governance activation (no ActivateObserver tx yet).
+        let did_hash = crate::storage::did_to_hash(&"did:zhtp:node3".to_string());
+        {
+            let mut record = store.get_observer_record(&did_hash).unwrap().unwrap();
+            record.status = lib_types::ObserverAdmissionStatus::Active;
+            store.begin_block(2).unwrap();
+            store.put_observer_record(&did_hash, &record).unwrap();
+            store.commit_block().unwrap();
+        }
+
+        // Now suspend — height 3, previous is block1's hash (executor re-derives from store)
+        let block1_hash = block1.header.block_hash;
+        let tx_sus = make_suspend_observer_tx("did:zhtp:node3", "did:zhtp:sponsor1");
+        let block3 = create_block_with_txs(3, block1_hash, vec![tx_sus]);
+        executor.apply_block(&block3).unwrap();
+
+        let record = store.get_observer_record(&did_hash).unwrap().unwrap();
+        assert_eq!(record.status, lib_types::ObserverAdmissionStatus::Suspended);
+        assert!(record.action_meta.is_some());
+        assert_eq!(record.action_meta.as_ref().unwrap().actor_did, "did:zhtp:sponsor1");
+    }
+
+    #[test]
+    fn test_suspend_pending_observer_rejected() {
+        let store = create_test_store();
+        let executor = BlockExecutor::with_store(store.clone());
+        let genesis_hash = apply_genesis_and_get_hash(&executor);
+
+        let tx_reg = make_register_observer_tx("did:zhtp:node4", "did:zhtp:sponsor1");
+        let block1 = create_block_with_txs(1, genesis_hash, vec![tx_reg]);
+        executor.apply_block(&block1).unwrap();
+
+        // Try to suspend a Pending observer (must fail — only Active can be suspended)
+        let tx_sus = make_suspend_observer_tx("did:zhtp:node4", "did:zhtp:sponsor1");
+        let result = apply_block_with_tx(&executor, 2, block1.header.block_hash, tx_sus);
+        assert!(result.is_err(), "suspending a Pending observer should be rejected");
+    }
+
+    #[test]
+    fn test_revoke_observer() {
+        let store = create_test_store();
+        let executor = BlockExecutor::with_store(store.clone());
+        let genesis_hash = apply_genesis_and_get_hash(&executor);
+
+        let tx_reg = make_register_observer_tx("did:zhtp:node5", "did:zhtp:sponsor1");
+        let block1 = create_block_with_txs(1, genesis_hash, vec![tx_reg]);
+        executor.apply_block(&block1).unwrap();
+
+        let tx_rev = make_revoke_observer_tx("did:zhtp:node5", "did:zhtp:sponsor1");
+        let block2 = create_block_with_txs(2, block1.header.block_hash, vec![tx_rev]);
+        executor.apply_block(&block2).unwrap();
+
+        let did_hash = crate::storage::did_to_hash(&"did:zhtp:node5".to_string());
+        let record = store.get_observer_record(&did_hash).unwrap().unwrap();
+        assert_eq!(record.status, lib_types::ObserverAdmissionStatus::Revoked);
+        assert!(record.action_meta.is_some());
+    }
+
+    #[test]
+    fn test_double_revoke_rejected() {
+        let store = create_test_store();
+        let executor = BlockExecutor::with_store(store.clone());
+        let genesis_hash = apply_genesis_and_get_hash(&executor);
+
+        let tx_reg = make_register_observer_tx("did:zhtp:node6", "did:zhtp:sponsor1");
+        let block1 = create_block_with_txs(1, genesis_hash, vec![tx_reg]);
+        executor.apply_block(&block1).unwrap();
+
+        let tx_rev1 = make_revoke_observer_tx("did:zhtp:node6", "did:zhtp:sponsor1");
+        let block2 = create_block_with_txs(2, block1.header.block_hash, vec![tx_rev1]);
+        executor.apply_block(&block2).unwrap();
+
+        // Second revoke must fail
+        let tx_rev2 = make_revoke_observer_tx("did:zhtp:node6", "did:zhtp:sponsor1");
+        let result = apply_block_with_tx(&executor, 3, block2.header.block_hash, tx_rev2);
+        assert!(result.is_err(), "double-revoking an observer should be rejected");
+    }
+
+    #[test]
+    fn test_reauthorize_suspended_observer() {
+        let store = create_test_store();
+        let executor = create_trusted_replay_executor(store.clone());
+        let genesis_hash = apply_genesis_and_get_hash(&executor);
+
+        let tx_reg = make_register_observer_tx("did:zhtp:node7", "did:zhtp:sponsor1");
+        let block1 = create_block_with_txs(1, genesis_hash, vec![tx_reg]);
+        executor.apply_block(&block1).unwrap();
+
+        // Seed Suspended status via begin_block/commit_block at height 2.
+        let did_hash = crate::storage::did_to_hash(&"did:zhtp:node7".to_string());
+        {
+            let mut record = store.get_observer_record(&did_hash).unwrap().unwrap();
+            record.status = lib_types::ObserverAdmissionStatus::Suspended;
+            store.begin_block(2).unwrap();
+            store.put_observer_record(&did_hash, &record).unwrap();
+            store.commit_block().unwrap();
+        }
+
+        // Reauthorize as original sponsor — height 3
+        let block1_hash = block1.header.block_hash;
+        let tx_rauth = make_reauthorize_observer_tx("did:zhtp:node7", "did:zhtp:sponsor1");
+        let block3 = create_block_with_txs(3, block1_hash, vec![tx_rauth]);
+        executor.apply_block(&block3).unwrap();
+
+        let record = store.get_observer_record(&did_hash).unwrap().unwrap();
+        assert_eq!(record.status, lib_types::ObserverAdmissionStatus::Active);
+        assert!(record.action_meta.is_none(), "action_meta should be cleared on reauthorization");
+    }
+
+    #[test]
+    fn test_reauthorize_wrong_sponsor_rejected() {
+        let store = create_test_store();
+        let executor = create_trusted_replay_executor(store.clone());
+        let genesis_hash = apply_genesis_and_get_hash(&executor);
+
+        let tx_reg = make_register_observer_tx("did:zhtp:node8", "did:zhtp:sponsor1");
+        let block1 = create_block_with_txs(1, genesis_hash, vec![tx_reg]);
+        executor.apply_block(&block1).unwrap();
+
+        // Seed Suspended status via begin_block/commit_block at height 2.
+        let did_hash = crate::storage::did_to_hash(&"did:zhtp:node8".to_string());
+        {
+            let mut record = store.get_observer_record(&did_hash).unwrap().unwrap();
+            record.status = lib_types::ObserverAdmissionStatus::Suspended;
+            store.begin_block(2).unwrap();
+            store.put_observer_record(&did_hash, &record).unwrap();
+            store.commit_block().unwrap();
+        }
+
+        // Wrong sponsor — height 3
+        let block1_hash = block1.header.block_hash;
+        let tx_rauth = make_reauthorize_observer_tx("did:zhtp:node8", "did:zhtp:impostor");
+        let result = apply_block_with_tx(&executor, 3, block1_hash, tx_rauth);
+        assert!(result.is_err(), "reauthorize by wrong sponsor must be rejected");
+    }
+
+    #[test]
+    fn test_sponsor_binding_stored() {
+        let store = create_test_store();
+        let executor = BlockExecutor::with_store(store.clone());
+        let genesis_hash = apply_genesis_and_get_hash(&executor);
+
+        let tx = make_register_observer_tx("did:zhtp:node9", "did:zhtp:sponsor_abc");
+        apply_block_with_tx(&executor, 1, genesis_hash, tx).unwrap();
+
+        let did_hash = crate::storage::did_to_hash(&"did:zhtp:node9".to_string());
+        let record = store.get_observer_record(&did_hash).unwrap().unwrap();
+        assert_eq!(record.sponsor.sponsoring_user_did, "did:zhtp:sponsor_abc");
+        assert_eq!(record.sponsor.proof_level, lib_types::ObserverProofLevel::Basic);
     }
 }
