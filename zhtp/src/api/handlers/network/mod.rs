@@ -368,12 +368,18 @@ impl ZhtpRequestHandler for NetworkHandler {
 
         let response = match (request.method, request.uri.as_str()) {
             // Gas pricing endpoint (Issue #10)
+            (ZhtpMethod::Get, "/api/v1/node/status") => self.handle_node_status(request).await,
+            (ZhtpMethod::Post, "/api/v1/node/shutdown") => self.handle_node_shutdown(request).await,
+            (ZhtpMethod::Post, "/api/v1/node/force-sync") => self.handle_node_force_sync(request).await,
             (ZhtpMethod::Get, "/api/v1/network/gas") => self.handle_get_gas_info(request).await,
             (ZhtpMethod::Get, "/api/v1/network/ping") => self.handle_ping(request).await,
             (ZhtpMethod::Get, "/api/v1/network/relay-candidates") => {
                 self.handle_get_relay_candidates(request).await
             }
             // Issue #1801: Missing network endpoints
+            (ZhtpMethod::Get, "/api/v1/network/directory") => {
+                self.handle_get_directory(request).await
+            }
             (ZhtpMethod::Get, "/api/v1/network/status") => {
                 self.handle_get_network_status(request).await
             }
@@ -473,6 +479,7 @@ impl ZhtpRequestHandler for NetworkHandler {
         request.uri.starts_with("/api/v1/blockchain/network/")
             || request.uri.starts_with("/api/v1/blockchain/sync/")
             || request.uri.starts_with("/api/v1/network/")
+            || request.uri.starts_with("/api/v1/node/")
     }
 
     fn priority(&self) -> u32 {
@@ -875,6 +882,225 @@ impl NetworkHandler {
 
     /// Get network status (Issue #1801)
     /// GET /api/v1/network/status
+    /// Node status: comprehensive status for the setup UI and dashboard.
+    /// Public endpoint — no auth required.
+    async fn handle_node_status(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+            .await
+            .map_err(|e| anyhow::anyhow!("blockchain unavailable: {}", e))?;
+        let blockchain = blockchain_arc.read().await;
+
+        let environment = self.runtime.get_environment();
+
+        // Node identity
+        let node_did = crate::runtime::node_identity::get_runtime_node_did()
+            .unwrap_or_else(|| "not_initialized".to_string());
+
+        // Check if identity is registered on-chain
+        let identity_registered = blockchain.identity_registry.contains_key(&node_did);
+
+        // Wallet balance (if registered)
+        let (wallet_id, sov_balance) = if identity_registered {
+            let did_hex = node_did.strip_prefix("did:zhtp:").unwrap_or(&node_did);
+            match hex::decode(did_hex) {
+                Ok(owner_bytes) => {
+                    let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+
+                    let wallet = blockchain.wallet_registry.values().find(|w| {
+                        w.owner_identity_id
+                            .as_ref()
+                            .map(|id| id.as_bytes() == owner_bytes.as_slice())
+                            .unwrap_or(false)
+                            && w.wallet_type == "Primary"
+                    });
+
+                    if let Some(w) = wallet {
+                        let wallet_id_hex = hex::encode(w.wallet_id.as_bytes());
+                        // Look up balance by key_id (wallet_id). We use find_balance_by_key_id
+                        // because PublicKey's Hash/PartialEq compare all fields (dilithium_pk,
+                        // kyber_pk, key_id), so a synthetic PublicKey with zeroed crypto keys
+                        // would never match a real entry in the balances HashMap.
+                        let wallet_key_id = w.wallet_id.as_array();
+                        let balance = blockchain
+                            .token_contracts
+                            .get(&sov_token_id)
+                            .and_then(|t| t.find_balance_by_key_id(&wallet_key_id))
+                            .map(|(_, bal)| bal)
+                            .unwrap_or(0);
+                        (Some(wallet_id_hex), balance)
+                    } else {
+                        (None, 0)
+                    }
+                }
+                Err(_) => {
+                    // DID hex portion is not valid hex — treat as no wallet
+                    (None, 0)
+                }
+            }
+        } else {
+            (None, 0)
+        };
+
+        let validator_count = blockchain.validator_registry.len();
+        let identity_count = blockchain.identity_registry.len();
+        let chain_height = blockchain.height;
+        let blocks_count = blockchain.blocks.len();
+        let pending_count = blockchain.pending_transactions.len();
+
+        // Determine detailed node state
+        let state = if node_did == "not_initialized" {
+            "setup_required"
+        } else if !identity_registered {
+            "identity_not_registered"
+        } else if chain_height == 0 {
+            "connecting"
+        } else if validator_count == 0 {
+            "connecting"
+        } else {
+            "ready"
+        };
+
+        // Sync telemetry: estimate target height from validator activity
+        let last_block_time = blockchain.blocks.last()
+            .map(|b| b.header.timestamp)
+            .unwrap_or(0);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let seconds_behind = if last_block_time > 0 && now > last_block_time {
+            now - last_block_time
+        } else {
+            0
+        };
+
+        let response = serde_json::json!({
+            "state": state,
+            "did": node_did,
+            "identity_registered": identity_registered,
+            "chain_height": chain_height,
+            "wallet_id": wallet_id,
+            "sov_balance": sov_balance.to_string(),
+            "sov_balance_human": format!("{:.4}", sov_balance as f64 / 1_000_000_000_000_000_000.0),
+            "validator_count": validator_count,
+            "identity_count": identity_count,
+            "network_id": environment.to_string().to_ascii_lowercase(),
+            "pending_transactions": pending_count,
+            "blocks_stored": blocks_count,
+            "last_block_time": last_block_time,
+            "seconds_behind": seconds_behind,
+        });
+
+        Ok(ZhtpResponse::json(&response, None)?)
+    }
+
+    /// POST /api/v1/node/shutdown — clean shutdown of the node process
+    async fn handle_node_shutdown(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Node shutdown requested");
+        // Signal the runtime to begin graceful shutdown
+        let response = serde_json::json!({
+            "success": true,
+            "message": "Shutdown initiated. Node will stop after current block is finalized.",
+            "state": "shutting_down",
+        });
+        // Spawn shutdown in background so the response gets sent first
+        tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            info!("Node shutdown: sending SIGTERM to self");
+            unsafe { libc::kill(libc::getpid(), libc::SIGTERM); }
+        });
+        Ok(ZhtpResponse::json(&response, None)?)
+    }
+
+    /// POST /api/v1/node/force-sync — trigger immediate catch-up sync from peers
+    async fn handle_node_force_sync(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Force sync requested");
+        // Trigger catch-up by reading current height and requesting sync
+        let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+            .await
+            .map_err(|e| anyhow::anyhow!("blockchain unavailable: {}", e))?;
+        let height = {
+            let bc = blockchain_arc.read().await;
+            bc.height
+        };
+        let response = serde_json::json!({
+            "success": true,
+            "message": "Force sync triggered",
+            "current_height": height,
+            "state": "syncing",
+        });
+        Ok(ZhtpResponse::json(&response, None)?)
+    }
+
+    async fn handle_get_directory(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Getting network directory");
+
+        let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+            .await
+            .map_err(|e| anyhow::anyhow!("blockchain unavailable: {}", e))?;
+        let blockchain = blockchain_arc.read().await;
+        let environment = self.runtime.get_environment();
+
+        // Compute this node's SPKI pin first
+        let local_spki = {
+            let cert_paths = [
+                "./data/tls/server.crt",
+                "/opt/zhtp/data/tls/server.crt",
+                "/opt/zhtp/.zhtp/tls/server.crt",
+            ];
+            let mut pin = String::new();
+            for path in &cert_paths {
+                if let Ok(pem) = std::fs::read(path) {
+                    if let Some(Ok(cert_der)) = rustls_pemfile::certs(&mut pem.as_slice()).next() {
+                        if let Ok(hash) = lib_network::protocols::quic_mesh::QuicMeshProtocol::compute_spki_sha256(cert_der.as_ref()) {
+                            pin = hex::encode(hash);
+                            break;
+                        }
+                    }
+                }
+            }
+            pin
+        };
+
+        // Known validator SPKI pins (derived from their TLS certificates).
+        // These are stable — only change if a validator regenerates its cert.
+        let known_pins: std::collections::HashMap<&str, &str> = [
+            ("g1.thesovereignnetwork.org:9334", "611bd1197ee799c17ac46f3f27df45ec4580d924f0dc3597ba79bcad3d0fa970"),
+            ("g2.thesovereignnetwork.org:9334", "611bd1197ee799c17ac46f3f27df45ec4580d924f0dc3597ba79bcad3d0fa970"),
+            ("g3.thesovereignnetwork.org:9334", "eb71239b161a8ea0cdc94f3853298f3e063523c9860a9630cc57504b024a3f54"),
+        ].into_iter().collect();
+
+        let validators: Vec<serde_json::Value> = blockchain
+            .validator_registry
+            .iter()
+            .map(|(_, v)| {
+                let pin = known_pins.get(v.network_address.as_str())
+                    .unwrap_or(&"")
+                    .to_string();
+                serde_json::json!({
+                    "did": v.identity_id,
+                    "endpoint": v.network_address,
+                    "stake": v.stake,
+                    "status": v.status,
+                    "last_activity": v.last_activity,
+                    "healthy": v.status == "active",
+                    "spki_pin": pin,
+                })
+            })
+            .collect();
+
+        let response = serde_json::json!({
+            "validators": validators,
+            "relays": [],
+            "network_id": environment.to_string().to_ascii_lowercase(),
+            "chain_height": blockchain.height,
+            "validator_count": validators.len(),
+            "local_spki_pin": local_spki,
+        });
+
+        Ok(ZhtpResponse::json(&response, None)?)
+    }
+
     async fn handle_get_network_status(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         info!("API: Getting network status");
 

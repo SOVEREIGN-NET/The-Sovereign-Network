@@ -22,6 +22,7 @@ pub mod monitor;
 pub mod nft;
 pub mod network;
 pub mod node;
+pub mod setup_ui;
 pub mod oracle;
 pub mod rewards;
 pub mod server;
