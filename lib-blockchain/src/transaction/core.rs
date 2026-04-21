@@ -2669,6 +2669,8 @@ pub struct RegisterObserverData {
 pub struct UpdateObserverMetadataData {
     /// Observer node DID to update.
     pub observer_node_did: String,
+    /// DID of the actor authorizing the update (must be the sponsor).
+    pub actor_did: String,
     /// Replacement endpoint list (replaces the entire existing list).
     #[serde(default)]
     pub new_endpoints: Vec<String>,

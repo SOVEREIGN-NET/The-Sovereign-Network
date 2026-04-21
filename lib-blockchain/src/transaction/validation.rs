@@ -2023,33 +2023,99 @@ impl<'a> StatefulTransactionValidator<'a> {
 
             // =================================================================
             // Observer Admission (observer-admission-3)
-            // Stateful checks (duplicate, lifecycle, sponsor) are deferred to the
-            // executor's apply_* methods which have mutable access to store.
-            // Here we only re-confirm payload presence (idempotent with stateless).
+            // For each observer type, verify that the signing key matches the
+            // expected actor DID in the payload.  This prevents a malicious
+            // party from submitting observer lifecycle operations under a DID
+            // they do not control.
             // =================================================================
             TransactionType::RegisterObserver => {
                 if transaction.register_observer_data().is_none() {
                     return Err(ValidationError::MissingRequiredData);
+                }
+                let data = transaction.register_observer_data().unwrap();
+                let signer_did = format!(
+                    "did:zhtp:{}",
+                    hex::encode(transaction.signature.public_key.key_id)
+                );
+                if signer_did != data.sponsor_user_did {
+                    tracing::warn!(
+                        "[REGISTER_OBSERVER] sponsor_user_did mismatch: payload={} signer={}",
+                        data.sponsor_user_did,
+                        signer_did
+                    );
+                    return Err(ValidationError::InvalidSponsorBinding);
                 }
             }
             TransactionType::UpdateObserverMetadata => {
                 if transaction.update_observer_metadata_data().is_none() {
                     return Err(ValidationError::MissingRequiredData);
                 }
+                let data = transaction.update_observer_metadata_data().unwrap();
+                let signer_did = format!(
+                    "did:zhtp:{}",
+                    hex::encode(transaction.signature.public_key.key_id)
+                );
+                if signer_did != data.actor_did {
+                    tracing::warn!(
+                        "[UPDATE_OBSERVER_META] actor_did mismatch: payload={} signer={}",
+                        data.actor_did,
+                        signer_did
+                    );
+                    return Err(ValidationError::InvalidSponsorBinding);
+                }
             }
             TransactionType::SuspendObserver => {
                 if transaction.suspend_observer_data().is_none() {
                     return Err(ValidationError::MissingRequiredData);
+                }
+                let data = transaction.suspend_observer_data().unwrap();
+                let signer_did = format!(
+                    "did:zhtp:{}",
+                    hex::encode(transaction.signature.public_key.key_id)
+                );
+                if signer_did != data.actor_did {
+                    tracing::warn!(
+                        "[SUSPEND_OBSERVER] actor_did mismatch: payload={} signer={}",
+                        data.actor_did,
+                        signer_did
+                    );
+                    return Err(ValidationError::InvalidSponsorBinding);
                 }
             }
             TransactionType::RevokeObserver => {
                 if transaction.revoke_observer_data().is_none() {
                     return Err(ValidationError::MissingRequiredData);
                 }
+                let data = transaction.revoke_observer_data().unwrap();
+                let signer_did = format!(
+                    "did:zhtp:{}",
+                    hex::encode(transaction.signature.public_key.key_id)
+                );
+                if signer_did != data.actor_did {
+                    tracing::warn!(
+                        "[REVOKE_OBSERVER] actor_did mismatch: payload={} signer={}",
+                        data.actor_did,
+                        signer_did
+                    );
+                    return Err(ValidationError::InvalidSponsorBinding);
+                }
             }
             TransactionType::ReauthorizeObserver => {
                 if transaction.reauthorize_observer_data().is_none() {
                     return Err(ValidationError::MissingRequiredData);
+                }
+                let data = transaction.reauthorize_observer_data().unwrap();
+                let signer_did = format!(
+                    "did:zhtp:{}",
+                    hex::encode(transaction.signature.public_key.key_id)
+                );
+                if signer_did != data.sponsor_user_did {
+                    tracing::warn!(
+                        "[REAUTHORIZE_OBSERVER] sponsor_user_did mismatch: payload={} signer={}",
+                        data.sponsor_user_did,
+                        signer_did
+                    );
+                    return Err(ValidationError::InvalidSponsorBinding);
                 }
             }
 
@@ -2160,9 +2226,10 @@ impl<'a> StatefulTransactionValidator<'a> {
             && transaction.transaction_type != TransactionType::DaoUnstake
             && transaction.transaction_type != TransactionType::DomainRegistration // owner_did↔signer binding enforced above
             && transaction.transaction_type != TransactionType::DomainUpdate // owner_did↔signer binding enforced above
-            // Observer transactions: sponsor binding is validated in executor; signer may be
-            // the observer node itself which may not have a registered identity yet.
-            && !transaction.transaction_type.is_observer_transaction()
+            // RegisterObserver: the sponsor may not have a registered identity yet.
+            // All other observer lifecycle types (Suspend/Revoke/Reauthorize/Update) require
+            // the actor to be a known identity, so they go through the normal check.
+            && transaction.transaction_type != TransactionType::RegisterObserver
             && !is_token_contract_execution(transaction)
         {
             tracing::debug!("[BREADCRUMB] validate_sender_identity_exists CALL");

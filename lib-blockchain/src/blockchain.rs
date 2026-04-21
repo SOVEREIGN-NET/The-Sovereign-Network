@@ -321,13 +321,17 @@ pub struct Blockchain {
     // =========================================================================
     // Observer Admission Registry (observer-admission-3)
     // =========================================================================
-    /// Canonical observer admission registry.
+    /// Observer admission registry snapshot used for in-process reads (e.g.
+    /// API handlers that load a `Blockchain` from a snapshot).
     ///
-    /// Keyed by observer node DID string. This is the authoritative in-memory
-    /// view; sled-backed persistence mirrors it record-by-record via
-    /// `put_observer_record` / `get_observer_record` in the executor.
+    /// **The sled-backed store is the canonical source of truth.** The executor
+    /// does not populate this field during block application; it writes directly
+    /// to sled via `put_observer_record`.  This field is populated only when a
+    /// `Blockchain` is deserialized from a persisted snapshot that included
+    /// observer records.
     ///
-    /// Eligibility MUST be checked here — never inferred from local config.
+    /// Do not use this field for eligibility checks during execution — query the
+    /// store instead.
     #[serde(default)]
     pub observer_registry: HashMap<String, lib_types::ObserverAdmissionRecord>,
     /// Observer node DID → block height at which the record was first committed.

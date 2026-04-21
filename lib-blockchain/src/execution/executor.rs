@@ -2471,10 +2471,32 @@ impl BlockExecutor {
     //   - ReauthorizeObserver: record must exist; status must be Suspended;
     //     caller must be original sponsor.
     //
-    // All write paths: mutate in-memory blockchain state AND persist to sled.
-    // This ensures deterministic replay: both a fresh node (sled) and an in-memory
-    // node (block replay) end up with identical state.
+    // All write paths: persist to sled (the canonical store).
+    // The in-memory `Blockchain::observer_registry` field is NOT populated by
+    // the executor; the sled-backed store is the authoritative source of truth.
     // =========================================================================
+
+    /// Truncate a DID string to at most `n` Unicode scalar values for safe log output.
+    fn trunc_did(s: &str) -> String {
+        s.chars().take(48).collect()
+    }
+
+    /// Load an observer record by DID, returning both the hash key and the record.
+    fn load_observer_record(
+        mutator: &StateMutator<'_>,
+        did: &str,
+        op_name: &str,
+    ) -> Result<([u8; 32], lib_types::ObserverAdmissionRecord), TxApplyError> {
+        let did_hash = crate::storage::did_to_hash(did);
+        let record = mutator.get_observer_record(&did_hash)?.ok_or_else(|| {
+            TxApplyError::InvalidType(format!(
+                "{}: observer {} not found",
+                op_name,
+                Self::trunc_did(did),
+            ))
+        })?;
+        Ok((did_hash, record))
+    }
 
     fn apply_register_observer(
         &self,
@@ -2510,7 +2532,7 @@ impl BlockExecutor {
         if mutator.get_observer_record(&did_hash)?.is_some() {
             return Err(TxApplyError::InvalidType(format!(
                 "RegisterObserver: observer {} is already registered",
-                &data.observer_node_did[..data.observer_node_did.len().min(48)],
+                Self::trunc_did(&data.observer_node_did),
             )));
         }
 
@@ -2543,8 +2565,8 @@ impl BlockExecutor {
 
         tracing::info!(
             "[REGISTER_OBSERVER] did={} sponsor={} height={}",
-            &data.observer_node_did[..data.observer_node_did.len().min(48)],
-            &data.sponsor_user_did[..data.sponsor_user_did.len().min(48)],
+            Self::trunc_did(&data.observer_node_did),
+            Self::trunc_did(&data.sponsor_user_did),
             block_height,
         );
 
@@ -2561,18 +2583,20 @@ impl BlockExecutor {
             TxApplyError::InvalidType("UpdateObserverMetadata missing payload".to_string())
         })?;
 
-        let did_hash = crate::storage::did_to_hash(&data.observer_node_did);
-        let mut record = mutator.get_observer_record(&did_hash)?.ok_or_else(|| {
-            TxApplyError::InvalidType(format!(
-                "UpdateObserverMetadata: observer {} not found",
-                &data.observer_node_did[..data.observer_node_did.len().min(48)],
-            ))
-        })?;
+        let (did_hash, mut record) =
+            Self::load_observer_record(mutator, &data.observer_node_did, "UpdateObserverMetadata")?;
+
+        // Only the registered sponsor may update observer metadata.
+        if data.actor_did != record.sponsor.sponsoring_user_did {
+            return Err(TxApplyError::InvalidType(format!(
+                "UpdateObserverMetadata: actor {} is not the sponsor",
+                Self::trunc_did(&data.actor_did),
+            )));
+        }
 
         // Apply updates.
-        if !data.new_endpoints.is_empty() {
-            record.node_info.endpoints = data.new_endpoints.clone();
-        }
+        // Endpoints are always replaced (even with an empty list, to allow clearing).
+        record.node_info.endpoints = data.new_endpoints.clone();
         if let Some(ref net) = data.new_network {
             record.network.allowed_network = net.allowed_network.clone();
             record.network.trusted_sync_scope = net.trusted_sync_scope.clone();
@@ -2588,8 +2612,9 @@ impl BlockExecutor {
         mutator.put_observer_record(&did_hash, &record)?;
 
         tracing::info!(
-            "[UPDATE_OBSERVER_META] did={} height={}",
-            &data.observer_node_did[..data.observer_node_did.len().min(48)],
+            "[UPDATE_OBSERVER_META] did={} actor={} height={}",
+            Self::trunc_did(&data.observer_node_did),
+            Self::trunc_did(&data.actor_did),
             block_height,
         );
 
@@ -2608,19 +2633,22 @@ impl BlockExecutor {
             TxApplyError::InvalidType("SuspendObserver missing payload".to_string())
         })?;
 
-        let did_hash = crate::storage::did_to_hash(&data.observer_node_did);
-        let mut record = mutator.get_observer_record(&did_hash)?.ok_or_else(|| {
-            TxApplyError::InvalidType(format!(
-                "SuspendObserver: observer {} not found",
-                &data.observer_node_did[..data.observer_node_did.len().min(48)],
-            ))
-        })?;
+        let (did_hash, mut record) =
+            Self::load_observer_record(mutator, &data.observer_node_did, "SuspendObserver")?;
+
+        // Only the registered sponsor may suspend the observer.
+        if data.actor_did != record.sponsor.sponsoring_user_did {
+            return Err(TxApplyError::InvalidType(format!(
+                "SuspendObserver: actor {} is not the sponsor",
+                Self::trunc_did(&data.actor_did),
+            )));
+        }
 
         // Only Active observers can be suspended.
         if record.status != ObserverAdmissionStatus::Active {
             return Err(TxApplyError::InvalidType(format!(
                 "SuspendObserver: observer {} status is {:?}, must be Active",
-                &data.observer_node_did[..data.observer_node_did.len().min(48)],
+                Self::trunc_did(&data.observer_node_did),
                 record.status,
             )));
         }
@@ -2637,8 +2665,8 @@ impl BlockExecutor {
 
         tracing::info!(
             "[SUSPEND_OBSERVER] did={} actor={} height={}",
-            &data.observer_node_did[..data.observer_node_did.len().min(48)],
-            &data.actor_did[..data.actor_did.len().min(48)],
+            Self::trunc_did(&data.observer_node_did),
+            Self::trunc_did(&data.actor_did),
             block_height,
         );
 
@@ -2657,19 +2685,22 @@ impl BlockExecutor {
             TxApplyError::InvalidType("RevokeObserver missing payload".to_string())
         })?;
 
-        let did_hash = crate::storage::did_to_hash(&data.observer_node_did);
-        let mut record = mutator.get_observer_record(&did_hash)?.ok_or_else(|| {
-            TxApplyError::InvalidType(format!(
-                "RevokeObserver: observer {} not found",
-                &data.observer_node_did[..data.observer_node_did.len().min(48)],
-            ))
-        })?;
+        let (did_hash, mut record) =
+            Self::load_observer_record(mutator, &data.observer_node_did, "RevokeObserver")?;
+
+        // Only the registered sponsor may revoke the observer.
+        if data.actor_did != record.sponsor.sponsoring_user_did {
+            return Err(TxApplyError::InvalidType(format!(
+                "RevokeObserver: actor {} is not the sponsor",
+                Self::trunc_did(&data.actor_did),
+            )));
+        }
 
         // Cannot revoke an already-revoked observer (idempotency guard).
         if record.status == ObserverAdmissionStatus::Revoked {
             return Err(TxApplyError::InvalidType(format!(
                 "RevokeObserver: observer {} is already Revoked",
-                &data.observer_node_did[..data.observer_node_did.len().min(48)],
+                Self::trunc_did(&data.observer_node_did),
             )));
         }
 
@@ -2685,8 +2716,8 @@ impl BlockExecutor {
 
         tracing::info!(
             "[REVOKE_OBSERVER] did={} actor={} height={}",
-            &data.observer_node_did[..data.observer_node_did.len().min(48)],
-            &data.actor_did[..data.actor_did.len().min(48)],
+            Self::trunc_did(&data.observer_node_did),
+            Self::trunc_did(&data.actor_did),
             block_height,
         );
 
@@ -2705,19 +2736,14 @@ impl BlockExecutor {
             TxApplyError::InvalidType("ReauthorizeObserver missing payload".to_string())
         })?;
 
-        let did_hash = crate::storage::did_to_hash(&data.observer_node_did);
-        let mut record = mutator.get_observer_record(&did_hash)?.ok_or_else(|| {
-            TxApplyError::InvalidType(format!(
-                "ReauthorizeObserver: observer {} not found",
-                &data.observer_node_did[..data.observer_node_did.len().min(48)],
-            ))
-        })?;
+        let (did_hash, mut record) =
+            Self::load_observer_record(mutator, &data.observer_node_did, "ReauthorizeObserver")?;
 
         // Only Suspended observers can be reauthorized.
         if record.status != ObserverAdmissionStatus::Suspended {
             return Err(TxApplyError::InvalidType(format!(
                 "ReauthorizeObserver: observer {} status is {:?}, must be Suspended",
-                &data.observer_node_did[..data.observer_node_did.len().min(48)],
+                Self::trunc_did(&data.observer_node_did),
                 record.status,
             )));
         }
@@ -2726,9 +2752,8 @@ impl BlockExecutor {
         if data.sponsor_user_did != record.sponsor.sponsoring_user_did {
             return Err(TxApplyError::InvalidType(format!(
                 "ReauthorizeObserver: sponsor_user_did mismatch: tx={} recorded={}",
-                &data.sponsor_user_did[..data.sponsor_user_did.len().min(48)],
-                &record.sponsor.sponsoring_user_did
-                    [..record.sponsor.sponsoring_user_did.len().min(48)],
+                Self::trunc_did(&data.sponsor_user_did),
+                Self::trunc_did(&record.sponsor.sponsoring_user_did),
             )));
         }
 
@@ -2740,8 +2765,8 @@ impl BlockExecutor {
 
         tracing::info!(
             "[REAUTHORIZE_OBSERVER] did={} sponsor={} height={}",
-            &data.observer_node_did[..data.observer_node_did.len().min(48)],
-            &data.sponsor_user_did[..data.sponsor_user_did.len().min(48)],
+            Self::trunc_did(&data.observer_node_did),
+            Self::trunc_did(&data.sponsor_user_did),
             block_height,
         );
 
