@@ -430,9 +430,31 @@ impl Component for ProtocolsComponent {
         // Start ZDNS transport server if enabled (UDP/TCP DNS on port 53)
         if self.enable_zdns_transport {
             info!(" Starting ZDNS transport server (DNS on port 53)...");
-            // SECURITY: Use builder pattern with explicit bind address
-            let transport_config = ZdnsServerConfig::production(self.zdns_gateway_ip)
+            let mut transport_config = ZdnsServerConfig::production(self.zdns_gateway_ip)
                 .with_bind_addr(self.zdns_bind_addr);
+
+            // Wire dynamic endpoint provider: reads active validator IPs from on-chain registry.
+            // Health filtering: only returns validators with status == "active".
+            if let Ok(blockchain_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
+                let bc_ref = blockchain_arc.clone();
+                transport_config.network_endpoint_provider = Some(std::sync::Arc::new(move || {
+                    // Synchronous closure — use try_read to avoid blocking.
+                    // If the lock is held, return empty (DNS will retry on next query).
+                    let bc = match bc_ref.try_read() {
+                        Ok(bc) => bc,
+                        Err(_) => return vec![],
+                    };
+                    bc.validator_registry
+                        .values()
+                        .filter(|v| v.status == "active")
+                        .filter_map(|v| {
+                            let host = v.network_address.split(':').next()?;
+                            host.parse::<std::net::Ipv4Addr>().ok()
+                        })
+                        .collect()
+                }));
+                info!(" ✓ ZDNS network endpoint provider wired to validator registry");
+            }
             let transport_server = Arc::new(ZdnsTransportServer::new(
                 zdns_resolver.clone(),
                 transport_config,

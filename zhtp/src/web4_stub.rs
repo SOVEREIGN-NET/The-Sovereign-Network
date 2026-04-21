@@ -234,12 +234,23 @@ impl ZhtpRelayProtocol {
 #[derive(Debug, Clone, Default)]
 pub struct ZdnsTransportServer;
 
-#[derive(Debug, Clone, Default)]
-pub struct ZdnsServerConfig;
+/// Network endpoint provider for ZDNS directory queries.
+pub type NetworkEndpointProvider = std::sync::Arc<dyn Fn() -> Vec<std::net::Ipv4Addr> + Send + Sync>;
+
+#[derive(Clone, Default)]
+pub struct ZdnsServerConfig {
+    pub network_endpoint_provider: Option<NetworkEndpointProvider>,
+}
+
+impl std::fmt::Debug for ZdnsServerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ZdnsServerConfig").finish()
+    }
+}
 
 impl ZdnsServerConfig {
     pub fn production(_gateway_ip: std::net::Ipv4Addr) -> Self {
-        Self
+        Self { network_endpoint_provider: None }
     }
 
     pub fn with_bind_addr(self, _addr: std::net::IpAddr) -> Self {
