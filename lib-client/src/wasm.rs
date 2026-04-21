@@ -279,7 +279,7 @@ impl WasmSession {
     /// Get peer's DID
     #[wasm_bindgen(js_name = peerDid)]
     pub fn peer_did(&self) -> String {
-        self.inner.peer_did().to_string()
+        self.inner.peer_did().unwrap_or_default()
     }
 
     /// Get session ID

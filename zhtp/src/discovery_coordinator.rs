@@ -1011,7 +1011,7 @@ fn spawn_remote_chain_probe_task(
             }
         }
 
-        let peer_did = client.peer_did().map(str::to_owned);
+        let peer_did = client.peer_did();
         if !crate::runtime::is_trusted_sync_source(
             &peer,
             peer_did.as_deref(),

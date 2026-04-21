@@ -229,7 +229,7 @@ async fn try_initial_sync_from_peer(
             }
         }
 
-        let peer_did = client.peer_did().map(str::to_owned);
+        let peer_did = client.peer_did();
         if !is_trusted_sync_source(peer, peer_did.as_deref(), trusted_sync_sources) {
             warn!(
                 "⚠️  Skipping untrusted sync source {} (peer_did={})",
