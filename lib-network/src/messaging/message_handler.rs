@@ -225,6 +225,157 @@ impl MeshMessageHandler {
         }
     }
 
+    /// Handle route discovery probe
+    ///
+    /// If this node is the target, sends a RouteResponse back to the originator.
+    /// Otherwise, decrements TTL and forwards toward the target.
+    async fn handle_route_probe(
+        &self,
+        probe_id: u64,
+        target: PublicKey,
+        originator: PublicKey,
+        ttl: u8,
+        _sender: PublicKey,
+    ) -> Result<()> {
+        if ttl == 0 {
+            debug!("Route probe {} TTL expired, dropping", probe_id);
+            return Ok(());
+        }
+
+        // Check if we are the target
+        if let Some(node_id) = &self.node_id {
+            if node_id == &target {
+                let registry = self.peer_registry.read().await;
+                let quality = registry
+                    .find_by_public_key(node_id)
+                    .map(|e| e.route_quality)
+                    .unwrap_or(0.5);
+                let latency = registry
+                    .find_by_public_key(node_id)
+                    .map(|e| e.connection_metrics.latency_ms)
+                    .unwrap_or(0);
+                drop(registry);
+
+                let response = ZhtpMeshMessage::RouteResponse {
+                    probe_id,
+                    route_quality: quality,
+                    latency_ms: latency,
+                    originator: originator.clone(),
+                    ttl: 5,
+                };
+
+                if let Some(router) = &self.message_router {
+                    router
+                        .read()
+                        .await
+                        .route_message(response, originator, node_id.clone())
+                        .await?;
+                    info!("Sent RouteResponse for probe {} (we are target)", probe_id);
+                }
+                return Ok(());
+            }
+        }
+
+        // Forward toward target
+        let new_ttl = ttl.saturating_sub(1);
+        let forward = ZhtpMeshMessage::RouteProbe {
+            probe_id,
+            target: target.clone(),
+            originator: originator.clone(),
+            ttl: new_ttl,
+        };
+
+        if let Some(router) = &self.message_router {
+            router
+                .read()
+                .await
+                .route_message(forward, target, originator)
+                .await?;
+            debug!("Forwarded RouteProbe {} toward target (ttl={})", probe_id, new_ttl);
+        }
+
+        Ok(())
+    }
+
+    /// Handle route discovery response
+    ///
+    /// If this node is the originator, updates the peer registry with the
+    /// measured route quality and latency for the target.
+    /// Otherwise, decrements TTL and forwards toward the originator.
+    async fn handle_route_response(
+        &self,
+        probe_id: u64,
+        route_quality: f64,
+        latency_ms: u32,
+        originator: PublicKey,
+        ttl: u8,
+        sender: PublicKey,
+    ) -> Result<()> {
+        if ttl == 0 {
+            debug!("Route response {} TTL expired, dropping", probe_id);
+            return Ok(());
+        }
+
+        // Check if we are the originator
+        if let Some(node_id) = &self.node_id {
+            if node_id == &originator {
+                // Update peer registry for the target (the node that sent the response)
+                let mut registry = self.peer_registry.write().await;
+                let updated = registry.update_by_public_key(&sender, |entry| {
+                    entry.route_quality = route_quality;
+                    entry.connection_metrics.latency_ms = latency_ms;
+                    entry.last_seen = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                });
+                drop(registry);
+
+                if updated {
+                    info!(
+                        "Route probe {} completed: target {} quality={:.2} latency={}ms",
+                        probe_id,
+                        hex::encode(&sender.key_id[..8]),
+                        route_quality,
+                        latency_ms
+                    );
+                } else {
+                    warn!(
+                        "Route probe {} response from unknown peer {}",
+                        probe_id,
+                        hex::encode(&sender.key_id[..8])
+                    );
+                }
+                return Ok(());
+            }
+        }
+
+        // Forward toward originator
+        let new_ttl = ttl.saturating_sub(1);
+        let forward = ZhtpMeshMessage::RouteResponse {
+            probe_id,
+            route_quality,
+            latency_ms,
+            originator: originator.clone(),
+            ttl: new_ttl,
+        };
+
+        if let Some(router) = &self.message_router {
+            router
+                .read()
+                .await
+                .route_message(forward, originator, sender)
+                .await?;
+            debug!(
+                "Forwarded RouteResponse {} toward originator (ttl={})",
+                probe_id,
+                new_ttl
+            );
+        }
+
+        Ok(())
+    }
+
     /// Handle incoming mesh message
     pub async fn handle_mesh_message(
         &self,
@@ -424,22 +575,31 @@ impl MeshMessageHandler {
                 self.handle_new_transaction(transaction, sender, tx_hash, fee)
                     .await?;
             }
-            ZhtpMeshMessage::RouteProbe { probe_id, target } => {
-                // TODO: Implement route probe handling
-                tracing::info!("Received route probe {} for target {:?}", probe_id, target);
+            ZhtpMeshMessage::RouteProbe {
+                probe_id,
+                target,
+                originator,
+                ttl,
+            } => {
+                self.handle_route_probe(probe_id, target, originator, ttl, sender)
+                    .await?;
             }
             ZhtpMeshMessage::RouteResponse {
                 probe_id,
                 route_quality,
                 latency_ms,
+                originator,
+                ttl,
             } => {
-                // TODO: Implement route response handling
-                tracing::info!(
-                    "Received route response for probe {} with quality {} and latency {}ms",
+                self.handle_route_response(
                     probe_id,
                     route_quality,
-                    latency_ms
-                );
+                    latency_ms,
+                    originator,
+                    ttl,
+                    sender,
+                )
+                .await?;
             }
             ZhtpMeshMessage::BootstrapProofRequest {
                 requester,

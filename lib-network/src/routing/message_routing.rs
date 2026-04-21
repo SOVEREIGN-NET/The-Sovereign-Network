@@ -543,6 +543,26 @@ impl MeshMessageRouter {
         crate::nat::is_reachable(entry.nat_state.as_ref(), now, 3600)
     }
 
+    /// Send a route discovery probe toward a target node
+    ///
+    /// Initiates control-plane route probing. Intermediary nodes forward the
+    /// probe toward the target; the target replies with a RouteResponse that
+    /// updates route quality metrics in the peer registry.
+    pub async fn send_route_probe(
+        &self,
+        target: PublicKey,
+        originator: PublicKey,
+    ) -> Result<u64> {
+        let probe_id = self.generate_message_id().await;
+        let probe = ZhtpMeshMessage::RouteProbe {
+            probe_id,
+            target: target.clone(),
+            originator: originator.clone(),
+            ttl: 5,
+        };
+        self.route_message(probe, target, originator).await
+    }
+
     /// Find optimal route to destination
     pub async fn find_optimal_route(
         &self,
