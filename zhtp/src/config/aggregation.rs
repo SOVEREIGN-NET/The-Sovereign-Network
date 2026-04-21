@@ -48,7 +48,7 @@ pub struct PartialZdnsConfig {
     /// Enable ZDNS server (default: false — opt-in)
     #[serde(default)]
     pub enabled: Option<bool>,
-    /// Bind address (default: 0.0.0.0)
+    /// Bind address (default: 127.0.0.1)
     #[serde(default)]
     pub bind: Option<String>,
     /// Port (default: 53)
@@ -61,7 +61,7 @@ pub struct PartialZdnsConfig {
 pub struct ZdnsNodeConfig {
     /// Enable ZDNS DNS server
     pub enabled: bool,
-    /// Bind address (default: 0.0.0.0 for public access)
+    /// Bind address (default: 127.0.0.1 — set to "0.0.0.0" to expose publicly)
     pub bind: String,
     /// DNS port (default: 53)
     pub port: u16,
@@ -71,7 +71,7 @@ impl Default for ZdnsNodeConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            bind: "0.0.0.0".to_string(),
+            bind: "127.0.0.1".to_string(),
             port: 53,
         }
     }
@@ -249,7 +249,7 @@ pub struct NodeConfig {
     pub rewards_config: RewardsConfig,
 
     /// ZDNS configuration (network directory DNS server)
-    #[serde(default)]
+    #[serde(default, alias = "zdns")]
     pub zdns_config: ZdnsNodeConfig,
 
     // Validator configuration (Gap 5)
@@ -1318,8 +1318,8 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
 
                     // Merge [zdns] section
                     if let Some(zdns) = partial.zdns {
-                        if zdns.enabled.unwrap_or(false) {
-                            config.zdns_config.enabled = true;
+                        config.zdns_config.enabled = zdns.enabled.unwrap_or(config.zdns_config.enabled);
+                        if config.zdns_config.enabled {
                             tracing::info!("Loaded [zdns] section: enabled");
                         }
                         if let Some(bind) = zdns.bind {

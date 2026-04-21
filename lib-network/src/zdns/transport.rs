@@ -576,11 +576,11 @@ impl ZdnsTransportServer {
             let provider = config.network_endpoint_provider.as_ref().unwrap();
             let endpoints = provider();
             if endpoints.is_empty() {
-                debug!(domain = %domain_lower, "No network endpoints available");
-                stats.write().await.nxdomain += 1;
-                return Some(DnsPacket::nxdomain(&query));
+                debug!(domain = %domain_lower, "No network endpoints available (temporary)");
+                stats.write().await.errors += 1;
+                return Some(DnsPacket::servfail(&query));
             }
-            // Return all validator IPs as multiple A records (round-robin)
+            // Return all validator IPs as multiple A records
             debug!(
                 domain = %domain_lower,
                 count = endpoints.len(),

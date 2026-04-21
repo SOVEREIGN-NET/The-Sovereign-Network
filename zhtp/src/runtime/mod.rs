@@ -1138,19 +1138,57 @@ impl RuntimeOrchestrator {
 
             // Wire ZDNS config from [zdns] TOML section
             if self.config.zdns_config.enabled {
-                let bind: std::net::IpAddr = self.config.zdns_config.bind.parse()
-                    .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
-                let gateway_ip = local_ip_address::local_ip()
-                    .ok()
-                    .and_then(|ip| match ip {
-                        std::net::IpAddr::V4(v4) => Some(v4),
-                        _ => None,
-                    })
-                    .unwrap_or(std::net::Ipv4Addr::new(127, 0, 0, 1));
-                protocols.enable_zdns_transport = true;
-                protocols.zdns_gateway_ip = gateway_ip;
-                protocols.zdns_bind_addr = bind;
-                info!("🌐 ZDNS enabled: bind={}:{} gateway_ip={}", bind, self.config.zdns_config.port, gateway_ip);
+                match self.config.zdns_config.bind.parse::<std::net::IpAddr>() {
+                    Err(e) => {
+                        tracing::error!(
+                            "Invalid zdns bind address '{}': {} — skipping ZDNS init",
+                            self.config.zdns_config.bind, e
+                        );
+                    }
+                    Ok(bind) => {
+                        // Determine gateway IP: try bootstrap_validators config first,
+                        // then fall back to local_ip with a warning.
+                        let gateway_ip = {
+                            let mut found: Option<std::net::Ipv4Addr> = None;
+                            // Check our own bootstrap_validators config for an endpoint we can parse
+                            for bv in &self.config.network_config.bootstrap_validators {
+                                for ep in &bv.endpoints {
+                                    let host = ep.split(':').next().unwrap_or("");
+                                    if let Ok(ip) = host.parse::<std::net::Ipv4Addr>() {
+                                        if !ip.is_loopback() && !ip.is_unspecified() {
+                                            found = Some(ip);
+                                            break;
+                                        }
+                                    }
+                                }
+                                if found.is_some() { break; }
+                            }
+                            match found {
+                                Some(ip) => ip,
+                                None => {
+                                    let fallback = local_ip_address::local_ip()
+                                        .ok()
+                                        .and_then(|ip| match ip {
+                                            std::net::IpAddr::V4(v4) => Some(v4),
+                                            _ => None,
+                                        })
+                                        .unwrap_or(std::net::Ipv4Addr::new(127, 0, 0, 1));
+                                    warn!(
+                                        "ZDNS gateway_ip: no public endpoint in bootstrap_validators config, \
+                                         using local IP {} (may be a private address)",
+                                        fallback
+                                    );
+                                    fallback
+                                }
+                            }
+                        };
+                        protocols.enable_zdns_transport = true;
+                        protocols.zdns_gateway_ip = gateway_ip;
+                        protocols.zdns_bind_addr = bind;
+                        protocols.zdns_port = self.config.zdns_config.port;
+                        info!("ZDNS enabled: bind={}:{} gateway_ip={}", bind, self.config.zdns_config.port, gateway_ip);
+                    }
+                }
             }
 
             self.register_component(Arc::new(protocols))

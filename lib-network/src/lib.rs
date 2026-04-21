@@ -308,6 +308,12 @@ pub mod validator_discovery_transport; // Mesh-based validator discovery gossip 
     feature = "full"
 ))]
 pub mod web4;
+#[cfg(any(
+    feature = "quic",
+    feature = "mdns",
+    feature = "lorawan",
+    feature = "full"
+))]
 pub mod zdns;
 #[cfg(any(
     feature = "quic",

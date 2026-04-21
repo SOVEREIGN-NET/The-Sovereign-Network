@@ -218,7 +218,7 @@ impl DnsPacket {
         }
     }
 
-    /// Create a DNS response with multiple A records (round-robin).
+    /// Create a DNS response with multiple A records.
     /// Used for `network.sov` to return all validator IPs.
     pub fn a_records(query: &DnsPacket, ips: &[Ipv4Addr], ttl: u32) -> Self {
         let question = query.question.clone();

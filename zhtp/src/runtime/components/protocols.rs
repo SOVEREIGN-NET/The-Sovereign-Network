@@ -43,11 +43,13 @@ pub struct ProtocolsComponent {
     discovery_port: u16,
     is_edge_node: bool,
     /// Enable ZDNS transport server (UDP/TCP DNS on port 53)
-    pub enable_zdns_transport: bool,
+    pub(crate) enable_zdns_transport: bool,
     /// Gateway IP for ZDNS transport responses
-    pub zdns_gateway_ip: std::net::Ipv4Addr,
+    pub(crate) zdns_gateway_ip: std::net::Ipv4Addr,
     /// Bind address for ZDNS transport (defaults to localhost for safety)
-    pub zdns_bind_addr: std::net::IpAddr,
+    pub(crate) zdns_bind_addr: std::net::IpAddr,
+    /// ZDNS DNS port (default: 53)
+    pub(crate) zdns_port: u16,
     /// Enable HTTPS gateway for browser-based Web4 access
     enable_https_gateway: bool,
     /// HTTPS gateway configuration
@@ -93,6 +95,7 @@ impl ProtocolsComponent {
             enable_zdns_transport: false, // Disabled by default (requires root for port 53)
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
+            zdns_port: 53,
             enable_https_gateway: false, // Disabled by default
             https_gateway_config: None,
             https_gateway: Arc::new(RwLock::new(None)),
@@ -130,6 +133,7 @@ impl ProtocolsComponent {
             enable_zdns_transport: false, // Disabled by default
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
+            zdns_port: 53,
             enable_https_gateway: false,
             https_gateway_config: None,
             https_gateway: Arc::new(RwLock::new(None)),
@@ -160,6 +164,7 @@ impl ProtocolsComponent {
             zdns_gateway_ip: gateway_ip,
             // SECURITY: Default to localhost even when enabled
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
+            zdns_port: 53,
             enable_https_gateway: false,
             https_gateway_config: None,
             https_gateway: Arc::new(RwLock::new(None)),
@@ -189,6 +194,7 @@ impl ProtocolsComponent {
             enable_zdns_transport: false,
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
+            zdns_port: 53,
             enable_https_gateway: true,
             https_gateway_config: Some(gateway_config),
             https_gateway: Arc::new(RwLock::new(None)),
@@ -218,6 +224,7 @@ impl ProtocolsComponent {
             enable_zdns_transport: true,
             zdns_gateway_ip: gateway_ip,
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
+            zdns_port: 53,
             enable_https_gateway: true,
             https_gateway_config: Some(https_config),
             https_gateway: Arc::new(RwLock::new(None)),
@@ -427,11 +434,12 @@ impl Component for ProtocolsComponent {
         *self.zdns_resolver.write().await = Some(zdns_resolver.clone());
         info!(" ✓ ZDNS resolver initialized with LRU cache (size: 10000, TTL: up to 1hr)");
 
-        // Start ZDNS transport server if enabled (UDP/TCP DNS on port 53)
+        // Start ZDNS transport server if enabled
         if self.enable_zdns_transport {
-            info!(" Starting ZDNS transport server (DNS on port 53)...");
+            info!(" Starting ZDNS transport server (DNS on port {})...", self.zdns_port);
             let mut transport_config = ZdnsServerConfig::production(self.zdns_gateway_ip)
                 .with_bind_addr(self.zdns_bind_addr);
+            transport_config.port = self.zdns_port;
 
             // Wire dynamic endpoint provider: reads active validator IPs from on-chain registry.
             // Health filtering: only returns validators with status == "active".

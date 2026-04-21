@@ -239,6 +239,7 @@ pub type NetworkEndpointProvider = std::sync::Arc<dyn Fn() -> Vec<std::net::Ipv4
 
 #[derive(Clone, Default)]
 pub struct ZdnsServerConfig {
+    pub port: u16,
     pub network_endpoint_provider: Option<NetworkEndpointProvider>,
 }
 
@@ -250,7 +251,7 @@ impl std::fmt::Debug for ZdnsServerConfig {
 
 impl ZdnsServerConfig {
     pub fn production(_gateway_ip: std::net::Ipv4Addr) -> Self {
-        Self { network_endpoint_provider: None }
+        Self { port: 53, network_endpoint_provider: None }
     }
 
     pub fn with_bind_addr(self, _addr: std::net::IpAddr) -> Self {
