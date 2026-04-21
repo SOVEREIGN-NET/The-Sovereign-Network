@@ -18,6 +18,9 @@
 //! Private keys are generated locally and NEVER leave the device.
 //! Only public keys are sent to the server for registration.
 //!
+
+// Allow raw pointer lints for FFI code
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 //! # Example
 //!
 //! ```ignore
