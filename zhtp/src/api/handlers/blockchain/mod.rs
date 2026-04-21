@@ -195,6 +195,7 @@ impl ZhtpRequestHandler for BlockchainHandler {
                 self.handle_blockchain_status(request).await
             }
             (ZhtpMethod::Get, "/api/v1/chain/info") => self.handle_chain_info(request).await,
+            (ZhtpMethod::Get, "/api/v1/network/directory") => self.handle_network_directory(request).await,
             (ZhtpMethod::Get, "/api/v1/blockchain/latest") => {
                 self.handle_latest_block(request).await
             }
@@ -1010,6 +1011,50 @@ impl BlockchainHandler {
         };
 
         Ok(ZhtpResponse::json(&response_data, None)?)
+    }
+
+    /// Network directory: returns validators, relays, and ZDNS servers for client routing.
+    /// Public endpoint — no authentication required.
+    async fn handle_network_directory(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        let validators: Vec<serde_json::Value> = blockchain
+            .validator_registry
+            .iter()
+            .map(|(_, v)| {
+                serde_json::json!({
+                    "did": v.identity_id,
+                    "endpoint": v.network_address,
+                    "stake": v.stake,
+                    "status": v.status,
+                    "last_activity": v.last_activity,
+                    "healthy": v.status == "active",
+                })
+            })
+            .collect();
+
+        let zdns_servers: Vec<String> = blockchain
+            .validator_registry
+            .values()
+            .filter(|v| v.status == "active")
+            .filter_map(|v| {
+                // Extract IP from endpoint (format: "host:port")
+                let host = v.network_address.split(':').next()?;
+                Some(format!("{}:53", host))
+            })
+            .collect();
+
+        let response = serde_json::json!({
+            "validators": validators,
+            "relays": [],
+            "zdns_servers": zdns_servers,
+            "network_id": self.environment.to_string().to_ascii_lowercase(),
+            "chain_height": blockchain.height,
+            "validator_count": validators.len(),
+        });
+
+        Ok(ZhtpResponse::json(&response, None)?)
     }
 
     /// Handle latest block request
