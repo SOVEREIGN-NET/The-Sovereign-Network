@@ -441,6 +441,9 @@ impl ZhtpUnifiedServer {
         info!(" [UNIFIED_SERVER] Wrapping quic_mesh in Arc");
         let quic_arc = Arc::new(quic_mesh);
 
+        // Register global QUIC protocol for peer endpoint gossip
+        crate::runtime::quic_broadcast::set_global_quic_protocol(quic_arc.clone());
+
         // Set QUIC protocol on mesh_router for sending messages
         info!(" [UNIFIED_SERVER] Setting QUIC protocol on mesh_router");
         mesh_router_arc.set_quic_protocol(quic_arc.clone()).await;

@@ -19,13 +19,25 @@ pub struct PeerEndpointInfo {
 }
 
 /// Register or update a peer's endpoint after successful UHP handshake.
+/// Broadcasts the endpoint to mesh peers so all nodes learn about it.
 pub async fn register_peer_endpoint(did: String, addr: SocketAddr) {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    if let Ok(mut map) = PEER_ENDPOINTS.write() {
-        map.insert(did.clone(), PeerEndpointInfo { did, addr, last_seen: now });
+
+    let is_new = if let Ok(mut map) = PEER_ENDPOINTS.write() {
+        let was_absent = !map.contains_key(&did);
+        map.insert(did.clone(), PeerEndpointInfo { did: did.clone(), addr, last_seen: now });
+        was_absent
+    } else {
+        false
+    };
+
+    // Gossip new endpoints to mesh peers
+    if is_new {
+        let addr_str = format!("{}:{}", addr.ip(), 9334);
+        crate::runtime::quic_broadcast::broadcast_peer_endpoint(&did, &addr_str).await;
     }
 }
 

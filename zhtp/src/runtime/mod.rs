@@ -65,6 +65,7 @@ pub mod edge_state_provider; // Global access to edge node state for header-only
 pub mod identity_manager_provider;
 pub mod mesh_router_provider;
 pub mod peer_endpoints;
+pub mod quic_broadcast;
 pub mod network_blockchain_event_receiver;
 pub mod network_blockchain_provider;
 pub mod node_identity;
