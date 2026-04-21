@@ -1019,10 +1019,20 @@ impl BlockchainHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
+        // Load SPKI pins from bootstrap_peer_pins config (host:port → hex hash)
+        let peer_pins: std::collections::HashMap<String, String> =
+            crate::runtime::bootstrap_peers_provider::get_bootstrap_peer_pins()
+                .await
+                .unwrap_or_default();
+
         let validators: Vec<serde_json::Value> = blockchain
             .validator_registry
             .iter()
             .map(|(_, v)| {
+                // Look up SPKI pin by endpoint address
+                let spki_pin = peer_pins.get(&v.network_address)
+                    .cloned()
+                    .unwrap_or_default();
                 serde_json::json!({
                     "did": v.identity_id,
                     "endpoint": v.network_address,
@@ -1030,16 +1040,21 @@ impl BlockchainHandler {
                     "status": v.status,
                     "last_activity": v.last_activity,
                     "healthy": v.status == "active",
+                    "spki_pin": spki_pin,
                 })
             })
             .collect();
+
+        // This node's own SPKI hash
+        let local_spki = lib_network::protocols::quic_mesh::get_tls_spki_hash_from_default_cert()
+            .map(|h| hex::encode(h))
+            .unwrap_or_default();
 
         let zdns_servers: Vec<String> = blockchain
             .validator_registry
             .values()
             .filter(|v| v.status == "active")
             .filter_map(|v| {
-                // Extract IP from endpoint (format: "host:port")
                 let host = v.network_address.split(':').next()?;
                 Some(format!("{}:53", host))
             })
@@ -1052,6 +1067,7 @@ impl BlockchainHandler {
             "network_id": self.environment.to_string().to_ascii_lowercase(),
             "chain_height": blockchain.height,
             "validator_count": validators.len(),
+            "local_spki_pin": local_spki,
         });
 
         Ok(ZhtpResponse::json(&response, None)?)

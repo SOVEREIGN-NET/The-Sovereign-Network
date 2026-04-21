@@ -908,13 +908,75 @@ impl RuntimeOrchestrator {
             let quic_port = self.config.protocols_config.quic_port;
             let discovery_port = self.config.protocols_config.discovery_port;
             let is_edge_node = *self.is_edge_node.read().await;
-            self.register_component(Arc::new(ProtocolsComponent::new_with_node_type_and_ports(
+            let mut protocols = ProtocolsComponent::new_with_node_type_and_ports(
                 environment,
                 api_port,
                 quic_port,
                 discovery_port,
                 is_edge_node,
-            )))
+            );
+
+            // Wire ZDNS config from [zdns] TOML section
+            if self.config.zdns_config.enabled {
+                match self.config.zdns_config.bind.parse::<std::net::IpAddr>() {
+                    Err(e) => {
+                        tracing::error!(
+                            "Invalid zdns bind address '{}': {} — skipping ZDNS init",
+                            self.config.zdns_config.bind, e
+                        );
+                    }
+                    Ok(bind) => {
+                        // Determine gateway IP: try bootstrap_validators config first,
+                        // then fall back to local_ip with a warning.
+                        let gateway_ip = {
+                            let mut found: Option<std::net::Ipv4Addr> = None;
+                            // Check our own bootstrap_validators config for an endpoint we can parse
+                            for bv in &self.config.network_config.bootstrap_validators {
+                                for ep in &bv.endpoints {
+                                    let host = ep.split(':').next().unwrap_or("");
+                                    if let Ok(ip) = host.parse::<std::net::Ipv4Addr>() {
+                                        if !ip.is_loopback() && !ip.is_unspecified() {
+                                            found = Some(ip);
+                                            break;
+                                        }
+                                    }
+                                }
+                                if found.is_some() { break; }
+                            }
+                            match found {
+                                Some(ip) => ip,
+                                None => {
+                                    let fallback = local_ip_address::local_ip()
+                                        .ok()
+                                        .and_then(|ip| match ip {
+                                            std::net::IpAddr::V4(v4) => Some(v4),
+                                            _ => None,
+                                        })
+                                        .unwrap_or(std::net::Ipv4Addr::new(127, 0, 0, 1));
+                                    warn!(
+                                        "ZDNS gateway_ip: no public endpoint in bootstrap_validators config, \
+                                         using local IP {} (may be a private address)",
+                                        fallback
+                                    );
+                                    fallback
+                                }
+                            }
+                        };
+                        protocols.enable_zdns_transport = true;
+                        protocols.zdns_gateway_ip = gateway_ip;
+                        protocols.zdns_bind_addr = bind;
+                        protocols.zdns_port = self.config.zdns_config.port;
+                        protocols.zdns_bootstrap_ips = self.config.network_config.bootstrap_peers
+                            .iter()
+                            .filter_map(|p| p.split(':').next()?.parse::<std::net::Ipv4Addr>().ok())
+                            .collect();
+                        info!("ZDNS enabled: bind={}:{} gateway_ip={} bootstrap_ips={}",
+                            bind, self.config.zdns_config.port, gateway_ip, protocols.zdns_bootstrap_ips.len());
+                    }
+                }
+            }
+
+            self.register_component(Arc::new(protocols))
             .await?;
         }
 
@@ -2516,13 +2578,48 @@ impl RuntimeOrchestrator {
             .await?;
 
         // Protocols must start before Consensus so mesh router is available
-        self.register_component(Arc::new(ProtocolsComponent::new_with_ports(
+        let mut protocols = ProtocolsComponent::new_with_ports(
             environment,
             self.config.protocols_config.api_port,
             self.config.protocols_config.quic_port,
             self.config.protocols_config.discovery_port,
-        )))
-        .await?;
+        );
+        // Wire ZDNS config
+        if self.config.zdns_config.enabled {
+            match self.config.zdns_config.bind.parse::<std::net::IpAddr>() {
+                Err(e) => {
+                    tracing::error!("Invalid zdns bind '{}': {} — skipping", self.config.zdns_config.bind, e);
+                }
+                Ok(bind) => {
+                    let gateway_ip = self.config.network_config.bootstrap_validators
+                        .iter()
+                        .flat_map(|bv| bv.endpoints.iter())
+                        .filter_map(|ep| ep.split(':').next()?.parse::<std::net::Ipv4Addr>().ok())
+                        .find(|ip| !ip.is_loopback() && !ip.is_unspecified())
+                        .unwrap_or_else(|| {
+                            tracing::warn!("ZDNS: no public IP from config, using local_ip");
+                            local_ip_address::local_ip()
+                                .ok()
+                                .and_then(|ip| match ip {
+                                    std::net::IpAddr::V4(v4) => Some(v4),
+                                    _ => None,
+                                })
+                                .unwrap_or(std::net::Ipv4Addr::new(127, 0, 0, 1))
+                        });
+                    protocols.enable_zdns_transport = true;
+                    protocols.zdns_gateway_ip = gateway_ip;
+                    protocols.zdns_bind_addr = bind;
+                    protocols.zdns_port = self.config.zdns_config.port;
+                    protocols.zdns_bootstrap_ips = self.config.network_config.bootstrap_peers
+                        .iter()
+                        .filter_map(|p| p.split(':').next()?.parse::<std::net::Ipv4Addr>().ok())
+                        .collect();
+                    info!("🌐 ZDNS enabled: bind={}:{} gateway_ip={} bootstrap_ips={}",
+                        bind, self.config.zdns_config.port, gateway_ip, protocols.zdns_bootstrap_ips.len());
+                }
+            }
+        }
+        self.register_component(Arc::new(protocols)).await?;
         self.register_component(Arc::new(
             ConsensusComponent::new_with_bootstrap_validators_and_oracle(
                 environment,
