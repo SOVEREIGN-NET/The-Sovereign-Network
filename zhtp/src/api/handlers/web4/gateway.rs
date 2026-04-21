@@ -247,6 +247,7 @@ impl Web4GatewayHandler {
             manifest_cid,
             domain: Some(domain.to_string()),
             route_hops: None,
+            route_intermediaries: vec![],
             served_from_cache: Some(true),
         };
 

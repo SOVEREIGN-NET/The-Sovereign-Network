@@ -665,6 +665,12 @@ impl Blockchain {
         // bonding curve, or when the original genesis didn't include it.
         blockchain.initialize_cbe_genesis();
 
+        // Initialize Treasury Kernel if not already present.
+        blockchain.init_treasury_kernel_if_missing();
+
+        // Welfare DAO tokens are initialized after kernel init in the component
+        // startup path (council_members not yet loaded at this point).
+
         info!(
             "📂 Loaded blockchain from SledStore: height={}, identities={}, wallets={}, tokens={}",
             blockchain.height,

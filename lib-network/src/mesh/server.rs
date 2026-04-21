@@ -412,6 +412,9 @@ pub struct ZhtpMeshServer {
     /// Message handler for processing received messages
     pub message_handler: Option<Arc<RwLock<crate::messaging::message_handler::MeshMessageHandler>>>,
 
+    // Store-and-forward persistence path (optional)
+    pub store_forward_path: Option<std::path::PathBuf>,
+
     // Blockchain Synchronization
     /// Sync coordinator to prevent duplicate syncs across multiple protocols
     pub sync_coordinator: Arc<crate::blockchain_sync::SyncCoordinator>,
@@ -1251,6 +1254,9 @@ impl ZhtpMeshServer {
             message_router: None,
             message_handler: None,
 
+            // Store-and-forward persistence (default: in-memory)
+            store_forward_path: None,
+
             // Initialize blockchain sync coordinator
             sync_coordinator: Arc::new(crate::blockchain_sync::SyncCoordinator::new()),
 
@@ -1527,19 +1533,33 @@ impl ZhtpMeshServer {
             ),
         ));
 
-        // Create identity store-and-forward queue
-        let mut identity_store = crate::identity_store_forward::IdentityStoreForward::new(128);
+        // Create identity store-and-forward queue (persistent if path configured)
+        let mut identity_store = if let Some(ref path) = self.store_forward_path {
+            match crate::identity_store_forward::IdentityStoreForward::new_persistent(path, 128) {
+                Ok(store) => store,
+                Err(e) => {
+                    warn!("Failed to open persistent store-forward at {:?}: {}. Falling back to in-memory.", path, e);
+                    crate::identity_store_forward::IdentityStoreForward::new(128)
+                }
+            }
+        } else {
+            crate::identity_store_forward::IdentityStoreForward::new(128)
+        };
         identity_store.set_pouw_verifier(
             crate::identity_store_forward::IdentityStoreForward::default_pouw_verifier(),
         );
         let identity_store = Arc::new(RwLock::new(identity_store));
 
-        // Create message router (Ticket #149: using peer_registry)
+        // Create message router (Ticket #149: using peer_registry, #2209: with multi-hop)
+        let multi_hop_router = Arc::new(RwLock::new(
+            crate::routing::multi_hop::MultiHopRouter::new(),
+        ));
         let message_router = Arc::new(RwLock::new(
             crate::routing::message_routing::MeshMessageRouter::new(
                 self.peer_registry.clone(),
                 self.long_range_relays.clone(),
-            ),
+            )
+            .with_multi_hop_router(multi_hop_router),
         ));
 
         // Set mesh server reference in router for reward tracking
@@ -2411,6 +2431,24 @@ impl ZhtpMeshServer {
         }
     }
 
+    /// Subtract claimed amount from the theoretical tokens counter (partial reset)
+    ///
+    /// This preserves unclaimed accumulated tokens when a claim is capped
+    /// at `max_batch_size`, preventing operator token loss.
+    pub async fn subtract_reward_counter(&self, amount: u64) {
+        let mut stats = self.routing_stats.write().await;
+        let previous = stats.theoretical_tokens_earned;
+        stats.theoretical_tokens_earned = stats.theoretical_tokens_earned.saturating_sub(amount);
+
+        if previous > 0 {
+            info!(
+                " Routing reward counter partial reset: {} SOV claimed, {} SOV remaining",
+                amount,
+                stats.theoretical_tokens_earned
+            );
+        }
+    }
+
     /// Get complete routing statistics snapshot
     ///
     /// Returns a complete snapshot of current routing statistics including:
@@ -2498,6 +2536,24 @@ impl ZhtpMeshServer {
 
         if previous > 0 {
             info!(" Storage reward counter reset: {} SOV claimed", previous);
+        }
+    }
+
+    /// Subtract claimed amount from the storage theoretical tokens counter (partial reset)
+    ///
+    /// This preserves unclaimed accumulated tokens when a claim is capped
+    /// at `max_batch_size`, preventing operator token loss.
+    pub async fn subtract_storage_reward_counter(&self, amount: u64) {
+        let mut stats = self.storage_stats.write().await;
+        let previous = stats.theoretical_tokens_earned;
+        stats.theoretical_tokens_earned = stats.theoretical_tokens_earned.saturating_sub(amount);
+
+        if previous > 0 {
+            info!(
+                " Storage reward counter partial reset: {} SOV claimed, {} SOV remaining",
+                amount,
+                stats.theoretical_tokens_earned
+            );
         }
     }
 

@@ -102,6 +102,34 @@ pub use node_runtime_orchestrator::NodeRuntimeOrchestrator;
 pub use shared_blockchain::*;
 pub use shared_dht::*;
 
+/// Deserialize block batches from peer sync endpoints with conservative wire compatibility.
+///
+/// Primary format is bincode default options (fixed-int). We also accept varint
+/// encoding as a fallback because some peers may serialize with different bincode
+/// integer encoding defaults. This is used for non-consensus sync paths only.
+pub(crate) fn deserialize_blocks_compatible(
+    body: &[u8],
+) -> anyhow::Result<Vec<lib_blockchain::Block>> {
+    use bincode::Options;
+
+    match bincode::deserialize::<Vec<lib_blockchain::Block>>(body) {
+        Ok(blocks) => Ok(blocks),
+        Err(fixed_err) => {
+            let varint = bincode::DefaultOptions::new()
+                .with_varint_encoding()
+                .deserialize::<Vec<lib_blockchain::Block>>(body);
+            match varint {
+                Ok(blocks) => Ok(blocks),
+                Err(varint_err) => Err(anyhow::anyhow!(
+                    "block decode failed (fixed-int: {}; varint: {})",
+                    fixed_err,
+                    varint_err
+                )),
+            }
+        }
+    }
+}
+
 /// Try to sync blockchain from bootstrap peers using paginated block-range QUIC requests.
 ///
 /// Uses the same `/api/v1/blockchain/blocks/{start}/{end}` endpoint as the catch-up
@@ -310,7 +338,9 @@ async fn try_initial_sync_from_peer(
                 break;
             }
 
-            let blocks: Vec<lib_blockchain::Block> = match bincode::deserialize(&blocks_resp.body) {
+            let blocks: Vec<lib_blockchain::Block> = match deserialize_blocks_compatible(
+                &blocks_resp.body,
+            ) {
                 Ok(b) => b,
                 Err(e) => {
                     warn!(
@@ -1266,7 +1296,8 @@ impl RuntimeOrchestrator {
 
     /// Returns true if local persistent chain artifacts already exist.
     fn has_local_chain_data(&self) -> bool {
-        let sled_path = crate::node_data_dir().join("sled");
+        let data_dir = self.config.environment.data_directory();
+        let sled_path = std::path::Path::new(&data_dir).join("sled");
         if !sled_path.exists() {
             return false;
         }
@@ -1725,27 +1756,27 @@ impl RuntimeOrchestrator {
         Ok(orchestrator)
     }
 
-    /// Start a Gateway node (remote QUIC ingress proxy).
+    /// Start a gateway node - THE canonical way
     ///
-    /// Gateways accept native ZHTP over QUIC from clients, perform UHP v2
-    /// handshake when required, and forward requests to backend validators
-    /// via `BackendPool` / `Web4Client`.  No blockchain state, no consensus,
-    /// no mining — pure ingress + forwarding.
+    /// Gateway nodes act as public ingress proxies, providing QUIC-based access
+    /// to the network for external clients. They do NOT maintain blockchain state
+    /// or validate blocks - they forward requests to backend nodes.
     ///
-    /// Configuration:
-    /// - Uses `config.network_config.bootstrap_peers` as static backends.
-    /// - Listens on UDP `0.0.0.0:7840` for QUIC (configurable via `ZHTP_GATEWAY_ADDR`).
-    /// - Loads or creates a gateway identity in the node data directory.
+    /// # Errors
+    /// Returns an error if config.node_type is not Gateway.
     pub async fn start_gateway(config: NodeConfig) -> Result<Self> {
         Self::validate_node_type(&config, crate::config::NodeType::Gateway)?;
 
-        let orchestrator = Self::new(config.clone()).await?;
+        let orchestrator = Self::new(config).await?;
 
+        // For gateway nodes, initialize ONLY mesh routing/networking components,
+        // NOT the full blockchain startup sequence. Gateways should not maintain
+        // blockchain state - they proxy requests to backend nodes.
         use crate::runtime::components::{CryptoComponent, NetworkComponent};
 
-        info!("Starting Gateway Node - QUIC ingress proxy (no blockchain state)");
+        info!("Starting Gateway Node - initializing mesh/routing only (no blockchain state)");
 
-        // Initialize crypto and network components
+        // Initialize crypto and network components for routing
         orchestrator
             .register_component(Arc::new(CryptoComponent::new()))
             .await?;
@@ -1756,83 +1787,7 @@ impl RuntimeOrchestrator {
             .await?;
         orchestrator.start_component(ComponentId::Network).await?;
 
-        // ------------------------------------------------------------------
-        // Gateway-specific: load identity, create service, start QUIC server
-        // ------------------------------------------------------------------
-        let data_dir = std::path::PathBuf::from(&config.data_directory);
-        let identity = zhtp_daemon::identity::load_or_create(&data_dir)
-            .context("Failed to load gateway identity")?;
-
-        let _ = lib_identity::types::node_id::try_set_network_genesis(
-            lib_identity::constants::TESTNET_GENESIS_HASH,
-        );
-
-        // Build a minimal daemon config from NodeConfig
-        let bootstrap_peers = config.network_config.bootstrap_peers.clone();
-        let daemon_config = zhtp_daemon::config::DaemonConfig {
-            listen_addr: std::env::var("ZHTP_GATEWAY_HTTP_ADDR")
-                .unwrap_or_else(|_| "127.0.0.1:7840".to_string()),
-            backend_nodes: bootstrap_peers.clone(),
-            trust: zhtp_daemon::config::TrustSettings::default(),
-            gateway: Some(zhtp_daemon::config::GatewayConfig {
-                listen_addr: std::env::var("ZHTP_GATEWAY_HTTP_ADDR")
-                    .unwrap_or_else(|_| "127.0.0.1:7840".to_string()),
-                quic_listen_addr: std::env::var("ZHTP_GATEWAY_ADDR")
-                    .unwrap_or_else(|_| "0.0.0.0:7840".to_string()),
-                request_timeout_ms: 8000,
-                connect_timeout_ms: 1500,
-                backend_selection: zhtp_daemon::config::BackendSelectionPolicy::LowestLatency,
-                retry_idempotent_requests: true,
-                static_backends: bootstrap_peers,
-                dynamic_backend_discovery: false,
-                dynamic_backend_routing: false,
-                health_check_interval_ms: 5000,
-                unhealthy_threshold: 3,
-                recovery_threshold: 2,
-                cooldown_ms: 15000,
-                max_in_flight_per_backend: 200,
-            }),
-        };
-
-        let service = Arc::new(
-            zhtp_daemon::service::ZhtpDaemonService::new(daemon_config.clone(), identity.clone())
-                .await
-                .context("Failed to create gateway service")?,
-        );
-
-        let gateway_cfg = daemon_config.effective_gateway_config();
-        let quic_bind: std::net::SocketAddr = gateway_cfg
-            .quic_listen_addr
-            .parse()
-            .with_context(|| format!("Invalid quic_listen_addr: {}", gateway_cfg.quic_listen_addr))?;
-
-        let cert_path = data_dir.join("gateway-cert.pem");
-        let key_path = data_dir.join("gateway-key.pem");
-
-        let quic_server = zhtp_daemon::quic_server::QuicGatewayServer::new(
-            quic_bind,
-            service.clone(),
-            Arc::new(identity),
-            &cert_path,
-            &key_path,
-        )
-        .await
-        .context("Failed to create QUIC gateway server")?;
-
-        info!(
-            quic_addr = %quic_bind,
-            backends = %gateway_cfg.static_backends.len(),
-            "Gateway QUIC server starting"
-        );
-
-        // Spawn QUIC server into background; orchestrator keeps ownership.
-        tokio::spawn(async move {
-            if let Err(e) = quic_server.run().await {
-                tracing::error!("QUIC gateway server error: {}", e);
-            }
-        });
-
-        info!("Gateway node initialized and listening");
+        info!("Gateway node initialized (routing-only mode - ready for routing)");
 
         Ok(orchestrator)
     }
@@ -1987,7 +1942,8 @@ impl RuntimeOrchestrator {
 
         // Phase 3: Use SledStore for persistent blockchain storage
         // This replaces the deprecated file-based storage with incremental Sled DB
-        let sled_path = crate::node_data_dir().join("sled");
+        let data_dir = self.config.environment.data_directory();
+        let sled_path = std::path::Path::new(&data_dir).join("sled");
 
         info!("📂 Opening SledStore at {:?}", sled_path);
 

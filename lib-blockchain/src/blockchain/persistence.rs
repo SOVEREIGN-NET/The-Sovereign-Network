@@ -882,9 +882,35 @@ impl BlockchainStorageV10 {
     }
 }
 
+/// V11: Treasury Kernel state persistence.
+/// The kernel manages kernel-controlled token minting (welfare DAO tokens),
+/// cap enforcement, dedup, and governance authorizations. Without persistence,
+/// all kernel state is lost on restart.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct BlockchainStorageV11 {
+    pub v10: BlockchainStorageV10,
+    #[serde(default)]
+    pub treasury_kernel: Option<crate::contracts::treasury_kernel::TreasuryKernel>,
+}
+
+impl BlockchainStorageV11 {
+    fn from_blockchain(bc: &Blockchain) -> Self {
+        Self {
+            v10: BlockchainStorageV10::from_blockchain(bc),
+            treasury_kernel: bc.treasury_kernel.clone(),
+        }
+    }
+
+    fn to_blockchain(self) -> Blockchain {
+        let mut blockchain = self.v10.to_blockchain();
+        blockchain.treasury_kernel = self.treasury_kernel;
+        blockchain
+    }
+}
+
 impl Blockchain {
     pub(crate) const FILE_MAGIC: [u8; 4] = [0x5A, 0x48, 0x54, 0x50];
-    const FILE_VERSION: u16 = 10;
+    const FILE_VERSION: u16 = 11;
 
     #[deprecated(
         since = "0.2.0",
@@ -908,7 +934,7 @@ impl Blockchain {
             std::fs::create_dir_all(parent)?;
         }
 
-        let storage = BlockchainStorageV10::from_blockchain(self);
+        let storage = BlockchainStorageV11::from_blockchain(self);
         let serialized = bincode::serialize(&storage)
             .map_err(|e| anyhow::anyhow!("Failed to serialize blockchain: {}", e))?;
 
@@ -956,6 +982,14 @@ impl Blockchain {
             info!("📂 Detected versioned format v{}", version);
 
             match version {
+                11 => deserialize_or_err::<BlockchainStorageV11, _, _>(
+                    data,
+                    "v11 blockchain",
+                    |storage| {
+                    info!("📂 Loaded blockchain storage v11 (treasury kernel state)");
+                    storage.to_blockchain()
+                },
+                )?,
                 10 => deserialize_or_err::<BlockchainStorageV10, _, _>(
                     data,
                     "v10 blockchain",
@@ -1177,6 +1211,34 @@ impl Blockchain {
         }
 
         blockchain.evict_phase2_invalid_transactions("load_from_file");
+
+        // Initialize Treasury Kernel if not restored from V11 persistence.
+        if blockchain.treasury_kernel.is_none() {
+            let kernel_init: Option<(lib_crypto::PublicKey, String)> = blockchain
+                .council_members
+                .first()
+                .and_then(|cm| {
+                    let did = cm.identity_id.clone();
+                    blockchain.identity_registry.get(&did).and_then(|id| {
+                        match id.public_key.as_slice().try_into() {
+                            Ok(pk_bytes) => Some((lib_crypto::PublicKey::new(pk_bytes), did)),
+                            Err(_) => {
+                                warn!("Treasury Kernel skip: council pk length {}", id.public_key.len());
+                                None
+                            }
+                        }
+                    })
+                });
+            if let Some((authority_pk, authority_did)) = kernel_init {
+                blockchain.initialize_treasury_kernel(authority_pk);
+                info!(
+                    "🏛️ Treasury Kernel initialized (authority: {})",
+                    &authority_did[..40.min(authority_did.len())]
+                );
+            }
+        } else {
+            info!("🏛️ Treasury Kernel restored from V11 persistence");
+        }
 
         info!(
             "📂 Blockchain loaded successfully (height: {}, identities: {}, wallets: {}, tokens: {}, UTXOs: {}, {:?})",

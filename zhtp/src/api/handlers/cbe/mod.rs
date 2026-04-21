@@ -59,7 +59,7 @@ impl CbeHandler {
     fn decode_tx(&self, signed_tx: &str) -> Result<Transaction> {
         let bytes =
             hex::decode(signed_tx).map_err(|_| anyhow::anyhow!("signed_tx is not valid hex"))?;
-        bincode::deserialize(&bytes)
+        lib_blockchain::transaction::decode_client_transaction(&bytes)
             .map_err(|e| anyhow::anyhow!("signed_tx deserialization failed: {}", e))
     }
 

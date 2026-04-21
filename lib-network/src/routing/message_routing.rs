@@ -15,6 +15,7 @@ use crate::identity::unified_peer::UnifiedPeerId;
 use crate::mesh::connection::MeshConnection;
 use crate::protocols::NetworkProtocol;
 use crate::relays::LongRangeRelay;
+use crate::routing::multi_hop::MultiHopRouter;
 use crate::transport::TransportManager;
 use crate::types::mesh_message::{MeshMessageEnvelope, ZhtpMeshMessage};
 use lib_identity::NodeId;
@@ -35,6 +36,8 @@ pub struct MeshRoutingEvent {
     pub sender_did: Option<String>,
     /// Unix timestamp of delivery
     pub delivered_at: u64,
+    /// DIDs of intermediary nodes that forwarded this message (hop-by-hop)
+    pub intermediary_nodes: Vec<String>,
 }
 
 /// Intelligent mesh message router
@@ -67,6 +70,8 @@ pub struct MeshMessageRouter {
     pub transport_manager: Option<TransportManager>,
     /// Optional event sink for POUW receipt generation on successful message delivery
     pub pouw_routing_tx: Option<tokio::sync::mpsc::Sender<MeshRoutingEvent>>,
+    /// Multi-hop routing engine with advanced pathfinding algorithms
+    pub multi_hop_router: Option<Arc<RwLock<MultiHopRouter>>>,
 }
 
 /// Routing table for mesh network
@@ -231,6 +236,7 @@ impl MeshMessageRouter {
             mesh_server: None, // Can be set later with set_mesh_server()
             transport_manager: None,
             pouw_routing_tx: None,
+            multi_hop_router: None,
         }
     }
 
@@ -240,6 +246,12 @@ impl MeshMessageRouter {
     /// convert routing events into `Web4ManifestRoute` receipts.
     pub fn with_pouw_routing_tx(mut self, tx: tokio::sync::mpsc::Sender<MeshRoutingEvent>) -> Self {
         self.pouw_routing_tx = Some(tx);
+        self
+    }
+
+    /// Attach a multi-hop routing engine for advanced pathfinding.
+    pub fn with_multi_hop_router(mut self, router: Arc<RwLock<MultiHopRouter>>) -> Self {
+        self.multi_hop_router = Some(router);
         self
     }
 
@@ -514,7 +526,55 @@ impl MeshMessageRouter {
         .await
     }
 
-    /// Find optimal route to destination
+    /// Determine if a peer is routable based on security, reachability, admission, trust, and tier.
+    ///
+    /// **#2200:** Excludes peers with stale or unreachable NAT state.
+    /// **#2201:** Excludes peers with blocked relay admission or insufficient trust/tier.
+    fn is_peer_routable(entry: &crate::peer_registry::PeerEntry, now: u64) -> bool {
+        use crate::peer_registry::relay_admission::RelayAdmissionState;
+
+        // #2201: Check relay admission
+        if let Some(ref admission) = entry.relay_admission {
+            if admission.state == RelayAdmissionState::Blocked {
+                return false;
+            }
+        }
+
+        // #2201: Check auth, quantum secure, trust, tier
+        if !entry.authenticated || !entry.quantum_secure {
+            return false;
+        }
+        if entry.trust_score < 0.3 {
+            return false;
+        }
+        if entry.tier == crate::peer_registry::PeerTier::Untrusted {
+            return false;
+        }
+
+        // #2200: Check NAT reachability
+        crate::nat::is_reachable(entry.nat_state.as_ref(), now, 3600)
+    }
+
+    /// Send a route discovery probe toward a target node
+    ///
+    /// Initiates control-plane route probing. Intermediary nodes forward the
+    /// probe toward the target; the target replies with a RouteResponse that
+    /// updates route quality metrics in the peer registry.
+    pub async fn send_route_probe(
+        &self,
+        target: PublicKey,
+        originator: PublicKey,
+    ) -> Result<u64> {
+        let probe_id = self.generate_message_id().await;
+        let probe = ZhtpMeshMessage::RouteProbe {
+            probe_id,
+            target: target.clone(),
+            originator: originator.clone(),
+            ttl: 5,
+        };
+        self.route_message(probe, target, originator).await
+    }
+
     pub async fn find_optimal_route(
         &self,
         destination: &UnifiedPeerId,
@@ -524,6 +584,11 @@ impl MeshMessageRouter {
             "Finding optimal route to {:?}",
             hex::encode(&destination.public_key().key_id[0..4])
         );
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
 
         // Check route cache first
         if let Some(cached_route) = self.get_cached_route(destination).await {
@@ -543,15 +608,33 @@ impl MeshMessageRouter {
             .get(destination)
             .or_else(|| registry.find_by_public_key(&destination.public_key()));
         if let Some(peer_entry) = peer_entry_opt {
-            // Enforce secure routing only: authenticated + quantum secure
-            if !peer_entry.authenticated || !peer_entry.quantum_secure {
+            // Enforce secure + quality routing (#2200/#2201/#2204)
+            if !Self::is_peer_routable(peer_entry, now) {
                 return Err(anyhow::anyhow!(
-                    "Direct route rejected: insecure transport for peer {}",
-                    destination.to_compact_string()
+                    "Direct route rejected: peer {} is not routable (auth={}, quantum={}, nat={:?}, admission={:?}, trust={:.2}, tier={:?})",
+                    destination.to_compact_string(),
+                    peer_entry.authenticated,
+                    peer_entry.quantum_secure,
+                    peer_entry.nat_state.as_ref().map(|s| &s.reachability),
+                    peer_entry.relay_admission.as_ref().map(|a| &a.state),
+                    peer_entry.trust_score,
+                    peer_entry.tier,
                 ));
             }
 
-            info!("Direct connection available to destination");
+            if peer_entry.relay_admission.as_ref().map_or(false, |a| {
+                a.state == crate::peer_registry::relay_admission::RelayAdmissionState::Probation
+            }) {
+                warn!(
+                    peer = %destination.to_compact_string(),
+                    "Direct route to peer on probation — routing with penalty"
+                );
+            }
+
+            info!(
+                "Direct connection available to destination (trust={:.2}, tier={:?})",
+                peer_entry.trust_score, peer_entry.tier
+            );
             let endpoint = peer_entry
                 .endpoints
                 .first()
@@ -586,9 +669,32 @@ impl MeshMessageRouter {
         Err(anyhow!("No route found to destination"))
     }
 
+    /// Sync PeerRegistry topology into the MultiHopRouter graph
+    async fn sync_multi_hop_topology(&self) -> Result<()> {
+        let registry = self.peer_registry.read().await;
+
+        // Build MeshConnection map from registry entries
+        let mut connections: HashMap<PublicKey, MeshConnection> = HashMap::new();
+        for entry in registry.all_peers() {
+            if let Some(conn) = Self::peer_entry_to_mesh_connection(entry) {
+                connections.insert(entry.peer_id.public_key().clone(), conn);
+            }
+        }
+
+        drop(registry);
+
+        if let Some(ref mhr) = self.multi_hop_router {
+            let router = mhr.read().await;
+            router.update_topology(&connections).await?;
+        }
+
+        Ok(())
+    }
+
     /// Find multi-hop route through mesh network
     ///
     /// **MIGRATION (Ticket #146):** Updated to use UnifiedPeerId for routing
+    /// **MIGRATION (#2209):** Delegates to MultiHopRouter when available for advanced algorithms
     async fn find_mesh_route(
         &self,
         destination: &UnifiedPeerId,
@@ -596,7 +702,31 @@ impl MeshMessageRouter {
     ) -> Result<Vec<RouteHop>> {
         debug!("Searching mesh network for route");
 
-        // Ticket #149: Use peer_registry instead of mesh_connections
+        // Try MultiHopRouter first if configured (#2209)
+        if let Some(ref mhr) = self.multi_hop_router {
+            if let Err(e) = self.sync_multi_hop_topology().await {
+                warn!("Failed to sync multi-hop topology: {}", e);
+            }
+
+            let source_pk = sender.public_key().clone();
+            let dest_pk = destination.public_key().clone();
+
+            let router = mhr.read().await;
+            match router.find_multi_hop_path(&source_pk, &dest_pk, 1024).await {
+                Ok(hops) => {
+                    info!(
+                        "MultiHopRouter found route ({} hops, algorithm-selected)",
+                        hops.len()
+                    );
+                    return Ok(hops);
+                }
+                Err(e) => {
+                    debug!("MultiHopRouter could not find path: {}, falling back", e);
+                }
+            }
+        }
+
+        // Fallback: legacy Dijkstra over PeerRegistry + TopologyMap
         let registry = self.peer_registry.read().await;
         let routing_table = self.routing_table.read().await;
 
@@ -672,20 +802,55 @@ impl MeshMessageRouter {
     /// Calculate edge weight for routing algorithm
     ///
     /// **MIGRATION (Ticket #149):** Updated to use PeerRegistry
+    /// **#2200:** Returns INFINITY for unreachable peers.
+    /// **#2201:** Enforces relay admission policy in edge weighting.
+    /// **QUALITY (#2204):** Incorporates trust_score, route_quality, and tier.
     async fn calculate_edge_weight(
         &self,
         _from: &UnifiedPeerId,
         to: &UnifiedPeerId,
         registry: &crate::peer_registry::PeerRegistry,
     ) -> f64 {
-        // Weight based on latency, stability, and bandwidth
         if let Some(peer_entry) = registry.get(to) {
-            let latency_weight = peer_entry.connection_metrics.latency_ms as f64 / 1000.0; // Convert to seconds
-            let stability_weight = 1.0 - peer_entry.connection_metrics.stability_score; // Lower stability = higher weight
-            let bandwidth_weight =
-                1.0 / (peer_entry.connection_metrics.bandwidth_capacity as f64 / 1_000_000.0); // Favor higher bandwidth
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            // #2200/#2201: Blocked or otherwise non-routable peers are unreachable
+            if !Self::is_peer_routable(peer_entry, now) {
+                return f64::INFINITY;
+            }
 
-            latency_weight + stability_weight + bandwidth_weight
+            let latency_weight = peer_entry.connection_metrics.latency_ms as f64 / 1000.0;
+            let stability_weight = 1.0 - peer_entry.connection_metrics.stability_score;
+            let bandwidth_weight =
+                1.0 / (peer_entry.connection_metrics.bandwidth_capacity as f64 / 1_000_000.0);
+
+            let base_weight = latency_weight + stability_weight + bandwidth_weight;
+
+            // Quality penalties (#2204)
+            let trust_penalty = (1.0 - peer_entry.trust_score) * 2.0;
+            let route_quality_penalty = (1.0 - peer_entry.route_quality) * 1.5;
+            let tier_penalty = match peer_entry.tier {
+                crate::peer_registry::PeerTier::Tier1 => 0.0,
+                crate::peer_registry::PeerTier::Tier2 => 0.2,
+                crate::peer_registry::PeerTier::Tier3 => 0.5,
+                crate::peer_registry::PeerTier::Tier4 => 1.0,
+                crate::peer_registry::PeerTier::Untrusted => f64::INFINITY,
+            };
+
+            let quality_penalty = trust_penalty + route_quality_penalty + tier_penalty;
+
+            // #2201: Probation peers incur a routing penalty
+            let probation_penalty = if peer_entry.relay_admission.as_ref().map_or(false, |a| {
+                a.state == crate::peer_registry::relay_admission::RelayAdmissionState::Probation
+            }) {
+                1.5
+            } else {
+                1.0
+            };
+
+            (base_weight + quality_penalty) * probation_penalty
         } else {
             f64::INFINITY // No connection
         }
@@ -694,18 +859,32 @@ impl MeshMessageRouter {
     /// Construct route from pathfinding result
     ///
     /// **MIGRATION (Ticket #149):** Updated to use PeerRegistry
+    /// **#2200/#2201:** Defensively skips non-routable peers in constructed paths.
     async fn construct_route_from_path(
         &self,
         previous: &HashMap<UnifiedPeerId, Option<UnifiedPeerId>>,
         destination: &UnifiedPeerId,
         registry: &crate::peer_registry::PeerRegistry,
     ) -> Result<Vec<RouteHop>> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         let mut route = Vec::new();
         let mut current = destination.clone();
 
         // Trace back from destination to source
         while let Some(Some(prev)) = previous.get(&current) {
             if let Some(peer_entry) = registry.get(&current) {
+                // #2200/#2201: Skip non-routable peers defensively (Dijkstra should already exclude them)
+                if !Self::is_peer_routable(peer_entry, now) {
+                    warn!(
+                        peer = %current.to_compact_string(),
+                        "Skipping non-routable peer in constructed route"
+                    );
+                    current = prev.clone();
+                    continue;
+                }
                 let endpoint = peer_entry
                     .endpoints
                     .first()
@@ -855,6 +1034,34 @@ impl MeshMessageRouter {
                     self.route_via_long_range(message_id, &message, hop).await?;
                 }
                 _ => {
+                    // Multi-hop mesh route: use true relay forwarding.
+                    // Wrap the payload in RoutedMessage and send only to the
+                    // first hop; each intermediary unpacks/forward towards
+                    // the destination until it arrives.
+                    // Skip re-wrapping if the message is already a RoutedMessage
+                    // (prevents nested envelopes when an intermediary re-routes).
+                    if hop_index == 0 && route.len() > 1 && !matches!(message, ZhtpMeshMessage::RoutedMessage { .. }) {
+                        let destination = route
+                            .last()
+                            .map(|h| h.peer_id.public_key().clone())
+                            .ok_or_else(|| anyhow!("Empty route"))?;
+                        let payload = bincode::serialize(&message)
+                            .map_err(|e| anyhow!("Failed to serialize message for relay: {}", e))?;
+                        let routed = ZhtpMeshMessage::RoutedMessage {
+                            destination,
+                            ttl: crate::types::mesh_message::DEFAULT_TTL,
+                            hop_count: 0,
+                            route_history: Vec::new(),
+                            payload,
+                        };
+                        self.route_via_mesh(message_id, &routed, hop).await?;
+                        info!(
+                            "Message {} handed to first hop for relay forwarding ({} hops)",
+                            message_id,
+                            route.len()
+                        );
+                        break;
+                    }
                     self.route_via_mesh(message_id, &message, hop).await?;
                 }
             }
@@ -912,6 +1119,11 @@ impl MeshMessageRouter {
 
         // Emit POUW routing event for reward attribution (non-blocking, fire-and-forget)
         if let Some(tx) = &self.pouw_routing_tx {
+            let intermediary_nodes: Vec<String> = route
+                .iter()
+                .take(route.len().saturating_sub(1))
+                .map(|hop| hop.peer_id.did().to_string())
+                .collect();
             let event = MeshRoutingEvent {
                 message_size: Self::estimate_message_size(&message) as u64,
                 hop_count: route.len().min(255) as u8,
@@ -920,6 +1132,7 @@ impl MeshMessageRouter {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs(),
+                intermediary_nodes,
             };
             // try_send: drop event silently if receiver has closed or buffer is full
             let _ = tx.try_send(event);
@@ -933,8 +1146,8 @@ impl MeshMessageRouter {
     async fn route_via_satellite(
         &self,
         message_id: u64,
-        _message: &ZhtpMeshMessage,
-        _hop: &RouteHop,
+        message: &ZhtpMeshMessage,
+        hop: &RouteHop,
     ) -> Result<()> {
         info!(
             "🛰️ GLOBAL satellite routing: message {} to ANYWHERE on Earth",
@@ -948,37 +1161,138 @@ impl MeshMessageRouter {
             }
         }
 
-        // Satellite routing enables PLANETARY reach
-        info!("Satellite uplink active - message can reach ANY location on Earth!");
-        info!(" ZHTP revolutionizing global communications - no ISP needed!");
+        // Look up relay details for logging / endpoint construction
+        let relay_id = hop.relay_id.as_ref().ok_or_else(|| {
+            anyhow!("Satellite route missing relay_id")
+        })?;
+        let relays = self.long_range_relays.read().await;
+        let relay = relays.get(relay_id).ok_or_else(|| {
+            anyhow!("Satellite relay {} not found", relay_id)
+        })?;
+        info!(
+            "Using satellite relay {}: {:.0}km range, {} Mbps",
+            relay_id, relay.coverage_radius_km, relay.max_throughput_mbps
+        );
+        drop(relays);
 
-        Err(anyhow::anyhow!(
-            "Satellite routing not configured: no uplink handler available"
-        ))
+        // Serialize message
+        let message_bytes = bincode::serialize(message)
+            .map_err(|e| anyhow!("Failed to serialize message for satellite: {}", e))?;
+
+        // Construct synthetic endpoint for satellite transport
+        let endpoint = crate::peer_registry::PeerEndpoint {
+            address: crate::types::node_address::NodeAddress::Satellite {
+                terminal_id: relay_id.clone(),
+                constellation: Some("Starlink".to_string()),
+            },
+            protocol: NetworkProtocol::Satellite,
+            signal_strength: 0.85,
+            latency_ms: hop.latency_ms,
+            nat_type: None,
+            public_endpoint: None,
+            relay_endpoint: None,
+        };
+
+        let manager = self.transport_manager()?;
+        manager
+            .send(
+                &NetworkProtocol::Satellite,
+                &endpoint,
+                &hop.peer_id,
+                message,
+                &message_bytes,
+            )
+            .await?;
+
+        info!("📡 Satellite transmission completed for message {}", message_id);
+
+        // Record routing activity for satellite relay reward
+        if let Some(mesh_server) = &self.mesh_server {
+            let message_size = Self::estimate_message_size(message);
+            let _ = mesh_server
+                .read()
+                .await
+                .record_routing_activity(
+                    message_size,
+                    1,
+                    NetworkProtocol::Satellite,
+                    hop.latency_ms as u64,
+                )
+                .await;
+        }
+
+        Ok(())
     }
 
     /// Route via long-range relay
     async fn route_via_long_range(
         &self,
         message_id: u64,
-        _message: &ZhtpMeshMessage,
+        message: &ZhtpMeshMessage,
         hop: &RouteHop,
     ) -> Result<()> {
         info!("Long-range relay routing: message {}", message_id);
 
-        if let Some(relay_id) = &hop.relay_id {
-            let relays = self.long_range_relays.read().await;
-            if let Some(relay) = relays.get(relay_id) {
-                info!(
-                    "Using {} relay: {:.0}km range, {} Mbps",
-                    relay_id, relay.coverage_radius_km, relay.max_throughput_mbps
-                );
-            }
+        let relay_id = hop.relay_id.as_ref().ok_or_else(|| {
+            anyhow!("Long-range route missing relay_id")
+        })?;
+        let relays = self.long_range_relays.read().await;
+        let relay = relays.get(relay_id).ok_or_else(|| {
+            anyhow!("Long-range relay {} not found", relay_id)
+        })?;
+        info!(
+            "Using {:?} relay {}: {:.0}km range, {} Mbps",
+            relay.relay_type, relay_id, relay.coverage_radius_km, relay.max_throughput_mbps
+        );
+        drop(relays);
+
+        // Serialize message
+        let message_bytes = bincode::serialize(message)
+            .map_err(|e| anyhow!("Failed to serialize message for long-range: {}", e))?;
+
+        // Construct synthetic endpoint for LoRaWAN transport
+        let endpoint = crate::peer_registry::PeerEndpoint {
+            address: crate::types::node_address::NodeAddress::LoRaWAN {
+                dev_addr: relay_id.clone(),
+                dev_eui: None,
+            },
+            protocol: NetworkProtocol::LoRaWAN,
+            signal_strength: 0.60,
+            latency_ms: hop.latency_ms,
+            nat_type: None,
+            public_endpoint: None,
+            relay_endpoint: None,
+        };
+
+        let manager = self.transport_manager()?;
+        manager
+            .send(
+                &NetworkProtocol::LoRaWAN,
+                &endpoint,
+                &hop.peer_id,
+                message,
+                &message_bytes,
+            )
+            .await?;
+
+        info!("📡 Long-range transmission completed for message {}", message_id);
+
+        // Record routing activity for long-range relay reward
+        if let Some(mesh_server) = &self.mesh_server {
+            let message_size = Self::estimate_message_size(message);
+            let _ = mesh_server
+                .read()
+                .await
+                .record_routing_activity(
+                    message_size,
+                    1,
+                    NetworkProtocol::LoRaWAN,
+                    hop.latency_ms as u64,
+                )
+                .await;
         }
 
-        Err(anyhow::anyhow!(
-            "Long-range routing not configured: no relay send implementation"
-        ))
+        Ok(())
     }
 
     /// Route via mesh connection
@@ -1104,6 +1418,30 @@ impl MeshMessageRouter {
         tracking.get(&message_id).cloned()
     }
 
+    // ==================== RELAY ADMISSION (#2201) ====================
+
+    /// Evaluate relay admission for all peers in the registry.
+    pub async fn update_relay_admissions(&self) -> crate::peer_registry::relay_admission::RelayAdmissionSummary {
+        let mut registry = self.peer_registry.write().await;
+        let peer_ids: Vec<_> = registry.all_peers().map(|e| e.peer_id.clone()).collect();
+        for peer_id in peer_ids {
+            let _ = registry.evaluate_and_set_relay_admission(&peer_id);
+        }
+        registry.relay_admission_summary()
+    }
+
+    /// Count of peers currently eligible for relay duties.
+    pub async fn eligible_relay_count(&self) -> usize {
+        let registry = self.peer_registry.read().await;
+        registry.eligible_relays().count()
+    }
+
+    /// Summary of relay admission states across all peers.
+    pub async fn relay_admission_summary(&self) -> crate::peer_registry::relay_admission::RelayAdmissionSummary {
+        let registry = self.peer_registry.read().await;
+        registry.relay_admission_summary()
+    }
+
     /// Update routing table with topology information
     pub async fn update_topology(&self, topology_updates: Vec<TopologyUpdate>) -> Result<()> {
         let mut routing_table = self.routing_table.write().await;
@@ -1143,6 +1481,24 @@ impl MeshMessageRouter {
         Ok(())
     }
 
+    // ==================== NAT / REACHABILITY (#2200) ====================
+
+    /// Update NAT state for a peer.
+    pub async fn set_peer_nat_state(
+        &self,
+        peer_id: &UnifiedPeerId,
+        state: crate::nat::NatState,
+    ) -> Result<()> {
+        let mut registry = self.peer_registry.write().await;
+        registry.set_nat_state(peer_id, state)
+    }
+
+    /// Reachability summary across all peers.
+    pub async fn reachability_summary(&self) -> crate::nat::ReachabilitySummary {
+        let registry = self.peer_registry.read().await;
+        registry.reachability_summary()
+    }
+
     // ==================== PHASE 2: Multi-Hop Routing Integration ====================
 
     /// Find next hop for destination (simplified from full route) - Phase 2
@@ -1157,11 +1513,27 @@ impl MeshMessageRouter {
             hex::encode(&destination.public_key().key_id[0..4])
         );
 
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
         // Check for direct connection first (Ticket #149: use peer_registry)
         let registry = self.peer_registry.read().await;
-        if registry.get(destination).is_some() {
-            info!(" Direct connection to destination available");
-            return Ok(destination.clone());
+        if let Some(entry) = registry.get(destination) {
+            if Self::is_peer_routable(entry, now) {
+                info!(
+                    " Direct connection to destination available (trust={:.2})",
+                    entry.trust_score
+                );
+                return Ok(destination.clone());
+            }
+            warn!(
+                " Direct connection exists but peer {} fails quality gate (trust={:.2}, tier={:?})",
+                destination.to_compact_string(),
+                entry.trust_score,
+                entry.tier
+            );
         }
 
         // Check cached route
@@ -1203,6 +1575,8 @@ impl MeshMessageRouter {
     }
 
     /// Calculate route quality score - Phase 2
+    ///
+    /// **QUALITY (#2204):** Blends per-hop trust and stability from registry.
     async fn calculate_route_quality(&self, route: &[RouteHop]) -> f64 {
         if route.is_empty() {
             return 0.0;
@@ -1211,10 +1585,30 @@ impl MeshMessageRouter {
         let total_latency: u32 = route.iter().map(|h| h.latency_ms).sum();
         let hop_count = route.len();
 
-        // Quality = (1 / latency) × (1 / hops) × 1000
-        // Higher is better, normalized to 0.0-1.0
+        // Base score from latency and hop count
         let base_score = 1000.0 / ((total_latency as f64 + 1.0) * (hop_count as f64 + 1.0));
-        base_score.min(1.0).max(0.0)
+        let base_score = base_score.min(1.0).max(0.0);
+
+        // Blend in per-hop trust and stability (#2204)
+        let registry = self.peer_registry.read().await;
+        let avg_trust: f64 = route
+            .iter()
+            .map(|h| registry.get(&h.peer_id).map(|e| e.trust_score).unwrap_or(0.0))
+            .sum::<f64>()
+            / hop_count as f64;
+        let avg_stability: f64 = route
+            .iter()
+            .map(|h| {
+                registry
+                    .get(&h.peer_id)
+                    .map(|e| e.connection_metrics.stability_score)
+                    .unwrap_or(0.0)
+            })
+            .sum::<f64>()
+            / hop_count as f64;
+        drop(registry);
+
+        base_score * (0.5 + 0.25 * avg_trust + 0.25 * avg_stability)
     }
 
     /// Full route execution with forwarding - Phase 2

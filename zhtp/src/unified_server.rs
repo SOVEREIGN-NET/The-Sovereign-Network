@@ -751,9 +751,17 @@ impl ZhtpUnifiedServer {
             revenue_pools,
         );
 
-        // Wire identity store-and-forward for identity envelopes
+        // Wire identity store-and-forward for identity envelopes (persistent)
+        let store_forward_path = crate::node_data_dir().join("store_forward");
         let mut identity_store =
-            lib_network::identity_store_forward::IdentityStoreForward::new(128);
+            lib_network::identity_store_forward::IdentityStoreForward::new_persistent(
+                &store_forward_path,
+                128,
+            )
+            .unwrap_or_else(|e| {
+                warn!("Failed to open persistent store-forward at {:?}: {}. Using in-memory queue.", store_forward_path, e);
+                lib_network::identity_store_forward::IdentityStoreForward::new(128)
+            });
         identity_store.set_pouw_verifier(
             lib_network::identity_store_forward::IdentityStoreForward::default_pouw_verifier(),
         );

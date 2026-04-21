@@ -862,7 +862,14 @@ impl BlockchainConsensusCoordinator {
     async fn block_production_loop(&self) {
         info!("⛏️ Starting block production loop");
 
-        while self.is_producing_blocks {
+        // Use if + loop pattern to avoid clippy warning about immutable condition
+        if !self.is_producing_blocks {
+            return;
+        }
+        loop {
+            if !self.is_producing_blocks {
+                break;
+            }
             if let Err(e) = self.attempt_block_production().await {
                 error!("Block production error: {}", e);
             }

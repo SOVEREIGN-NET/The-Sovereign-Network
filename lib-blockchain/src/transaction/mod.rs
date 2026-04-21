@@ -33,7 +33,7 @@ pub use core::{
     RecordOnRampTradeData, RevenueSource, TokenMintData, TokenTransferData, Transaction,
     TransactionInput, TransactionOutput, TransactionPayload, TreasuryAllocationData, UbiClaimData,
     ValidatorOperation, ValidatorTransactionData, WalletPrivateData, WalletReference,
-    WalletTransactionData, TX_VERSION_V3, TX_VERSION_V7, TX_VERSION_V8,
+    WalletTransactionData, TX_VERSION_V3, TX_VERSION_V7, TX_VERSION_V8, TX_VERSION_V9,
 };
 
 // Re-exports from threshold_approval module
@@ -85,6 +85,8 @@ pub use validation::{
     is_token_contract_execution, StatefulTransactionValidator, TransactionValidator,
     ValidationError, ValidationResult,
 };
+
+pub use core::decode_client_transaction;
 
 // Explicit re-exports from hashing module
 pub use hashing::{

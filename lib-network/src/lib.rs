@@ -129,6 +129,7 @@ pub use crate::consensus_receiver::{ConsensusReceiver, ReceivedConsensusMessage}
 pub use crate::validator_discovery_transport::MeshValidatorDiscoveryTransport;
 
 // Network utilities
+pub mod nat; // NAT traversal and endpoint reachability (#2200)
 pub mod network_utils;
 pub use crate::network_utils::{get_local_ip, get_local_ip_with_config, LocalIpConfig};
 
@@ -308,6 +309,13 @@ pub mod validator_discovery_transport; // Mesh-based validator discovery gossip 
     feature = "full"
 ))]
 pub mod web4;
+#[cfg(any(
+    feature = "quic",
+    feature = "mdns",
+    feature = "lorawan",
+    feature = "full"
+))]
+pub mod zdns;
 #[cfg(any(
     feature = "quic",
     feature = "mdns",

@@ -49,8 +49,12 @@ const RATE_LIMIT_WINDOW_SECS: u64 = 10;
 /// Maximum TCP message size (RFC 1035 limit)
 const MAX_TCP_MESSAGE_SIZE: usize = 65535;
 
+/// Provider for dynamic network endpoint resolution.
+/// Called when ZDNS receives a query for `network.sov` or `directory.sov`.
+/// Returns a list of validator IPv4 addresses from the on-chain registry.
+pub type NetworkEndpointProvider = Arc<dyn Fn() -> Vec<Ipv4Addr> + Send + Sync>;
+
 /// ZDNS Server configuration
-#[derive(Debug, Clone)]
 pub struct ZdnsServerConfig {
     /// Port to listen on (default: 53)
     pub port: u16,
@@ -66,6 +70,36 @@ pub struct ZdnsServerConfig {
     pub enable_rate_limit: bool,
     /// Allowed capabilities for gateway routing (None = all allowed)
     pub allowed_capabilities: Option<Vec<Web4Capability>>,
+    /// Dynamic endpoint provider for `network.sov` queries.
+    /// When set, `network.sov` returns all validator IPs from the on-chain registry
+    /// instead of the single hardcoded gateway_ip.
+    pub network_endpoint_provider: Option<NetworkEndpointProvider>,
+}
+
+impl Clone for ZdnsServerConfig {
+    fn clone(&self) -> Self {
+        Self {
+            port: self.port,
+            gateway_ip: self.gateway_ip,
+            default_ttl: self.default_ttl,
+            enable_tcp: self.enable_tcp,
+            bind_addr: self.bind_addr,
+            enable_rate_limit: self.enable_rate_limit,
+            allowed_capabilities: self.allowed_capabilities.clone(),
+            network_endpoint_provider: self.network_endpoint_provider.clone(),
+        }
+    }
+}
+
+impl std::fmt::Debug for ZdnsServerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ZdnsServerConfig")
+            .field("port", &self.port)
+            .field("gateway_ip", &self.gateway_ip)
+            .field("bind_addr", &self.bind_addr)
+            .field("network_endpoint_provider", &self.network_endpoint_provider.is_some())
+            .finish()
+    }
 }
 
 impl Default for ZdnsServerConfig {
@@ -80,6 +114,7 @@ impl Default for ZdnsServerConfig {
             enable_rate_limit: true,
             // By default, only allow HttpServe and SpaServe (not DownloadOnly)
             allowed_capabilities: Some(vec![Web4Capability::HttpServe, Web4Capability::SpaServe]),
+            network_endpoint_provider: None,
         }
     }
 }
@@ -95,6 +130,7 @@ impl ZdnsServerConfig {
             bind_addr: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             enable_rate_limit: false, // Disabled for local testing
             allowed_capabilities: None, // Allow all for testing
+            network_endpoint_provider: None,
         }
     }
 
@@ -110,6 +146,7 @@ impl ZdnsServerConfig {
             bind_addr: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             enable_rate_limit: true,
             allowed_capabilities: Some(vec![Web4Capability::HttpServe, Web4Capability::SpaServe]),
+            network_endpoint_provider: None,
         }
     }
 
@@ -530,6 +567,27 @@ impl ZdnsTransportServer {
             debug!(domain = %domain_lower, "Non-A query, returning NOTIMP");
             stats.write().await.errors += 1;
             return Some(DnsPacket::notimp(&query));
+        }
+
+        // Special handling for network.sov — return all validator IPs
+        if (domain_lower == "network.sov" || domain_lower == "directory.sov")
+            && config.network_endpoint_provider.is_some()
+        {
+            let provider = config.network_endpoint_provider.as_ref().unwrap();
+            let endpoints = provider();
+            if endpoints.is_empty() {
+                debug!(domain = %domain_lower, "No network endpoints available (temporary)");
+                stats.write().await.errors += 1;
+                return Some(DnsPacket::servfail(&query));
+            }
+            // Return all validator IPs as multiple A records
+            debug!(
+                domain = %domain_lower,
+                count = endpoints.len(),
+                "Returning network directory A records"
+            );
+            stats.write().await.resolved += 1;
+            return Some(DnsPacket::a_records(&query, &endpoints, config.default_ttl));
         }
 
         // Resolve domain using ZDNS resolver (with caching)
