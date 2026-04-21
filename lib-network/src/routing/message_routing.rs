@@ -263,6 +263,7 @@ impl MeshMessageRouter {
         self.ingress_steering = Some(steering);
         self
     }
+
     /// DEPRECATED (Ticket #149): No longer needed with PeerRegistry
     ///
     /// PeerRegistry automatically maintains indexes when peers are added.
