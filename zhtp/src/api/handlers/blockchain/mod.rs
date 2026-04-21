@@ -1124,29 +1124,54 @@ impl BlockchainHandler {
             (None, 0)
         };
 
-        // Peer count
-        let peer_count = blockchain.validator_registry.len();
+        let validator_count = blockchain.validator_registry.len();
+        let identity_count = blockchain.identity_registry.len();
+        let chain_height = blockchain.height;
+        let blocks_count = blockchain.blocks.len();
+        let pending_count = blockchain.pending_transactions.len();
 
-        // Determine node state
+        // Determine detailed node state
         let state = if node_did == "not_initialized" {
             "setup_required"
         } else if !identity_registered {
             "identity_not_registered"
+        } else if chain_height == 0 {
+            "connecting"
+        } else if validator_count == 0 {
+            "connecting"
         } else {
             "ready"
+        };
+
+        // Sync telemetry: estimate target height from validator activity
+        let last_block_time = blockchain.blocks.last()
+            .map(|b| b.header.timestamp)
+            .unwrap_or(0);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let seconds_behind = if last_block_time > 0 && now > last_block_time {
+            now - last_block_time
+        } else {
+            0
         };
 
         let response = serde_json::json!({
             "state": state,
             "did": node_did,
             "identity_registered": identity_registered,
-            "chain_height": blockchain.height,
+            "chain_height": chain_height,
             "wallet_id": wallet_id,
             "sov_balance": sov_balance.to_string(),
             "sov_balance_human": format!("{:.4}", sov_balance as f64 / 1_000_000_000_000_000_000.0),
-            "validator_count": peer_count,
-            "identity_count": blockchain.identity_registry.len(),
+            "validator_count": validator_count,
+            "identity_count": identity_count,
             "network_id": self.environment.to_string().to_ascii_lowercase(),
+            "pending_transactions": pending_count,
+            "blocks_stored": blocks_count,
+            "last_block_time": last_block_time,
+            "seconds_behind": seconds_behind,
         });
 
         Ok(ZhtpResponse::json(&response, None)?)

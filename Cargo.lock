@@ -9386,6 +9386,7 @@ dependencies = [
  "lib-protocols",
  "lib-storage",
  "lib-types",
+ "libc",
  "local-ip-address 0.6.10",
  "lru 0.12.5",
  "lz4_flex",

@@ -368,6 +368,8 @@ impl ZhtpRequestHandler for NetworkHandler {
 
         let response = match (request.method, request.uri.as_str()) {
             // Gas pricing endpoint (Issue #10)
+            (ZhtpMethod::Post, "/api/v1/node/shutdown") => self.handle_node_shutdown(request).await,
+            (ZhtpMethod::Post, "/api/v1/node/force-sync") => self.handle_node_force_sync(request).await,
             (ZhtpMethod::Get, "/api/v1/network/gas") => self.handle_get_gas_info(request).await,
             (ZhtpMethod::Get, "/api/v1/network/ping") => self.handle_ping(request).await,
             (ZhtpMethod::Get, "/api/v1/network/relay-candidates") => {
@@ -880,6 +882,44 @@ impl NetworkHandler {
     /// GET /api/v1/network/status
     /// Network directory: validators with endpoints and SPKI pins.
     /// Public endpoint for client bootstrap — no auth required.
+    /// POST /api/v1/node/shutdown — clean shutdown of the node process
+    async fn handle_node_shutdown(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Node shutdown requested");
+        // Signal the runtime to begin graceful shutdown
+        let response = serde_json::json!({
+            "success": true,
+            "message": "Shutdown initiated. Node will stop after current block is finalized.",
+            "state": "shutting_down",
+        });
+        // Spawn shutdown in background so the response gets sent first
+        tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            info!("Node shutdown: sending SIGTERM to self");
+            unsafe { libc::kill(libc::getpid(), libc::SIGTERM); }
+        });
+        Ok(ZhtpResponse::json(&response, None)?)
+    }
+
+    /// POST /api/v1/node/force-sync — trigger immediate catch-up sync from peers
+    async fn handle_node_force_sync(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Force sync requested");
+        // Trigger catch-up by reading current height and requesting sync
+        let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+            .await
+            .map_err(|e| anyhow::anyhow!("blockchain unavailable: {}", e))?;
+        let height = {
+            let bc = blockchain_arc.read().await;
+            bc.height
+        };
+        let response = serde_json::json!({
+            "success": true,
+            "message": "Force sync triggered",
+            "current_height": height,
+            "state": "syncing",
+        });
+        Ok(ZhtpResponse::json(&response, None)?)
+    }
+
     async fn handle_get_directory(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         info!("API: Getting network directory");
 

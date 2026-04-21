@@ -3,323 +3,1141 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sovereign Network</title>
-<link href="https://fonts.googleapis.com/css2?family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400;500&family=Manrope:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<title>Sovereign Network Mission Control</title>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
-  --bg:#020408;
-  --s1:#080c14;
-  --s2:#0d1220;
-  --brd:#141c2e;
-  --t:#c8d4e8;
-  --td:#4a5678;
-  --tm:#2a3450;
-  --teal:#0ff5ce;
-  --teal2:rgba(15,245,206,.06);
-  --teal3:rgba(15,245,206,.2);
-  --mag:#ff2d78;
-  --mag2:rgba(255,45,120,.06);
-  --ok:#22e88a;
-  --warn:#ffc233;
-  --err:#ff3b5c;
-  --display:'Syncopate',sans-serif;
-  --mono:'DM Mono',monospace;
-  --body:'Manrope',sans-serif;
+  --paper:#f4efe2;
+  --paper-2:#efe6d2;
+  --paper-3:#e4d6bb;
+  --ink:#16140f;
+  --muted:#6f6556;
+  --line:rgba(22,20,15,.12);
+  --line-strong:rgba(22,20,15,.24);
+  --panel:rgba(255,251,243,.74);
+  --panel-strong:rgba(255,248,237,.92);
+  --gold:#9f6a1f;
+  --gold-soft:#d3aa64;
+  --signal:#0f766e;
+  --signal-soft:rgba(15,118,110,.12);
+  --warn:#b86717;
+  --warn-soft:rgba(184,103,23,.14);
+  --err:#aa2e2e;
+  --err-soft:rgba(170,46,46,.12);
+  --shadow:0 24px 80px rgba(67,42,15,.12);
+  --display:'Chakra Petch',sans-serif;
+  --body:'Instrument Serif',serif;
+  --mono:'IBM Plex Mono',monospace;
 }
-html{background:var(--bg);color:var(--t);font-family:var(--body)}
-body{min-height:100vh;overflow-x:hidden;position:relative}
-
-/* Animated mesh background */
-.mesh{position:fixed;inset:0;z-index:0;overflow:hidden;opacity:.4}
-.mesh-line{position:absolute;background:var(--brd);transform-origin:0 0}
-.mesh-h{width:100%;height:1px;left:0}
-.mesh-v{height:100%;width:1px;top:0}
-
-/* Glow orbs */
-.orb{position:fixed;border-radius:50%;filter:blur(120px);pointer-events:none;z-index:0}
-.orb-1{width:600px;height:600px;background:rgba(15,245,206,.05);top:-200px;right:-100px;animation:orb-drift 20s ease-in-out infinite alternate}
-.orb-2{width:400px;height:400px;background:rgba(255,45,120,.04);bottom:-100px;left:-100px;animation:orb-drift 25s ease-in-out infinite alternate-reverse}
-@keyframes orb-drift{0%{transform:translate(0,0)}100%{transform:translate(40px,30px)}}
-
-.wrap{position:relative;z-index:1;min-height:100vh}
-
-/* Nav */
-nav{position:fixed;top:0;left:0;right:0;z-index:100;height:56px;display:flex;align-items:center;padding:0 32px;background:rgba(2,4,8,.8);backdrop-filter:blur(24px);border-bottom:1px solid var(--brd)}
-.nav-brand{font-family:var(--display);font-size:11px;font-weight:700;letter-spacing:4px;text-transform:uppercase;color:var(--teal)}
-.nav-sep{width:1px;height:24px;background:var(--brd);margin:0 20px}
-.nav-pulse{display:flex;align-items:center;gap:8px}
-.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 12px var(--ok);animation:blink 1.5s ease infinite}
-.dot.off{background:var(--err);box-shadow:0 0 12px var(--err);animation:none}
-.dot.warn{background:var(--warn);box-shadow:0 0 12px var(--warn)}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
-.nav-label{font-family:var(--mono);font-size:11px;color:var(--td);letter-spacing:.5px}
-.nav-right{margin-left:auto;display:flex;align-items:center;gap:24px}
-.nav-block{font-family:var(--mono);font-size:12px;color:var(--td)}
-.nav-block b{color:var(--teal);font-weight:500}
-
-/* ─── SETUP ─── */
-.setup{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:56px 24px 24px}
-.setup-inner{width:100%;max-width:520px}
-.setup-hero{margin-bottom:48px;animation:rise .8s ease both}
-.setup-hero h1{font-family:var(--display);font-size:32px;font-weight:700;letter-spacing:3px;text-transform:uppercase;line-height:1.2;margin-bottom:12px}
-.setup-hero h1 span{color:var(--teal);display:block;font-size:14px;letter-spacing:6px;margin-bottom:8px;font-weight:400}
-.setup-hero p{color:var(--td);font-size:15px;font-weight:300;line-height:1.6;max-width:380px}
-@keyframes rise{from{opacity:0;transform:translateY(30px)}to{opacity:1;transform:translateY(0)}}
-
-.choices{display:grid;gap:14px;animation:rise .8s ease .15s both}
-.choice{background:var(--s1);border:1px solid var(--brd);border-radius:14px;padding:24px;cursor:pointer;transition:all .25s;position:relative;overflow:hidden}
-.choice::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,var(--teal2),transparent);opacity:0;transition:opacity .25s}
-.choice:hover{border-color:var(--teal);transform:translateY(-2px);box-shadow:0 8px 32px rgba(15,245,206,.08)}
-.choice:hover::before{opacity:1}
-.choice-row{display:flex;align-items:center;gap:16px;position:relative;z-index:1}
-.choice-icon{width:48px;height:48px;border-radius:12px;background:var(--s2);border:1px solid var(--brd);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
-.choice h3{font-family:var(--body);font-size:15px;font-weight:600;margin-bottom:3px}
-.choice p{font-size:12px;color:var(--td);font-weight:400}
-
-/* Seed panel */
-.panel{background:var(--s1);border:1px solid var(--brd);border-radius:14px;padding:28px;animation:rise .5s ease both}
-.panel-title{font-family:var(--display);font-size:12px;letter-spacing:3px;text-transform:uppercase;color:var(--td);margin-bottom:20px}
-.sgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:20px}
-.scell{display:flex;flex-direction:column;gap:2px}
-.snum{font-family:var(--mono);font-size:9px;color:var(--tm);text-align:center;letter-spacing:1px}
-.sinput{background:var(--bg);border:1px solid var(--brd);border-radius:8px;padding:10px 8px;font-family:var(--mono);font-size:12px;color:var(--t);text-align:center;outline:none;transition:all .2s;width:100%}
-.sinput:focus{border-color:var(--teal);box-shadow:0 0 0 3px var(--teal2)}
-.sinput::placeholder{color:var(--tm)}
-.ninput{width:100%;background:var(--bg);border:1px solid var(--brd);border-radius:10px;padding:14px 16px;font-family:var(--mono);font-size:15px;color:var(--t);outline:none;margin-bottom:20px;letter-spacing:1px}
-.ninput:focus{border-color:var(--teal)}
-.ninput::placeholder{color:var(--tm)}
-
-.btn{width:100%;padding:14px;border:none;border-radius:10px;font-family:var(--body);font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;margin-top:8px;letter-spacing:.5px;text-transform:uppercase}
-.btn-t{background:var(--teal);color:var(--bg)}
-.btn-t:hover{filter:brightness(1.15);transform:translateY(-1px);box-shadow:0 6px 24px var(--teal3)}
-.btn-t:disabled{opacity:.35;cursor:not-allowed;transform:none;box-shadow:none}
-.btn-g{background:transparent;color:var(--td);border:1px solid var(--brd)}
-.btn-g:hover{border-color:var(--td);color:var(--t)}
-.err{color:var(--err);font-size:12px;margin-top:10px;font-family:var(--mono)}
-
-/* ─── DASHBOARD ─── */
-.dash{padding:72px 32px 32px;animation:rise .5s ease both}
-.dash-head{display:flex;align-items:baseline;gap:16px;margin-bottom:32px}
-.dash-head h2{font-family:var(--display);font-size:14px;font-weight:700;letter-spacing:4px;text-transform:uppercase;color:var(--teal)}
-
-.mgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
-@media(max-width:860px){.mgrid{grid-template-columns:repeat(2,1fr)}}
-.mcard{background:var(--s1);border:1px solid var(--brd);border-radius:12px;padding:20px;position:relative;overflow:hidden;transition:border-color .3s}
-.mcard:hover{border-color:var(--teal)}
-.mcard-bar{position:absolute;top:0;left:0;right:0;height:2px}
-.mcard-bar.bt{background:var(--teal);box-shadow:0 0 16px var(--teal3)}
-.mcard-bar.bg{background:var(--ok)}
-.mcard-bar.bm{background:var(--mag)}
-.mcard-bar.bw{background:var(--warn)}
-.mcard-lbl{font-family:var(--mono);font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--td);margin-bottom:10px}
-.mcard-val{font-family:var(--mono);font-size:26px;font-weight:500;letter-spacing:-1px}
-.mcard-sub{font-family:var(--mono);font-size:10px;color:var(--td);margin-top:6px}
-
-/* DID card */
-.did-card{background:var(--s1);border:1px solid var(--brd);border-radius:12px;padding:20px;margin-bottom:20px}
-.did-card h3{font-family:var(--mono);font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--td);margin-bottom:12px}
-.did-val{font-family:var(--mono);font-size:12px;color:var(--teal);word-break:break-all;line-height:1.8;padding:14px;background:var(--bg);border-radius:8px;border:1px solid var(--brd);letter-spacing:.3px}
-
-/* Sync */
-.sync-card{background:var(--s1);border:1px solid var(--brd);border-radius:12px;padding:20px;margin-bottom:20px}
-.sync-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
-.sync-top h3{font-family:var(--mono);font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--td)}
-.sync-pct{font-family:var(--mono);font-size:12px;color:var(--teal);font-weight:500}
-.sync-track{height:3px;background:var(--brd);border-radius:2px;overflow:hidden}
-.sync-fill{height:100%;background:linear-gradient(90deg,var(--teal),var(--ok));border-radius:2px;transition:width 1s cubic-bezier(.4,0,.2,1);box-shadow:0 0 12px var(--teal3)}
-
-/* Status grid */
-.sgrid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.scard{background:var(--s1);border:1px solid var(--brd);border-radius:12px;padding:18px}
-.scard h3{font-family:var(--mono);font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--td);margin-bottom:12px}
-.srow{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid rgba(20,28,46,.5);font-size:12px}
-.srow:last-child{border:none}
-.srow .k{color:var(--td);font-family:var(--mono);font-size:11px}
-.srow .v{font-family:var(--mono);font-weight:500;font-size:11px}
-.tag{display:inline-block;padding:3px 10px;border-radius:4px;font-size:9px;font-family:var(--mono);font-weight:700;letter-spacing:.5px;text-transform:uppercase}
-.tag-g{background:rgba(34,232,138,.1);color:var(--ok)}
-.tag-w{background:rgba(255,194,51,.1);color:var(--warn)}
-.tag-r{background:rgba(255,59,92,.1);color:var(--err)}
-
+html{background:
+  radial-gradient(circle at top left, rgba(255,255,255,.68), transparent 38%),
+  radial-gradient(circle at bottom right, rgba(159,106,31,.12), transparent 30%),
+  linear-gradient(135deg, #f6f2e8 0%, #f1e7d2 46%, #eadcc0 100%);
+  color:var(--ink);
+  font-family:var(--body);
+}
+body{min-height:100vh;position:relative;overflow-x:hidden}
+body::before,body::after{content:"";position:fixed;pointer-events:none;inset:0;z-index:0}
+body::before{
+  background:
+    linear-gradient(rgba(22,20,15,.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(22,20,15,.04) 1px, transparent 1px);
+  background-size:36px 36px;
+  mask-image:linear-gradient(to bottom, rgba(0,0,0,.5), rgba(0,0,0,.18));
+}
+body::after{
+  background:
+    radial-gradient(circle at 18% 14%, rgba(211,170,100,.34), transparent 18%),
+    radial-gradient(circle at 80% 20%, rgba(15,118,110,.18), transparent 18%),
+    radial-gradient(circle at 50% 100%, rgba(184,103,23,.14), transparent 30%);
+}
+a{color:inherit}
+button,input{font:inherit}
 .hidden{display:none !important}
+
+.shell{position:relative;z-index:1;min-height:100vh;padding:24px}
+.frame{
+  max-width:1280px;
+  margin:0 auto;
+  min-height:calc(100vh - 48px);
+  border:1px solid var(--line);
+  background:linear-gradient(180deg, rgba(255,253,248,.8), rgba(251,245,233,.68));
+  backdrop-filter:blur(18px);
+  box-shadow:var(--shadow);
+  border-radius:28px;
+  overflow:hidden;
+}
+
+.topbar{
+  display:flex;
+  align-items:center;
+  gap:20px;
+  padding:18px 24px;
+  border-bottom:1px solid var(--line);
+  background:rgba(249,244,233,.72);
+  backdrop-filter:blur(12px);
+}
+.brand{display:flex;align-items:center;gap:16px;min-width:0}
+.brand-mark{
+  width:52px;height:52px;border-radius:16px;
+  border:1px solid var(--line-strong);
+  background:
+    radial-gradient(circle at 30% 30%, rgba(255,255,255,.7), transparent 45%),
+    linear-gradient(135deg, rgba(159,106,31,.18), rgba(15,118,110,.12));
+  position:relative;
+}
+.brand-mark::before,.brand-mark::after{content:"";position:absolute;inset:11px;border:1px solid rgba(22,20,15,.16);border-radius:12px;transform:rotate(45deg)}
+.brand-mark::after{inset:18px;background:rgba(255,255,255,.5)}
+.brand-copy small,.eyebrow,.section-label,.stat-label,.control-label,.panel-label,.seed-number,.meta-key,.help-label{
+  font-family:var(--mono);
+  font-size:11px;
+  letter-spacing:.18em;
+  text-transform:uppercase;
+}
+.brand-copy small{display:block;color:var(--muted);margin-bottom:4px}
+.brand-copy strong{
+  display:block;
+  font-family:var(--display);
+  font-size:20px;
+  line-height:1;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+.status-rail{margin-left:auto;display:flex;align-items:center;gap:18px;flex-wrap:wrap;justify-content:flex-end}
+.status-badge{
+  display:inline-flex;align-items:center;gap:10px;
+  padding:10px 14px;border-radius:999px;border:1px solid var(--line);
+  background:rgba(255,255,255,.45);font-family:var(--mono);font-size:12px;
+}
+.signal-dot{width:10px;height:10px;border-radius:999px;background:var(--err);box-shadow:0 0 0 5px rgba(170,46,46,.08)}
+.signal-dot.ready{background:var(--signal);box-shadow:0 0 0 5px rgba(15,118,110,.1)}
+.signal-dot.syncing,.signal-dot.unregistered{background:var(--warn);box-shadow:0 0 0 5px rgba(184,103,23,.12)}
+.status-meta{display:flex;gap:18px;flex-wrap:wrap}
+.status-meta .value{font-family:var(--display);font-size:15px;letter-spacing:.04em}
+.main{padding:28px}
+
+.hero{
+  display:grid;
+  grid-template-columns:minmax(0,1.1fr) minmax(320px,.9fr);
+  gap:24px;
+  margin-bottom:24px;
+}
+.hero-panel,.panel,.metric,.command-card,.status-card,.logline,.seed-panel{
+  border:1px solid var(--line);
+  background:var(--panel);
+  border-radius:24px;
+  position:relative;
+  overflow:hidden;
+}
+.hero-panel::before,.panel::before,.metric::before,.command-card::before,.status-card::before,.seed-panel::before{
+  content:"";position:absolute;top:0;left:0;right:0;height:3px;
+  background:linear-gradient(90deg, rgba(159,106,31,.7), rgba(15,118,110,.48), transparent 92%);
+}
+.hero-copy{padding:28px}
+.eyebrow{color:var(--muted);margin-bottom:12px}
+.hero-copy h1{
+  font-family:var(--display);
+  font-size:clamp(2.8rem,6vw,5.2rem);
+  line-height:.94;
+  text-transform:uppercase;
+  letter-spacing:.02em;
+  max-width:10ch;
+}
+.hero-copy h1 em{
+  display:block;
+  font-style:normal;
+  color:var(--gold);
+}
+.hero-copy p{
+  margin-top:16px;
+  max-width:36rem;
+  font-size:1.25rem;
+  line-height:1.34;
+}
+.hero-meta{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:12px;
+  padding:0 28px 28px;
+}
+.meta-block{
+  padding:14px 16px;
+  border-radius:18px;
+  border:1px solid var(--line);
+  background:rgba(255,255,255,.45);
+}
+.meta-key{display:block;color:var(--muted);margin-bottom:8px}
+.meta-value{font-family:var(--display);font-size:20px;letter-spacing:.04em}
+.mission-card{padding:24px;display:flex;flex-direction:column;gap:18px;justify-content:space-between}
+.mission-card h2{
+  font-family:var(--display);
+  font-size:24px;
+  line-height:1;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+.mission-card p{font-size:1.08rem;line-height:1.34}
+.flight-path{
+  height:160px;border-radius:18px;border:1px solid var(--line);
+  background:
+    radial-gradient(circle at 20% 20%, rgba(159,106,31,.16), transparent 25%),
+    linear-gradient(135deg, rgba(255,255,255,.68), rgba(234,220,192,.44));
+  position:relative;
+  overflow:hidden;
+}
+.flight-path::before,.flight-path::after{content:"";position:absolute;border-radius:999px}
+.flight-path::before{
+  inset:20px;border:1px dashed rgba(22,20,15,.18);
+  animation:drift 12s linear infinite;
+}
+.flight-path::after{
+  width:26px;height:26px;top:50%;left:20%;
+  background:linear-gradient(135deg, var(--gold), var(--signal));
+  box-shadow:0 0 0 10px rgba(255,255,255,.5);
+  animation:orbit 8s ease-in-out infinite;
+}
+@keyframes drift{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+@keyframes orbit{
+  0%,100%{transform:translate(0,-50%)}
+  50%{transform:translate(220px,40px)}
+}
+
+.setup-grid,.dashboard-grid{display:grid;gap:24px}
+.setup-grid{grid-template-columns:minmax(0,1.15fr) minmax(320px,.85fr)}
+.setup-main{display:grid;gap:18px}
+.choice-grid{display:grid;gap:16px}
+.choice{
+  width:100%;text-align:left;padding:22px;border-radius:22px;
+  border:1px solid var(--line);background:var(--panel-strong);cursor:pointer;
+  transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease;
+}
+.choice:hover,.choice:focus-visible{transform:translateY(-2px);border-color:var(--line-strong);box-shadow:0 16px 36px rgba(67,42,15,.12);outline:none}
+.choice-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:12px}
+.choice-title{font-family:var(--display);font-size:24px;line-height:1;text-transform:uppercase}
+.choice-code{
+  min-width:72px;text-align:right;color:var(--muted);font-family:var(--mono);font-size:12px;
+}
+.choice p{font-size:1.06rem;line-height:1.3;max-width:34rem}
+
+.panel{padding:22px}
+.panel-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}
+.panel-title{
+  font-family:var(--display);
+  font-size:28px;
+  line-height:1;
+  text-transform:uppercase;
+}
+.panel-subtitle{font-size:1rem;color:var(--muted);max-width:34rem}
+.panel-actions{display:flex;gap:10px;flex-wrap:wrap}
+.btn{
+  border:none;border-radius:999px;padding:13px 18px;cursor:pointer;
+  font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+  transition:transform .18s ease,box-shadow .18s ease,background .18s ease,color .18s ease,border-color .18s ease;
+}
+.btn:hover,.btn:focus-visible{transform:translateY(-1px);outline:none}
+.btn-primary{background:var(--ink);color:#fff7ea;box-shadow:0 12px 28px rgba(22,20,15,.16)}
+.btn-secondary{background:rgba(255,255,255,.56);color:var(--ink);border:1px solid var(--line)}
+.btn-ghost{background:transparent;color:var(--muted);border:1px dashed var(--line-strong)}
+.btn-danger{background:rgba(170,46,46,.08);color:var(--err);border:1px solid rgba(170,46,46,.16)}
+.btn:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+.error-box,.info-box{
+  margin-top:16px;padding:14px 16px;border-radius:18px;font-size:.98rem;line-height:1.35
+}
+.error-box{background:var(--err-soft);border:1px solid rgba(170,46,46,.16);color:var(--err)}
+.info-box{background:var(--signal-soft);border:1px solid rgba(15,118,110,.16);color:var(--signal)}
+
+.seed-panel{padding:22px}
+.seed-toolbar{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px
+}
+.seed-title{font-family:var(--display);font-size:24px;text-transform:uppercase}
+.seed-copy{font-size:.98rem;color:var(--muted);max-width:34rem}
+.seed-grid{
+  display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;
+}
+.seed-cell{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:16px;border:1px solid var(--line);background:rgba(255,255,255,.48)}
+.seed-number{color:var(--muted);min-width:22px;text-align:center}
+.seed-input{
+  width:100%;border:none;background:transparent;outline:none;font-family:var(--mono);font-size:14px;color:var(--ink)
+}
+.seed-input::placeholder{color:rgba(111,101,86,.54)}
+.name-field{
+  width:100%;padding:16px 18px;border-radius:18px;border:1px solid var(--line);
+  background:rgba(255,255,255,.56);outline:none;font-family:var(--mono);font-size:15px;color:var(--ink)
+}
+.name-field:focus,.seed-input:focus{box-shadow:none}
+.name-wrap{display:grid;gap:14px}
+.setup-aside{display:grid;gap:18px}
+.note-list{display:grid;gap:12px}
+.note{
+  padding:16px 18px;border-radius:18px;border:1px solid var(--line);background:rgba(255,255,255,.42)
+}
+.note strong,.side-title,.card-title,.status-title{
+  font-family:var(--display);text-transform:uppercase;letter-spacing:.06em;line-height:1;
+}
+.note strong{display:block;margin-bottom:8px;font-size:20px}
+.note p{font-size:1rem;line-height:1.3;color:var(--muted)}
+.command-card{padding:20px}
+.control-label{color:var(--muted);margin-bottom:8px}
+.command{
+  display:block;padding:14px 16px;border-radius:18px;background:rgba(22,20,15,.04);
+  border:1px solid var(--line);font-family:var(--mono);font-size:12px;line-height:1.5;word-break:break-word
+}
+
+.dashboard-grid{grid-template-columns:minmax(0,1.18fr) minmax(320px,.82fr)}
+.metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.metric{padding:20px}
+.metric.emphasis{grid-column:span 2;padding:26px}
+.stat-label{color:var(--muted);margin-bottom:14px}
+.metric-value{
+  font-family:var(--display);font-size:clamp(2rem,4vw,3.25rem);line-height:.95;text-transform:uppercase
+}
+.metric-sub{margin-top:10px;font-family:var(--mono);font-size:12px;color:var(--muted);word-break:break-word}
+.metric-foot{margin-top:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.status-pill{
+  display:inline-flex;align-items:center;gap:10px;padding:8px 14px;border-radius:999px;
+  font-family:var(--mono);font-size:12px;border:1px solid var(--line)
+}
+.status-pill.ready{background:var(--signal-soft);color:var(--signal)}
+.status-pill.syncing,.status-pill.unregistered{background:var(--warn-soft);color:var(--warn)}
+.status-pill.offline{background:var(--err-soft);color:var(--err)}
+
+.progress-card,.did-card,.status-card,.logline{padding:20px}
+.progress-head,.did-head,.status-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px}
+.card-title,.status-title{font-size:22px}
+.card-copy,.status-copy,.help-copy{font-size:1rem;color:var(--muted);line-height:1.3}
+.progress-bar{
+  height:14px;border-radius:999px;border:1px solid var(--line);overflow:hidden;
+  background:rgba(255,255,255,.56);margin-bottom:12px
+}
+.progress-fill{
+  height:100%;
+  width:0;
+  background:linear-gradient(90deg, rgba(159,106,31,.72), rgba(15,118,110,.78));
+  transition:width .45s ease;
+}
+.progress-meta{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-family:var(--mono);font-size:12px;color:var(--muted)}
+.did-value{
+  padding:16px 18px;border-radius:18px;background:rgba(255,255,255,.5);border:1px solid var(--line);
+  font-family:var(--mono);font-size:13px;line-height:1.6;word-break:break-all
+}
+.did-actions,.register-cta,.control-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+.status-stack{display:grid;gap:16px}
+.status-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.status-item{
+  padding:16px;border-radius:18px;border:1px solid var(--line);background:rgba(255,255,255,.46)
+}
+.status-item .meta-key{margin-bottom:8px}
+.status-item .value{font-family:var(--display);font-size:22px;line-height:1;word-break:break-word}
+.status-item.compact .value{font-size:16px;font-family:var(--mono);text-transform:none}
+.logline{
+  display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;
+  background:rgba(22,20,15,.04)
+}
+.help-label{color:var(--muted);margin-bottom:8px}
+.inline-link{
+  text-decoration:none;padding-bottom:1px;border-bottom:1px solid currentColor;cursor:pointer
+}
+
+.dialog-backdrop{
+  position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+  background:rgba(22,20,15,.28);padding:24px;z-index:20
+}
+.dialog-backdrop.open{display:flex}
+.dialog{
+  width:min(520px,100%);border-radius:26px;border:1px solid var(--line);
+  background:rgba(255,250,241,.96);box-shadow:var(--shadow);padding:24px
+}
+.dialog h3{font-family:var(--display);font-size:26px;line-height:1;text-transform:uppercase;margin-bottom:12px}
+.dialog p{font-size:1.05rem;line-height:1.35;margin-bottom:16px}
+.dialog code{
+  display:block;padding:14px 16px;border-radius:18px;border:1px solid var(--line);
+  background:rgba(22,20,15,.04);font-family:var(--mono);font-size:12px;line-height:1.5;word-break:break-word
+}
+.dialog-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+
+@media (max-width:1080px){
+  .hero,.setup-grid,.dashboard-grid{grid-template-columns:1fr}
+  .hero-copy h1{max-width:none}
+}
+@media (max-width:760px){
+  .shell{padding:12px}
+  .frame{min-height:calc(100vh - 24px);border-radius:22px}
+  .topbar,.main,.hero-copy,.hero-meta,.mission-card,.panel,.seed-panel,.metric,.progress-card,.did-card,.status-card,.logline{padding-left:18px;padding-right:18px}
+  .metrics{grid-template-columns:1fr}
+  .metric.emphasis{grid-column:auto}
+  .seed-grid,.status-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .status-rail{margin-left:0}
+}
+@media (max-width:520px){
+  .seed-grid,.status-grid,.hero-meta{grid-template-columns:1fr}
+  .topbar{align-items:flex-start;flex-direction:column}
+  .status-rail{width:100%;justify-content:flex-start}
+}
 </style>
 </head>
 <body>
-<div class="mesh" id="mesh"></div>
-<div class="orb orb-1"></div>
-<div class="orb orb-2"></div>
-
-<nav>
-  <div class="nav-brand">Sovereign</div>
-  <div class="nav-sep"></div>
-  <div class="nav-pulse"><div class="dot off" id="dot"></div><span class="nav-label" id="nav-st">Offline</span></div>
-  <div class="nav-right"><div class="nav-block">block <b id="nav-h">—</b></div></div>
-</nav>
-
-<div class="wrap">
-  <!-- SETUP -->
-  <div class="setup" id="v-setup">
-    <div class="setup-inner">
-      <div class="setup-hero">
-        <h1><span>Node Control</span>Initialize</h1>
-        <p>Spawn an observer node on The Sovereign Network. Your identity, your infrastructure.</p>
+<div class="shell">
+  <div class="frame">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"></div>
+        <div class="brand-copy">
+          <small>Local Control Surface</small>
+          <strong>Sovereign Network</strong>
+        </div>
       </div>
-      <div id="s-choose">
-        <div class="choices">
-          <div class="choice" onclick="showRestore()">
-            <div class="choice-row">
-              <div class="choice-icon">🔑</div>
-              <div><h3>Restore from seed</h3><p>Use your mobile wallet identity on this node</p></div>
+      <div class="status-rail">
+        <div class="status-badge">
+          <span class="signal-dot" id="nav-dot"></span>
+          <span id="nav-state">Offline</span>
+        </div>
+        <div class="status-meta">
+          <div><div class="meta-key">Network</div><div class="value" id="nav-network">Unknown</div></div>
+          <div><div class="meta-key">Chain</div><div class="value" id="nav-height">0</div></div>
+        </div>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="hero">
+        <div class="hero-panel">
+          <div class="hero-copy">
+            <div class="eyebrow">Post-Quantum Node Operations</div>
+            <h1>Operate Your <em>Own Layer</em></h1>
+            <p>Mission control for a sovereign node should feel like instrumenting infrastructure, not filling out a theme-default wizard. This console keeps setup sharp and the live node state legible.</p>
+          </div>
+          <div class="hero-meta">
+            <div class="meta-block">
+              <span class="meta-key">Identity</span>
+              <div class="meta-value" id="hero-identity">Awaiting</div>
+            </div>
+            <div class="meta-block">
+              <span class="meta-key">Wallet</span>
+              <div class="meta-value" id="hero-wallet">Standby</div>
+            </div>
+            <div class="meta-block">
+              <span class="meta-key">Telemetry</span>
+              <div class="meta-value" id="hero-poll">2.5s</div>
             </div>
           </div>
-          <div class="choice" onclick="showCreate()">
-            <div class="choice-row">
-              <div class="choice-icon">◆</div>
-              <div><h3>New identity</h3><p>Generate fresh post-quantum cryptographic keys</p></div>
+        </div>
+        <aside class="panel mission-card">
+          <div>
+            <div class="eyebrow">Flight Deck</div>
+            <h2>Mission Profile</h2>
+            <p>Restore an existing identity or commission a new node persona, then stay on top of height, wallet state, validator presence, and registration status without leaving localhost.</p>
+          </div>
+          <div class="flight-path" aria-hidden="true"></div>
+        </aside>
+      </section>
+
+      <section id="view-setup" class="setup-grid">
+        <div class="setup-main">
+          <div id="setup-choice" class="choice-grid">
+            <button class="choice" type="button" onclick="showRestore()">
+              <div class="choice-head">
+                <div class="choice-title">Restore Identity</div>
+                <div class="choice-code">seed://import</div>
+              </div>
+              <p>Recover an existing node identity from a 20 or 24 word phrase. Words stay in memory only long enough to submit them to the local bridge.</p>
+            </button>
+            <button class="choice" type="button" onclick="showCreate()">
+              <div class="choice-head">
+                <div class="choice-title">Create New Node</div>
+                <div class="choice-code">node://bootstrap</div>
+              </div>
+              <p>Generate a fresh post-quantum identity and prepare this machine as a new operating surface on the network.</p>
+            </button>
+          </div>
+
+          <div id="setup-restore" class="hidden">
+            <div class="seed-panel">
+              <div class="seed-toolbar">
+                <div>
+                  <div class="panel-label">Recovery Input</div>
+                  <div class="seed-title">Seed Phrase</div>
+                </div>
+                <div class="panel-actions">
+                  <button class="btn btn-secondary" type="button" onclick="clearSeed()">Clear</button>
+                  <button class="btn btn-ghost" type="button" onclick="backToChoices()">Back</button>
+                </div>
+              </div>
+              <p class="seed-copy">Paste the full phrase into any field or enter words one by one. Tab keeps natural browser navigation, and arrow keys or Enter advance through the grid.</p>
+              <div class="seed-grid" id="seed-grid"></div>
+              <div id="restore-error" class="error-box hidden" role="alert"></div>
+              <div class="panel-actions">
+                <button class="btn btn-primary" type="button" id="restore-btn" onclick="doRestore()">Restore Identity</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="setup-create" class="hidden">
+            <div class="panel">
+              <div class="panel-header">
+                <div>
+                  <div class="panel-label">Provision</div>
+                  <div class="panel-title">Create New Identity</div>
+                </div>
+                <div class="panel-actions">
+                  <button class="btn btn-ghost" type="button" onclick="backToChoices()">Back</button>
+                </div>
+              </div>
+              <p class="panel-subtitle">Name this node the way you name infrastructure: short, clear, and durable.</p>
+              <div class="name-wrap">
+                <input id="node-name" class="name-field" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="atlas-observer-01">
+                <div id="create-error" class="error-box hidden" role="alert"></div>
+                <div class="panel-actions">
+                  <button class="btn btn-primary" type="button" id="create-btn" onclick="doCreate()">Launch Node</button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
-      </div>
-      <div id="s-restore" class="hidden">
-        <div class="panel">
-          <div class="panel-title">Recovery Phrase</div>
-          <div class="sgrid" id="seed-grid"></div>
-          <div class="err hidden" id="r-err"></div>
-          <button class="btn btn-t" onclick="doRestore()" id="r-btn">Restore Identity</button>
-          <button class="btn btn-g" onclick="back()">Back</button>
+
+        <aside class="setup-aside">
+          <div class="panel">
+            <div class="panel-label">Operational Notes</div>
+            <div class="note-list">
+              <div class="note">
+                <strong>Seed Hygiene</strong>
+                <p>The recovery phrase is never logged and is only sent once to `POST /api/setup` when you explicitly restore.</p>
+              </div>
+              <div class="note">
+                <strong>Local Bridge</strong>
+                <p>This interface runs from the CLI binary at `localhost:7840`, while node state is proxied over QUIC.</p>
+              </div>
+              <div class="note">
+                <strong>Live Polling</strong>
+                <p>Dashboard telemetry refreshes every 2.5 seconds and can be forced manually at any time.</p>
+              </div>
+            </div>
+          </div>
+          <div class="command-card">
+            <div class="control-label">Manual Stop</div>
+            <span class="command">Press Ctrl+C in the terminal running:<br>./target/dev-release/zhtp-cli -s 77.42.37.161:9334 node setup-ui</span>
+          </div>
+        </aside>
+      </section>
+
+      <section id="view-dashboard" class="dashboard-grid hidden">
+        <div class="dashboard-main">
+          <div class="metrics">
+            <article class="metric emphasis">
+              <div class="stat-label">Chain Height</div>
+              <div class="metric-value" id="metric-height">0</div>
+              <div class="metric-foot">
+                <span class="status-pill offline" id="state-pill"><span class="signal-dot" id="state-pill-dot"></span><span id="state-pill-text">Offline</span></span>
+                <span class="metric-sub" id="status-detail">Waiting for bridge telemetry.</span>
+              </div>
+            </article>
+            <article class="metric">
+              <div class="stat-label">SOV Balance</div>
+              <div class="metric-value" id="metric-balance">0</div>
+              <div class="metric-sub" id="metric-balance-atoms">0 atoms</div>
+            </article>
+            <article class="metric">
+              <div class="stat-label">Validators</div>
+              <div class="metric-value" id="metric-validators">0</div>
+              <div class="metric-sub">Active validator set reported by the node</div>
+            </article>
+            <article class="metric">
+              <div class="stat-label">Identities</div>
+              <div class="metric-value" id="metric-identities">0</div>
+              <div class="metric-sub">Registered participants observed on-chain</div>
+            </article>
+          </div>
+
+          <article class="progress-card">
+            <div class="progress-head">
+              <div>
+                <div class="panel-label">Synchronization</div>
+                <div class="card-title">Node Readiness</div>
+              </div>
+              <div class="card-copy" id="progress-copy">Waiting for status.</div>
+            </div>
+            <div class="progress-bar">
+              <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <div class="progress-meta">
+              <span id="progress-label">0%</span>
+              <span id="progress-detail">Bridge has not delivered status yet.</span>
+            </div>
+          </article>
+
+          <article class="did-card">
+            <div class="did-head">
+              <div>
+                <div class="panel-label">Identity</div>
+                <div class="card-title">Device DID</div>
+              </div>
+              <div class="card-copy">Copy for operators, tooling, and registration flow.</div>
+            </div>
+            <div class="did-value" id="did-value">No DID detected yet.</div>
+            <div class="did-actions">
+              <button class="btn btn-secondary" type="button" id="copy-did-btn" onclick="copyDid()">Copy DID</button>
+              <button class="btn btn-secondary" type="button" onclick="refreshStatus(true)">Force Sync</button>
+              <button class="btn btn-danger" type="button" id="disconnect-btn" onclick="openStopDialog()">Disconnect Session</button>
+            </div>
+            <div id="register-cta" class="register-cta hidden">
+              <a href="#register-guide" class="inline-link" onclick="openRegisterGuide(event)">Register this identity on-chain</a>
+            </div>
+          </article>
         </div>
-      </div>
-      <div id="s-create" class="hidden">
-        <div class="panel">
-          <div class="panel-title">Node Name</div>
-          <input type="text" class="ninput" id="n-name" placeholder="sovereign-node" autocomplete="off" spellcheck="false">
-          <div class="err hidden" id="c-err"></div>
-          <button class="btn btn-t" onclick="doCreate()" id="c-btn">Launch Node</button>
-          <button class="btn btn-g" onclick="back()">Back</button>
-        </div>
-      </div>
-    </div>
+
+        <aside class="status-stack">
+          <article class="status-card">
+            <div class="status-head">
+              <div>
+                <div class="panel-label">Telemetry</div>
+                <div class="status-title">Node State</div>
+              </div>
+              <div class="status-copy">Live metrics pulled from `GET /api/status`.</div>
+            </div>
+            <div class="status-grid">
+              <div class="status-item">
+                <div class="meta-key">Network ID</div>
+                <div class="value" id="status-network">Unknown</div>
+              </div>
+              <div class="status-item">
+                <div class="meta-key">Registration</div>
+                <div class="value" id="status-registered">Pending</div>
+              </div>
+              <div class="status-item compact">
+                <div class="meta-key">Wallet ID</div>
+                <div class="value" id="status-wallet">Unavailable</div>
+              </div>
+              <div class="status-item">
+                <div class="meta-key">Poll Cycle</div>
+                <div class="value">2.5s</div>
+              </div>
+            </div>
+          </article>
+
+          <article class="status-card" id="register-guide">
+            <div class="status-head">
+              <div>
+                <div class="panel-label">Registration Path</div>
+                <div class="status-title">Identity Not Registered</div>
+              </div>
+              <div class="status-copy">Shown only when the node reports `identity_registered === false`.</div>
+            </div>
+            <div class="help-copy">Promote the local identity onto the chain through the same canonical registration request the CLI already uses.</div>
+            <div class="control-row">
+              <button class="btn btn-primary" type="button" id="register-btn" onclick="registerIdentity()">Register Identity</button>
+              <button class="btn btn-secondary" type="button" onclick="copyRegisterCommand()">Copy CLI Command</button>
+            </div>
+            <div class="info-box hidden" id="register-info"></div>
+          </article>
+
+          <article class="logline">
+            <div>
+              <div class="help-label">Operator Guidance</div>
+              <div class="help-copy">Force sync pulls immediately. Disconnect stops the local setup UI bridge session; it does not terminate the remote QUIC node process.</div>
+            </div>
+          </article>
+        </aside>
+      </section>
+    </main>
   </div>
+</div>
 
-  <!-- DASHBOARD -->
-  <div class="dash hidden" id="v-dash">
-    <div class="dash-head"><h2>Dashboard</h2></div>
-    <div class="mgrid">
-      <div class="mcard"><div class="mcard-bar bt"></div><div class="mcard-lbl">Chain Height</div><div class="mcard-val" id="m-h">—</div></div>
-      <div class="mcard"><div class="mcard-bar bg"></div><div class="mcard-lbl">SOV Balance</div><div class="mcard-val" id="m-b">—</div><div class="mcard-sub" id="m-ba"></div></div>
-      <div class="mcard"><div class="mcard-bar bm"></div><div class="mcard-lbl">Validators</div><div class="mcard-val" id="m-v">—</div></div>
-      <div class="mcard"><div class="mcard-bar bw"></div><div class="mcard-lbl">Identities</div><div class="mcard-val" id="m-i">—</div></div>
-    </div>
-    <div class="did-card"><h3>Your DID</h3><div class="did-val" id="m-did">—</div></div>
-    <div class="sync-card">
-      <div class="sync-top"><h3>Sync</h3><div class="sync-pct" id="m-pct">0%</div></div>
-      <div class="sync-track"><div class="sync-fill" id="m-fill" style="width:0%"></div></div>
-    </div>
-    <div class="sgrid2">
-      <div class="scard"><h3>Node</h3>
-        <div class="srow"><span class="k">State</span><span class="v"><span class="tag tag-g" id="m-tag">Ready</span></span></div>
-        <div class="srow"><span class="k">Registered</span><span class="v" id="m-reg">—</span></div>
-        <div class="srow"><span class="k">Network</span><span class="v" id="m-net">—</span></div>
-      </div>
-      <div class="scard"><h3>Wallet</h3>
-        <div class="srow"><span class="k">ID</span><span class="v" id="m-wid" style="font-size:10px">—</span></div>
-        <div class="srow"><span class="k">SOV</span><span class="v" id="m-sov">—</span></div>
-      </div>
+<div class="dialog-backdrop" id="stop-dialog" onclick="dismissDialog(event)">
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="stop-dialog-title">
+    <h3 id="stop-dialog-title">Disconnect Session</h3>
+    <p>This stops the local `setup-ui` bridge process on `localhost:7840`. It disconnects the browser control surface, but it does not shut down the remote node itself.</p>
+    <code>The browser session will lose connectivity once the bridge exits.</code>
+    <div class="dialog-actions">
+      <button class="btn btn-danger" type="button" id="disconnect-confirm-btn" onclick="disconnectSession()">Disconnect</button>
+      <button class="btn btn-primary" type="button" onclick="closeStopDialog()">Close</button>
     </div>
   </div>
 </div>
 
 <script>
-// Mesh background
-(function(){
-  const m=document.getElementById('mesh');
-  const gap=80;
-  for(let y=0;y<window.innerHeight;y+=gap){
-    const l=document.createElement('div');
-    l.className='mesh-line mesh-h';
-    l.style.top=y+'px';
-    l.style.opacity=String(.15+Math.random()*.1);
-    m.appendChild(l);
-  }
-  for(let x=0;x<window.innerWidth;x+=gap){
-    const l=document.createElement('div');
-    l.className='mesh-line mesh-v';
-    l.style.left=x+'px';
-    l.style.opacity=String(.1+Math.random()*.08);
-    m.appendChild(l);
-  }
-})();
+const API = "";
+const POLL_MS = 2500;
+let pollTimer = null;
+let lastStatus = null;
 
-// Seed grid
-(function(){
-  const g=document.getElementById('seed-grid');
-  for(let i=0;i<24;i++){
-    const c=document.createElement('div');c.className='scell';
-    const n=document.createElement('div');n.className='snum';n.textContent=String(i+1).padStart(2,'0');
-    const inp=document.createElement('input');inp.className='sinput';inp.dataset.idx=String(i);inp.placeholder='···';inp.autocomplete='off';inp.spellcheck=false;inp.autocapitalize='off';
-    c.appendChild(n);c.appendChild(inp);g.appendChild(c);
-  }
-  g.addEventListener('keydown',e=>{if(e.key===' '||e.key==='Tab'){e.preventDefault();const nx=g.querySelector('[data-idx="'+(parseInt(e.target.dataset.idx)+1)+'"]');if(nx)nx.focus();}});
-  g.addEventListener('paste',e=>{const t=(e.clipboardData||window.clipboardData).getData('text');const w=t.trim().split(/\s+/);if(w.length>1){e.preventDefault();w.forEach((v,i)=>{const inp=g.querySelector('[data-idx="'+i+'"]');if(inp)inp.value=v;});}});
-})();
+const els = {};
 
-const API='';
-function showRestore(){document.getElementById('s-choose').classList.add('hidden');document.getElementById('s-restore').classList.remove('hidden');document.querySelector('.sinput').focus();}
-function showCreate(){document.getElementById('s-choose').classList.add('hidden');document.getElementById('s-create').classList.remove('hidden');document.getElementById('n-name').focus();}
-function back(){document.getElementById('s-restore').classList.add('hidden');document.getElementById('s-create').classList.add('hidden');document.getElementById('s-choose').classList.remove('hidden');}
-function getWords(){return Array.from(document.querySelectorAll('.sinput')).map(i=>i.value.trim().toLowerCase()).filter(w=>w);}
-
-async function doRestore(){
-  const w=getWords(),err=document.getElementById('r-err');err.classList.add('hidden');
-  if(w.length!==20&&w.length!==24){err.textContent='Expected 20 or 24 words, got '+w.length;err.classList.remove('hidden');return;}
-  const b=document.getElementById('r-btn');b.disabled=true;b.textContent='RESTORING...';
-  try{const r=await fetch(API+'/api/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'restore',seed_phrase:w.join(' ')})});
-    const d=await r.json();if(d.error){err.textContent=d.error;err.classList.remove('hidden');b.disabled=false;b.textContent='RESTORE IDENTITY';return;}
-    goDash();
-  }catch(e){err.textContent=e.message;err.classList.remove('hidden');b.disabled=false;b.textContent='RESTORE IDENTITY';}
+function $(id) {
+  return document.getElementById(id);
 }
 
-async function doCreate(){
-  const name=document.getElementById('n-name').value.trim()||'sovereign-node';
-  const err=document.getElementById('c-err');err.classList.add('hidden');
-  const b=document.getElementById('c-btn');b.disabled=true;b.textContent='LAUNCHING...';
-  try{const r=await fetch(API+'/api/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'create',node_name:name})});
-    const d=await r.json();if(d.error){err.textContent=d.error;err.classList.remove('hidden');b.disabled=false;b.textContent='LAUNCH NODE';return;}
-    goDash();
-  }catch(e){err.textContent=e.message;err.classList.remove('hidden');b.disabled=false;b.textContent='LAUNCH NODE';}
+function cacheElements() {
+  [
+    "view-setup","view-dashboard","setup-choice","setup-restore","setup-create",
+    "restore-error","create-error","restore-btn","create-btn","node-name","seed-grid",
+    "nav-dot","nav-state","nav-network","nav-height","hero-identity","hero-wallet",
+    "metric-height","metric-balance","metric-balance-atoms","metric-validators","metric-identities",
+    "status-detail","progress-fill","progress-label","progress-detail","progress-copy","did-value",
+    "status-network","status-registered","status-wallet","copy-did-btn","register-cta",
+    "register-info","state-pill","state-pill-dot","state-pill-text","stop-dialog",
+    "register-btn","disconnect-btn","disconnect-confirm-btn"
+  ].forEach(function(id){els[id] = $(id);});
 }
 
-function goDash(){document.getElementById('v-setup').classList.add('hidden');document.getElementById('v-dash').classList.remove('hidden');poll();}
-function poll(){upd();setInterval(upd,2500);}
-
-async function upd(){
-  try{
-    const r=await fetch(API+'/api/status');const d=await r.json();
-    const h=Number(d.chain_height||0);
-    document.getElementById('m-h').textContent=h.toLocaleString();
-    document.getElementById('nav-h').textContent=h.toLocaleString();
-    document.getElementById('m-b').textContent=d.sov_balance_human||'0';
-    document.getElementById('m-ba').textContent=d.sov_balance?Number(d.sov_balance).toLocaleString()+' atoms':'';
-    document.getElementById('m-v').textContent=d.validator_count||'0';
-    document.getElementById('m-i').textContent=d.identity_count||'0';
-    document.getElementById('m-did').textContent=d.did||'—';
-    document.getElementById('m-reg').textContent=d.identity_registered?'Yes':'No';
-    document.getElementById('m-net').textContent=d.network_id||'—';
-    document.getElementById('m-wid').textContent=d.wallet_id?d.wallet_id.slice(0,16)+'…':'—';
-    document.getElementById('m-sov').textContent=(d.sov_balance_human||'0')+' SOV';
-    const tag=document.getElementById('m-tag'),dot=document.getElementById('dot'),st=document.getElementById('nav-st');
-    if(d.state==='ready'){tag.className='tag tag-g';tag.textContent='SYNCED';dot.className='dot';st.textContent='Online';}
-    else if(d.state==='identity_not_registered'){tag.className='tag tag-w';tag.textContent='UNREGISTERED';dot.className='dot warn';st.textContent='Unregistered';}
-    else if(d.state==='connecting'){tag.className='tag tag-w';tag.textContent='SYNCING';dot.className='dot warn';st.textContent='Syncing';}
-    else{tag.className='tag tag-r';tag.textContent=d.state||'OFFLINE';dot.className='dot off';st.textContent='Offline';}
-    const pct=Math.min(100,(h/50000)*100);
-    document.getElementById('m-fill').style.width=pct+'%';
-    document.getElementById('m-pct').textContent=pct<100?pct.toFixed(1)+'%':'Synced';
-  }catch(e){}
+function formatNumber(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return "0";
+  return number.toLocaleString();
 }
 
-(async()=>{try{const r=await fetch(API+'/api/status');const d=await r.json();if(d.state&&d.state!=='setup_required')goDash();}catch(e){}})();
+function setView(mode) {
+  const showSetup = mode === "setup";
+  els["view-setup"].classList.toggle("hidden", !showSetup);
+  els["view-dashboard"].classList.toggle("hidden", showSetup);
+  if (!showSetup) startPolling();
+}
+
+function showRestore() {
+  clearError("restore-error");
+  els["setup-choice"].classList.add("hidden");
+  els["setup-create"].classList.add("hidden");
+  els["setup-restore"].classList.remove("hidden");
+  const first = document.querySelector(".seed-input");
+  if (first) first.focus();
+}
+
+function showCreate() {
+  clearError("create-error");
+  els["setup-choice"].classList.add("hidden");
+  els["setup-restore"].classList.add("hidden");
+  els["setup-create"].classList.remove("hidden");
+  els["node-name"].focus();
+}
+
+function backToChoices() {
+  clearError("restore-error");
+  clearError("create-error");
+  els["setup-restore"].classList.add("hidden");
+  els["setup-create"].classList.add("hidden");
+  els["setup-choice"].classList.remove("hidden");
+}
+
+function clearError(id) {
+  els[id].textContent = "";
+  els[id].classList.add("hidden");
+}
+
+function showError(id, message) {
+  els[id].textContent = message;
+  els[id].classList.remove("hidden");
+}
+
+function setBusy(id, busy, label) {
+  const button = els[id];
+  button.disabled = busy;
+  button.textContent = label;
+}
+
+function buildSeedGrid() {
+  const grid = els["seed-grid"];
+  for (let i = 0; i < 24; i += 1) {
+    const cell = document.createElement("label");
+    cell.className = "seed-cell";
+
+    const number = document.createElement("span");
+    number.className = "seed-number";
+    number.textContent = String(i + 1).padStart(2, "0");
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "seed-input";
+    input.dataset.index = String(i);
+    input.autocomplete = "off";
+    input.autocapitalize = "off";
+    input.spellcheck = false;
+    input.placeholder = "word";
+
+    cell.appendChild(number);
+    cell.appendChild(input);
+    grid.appendChild(cell);
+  }
+
+  grid.addEventListener("keydown", function(event) {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    const index = Number(target.dataset.index);
+    if (event.key === "Enter" || event.key === "ArrowRight" || event.key === " ") {
+      event.preventDefault();
+      focusSeed(index + 1);
+      return;
+    }
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      focusSeed(index - 1);
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      focusSeed(index + 4);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      focusSeed(index - 4);
+      return;
+    }
+    if (event.key === "Backspace" && !target.value) {
+      focusSeed(index - 1);
+    }
+  });
+
+  grid.addEventListener("paste", function(event) {
+    const text = (event.clipboardData || window.clipboardData).getData("text");
+    const words = normalizeSeedWords(text);
+    if (words.length <= 1) return;
+    event.preventDefault();
+    fillSeedWords(words);
+  });
+}
+
+function focusSeed(index) {
+  if (index < 0 || index > 23) return;
+  const next = document.querySelector('.seed-input[data-index="' + index + '"]');
+  if (next) next.focus();
+}
+
+function normalizeSeedWords(text) {
+  return String(text || "")
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function fillSeedWords(words) {
+  const inputs = document.querySelectorAll(".seed-input");
+  inputs.forEach(function(input, index) {
+    input.value = words[index] || "";
+  });
+}
+
+function clearSeed() {
+  fillSeedWords([]);
+  clearError("restore-error");
+  focusSeed(0);
+}
+
+function getSeedWords() {
+  return Array.from(document.querySelectorAll(".seed-input"))
+    .map(function(input) { return input.value.trim().toLowerCase(); })
+    .filter(Boolean);
+}
+
+async function requestJson(path, options) {
+  const response = await fetch(API + path, options);
+  return response.json();
+}
+
+async function postControl(action) {
+  return requestJson("/api/control", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({action: action})
+  });
+}
+
+async function doRestore() {
+  clearError("restore-error");
+  const words = getSeedWords();
+  if (words.length !== 20 && words.length !== 24) {
+    showError("restore-error", "Expected 20 or 24 words, got " + words.length + ".");
+    return;
+  }
+
+  setBusy("restore-btn", true, "Restoring...");
+  try {
+    const data = await requestJson("/api/setup", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        action: "restore",
+        seed_phrase: words.join(" ")
+      })
+    });
+    clearSeed();
+    if (data.error) throw new Error(data.error);
+    setView("dashboard");
+    await refreshStatus(true);
+  } catch (error) {
+    showError("restore-error", error.message || "Restore failed.");
+  } finally {
+    setBusy("restore-btn", false, "Restore Identity");
+  }
+}
+
+async function doCreate() {
+  clearError("create-error");
+  const name = els["node-name"].value.trim() || "sovereign-node";
+  setBusy("create-btn", true, "Launching...");
+  try {
+    const data = await requestJson("/api/setup", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        action: "create",
+        node_name: name
+      })
+    });
+    if (data.error) throw new Error(data.error);
+    setView("dashboard");
+    await refreshStatus(true);
+  } catch (error) {
+    showError("create-error", error.message || "Launch failed.");
+  } finally {
+    setBusy("create-btn", false, "Launch Node");
+  }
+}
+
+function mapState(status) {
+  const state = status && status.state ? status.state : "connecting";
+  if (state === "ready") {
+    return {
+      key: "ready",
+      label: "Connected",
+      detail: "Node is online and serving current telemetry.",
+      progress: 100
+    };
+  }
+  if (state === "identity_not_registered") {
+    return {
+      key: "unregistered",
+      label: "Unregistered",
+      detail: "Identity exists locally but is not registered on-chain.",
+      progress: 82
+    };
+  }
+  if (state === "connecting") {
+    return {
+      key: "syncing",
+      label: "Syncing",
+      detail: "Bridge is attempting to connect to the node and fetch current status.",
+      progress: status && Number(status.chain_height) > 0 ? 68 : 34
+    };
+  }
+  if (state === "setup_required") {
+    return {
+      key: "offline",
+      label: "Setup Required",
+      detail: "No local identity is available yet.",
+      progress: 0
+    };
+  }
+  return {
+    key: "offline",
+    label: "Offline",
+    detail: "Telemetry is unavailable from the node bridge.",
+    progress: 12
+  };
+}
+
+function applyNavStatus(mapped, status) {
+  els["nav-state"].textContent = mapped.label;
+  els["nav-network"].textContent = status.network_id || "Unknown";
+  els["nav-height"].textContent = formatNumber(status.chain_height);
+  els["nav-dot"].className = "signal-dot " + mapped.key;
+}
+
+function applyDashboardStatus(status) {
+  lastStatus = status;
+  const mapped = mapState(status);
+  applyNavStatus(mapped, status);
+
+  const height = formatNumber(status.chain_height);
+  els["metric-height"].textContent = height;
+  els["metric-balance"].textContent = status.sov_balance_human || "0.0000";
+  els["metric-balance-atoms"].textContent = status.sov_balance ? formatNumber(status.sov_balance) + " atoms" : "0 atoms";
+  els["metric-validators"].textContent = formatNumber(status.validator_count);
+  els["metric-identities"].textContent = formatNumber(status.identity_count);
+
+  const did = status.did || "No DID detected yet.";
+  els["did-value"].textContent = did;
+  els["copy-did-btn"].disabled = !status.did;
+
+  els["hero-identity"].textContent = status.did ? "Loaded" : "Awaiting";
+  els["hero-wallet"].textContent = status.wallet_id ? "Linked" : "Standby";
+
+  els["status-network"].textContent = status.network_id || "Unknown";
+  els["status-registered"].textContent = status.identity_registered ? "Registered" : "Needs Action";
+  els["status-wallet"].textContent = status.wallet_id || "Unavailable";
+
+  els["status-detail"].textContent = mapped.detail;
+  els["progress-copy"].textContent = mapped.detail;
+  els["progress-fill"].style.width = Math.max(0, Math.min(100, mapped.progress)) + "%";
+  els["progress-label"].textContent = mapped.progress + "%";
+  els["progress-detail"].textContent = status.identity_registered === false ? "Registration pending after identity creation." : "Based on the current bridge-reported state.";
+
+  els["state-pill"].className = "status-pill " + mapped.key;
+  els["state-pill-text"].textContent = mapped.label;
+  els["state-pill-dot"].className = "signal-dot " + mapped.key;
+
+  const registerVisible = status.identity_registered === false;
+  els["register-cta"].classList.toggle("hidden", !registerVisible);
+
+  if (mapped.key === "ready") {
+    els["progress-label"].textContent = "100%";
+  }
+}
+
+async function refreshStatus(force) {
+  try {
+    const data = await requestJson("/api/status");
+    applyDashboardStatus(data);
+    if (data.state === "setup_required") {
+      stopPolling();
+      setView("setup");
+      backToChoices();
+    } else if (els["view-dashboard"].classList.contains("hidden")) {
+      setView("dashboard");
+    }
+  } catch (_error) {
+    applyDashboardStatus({
+      state: "connecting",
+      chain_height: lastStatus && lastStatus.chain_height ? lastStatus.chain_height : 0,
+      network_id: lastStatus && lastStatus.network_id ? lastStatus.network_id : "Unknown",
+      validator_count: lastStatus && lastStatus.validator_count ? lastStatus.validator_count : 0,
+      identity_count: lastStatus && lastStatus.identity_count ? lastStatus.identity_count : 0,
+      identity_registered: lastStatus ? lastStatus.identity_registered : null,
+      did: lastStatus ? lastStatus.did : "",
+      wallet_id: lastStatus ? lastStatus.wallet_id : ""
+    });
+  }
+
+  if (force) {
+    const info = els["register-info"];
+    info.classList.add("hidden");
+    info.textContent = "";
+  }
+}
+
+function startPolling() {
+  if (pollTimer) return;
+  refreshStatus(false);
+  pollTimer = window.setInterval(function() {
+    refreshStatus(false);
+  }, POLL_MS);
+}
+
+function stopPolling() {
+  if (!pollTimer) return;
+  window.clearInterval(pollTimer);
+  pollTimer = null;
+}
+
+async function copyText(text, successLabel, fallbackLabel, targetButtonId) {
+  try {
+    await navigator.clipboard.writeText(text);
+    if (targetButtonId) {
+      const button = $(targetButtonId);
+      const previous = button.textContent;
+      button.textContent = successLabel;
+      window.setTimeout(function(){ button.textContent = previous; }, 1200);
+    }
+  } catch (_error) {
+    if (targetButtonId) {
+      const button = $(targetButtonId);
+      const previous = button.textContent;
+      button.textContent = fallbackLabel;
+      window.setTimeout(function(){ button.textContent = previous; }, 1400);
+    }
+  }
+}
+
+function copyDid() {
+  if (!lastStatus || !lastStatus.did) return;
+  copyText(lastStatus.did, "Copied", "Copy Failed", "copy-did-btn");
+}
+
+function openRegisterGuide(event) {
+  if (event) event.preventDefault();
+  const panel = $("register-guide");
+  if (panel) panel.scrollIntoView({behavior: "smooth", block: "nearest"});
+}
+
+function copyRegisterCommand() {
+  const info = els["register-info"];
+  const command = "zhtp-cli identity register <display-name> <device-id>";
+  copyText(command, "Copied", "Copy Failed");
+  info.textContent = "CLI hint copied: " + command;
+  info.classList.remove("hidden");
+}
+
+async function registerIdentity() {
+  const info = els["register-info"];
+  info.classList.add("hidden");
+  info.textContent = "";
+  setBusy("register-btn", true, "Registering...");
+  try {
+    const data = await postControl("register_identity");
+    if (data.error) throw new Error(data.error);
+    info.textContent = "Identity registered on-chain. Refreshing status.";
+    info.classList.remove("hidden");
+    await refreshStatus(true);
+  } catch (error) {
+    info.textContent = error.message || "Registration failed.";
+    info.classList.remove("hidden");
+  } finally {
+    setBusy("register-btn", false, "Register Identity");
+  }
+}
+
+function openStopDialog() {
+  els["stop-dialog"].classList.add("open");
+}
+
+function closeStopDialog() {
+  els["stop-dialog"].classList.remove("open");
+}
+
+function dismissDialog(event) {
+  if (event.target === els["stop-dialog"]) {
+    closeStopDialog();
+  }
+}
+
+async function disconnectSession() {
+  setBusy("disconnect-confirm-btn", true, "Disconnecting...");
+  try {
+    const data = await postControl("disconnect");
+    if (data.error) throw new Error(data.error);
+    stopPolling();
+    closeStopDialog();
+    els["register-info"].textContent = "Setup UI bridge stopped. Reloading this page will fail until you launch `zhtp-cli node setup-ui` again.";
+    els["register-info"].classList.remove("hidden");
+    els["disconnect-btn"].disabled = true;
+    els["nav-state"].textContent = "Disconnected";
+    els["nav-dot"].className = "signal-dot offline";
+  } catch (error) {
+    els["register-info"].textContent = error.message || "Disconnect failed.";
+    els["register-info"].classList.remove("hidden");
+  } finally {
+    setBusy("disconnect-confirm-btn", false, "Disconnect");
+  }
+}
+
+async function bootstrap() {
+  cacheElements();
+  buildSeedGrid();
+  try {
+    const data = await requestJson("/api/status");
+    if (data.state === "setup_required") {
+      applyNavStatus(mapState(data), data);
+      setView("setup");
+      return;
+    }
+    setView("dashboard");
+    applyDashboardStatus(data);
+  } catch (_error) {
+    setView("setup");
+  }
+}
+
+bootstrap();
 </script>
 </body>
 </html>
