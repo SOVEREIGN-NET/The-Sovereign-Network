@@ -577,8 +577,8 @@ button,input{font:inherit}
             <div class="did-value" id="did-value">No DID detected yet.</div>
             <div class="did-actions">
               <button class="btn btn-secondary" type="button" id="copy-did-btn" onclick="copyDid()">Copy DID</button>
-              <button class="btn btn-secondary" type="button" onclick="refreshStatus(true)">Force Sync</button>
-              <button class="btn btn-danger" type="button" id="disconnect-btn" onclick="openStopDialog()">Disconnect Session</button>
+              <button class="btn btn-secondary" type="button" id="force-sync-btn" onclick="forceSync()">Force Sync</button>
+              <button class="btn btn-danger" type="button" id="disconnect-btn" onclick="openStopDialog()">Disconnect / Stop Node</button>
             </div>
             <div id="register-cta" class="register-cta hidden">
               <a href="#register-guide" class="inline-link" onclick="openRegisterGuide(event)">Register this identity on-chain</a>
@@ -634,7 +634,7 @@ button,input{font:inherit}
           <article class="logline">
             <div>
               <div class="help-label">Operator Guidance</div>
-              <div class="help-copy">Force sync pulls immediately. Disconnect stops the local setup UI bridge session; it does not terminate the remote QUIC node process.</div>
+              <div class="help-copy">Every operational action runs through the local CLI bridge. The bridge is the only browser-facing surface; the node remains QUIC-only.</div>
             </div>
           </article>
         </aside>
@@ -645,11 +645,11 @@ button,input{font:inherit}
 
 <div class="dialog-backdrop" id="stop-dialog" onclick="dismissDialog(event)">
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="stop-dialog-title">
-    <h3 id="stop-dialog-title">Disconnect Session</h3>
-    <p>This stops the local `setup-ui` bridge process on `localhost:7840`. It disconnects the browser control surface, but it does not shut down the remote node itself.</p>
-    <code>The browser session will lose connectivity once the bridge exits.</code>
+    <h3 id="stop-dialog-title">Disconnect / Stop Node</h3>
+    <p>This action is expected to call the node control path over QUIC through the local CLI bridge. Use it to stop node networking or the node itself, depending on the backend implementation.</p>
+    <code>Expected node endpoint: POST /api/v1/node/shutdown</code>
     <div class="dialog-actions">
-      <button class="btn btn-danger" type="button" id="disconnect-confirm-btn" onclick="disconnectSession()">Disconnect</button>
+      <button class="btn btn-danger" type="button" id="disconnect-confirm-btn" onclick="disconnectNode()">Disconnect Node</button>
       <button class="btn btn-primary" type="button" onclick="closeStopDialog()">Close</button>
     </div>
   </div>
@@ -676,7 +676,7 @@ function cacheElements() {
     "status-detail","progress-fill","progress-label","progress-detail","progress-copy","did-value",
     "status-network","status-registered","status-wallet","copy-did-btn","register-cta",
     "register-info","state-pill","state-pill-dot","state-pill-text","stop-dialog",
-    "register-btn","disconnect-btn","disconnect-confirm-btn"
+    "register-btn","disconnect-btn","disconnect-confirm-btn","force-sync-btn"
   ].forEach(function(id){els[id] = $(id);});
 }
 
@@ -834,11 +834,11 @@ async function requestJson(path, options) {
   return response.json();
 }
 
-async function postControl(action) {
+async function postControl(action, extra) {
   return requestJson("/api/control", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({action: action})
+    body: JSON.stringify(Object.assign({action: action}, extra || {}))
   });
 }
 
@@ -852,13 +852,8 @@ async function doRestore() {
 
   setBusy("restore-btn", true, "Restoring...");
   try {
-    const data = await requestJson("/api/setup", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({
-        action: "restore",
-        seed_phrase: words.join(" ")
-      })
+    const data = await postControl("restore_identity", {
+      seed_phrase: words.join(" ")
     });
     clearSeed();
     if (data.error) throw new Error(data.error);
@@ -876,13 +871,8 @@ async function doCreate() {
   const name = els["node-name"].value.trim() || "sovereign-node";
   setBusy("create-btn", true, "Launching...");
   try {
-    const data = await requestJson("/api/setup", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({
-        action: "create",
-        node_name: name
-      })
+    const data = await postControl("create_identity", {
+      node_name: name
     });
     if (data.error) throw new Error(data.error);
     setView("dashboard");
@@ -1086,6 +1076,25 @@ async function registerIdentity() {
   }
 }
 
+async function forceSync() {
+  const info = els["register-info"];
+  info.classList.add("hidden");
+  info.textContent = "";
+  setBusy("force-sync-btn", true, "Syncing...");
+  try {
+    const data = await postControl("force_sync");
+    if (data.error) throw new Error(data.error);
+    info.textContent = data.message || "Force sync command sent. Refreshing status.";
+    info.classList.remove("hidden");
+    await refreshStatus(true);
+  } catch (error) {
+    info.textContent = error.message || "Force sync failed.";
+    info.classList.remove("hidden");
+  } finally {
+    setBusy("force-sync-btn", false, "Force Sync");
+  }
+}
+
 function openStopDialog() {
   els["stop-dialog"].classList.add("open");
 }
@@ -1100,23 +1109,20 @@ function dismissDialog(event) {
   }
 }
 
-async function disconnectSession() {
-  setBusy("disconnect-confirm-btn", true, "Disconnecting...");
+async function disconnectNode() {
+  setBusy("disconnect-confirm-btn", true, "Stopping...");
   try {
-    const data = await postControl("disconnect");
+    const data = await postControl("disconnect_node");
     if (data.error) throw new Error(data.error);
-    stopPolling();
     closeStopDialog();
-    els["register-info"].textContent = "Setup UI bridge stopped. Reloading this page will fail until you launch `zhtp-cli node setup-ui` again.";
+    els["register-info"].textContent = data.message || "Disconnect command sent to node control plane.";
     els["register-info"].classList.remove("hidden");
-    els["disconnect-btn"].disabled = true;
-    els["nav-state"].textContent = "Disconnected";
-    els["nav-dot"].className = "signal-dot offline";
+    await refreshStatus(true);
   } catch (error) {
     els["register-info"].textContent = error.message || "Disconnect failed.";
     els["register-info"].classList.remove("hidden");
   } finally {
-    setBusy("disconnect-confirm-btn", false, "Disconnect");
+    setBusy("disconnect-confirm-btn", false, "Disconnect Node");
   }
 }
 

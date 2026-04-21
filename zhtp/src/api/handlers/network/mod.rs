@@ -478,6 +478,7 @@ impl ZhtpRequestHandler for NetworkHandler {
         request.uri.starts_with("/api/v1/blockchain/network/")
             || request.uri.starts_with("/api/v1/blockchain/sync/")
             || request.uri.starts_with("/api/v1/network/")
+            || request.uri.starts_with("/api/v1/node/")
     }
 
     fn priority(&self) -> u32 {
