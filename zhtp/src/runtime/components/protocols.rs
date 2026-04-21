@@ -44,6 +44,8 @@ pub struct ProtocolsComponent {
     is_edge_node: bool,
     /// Enable ZDNS transport server (UDP/TCP DNS on port 53)
     pub(crate) enable_zdns_transport: bool,
+    /// Bootstrap peer IPs for ZDNS fallback (when validator registry has hostnames not IPs)
+    pub(crate) zdns_bootstrap_ips: Vec<std::net::Ipv4Addr>,
     /// Gateway IP for ZDNS transport responses
     pub(crate) zdns_gateway_ip: std::net::Ipv4Addr,
     /// Bind address for ZDNS transport (defaults to localhost for safety)
@@ -92,7 +94,7 @@ impl ProtocolsComponent {
             quic_port,
             discovery_port,
             is_edge_node: false,
-            enable_zdns_transport: false, // Disabled by default (requires root for port 53)
+            enable_zdns_transport: false, zdns_bootstrap_ips: vec![], // Disabled by default (requires root for port 53)
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
             zdns_port: 53,
@@ -130,7 +132,7 @@ impl ProtocolsComponent {
             quic_port,
             discovery_port,
             is_edge_node,
-            enable_zdns_transport: false, // Disabled by default
+            enable_zdns_transport: false, zdns_bootstrap_ips: vec![], // Disabled by default
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
             zdns_port: 53,
@@ -160,7 +162,7 @@ impl ProtocolsComponent {
             quic_port: 9334,
             discovery_port: 9333,
             is_edge_node: false,
-            enable_zdns_transport: true,
+            enable_zdns_transport: true, zdns_bootstrap_ips: vec![],
             zdns_gateway_ip: gateway_ip,
             // SECURITY: Default to localhost even when enabled
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
@@ -191,7 +193,7 @@ impl ProtocolsComponent {
             quic_port: 9334,
             discovery_port: 9333,
             is_edge_node: false,
-            enable_zdns_transport: false,
+            enable_zdns_transport: false, zdns_bootstrap_ips: vec![],
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
             zdns_port: 53,
@@ -221,7 +223,7 @@ impl ProtocolsComponent {
             quic_port: 9334,
             discovery_port: 9333,
             is_edge_node: false,
-            enable_zdns_transport: true,
+            enable_zdns_transport: true, zdns_bootstrap_ips: vec![],
             zdns_gateway_ip: gateway_ip,
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
             zdns_port: 53,
@@ -446,26 +448,32 @@ impl Component for ProtocolsComponent {
 
             // Wire dynamic endpoint provider: reads active validator IPs from on-chain registry.
             // Health filtering: only returns validators with status == "active".
+            // Bootstrap peer IPs as fallback (config has raw IPs, registry has hostnames).
+            let bootstrap_ips = self.zdns_bootstrap_ips.clone();
             if let Ok(blockchain_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
                 let bc_ref = blockchain_arc.clone();
+                let fallback_ips = bootstrap_ips.clone();
                 transport_config.network_endpoint_provider = Some(std::sync::Arc::new(move || {
-                    // Synchronous closure called from DNS handler thread — MUST NOT block
-                    // on the async RwLock (would deadlock the tokio runtime). try_read()
-                    // returns immediately; on contention, empty vec → SERVFAIL → client
-                    // retries on next query (typically <1s). DNS TTL caching prevents
-                    // SERVFAIL from being sticky.
+                    // Synchronous closure — MUST NOT block on async RwLock.
                     let bc = match bc_ref.try_read() {
                         Ok(bc) => bc,
-                        Err(_) => return vec![],
+                        Err(_) => return fallback_ips.clone(),
                     };
-                    bc.validator_registry
+                    // Try validator registry first (has health status).
+                    let mut ips: Vec<std::net::Ipv4Addr> = bc.validator_registry
                         .values()
                         .filter(|v| v.status == "active")
                         .filter_map(|v| {
                             let host = v.network_address.split(':').next()?;
                             host.parse::<std::net::Ipv4Addr>().ok()
                         })
-                        .collect()
+                        .collect();
+                    // Fallback: use bootstrap config IPs if registry has no parseable IPs
+                    // (registry stores hostnames like g1.thesovereignnetwork.org, not raw IPs).
+                    if ips.is_empty() {
+                        ips = fallback_ips.clone();
+                    }
+                    ips
                 }));
                 info!(" ✓ ZDNS network endpoint provider wired to validator registry");
             }

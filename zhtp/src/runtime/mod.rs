@@ -1186,7 +1186,12 @@ impl RuntimeOrchestrator {
                         protocols.zdns_gateway_ip = gateway_ip;
                         protocols.zdns_bind_addr = bind;
                         protocols.zdns_port = self.config.zdns_config.port;
-                        info!("ZDNS enabled: bind={}:{} gateway_ip={}", bind, self.config.zdns_config.port, gateway_ip);
+                        protocols.zdns_bootstrap_ips = self.config.network_config.bootstrap_peers
+                            .iter()
+                            .filter_map(|p| p.split(':').next()?.parse::<std::net::Ipv4Addr>().ok())
+                            .collect();
+                        info!("ZDNS enabled: bind={}:{} gateway_ip={} bootstrap_ips={}",
+                            bind, self.config.zdns_config.port, gateway_ip, protocols.zdns_bootstrap_ips.len());
                     }
                 }
             }
@@ -2902,7 +2907,12 @@ impl RuntimeOrchestrator {
                     protocols.zdns_gateway_ip = gateway_ip;
                     protocols.zdns_bind_addr = bind;
                     protocols.zdns_port = self.config.zdns_config.port;
-                    info!("🌐 ZDNS enabled: bind={}:{} gateway_ip={}", bind, self.config.zdns_config.port, gateway_ip);
+                    protocols.zdns_bootstrap_ips = self.config.network_config.bootstrap_peers
+                        .iter()
+                        .filter_map(|p| p.split(':').next()?.parse::<std::net::Ipv4Addr>().ok())
+                        .collect();
+                    info!("🌐 ZDNS enabled: bind={}:{} gateway_ip={} bootstrap_ips={}",
+                        bind, self.config.zdns_config.port, gateway_ip, protocols.zdns_bootstrap_ips.len());
                 }
             }
         }
