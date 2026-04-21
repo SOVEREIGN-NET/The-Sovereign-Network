@@ -376,6 +376,107 @@ impl MeshMessageHandler {
         Ok(())
     }
 
+    /// Handle relay-routed message envelope
+    ///
+    /// If this node is the destination, deserializes the inner payload and
+    /// dispatches it locally. Otherwise validates TTL/loop detection and
+    /// forwards toward the destination, recording routing activity for the
+    /// intermediary relay.
+    async fn handle_routed_message(
+        &self,
+        destination: PublicKey,
+        ttl: u8,
+        hop_count: u8,
+        route_history: Vec<PublicKey>,
+        payload: Vec<u8>,
+        sender: PublicKey,
+    ) -> Result<()> {
+        // Drop if TTL expired
+        if ttl == 0 {
+            debug!("RoutedMessage TTL expired, dropping");
+            return Ok(());
+        }
+
+        // Drop if loop detected
+        if let Some(node_id) = &self.node_id {
+            if route_history.iter().any(|id| id == node_id) {
+                warn!(
+                    "Loop detected in routed message to {:?}, dropping",
+                    hex::encode(&destination.key_id[..8])
+                );
+                return Ok(());
+            }
+        }
+
+        // Check if we are the destination
+        if let Some(node_id) = &self.node_id {
+            if node_id == &destination {
+                match bincode::deserialize::<ZhtpMeshMessage>(&payload) {
+                    Ok(inner) => {
+                        info!(
+                            "RoutedMessage arrived at destination ({} hops)",
+                            hop_count
+                        );
+                        return Box::pin(self.handle_mesh_message(inner, sender)).await;
+                    }
+                    Err(e) => {
+                        warn!("Failed to deserialize RoutedMessage payload: {}", e);
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        // Forward toward destination
+        let new_ttl = ttl.saturating_sub(1);
+        let new_hop_count = hop_count + 1;
+        let mut new_route_history = route_history;
+        if let Some(node_id) = &self.node_id {
+            new_route_history.push(node_id.clone());
+        }
+
+        let forward = ZhtpMeshMessage::RoutedMessage {
+            destination: destination.clone(),
+            ttl: new_ttl,
+            hop_count: new_hop_count,
+            route_history: new_route_history,
+            payload: payload.clone(),
+        };
+
+        if let Some(router) = &self.message_router {
+            router
+                .read()
+                .await
+                .route_message(forward, destination.clone(), sender)
+                .await?;
+            debug!(
+                "Forwarded RoutedMessage toward {:?} (hop {}, ttl={})",
+                hex::encode(&destination.key_id[..8]),
+                new_hop_count,
+                new_ttl
+            );
+
+            // Record routing activity for intermediary relay reward
+            if let Some(router_guard) = router.read().await.mesh_server.as_ref() {
+                let message_size = payload.len();
+                let _ = router_guard
+                    .read()
+                    .await
+                    .record_routing_activity(
+                        message_size,
+                        new_hop_count,
+                        crate::protocols::NetworkProtocol::TCP, // default; actual protocol determined by peer
+                        0,                                      // latency tracked separately
+                    )
+                    .await;
+            }
+        } else {
+            warn!("No message router available, cannot forward RoutedMessage");
+        }
+
+        Ok(())
+    }
+
     /// Handle incoming mesh message
     pub async fn handle_mesh_message(
         &self,
@@ -750,6 +851,23 @@ impl MeshMessageHandler {
                         payload.len()
                     );
                 }
+            }
+            ZhtpMeshMessage::RoutedMessage {
+                destination,
+                ttl,
+                hop_count,
+                route_history,
+                payload,
+            } => {
+                self.handle_routed_message(
+                    destination,
+                    ttl,
+                    hop_count,
+                    route_history,
+                    payload,
+                    sender,
+                )
+                .await?;
             }
         }
         Ok(())

@@ -69,6 +69,8 @@ pub enum MessageType {
     IdentityDeliveryAck = 31,
     /// Oracle price attestation gossip payload.
     OracleAttestation = 32,
+    /// Relay-routed message envelope for true multi-hop forwarding.
+    RoutedMessage = 33,
 }
 
 /// Message envelope for multi-hop routing
@@ -689,6 +691,20 @@ pub enum ZhtpMeshMessage {
     ///
     /// Contains canonical serialized attestation bytes produced by oracle logic.
     OracleAttestation { payload: Vec<u8> },
+
+    /// Relay-routed message envelope for true multi-hop forwarding.
+    ///
+    /// The originator wraps the inner message and sends it to the first hop;
+    /// each intermediary checks the destination, forwards if not local, or
+    /// deserializes and handles the payload if it is the final recipient.
+    /// TTL and route_history provide loop prevention.
+    RoutedMessage {
+        destination: PublicKey,
+        ttl: u8,
+        hop_count: u8,
+        route_history: Vec<PublicKey>,
+        payload: Vec<u8>,
+    },
 }
 
 /// Acknowledgement for store-and-forward message delivery
@@ -992,6 +1008,16 @@ impl ZhtpMeshMessage {
                 // Use raw bytes directly to avoid bincode's 8-byte length prefix overhead
                 (MessageType::OracleAttestation, payload.clone())
             }
+            Self::RoutedMessage {
+                destination,
+                ttl,
+                hop_count,
+                route_history,
+                payload,
+            } => (
+                MessageType::RoutedMessage,
+                bincode::serialize(&(destination, ttl, hop_count, route_history, payload))?,
+            ),
         };
         Ok((msg_type, payload))
     }
@@ -1300,6 +1326,17 @@ impl ZhtpMeshMessage {
                 // Use raw bytes directly (payload is the opaque attestation bytes)
                 Self::OracleAttestation {
                     payload: payload.to_vec(),
+                }
+            }
+            MessageType::RoutedMessage => {
+                let (destination, ttl, hop_count, route_history, payload) =
+                    bincode::deserialize(payload)?;
+                Self::RoutedMessage {
+                    destination,
+                    ttl,
+                    hop_count,
+                    route_history,
+                    payload,
                 }
             }
         };

@@ -975,6 +975,34 @@ impl MeshMessageRouter {
                     self.route_via_long_range(message_id, &message, hop).await?;
                 }
                 _ => {
+                    // Multi-hop mesh route: use true relay forwarding.
+                    // Wrap the payload in RoutedMessage and send only to the
+                    // first hop; each intermediary unpacks/forward towards
+                    // the destination until it arrives.
+                    // Skip re-wrapping if the message is already a RoutedMessage
+                    // (prevents nested envelopes when an intermediary re-routes).
+                    if hop_index == 0 && route.len() > 1 && !matches!(message, ZhtpMeshMessage::RoutedMessage { .. }) {
+                        let destination = route
+                            .last()
+                            .map(|h| h.peer_id.public_key().clone())
+                            .ok_or_else(|| anyhow!("Empty route"))?;
+                        let payload = bincode::serialize(&message)
+                            .map_err(|e| anyhow!("Failed to serialize message for relay: {}", e))?;
+                        let routed = ZhtpMeshMessage::RoutedMessage {
+                            destination,
+                            ttl: crate::types::mesh_message::DEFAULT_TTL,
+                            hop_count: 0,
+                            route_history: Vec::new(),
+                            payload,
+                        };
+                        self.route_via_mesh(message_id, &routed, hop).await?;
+                        info!(
+                            "Message {} handed to first hop for relay forwarding ({} hops)",
+                            message_id,
+                            route.len()
+                        );
+                        break;
+                    }
                     self.route_via_mesh(message_id, &message, hop).await?;
                 }
             }
@@ -1053,8 +1081,8 @@ impl MeshMessageRouter {
     async fn route_via_satellite(
         &self,
         message_id: u64,
-        _message: &ZhtpMeshMessage,
-        _hop: &RouteHop,
+        message: &ZhtpMeshMessage,
+        hop: &RouteHop,
     ) -> Result<()> {
         info!(
             "🛰️ GLOBAL satellite routing: message {} to ANYWHERE on Earth",
@@ -1068,37 +1096,138 @@ impl MeshMessageRouter {
             }
         }
 
-        // Satellite routing enables PLANETARY reach
-        info!("Satellite uplink active - message can reach ANY location on Earth!");
-        info!(" ZHTP revolutionizing global communications - no ISP needed!");
+        // Look up relay details for logging / endpoint construction
+        let relay_id = hop.relay_id.as_ref().ok_or_else(|| {
+            anyhow!("Satellite route missing relay_id")
+        })?;
+        let relays = self.long_range_relays.read().await;
+        let relay = relays.get(relay_id).ok_or_else(|| {
+            anyhow!("Satellite relay {} not found", relay_id)
+        })?;
+        info!(
+            "Using satellite relay {}: {:.0}km range, {} Mbps",
+            relay_id, relay.coverage_radius_km, relay.max_throughput_mbps
+        );
+        drop(relays);
 
-        Err(anyhow::anyhow!(
-            "Satellite routing not configured: no uplink handler available"
-        ))
+        // Serialize message
+        let message_bytes = bincode::serialize(message)
+            .map_err(|e| anyhow!("Failed to serialize message for satellite: {}", e))?;
+
+        // Construct synthetic endpoint for satellite transport
+        let endpoint = crate::peer_registry::PeerEndpoint {
+            address: crate::types::node_address::NodeAddress::Satellite {
+                terminal_id: relay_id.clone(),
+                constellation: Some("Starlink".to_string()),
+            },
+            protocol: NetworkProtocol::Satellite,
+            signal_strength: 0.85,
+            latency_ms: hop.latency_ms,
+            nat_type: None,
+            public_endpoint: None,
+            relay_endpoint: None,
+        };
+
+        let manager = self.transport_manager()?;
+        manager
+            .send(
+                &NetworkProtocol::Satellite,
+                &endpoint,
+                &hop.peer_id,
+                message,
+                &message_bytes,
+            )
+            .await?;
+
+        info!("📡 Satellite transmission completed for message {}", message_id);
+
+        // Record routing activity for satellite relay reward
+        if let Some(mesh_server) = &self.mesh_server {
+            let message_size = Self::estimate_message_size(message);
+            let _ = mesh_server
+                .read()
+                .await
+                .record_routing_activity(
+                    message_size,
+                    1,
+                    NetworkProtocol::Satellite,
+                    hop.latency_ms as u64,
+                )
+                .await;
+        }
+
+        Ok(())
     }
 
     /// Route via long-range relay
     async fn route_via_long_range(
         &self,
         message_id: u64,
-        _message: &ZhtpMeshMessage,
+        message: &ZhtpMeshMessage,
         hop: &RouteHop,
     ) -> Result<()> {
         info!("Long-range relay routing: message {}", message_id);
 
-        if let Some(relay_id) = &hop.relay_id {
-            let relays = self.long_range_relays.read().await;
-            if let Some(relay) = relays.get(relay_id) {
-                info!(
-                    "Using {} relay: {:.0}km range, {} Mbps",
-                    relay_id, relay.coverage_radius_km, relay.max_throughput_mbps
-                );
-            }
+        let relay_id = hop.relay_id.as_ref().ok_or_else(|| {
+            anyhow!("Long-range route missing relay_id")
+        })?;
+        let relays = self.long_range_relays.read().await;
+        let relay = relays.get(relay_id).ok_or_else(|| {
+            anyhow!("Long-range relay {} not found", relay_id)
+        })?;
+        info!(
+            "Using {:?} relay {}: {:.0}km range, {} Mbps",
+            relay.relay_type, relay_id, relay.coverage_radius_km, relay.max_throughput_mbps
+        );
+        drop(relays);
+
+        // Serialize message
+        let message_bytes = bincode::serialize(message)
+            .map_err(|e| anyhow!("Failed to serialize message for long-range: {}", e))?;
+
+        // Construct synthetic endpoint for LoRaWAN transport
+        let endpoint = crate::peer_registry::PeerEndpoint {
+            address: crate::types::node_address::NodeAddress::LoRaWAN {
+                dev_addr: relay_id.clone(),
+                dev_eui: None,
+            },
+            protocol: NetworkProtocol::LoRaWAN,
+            signal_strength: 0.60,
+            latency_ms: hop.latency_ms,
+            nat_type: None,
+            public_endpoint: None,
+            relay_endpoint: None,
+        };
+
+        let manager = self.transport_manager()?;
+        manager
+            .send(
+                &NetworkProtocol::LoRaWAN,
+                &endpoint,
+                &hop.peer_id,
+                message,
+                &message_bytes,
+            )
+            .await?;
+
+        info!("📡 Long-range transmission completed for message {}", message_id);
+
+        // Record routing activity for long-range relay reward
+        if let Some(mesh_server) = &self.mesh_server {
+            let message_size = Self::estimate_message_size(message);
+            let _ = mesh_server
+                .read()
+                .await
+                .record_routing_activity(
+                    message_size,
+                    1,
+                    NetworkProtocol::LoRaWAN,
+                    hop.latency_ms as u64,
+                )
+                .await;
         }
 
-        Err(anyhow::anyhow!(
-            "Long-range routing not configured: no relay send implementation"
-        ))
+        Ok(())
     }
 
     /// Route via mesh connection

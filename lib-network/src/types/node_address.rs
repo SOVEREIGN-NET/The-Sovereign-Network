@@ -30,6 +30,11 @@ pub enum NodeAddress {
         dev_addr: String,
         dev_eui: Option<String>,
     },
+    /// Satellite terminal address
+    Satellite {
+        terminal_id: String,
+        constellation: Option<String>,
+    },
     /// Mesh network with public key routing
     Mesh(Vec<u8>),
     /// Domain name (for ZDNS resolution)
@@ -59,6 +64,16 @@ impl NodeAddress {
                     format!("lora://{}", dev_addr)
                 }
             }
+            NodeAddress::Satellite {
+                terminal_id,
+                constellation,
+            } => {
+                if let Some(constellation) = constellation {
+                    format!("sat://{}?constellation={}", terminal_id, constellation)
+                } else {
+                    format!("sat://{}", terminal_id)
+                }
+            }
             NodeAddress::Mesh(pubkey) => format!("mesh://{}", hex::encode(pubkey)),
             NodeAddress::Domain(domain) => format!("zdns://{}", domain),
         }
@@ -74,6 +89,7 @@ impl NodeAddress {
             NodeAddress::BluetoothLE(_) => "ble",
             NodeAddress::WiFiDirect { .. } => "wifi_direct",
             NodeAddress::LoRaWAN { .. } => "lorawan",
+            NodeAddress::Satellite { .. } => "satellite",
             NodeAddress::Mesh(_) => "mesh",
             NodeAddress::Domain(_) => "domain",
         }
@@ -142,6 +158,18 @@ impl NodeAddress {
                 None
             };
             Ok(NodeAddress::LoRaWAN { dev_addr, dev_eui })
+        } else if let Some(rest) = s.strip_prefix("sat://") {
+            let parts: Vec<&str> = rest.split('?').collect();
+            let terminal_id = parts[0].to_string();
+            let constellation = if parts.len() > 1 {
+                parts[1].strip_prefix("constellation=").map(String::from)
+            } else {
+                None
+            };
+            Ok(NodeAddress::Satellite {
+                terminal_id,
+                constellation,
+            })
         } else if let Some(rest) = s.strip_prefix("mesh://") {
             let pubkey = hex::decode(rest).map_err(|_| AddressParseError::InvalidFormat)?;
             Ok(NodeAddress::Mesh(pubkey))
