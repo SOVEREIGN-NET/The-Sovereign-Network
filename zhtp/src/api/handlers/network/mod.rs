@@ -912,27 +912,35 @@ impl NetworkHandler {
             })
             .collect();
 
-        // Try default path first, then known absolute paths
-        let local_spki = lib_network::protocols::quic_mesh::get_tls_spki_hash_from_default_cert()
-            .or_else(|| {
-                // Fallback: try absolute path used on validators
-                let paths = [
-                    "/opt/zhtp/data/tls/server.crt",
-                    "/opt/zhtp/.zhtp/tls/server.crt",
-                ];
-                for path in &paths {
-                    if let Ok(pem) = std::fs::read(path) {
-                        if let Some(Ok(cert_der)) = rustls_pemfile::certs(&mut pem.as_slice()).next() {
-                            if let Ok(hash) = lib_network::protocols::quic_mesh::QuicMeshProtocol::compute_spki_sha256(cert_der.as_ref()) {
-                                return Some(hash);
+        // Compute local SPKI pin from TLS certificate
+        let local_spki = {
+            let cert_paths = [
+                "./data/tls/server.crt",
+                "/opt/zhtp/data/tls/server.crt",
+                "/opt/zhtp/.zhtp/tls/server.crt",
+            ];
+            let mut pin = String::new();
+            for path in &cert_paths {
+                if let Ok(pem) = std::fs::read(path) {
+                    if let Some(Ok(cert_der)) = rustls_pemfile::certs(&mut pem.as_slice()).next() {
+                        match lib_network::protocols::quic_mesh::QuicMeshProtocol::compute_spki_sha256(cert_der.as_ref()) {
+                            Ok(hash) => {
+                                pin = hex::encode(hash);
+                                info!("SPKI pin computed from {}: {}", path, &pin[..16]);
+                                break;
+                            }
+                            Err(e) => {
+                                warn!("Failed to compute SPKI from {}: {}", path, e);
                             }
                         }
                     }
                 }
-                None
-            })
-            .map(|h| hex::encode(h))
-            .unwrap_or_default();
+            }
+            if pin.is_empty() {
+                warn!("No TLS certificate found for SPKI pin computation");
+            }
+            pin
+        };
 
         let response = serde_json::json!({
             "validators": validators,
