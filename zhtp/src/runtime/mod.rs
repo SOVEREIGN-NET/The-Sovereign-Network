@@ -2870,13 +2870,43 @@ impl RuntimeOrchestrator {
             .await?;
 
         // Protocols must start before Consensus so mesh router is available
-        self.register_component(Arc::new(ProtocolsComponent::new_with_ports(
+        let mut protocols = ProtocolsComponent::new_with_ports(
             environment,
             self.config.protocols_config.api_port,
             self.config.protocols_config.quic_port,
             self.config.protocols_config.discovery_port,
-        )))
-        .await?;
+        );
+        // Wire ZDNS config
+        if self.config.zdns_config.enabled {
+            match self.config.zdns_config.bind.parse::<std::net::IpAddr>() {
+                Err(e) => {
+                    tracing::error!("Invalid zdns bind '{}': {} — skipping", self.config.zdns_config.bind, e);
+                }
+                Ok(bind) => {
+                    let gateway_ip = self.config.network_config.bootstrap_validators
+                        .iter()
+                        .flat_map(|bv| bv.endpoints.iter())
+                        .filter_map(|ep| ep.split(':').next()?.parse::<std::net::Ipv4Addr>().ok())
+                        .find(|ip| !ip.is_loopback() && !ip.is_unspecified())
+                        .unwrap_or_else(|| {
+                            tracing::warn!("ZDNS: no public IP from config, using local_ip");
+                            local_ip_address::local_ip()
+                                .ok()
+                                .and_then(|ip| match ip {
+                                    std::net::IpAddr::V4(v4) => Some(v4),
+                                    _ => None,
+                                })
+                                .unwrap_or(std::net::Ipv4Addr::new(127, 0, 0, 1))
+                        });
+                    protocols.enable_zdns_transport = true;
+                    protocols.zdns_gateway_ip = gateway_ip;
+                    protocols.zdns_bind_addr = bind;
+                    protocols.zdns_port = self.config.zdns_config.port;
+                    info!("🌐 ZDNS enabled: bind={}:{} gateway_ip={}", bind, self.config.zdns_config.port, gateway_ip);
+                }
+            }
+        }
+        self.register_component(Arc::new(protocols)).await?;
         self.register_component(Arc::new(
             ConsensusComponent::new_with_bootstrap_validators_and_oracle(
                 environment,
