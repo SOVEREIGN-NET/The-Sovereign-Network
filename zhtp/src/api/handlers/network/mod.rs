@@ -888,31 +888,7 @@ impl NetworkHandler {
             .map_err(|e| anyhow::anyhow!("blockchain unavailable: {}", e))?;
         let blockchain = blockchain_arc.read().await;
 
-        let peer_pins: std::collections::HashMap<String, String> =
-            crate::runtime::bootstrap_peers_provider::get_bootstrap_peer_pins()
-                .await
-                .unwrap_or_default();
-
-        let validators: Vec<serde_json::Value> = blockchain
-            .validator_registry
-            .iter()
-            .map(|(_, v)| {
-                let spki_pin = peer_pins.get(&v.network_address)
-                    .cloned()
-                    .unwrap_or_default();
-                serde_json::json!({
-                    "did": v.identity_id,
-                    "endpoint": v.network_address,
-                    "stake": v.stake,
-                    "status": v.status,
-                    "last_activity": v.last_activity,
-                    "healthy": v.status == "active",
-                    "spki_pin": spki_pin,
-                })
-            })
-            .collect();
-
-        // Compute local SPKI pin from TLS certificate
+        // Compute this node's SPKI pin first
         let local_spki = {
             let cert_paths = [
                 "./data/tls/server.crt",
@@ -923,24 +899,43 @@ impl NetworkHandler {
             for path in &cert_paths {
                 if let Ok(pem) = std::fs::read(path) {
                     if let Some(Ok(cert_der)) = rustls_pemfile::certs(&mut pem.as_slice()).next() {
-                        match lib_network::protocols::quic_mesh::QuicMeshProtocol::compute_spki_sha256(cert_der.as_ref()) {
-                            Ok(hash) => {
-                                pin = hex::encode(hash);
-                                info!("SPKI pin computed from {}: {}", path, &pin[..16]);
-                                break;
-                            }
-                            Err(e) => {
-                                warn!("Failed to compute SPKI from {}: {}", path, e);
-                            }
+                        if let Ok(hash) = lib_network::protocols::quic_mesh::QuicMeshProtocol::compute_spki_sha256(cert_der.as_ref()) {
+                            pin = hex::encode(hash);
+                            break;
                         }
                     }
                 }
             }
-            if pin.is_empty() {
-                warn!("No TLS certificate found for SPKI pin computation");
-            }
             pin
         };
+
+        // Get this node's DID to match against validator entries
+        let local_did = crate::runtime::node_identity::get_runtime_node_did()
+            .unwrap_or_default();
+
+        // Each validator entry gets the SPKI pin only if it's THIS node.
+        // Other validators' pins must be fetched by connecting to them directly.
+        let validators: Vec<serde_json::Value> = blockchain
+            .validator_registry
+            .iter()
+            .map(|(_, v)| {
+                // Match by DID: if this validator is us, attach our pin
+                let pin = if v.identity_id == local_did {
+                    local_spki.clone()
+                } else {
+                    String::new()
+                };
+                serde_json::json!({
+                    "did": v.identity_id,
+                    "endpoint": v.network_address,
+                    "stake": v.stake,
+                    "status": v.status,
+                    "last_activity": v.last_activity,
+                    "healthy": v.status == "active",
+                    "spki_pin": pin,
+                })
+            })
+            .collect();
 
         let response = serde_json::json!({
             "validators": validators,
