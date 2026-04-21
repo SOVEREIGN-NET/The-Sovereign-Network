@@ -448,4 +448,59 @@ mod tests {
         assert_eq!(packet.query_name(), Some("test.zhtp"));
         assert!(packet.is_a_query());
     }
+
+    #[test]
+    fn test_serialize_multi_a_records() {
+        let query = DnsPacket {
+            id: 0x1234,
+            is_response: false,
+            question: Some(DnsQuestion {
+                name: "network.sov".to_string(),
+                qtype: TYPE_A,
+                qclass: CLASS_IN,
+            }),
+            answers: vec![],
+            rcode: 0,
+        };
+
+        let ips = vec![
+            Ipv4Addr::new(77, 42, 37, 161),
+            Ipv4Addr::new(77, 42, 74, 80),
+            Ipv4Addr::new(178, 105, 9, 247),
+        ];
+
+        let response = DnsPacket::a_records(&query, &ips, 300);
+        assert_eq!(response.answers.len(), 3);
+        assert_eq!(response.answers[0].rdata, vec![77, 42, 37, 161]);
+        assert_eq!(response.answers[1].rdata, vec![77, 42, 74, 80]);
+        assert_eq!(response.answers[2].rdata, vec![178, 105, 9, 247]);
+
+        // Round-trip: serialize and parse back
+        let bytes = response.serialize();
+        let parsed = DnsPacket::parse(&bytes).unwrap();
+        assert_eq!(parsed.id, 0x1234);
+        assert!(parsed.is_response);
+        assert_eq!(parsed.answers.len(), 3);
+        assert_eq!(parsed.answers[0].rdata, vec![77, 42, 37, 161]);
+        assert_eq!(parsed.answers[2].rdata, vec![178, 105, 9, 247]);
+        assert_eq!(parsed.answers[0].ttl, 300);
+    }
+
+    #[test]
+    fn test_a_records_empty() {
+        let query = DnsPacket {
+            id: 0xAAAA,
+            is_response: false,
+            question: Some(DnsQuestion {
+                name: "network.sov".to_string(),
+                qtype: TYPE_A,
+                qclass: CLASS_IN,
+            }),
+            answers: vec![],
+            rcode: 0,
+        };
+
+        let response = DnsPacket::a_records(&query, &[], 60);
+        assert_eq!(response.answers.len(), 0);
+    }
 }

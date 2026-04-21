@@ -446,8 +446,11 @@ impl Component for ProtocolsComponent {
             if let Ok(blockchain_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
                 let bc_ref = blockchain_arc.clone();
                 transport_config.network_endpoint_provider = Some(std::sync::Arc::new(move || {
-                    // Synchronous closure — use try_read to avoid blocking.
-                    // If the lock is held, return empty (DNS will retry on next query).
+                    // Synchronous closure called from DNS handler thread — MUST NOT block
+                    // on the async RwLock (would deadlock the tokio runtime). try_read()
+                    // returns immediately; on contention, empty vec → SERVFAIL → client
+                    // retries on next query (typically <1s). DNS TTL caching prevents
+                    // SERVFAIL from being sticky.
                     let bc = match bc_ref.try_read() {
                         Ok(bc) => bc,
                         Err(_) => return vec![],
