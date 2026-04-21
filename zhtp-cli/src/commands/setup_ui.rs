@@ -175,7 +175,7 @@ async fn try_restore_seed(seed_phrase: &str, _server: &str) -> Result<serde_json
     // Recover identity from seed
     let identity = lib_identity::ZhtpIdentity::recover_from_seed(
         seed,
-        lib_identity::IdentityType::Human,
+        lib_identity::IdentityType::Device,
         None,
         None,
         "restored-node",

@@ -3,495 +3,267 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sovereign Network — Node Setup</title>
+<title>SOV — Node Control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --bg: #0a0a0f;
-    --surface: #12121a;
-    --border: #1e1e2e;
-    --text: #e0e0e8;
-    --muted: #6b6b80;
-    --accent: #6366f1;
-    --accent-glow: rgba(99, 102, 241, 0.15);
-    --success: #22c55e;
-    --error: #ef4444;
-    --warning: #f59e0b;
-  }
-
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    display: flex;
-    justify-content: center;
-    padding: 40px 20px;
-  }
-
-  .container {
-    max-width: 640px;
-    width: 100%;
-  }
-
-  .logo {
-    text-align: center;
-    margin-bottom: 48px;
-  }
-
-  .logo h1 {
-    font-size: 28px;
-    font-weight: 700;
-    letter-spacing: -0.5px;
-    background: linear-gradient(135deg, #6366f1, #8b5cf6);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
-
-  .logo p {
-    color: var(--muted);
-    font-size: 14px;
-    margin-top: 8px;
-  }
-
-  .card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    padding: 32px;
-    margin-bottom: 24px;
-  }
-
-  .card h2 {
-    font-size: 18px;
-    font-weight: 600;
-    margin-bottom: 16px;
-  }
-
-  .step-indicator {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 32px;
-    justify-content: center;
-  }
-
-  .step-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: var(--border);
-    transition: all 0.3s;
-  }
-
-  .step-dot.active {
-    background: var(--accent);
-    box-shadow: 0 0 12px var(--accent-glow);
-  }
-
-  .step-dot.done {
-    background: var(--success);
-  }
-
-  label {
-    display: block;
-    font-size: 13px;
-    color: var(--muted);
-    margin-bottom: 8px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-
-  textarea, input[type="text"] {
-    width: 100%;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 14px 16px;
-    color: var(--text);
-    font-size: 15px;
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    resize: none;
-    transition: border-color 0.2s;
-  }
-
-  textarea:focus, input[type="text"]:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-glow);
-  }
-
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-    padding: 14px 24px;
-    border: none;
-    border-radius: 10px;
-    font-size: 15px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-    margin-top: 16px;
-  }
-
-  .btn-primary {
-    background: var(--accent);
-    color: white;
-  }
-
-  .btn-primary:hover {
-    background: #5558e6;
-    transform: translateY(-1px);
-    box-shadow: 0 4px 16px var(--accent-glow);
-  }
-
-  .btn-primary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    transform: none;
-  }
-
-  .btn-secondary {
-    background: var(--border);
-    color: var(--text);
-  }
-
-  .btn-secondary:hover {
-    background: #2a2a3e;
-  }
-
-  .status-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 16px;
-  }
-
-  .status-item {
-    background: var(--bg);
-    border-radius: 10px;
-    padding: 16px;
-  }
-
-  .status-item .label {
-    font-size: 12px;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 6px;
-  }
-
-  .status-item .value {
-    font-size: 20px;
-    font-weight: 700;
-  }
-
-  .status-item .value.mono {
-    font-size: 13px;
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    word-break: break-all;
-  }
-
-  .status-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: 600;
-  }
-
-  .badge-success { background: rgba(34,197,94,0.15); color: var(--success); }
-  .badge-warning { background: rgba(245,158,11,0.15); color: var(--warning); }
-  .badge-error { background: rgba(239,68,68,0.15); color: var(--error); }
-
-  .badge-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: currentColor;
-    animation: pulse 2s infinite;
-  }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
-  }
-
-  .sync-bar {
-    height: 4px;
-    background: var(--border);
-    border-radius: 2px;
-    margin-top: 12px;
-    overflow: hidden;
-  }
-
-  .sync-bar-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--accent), #8b5cf6);
-    border-radius: 2px;
-    transition: width 0.5s ease;
-  }
-
-  .hidden { display: none !important; }
-
-  .option-group {
-    display: flex;
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-
-  .option-group .btn {
-    flex: 1;
-    margin-top: 0;
-  }
-
-  .option-group .btn.selected {
-    border: 2px solid var(--accent);
-    background: var(--accent-glow);
-  }
-
-  .hint {
-    font-size: 13px;
-    color: var(--muted);
-    margin-top: 8px;
-  }
-
-  .error-msg {
-    color: var(--error);
-    font-size: 13px;
-    margin-top: 8px;
-  }
+:root {
+  --bg: #060610;
+  --surface: #0c0c1a;
+  --surface-2: #111125;
+  --border: #1a1a35;
+  --text: #d8dce8;
+  --text-dim: #525278;
+  --text-muted: #3a3a5c;
+  --cyan: #00e8ff;
+  --cyan-dim: rgba(0, 232, 255, 0.08);
+  --cyan-glow: rgba(0, 232, 255, 0.25);
+  --green: #00ff88;
+  --green-dim: rgba(0, 255, 136, 0.08);
+  --amber: #ffb800;
+  --amber-dim: rgba(255, 184, 0, 0.08);
+  --red: #ff3366;
+  --red-dim: rgba(255, 51, 102, 0.08);
+  --mono: 'JetBrains Mono', monospace;
+  --sans: 'Outfit', sans-serif;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: var(--sans); background: var(--bg); color: var(--text); min-height: 100vh; overflow-x: hidden; }
+body::before { content: ''; position: fixed; inset: 0; background: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E"); pointer-events: none; z-index: 9999; }
+.topbar { position: fixed; top: 0; left: 0; right: 0; height: 48px; background: rgba(6,6,16,0.9); backdrop-filter: blur(20px); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 24px; z-index: 100; gap: 16px; }
+.topbar-brand { font-family: var(--mono); font-weight: 700; font-size: 13px; letter-spacing: 2px; text-transform: uppercase; color: var(--cyan); }
+.topbar-sep { width: 1px; height: 20px; background: var(--border); }
+.topbar-status { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+.pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); animation: pg 2s ease-in-out infinite; }
+.pulse.warn { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+.pulse.off { background: var(--red); box-shadow: 0 0 8px var(--red); animation: none; }
+@keyframes pg { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(.8)} }
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+.topbar-height { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+.topbar-height span { color: var(--cyan); font-weight: 500; }
+.main { padding-top: 48px; min-height: 100vh; }
+.setup-view { display: flex; justify-content: center; align-items: center; min-height: calc(100vh - 48px); padding: 40px 20px; }
+.setup-card { width: 100%; max-width: 480px; animation: fu .6s ease; }
+@keyframes fu { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
+.setup-header { text-align: center; margin-bottom: 40px; }
+.setup-header h1 { font-size: 24px; font-weight: 600; margin-bottom: 8px; }
+.setup-header p { color: var(--text-dim); font-size: 14px; }
+.setup-options { display: grid; gap: 12px; margin-bottom: 24px; }
+.setup-option { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; cursor: pointer; transition: all .2s; display: flex; align-items: center; gap: 16px; }
+.setup-option:hover { border-color: var(--cyan); background: var(--cyan-dim); }
+.setup-option-icon { width: 40px; height: 40px; border-radius: 10px; background: var(--surface-2); display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+.setup-option-text h3 { font-size: 15px; font-weight: 500; margin-bottom: 2px; }
+.setup-option-text p { font-size: 12px; color: var(--text-dim); }
+.seed-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; }
+.seed-panel h2 { font-size: 16px; font-weight: 500; margin-bottom: 16px; }
+.seed-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 6px; margin-bottom: 16px; }
+.seed-word { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 6px; font-family: var(--mono); font-size: 12px; color: var(--text); text-align: center; outline: none; transition: border-color .2s; width: 100%; }
+.seed-word:focus { border-color: var(--cyan); box-shadow: 0 0 0 2px var(--cyan-dim); }
+.seed-word::placeholder { color: var(--text-muted); font-size: 10px; }
+.seed-word-num { font-size: 9px; color: var(--text-muted); text-align: center; margin-bottom: 2px; font-family: var(--mono); }
+.seed-word-cell { display: flex; flex-direction: column; }
+.name-input { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; font-family: var(--mono); font-size: 14px; color: var(--text); outline: none; margin-bottom: 16px; }
+.name-input:focus { border-color: var(--cyan); }
+.btn { width: 100%; padding: 12px; border: none; border-radius: 8px; font-family: var(--sans); font-size: 14px; font-weight: 600; cursor: pointer; transition: all .15s; margin-top: 8px; }
+.btn-cyan { background: var(--cyan); color: var(--bg); }
+.btn-cyan:hover { filter: brightness(1.1); transform: translateY(-1px); }
+.btn-cyan:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+.btn-ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
+.btn-ghost:hover { border-color: var(--text-dim); color: var(--text); }
+.error-text { color: var(--red); font-size: 12px; margin-top: 8px; font-family: var(--mono); }
+.dashboard { padding: 24px; display: grid; gap: 16px; animation: fu .4s ease; }
+.metrics-row { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; }
+@media(max-width:800px) { .metrics-row{grid-template-columns:repeat(2,1fr)} }
+.metric { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; position: relative; overflow: hidden; }
+.metric::after { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--border); }
+.metric.ac::after { background: var(--cyan); box-shadow: 0 0 12px var(--cyan-glow); }
+.metric.ag::after { background: var(--green); }
+.metric.aa::after { background: var(--amber); }
+.metric-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-bottom: 8px; font-family: var(--mono); }
+.metric-value { font-family: var(--mono); font-size: 22px; font-weight: 700; letter-spacing: -.5px; }
+.metric-sub { font-size: 11px; color: var(--text-dim); margin-top: 4px; font-family: var(--mono); }
+.identity-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; }
+.identity-card h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-bottom: 12px; font-family: var(--mono); }
+.did-display { font-family: var(--mono); font-size: 13px; color: var(--cyan); word-break: break-all; line-height: 1.6; padding: 12px; background: var(--bg); border-radius: 6px; border: 1px solid var(--border); }
+.status-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.status-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+.status-card h3 { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-bottom: 10px; font-family: var(--mono); }
+.status-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.status-item:last-child { border-bottom: none; }
+.status-item .key { color: var(--text-dim); font-family: var(--mono); }
+.status-item .val { font-family: var(--mono); font-weight: 500; }
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-family: var(--mono); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+.badge-green { background: var(--green-dim); color: var(--green); }
+.badge-amber { background: var(--amber-dim); color: var(--amber); }
+.badge-red { background: var(--red-dim); color: var(--red); }
+.sync-bar-container { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+.sync-bar-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.sync-bar-header h3 { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); font-family: var(--mono); }
+.sync-bar-pct { font-family: var(--mono); font-size: 12px; color: var(--cyan); font-weight: 500; }
+.sync-track { height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
+.sync-fill { height: 100%; background: linear-gradient(90deg,var(--cyan),#00ff88); border-radius: 2px; transition: width .8s ease; box-shadow: 0 0 8px var(--cyan-glow); }
+.hidden { display: none !important; }
 </style>
 </head>
 <body>
-<div class="container">
-  <div class="logo">
-    <h1>The Sovereign Network</h1>
-    <p>Node Setup</p>
-  </div>
-
-  <div class="step-indicator">
-    <div class="step-dot active" id="dot-0"></div>
-    <div class="step-dot" id="dot-1"></div>
-    <div class="step-dot" id="dot-2"></div>
-  </div>
-
-  <!-- Step 0: Choose mode -->
-  <div class="card" id="step-0">
-    <h2>How do you want to set up your node?</h2>
-    <div class="option-group">
-      <button class="btn btn-secondary" onclick="chooseMode('restore')">
-        Restore from seed phrase
-      </button>
-      <button class="btn btn-secondary" onclick="chooseMode('new')">
-        Create new identity
-      </button>
-    </div>
-    <p class="hint">If you have a mobile wallet, use "Restore" to use the same identity on your node.</p>
-  </div>
-
-  <!-- Step 1: Seed phrase -->
-  <div class="card hidden" id="step-1-restore">
-    <h2>Enter your seed phrase</h2>
-    <label>24-word recovery phrase</label>
-    <textarea id="seed-input" rows="4" placeholder="word1 word2 word3 ..."></textarea>
-    <p class="hint">From your mobile app: Settings → Backup → Show seed phrase</p>
-    <div class="error-msg hidden" id="seed-error"></div>
-    <button class="btn btn-primary" onclick="submitSeed()" id="btn-restore">Restore Identity</button>
-  </div>
-
-  <div class="card hidden" id="step-1-new">
-    <h2>New Identity</h2>
-    <label>Node name</label>
-    <input type="text" id="node-name" placeholder="my-sovereign-node" />
-    <p class="hint">A friendly name for your node. Your identity will be generated automatically.</p>
-    <button class="btn btn-primary" onclick="createNew()" id="btn-create">Create &amp; Start</button>
-  </div>
-
-  <!-- Step 2: Dashboard -->
-  <div class="card hidden" id="step-2">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-      <h2>Node Dashboard</h2>
-      <span class="status-badge badge-success" id="node-badge">
-        <span class="badge-dot"></span>
-        <span id="badge-text">Syncing</span>
-      </span>
-    </div>
-
-    <div class="status-grid">
-      <div class="status-item">
-        <div class="label">Chain Height</div>
-        <div class="value" id="chain-height">—</div>
+<div class="topbar">
+  <div class="topbar-brand">SOV</div>
+  <div class="topbar-sep"></div>
+  <div class="topbar-status"><div class="pulse off" id="pulse"></div><span id="status-text">Offline</span></div>
+  <div class="topbar-right"><div class="topbar-height">block <span id="top-height">—</span></div></div>
+</div>
+<div class="main">
+  <div class="setup-view" id="view-setup">
+    <div class="setup-card">
+      <div class="setup-header"><h1>Initialize Node</h1><p>Connect to The Sovereign Network</p></div>
+      <div id="setup-choose">
+        <div class="setup-options">
+          <div class="setup-option" onclick="showRestore()">
+            <div class="setup-option-icon">🔑</div>
+            <div class="setup-option-text"><h3>Restore from seed</h3><p>Use your existing identity from the mobile app</p></div>
+          </div>
+          <div class="setup-option" onclick="showCreate()">
+            <div class="setup-option-icon">✦</div>
+            <div class="setup-option-text"><h3>New identity</h3><p>Generate a fresh cryptographic identity</p></div>
+          </div>
+        </div>
       </div>
-      <div class="status-item">
-        <div class="label">SOV Balance</div>
-        <div class="value" id="sov-balance">—</div>
+      <div id="setup-restore" class="hidden">
+        <div class="seed-panel">
+          <h2>Recovery phrase</h2>
+          <div class="seed-grid" id="seed-grid"></div>
+          <div class="error-text hidden" id="restore-error"></div>
+          <button class="btn btn-cyan" onclick="doRestore()" id="btn-restore">Restore</button>
+          <button class="btn btn-ghost" onclick="backToChoose()">Back</button>
+        </div>
       </div>
-      <div class="status-item">
-        <div class="label">Validators</div>
-        <div class="value" id="validators">—</div>
-      </div>
-      <div class="status-item">
-        <div class="label">Identities</div>
-        <div class="value" id="identities">—</div>
-      </div>
-      <div class="status-item" style="grid-column: span 2;">
-        <div class="label">Your DID</div>
-        <div class="value mono" id="node-did">—</div>
+      <div id="setup-create" class="hidden">
+        <div class="seed-panel">
+          <h2>Name your node</h2>
+          <input type="text" class="name-input" id="node-name" placeholder="sovereign-node" autocomplete="off" spellcheck="false">
+          <div class="error-text hidden" id="create-error"></div>
+          <button class="btn btn-cyan" onclick="doCreate()" id="btn-create">Create</button>
+          <button class="btn btn-ghost" onclick="backToChoose()">Back</button>
+        </div>
       </div>
     </div>
-
-    <div class="sync-bar">
-      <div class="sync-bar-fill" id="sync-fill" style="width: 0%"></div>
+  </div>
+  <div class="dashboard hidden" id="view-dashboard">
+    <div class="metrics-row">
+      <div class="metric ac"><div class="metric-label">Chain Height</div><div class="metric-value" id="d-height">—</div></div>
+      <div class="metric ag"><div class="metric-label">SOV Balance</div><div class="metric-value" id="d-balance">—</div><div class="metric-sub" id="d-balance-atoms"></div></div>
+      <div class="metric"><div class="metric-label">Validators</div><div class="metric-value" id="d-validators">—</div></div>
+      <div class="metric aa"><div class="metric-label">Identities</div><div class="metric-value" id="d-identities">—</div></div>
+    </div>
+    <div class="identity-card"><h3>Your DID</h3><div class="did-display" id="d-did">—</div></div>
+    <div class="sync-bar-container">
+      <div class="sync-bar-header"><h3>Sync Progress</h3><div class="sync-bar-pct" id="d-sync-pct">0%</div></div>
+      <div class="sync-track"><div class="sync-fill" id="d-sync-fill" style="width:0%"></div></div>
+    </div>
+    <div class="status-row">
+      <div class="status-card"><h3>Node</h3>
+        <div class="status-item"><span class="key">State</span><span class="val"><span class="badge badge-green" id="d-state-badge">Ready</span></span></div>
+        <div class="status-item"><span class="key">Registered</span><span class="val" id="d-registered">—</span></div>
+        <div class="status-item"><span class="key">Network</span><span class="val" id="d-network">—</span></div>
+      </div>
+      <div class="status-card"><h3>Wallet</h3>
+        <div class="status-item"><span class="key">Wallet ID</span><span class="val" id="d-wallet" style="font-size:10px">—</span></div>
+        <div class="status-item"><span class="key">SOV</span><span class="val" id="d-sov-human">—</span></div>
+      </div>
     </div>
   </div>
 </div>
-
 <script>
-const API = '';  // Same origin (localhost bridge)
-let mode = null;
-let pollInterval = null;
+const API='';
+let poll=null;
 
-function chooseMode(m) {
-  mode = m;
-  document.getElementById('step-0').classList.add('hidden');
-  document.getElementById('dot-0').classList.remove('active');
-  document.getElementById('dot-0').classList.add('done');
-  document.getElementById('dot-1').classList.add('active');
-  if (m === 'restore') {
-    document.getElementById('step-1-restore').classList.remove('hidden');
-  } else {
-    document.getElementById('step-1-new').classList.remove('hidden');
+// Build seed grid safely
+(function(){
+  const g=document.getElementById('seed-grid');
+  for(let i=0;i<24;i++){
+    const cell=document.createElement('div');
+    cell.className='seed-word-cell';
+    const num=document.createElement('div');
+    num.className='seed-word-num';
+    num.textContent=String(i+1);
+    const inp=document.createElement('input');
+    inp.className='seed-word';
+    inp.dataset.idx=String(i);
+    inp.placeholder='word';
+    inp.autocomplete='off';
+    inp.spellcheck=false;
+    cell.appendChild(num);
+    cell.appendChild(inp);
+    g.appendChild(cell);
   }
-}
-
-async function submitSeed() {
-  const seed = document.getElementById('seed-input').value.trim();
-  const words = seed.split(/\s+/);
-  const errEl = document.getElementById('seed-error');
-  errEl.classList.add('hidden');
-
-  if (words.length !== 24) {
-    errEl.textContent = `Expected 24 words, got ${words.length}`;
-    errEl.classList.remove('hidden');
-    return;
-  }
-
-  document.getElementById('btn-restore').disabled = true;
-  document.getElementById('btn-restore').textContent = 'Restoring...';
-
-  try {
-    const res = await fetch(API + '/api/setup', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'restore', seed_phrase: seed }),
-    });
-    const data = await res.json();
-    if (data.error) {
-      errEl.textContent = data.error;
-      errEl.classList.remove('hidden');
-      document.getElementById('btn-restore').disabled = false;
-      document.getElementById('btn-restore').textContent = 'Restore Identity';
-      return;
-    }
-    showDashboard();
-  } catch (e) {
-    errEl.textContent = 'Connection failed: ' + e.message;
-    errEl.classList.remove('hidden');
-    document.getElementById('btn-restore').disabled = false;
-    document.getElementById('btn-restore').textContent = 'Restore Identity';
-  }
-}
-
-async function createNew() {
-  const name = document.getElementById('node-name').value.trim() || 'sovereign-node';
-  document.getElementById('btn-create').disabled = true;
-  document.getElementById('btn-create').textContent = 'Creating...';
-
-  try {
-    const res = await fetch(API + '/api/setup', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'create', node_name: name }),
-    });
-    const data = await res.json();
-    if (data.error) {
-      alert(data.error);
-      document.getElementById('btn-create').disabled = false;
-      document.getElementById('btn-create').textContent = 'Create & Start';
-      return;
-    }
-    showDashboard();
-  } catch (e) {
-    alert('Connection failed: ' + e.message);
-    document.getElementById('btn-create').disabled = false;
-    document.getElementById('btn-create').textContent = 'Create & Start';
-  }
-}
-
-function showDashboard() {
-  document.getElementById('step-1-restore').classList.add('hidden');
-  document.getElementById('step-1-new').classList.add('hidden');
-  document.getElementById('dot-1').classList.remove('active');
-  document.getElementById('dot-1').classList.add('done');
-  document.getElementById('dot-2').classList.add('active');
-  document.getElementById('step-2').classList.remove('hidden');
-  startPolling();
-}
-
-function startPolling() {
-  updateStatus();
-  pollInterval = setInterval(updateStatus, 3000);
-}
-
-async function updateStatus() {
-  try {
-    const res = await fetch(API + '/api/status');
-    const data = await res.json();
-
-    document.getElementById('chain-height').textContent = Number(data.chain_height || 0).toLocaleString();
-    document.getElementById('sov-balance').textContent = data.sov_balance_human || '0';
-    document.getElementById('validators').textContent = data.validator_count || '0';
-    document.getElementById('identities').textContent = data.identity_count || '0';
-    document.getElementById('node-did').textContent = data.did || '—';
-
-    const badge = document.getElementById('node-badge');
-    const badgeText = document.getElementById('badge-text');
-    if (data.state === 'ready') {
-      badge.className = 'status-badge badge-success';
-      badgeText.textContent = 'Connected';
-    } else if (data.state === 'identity_not_registered') {
-      badge.className = 'status-badge badge-warning';
-      badgeText.textContent = 'Not Registered';
-    } else {
-      badge.className = 'status-badge badge-warning';
-      badgeText.textContent = 'Syncing';
-    }
-
-    // Rough sync progress (assume 40000 blocks target)
-    const height = data.chain_height || 0;
-    const pct = Math.min(100, (height / 40000) * 100);
-    document.getElementById('sync-fill').style.width = pct + '%';
-  } catch (e) {
-    // Bridge not ready yet
-  }
-}
-
-// Auto-detect: if node is already running, skip to dashboard
-(async () => {
-  try {
-    const res = await fetch(API + '/api/status');
-    const data = await res.json();
-    if (data.state && data.state !== 'setup_required') {
-      showDashboard();
-    }
-  } catch (e) {
-    // Not running yet, show setup
-  }
+  g.addEventListener('keydown',e=>{
+    if(e.key===' '||e.key==='Tab'){e.preventDefault();const n=g.querySelector('[data-idx="'+(parseInt(e.target.dataset.idx)+1)+'"]');if(n)n.focus();}
+  });
+  g.addEventListener('paste',e=>{
+    const t=(e.clipboardData||window.clipboardData).getData('text');
+    const w=t.trim().split(/\s+/);
+    if(w.length>1){e.preventDefault();w.forEach((v,i)=>{const inp=g.querySelector('[data-idx="'+i+'"]');if(inp)inp.value=v;});}
+  });
 })();
+
+function showRestore(){document.getElementById('setup-choose').classList.add('hidden');document.getElementById('setup-restore').classList.remove('hidden');document.querySelector('.seed-word').focus();}
+function showCreate(){document.getElementById('setup-choose').classList.add('hidden');document.getElementById('setup-create').classList.remove('hidden');document.getElementById('node-name').focus();}
+function backToChoose(){document.getElementById('setup-restore').classList.add('hidden');document.getElementById('setup-create').classList.add('hidden');document.getElementById('setup-choose').classList.remove('hidden');}
+function getSeedWords(){return Array.from(document.querySelectorAll('.seed-word')).map(i=>i.value.trim().toLowerCase()).filter(w=>w.length>0);}
+
+async function doRestore(){
+  const w=getSeedWords(),err=document.getElementById('restore-error');
+  err.classList.add('hidden');
+  if(w.length!==20&&w.length!==24){err.textContent='Need 20 or 24 words — got '+w.length;err.classList.remove('hidden');return;}
+  const btn=document.getElementById('btn-restore');btn.disabled=true;btn.textContent='Restoring...';
+  try{const r=await fetch(API+'/api/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'restore',seed_phrase:w.join(' ')})});
+    const d=await r.json();if(d.error){err.textContent=d.error;err.classList.remove('hidden');btn.disabled=false;btn.textContent='Restore';return;}
+    switchToDashboard();
+  }catch(e){err.textContent=e.message;err.classList.remove('hidden');btn.disabled=false;btn.textContent='Restore';}
+}
+
+async function doCreate(){
+  const name=document.getElementById('node-name').value.trim()||'sovereign-node';
+  const err=document.getElementById('create-error');err.classList.add('hidden');
+  const btn=document.getElementById('btn-create');btn.disabled=true;btn.textContent='Creating...';
+  try{const r=await fetch(API+'/api/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'create',node_name:name})});
+    const d=await r.json();if(d.error){err.textContent=d.error;err.classList.remove('hidden');btn.disabled=false;btn.textContent='Create';return;}
+    switchToDashboard();
+  }catch(e){err.textContent=e.message;err.classList.remove('hidden');btn.disabled=false;btn.textContent='Create';}
+}
+
+function switchToDashboard(){document.getElementById('view-setup').classList.add('hidden');document.getElementById('view-dashboard').classList.remove('hidden');startPolling();}
+function startPolling(){updateDashboard();poll=setInterval(updateDashboard,2000);}
+
+async function updateDashboard(){
+  try{
+    const r=await fetch(API+'/api/status');const d=await r.json();
+    const h=Number(d.chain_height||0);
+    document.getElementById('d-height').textContent=h.toLocaleString();
+    document.getElementById('top-height').textContent=h.toLocaleString();
+    document.getElementById('d-balance').textContent=d.sov_balance_human||'0';
+    document.getElementById('d-balance-atoms').textContent=d.sov_balance?Number(d.sov_balance).toLocaleString()+' atoms':'';
+    document.getElementById('d-validators').textContent=d.validator_count||'0';
+    document.getElementById('d-identities').textContent=d.identity_count||'0';
+    document.getElementById('d-did').textContent=d.did||'—';
+    document.getElementById('d-registered').textContent=d.identity_registered?'Yes':'No';
+    document.getElementById('d-network').textContent=d.network_id||'—';
+    document.getElementById('d-wallet').textContent=d.wallet_id?d.wallet_id.slice(0,16)+'...':'—';
+    document.getElementById('d-sov-human').textContent=(d.sov_balance_human||'0')+' SOV';
+    const badge=document.getElementById('d-state-badge');
+    const pulse=document.getElementById('pulse');
+    const st=document.getElementById('status-text');
+    if(d.state==='ready'){badge.className='badge badge-green';badge.textContent='Connected';pulse.className='pulse';st.textContent='Synced';}
+    else if(d.state==='identity_not_registered'){badge.className='badge badge-amber';badge.textContent='Not Registered';pulse.className='pulse warn';st.textContent='Unregistered';}
+    else if(d.state==='connecting'){badge.className='badge badge-amber';badge.textContent='Connecting';pulse.className='pulse warn';st.textContent='Connecting';}
+    else{badge.className='badge badge-red';badge.textContent=d.state||'Unknown';pulse.className='pulse off';st.textContent='Setup Required';}
+    const pct=Math.min(100,(h/50000)*100);
+    document.getElementById('d-sync-fill').style.width=pct+'%';
+    document.getElementById('d-sync-pct').textContent=pct<100?pct.toFixed(1)+'%':'Synced';
+  }catch(e){}
+}
+
+(async()=>{try{const r=await fetch(API+'/api/status');const d=await r.json();if(d.state&&d.state!=='setup_required')switchToDashboard();}catch(e){}})();
 </script>
 </body>
 </html>
