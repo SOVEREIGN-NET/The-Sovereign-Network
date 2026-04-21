@@ -4,6 +4,7 @@
 //! Built on lib-network functions and runtime orchestrator capabilities.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 // Removed unused tokio::sync::RwLock, anyhow::Result, serde_json::json
 use chrono;
@@ -278,6 +279,41 @@ pub struct PeerPerformanceInfo {
     pub status: String, // "active", "warning", "banned"
 }
 
+// Issue #2197: Relay-capable candidate discovery
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RelayCandidatesRequest {
+    pub min_quality: Option<f64>,
+    pub capability: Option<String>, // "relay", "dht", "api", etc.
+    pub page: Option<usize>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RelayCandidatesResponse {
+    pub status: String,
+    pub total: usize,
+    pub page: usize,
+    pub limit: usize,
+    pub candidates: Vec<RelayCandidateInfo>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RelayCandidateInfo {
+    pub did: String,
+    pub peer_id: String,
+    pub endpoints: Vec<String>,
+    pub protocols: Vec<String>,
+    pub routing_capacity: u32,
+    pub bandwidth_mbps: f64,
+    pub latency_ms: u32,
+    pub reliability_score: f64,
+    pub trust_score: f64,
+    pub health_state: String, // "healthy", "degraded", "unhealthy"
+    pub admission_state: String, // "admitted", "pending", "rejected"
+    pub tier: String,
+}
+
 /// Network handler implementation
 pub struct NetworkHandler {
     runtime: Arc<RuntimeOrchestrator>,
@@ -334,6 +370,9 @@ impl ZhtpRequestHandler for NetworkHandler {
             // Gas pricing endpoint (Issue #10)
             (ZhtpMethod::Get, "/api/v1/network/gas") => self.handle_get_gas_info(request).await,
             (ZhtpMethod::Get, "/api/v1/network/ping") => self.handle_ping(request).await,
+            (ZhtpMethod::Get, "/api/v1/network/relay-candidates") => {
+                self.handle_get_relay_candidates(request).await
+            }
             // Issue #1801: Missing network endpoints
             (ZhtpMethod::Get, "/api/v1/network/status") => {
                 self.handle_get_network_status(request).await
@@ -442,6 +481,174 @@ impl ZhtpRequestHandler for NetworkHandler {
 }
 
 impl NetworkHandler {
+    /// Get relay-capable peer candidates
+    /// GET /api/v1/network/relay-candidates (Issue #2197)
+    async fn handle_get_relay_candidates(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Getting relay candidates");
+
+        // Parse query parameters from URI
+        let query = request.uri.split('?').nth(1).unwrap_or("");
+        let params: HashMap<&str, &str> = query
+            .split('&')
+            .filter(|p| !p.is_empty())
+            .filter_map(|p| {
+                let mut parts = p.splitn(2, '=');
+                Some((parts.next()?, parts.next().unwrap_or("")))
+            })
+            .collect();
+
+        let min_quality = params
+            .get("min_quality")
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0);
+        let capability = params.get("capability").map(|s| s.to_string());
+        let page = params
+            .get("page")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(1)
+            .max(1);
+        let limit = params
+            .get("limit")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(20)
+            .clamp(1, 100);
+
+        // Access peer registry via global mesh router
+        let candidates = match crate::runtime::mesh_router_provider::get_global_mesh_router().await
+        {
+            Ok(mesh_router) => {
+                let registry = mesh_router.connections.read().await;
+                let mut candidates: Vec<RelayCandidateInfo> = registry
+                    .all_peers()
+                    .filter(|entry| {
+                        // Base filter: Tier2 OR routing_capacity > 0
+                        let is_relay = entry.tier == lib_network::peer_registry::PeerTier::Tier2
+                            || entry.capabilities.routing_capacity > 0;
+
+                        if !is_relay {
+                            return false;
+                        }
+
+                        // Quality filter
+                        if min_quality > 0.0 && entry.trust_score < min_quality {
+                            return false;
+                        }
+
+                        // Capability filter
+                        if let Some(ref cap) = capability {
+                            match cap.as_str() {
+                                "relay" => {
+                                    entry.tier == lib_network::peer_registry::PeerTier::Tier2
+                                        || entry.capabilities.routing_capacity > 0
+                                }
+                                "dht" => entry.dht_info.is_some(),
+                                "api" => entry.capabilities.api_endpoint.is_some(),
+                                _ => true,
+                            }
+                        } else {
+                            true
+                        }
+                    })
+                    .map(|entry| {
+                        let health_state = if entry.reliability_score >= 0.8 {
+                            "healthy"
+                        } else if entry.reliability_score >= 0.5 {
+                            "degraded"
+                        } else {
+                            "unhealthy"
+                        }
+                        .to_string();
+
+                        let admission_state = entry
+                            .relay_admission
+                            .as_ref()
+                            .map(|a| match a.state {
+                                lib_network::peer_registry::relay_admission::RelayAdmissionState::Eligible => "admitted",
+                                lib_network::peer_registry::relay_admission::RelayAdmissionState::Probation => "pending",
+                                lib_network::peer_registry::relay_admission::RelayAdmissionState::Blocked => "rejected",
+                            })
+                            .unwrap_or("pending")
+                            .to_string();
+
+                        RelayCandidateInfo {
+                            did: entry.peer_id.did().to_string(),
+                            peer_id: hex::encode(
+                                &entry.peer_id.public_key().as_bytes()[..8],
+                            ),
+                            endpoints: entry
+                                .endpoints
+                                .iter()
+                                .map(|ep| ep.address.to_string())
+                                .collect(),
+                            protocols: entry
+                                .active_protocols
+                                .iter()
+                                .map(|p| format!("{:?}", p))
+                                .collect(),
+                            routing_capacity: entry.capabilities.routing_capacity,
+                            bandwidth_mbps: entry.connection_metrics.bandwidth_capacity as f64
+                                / 1_000_000.0,
+                            latency_ms: entry.connection_metrics.latency_ms,
+                            reliability_score: entry.reliability_score,
+                            trust_score: entry.trust_score,
+                            health_state,
+                            admission_state,
+                            tier: format!("{:?}", entry.tier),
+                        }
+                    })
+                    .collect();
+
+                // Sort by trust score descending, then reliability
+                candidates.sort_by(|a, b| {
+                    b.trust_score
+                        .partial_cmp(&a.trust_score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| {
+                            b.reliability_score
+                                .partial_cmp(&a.reliability_score)
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                        })
+                });
+
+                candidates
+            }
+            Err(e) => {
+                error!("API: Failed to access mesh router for relay candidates: {}", e);
+                vec![]
+            }
+        };
+
+        let total = candidates.len();
+        let start = (page - 1) * limit;
+        let paginated = if start < total {
+            candidates.into_iter().skip(start).take(limit).collect()
+        } else {
+            vec![]
+        };
+
+        let response = RelayCandidatesResponse {
+            status: "success".to_string(),
+            total,
+            page,
+            limit,
+            candidates: paginated,
+        };
+
+        info!(
+            "API: Retrieved {} relay candidates (page {}, limit {})",
+            response.candidates.len(), page, limit
+        );
+
+        let json_response = serde_json::to_vec(&response)
+            .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            CONTENT_TYPE_JSON.to_string(),
+            None,
+        ))
+    }
+
     /// Get gas pricing information
     /// GET /api/v1/network/gas (Issue #10)
     async fn handle_get_gas_info(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
