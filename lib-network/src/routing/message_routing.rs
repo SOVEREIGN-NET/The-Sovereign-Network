@@ -563,18 +563,6 @@ impl MeshMessageRouter {
         self.route_message(probe, target, originator).await
     }
 
-    /// Quality gate: check if a peer is acceptable for routing
-    ///
-    /// Rejects unauthenticated, insecure, untrusted, or low-quality peers.
-    /// Delegates to the static `is_peer_routable` which also checks NAT and relay admission.
-    fn is_peer_routable(&self, entry: &crate::peer_registry::PeerEntry) -> bool {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        Self::is_peer_routable(entry, now)
-    }
-
     pub async fn find_optimal_route(
         &self,
         destination: &UnifiedPeerId,
@@ -1331,10 +1319,15 @@ impl MeshMessageRouter {
             hex::encode(&destination.public_key().key_id[0..4])
         );
 
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
         // Check for direct connection first (Ticket #149: use peer_registry)
         let registry = self.peer_registry.read().await;
         if let Some(entry) = registry.get(destination) {
-            if self.is_peer_routable(entry) {
+            if Self::is_peer_routable(entry, now) {
                 info!(
                     " Direct connection to destination available (trust={:.2})",
                     entry.trust_score
