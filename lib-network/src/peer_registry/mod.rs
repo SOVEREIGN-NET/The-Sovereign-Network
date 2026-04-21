@@ -17,6 +17,8 @@
 //! - **Comprehensive Metadata**: All connection, routing, and capability data in one place
 // Synchronization module (Ticket #151)
 pub mod sync;
+// Relay admission state machine (#2201)
+pub mod relay_admission;
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -327,6 +329,10 @@ pub struct PeerEntry {
     /// NAT and reachability state for this peer.
     pub nat_state: Option<crate::nat::NatState>,
 
+    // === Relay Admission (#2201) ===
+    /// Relay admission status (None = not yet evaluated)
+    pub relay_admission: Option<relay_admission::RelayAdmissionStatus>,
+
     // === Statistics (use atomic counters for lock-free updates) ===
     /// Total data transferred (atomic for lock-free updates)
     #[serde(skip)]
@@ -397,6 +403,8 @@ impl PeerEntry {
             trust_score,
             // Initialize NAT state as unknown
             nat_state: None,
+            // Initialize relay admission as unevaluated
+            relay_admission: None,
             // Initialize atomic counters
             data_transferred: Arc::new(AtomicU64::new(0)),
             tokens_earned: Arc::new(AtomicU64::new(0)),
@@ -1259,6 +1267,62 @@ impl PeerRegistry {
         summary
     }
 
+    // ========== RELAY ADMISSION (#2201) ==========
+
+    /// Evaluate and set relay admission status for a peer.
+    pub fn evaluate_and_set_relay_admission(&mut self, peer_id: &UnifiedPeerId) -> Result<relay_admission::RelayAdmissionStatus> {
+        let entry = self.peers.get(peer_id).ok_or_else(|| anyhow!("Peer not found"))?;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let status = relay_admission::evaluate_relay_admission(
+            entry.authenticated,
+            entry.quantum_secure,
+            entry.trust_score,
+            &entry.tier,
+            entry.connection_metrics.stability_score,
+            entry.connection_metrics.latency_ms,
+            entry.capabilities.routing_capacity,
+            entry.last_seen,
+            now,
+            entry.relay_admission.as_ref(),
+        );
+        let entry = self.peers.get_mut(peer_id).ok_or_else(|| anyhow!("Peer not found"))?;
+        entry.relay_admission = Some(status.clone());
+        Ok(status)
+    }
+
+    /// Set relay admission status manually (e.g., by operator or governance).
+    pub fn set_relay_admission(&mut self, peer_id: &UnifiedPeerId, status: relay_admission::RelayAdmissionStatus) -> Result<()> {
+        let entry = self.peers.get_mut(peer_id).ok_or_else(|| anyhow!("Peer not found"))?;
+        entry.relay_admission = Some(status);
+        Ok(())
+    }
+
+    /// Get relay admission status for a peer.
+    pub fn relay_admission_status(&self, peer_id: &UnifiedPeerId) -> Option<relay_admission::RelayAdmissionStatus> {
+        self.peers.get(peer_id)?.relay_admission.clone()
+    }
+
+    /// Iterate over peers whose relay admission state is `Eligible`.
+    pub fn eligible_relays(&self) -> impl Iterator<Item = &PeerEntry> {
+        self.peers.values().filter(|e| {
+            e.relay_admission.as_ref().map_or(false, |a| a.state == relay_admission::RelayAdmissionState::Eligible)
+        })
+    }
+
+    /// Summary of relay admission states across all peers.
+    pub fn relay_admission_summary(&self) -> relay_admission::RelayAdmissionSummary {
+        let mut summary = relay_admission::RelayAdmissionSummary::default();
+        for entry in self.peers.values() {
+            match entry.relay_admission.as_ref().map(|a| &a.state) {
+                Some(relay_admission::RelayAdmissionState::Eligible) => summary.eligible += 1,
+                Some(relay_admission::RelayAdmissionState::Probation) => summary.probation += 1,
+                Some(relay_admission::RelayAdmissionState::Blocked) => summary.blocked += 1,
+                None => summary.unevaluated += 1,
+            }
+        }
+        summary
+    }
+
     // ========== UNIFIED ADDRESS RESOLUTION METHODS ==========
     //
     // These methods integrate the unified AddressResolver with the PeerRegistry
@@ -1726,10 +1790,11 @@ mod tests {
             location: None,
             reliability_score: 0.92,
             nat_state: None,
+            relay_admission: None,
             dht_info: None,
             discovery_method: DiscoveryMethod::MeshScan,
             first_seen: 0,
-            last_seen: 0,
+            last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
             tier: PeerTier::Tier3,
             trust_score: 0.8,
             // Atomic counters
@@ -2283,5 +2348,129 @@ mod tests {
         // Cleanup should keep recent entries
         limiter.cleanup_old_entries();
         assert_eq!(limiter.per_peer_counts.len(), 2);
+    }
+
+    // ========== RELAY ADMISSION TESTS (#2201) ==========
+
+    #[test]
+    fn test_relay_admission_eligible_peer() {
+        let now = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let status = relay_admission::evaluate_relay_admission(
+            true, true, 0.8, &PeerTier::Tier2, 0.9, 50, 100, now, now, None,
+        );
+        assert_eq!(status.state, relay_admission::RelayAdmissionState::Eligible);
+    }
+
+    #[test]
+    fn test_relay_admission_probation_peer() {
+        let now = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        // Low stability but otherwise OK -> Probation
+        let status = relay_admission::evaluate_relay_admission(
+            true, true, 0.6, &PeerTier::Tier2, 0.4, 50, 100, now, now, None,
+        );
+        assert_eq!(status.state, relay_admission::RelayAdmissionState::Probation);
+    }
+
+    #[test]
+    fn test_relay_admission_blocked_low_trust() {
+        let now = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let status = relay_admission::evaluate_relay_admission(
+            true, true, 0.2, &PeerTier::Tier2, 0.9, 50, 100, now, now, None,
+        );
+        assert_eq!(status.state, relay_admission::RelayAdmissionState::Blocked);
+    }
+
+    #[test]
+    fn test_relay_admission_blocked_untrusted_tier() {
+        let now = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let status = relay_admission::evaluate_relay_admission(
+            true, true, 0.8, &PeerTier::Untrusted, 0.9, 50, 100, now, now, None,
+        );
+        assert_eq!(status.state, relay_admission::RelayAdmissionState::Blocked);
+    }
+
+    #[test]
+    fn test_relay_admission_blocked_not_authenticated() {
+        let now = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let status = relay_admission::evaluate_relay_admission(
+            false, true, 0.8, &PeerTier::Tier2, 0.9, 50, 100, now, now, None,
+        );
+        assert_eq!(status.state, relay_admission::RelayAdmissionState::Blocked);
+    }
+
+    #[test]
+    fn test_relay_admission_block_expiration() {
+        let now = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let existing = relay_admission::RelayAdmissionStatus::blocked("test", now - 100, Some(now - 10));
+        let status = relay_admission::evaluate_relay_admission(
+            true, true, 0.8, &PeerTier::Tier2, 0.9, 50, 100, now, now, Some(&existing),
+        );
+        // Block expired -> re-evaluated to Eligible
+        assert_eq!(status.state, relay_admission::RelayAdmissionState::Eligible);
+    }
+
+    #[test]
+    fn test_relay_admission_block_persists() {
+        let now = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let existing = relay_admission::RelayAdmissionStatus::blocked("test", now - 100, Some(now + 1000));
+        let status = relay_admission::evaluate_relay_admission(
+            true, true, 0.8, &PeerTier::Tier2, 0.9, 50, 100, now, now, Some(&existing),
+        );
+        // Block still active
+        assert_eq!(status.state, relay_admission::RelayAdmissionState::Blocked);
+    }
+
+    #[test]
+    fn test_relay_admission_registry_methods() {
+        let mut registry = PeerRegistry::new();
+        let peer_id = create_test_peer_id();
+        let entry = create_test_entry(peer_id.clone());
+        upsert_blocking(&mut registry, entry).expect("Failed to upsert");
+
+        // Initially unevaluated
+        assert!(registry.relay_admission_status(&peer_id).is_none());
+
+        // Evaluate
+        let status = registry.evaluate_and_set_relay_admission(&peer_id).unwrap();
+        assert_eq!(status.state, relay_admission::RelayAdmissionState::Eligible);
+        assert!(registry.relay_admission_status(&peer_id).is_some());
+
+        // Eligible relays count
+        assert_eq!(registry.eligible_relays().count(), 1);
+
+        // Summary
+        let summary = registry.relay_admission_summary();
+        assert_eq!(summary.eligible, 1);
+        assert_eq!(summary.unevaluated, 0);
+    }
+
+    #[test]
+    fn test_relay_admission_summary_counts() {
+        let mut registry = PeerRegistry::new();
+
+        let p1 = create_test_peer_id();
+        let mut e1 = create_test_entry(p1.clone());
+        e1.relay_admission = Some(relay_admission::RelayAdmissionStatus::eligible("", 0));
+        upsert_blocking(&mut registry, e1).unwrap();
+
+        let p2 = create_test_peer_id();
+        let mut e2 = create_test_entry(p2.clone());
+        e2.relay_admission = Some(relay_admission::RelayAdmissionStatus::probation("", 0, 100));
+        upsert_blocking(&mut registry, e2).unwrap();
+
+        let p3 = create_test_peer_id();
+        let mut e3 = create_test_entry(p3.clone());
+        e3.relay_admission = Some(relay_admission::RelayAdmissionStatus::blocked("", 0, None));
+        upsert_blocking(&mut registry, e3).unwrap();
+
+        let p4 = create_test_peer_id();
+        let e4 = create_test_entry(p4.clone());
+        upsert_blocking(&mut registry, e4).unwrap();
+
+        let summary = registry.relay_admission_summary();
+        assert_eq!(summary.eligible, 1);
+        assert_eq!(summary.probation, 1);
+        assert_eq!(summary.blocked, 1);
+        assert_eq!(summary.unevaluated, 1);
     }
 }
