@@ -147,17 +147,14 @@ pub struct SearchQuery {
     pub tag_filter: Option<Vec<String>>,
 }
 
-/// Default stack size for key generation threads (8 MB)
-/// Dilithium/Kyber key generation can require a larger stack than deep async startup paths.
-const KEYGEN_STACK_SIZE: usize = 8 * 1024 * 1024;
-
 impl ContentManager {
     /// Create new content manager with encryption capabilities
     pub fn new(dht_storage: DhtStorage, _economic_config: EconomicManagerConfig) -> Result<Self> {
         // Generate master keypair on a dedicated thread with explicit stack size.
+        // Dilithium/Kyber key generation can require a larger stack than deep async startup paths.
         let keygen_thread = std::thread::Builder::new()
             .name("content-keygen".to_string())
-            .stack_size(KEYGEN_STACK_SIZE)
+            .stack_size(8 * 1024 * 1024)
             .spawn(KeyPair::generate)
             .map_err(|e| anyhow!("Failed to spawn content keygen thread: {}", e))?;
         let master_keypair = keygen_thread

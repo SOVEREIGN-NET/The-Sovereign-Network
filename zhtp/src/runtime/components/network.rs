@@ -80,6 +80,18 @@ impl NetworkComponent {
         }
     }
 
+    pub async fn subtract_routing_rewards(&self, amount: u64) -> Result<()> {
+        if let Some(ref server) = *self.mesh_server.read().await {
+            server.subtract_reward_counter(amount).await;
+            info!(" Routing rewards partially reset: {} SOV subtracted", amount);
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "Cannot subtract routing rewards: mesh server not initialized"
+            ))
+        }
+    }
+
     pub async fn get_node_id(&self) -> Option<[u8; 32]> {
         if let Some(ref server) = *self.mesh_server.read().await {
             Some(server.get_node_id())
@@ -119,6 +131,18 @@ impl NetworkComponent {
         } else {
             Err(anyhow::anyhow!(
                 "Cannot reset storage rewards: mesh server not initialized"
+            ))
+        }
+    }
+
+    pub async fn subtract_storage_rewards(&self, amount: u64) -> Result<()> {
+        if let Some(ref server) = *self.mesh_server.read().await {
+            server.subtract_storage_reward_counter(amount).await;
+            info!(" Storage rewards partially reset: {} SOV subtracted", amount);
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "Cannot subtract storage rewards: mesh server not initialized"
             ))
         }
     }

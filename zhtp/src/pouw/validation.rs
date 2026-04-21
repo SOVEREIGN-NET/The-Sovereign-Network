@@ -115,6 +115,8 @@ pub struct ValidatedReceipt {
     pub domain: Option<String>,
     /// Number of mesh hops used to route the manifest (Web4ManifestRoute only)
     pub route_hops: Option<u8>,
+    /// DIDs of intermediary nodes that forwarded this message (Web4ManifestRoute only)
+    pub route_intermediaries: Vec<String>,
     /// Whether the content was served from local cache (Web4ContentServed only)
     pub served_from_cache: Option<bool>,
 }
@@ -674,6 +676,7 @@ impl ReceiptValidator {
             manifest_cid,
             domain,
             route_hops,
+            route_intermediaries: vec![],
             served_from_cache,
         };
 
@@ -800,6 +803,7 @@ pub fn spawn_mesh_routing_listener(
                 manifest_cid: None,
                 domain: None,
                 route_hops: Some(event.hop_count),
+                route_intermediaries: event.intermediary_nodes,
                 served_from_cache: None,
             };
 
