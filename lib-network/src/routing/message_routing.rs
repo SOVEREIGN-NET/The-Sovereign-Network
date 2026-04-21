@@ -72,6 +72,8 @@ pub struct MeshMessageRouter {
     pub pouw_routing_tx: Option<tokio::sync::mpsc::Sender<MeshRoutingEvent>>,
     /// Multi-hop routing engine with advanced pathfinding algorithms
     pub multi_hop_router: Option<Arc<RwLock<MultiHopRouter>>>,
+    /// Ingress steering for gateway/bootstrap nodes to distribute traffic across relay peers
+    pub ingress_steering: Option<Arc<crate::routing::ingress_steering::IngressSteering>>,
 }
 
 /// Routing table for mesh network
@@ -237,6 +239,7 @@ impl MeshMessageRouter {
             transport_manager: None,
             pouw_routing_tx: None,
             multi_hop_router: None,
+            ingress_steering: None,
         }
     }
 
@@ -252,6 +255,12 @@ impl MeshMessageRouter {
     /// Attach a multi-hop routing engine for advanced pathfinding.
     pub fn with_multi_hop_router(mut self, router: Arc<RwLock<MultiHopRouter>>) -> Self {
         self.multi_hop_router = Some(router);
+        self
+    }
+
+    /// Attach ingress steering for gateway/bootstrap relay distribution.
+    pub fn with_ingress_steering(mut self, steering: Arc<crate::routing::ingress_steering::IngressSteering>) -> Self {
+        self.ingress_steering = Some(steering);
         self
     }
 
@@ -654,6 +663,12 @@ impl MeshMessageRouter {
             return Ok(mesh_route);
         }
 
+        // Try ingress steering to relay peer (gateway/bootstrap forwarding)
+        if let Ok(ingress_route) = self.find_ingress_relay_route(destination).await {
+            info!("Using ingress steering to relay peer");
+            return Ok(ingress_route);
+        }
+
         // Try long-range relay routing
         if let Ok(relay_route) = self.find_long_range_route(destination).await {
             info!("Using long-range relay route");
@@ -949,6 +964,43 @@ impl MeshMessageRouter {
         } else {
             Err(anyhow!("No suitable long-range relay found"))
         }
+    }
+
+    /// Find ingress steering relay route for gateway/bootstrap forwarding.
+    ///
+    /// When the current node is a gateway and the destination is not directly
+    /// reachable, select a healthy relay peer via ingress steering and route
+    /// through it.
+    async fn find_ingress_relay_route(&self, destination: &UnifiedPeerId) -> Result<Vec<RouteHop>> {
+        debug!("Checking ingress steering for relay route");
+
+        if let Some(ref steering) = self.ingress_steering {
+            if let Some(relay) = steering.select_relay(destination).await {
+                info!(
+                    "Selected relay {} via ingress steering for destination {:?}",
+                    relay.did,
+                    hex::encode(&destination.public_key().key_id[0..4])
+                );
+
+                // Return a two-hop route: relay -> destination
+                return Ok(vec![
+                    RouteHop {
+                        peer_id: relay.peer_id.clone(),
+                        protocol: NetworkProtocol::QUIC,
+                        relay_id: None,
+                        latency_ms: relay.latency_ewma_ms.load(std::sync::atomic::Ordering::Relaxed) as u32,
+                    },
+                    RouteHop {
+                        peer_id: destination.clone(),
+                        protocol: NetworkProtocol::QUIC,
+                        relay_id: None,
+                        latency_ms: 0,
+                    },
+                ]);
+            }
+        }
+
+        Err(anyhow!("No ingress relay available"))
     }
 
     /// Find satellite route for GLOBAL coverage
