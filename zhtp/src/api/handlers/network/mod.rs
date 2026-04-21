@@ -1089,12 +1089,27 @@ impl NetworkHandler {
             })
             .collect();
 
+        // Active peer nodes (non-validators that connected via UHP in last 5 min)
+        let peers: Vec<serde_json::Value> = crate::runtime::peer_endpoints::get_active_peers_sync(300)
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "did": p.did,
+                    "endpoint": format!("{}:{}", p.addr.ip(), 9334),
+                    "last_seen": p.last_seen,
+                    "type": "node",
+                })
+            })
+            .collect();
+
         let response = serde_json::json!({
             "validators": validators,
+            "nodes": peers,
             "relays": [],
             "network_id": environment.to_string().to_ascii_lowercase(),
             "chain_height": blockchain.height,
             "validator_count": validators.len(),
+            "node_count": peers.len(),
             "local_spki_pin": local_spki,
         });
 

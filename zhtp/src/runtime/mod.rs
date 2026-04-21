@@ -64,6 +64,7 @@ pub mod did_startup;
 pub mod edge_state_provider; // Global access to edge node state for header-only sync
 pub mod identity_manager_provider;
 pub mod mesh_router_provider;
+pub mod peer_endpoints;
 pub mod network_blockchain_event_receiver;
 pub mod network_blockchain_provider;
 pub mod node_identity;
@@ -1873,6 +1874,12 @@ impl RuntimeOrchestrator {
     /// - RuntimeOrchestrator: Coordinates the flow
     pub async fn start_node(&self) -> Result<()> {
         info!("🚀 Starting ZHTP node with full startup sequence");
+
+        // Register the peer endpoint gossip callback so incoming PeerEndpointAnnounce
+        // messages get stored in our local peer_endpoints registry.
+        let _ = lib_network::types::mesh_message::PEER_ENDPOINT_CALLBACK.set(|did, addr| {
+            crate::runtime::peer_endpoints::handle_peer_announce(did.to_string(), addr);
+        });
 
         // ========================================================================
         // PHASE 1: Network Components (for peer discovery)

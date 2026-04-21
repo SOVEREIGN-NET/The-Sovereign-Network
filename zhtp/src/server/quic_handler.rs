@@ -469,8 +469,8 @@ impl QuicHandler {
             peer_addr
         );
 
-        // Auto-register the authenticated peer identity
-        self.auto_register_peer_identity(&handshake_result.verified_peer.identity)
+        // Auto-register the authenticated peer identity with its external IP
+        self.auto_register_peer_identity(&handshake_result.verified_peer.identity, peer_addr)
             .await;
 
         // Record session in POUW session log for proof-of-presence verification
@@ -827,8 +827,16 @@ impl QuicHandler {
     async fn auto_register_peer_identity(
         &self,
         peer_identity: &lib_network::handshake::NodeIdentity,
+        peer_addr: std::net::SocketAddr,
     ) {
         let peer_did = &peer_identity.did;
+
+        // Store peer endpoint in the global peer endpoint map for ZDNS discovery.
+        // This is a simple DID → SocketAddr mapping that the ZDNS provider reads.
+        crate::runtime::peer_endpoints::register_peer_endpoint(
+            peer_did.clone(),
+            peer_addr,
+        ).await;
 
         let identity_id = match lib_identity::did::parse_did_to_identity_id(peer_did) {
             Ok(id) => id,
@@ -956,7 +964,7 @@ impl QuicHandler {
         );
 
         // Auto-register peer identity for wallet/blockchain
-        self.auto_register_peer_identity(&handshake_result.verified_peer.identity)
+        self.auto_register_peer_identity(&handshake_result.verified_peer.identity, peer_addr)
             .await;
 
         Ok(())

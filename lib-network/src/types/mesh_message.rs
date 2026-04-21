@@ -8,6 +8,10 @@
 
 use crate::types::connection_details::ConnectionDetails;
 use crate::types::geographic::GeographicLocation;
+
+/// Global callback for peer endpoint announce gossip.
+/// Set by the zhtp runtime to store received peer endpoints.
+pub static PEER_ENDPOINT_CALLBACK: std::sync::OnceLock<fn(&str, &str)> = std::sync::OnceLock::new();
 use crate::types::mesh_capability::{MeshCapability, SharedResources};
 use anyhow::{anyhow, Result};
 use lib_crypto::PublicKey;
@@ -71,6 +75,9 @@ pub enum MessageType {
     OracleAttestation = 32,
     /// Relay-routed message envelope for true multi-hop forwarding.
     RoutedMessage = 33,
+    /// Peer endpoint announcement for ZDNS discovery gossip.
+    /// Payload: JSON `{"did":"did:zhtp:...","addr":"1.2.3.4:9334"}`
+    PeerEndpointAnnounce = 34,
 }
 
 /// Message envelope for multi-hop routing
@@ -706,6 +713,15 @@ pub enum ZhtpMeshMessage {
         route_history: Vec<PublicKey>,
         payload: Vec<u8>,
     },
+
+    /// Peer endpoint announcement for ZDNS discovery gossip.
+    /// Broadcast when a new peer completes UHP handshake. All nodes store
+    /// the endpoint so ZDNS/directory returns it.
+    PeerEndpointAnnounce {
+        did: String,
+        addr: String, // "ip:port"
+        timestamp: u64,
+    },
 }
 
 /// Acknowledgement for store-and-forward message delivery
@@ -1019,6 +1035,10 @@ impl ZhtpMeshMessage {
             } => (
                 MessageType::RoutedMessage,
                 bincode::serialize(&(destination, ttl, hop_count, route_history, payload))?,
+            ),
+            Self::PeerEndpointAnnounce { did, addr, timestamp } => (
+                MessageType::PeerEndpointAnnounce,
+                bincode::serialize(&(did, addr, timestamp))?,
             ),
         };
         Ok((msg_type, payload))
@@ -1341,6 +1361,10 @@ impl ZhtpMeshMessage {
                     route_history,
                     payload,
                 }
+            }
+            MessageType::PeerEndpointAnnounce => {
+                let (did, addr, timestamp): (String, String, u64) = bincode::deserialize(payload)?;
+                Self::PeerEndpointAnnounce { did, addr, timestamp }
             }
         };
         Ok(message)

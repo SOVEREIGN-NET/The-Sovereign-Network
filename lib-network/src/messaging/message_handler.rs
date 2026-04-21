@@ -881,6 +881,16 @@ impl MeshMessageHandler {
                 )
                 .await?;
             }
+            ZhtpMeshMessage::PeerEndpointAnnounce { did, addr, timestamp } => {
+                tracing::info!(
+                    "📡 Received peer endpoint gossip: {} @ {} (ts={})",
+                    &did[..20.min(did.len())], addr, timestamp
+                );
+                // Invoke the global callback if registered by the runtime.
+                if let Some(cb) = crate::types::mesh_message::PEER_ENDPOINT_CALLBACK.get() {
+                    cb(&did, &addr);
+                }
+            }
         }
         Ok(())
     }

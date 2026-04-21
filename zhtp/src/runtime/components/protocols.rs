@@ -476,6 +476,14 @@ impl Component for ProtocolsComponent {
                     if ips.is_empty() {
                         ips = fallback_ips.clone();
                     }
+                    // Add non-validator peer IPs from the peer endpoint registry.
+                    // These are nodes that connected via UHP handshake in the last 5 minutes.
+                    let peer_ips = crate::runtime::peer_endpoints::get_active_peer_ips_sync(300);
+                    for pip in peer_ips {
+                        if !ips.contains(&pip) {
+                            ips.push(pip);
+                        }
+                    }
                     ips
                 }));
                 info!(" ✓ ZDNS network endpoint provider wired to validator registry");
