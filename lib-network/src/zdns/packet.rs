@@ -218,6 +218,32 @@ impl DnsPacket {
         }
     }
 
+    /// Create a DNS response with multiple A records (round-robin).
+    /// Used for `network.sov` to return all validator IPs.
+    pub fn a_records(query: &DnsPacket, ips: &[Ipv4Addr], ttl: u32) -> Self {
+        let question = query.question.clone();
+        let name = question.as_ref().map(|q| q.name.clone()).unwrap_or_default();
+
+        let answers = ips
+            .iter()
+            .map(|ip| DnsAnswer {
+                name: name.clone(),
+                rtype: TYPE_A,
+                rclass: CLASS_IN,
+                ttl,
+                rdata: ip.octets().to_vec(),
+            })
+            .collect();
+
+        DnsPacket {
+            id: query.id,
+            is_response: true,
+            question,
+            answers,
+            rcode: 0,
+        }
+    }
+
     /// Create an NXDOMAIN response
     pub fn nxdomain(query: &DnsPacket) -> Self {
         DnsPacket {
