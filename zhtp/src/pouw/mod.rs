@@ -42,6 +42,35 @@ pub use validation::{
 /// Runs every interval_secs seconds (one full epoch by default = 3600s).
 /// Processes all Pending rewards: mints SOV on-chain via blockchain, persists,
 /// and marks rewards Paid or Failed.
+/// Derive a 32-byte key_id from a `did:zhtp:<hex>` string.
+fn derive_key_id_from_did(did: &str) -> anyhow::Result<[u8; 32]> {
+    let hex_part = did
+        .strip_prefix("did:zhtp:")
+        .ok_or_else(|| anyhow::anyhow!("DID missing did:zhtp: prefix"))?;
+    let bytes = hex::decode(hex_part)
+        .map_err(|e| anyhow::anyhow!("Invalid DID hex: {}", e))?;
+    if bytes.len() != 32 {
+        return Err(anyhow::anyhow!(
+            "DID key_id must be 32 bytes, got {}",
+            bytes.len()
+        ));
+    }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&bytes);
+    Ok(arr)
+}
+
+/// Mint SOV for a single recipient and log the result.
+async fn mint_single_reward(
+    blockchain: &std::sync::Arc<tokio::sync::RwLock<lib_blockchain::Blockchain>>,
+    did: &str,
+    amount: u128,
+) -> anyhow::Result<lib_blockchain::Hash> {
+    let key_id = derive_key_id_from_did(did)?;
+    let mut bc = blockchain.write().await;
+    bc.mint_sov_for_pouw(key_id, amount)
+}
+
 pub fn spawn_pouw_payout_task(
     calculator: std::sync::Arc<crate::pouw::rewards::RewardCalculator>,
     blockchain: std::sync::Arc<tokio::sync::RwLock<lib_blockchain::Blockchain>>,
@@ -82,100 +111,30 @@ pub fn spawn_pouw_payout_task(
                     continue;
                 }
 
-                // Derive recipient key_id from DID
-                // Expected format: did:zhtp:<hex-encoded-32-byte-key-id>
-                let key_id_result: anyhow::Result<[u8; 32]> = (|| {
-                    let hex_part = reward
-                        .client_did
-                        .strip_prefix("did:zhtp:")
-                        .ok_or_else(|| anyhow::anyhow!("DID missing did:zhtp: prefix"))?;
-                    let bytes = hex::decode(hex_part)
-                        .map_err(|e| anyhow::anyhow!("Invalid DID hex: {}", e))?;
-                    if bytes.len() != 32 {
-                        return Err(anyhow::anyhow!(
-                            "DID key_id must be 32 bytes, got {}",
-                            bytes.len()
-                        ));
-                    }
-                    let mut arr = [0u8; 32];
-                    arr.copy_from_slice(&bytes);
-                    Ok(arr)
-                })();
+                // Pay primary recipient
+                let primary_result = mint_single_reward(&blockchain, &reward.client_did, reward.final_amount).await;
 
-                let key_id = match key_id_result {
-                    Ok(k) => k,
-                    Err(e) => {
-                        tracing::warn!(
-                            did = %reward.client_did,
-                            error = %e,
-                            "Cannot derive key_id from DID -- marking reward failed"
-                        );
-                        calculator.mark_failed(&reward_id).await;
-                        continue;
-                    }
-                };
-
-                // Create a TokenMint system transaction on the blockchain
-                let mint_result = {
-                    let mut bc = blockchain.write().await;
-                    bc.mint_sov_for_pouw(key_id, reward.final_amount)
-                };
-
-                match mint_result {
+                match primary_result {
                     Ok(tx_hash) => {
                         // Pay intermediary nodes for routing receipts
                         let mut intermediary_results = Vec::new();
                         for split in &reward.intermediary_splits {
-                            let split_key_result: anyhow::Result<[u8; 32]> = (|| {
-                                let hex_part = split
-                                    .did
-                                    .strip_prefix("did:zhtp:")
-                                    .ok_or_else(|| anyhow::anyhow!("DID missing did:zhtp: prefix"))?;
-                                let bytes = hex::decode(hex_part)
-                                    .map_err(|e| anyhow::anyhow!("Invalid DID hex: {}", e))?;
-                                if bytes.len() != 32 {
-                                    return Err(anyhow::anyhow!(
-                                        "DID key_id must be 32 bytes, got {}",
-                                        bytes.len()
-                                    ));
-                                }
-                                let mut arr = [0u8; 32];
-                                arr.copy_from_slice(&bytes);
-                                Ok(arr)
-                            })();
-
-                            match split_key_result {
-                                Ok(split_key) => {
-                                    let split_mint = {
-                                        let mut bc = blockchain.write().await;
-                                        bc.mint_sov_for_pouw(split_key, split.amount)
-                                    };
-                                    match split_mint {
-                                        Ok(split_tx) => {
-                                            tracing::info!(
-                                                did = %split.did,
-                                                amount = split.amount,
-                                                tx_hash = %split_tx,
-                                                "Intermediary routing reward paid"
-                                            );
-                                            intermediary_results.push((split.did.clone(), true));
-                                        }
-                                        Err(e) => {
-                                            tracing::warn!(
-                                                did = %split.did,
-                                                amount = split.amount,
-                                                error = %e,
-                                                "Intermediary routing reward failed"
-                                            );
-                                            intermediary_results.push((split.did.clone(), false));
-                                        }
-                                    }
+                            match mint_single_reward(&blockchain, &split.did, split.amount).await {
+                                Ok(split_tx) => {
+                                    tracing::info!(
+                                        did = %split.did,
+                                        amount = split.amount,
+                                        tx_hash = %split_tx,
+                                        "Intermediary routing reward paid"
+                                    );
+                                    intermediary_results.push((split.did.clone(), true));
                                 }
                                 Err(e) => {
                                     tracing::warn!(
                                         did = %split.did,
+                                        amount = split.amount,
                                         error = %e,
-                                        "Cannot derive intermediary key_id"
+                                        "Intermediary routing reward failed"
                                     );
                                     intermediary_results.push((split.did.clone(), false));
                                 }
