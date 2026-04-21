@@ -1,0 +1,1215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sovereign Network Mission Control</title>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --paper:#f4efe2;
+  --paper-2:#efe6d2;
+  --paper-3:#e4d6bb;
+  --ink:#16140f;
+  --muted:#6f6556;
+  --line:rgba(22,20,15,.12);
+  --line-strong:rgba(22,20,15,.24);
+  --panel:rgba(255,251,243,.74);
+  --panel-strong:rgba(255,248,237,.92);
+  --gold:#9f6a1f;
+  --gold-soft:#d3aa64;
+  --signal:#0f766e;
+  --signal-soft:rgba(15,118,110,.12);
+  --warn:#b86717;
+  --warn-soft:rgba(184,103,23,.14);
+  --err:#aa2e2e;
+  --err-soft:rgba(170,46,46,.12);
+  --shadow:0 24px 80px rgba(67,42,15,.12);
+  --display:'Chakra Petch',sans-serif;
+  --body:'Instrument Serif',serif;
+  --mono:'IBM Plex Mono',monospace;
+}
+html{background:
+  radial-gradient(circle at top left, rgba(255,255,255,.68), transparent 38%),
+  radial-gradient(circle at bottom right, rgba(159,106,31,.12), transparent 30%),
+  linear-gradient(135deg, #f6f2e8 0%, #f1e7d2 46%, #eadcc0 100%);
+  color:var(--ink);
+  font-family:var(--body);
+}
+body{min-height:100vh;position:relative;overflow-x:hidden}
+body::before,body::after{content:"";position:fixed;pointer-events:none;inset:0;z-index:0}
+body::before{
+  background:
+    linear-gradient(rgba(22,20,15,.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(22,20,15,.04) 1px, transparent 1px);
+  background-size:36px 36px;
+  mask-image:linear-gradient(to bottom, rgba(0,0,0,.5), rgba(0,0,0,.18));
+}
+body::after{
+  background:
+    radial-gradient(circle at 18% 14%, rgba(211,170,100,.34), transparent 18%),
+    radial-gradient(circle at 80% 20%, rgba(15,118,110,.18), transparent 18%),
+    radial-gradient(circle at 50% 100%, rgba(184,103,23,.14), transparent 30%);
+}
+a{color:inherit}
+button,input{font:inherit}
+.hidden{display:none !important}
+
+.shell{position:relative;z-index:1;min-height:100vh;padding:24px}
+.frame{
+  max-width:1280px;
+  margin:0 auto;
+  min-height:calc(100vh - 48px);
+  border:1px solid var(--line);
+  background:linear-gradient(180deg, rgba(255,253,248,.8), rgba(251,245,233,.68));
+  backdrop-filter:blur(18px);
+  box-shadow:var(--shadow);
+  border-radius:28px;
+  overflow:hidden;
+}
+
+.topbar{
+  display:flex;
+  align-items:center;
+  gap:20px;
+  padding:18px 24px;
+  border-bottom:1px solid var(--line);
+  background:rgba(249,244,233,.72);
+  backdrop-filter:blur(12px);
+}
+.brand{display:flex;align-items:center;gap:16px;min-width:0}
+.brand-mark{
+  width:52px;height:52px;border-radius:16px;
+  border:1px solid var(--line-strong);
+  background:
+    radial-gradient(circle at 30% 30%, rgba(255,255,255,.7), transparent 45%),
+    linear-gradient(135deg, rgba(159,106,31,.18), rgba(15,118,110,.12));
+  position:relative;
+}
+.brand-mark::before,.brand-mark::after{content:"";position:absolute;inset:11px;border:1px solid rgba(22,20,15,.16);border-radius:12px;transform:rotate(45deg)}
+.brand-mark::after{inset:18px;background:rgba(255,255,255,.5)}
+.brand-copy small,.eyebrow,.section-label,.stat-label,.control-label,.panel-label,.seed-number,.meta-key,.help-label{
+  font-family:var(--mono);
+  font-size:11px;
+  letter-spacing:.18em;
+  text-transform:uppercase;
+}
+.brand-copy small{display:block;color:var(--muted);margin-bottom:4px}
+.brand-copy strong{
+  display:block;
+  font-family:var(--display);
+  font-size:20px;
+  line-height:1;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+.status-rail{margin-left:auto;display:flex;align-items:center;gap:18px;flex-wrap:wrap;justify-content:flex-end}
+.status-badge{
+  display:inline-flex;align-items:center;gap:10px;
+  padding:10px 14px;border-radius:999px;border:1px solid var(--line);
+  background:rgba(255,255,255,.45);font-family:var(--mono);font-size:12px;
+}
+.signal-dot{width:10px;height:10px;border-radius:999px;background:var(--err);box-shadow:0 0 0 5px rgba(170,46,46,.08)}
+.signal-dot.ready{background:var(--signal);box-shadow:0 0 0 5px rgba(15,118,110,.1)}
+.signal-dot.syncing,.signal-dot.unregistered{background:var(--warn);box-shadow:0 0 0 5px rgba(184,103,23,.12)}
+.status-meta{display:flex;gap:18px;flex-wrap:wrap}
+.status-meta .value{font-family:var(--display);font-size:15px;letter-spacing:.04em}
+.main{padding:28px}
+
+.hero{
+  display:grid;
+  grid-template-columns:minmax(0,1.1fr) minmax(320px,.9fr);
+  gap:24px;
+  margin-bottom:24px;
+}
+.hero-panel,.panel,.metric,.command-card,.status-card,.logline,.seed-panel{
+  border:1px solid var(--line);
+  background:var(--panel);
+  border-radius:24px;
+  position:relative;
+  overflow:hidden;
+}
+.hero-panel::before,.panel::before,.metric::before,.command-card::before,.status-card::before,.seed-panel::before{
+  content:"";position:absolute;top:0;left:0;right:0;height:3px;
+  background:linear-gradient(90deg, rgba(159,106,31,.7), rgba(15,118,110,.48), transparent 92%);
+}
+.hero-copy{padding:28px}
+.eyebrow{color:var(--muted);margin-bottom:12px}
+.hero-copy h1{
+  font-family:var(--display);
+  font-size:clamp(2.8rem,6vw,5.2rem);
+  line-height:.94;
+  text-transform:uppercase;
+  letter-spacing:.02em;
+  max-width:10ch;
+}
+.hero-copy h1 em{
+  display:block;
+  font-style:normal;
+  color:var(--gold);
+}
+.hero-copy p{
+  margin-top:16px;
+  max-width:36rem;
+  font-size:1.25rem;
+  line-height:1.34;
+}
+.hero-meta{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:12px;
+  padding:0 28px 28px;
+}
+.meta-block{
+  padding:14px 16px;
+  border-radius:18px;
+  border:1px solid var(--line);
+  background:rgba(255,255,255,.45);
+}
+.meta-key{display:block;color:var(--muted);margin-bottom:8px}
+.meta-value{font-family:var(--display);font-size:20px;letter-spacing:.04em}
+.mission-card{padding:24px;display:flex;flex-direction:column;gap:18px;justify-content:space-between}
+.mission-card h2{
+  font-family:var(--display);
+  font-size:24px;
+  line-height:1;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+.mission-card p{font-size:1.08rem;line-height:1.34}
+.flight-path{
+  height:160px;border-radius:18px;border:1px solid var(--line);
+  background:
+    radial-gradient(circle at 20% 20%, rgba(159,106,31,.16), transparent 25%),
+    linear-gradient(135deg, rgba(255,255,255,.68), rgba(234,220,192,.44));
+  position:relative;
+  overflow:hidden;
+}
+.flight-path::before,.flight-path::after{content:"";position:absolute;border-radius:999px}
+.flight-path::before{
+  inset:20px;border:1px dashed rgba(22,20,15,.18);
+  animation:drift 12s linear infinite;
+}
+.flight-path::after{
+  width:26px;height:26px;top:50%;left:20%;
+  background:linear-gradient(135deg, var(--gold), var(--signal));
+  box-shadow:0 0 0 10px rgba(255,255,255,.5);
+  animation:orbit 8s ease-in-out infinite;
+}
+@keyframes drift{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+@keyframes orbit{
+  0%,100%{transform:translate(0,-50%)}
+  50%{transform:translate(220px,40px)}
+}
+
+.setup-grid,.dashboard-grid{display:grid;gap:24px}
+.setup-grid{grid-template-columns:minmax(0,1.15fr) minmax(320px,.85fr)}
+.setup-main{display:grid;gap:18px}
+.choice-grid{display:grid;gap:16px}
+.choice{
+  width:100%;text-align:left;padding:22px;border-radius:22px;
+  border:1px solid var(--line);background:var(--panel-strong);cursor:pointer;
+  transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease;
+}
+.choice:hover,.choice:focus-visible{transform:translateY(-2px);border-color:var(--line-strong);box-shadow:0 16px 36px rgba(67,42,15,.12);outline:none}
+.choice-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:12px}
+.choice-title{font-family:var(--display);font-size:24px;line-height:1;text-transform:uppercase}
+.choice-code{
+  min-width:72px;text-align:right;color:var(--muted);font-family:var(--mono);font-size:12px;
+}
+.choice p{font-size:1.06rem;line-height:1.3;max-width:34rem}
+
+.panel{padding:22px}
+.panel-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}
+.panel-title{
+  font-family:var(--display);
+  font-size:28px;
+  line-height:1;
+  text-transform:uppercase;
+}
+.panel-subtitle{font-size:1rem;color:var(--muted);max-width:34rem}
+.panel-actions{display:flex;gap:10px;flex-wrap:wrap}
+.btn{
+  border:none;border-radius:999px;padding:13px 18px;cursor:pointer;
+  font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+  transition:transform .18s ease,box-shadow .18s ease,background .18s ease,color .18s ease,border-color .18s ease;
+}
+.btn:hover,.btn:focus-visible{transform:translateY(-1px);outline:none}
+.btn-primary{background:var(--ink);color:#fff7ea;box-shadow:0 12px 28px rgba(22,20,15,.16)}
+.btn-secondary{background:rgba(255,255,255,.56);color:var(--ink);border:1px solid var(--line)}
+.btn-ghost{background:transparent;color:var(--muted);border:1px dashed var(--line-strong)}
+.btn-danger{background:rgba(170,46,46,.08);color:var(--err);border:1px solid rgba(170,46,46,.16)}
+.btn:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+.error-box,.info-box{
+  margin-top:16px;padding:14px 16px;border-radius:18px;font-size:.98rem;line-height:1.35
+}
+.error-box{background:var(--err-soft);border:1px solid rgba(170,46,46,.16);color:var(--err)}
+.info-box{background:var(--signal-soft);border:1px solid rgba(15,118,110,.16);color:var(--signal)}
+
+.seed-panel{padding:22px}
+.seed-toolbar{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px
+}
+.seed-title{font-family:var(--display);font-size:24px;text-transform:uppercase}
+.seed-copy{font-size:.98rem;color:var(--muted);max-width:34rem}
+.seed-grid{
+  display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;
+}
+.seed-cell{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:16px;border:1px solid var(--line);background:rgba(255,255,255,.48)}
+.seed-number{color:var(--muted);min-width:22px;text-align:center}
+.seed-input{
+  width:100%;border:none;background:transparent;outline:none;font-family:var(--mono);font-size:14px;color:var(--ink)
+}
+.seed-input::placeholder{color:rgba(111,101,86,.54)}
+.name-field{
+  width:100%;padding:16px 18px;border-radius:18px;border:1px solid var(--line);
+  background:rgba(255,255,255,.56);outline:none;font-family:var(--mono);font-size:15px;color:var(--ink)
+}
+.name-field:focus,.seed-input:focus{box-shadow:none}
+.name-wrap{display:grid;gap:14px}
+.setup-aside{display:grid;gap:18px}
+.note-list{display:grid;gap:12px}
+.note{
+  padding:16px 18px;border-radius:18px;border:1px solid var(--line);background:rgba(255,255,255,.42)
+}
+.note strong,.side-title,.card-title,.status-title{
+  font-family:var(--display);text-transform:uppercase;letter-spacing:.06em;line-height:1;
+}
+.note strong{display:block;margin-bottom:8px;font-size:20px}
+.note p{font-size:1rem;line-height:1.3;color:var(--muted)}
+.command-card{padding:20px}
+.control-label{color:var(--muted);margin-bottom:8px}
+.command{
+  display:block;padding:14px 16px;border-radius:18px;background:rgba(22,20,15,.04);
+  border:1px solid var(--line);font-family:var(--mono);font-size:12px;line-height:1.5;word-break:break-word
+}
+
+.dashboard-grid{grid-template-columns:minmax(0,1.18fr) minmax(320px,.82fr)}
+.metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.metric{padding:20px}
+.metric.emphasis{grid-column:span 2;padding:26px}
+.stat-label{color:var(--muted);margin-bottom:14px}
+.metric-value{
+  font-family:var(--display);font-size:clamp(2rem,4vw,3.25rem);line-height:.95;text-transform:uppercase
+}
+.metric-sub{margin-top:10px;font-family:var(--mono);font-size:12px;color:var(--muted);word-break:break-word}
+.metric-foot{margin-top:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.status-pill{
+  display:inline-flex;align-items:center;gap:10px;padding:8px 14px;border-radius:999px;
+  font-family:var(--mono);font-size:12px;border:1px solid var(--line)
+}
+.status-pill.ready{background:var(--signal-soft);color:var(--signal)}
+.status-pill.syncing,.status-pill.unregistered{background:var(--warn-soft);color:var(--warn)}
+.status-pill.offline{background:var(--err-soft);color:var(--err)}
+
+.progress-card,.did-card,.status-card,.logline{padding:20px}
+.progress-head,.did-head,.status-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px}
+.card-title,.status-title{font-size:22px}
+.card-copy,.status-copy,.help-copy{font-size:1rem;color:var(--muted);line-height:1.3}
+.progress-bar{
+  height:14px;border-radius:999px;border:1px solid var(--line);overflow:hidden;
+  background:rgba(255,255,255,.56);margin-bottom:12px
+}
+.progress-fill{
+  height:100%;
+  width:0;
+  background:linear-gradient(90deg, rgba(159,106,31,.72), rgba(15,118,110,.78));
+  transition:width .45s ease;
+}
+.progress-meta{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-family:var(--mono);font-size:12px;color:var(--muted)}
+.did-value{
+  padding:16px 18px;border-radius:18px;background:rgba(255,255,255,.5);border:1px solid var(--line);
+  font-family:var(--mono);font-size:13px;line-height:1.6;word-break:break-all
+}
+.did-actions,.register-cta,.control-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+.status-stack{display:grid;gap:16px}
+.status-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.status-item{
+  padding:16px;border-radius:18px;border:1px solid var(--line);background:rgba(255,255,255,.46)
+}
+.status-item .meta-key{margin-bottom:8px}
+.status-item .value{font-family:var(--display);font-size:22px;line-height:1;word-break:break-word}
+.status-item.compact .value{font-size:16px;font-family:var(--mono);text-transform:none}
+.logline{
+  display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;
+  background:rgba(22,20,15,.04)
+}
+.help-label{color:var(--muted);margin-bottom:8px}
+.inline-link{
+  text-decoration:none;padding-bottom:1px;border-bottom:1px solid currentColor;cursor:pointer
+}
+
+.dialog-backdrop{
+  position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+  background:rgba(22,20,15,.28);padding:24px;z-index:20
+}
+.dialog-backdrop.open{display:flex}
+.dialog{
+  width:min(520px,100%);border-radius:26px;border:1px solid var(--line);
+  background:rgba(255,250,241,.96);box-shadow:var(--shadow);padding:24px
+}
+.dialog h3{font-family:var(--display);font-size:26px;line-height:1;text-transform:uppercase;margin-bottom:12px}
+.dialog p{font-size:1.05rem;line-height:1.35;margin-bottom:16px}
+.dialog code{
+  display:block;padding:14px 16px;border-radius:18px;border:1px solid var(--line);
+  background:rgba(22,20,15,.04);font-family:var(--mono);font-size:12px;line-height:1.5;word-break:break-word
+}
+.dialog-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+
+@media (max-width:1080px){
+  .hero,.setup-grid,.dashboard-grid{grid-template-columns:1fr}
+  .hero-copy h1{max-width:none}
+}
+@media (max-width:760px){
+  .shell{padding:12px}
+  .frame{min-height:calc(100vh - 24px);border-radius:22px}
+  .topbar,.main,.hero-copy,.hero-meta,.mission-card,.panel,.seed-panel,.metric,.progress-card,.did-card,.status-card,.logline{padding-left:18px;padding-right:18px}
+  .metrics{grid-template-columns:1fr}
+  .metric.emphasis{grid-column:auto}
+  .seed-grid,.status-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .status-rail{margin-left:0}
+}
+@media (max-width:520px){
+  .seed-grid,.status-grid,.hero-meta{grid-template-columns:1fr}
+  .topbar{align-items:flex-start;flex-direction:column}
+  .status-rail{width:100%;justify-content:flex-start}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="frame">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"></div>
+        <div class="brand-copy">
+          <small>Local Control Surface</small>
+          <strong>Sovereign Network</strong>
+        </div>
+      </div>
+      <div class="status-rail">
+        <div class="status-badge">
+          <span class="signal-dot" id="nav-dot"></span>
+          <span id="nav-state">Offline</span>
+        </div>
+        <div class="status-meta">
+          <div><div class="meta-key">Network</div><div class="value" id="nav-network">Unknown</div></div>
+          <div><div class="meta-key">Chain</div><div class="value" id="nav-height">0</div></div>
+        </div>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="hero">
+        <div class="hero-panel">
+          <div class="hero-copy">
+            <div class="eyebrow">Post-Quantum Node Operations</div>
+            <h1>Operate Your <em>Own Layer</em></h1>
+            <p>Mission control for a sovereign node should feel like instrumenting infrastructure, not filling out a theme-default wizard. This console keeps setup sharp and the live node state legible.</p>
+          </div>
+          <div class="hero-meta">
+            <div class="meta-block">
+              <span class="meta-key">Identity</span>
+              <div class="meta-value" id="hero-identity">Awaiting</div>
+            </div>
+            <div class="meta-block">
+              <span class="meta-key">Wallet</span>
+              <div class="meta-value" id="hero-wallet">Standby</div>
+            </div>
+            <div class="meta-block">
+              <span class="meta-key">Telemetry</span>
+              <div class="meta-value" id="hero-poll">2.5s</div>
+            </div>
+          </div>
+        </div>
+        <aside class="panel mission-card">
+          <div>
+            <div class="eyebrow">Flight Deck</div>
+            <h2>Mission Profile</h2>
+            <p>Restore an existing identity or commission a new node persona, then stay on top of height, wallet state, validator presence, and registration status without leaving localhost.</p>
+          </div>
+          <div class="flight-path" aria-hidden="true"></div>
+        </aside>
+      </section>
+
+      <section id="view-setup" class="setup-grid">
+        <div class="setup-main">
+          <div id="setup-choice" class="choice-grid">
+            <button class="choice" type="button" onclick="showRestore()">
+              <div class="choice-head">
+                <div class="choice-title">Restore Identity</div>
+                <div class="choice-code">seed://import</div>
+              </div>
+              <p>Recover an existing node identity from a 20 or 24 word phrase. Words stay in memory only long enough to submit them to the local bridge.</p>
+            </button>
+            <button class="choice" type="button" onclick="showCreate()">
+              <div class="choice-head">
+                <div class="choice-title">Create New Node</div>
+                <div class="choice-code">node://bootstrap</div>
+              </div>
+              <p>Generate a fresh post-quantum identity and prepare this machine as a new operating surface on the network.</p>
+            </button>
+          </div>
+
+          <div id="setup-restore" class="hidden">
+            <div class="seed-panel">
+              <div class="seed-toolbar">
+                <div>
+                  <div class="panel-label">Recovery Input</div>
+                  <div class="seed-title">Seed Phrase</div>
+                </div>
+                <div class="panel-actions">
+                  <button class="btn btn-secondary" type="button" onclick="clearSeed()">Clear</button>
+                  <button class="btn btn-ghost" type="button" onclick="backToChoices()">Back</button>
+                </div>
+              </div>
+              <p class="seed-copy">Paste the full phrase into any field or enter words one by one. Tab keeps natural browser navigation, and arrow keys or Enter advance through the grid. Accepts 20-word (legacy) or 24-word (BIP39) phrases — leave the remaining cells empty for a 20-word phrase.</p>
+              <div class="seed-grid" id="seed-grid"></div>
+              <div id="restore-error" class="error-box hidden" role="alert"></div>
+              <div class="panel-actions">
+                <button class="btn btn-primary" type="button" id="restore-btn" onclick="doRestore()">Restore Identity</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="setup-create" class="hidden">
+            <div class="panel">
+              <div class="panel-header">
+                <div>
+                  <div class="panel-label">Provision</div>
+                  <div class="panel-title">Create New Identity</div>
+                </div>
+                <div class="panel-actions">
+                  <button class="btn btn-ghost" type="button" onclick="backToChoices()">Back</button>
+                </div>
+              </div>
+              <p class="panel-subtitle">Name this node the way you name infrastructure: short, clear, and durable.</p>
+              <div class="name-wrap">
+                <input id="node-name" class="name-field" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="atlas-observer-01">
+                <div id="create-error" class="error-box hidden" role="alert"></div>
+                <div class="panel-actions">
+                  <button class="btn btn-primary" type="button" id="create-btn" onclick="doCreate()">Launch Node</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="setup-aside">
+          <div class="panel">
+            <div class="panel-label">Operational Notes</div>
+            <div class="note-list">
+              <div class="note">
+                <strong>Seed Hygiene</strong>
+                <p>The recovery phrase is never logged and is only sent once to `POST /api/setup` when you explicitly restore.</p>
+              </div>
+              <div class="note">
+                <strong>Local Bridge</strong>
+                <p>This interface runs from the CLI binary at `localhost:7840`, while node state is proxied over QUIC.</p>
+              </div>
+              <div class="note">
+                <strong>Live Polling</strong>
+                <p>Dashboard telemetry refreshes every 2.5 seconds and can be forced manually at any time.</p>
+              </div>
+            </div>
+          </div>
+          <div class="command-card">
+            <div class="control-label">Manual Stop</div>
+            <span class="command">Press Ctrl+C in the terminal running:<br>./target/dev-release/zhtp-cli -s 77.42.37.161:9334 node setup-ui</span>
+          </div>
+        </aside>
+      </section>
+
+      <section id="view-dashboard" class="dashboard-grid hidden">
+        <div class="dashboard-main">
+          <div class="metrics">
+            <article class="metric emphasis">
+              <div class="stat-label">Chain Height</div>
+              <div class="metric-value" id="metric-height">0</div>
+              <div class="metric-foot">
+                <span class="status-pill offline" id="state-pill"><span class="signal-dot" id="state-pill-dot"></span><span id="state-pill-text">Offline</span></span>
+                <span class="metric-sub" id="status-detail">Waiting for bridge telemetry.</span>
+              </div>
+            </article>
+            <article class="metric">
+              <div class="stat-label">SOV Balance</div>
+              <div class="metric-value" id="metric-balance">0</div>
+              <div class="metric-sub" id="metric-balance-atoms">0 atoms</div>
+            </article>
+            <article class="metric">
+              <div class="stat-label">Validators</div>
+              <div class="metric-value" id="metric-validators">0</div>
+              <div class="metric-sub">Active validator set reported by the node</div>
+            </article>
+            <article class="metric">
+              <div class="stat-label">Identities</div>
+              <div class="metric-value" id="metric-identities">0</div>
+              <div class="metric-sub">Registered participants observed on-chain</div>
+            </article>
+          </div>
+
+          <article class="progress-card">
+            <div class="progress-head">
+              <div>
+                <div class="panel-label">Synchronization</div>
+                <div class="card-title">Node Readiness</div>
+              </div>
+              <div class="card-copy" id="progress-copy">Waiting for status.</div>
+            </div>
+            <div class="progress-bar">
+              <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <div class="progress-meta">
+              <span id="progress-label">0%</span>
+              <span id="progress-detail">Bridge has not delivered status yet.</span>
+            </div>
+          </article>
+
+          <article class="did-card">
+            <div class="did-head">
+              <div>
+                <div class="panel-label">Identity</div>
+                <div class="card-title">Device DID</div>
+              </div>
+              <div class="card-copy">Copy for operators, tooling, and registration flow.</div>
+            </div>
+            <div class="did-value" id="did-value">No DID detected yet.</div>
+            <div class="did-actions">
+              <button class="btn btn-secondary" type="button" id="copy-did-btn" onclick="copyDid()">Copy DID</button>
+              <button class="btn btn-secondary" type="button" id="force-sync-btn" onclick="forceSync()">Force Sync</button>
+              <button class="btn btn-secondary" type="button" id="reset-identity-btn" onclick="resetLocalIdentity()">Use Different Identity</button>
+              <button class="btn btn-danger" type="button" id="disconnect-btn" onclick="openStopDialog()">Disconnect / Stop Node</button>
+            </div>
+            <div id="register-cta" class="register-cta hidden">
+              <a href="#register-guide" class="inline-link" onclick="openRegisterGuide(event)">Register this identity on-chain</a>
+            </div>
+          </article>
+        </div>
+
+        <aside class="status-stack">
+          <article class="status-card">
+            <div class="status-head">
+              <div>
+                <div class="panel-label">Telemetry</div>
+                <div class="status-title">Node State</div>
+              </div>
+              <div class="status-copy">Live metrics pulled from `GET /api/status`.</div>
+            </div>
+            <div class="status-grid">
+              <div class="status-item">
+                <div class="meta-key">Network ID</div>
+                <div class="value" id="status-network">Unknown</div>
+              </div>
+              <div class="status-item">
+                <div class="meta-key">Registration</div>
+                <div class="value" id="status-registered">Pending</div>
+              </div>
+              <div class="status-item compact">
+                <div class="meta-key">Wallet ID</div>
+                <div class="value" id="status-wallet">Unavailable</div>
+              </div>
+              <div class="status-item">
+                <div class="meta-key">Poll Cycle</div>
+                <div class="value">2.5s</div>
+              </div>
+            </div>
+          </article>
+
+          <article class="status-card" id="register-guide">
+            <div class="status-head">
+              <div>
+                <div class="panel-label">Registration Path</div>
+                <div class="status-title">Identity Not Registered</div>
+              </div>
+              <div class="status-copy">Shown only when the node reports `identity_registered === false`.</div>
+            </div>
+            <div class="help-copy">Promote the local identity onto the chain through the same canonical registration request the CLI already uses.</div>
+            <div class="control-row">
+              <button class="btn btn-primary" type="button" id="register-btn" onclick="registerIdentity()">Register Identity</button>
+              <button class="btn btn-secondary" type="button" onclick="copyRegisterCommand()">Copy CLI Command</button>
+            </div>
+            <div class="info-box hidden" id="register-info"></div>
+          </article>
+
+          <article class="logline">
+            <div>
+              <div class="help-label">Operator Guidance</div>
+              <div class="help-copy">Every operational action runs through the local CLI bridge. The bridge is the only browser-facing surface; the node remains QUIC-only.</div>
+            </div>
+          </article>
+        </aside>
+      </section>
+    </main>
+  </div>
+</div>
+
+<div class="dialog-backdrop" id="stop-dialog" onclick="dismissDialog(event)">
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="stop-dialog-title">
+    <h3 id="stop-dialog-title">Disconnect / Stop Node</h3>
+    <p>This action is expected to call the node control path over QUIC through the local CLI bridge. Use it to stop node networking or the node itself, depending on the backend implementation.</p>
+    <code>Expected node endpoint: POST /api/v1/node/shutdown</code>
+    <div class="dialog-actions">
+      <button class="btn btn-danger" type="button" id="disconnect-confirm-btn" onclick="disconnectNode()">Disconnect Node</button>
+      <button class="btn btn-primary" type="button" onclick="closeStopDialog()">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = "";
+const POLL_MS = 2500;
+let pollTimer = null;
+let lastStatus = null;
+let autoRegisterInFlight = false;
+
+const els = {};
+
+function $(id) {
+  return document.getElementById(id);
+}
+
+function cacheElements() {
+  [
+    "view-setup","view-dashboard","setup-choice","setup-restore","setup-create",
+    "restore-error","create-error","restore-btn","create-btn","node-name","seed-grid",
+    "nav-dot","nav-state","nav-network","nav-height","hero-identity","hero-wallet",
+    "metric-height","metric-balance","metric-balance-atoms","metric-validators","metric-identities",
+    "status-detail","progress-fill","progress-label","progress-detail","progress-copy","did-value",
+    "status-network","status-registered","status-wallet","copy-did-btn","register-cta",
+    "register-info","state-pill","state-pill-dot","state-pill-text","stop-dialog",
+    "register-btn","disconnect-btn","disconnect-confirm-btn","force-sync-btn","reset-identity-btn"
+  ].forEach(function(id){els[id] = $(id);});
+}
+
+function formatNumber(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return "0";
+  return number.toLocaleString();
+}
+
+function setView(mode) {
+  const showSetup = mode === "setup";
+  els["view-setup"].classList.toggle("hidden", !showSetup);
+  els["view-dashboard"].classList.toggle("hidden", showSetup);
+  if (!showSetup) startPolling();
+}
+
+function showRestore() {
+  clearError("restore-error");
+  els["setup-choice"].classList.add("hidden");
+  els["setup-create"].classList.add("hidden");
+  els["setup-restore"].classList.remove("hidden");
+  const first = document.querySelector(".seed-input");
+  if (first) first.focus();
+}
+
+function showCreate() {
+  clearError("create-error");
+  els["setup-choice"].classList.add("hidden");
+  els["setup-restore"].classList.add("hidden");
+  els["setup-create"].classList.remove("hidden");
+  els["node-name"].focus();
+}
+
+function backToChoices() {
+  clearError("restore-error");
+  clearError("create-error");
+  els["setup-restore"].classList.add("hidden");
+  els["setup-create"].classList.add("hidden");
+  els["setup-choice"].classList.remove("hidden");
+}
+
+function enterRecoveryMode(message) {
+  stopPolling();
+  setView("setup");
+  showRestore();
+  if (message) showError("restore-error", message);
+}
+
+function clearError(id) {
+  els[id].textContent = "";
+  els[id].classList.add("hidden");
+}
+
+function showError(id, message) {
+  els[id].textContent = message;
+  els[id].classList.remove("hidden");
+}
+
+function setBusy(id, busy, label) {
+  const button = els[id];
+  button.disabled = busy;
+  button.textContent = label;
+}
+
+function buildSeedGrid() {
+  const grid = els["seed-grid"];
+  for (let i = 0; i < 24; i += 1) {
+    const cell = document.createElement("label");
+    cell.className = "seed-cell";
+
+    const number = document.createElement("span");
+    number.className = "seed-number";
+    number.textContent = String(i + 1).padStart(2, "0");
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "seed-input";
+    input.dataset.index = String(i);
+    input.autocomplete = "off";
+    input.autocapitalize = "off";
+    input.spellcheck = false;
+    input.placeholder = "word";
+
+    cell.appendChild(number);
+    cell.appendChild(input);
+    grid.appendChild(cell);
+  }
+
+  grid.addEventListener("keydown", function(event) {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    const index = Number(target.dataset.index);
+    if (event.key === "Enter" || event.key === "ArrowRight" || event.key === " ") {
+      event.preventDefault();
+      focusSeed(index + 1);
+      return;
+    }
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      focusSeed(index - 1);
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      focusSeed(index + 4);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      focusSeed(index - 4);
+      return;
+    }
+    if (event.key === "Backspace" && !target.value) {
+      focusSeed(index - 1);
+    }
+  });
+
+  grid.addEventListener("paste", function(event) {
+    const text = (event.clipboardData || window.clipboardData).getData("text");
+    const words = normalizeSeedWords(text);
+    if (words.length <= 1) return;
+    event.preventDefault();
+    fillSeedWords(words);
+  });
+}
+
+function focusSeed(index) {
+  if (index < 0 || index > 23) return;
+  const next = document.querySelector('.seed-input[data-index="' + index + '"]');
+  if (next) next.focus();
+}
+
+function normalizeSeedWords(text) {
+  return String(text || "")
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function fillSeedWords(words) {
+  const inputs = document.querySelectorAll(".seed-input");
+  inputs.forEach(function(input, index) {
+    input.value = words[index] || "";
+  });
+}
+
+function clearSeed() {
+  fillSeedWords([]);
+  clearError("restore-error");
+  focusSeed(0);
+}
+
+function getSeedWords() {
+  return Array.from(document.querySelectorAll(".seed-input"))
+    .map(function(input) { return input.value.trim().toLowerCase(); })
+    .filter(Boolean);
+}
+
+async function requestJson(path, options) {
+  const response = await fetch(API + path, options);
+  return response.json();
+}
+
+async function postControl(action, extra) {
+  return requestJson("/api/control", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(Object.assign({action: action}, extra || {}))
+  });
+}
+
+async function doRestore() {
+  clearError("restore-error");
+  const words = getSeedWords();
+  if (words.length !== 20 && words.length !== 24) {
+    showError("restore-error", "Expected 20 or 24 words, got " + words.length + ".");
+    return;
+  }
+
+  setBusy("restore-btn", true, "Restoring...");
+  try {
+    const data = await postControl("restore_identity", {
+      seed_phrase: words.join(" ")
+    });
+    clearSeed();
+    if (data.error) throw new Error(data.error);
+    setView("dashboard");
+    const status = await refreshStatus(true);
+    if (status && status.identity_registered === false) {
+      await registerIdentity(true);
+    }
+  } catch (error) {
+    showError("restore-error", error.message || "Restore failed.");
+  } finally {
+    setBusy("restore-btn", false, "Restore Identity");
+  }
+}
+
+async function doCreate() {
+  clearError("create-error");
+  const name = els["node-name"].value.trim() || "sovereign-node";
+  setBusy("create-btn", true, "Launching...");
+  try {
+    const data = await postControl("create_identity", {
+      node_name: name
+    });
+    if (data.error) throw new Error(data.error);
+    setView("dashboard");
+    await refreshStatus(true);
+  } catch (error) {
+    showError("create-error", error.message || "Launch failed.");
+  } finally {
+    setBusy("create-btn", false, "Launch Node");
+  }
+}
+
+function mapState(status) {
+  const state = status && status.state ? status.state : "connecting";
+  if (state === "ready") {
+    return {
+      key: "ready",
+      label: "Connected",
+      detail: "Node is online and serving current telemetry.",
+      progress: 100
+    };
+  }
+  if (state === "identity_not_registered") {
+    return {
+      key: "unregistered",
+      label: "Unregistered",
+      detail: "Identity exists locally but is not registered on-chain.",
+      progress: 82
+    };
+  }
+  if (state === "connecting") {
+    return {
+      key: "syncing",
+      label: "Syncing",
+      detail: "Bridge is attempting to connect to the node and fetch current status.",
+      progress: status && Number(status.chain_height) > 0 ? 68 : 34
+    };
+  }
+  if (state === "setup_required") {
+    return {
+      key: "offline",
+      label: "Setup Required",
+      detail: "No local identity is available yet.",
+      progress: 0
+    };
+  }
+  if (state === "api_unavailable") {
+    return {
+      key: "offline",
+      label: "API Unavailable",
+      detail: status && status.error ? status.error : "Node telemetry endpoints are not available from this validator.",
+      progress: 0
+    };
+  }
+  return {
+    key: "offline",
+    label: "Offline",
+    detail: "Telemetry is unavailable from the node bridge.",
+    progress: 12
+  };
+}
+
+function applyNavStatus(mapped, status) {
+  els["nav-state"].textContent = mapped.label;
+  els["nav-network"].textContent = status.network_id || "Unknown";
+  els["nav-height"].textContent = formatNumber(status.chain_height);
+  els["nav-dot"].className = "signal-dot " + mapped.key;
+}
+
+function applyDashboardStatus(status) {
+  lastStatus = status;
+  const mapped = mapState(status);
+  applyNavStatus(mapped, status);
+
+  const height = formatNumber(status.chain_height);
+  els["metric-height"].textContent = height;
+  els["metric-balance"].textContent = status.sov_balance_human || "0.0000";
+  els["metric-balance-atoms"].textContent = status.sov_balance ? formatNumber(status.sov_balance) + " atoms" : "0 atoms";
+  els["metric-validators"].textContent = formatNumber(status.validator_count);
+  els["metric-identities"].textContent = formatNumber(status.identity_count);
+
+  const did = status.did || "No DID detected yet.";
+  els["did-value"].textContent = did;
+  els["copy-did-btn"].disabled = !status.did;
+
+  els["hero-identity"].textContent = status.did ? "Loaded" : "Awaiting";
+  els["hero-wallet"].textContent = status.wallet_id ? "Linked" : "Standby";
+
+  els["status-network"].textContent = status.network_id || "Unknown";
+  els["status-registered"].textContent =
+    status.identity_registered === true ? "Registered" :
+    status.identity_registered === false ? "Needs Action" :
+    "Unknown";
+  els["status-wallet"].textContent = status.wallet_id || "Unavailable";
+
+  els["status-detail"].textContent = mapped.detail;
+  els["progress-copy"].textContent = mapped.detail;
+  els["progress-fill"].style.width = Math.max(0, Math.min(100, mapped.progress)) + "%";
+  els["progress-label"].textContent = mapped.progress + "%";
+  els["progress-detail"].textContent =
+    status.error ? status.error :
+    status.identity_registered === false ? "Registration pending after identity creation." :
+    "Based on the current bridge-reported state.";
+
+  els["state-pill"].className = "status-pill " + mapped.key;
+  els["state-pill-text"].textContent = mapped.label;
+  els["state-pill-dot"].className = "signal-dot " + mapped.key;
+
+  const registerVisible = status.identity_registered === false;
+  els["register-cta"].classList.toggle("hidden", !registerVisible);
+  const controlsAvailable = status.state !== "api_unavailable";
+  els["register-btn"].disabled = !controlsAvailable || autoRegisterInFlight;
+  els["force-sync-btn"].disabled = !controlsAvailable;
+  els["disconnect-btn"].disabled = !controlsAvailable;
+
+  if (mapped.key === "ready") {
+    els["progress-label"].textContent = "100%";
+  }
+}
+
+async function refreshStatus(force) {
+  let data = null;
+  try {
+    data = await requestJson("/api/status");
+    applyDashboardStatus(data);
+    if (data.state === "setup_required") {
+      if (data.local_identity_error) {
+        enterRecoveryMode(data.local_identity_error + " Restore from seed or create a new identity.");
+      } else {
+        stopPolling();
+        setView("setup");
+        backToChoices();
+      }
+    } else if (els["view-dashboard"].classList.contains("hidden")) {
+      setView("dashboard");
+    }
+  } catch (_error) {
+    applyDashboardStatus({
+      state: "connecting",
+      chain_height: lastStatus && lastStatus.chain_height ? lastStatus.chain_height : 0,
+      network_id: lastStatus && lastStatus.network_id ? lastStatus.network_id : "Unknown",
+      validator_count: lastStatus && lastStatus.validator_count ? lastStatus.validator_count : 0,
+      identity_count: lastStatus && lastStatus.identity_count ? lastStatus.identity_count : 0,
+      identity_registered: lastStatus ? lastStatus.identity_registered : null,
+      did: lastStatus ? lastStatus.did : "",
+      wallet_id: lastStatus ? lastStatus.wallet_id : ""
+    });
+  }
+
+  if (force) {
+    const info = els["register-info"];
+    info.classList.add("hidden");
+    info.textContent = "";
+  }
+
+  return data;
+}
+
+function startPolling() {
+  if (pollTimer) return;
+  refreshStatus(false);
+  pollTimer = window.setInterval(function() {
+    refreshStatus(false);
+  }, POLL_MS);
+}
+
+function stopPolling() {
+  if (!pollTimer) return;
+  window.clearInterval(pollTimer);
+  pollTimer = null;
+}
+
+async function copyText(text, successLabel, fallbackLabel, targetButtonId) {
+  try {
+    await navigator.clipboard.writeText(text);
+    if (targetButtonId) {
+      const button = $(targetButtonId);
+      const previous = button.textContent;
+      button.textContent = successLabel;
+      window.setTimeout(function(){ button.textContent = previous; }, 1200);
+    }
+  } catch (_error) {
+    if (targetButtonId) {
+      const button = $(targetButtonId);
+      const previous = button.textContent;
+      button.textContent = fallbackLabel;
+      window.setTimeout(function(){ button.textContent = previous; }, 1400);
+    }
+  }
+}
+
+function copyDid() {
+  if (!lastStatus || !lastStatus.did) return;
+  copyText(lastStatus.did, "Copied", "Copy Failed", "copy-did-btn");
+}
+
+function openRegisterGuide(event) {
+  if (event) event.preventDefault();
+  const panel = $("register-guide");
+  if (panel) panel.scrollIntoView({behavior: "smooth", block: "nearest"});
+}
+
+function copyRegisterCommand() {
+  const info = els["register-info"];
+  const command = "zhtp-cli identity register <display-name> <device-id>";
+  copyText(command, "Copied", "Copy Failed");
+  info.textContent = "CLI hint copied: " + command;
+  info.classList.remove("hidden");
+}
+
+async function registerIdentity(isAutomatic) {
+  const info = els["register-info"];
+  if (autoRegisterInFlight) return;
+  info.classList.add("hidden");
+  info.textContent = "";
+  autoRegisterInFlight = true;
+  setBusy("register-btn", true, "Registering...");
+  try {
+    const data = await postControl("register_identity");
+    if (data.error) throw new Error(data.error);
+    info.textContent = isAutomatic ? "Identity restored and registered on-chain. Refreshing status." : "Identity registered on-chain. Refreshing status.";
+    info.classList.remove("hidden");
+    await refreshStatus(true);
+  } catch (error) {
+    info.textContent = error.message || "Registration failed.";
+    info.classList.remove("hidden");
+  } finally {
+    autoRegisterInFlight = false;
+    setBusy("register-btn", false, "Register Identity");
+  }
+}
+
+async function forceSync() {
+  const info = els["register-info"];
+  info.classList.add("hidden");
+  info.textContent = "";
+  setBusy("force-sync-btn", true, "Syncing...");
+  try {
+    const data = await postControl("force_sync");
+    if (data.error) throw new Error(data.error);
+    info.textContent = data.message || "Force sync command sent. Refreshing status.";
+    info.classList.remove("hidden");
+    await refreshStatus(true);
+  } catch (error) {
+    info.textContent = error.message || "Force sync failed.";
+    info.classList.remove("hidden");
+  } finally {
+    setBusy("force-sync-btn", false, "Force Sync");
+  }
+}
+
+async function resetLocalIdentity() {
+  const info = els["register-info"];
+  info.classList.add("hidden");
+  info.textContent = "";
+  setBusy("reset-identity-btn", true, "Clearing...");
+  try {
+    const data = await postControl("reset_local_identity");
+    if (data.error) throw new Error(data.error);
+    lastStatus = null;
+    clearSeed();
+    els["node-name"].value = "";
+    info.textContent = data.message || "Local identity removed.";
+    info.classList.remove("hidden");
+    enterRecoveryMode("Local identity cleared. Enter a seed phrase or create a new identity.");
+  } catch (error) {
+    info.textContent = error.message || "Failed to remove local identity.";
+    info.classList.remove("hidden");
+  } finally {
+    setBusy("reset-identity-btn", false, "Use Different Identity");
+  }
+}
+
+function openStopDialog() {
+  els["stop-dialog"].classList.add("open");
+}
+
+function closeStopDialog() {
+  els["stop-dialog"].classList.remove("open");
+}
+
+function dismissDialog(event) {
+  if (event.target === els["stop-dialog"]) {
+    closeStopDialog();
+  }
+}
+
+async function disconnectNode() {
+  setBusy("disconnect-confirm-btn", true, "Stopping...");
+  try {
+    const data = await postControl("disconnect_node");
+    if (data.error) throw new Error(data.error);
+    closeStopDialog();
+    els["register-info"].textContent = data.message || "Disconnect command sent to node control plane.";
+    els["register-info"].classList.remove("hidden");
+    await refreshStatus(true);
+  } catch (error) {
+    els["register-info"].textContent = error.message || "Disconnect failed.";
+    els["register-info"].classList.remove("hidden");
+  } finally {
+    setBusy("disconnect-confirm-btn", false, "Disconnect Node");
+  }
+}
+
+async function bootstrap() {
+  cacheElements();
+  buildSeedGrid();
+  try {
+    const data = await requestJson("/api/status");
+    if (data.state === "setup_required") {
+      applyNavStatus(mapState(data), data);
+      if (data.local_identity_error) {
+        enterRecoveryMode(data.local_identity_error + " Restore from seed or create a new identity.");
+      } else {
+        setView("setup");
+      }
+      return;
+    }
+    setView("dashboard");
+    applyDashboardStatus(data);
+  } catch (_error) {
+    setView("setup");
+  }
+}
+
+bootstrap();
+</script>
+</body>
+</html>

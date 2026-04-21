@@ -264,6 +264,8 @@ pub enum NodeAction {
     Status,
     /// Restart the node
     Restart,
+    /// Open the node setup web UI (localhost browser dashboard)
+    SetupUi,
 }
 
 /// Wallet operation commands

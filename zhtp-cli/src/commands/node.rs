@@ -51,6 +51,7 @@ pub fn action_to_operation(action: &NodeAction) -> NodeOperation {
         NodeAction::Stop => NodeOperation::Stop,
         NodeAction::Status => NodeOperation::Status,
         NodeAction::Restart => NodeOperation::Restart,
+        NodeAction::SetupUi => NodeOperation::Status, // handled separately
     }
 }
 
@@ -100,6 +101,11 @@ async fn handle_node_command_impl(
     cli: &ZhtpCli,
     output: &dyn Output,
 ) -> CliResult<()> {
+    // Handle setup-ui separately (it starts its own HTTP server)
+    if matches!(args.action, NodeAction::SetupUi) {
+        return crate::commands::setup_ui::run_setup_ui(cli, output).await;
+    }
+
     let op = action_to_operation(&args.action);
     output.info(&format!("{}...", op.description()))?;
 
@@ -224,6 +230,10 @@ async fn handle_node_command_impl(
             output.warning("Restarting node...")?;
             output.print("Stop the current node and start it again.")?;
             Ok(())
+        }
+        NodeAction::SetupUi => {
+            // Already handled above, unreachable
+            unreachable!("SetupUi handled before match")
         }
     }
 }

@@ -30,6 +30,11 @@ clap_mangen = "0.2"
 # Configuration editing
 toml_edit = "0.22"
 
+# Setup UI (localhost HTTP bridge)
+axum = { version = "0.7", features = ["json"] }
+open = "5.0"
+sha2 = "0.10"
+
 # Async runtime and utilities (workspace shared)
 tokio = { version = "1.0", features = ["full"] }
 anyhow = "1.0"

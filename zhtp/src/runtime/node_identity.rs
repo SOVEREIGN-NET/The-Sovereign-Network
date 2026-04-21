@@ -50,6 +50,10 @@ pub fn try_get_runtime_node_id() -> Result<NodeId> {
 
 /// Panics if the runtime NodeId has not been initialized by the startup path
 /// (set during runtime initialization in Phase 3).
+pub fn get_runtime_node_did() -> Option<String> {
+    RUNTIME_NODE_IDENTITY.get().map(|ctx| ctx.did.clone())
+}
+
 pub fn get_runtime_node_id() -> NodeId {
     try_get_runtime_node_id().expect("Runtime NodeId not initialized")
 }
