@@ -715,6 +715,18 @@ pub enum NetworkAction {
         #[arg(short, long, default_value = "3")]
         count: u32,
     },
+    /// Get relay-capable peer candidates (Issue #2197)
+    RelayCandidates {
+        /// Minimum quality score (trust score, 0.0-1.0)
+        #[arg(long)]
+        min_quality: Option<f64>,
+        /// Capability filter: relay, dht, api
+        #[arg(long)]
+        capability: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Blockchain operation commands

@@ -69,7 +69,8 @@ impl ZkTransactionProver {
             )?;
 
             // Validate receiver balance is sufficient for receiving
-            if receiver_balance + amount < receiver_balance {
+            // Use checked_add to avoid overflow panic in debug mode
+            if receiver_balance.checked_add(amount).is_none() {
                 return Err(anyhow::anyhow!("Receiver balance overflow"));
             }
 

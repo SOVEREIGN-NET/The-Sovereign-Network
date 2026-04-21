@@ -389,14 +389,13 @@ impl NodeRuntime for DefaultNodeRuntime {
 
         // Should we try to connect to this peer?
         if self.should_sync_with(&peer) {
-            // Choose best protocol
-            for protocol in self.get_preferred_protocols(&peer) {
+            // Choose best protocol (use first preferred protocol)
+            if let Some(protocol) = self.get_preferred_protocols(&peer).into_iter().next() {
                 actions.push(NodeAction::Connect {
                     peer: peer.public_key.clone(),
                     protocol,
                     address: peer.addresses.first().cloned(),
                 });
-                break; // Try only preferred protocol first
             }
         }
 

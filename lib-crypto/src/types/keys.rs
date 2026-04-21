@@ -21,7 +21,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 /// - Memory barriers prevent reordering
 /// - Zeroization on drop for sensitive data protection
 #[repr(C)]
-#[derive(Debug, Clone, Hash)]
+#[derive(Debug, Clone)]
 pub struct PublicKey {
     /// CRYSTALS-Dilithium5 public key for post-quantum signatures (2592 bytes).
     pub dilithium_pk: [u8; 2592],
@@ -116,6 +116,18 @@ impl PartialEq for PublicKey {
 }
 
 impl Eq for PublicKey {}
+
+// Manual Hash implementation to match manual PartialEq implementation
+impl std::hash::Hash for PublicKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Hash all fields used in PartialEq comparison
+        // Note: We use the raw bytes, not constant-time comparison
+        // (Hash doesn't need constant-time properties)
+        self.dilithium_pk.hash(state);
+        self.kyber_pk.hash(state);
+        self.key_id.hash(state);
+    }
+}
 
 // CRITICAL FIX C5: Zeroize sensitive data on drop
 impl Drop for PublicKey {

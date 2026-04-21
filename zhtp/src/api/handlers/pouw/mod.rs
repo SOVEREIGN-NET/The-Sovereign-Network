@@ -1274,6 +1274,7 @@ mod tests {
                 manifest_cid: None,
                 domain: None,
                 route_hops: None,
+                route_intermediaries: vec![],
                 served_from_cache: None,
             }];
             let _ = calc.calculate_epoch_rewards(&validated, 1).await.unwrap();
@@ -1338,6 +1339,7 @@ mod tests {
                 manifest_cid: None,
                 domain: None,
                 route_hops: None,
+                route_intermediaries: vec![],
                 served_from_cache: None,
             }];
             let _ = calc.calculate_epoch_rewards(&validated, 7).await.unwrap();

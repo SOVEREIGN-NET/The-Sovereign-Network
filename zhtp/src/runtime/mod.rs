@@ -63,7 +63,6 @@ pub mod dht_indexing;
 pub mod did_startup;
 pub mod edge_state_provider; // Global access to edge node state for header-only sync
 pub mod identity_manager_provider;
-pub mod legacy_block_adapter;
 pub mod mesh_router_provider;
 pub mod network_blockchain_event_receiver;
 pub mod network_blockchain_provider;
@@ -78,7 +77,6 @@ pub mod shared_blockchain;
 pub mod shared_dht;
 pub mod storage_provider; // Global access to storage for component sharing
 pub mod storage_rewards;
-pub mod sync_diagnostics;
 #[cfg(test)]
 pub mod test_api_integration;
 pub mod token_utils;
@@ -104,227 +102,32 @@ pub use node_runtime_orchestrator::NodeRuntimeOrchestrator;
 pub use shared_blockchain::*;
 pub use shared_dht::*;
 
-const SYNC_CAPABILITIES_ENDPOINT: &str = "/api/v1/blockchain/sync-capabilities";
-
-fn strict_sync_wire_mode_enabled() -> bool {
-    std::env::var("ZHTP_SYNC_WIRE_STRICT")
-        .ok()
-        .map(|v| {
-            let normalized = v.trim().to_ascii_lowercase();
-            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
-        })
-        .unwrap_or(false)
-}
-
-pub(crate) fn block_range_path_for_wire(
-    wire_version: &str,
-    start: u64,
-    end: u64,
-) -> anyhow::Result<String> {
-    match wire_version {
-        crate::sync_wire::BLOCK_PAGE_WIRE_V2_CBORENVELOPE => {
-            Ok(format!("/api/v2/blockchain/blocks/{}/{}", start, end))
-        }
-        crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW => {
-            Ok(format!("/api/v1/blockchain/blocks/{}/{}", start, end))
-        }
-        _ => Err(anyhow::anyhow!(
-            "unsupported block page wire version: {}",
-            wire_version
-        )),
-    }
-}
-
-pub(crate) fn decode_block_page_for_wire(
-    wire_version: &str,
+/// Deserialize block batches from peer sync endpoints with conservative wire compatibility.
+///
+/// Primary format is bincode default options (fixed-int). We also accept varint
+/// encoding as a fallback because some peers may serialize with different bincode
+/// integer encoding defaults. This is used for non-consensus sync paths only.
+pub(crate) fn deserialize_blocks_compatible(
     body: &[u8],
-    expected_start: u64,
-    expected_end: u64,
 ) -> anyhow::Result<Vec<lib_blockchain::Block>> {
-    match wire_version {
-        crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW => {
-            match bincode::deserialize(body).with_context(|| {
-                format!(
-                    "PayloadDecodeFailed: wire={} range={}..{}",
-                    wire_version, expected_start, expected_end
-                )
-            }) {
+    use bincode::Options;
+
+    match bincode::deserialize::<Vec<lib_blockchain::Block>>(body) {
+        Ok(blocks) => Ok(blocks),
+        Err(fixed_err) => {
+            let varint = bincode::DefaultOptions::new()
+                .with_varint_encoding()
+                .deserialize::<Vec<lib_blockchain::Block>>(body);
+            match varint {
                 Ok(blocks) => Ok(blocks),
-                Err(primary_err) => crate::runtime::legacy_block_adapter::decode_legacy_block_page(
-                    body,
-                )
-                .with_context(|| {
-                    format!(
-                        "PayloadDecodeFailed: wire={} range={}..{} primary={} fallback_legacy_decode=true",
-                        wire_version, expected_start, expected_end, primary_err
-                    )
-                }),
+                Err(varint_err) => Err(anyhow::anyhow!(
+                    "block decode failed (fixed-int: {}; varint: {})",
+                    fixed_err,
+                    varint_err
+                )),
             }
         }
-        crate::sync_wire::BLOCK_PAGE_WIRE_V2_CBORENVELOPE => {
-            let envelope: crate::sync_wire::BlockPageEnvelopeV2 =
-                ciborium::de::from_reader(body).with_context(|| {
-                    format!(
-                        "BlockPageEnvelopeMalformed: failed cbor decode wire={} range={}..{}",
-                        wire_version, expected_start, expected_end
-                    )
-                })?;
-            crate::sync_wire::validate_block_page_envelope_v2(
-                &envelope,
-                expected_start,
-                expected_end,
-            )?;
-            let blocks: Vec<lib_blockchain::Block> = bincode::deserialize(&envelope.payload)
-                .with_context(|| {
-                    format!(
-                        "PayloadDecodeFailed: wire={} range={}..{}",
-                        wire_version, expected_start, expected_end
-                    )
-                })?;
-            if blocks.len() != envelope.count {
-                return Err(anyhow::anyhow!(
-                    "BlockPageEnvelopeMalformed: count={} payload_blocks={} range={}..{}",
-                    envelope.count,
-                    blocks.len(),
-                    expected_start,
-                    expected_end
-                ));
-            }
-            Ok(blocks)
-        }
-        _ => Err(anyhow::anyhow!(
-            "UnsupportedPeerWireVersion: unsupported local wire decode {}",
-            wire_version
-        )),
     }
-}
-
-pub(crate) async fn negotiate_block_page_wire_version(
-    client: &lib_network::client::ZhtpClient,
-    peer_addr: &str,
-) -> anyhow::Result<String> {
-    let strict_mode = strict_sync_wire_mode_enabled();
-    let local_supported = crate::sync_wire::LOCAL_BLOCK_PAGE_WIRE_PREFERENCE
-        .iter()
-        .map(|s| s.to_string())
-        .collect::<Vec<_>>();
-
-    let caps_resp = match tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        client.get(SYNC_CAPABILITIES_ENDPOINT),
-    )
-    .await
-    {
-        Ok(Ok(resp)) => resp,
-        Ok(Err(e)) => {
-            if strict_mode {
-                return Err(anyhow::anyhow!(
-                    "UnsupportedPeerWireVersion: peer={} strict_mode=true fallback_disabled reason=sync_capabilities_request_failed error={}",
-                    peer_addr,
-                    e
-                ));
-            }
-            warn!(
-                "⚠️  sync-capabilities request failed for {}: {}; falling back to {}",
-                peer_addr,
-                e,
-                crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW
-            );
-            let selected = crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW.to_string();
-            crate::runtime::sync_diagnostics::record_wire_selection(peer_addr, &selected);
-            return Ok(selected);
-        }
-        Err(_) => {
-            if strict_mode {
-                return Err(anyhow::anyhow!(
-                    "UnsupportedPeerWireVersion: peer={} strict_mode=true fallback_disabled reason=sync_capabilities_timeout",
-                    peer_addr
-                ));
-            }
-            warn!(
-                "⚠️  sync-capabilities request timed out for {}; falling back to {}",
-                peer_addr,
-                crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW
-            );
-            let selected = crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW.to_string();
-            crate::runtime::sync_diagnostics::record_wire_selection(peer_addr, &selected);
-            return Ok(selected);
-        }
-    };
-
-    if !caps_resp.is_success() {
-        if strict_mode {
-            return Err(anyhow::anyhow!(
-                "UnsupportedPeerWireVersion: peer={} strict_mode=true fallback_disabled reason=sync_capabilities_status status={}",
-                peer_addr,
-                caps_resp.status_message
-            ));
-        }
-        warn!(
-            "⚠️  peer {} does not expose sync capabilities (status={}): falling back to {}",
-            peer_addr,
-            caps_resp.status_message,
-            crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW
-        );
-        let selected = crate::sync_wire::BLOCK_PAGE_WIRE_V1_BINCODERAW.to_string();
-        crate::runtime::sync_diagnostics::record_wire_selection(peer_addr, &selected);
-        return Ok(selected);
-    }
-
-    let peer_caps: crate::sync_wire::SyncCapabilities = serde_json::from_slice(&caps_resp.body)
-        .with_context(|| format!("failed to parse sync capabilities from {}", peer_addr))?;
-
-    let selected = crate::sync_wire::select_preferred_block_page_wire(
-        &crate::sync_wire::LOCAL_BLOCK_PAGE_WIRE_PREFERENCE,
-        &peer_caps.block_page_wire_versions,
-    );
-
-    match selected {
-        Some(wire) => {
-            info!(
-                "🔁 Sync wire negotiated with {}: {} (peer_supported={:?}, local_supported={:?})",
-                peer_addr, wire, peer_caps.block_page_wire_versions, local_supported
-            );
-            crate::runtime::sync_diagnostics::record_wire_selection(peer_addr, &wire);
-            Ok(wire)
-        }
-        None => Err(anyhow::anyhow!(
-            "UnsupportedPeerWireVersion: peer={} peer_supported={:?} local_supported={:?}",
-            peer_addr,
-            peer_caps.block_page_wire_versions,
-            local_supported
-        )),
-    }
-}
-
-pub(crate) fn log_sync_decode_failure(
-    peer: &str,
-    endpoint: &str,
-    wire_version: &str,
-    start: u64,
-    end: u64,
-    payload: &[u8],
-    err: &anyhow::Error,
-) {
-    let class = crate::runtime::sync_diagnostics::classify_sync_decode_error(err);
-    crate::runtime::sync_diagnostics::record_decode_failure(peer, wire_version, class);
-
-    let prefix_len = std::cmp::min(payload.len(), 16);
-    let payload_prefix = hex::encode(&payload[..prefix_len]);
-    let payload_hash = hex::encode(blake3::hash(payload).as_bytes());
-
-    warn!(
-        "sync_decode_failure class={} peer={} endpoint={} wire={} range={}..{} payload_prefix={} payload_hash={} err={}",
-        class.as_str(),
-        peer,
-        endpoint,
-        wire_version,
-        start,
-        end,
-        payload_prefix,
-        payload_hash,
-        err
-    );
 }
 
 /// Try to sync blockchain from bootstrap peers using paginated block-range QUIC requests.
@@ -426,7 +229,7 @@ async fn try_initial_sync_from_peer(
             }
         }
 
-        let peer_did = client.peer_did().map(str::to_owned);
+        let peer_did = client.peer_did();
         if !is_trusted_sync_source(peer, peer_did.as_deref(), trusted_sync_sources) {
             warn!(
                 "⚠️  Skipping untrusted sync source {} (peer_did={})",
@@ -480,20 +283,12 @@ async fn try_initial_sync_from_peer(
         }
 
         highest_peer_height = highest_peer_height.max(tip.height);
-        let block_page_wire = match negotiate_block_page_wire_version(&client, peer).await {
-            Ok(wire) => wire,
-            Err(e) => {
-                warn!("⚠️  Failed sync wire negotiation with {}: {}", peer_addr, e);
-                continue;
-            }
-        };
         info!(
-            "📥 Peer {} at height {} — fetching blocks {}-{} (wire={})",
+            "📥 Peer {} at height {} — fetching blocks {}-{}",
             peer_addr,
             tip.height,
             local_height + 1,
-            tip.height,
-            block_page_wire
+            tip.height
         );
 
         // Paginated import: 200 blocks per request, same as consensus catch-up.
@@ -509,17 +304,7 @@ async fn try_initial_sync_from_peer(
             }
             let start = next_start;
             let end = tip.height.min(start + BLOCKS_PER_PAGE - 1);
-            let url = match block_range_path_for_wire(&block_page_wire, start, end) {
-                Ok(path) => path,
-                Err(e) => {
-                    warn!(
-                        "⚠️  Invalid sync wire {} for {}: {}",
-                        block_page_wire, peer_addr, e
-                    );
-                    page_error = true;
-                    break;
-                }
-            };
+            let url = format!("/api/v1/blockchain/blocks/{}/{}", start, end);
 
             let blocks_resp =
                 match tokio::time::timeout(std::time::Duration::from_secs(60), client.get(&url))
@@ -553,24 +338,19 @@ async fn try_initial_sync_from_peer(
                 break;
             }
 
-            let blocks: Vec<lib_blockchain::Block> =
-                match decode_block_page_for_wire(&block_page_wire, &blocks_resp.body, start, end)
-                {
-                    Ok(b) => b,
-                    Err(e) => {
-                        log_sync_decode_failure(
-                            &peer_addr.to_string(),
-                            &url,
-                            &block_page_wire,
-                            start,
-                            end,
-                            &blocks_resp.body,
-                            &e,
-                        );
-                        page_error = true;
-                        break;
-                    }
-                };
+            let blocks: Vec<lib_blockchain::Block> = match deserialize_blocks_compatible(
+                &blocks_resp.body,
+            ) {
+                Ok(b) => b,
+                Err(e) => {
+                    warn!(
+                        "⚠️  Failed to deserialize blocks {}-{} from {}: {}",
+                        start, end, peer_addr, e
+                    );
+                    page_error = true;
+                    break;
+                }
+            };
 
             if blocks.is_empty() {
                 break;
@@ -1160,13 +940,75 @@ impl RuntimeOrchestrator {
             let quic_port = self.config.protocols_config.quic_port;
             let discovery_port = self.config.protocols_config.discovery_port;
             let is_edge_node = *self.is_edge_node.read().await;
-            self.register_component(Arc::new(ProtocolsComponent::new_with_node_type_and_ports(
+            let mut protocols = ProtocolsComponent::new_with_node_type_and_ports(
                 environment,
                 api_port,
                 quic_port,
                 discovery_port,
                 is_edge_node,
-            )))
+            );
+
+            // Wire ZDNS config from [zdns] TOML section
+            if self.config.zdns_config.enabled {
+                match self.config.zdns_config.bind.parse::<std::net::IpAddr>() {
+                    Err(e) => {
+                        tracing::error!(
+                            "Invalid zdns bind address '{}': {} — skipping ZDNS init",
+                            self.config.zdns_config.bind, e
+                        );
+                    }
+                    Ok(bind) => {
+                        // Determine gateway IP: try bootstrap_validators config first,
+                        // then fall back to local_ip with a warning.
+                        let gateway_ip = {
+                            let mut found: Option<std::net::Ipv4Addr> = None;
+                            // Check our own bootstrap_validators config for an endpoint we can parse
+                            for bv in &self.config.network_config.bootstrap_validators {
+                                for ep in &bv.endpoints {
+                                    let host = ep.split(':').next().unwrap_or("");
+                                    if let Ok(ip) = host.parse::<std::net::Ipv4Addr>() {
+                                        if !ip.is_loopback() && !ip.is_unspecified() {
+                                            found = Some(ip);
+                                            break;
+                                        }
+                                    }
+                                }
+                                if found.is_some() { break; }
+                            }
+                            match found {
+                                Some(ip) => ip,
+                                None => {
+                                    let fallback = local_ip_address::local_ip()
+                                        .ok()
+                                        .and_then(|ip| match ip {
+                                            std::net::IpAddr::V4(v4) => Some(v4),
+                                            _ => None,
+                                        })
+                                        .unwrap_or(std::net::Ipv4Addr::new(127, 0, 0, 1));
+                                    warn!(
+                                        "ZDNS gateway_ip: no public endpoint in bootstrap_validators config, \
+                                         using local IP {} (may be a private address)",
+                                        fallback
+                                    );
+                                    fallback
+                                }
+                            }
+                        };
+                        protocols.enable_zdns_transport = true;
+                        protocols.zdns_gateway_ip = gateway_ip;
+                        protocols.zdns_bind_addr = bind;
+                        protocols.zdns_port = self.config.zdns_config.port;
+                        protocols.zdns_bootstrap_ips = self.config.network_config.bootstrap_peers
+                            .iter()
+                            .filter_map(|p| p.split(':').next()?.parse::<std::net::Ipv4Addr>().ok())
+                            .collect();
+                        info!("ZDNS enabled: bind={}:{} gateway_ip={} bootstrap_ips={}",
+                            bind, self.config.zdns_config.port, gateway_ip, protocols.zdns_bootstrap_ips.len());
+                    }
+                }
+            }
+
+            self.register_component(Arc::new(protocols))
             .await?;
         }
 
@@ -1488,9 +1330,6 @@ impl RuntimeOrchestrator {
                     }
                 }
             }
-            // Initialize Treasury Kernel if not already loaded from persistence.
-            blockchain.init_treasury_kernel_if_missing();
-            blockchain.ensure_welfare_dao_tokens();
         } // Release write lock
 
         info!(" Global blockchain provider initialized with user wallet funding");
@@ -1551,7 +1390,8 @@ impl RuntimeOrchestrator {
 
     /// Returns true if local persistent chain artifacts already exist.
     fn has_local_chain_data(&self) -> bool {
-        let sled_path = crate::node_data_dir().join("sled");
+        let data_dir = self.config.environment.data_directory();
+        let sled_path = std::path::Path::new(&data_dir).join("sled");
         if !sled_path.exists() {
             return false;
         }
@@ -2010,27 +1850,27 @@ impl RuntimeOrchestrator {
         Ok(orchestrator)
     }
 
-    /// Start a Gateway node (remote QUIC ingress proxy).
+    /// Start a gateway node - THE canonical way
     ///
-    /// Gateways accept native ZHTP over QUIC from clients, perform UHP v2
-    /// handshake when required, and forward requests to backend validators
-    /// via `BackendPool` / `Web4Client`.  No blockchain state, no consensus,
-    /// no mining — pure ingress + forwarding.
+    /// Gateway nodes act as public ingress proxies, providing QUIC-based access
+    /// to the network for external clients. They do NOT maintain blockchain state
+    /// or validate blocks - they forward requests to backend nodes.
     ///
-    /// Configuration:
-    /// - Uses `config.network_config.bootstrap_peers` as static backends.
-    /// - Listens on UDP `0.0.0.0:7840` for QUIC (configurable via `ZHTP_GATEWAY_ADDR`).
-    /// - Loads or creates a gateway identity in the node data directory.
+    /// # Errors
+    /// Returns an error if config.node_type is not Gateway.
     pub async fn start_gateway(config: NodeConfig) -> Result<Self> {
         Self::validate_node_type(&config, crate::config::NodeType::Gateway)?;
 
-        let orchestrator = Self::new(config.clone()).await?;
+        let orchestrator = Self::new(config).await?;
 
+        // For gateway nodes, initialize ONLY mesh routing/networking components,
+        // NOT the full blockchain startup sequence. Gateways should not maintain
+        // blockchain state - they proxy requests to backend nodes.
         use crate::runtime::components::{CryptoComponent, NetworkComponent};
 
-        info!("Starting Gateway Node - QUIC ingress proxy (no blockchain state)");
+        info!("Starting Gateway Node - initializing mesh/routing only (no blockchain state)");
 
-        // Initialize crypto and network components
+        // Initialize crypto and network components for routing
         orchestrator
             .register_component(Arc::new(CryptoComponent::new()))
             .await?;
@@ -2041,83 +1881,7 @@ impl RuntimeOrchestrator {
             .await?;
         orchestrator.start_component(ComponentId::Network).await?;
 
-        // ------------------------------------------------------------------
-        // Gateway-specific: load identity, create service, start QUIC server
-        // ------------------------------------------------------------------
-        let data_dir = std::path::PathBuf::from(&config.data_directory);
-        let identity = zhtp_daemon::identity::load_or_create(&data_dir)
-            .context("Failed to load gateway identity")?;
-
-        let _ = lib_identity::types::node_id::try_set_network_genesis(
-            lib_identity::constants::TESTNET_GENESIS_HASH,
-        );
-
-        // Build a minimal daemon config from NodeConfig
-        let bootstrap_peers = config.network_config.bootstrap_peers.clone();
-        let daemon_config = zhtp_daemon::config::DaemonConfig {
-            listen_addr: std::env::var("ZHTP_GATEWAY_HTTP_ADDR")
-                .unwrap_or_else(|_| "127.0.0.1:7840".to_string()),
-            backend_nodes: bootstrap_peers.clone(),
-            trust: zhtp_daemon::config::TrustSettings::default(),
-            gateway: Some(zhtp_daemon::config::GatewayConfig {
-                listen_addr: std::env::var("ZHTP_GATEWAY_HTTP_ADDR")
-                    .unwrap_or_else(|_| "127.0.0.1:7840".to_string()),
-                quic_listen_addr: std::env::var("ZHTP_GATEWAY_ADDR")
-                    .unwrap_or_else(|_| "0.0.0.0:7840".to_string()),
-                request_timeout_ms: 8000,
-                connect_timeout_ms: 1500,
-                backend_selection: zhtp_daemon::config::BackendSelectionPolicy::LowestLatency,
-                retry_idempotent_requests: true,
-                static_backends: bootstrap_peers,
-                dynamic_backend_discovery: false,
-                dynamic_backend_routing: false,
-                health_check_interval_ms: 5000,
-                unhealthy_threshold: 3,
-                recovery_threshold: 2,
-                cooldown_ms: 15000,
-                max_in_flight_per_backend: 200,
-            }),
-        };
-
-        let service = Arc::new(
-            zhtp_daemon::service::ZhtpDaemonService::new(daemon_config.clone(), identity.clone())
-                .await
-                .context("Failed to create gateway service")?,
-        );
-
-        let gateway_cfg = daemon_config.effective_gateway_config();
-        let quic_bind: std::net::SocketAddr = gateway_cfg
-            .quic_listen_addr
-            .parse()
-            .with_context(|| format!("Invalid quic_listen_addr: {}", gateway_cfg.quic_listen_addr))?;
-
-        let cert_path = data_dir.join("gateway-cert.pem");
-        let key_path = data_dir.join("gateway-key.pem");
-
-        let quic_server = zhtp_daemon::quic_server::QuicGatewayServer::new(
-            quic_bind,
-            service.clone(),
-            Arc::new(identity),
-            &cert_path,
-            &key_path,
-        )
-        .await
-        .context("Failed to create QUIC gateway server")?;
-
-        info!(
-            quic_addr = %quic_bind,
-            backends = %gateway_cfg.static_backends.len(),
-            "Gateway QUIC server starting"
-        );
-
-        // Spawn QUIC server into background; orchestrator keeps ownership.
-        tokio::spawn(async move {
-            if let Err(e) = quic_server.run().await {
-                tracing::error!("QUIC gateway server error: {}", e);
-            }
-        });
-
-        info!("Gateway node initialized and listening");
+        info!("Gateway node initialized (routing-only mode - ready for routing)");
 
         Ok(orchestrator)
     }
@@ -2279,7 +2043,8 @@ impl RuntimeOrchestrator {
 
         // Phase 3: Use SledStore for persistent blockchain storage
         // This replaces the deprecated file-based storage with incremental Sled DB
-        let sled_path = crate::node_data_dir().join("sled");
+        let data_dir = self.config.environment.data_directory();
+        let sled_path = std::path::Path::new(&data_dir).join("sled");
 
         info!("📂 Opening SledStore at {:?}", sled_path);
 
@@ -2852,13 +2617,48 @@ impl RuntimeOrchestrator {
             .await?;
 
         // Protocols must start before Consensus so mesh router is available
-        self.register_component(Arc::new(ProtocolsComponent::new_with_ports(
+        let mut protocols = ProtocolsComponent::new_with_ports(
             environment,
             self.config.protocols_config.api_port,
             self.config.protocols_config.quic_port,
             self.config.protocols_config.discovery_port,
-        )))
-        .await?;
+        );
+        // Wire ZDNS config
+        if self.config.zdns_config.enabled {
+            match self.config.zdns_config.bind.parse::<std::net::IpAddr>() {
+                Err(e) => {
+                    tracing::error!("Invalid zdns bind '{}': {} — skipping", self.config.zdns_config.bind, e);
+                }
+                Ok(bind) => {
+                    let gateway_ip = self.config.network_config.bootstrap_validators
+                        .iter()
+                        .flat_map(|bv| bv.endpoints.iter())
+                        .filter_map(|ep| ep.split(':').next()?.parse::<std::net::Ipv4Addr>().ok())
+                        .find(|ip| !ip.is_loopback() && !ip.is_unspecified())
+                        .unwrap_or_else(|| {
+                            tracing::warn!("ZDNS: no public IP from config, using local_ip");
+                            local_ip_address::local_ip()
+                                .ok()
+                                .and_then(|ip| match ip {
+                                    std::net::IpAddr::V4(v4) => Some(v4),
+                                    _ => None,
+                                })
+                                .unwrap_or(std::net::Ipv4Addr::new(127, 0, 0, 1))
+                        });
+                    protocols.enable_zdns_transport = true;
+                    protocols.zdns_gateway_ip = gateway_ip;
+                    protocols.zdns_bind_addr = bind;
+                    protocols.zdns_port = self.config.zdns_config.port;
+                    protocols.zdns_bootstrap_ips = self.config.network_config.bootstrap_peers
+                        .iter()
+                        .filter_map(|p| p.split(':').next()?.parse::<std::net::Ipv4Addr>().ok())
+                        .collect();
+                    info!("🌐 ZDNS enabled: bind={}:{} gateway_ip={} bootstrap_ips={}",
+                        bind, self.config.zdns_config.port, gateway_ip, protocols.zdns_bootstrap_ips.len());
+                }
+            }
+        }
+        self.register_component(Arc::new(protocols)).await?;
         self.register_component(Arc::new(
             ConsensusComponent::new_with_bootstrap_validators_and_oracle(
                 environment,
@@ -4423,16 +4223,10 @@ impl RuntimeOrchestrator {
                     *self.shared_blockchain.write().await = Some(shared_service);
 
                     // Also set the global blockchain for protocol access
-                    if let Err(e) = set_global_blockchain(blockchain_arc.clone()).await {
+                    if let Err(e) = set_global_blockchain(blockchain_arc).await {
                         warn!("Failed to set global blockchain: {}", e);
                     } else {
                         info!("Global blockchain provider updated");
-                    }
-
-                    // Initialize Treasury Kernel if not restored from persistence.
-                    {
-                        let mut bc = blockchain_arc.write().await;
-                        bc.init_treasury_kernel_if_missing();
                     }
 
                     info!("Shared blockchain service initialized");

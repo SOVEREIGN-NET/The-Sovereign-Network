@@ -150,9 +150,17 @@ pub struct SearchQuery {
 impl ContentManager {
     /// Create new content manager with encryption capabilities
     pub fn new(dht_storage: DhtStorage, _economic_config: EconomicManagerConfig) -> Result<Self> {
-        // Generate master keypair for this storage node
-        let master_keypair =
-            KeyPair::generate().map_err(|e| anyhow!("Failed to generate master keypair: {}", e))?;
+        // Generate master keypair on a dedicated thread with explicit stack size.
+        // Dilithium/Kyber key generation can require a larger stack than deep async startup paths.
+        let keygen_thread = std::thread::Builder::new()
+            .name("content-keygen".to_string())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(KeyPair::generate)
+            .map_err(|e| anyhow!("Failed to spawn content keygen thread: {}", e))?;
+        let master_keypair = keygen_thread
+            .join()
+            .map_err(|_| anyhow!("Content keygen thread panicked"))?
+            .map_err(|e| anyhow!("Failed to generate master keypair: {}", e))?;
 
         // Generate key derivation salt
         let mut salt = [0u8; 32];
