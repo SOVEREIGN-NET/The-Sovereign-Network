@@ -314,6 +314,13 @@ pub mod web4;
     feature = "lorawan",
     feature = "full"
 ))]
+pub mod zdns;
+#[cfg(any(
+    feature = "quic",
+    feature = "mdns",
+    feature = "lorawan",
+    feature = "full"
+))]
 pub mod zk_integration;
 #[cfg(any(
     feature = "quic",
