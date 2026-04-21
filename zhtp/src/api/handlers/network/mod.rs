@@ -909,22 +909,21 @@ impl NetworkHandler {
             pin
         };
 
-        // Get this node's DID to match against validator entries
-        let local_did = crate::runtime::node_identity::get_runtime_node_did()
-            .unwrap_or_default();
+        // Known validator SPKI pins (derived from their TLS certificates).
+        // These are stable — only change if a validator regenerates its cert.
+        let known_pins: std::collections::HashMap<&str, &str> = [
+            ("g1.thesovereignnetwork.org:9334", "611bd1197ee799c17ac46f3f27df45ec4580d924f0dc3597ba79bcad3d0fa970"),
+            ("g2.thesovereignnetwork.org:9334", "611bd1197ee799c17ac46f3f27df45ec4580d924f0dc3597ba79bcad3d0fa970"),
+            ("g3.thesovereignnetwork.org:9334", "eb71239b161a8ea0cdc94f3853298f3e063523c9860a9630cc57504b024a3f54"),
+        ].into_iter().collect();
 
-        // Each validator entry gets the SPKI pin only if it's THIS node.
-        // Other validators' pins must be fetched by connecting to them directly.
         let validators: Vec<serde_json::Value> = blockchain
             .validator_registry
             .iter()
             .map(|(_, v)| {
-                // Match by DID: if this validator is us, attach our pin
-                let pin = if v.identity_id == local_did {
-                    local_spki.clone()
-                } else {
-                    String::new()
-                };
+                let pin = known_pins.get(v.network_address.as_str())
+                    .unwrap_or(&"")
+                    .to_string();
                 serde_json::json!({
                     "did": v.identity_id,
                     "endpoint": v.network_address,
