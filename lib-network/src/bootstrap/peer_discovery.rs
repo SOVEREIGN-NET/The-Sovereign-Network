@@ -200,6 +200,9 @@ async fn add_peer_to_registry(
             protocol: protocol.clone(),
             signal_strength: 1.0, // Bootstrap peers assumed to have good connectivity
             latency_ms: 50,       // Default reasonable latency for bootstrap
+            nat_type: None,
+            public_endpoint: None,
+            relay_endpoint: None,
         })
         .collect();
 

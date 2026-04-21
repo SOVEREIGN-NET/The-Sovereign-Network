@@ -129,6 +129,7 @@ pub use crate::consensus_receiver::{ConsensusReceiver, ReceivedConsensusMessage}
 pub use crate::validator_discovery_transport::MeshValidatorDiscoveryTransport;
 
 // Network utilities
+pub mod nat; // NAT traversal and endpoint reachability (#2200)
 pub mod network_utils;
 pub use crate::network_utils::{get_local_ip, get_local_ip_with_config, LocalIpConfig};
 
