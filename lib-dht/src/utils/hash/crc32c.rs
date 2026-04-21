@@ -265,14 +265,14 @@ const T: [u32; 256 * 8] = [
     0xE54C35A1, 0xAC704886, 0x7734CFEF, 0x3E08B2C8, 0xC451B7CC, 0x8D6DCAEB, 0x56294D82, 0x1F1530A5,
 ];
 
-const T8_0_START: usize = 0 * 256;
-const T8_1_START: usize = 1 * 256;
-const T8_2_START: usize = 2 * 256;
-const T8_3_START: usize = 3 * 256;
-const T8_4_START: usize = 4 * 256;
-const T8_5_START: usize = 5 * 256;
-const T8_6_START: usize = 6 * 256;
-const T8_7_START: usize = 7 * 256;
+const T8_0_START: usize = 0;
+const T8_1_START: usize = 256;
+const T8_2_START: usize = 512;
+const T8_3_START: usize = 768;
+const T8_4_START: usize = 1024;
+const T8_5_START: usize = 1280;
+const T8_6_START: usize = 1536;
+const T8_7_START: usize = 1792;
 
 pub struct Crc32c {
     crc: u32,

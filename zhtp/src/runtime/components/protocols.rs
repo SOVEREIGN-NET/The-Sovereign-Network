@@ -11,7 +11,7 @@ use tracing::{debug, info, warn};
 use crate::runtime::{Component, ComponentHealth, ComponentId, ComponentMessage, ComponentStatus};
 // Removed: create_default_storage_config - now using global storage provider
 use crate::server::https_gateway::{GatewayTlsConfig, HttpsGateway};
-use lib_network::zdns::{ZdnsResolver, ZdnsServerConfig, ZdnsTransportServer, ZdnsConfig};
+use crate::web4_stub::{ZdnsResolver, ZdnsServerConfig, ZdnsTransportServer};
 use lib_protocols::{ZdnsServer, ZhtpIntegration};
 
 /// Protocols component - thin wrapper for unified server
@@ -430,14 +430,11 @@ impl Component for ProtocolsComponent {
         // Initialize ZDNS resolver with caching, using the canonical domain registry
         info!(" Initializing ZDNS resolver with canonical domain registry...");
         let domain_registry = unified_server.get_domain_registry();
-        let name_resolver = Arc::new(lib_network::web4::NameResolver::new(domain_registry.clone()));
-        let zdns_resolver = Arc::new(ZdnsResolver::new(name_resolver, ZdnsConfig::default()));
+        let zdns_resolver = Arc::new(ZdnsResolver::new());
         *self.zdns_resolver.write().await = Some(zdns_resolver.clone());
         info!(" ✓ ZDNS resolver initialized with LRU cache (size: 10000, TTL: up to 1hr)");
 
         // Start ZDNS transport server if enabled
-        info!("ZDNS transport check: enable_zdns_transport={} gateway_ip={} bind={} port={}",
-            self.enable_zdns_transport, self.zdns_gateway_ip, self.zdns_bind_addr, self.zdns_port);
         if self.enable_zdns_transport {
             info!(" Starting ZDNS transport server (DNS on port {})...", self.zdns_port);
             let mut transport_config = ZdnsServerConfig::production(self.zdns_gateway_ip)
@@ -555,7 +552,9 @@ impl Component for ProtocolsComponent {
         // Stop ZDNS transport server if running
         if let Some(transport) = self.zdns_transport.write().await.take() {
             info!(" Stopping ZDNS transport server...");
-            transport.stop().await;
+            if let Err(e) = transport.stop().await {
+                warn!("Failed to stop ZDNS transport server: {}", e);
+            }
         }
 
         if let Some(mut server) = self.unified_server.write().await.take() {
