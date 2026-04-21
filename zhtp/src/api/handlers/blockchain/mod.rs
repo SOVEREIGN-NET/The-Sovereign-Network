@@ -196,6 +196,7 @@ impl ZhtpRequestHandler for BlockchainHandler {
             }
             (ZhtpMethod::Get, "/api/v1/chain/info") => self.handle_chain_info(request).await,
             (ZhtpMethod::Get, "/api/v1/network/directory") => self.handle_network_directory(request).await,
+            (ZhtpMethod::Get, "/api/v1/node/status") => self.handle_node_status(request).await,
             (ZhtpMethod::Get, "/api/v1/blockchain/latest") => {
                 self.handle_latest_block(request).await
             }
@@ -322,7 +323,10 @@ impl ZhtpRequestHandler for BlockchainHandler {
     }
 
     fn can_handle(&self, request: &ZhtpRequest) -> bool {
-        request.uri.starts_with("/api/v1/blockchain/") || request.uri.starts_with("/api/v1/chain/")
+        request.uri.starts_with("/api/v1/blockchain/")
+            || request.uri.starts_with("/api/v1/chain/")
+            || request.uri.starts_with("/api/v1/network/")
+            || request.uri.starts_with("/api/v1/node/")
     }
 
     fn priority(&self) -> u32 {
@@ -1068,6 +1072,81 @@ impl BlockchainHandler {
             "chain_height": blockchain.height,
             "validator_count": validators.len(),
             "local_spki_pin": local_spki,
+        });
+
+        Ok(ZhtpResponse::json(&response, None)?)
+    }
+
+    /// Node status: comprehensive status for the setup UI and dashboard.
+    /// Public endpoint — no auth required.
+    async fn handle_node_status(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        // Node identity
+        let node_did = crate::runtime::node_identity::get_runtime_node_did()
+            .unwrap_or_else(|| "not_initialized".to_string());
+
+        // Check if identity is registered on-chain
+        let identity_registered = blockchain.identity_registry.contains_key(&node_did);
+
+        // Wallet balance (if registered)
+        let (wallet_id, sov_balance) = if identity_registered {
+            let did_hex = node_did.strip_prefix("did:zhtp:").unwrap_or(&node_did);
+            let owner_bytes = hex::decode(did_hex).unwrap_or_default();
+            let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+
+            let wallet = blockchain.wallet_registry.values().find(|w| {
+                w.owner_identity_id
+                    .as_ref()
+                    .map(|id| id.as_bytes() == owner_bytes.as_slice())
+                    .unwrap_or(false)
+                    && w.wallet_type == "Primary"
+            });
+
+            if let Some(w) = wallet {
+                let wallet_id_hex = hex::encode(w.wallet_id.as_bytes());
+                let pk = lib_blockchain::integration::crypto_integration::PublicKey {
+                    dilithium_pk: [0u8; 2592],
+                    kyber_pk: [0u8; 1568],
+                    key_id: w.wallet_id.as_array(),
+                };
+                let balance = blockchain
+                    .token_contracts
+                    .get(&sov_token_id)
+                    .map(|t| t.balance_of(&pk))
+                    .unwrap_or(0);
+                (Some(wallet_id_hex), balance)
+            } else {
+                (None, 0)
+            }
+        } else {
+            (None, 0)
+        };
+
+        // Peer count
+        let peer_count = blockchain.validator_registry.len();
+
+        // Determine node state
+        let state = if node_did == "not_initialized" {
+            "setup_required"
+        } else if !identity_registered {
+            "identity_not_registered"
+        } else {
+            "ready"
+        };
+
+        let response = serde_json::json!({
+            "state": state,
+            "did": node_did,
+            "identity_registered": identity_registered,
+            "chain_height": blockchain.height,
+            "wallet_id": wallet_id,
+            "sov_balance": sov_balance.to_string(),
+            "sov_balance_human": format!("{:.4}", sov_balance as f64 / 1_000_000_000_000_000_000.0),
+            "validator_count": peer_count,
+            "identity_count": blockchain.identity_registry.len(),
+            "network_id": self.environment.to_string().to_ascii_lowercase(),
         });
 
         Ok(ZhtpResponse::json(&response, None)?)

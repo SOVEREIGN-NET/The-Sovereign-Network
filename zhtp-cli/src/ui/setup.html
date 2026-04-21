@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sovereign Network — Node Setup</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --border: #1e1e2e;
+    --text: #e0e0e8;
+    --muted: #6b6b80;
+    --accent: #6366f1;
+    --accent-glow: rgba(99, 102, 241, 0.15);
+    --success: #22c55e;
+    --error: #ef4444;
+    --warning: #f59e0b;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: 40px 20px;
+  }
+
+  .container {
+    max-width: 640px;
+    width: 100%;
+  }
+
+  .logo {
+    text-align: center;
+    margin-bottom: 48px;
+  }
+
+  .logo h1 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .logo p {
+    color: var(--muted);
+    font-size: 14px;
+    margin-top: 8px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 32px;
+    margin-bottom: 24px;
+  }
+
+  .card h2 {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 16px;
+  }
+
+  .step-indicator {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 32px;
+    justify-content: center;
+  }
+
+  .step-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--border);
+    transition: all 0.3s;
+  }
+
+  .step-dot.active {
+    background: var(--accent);
+    box-shadow: 0 0 12px var(--accent-glow);
+  }
+
+  .step-dot.done {
+    background: var(--success);
+  }
+
+  label {
+    display: block;
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  textarea, input[type="text"] {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    color: var(--text);
+    font-size: 15px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    resize: none;
+    transition: border-color 0.2s;
+  }
+
+  textarea:focus, input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    padding: 14px 24px;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-top: 16px;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: white;
+  }
+
+  .btn-primary:hover {
+    background: #5558e6;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px var(--accent-glow);
+  }
+
+  .btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .btn-secondary {
+    background: var(--border);
+    color: var(--text);
+  }
+
+  .btn-secondary:hover {
+    background: #2a2a3e;
+  }
+
+  .status-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+
+  .status-item {
+    background: var(--bg);
+    border-radius: 10px;
+    padding: 16px;
+  }
+
+  .status-item .label {
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+  }
+
+  .status-item .value {
+    font-size: 20px;
+    font-weight: 700;
+  }
+
+  .status-item .value.mono {
+    font-size: 13px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    word-break: break-all;
+  }
+
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .badge-success { background: rgba(34,197,94,0.15); color: var(--success); }
+  .badge-warning { background: rgba(245,158,11,0.15); color: var(--warning); }
+  .badge-error { background: rgba(239,68,68,0.15); color: var(--error); }
+
+  .badge-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .sync-bar {
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    margin-top: 12px;
+    overflow: hidden;
+  }
+
+  .sync-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), #8b5cf6);
+    border-radius: 2px;
+    transition: width 0.5s ease;
+  }
+
+  .hidden { display: none !important; }
+
+  .option-group {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .option-group .btn {
+    flex: 1;
+    margin-top: 0;
+  }
+
+  .option-group .btn.selected {
+    border: 2px solid var(--accent);
+    background: var(--accent-glow);
+  }
+
+  .hint {
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 8px;
+  }
+
+  .error-msg {
+    color: var(--error);
+    font-size: 13px;
+    margin-top: 8px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="logo">
+    <h1>The Sovereign Network</h1>
+    <p>Node Setup</p>
+  </div>
+
+  <div class="step-indicator">
+    <div class="step-dot active" id="dot-0"></div>
+    <div class="step-dot" id="dot-1"></div>
+    <div class="step-dot" id="dot-2"></div>
+  </div>
+
+  <!-- Step 0: Choose mode -->
+  <div class="card" id="step-0">
+    <h2>How do you want to set up your node?</h2>
+    <div class="option-group">
+      <button class="btn btn-secondary" onclick="chooseMode('restore')">
+        Restore from seed phrase
+      </button>
+      <button class="btn btn-secondary" onclick="chooseMode('new')">
+        Create new identity
+      </button>
+    </div>
+    <p class="hint">If you have a mobile wallet, use "Restore" to use the same identity on your node.</p>
+  </div>
+
+  <!-- Step 1: Seed phrase -->
+  <div class="card hidden" id="step-1-restore">
+    <h2>Enter your seed phrase</h2>
+    <label>24-word recovery phrase</label>
+    <textarea id="seed-input" rows="4" placeholder="word1 word2 word3 ..."></textarea>
+    <p class="hint">From your mobile app: Settings → Backup → Show seed phrase</p>
+    <div class="error-msg hidden" id="seed-error"></div>
+    <button class="btn btn-primary" onclick="submitSeed()" id="btn-restore">Restore Identity</button>
+  </div>
+
+  <div class="card hidden" id="step-1-new">
+    <h2>New Identity</h2>
+    <label>Node name</label>
+    <input type="text" id="node-name" placeholder="my-sovereign-node" />
+    <p class="hint">A friendly name for your node. Your identity will be generated automatically.</p>
+    <button class="btn btn-primary" onclick="createNew()" id="btn-create">Create &amp; Start</button>
+  </div>
+
+  <!-- Step 2: Dashboard -->
+  <div class="card hidden" id="step-2">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+      <h2>Node Dashboard</h2>
+      <span class="status-badge badge-success" id="node-badge">
+        <span class="badge-dot"></span>
+        <span id="badge-text">Syncing</span>
+      </span>
+    </div>
+
+    <div class="status-grid">
+      <div class="status-item">
+        <div class="label">Chain Height</div>
+        <div class="value" id="chain-height">—</div>
+      </div>
+      <div class="status-item">
+        <div class="label">SOV Balance</div>
+        <div class="value" id="sov-balance">—</div>
+      </div>
+      <div class="status-item">
+        <div class="label">Validators</div>
+        <div class="value" id="validators">—</div>
+      </div>
+      <div class="status-item">
+        <div class="label">Identities</div>
+        <div class="value" id="identities">—</div>
+      </div>
+      <div class="status-item" style="grid-column: span 2;">
+        <div class="label">Your DID</div>
+        <div class="value mono" id="node-did">—</div>
+      </div>
+    </div>
+
+    <div class="sync-bar">
+      <div class="sync-bar-fill" id="sync-fill" style="width: 0%"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '';  // Same origin (localhost bridge)
+let mode = null;
+let pollInterval = null;
+
+function chooseMode(m) {
+  mode = m;
+  document.getElementById('step-0').classList.add('hidden');
+  document.getElementById('dot-0').classList.remove('active');
+  document.getElementById('dot-0').classList.add('done');
+  document.getElementById('dot-1').classList.add('active');
+  if (m === 'restore') {
+    document.getElementById('step-1-restore').classList.remove('hidden');
+  } else {
+    document.getElementById('step-1-new').classList.remove('hidden');
+  }
+}
+
+async function submitSeed() {
+  const seed = document.getElementById('seed-input').value.trim();
+  const words = seed.split(/\s+/);
+  const errEl = document.getElementById('seed-error');
+  errEl.classList.add('hidden');
+
+  if (words.length !== 24) {
+    errEl.textContent = `Expected 24 words, got ${words.length}`;
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  document.getElementById('btn-restore').disabled = true;
+  document.getElementById('btn-restore').textContent = 'Restoring...';
+
+  try {
+    const res = await fetch(API + '/api/setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'restore', seed_phrase: seed }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      errEl.textContent = data.error;
+      errEl.classList.remove('hidden');
+      document.getElementById('btn-restore').disabled = false;
+      document.getElementById('btn-restore').textContent = 'Restore Identity';
+      return;
+    }
+    showDashboard();
+  } catch (e) {
+    errEl.textContent = 'Connection failed: ' + e.message;
+    errEl.classList.remove('hidden');
+    document.getElementById('btn-restore').disabled = false;
+    document.getElementById('btn-restore').textContent = 'Restore Identity';
+  }
+}
+
+async function createNew() {
+  const name = document.getElementById('node-name').value.trim() || 'sovereign-node';
+  document.getElementById('btn-create').disabled = true;
+  document.getElementById('btn-create').textContent = 'Creating...';
+
+  try {
+    const res = await fetch(API + '/api/setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'create', node_name: name }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      alert(data.error);
+      document.getElementById('btn-create').disabled = false;
+      document.getElementById('btn-create').textContent = 'Create & Start';
+      return;
+    }
+    showDashboard();
+  } catch (e) {
+    alert('Connection failed: ' + e.message);
+    document.getElementById('btn-create').disabled = false;
+    document.getElementById('btn-create').textContent = 'Create & Start';
+  }
+}
+
+function showDashboard() {
+  document.getElementById('step-1-restore').classList.add('hidden');
+  document.getElementById('step-1-new').classList.add('hidden');
+  document.getElementById('dot-1').classList.remove('active');
+  document.getElementById('dot-1').classList.add('done');
+  document.getElementById('dot-2').classList.add('active');
+  document.getElementById('step-2').classList.remove('hidden');
+  startPolling();
+}
+
+function startPolling() {
+  updateStatus();
+  pollInterval = setInterval(updateStatus, 3000);
+}
+
+async function updateStatus() {
+  try {
+    const res = await fetch(API + '/api/status');
+    const data = await res.json();
+
+    document.getElementById('chain-height').textContent = Number(data.chain_height || 0).toLocaleString();
+    document.getElementById('sov-balance').textContent = data.sov_balance_human || '0';
+    document.getElementById('validators').textContent = data.validator_count || '0';
+    document.getElementById('identities').textContent = data.identity_count || '0';
+    document.getElementById('node-did').textContent = data.did || '—';
+
+    const badge = document.getElementById('node-badge');
+    const badgeText = document.getElementById('badge-text');
+    if (data.state === 'ready') {
+      badge.className = 'status-badge badge-success';
+      badgeText.textContent = 'Connected';
+    } else if (data.state === 'identity_not_registered') {
+      badge.className = 'status-badge badge-warning';
+      badgeText.textContent = 'Not Registered';
+    } else {
+      badge.className = 'status-badge badge-warning';
+      badgeText.textContent = 'Syncing';
+    }
+
+    // Rough sync progress (assume 40000 blocks target)
+    const height = data.chain_height || 0;
+    const pct = Math.min(100, (height / 40000) * 100);
+    document.getElementById('sync-fill').style.width = pct + '%';
+  } catch (e) {
+    // Bridge not ready yet
+  }
+}
+
+// Auto-detect: if node is already running, skip to dashboard
+(async () => {
+  try {
+    const res = await fetch(API + '/api/status');
+    const data = await res.json();
+    if (data.state && data.state !== 'setup_required') {
+      showDashboard();
+    }
+  } catch (e) {
+    // Not running yet, show setup
+  }
+})();
+</script>
+</body>
+</html>

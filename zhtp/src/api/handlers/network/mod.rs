@@ -374,6 +374,9 @@ impl ZhtpRequestHandler for NetworkHandler {
                 self.handle_get_relay_candidates(request).await
             }
             // Issue #1801: Missing network endpoints
+            (ZhtpMethod::Get, "/api/v1/network/directory") => {
+                self.handle_get_directory(request).await
+            }
             (ZhtpMethod::Get, "/api/v1/network/status") => {
                 self.handle_get_network_status(request).await
             }
@@ -875,6 +878,56 @@ impl NetworkHandler {
 
     /// Get network status (Issue #1801)
     /// GET /api/v1/network/status
+    /// Network directory: validators with endpoints and SPKI pins.
+    /// Public endpoint for client bootstrap — no auth required.
+    async fn handle_get_directory(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Getting network directory");
+
+        let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+            .await
+            .map_err(|e| anyhow::anyhow!("blockchain unavailable: {}", e))?;
+        let blockchain = blockchain_arc.read().await;
+
+        let peer_pins: std::collections::HashMap<String, String> =
+            crate::runtime::bootstrap_peers_provider::get_bootstrap_peer_pins()
+                .await
+                .unwrap_or_default();
+
+        let validators: Vec<serde_json::Value> = blockchain
+            .validator_registry
+            .iter()
+            .map(|(_, v)| {
+                let spki_pin = peer_pins.get(&v.network_address)
+                    .cloned()
+                    .unwrap_or_default();
+                serde_json::json!({
+                    "did": v.identity_id,
+                    "endpoint": v.network_address,
+                    "stake": v.stake,
+                    "status": v.status,
+                    "last_activity": v.last_activity,
+                    "healthy": v.status == "active",
+                    "spki_pin": spki_pin,
+                })
+            })
+            .collect();
+
+        let local_spki = lib_network::protocols::quic_mesh::get_tls_spki_hash_from_default_cert()
+            .map(|h| hex::encode(h))
+            .unwrap_or_default();
+
+        let response = serde_json::json!({
+            "validators": validators,
+            "relays": [],
+            "network_id": "testnet",
+            "chain_height": blockchain.height,
+            "validator_count": validators.len(),
+            "local_spki_pin": local_spki,
+        });
+
+        Ok(ZhtpResponse::json(&response, None)?)
+    }
+
     async fn handle_get_network_status(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         info!("API: Getting network status");
 
