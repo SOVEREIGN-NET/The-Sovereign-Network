@@ -261,6 +261,7 @@ impl MeshMessageHandler {
                     route_quality: quality,
                     latency_ms: latency,
                     originator: originator.clone(),
+                    responder: node_id.clone(),
                     ttl: 5,
                 };
 
@@ -310,6 +311,7 @@ impl MeshMessageHandler {
         originator: PublicKey,
         ttl: u8,
         sender: PublicKey,
+        responder: PublicKey,  // NEW: The actual target that responded
     ) -> Result<()> {
         if ttl == 0 {
             debug!("Route response {} TTL expired, dropping", probe_id);
@@ -319,9 +321,9 @@ impl MeshMessageHandler {
         // Check if we are the originator
         if let Some(node_id) = &self.node_id {
             if node_id == &originator {
-                // Update peer registry for the target (the node that sent the response)
+                // Update peer registry for the TARGET (responder), not the intermediary sender
                 let mut registry = self.peer_registry.write().await;
-                let updated = registry.update_by_public_key(&sender, |entry| {
+                let updated = registry.update_by_public_key(&responder, |entry| {
                     entry.route_quality = route_quality;
                     entry.connection_metrics.latency_ms = latency_ms;
                     entry.last_seen = std::time::SystemTime::now()
@@ -335,7 +337,7 @@ impl MeshMessageHandler {
                     info!(
                         "Route probe {} completed: target {} quality={:.2} latency={}ms",
                         probe_id,
-                        hex::encode(&sender.key_id[..8]),
+                        hex::encode(&responder.key_id[..8]),
                         route_quality,
                         latency_ms
                     );
@@ -343,7 +345,7 @@ impl MeshMessageHandler {
                     warn!(
                         "Route probe {} response from unknown peer {}",
                         probe_id,
-                        hex::encode(&sender.key_id[..8])
+                        hex::encode(&responder.key_id[..8])
                     );
                 }
                 return Ok(());
@@ -357,6 +359,7 @@ impl MeshMessageHandler {
             route_quality,
             latency_ms,
             originator: originator.clone(),
+            responder: sender.clone(),  // Forward the original responder
             ttl: new_ttl,
         };
 
@@ -429,7 +432,7 @@ impl MeshMessageHandler {
 
         // Forward toward destination
         let new_ttl = ttl.saturating_sub(1);
-        let new_hop_count = hop_count + 1;
+        let new_hop_count = hop_count.saturating_add(1);
         let mut new_route_history = route_history;
         if let Some(node_id) = &self.node_id {
             new_route_history.push(node_id.clone());
@@ -444,22 +447,29 @@ impl MeshMessageHandler {
         };
 
         if let Some(router) = &self.message_router {
-            router
-                .read()
-                .await
-                .route_message(forward, destination.clone(), sender)
+            let router_guard = router.read().await;
+            // Forward only to next hop, not full multi-hop route
+            // Convert destination PublicKey to UnifiedPeerId for find_next_hop_for_destination
+            let destination_peer_id = crate::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(destination.clone());
+            let next_hop = router_guard
+                .find_next_hop_for_destination(&destination_peer_id)
+                .await?;  // Returns Result<UnifiedPeerId, anyhow::Error>
+
+            router_guard
+                .route_message(forward, next_hop.public_key().clone(), sender)
                 .await?;
             debug!(
-                "Forwarded RoutedMessage toward {:?} (hop {}, ttl={})",
+                "Forwarded RoutedMessage to next hop {:?} toward {:?} (hop {}, ttl={})",
+                hex::encode(&next_hop.public_key().key_id[..8]),
                 hex::encode(&destination.key_id[..8]),
                 new_hop_count,
                 new_ttl
             );
 
             // Record routing activity for intermediary relay reward
-            if let Some(router_guard) = router.read().await.mesh_server.as_ref() {
+            if let Some(router_guard_inner) = router_guard.mesh_server.as_ref() {
                 let message_size = payload.len();
-                let _ = router_guard
+                let _ = router_guard_inner
                     .read()
                     .await
                     .record_routing_activity(
@@ -690,6 +700,7 @@ impl MeshMessageHandler {
                 route_quality,
                 latency_ms,
                 originator,
+                responder,
                 ttl,
             } => {
                 self.handle_route_response(
@@ -699,6 +710,7 @@ impl MeshMessageHandler {
                     originator,
                     ttl,
                     sender,
+                    responder,
                 )
                 .await?;
             }

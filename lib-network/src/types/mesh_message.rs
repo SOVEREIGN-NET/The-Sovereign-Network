@@ -544,6 +544,7 @@ pub enum ZhtpMeshMessage {
         route_quality: f64,
         latency_ms: u32,
         originator: PublicKey,
+        responder: PublicKey,  // The actual target node that responded (for registry updates)
         ttl: u8,
     },
 
@@ -877,10 +878,11 @@ impl ZhtpMeshMessage {
                 route_quality,
                 latency_ms,
                 originator,
+                responder,
                 ttl,
             } => (
                 MessageType::RouteResponse,
-                bincode::serialize(&(probe_id, route_quality, latency_ms, originator, ttl))?,
+                bincode::serialize(&(probe_id, route_quality, latency_ms, originator, responder, ttl))?,
             ),
             Self::BootstrapProofRequest {
                 requester,
@@ -1185,13 +1187,14 @@ impl ZhtpMeshMessage {
                 }
             }
             MessageType::RouteResponse => {
-                let (probe_id, route_quality, latency_ms, originator, ttl) =
+                let (probe_id, route_quality, latency_ms, originator, responder, ttl) =
                     bincode::deserialize(payload)?;
                 Self::RouteResponse {
                     probe_id,
                     route_quality,
                     latency_ms,
                     originator,
+                    responder,
                     ttl,
                 }
             }
