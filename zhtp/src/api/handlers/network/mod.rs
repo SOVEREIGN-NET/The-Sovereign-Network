@@ -912,7 +912,25 @@ impl NetworkHandler {
             })
             .collect();
 
+        // Try default path first, then known absolute paths
         let local_spki = lib_network::protocols::quic_mesh::get_tls_spki_hash_from_default_cert()
+            .or_else(|| {
+                // Fallback: try absolute path used on validators
+                let paths = [
+                    "/opt/zhtp/data/tls/server.crt",
+                    "/opt/zhtp/.zhtp/tls/server.crt",
+                ];
+                for path in &paths {
+                    if let Ok(pem) = std::fs::read(path) {
+                        if let Some(Ok(cert_der)) = rustls_pemfile::certs(&mut pem.as_slice()).next() {
+                            if let Ok(hash) = lib_network::protocols::quic_mesh::QuicMeshProtocol::compute_spki_sha256(cert_der.as_ref()) {
+                                return Some(hash);
+                            }
+                        }
+                    }
+                }
+                None
+            })
             .map(|h| hex::encode(h))
             .unwrap_or_default();
 
