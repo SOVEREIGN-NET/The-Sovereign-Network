@@ -464,7 +464,7 @@ button,input{font:inherit}
                   <button class="btn btn-ghost" type="button" onclick="backToChoices()">Back</button>
                 </div>
               </div>
-              <p class="seed-copy">Paste the full phrase into any field or enter words one by one. Tab keeps natural browser navigation, and arrow keys or Enter advance through the grid.</p>
+              <p class="seed-copy">Paste the full phrase into any field or enter words one by one. Tab keeps natural browser navigation, and arrow keys or Enter advance through the grid. Accepts 20-word (legacy) or 24-word (BIP39) phrases — leave the remaining cells empty for a 20-word phrase.</p>
               <div class="seed-grid" id="seed-grid"></div>
               <div id="restore-error" class="error-box hidden" role="alert"></div>
               <div class="panel-actions">
@@ -578,6 +578,7 @@ button,input{font:inherit}
             <div class="did-actions">
               <button class="btn btn-secondary" type="button" id="copy-did-btn" onclick="copyDid()">Copy DID</button>
               <button class="btn btn-secondary" type="button" id="force-sync-btn" onclick="forceSync()">Force Sync</button>
+              <button class="btn btn-secondary" type="button" id="reset-identity-btn" onclick="resetLocalIdentity()">Use Different Identity</button>
               <button class="btn btn-danger" type="button" id="disconnect-btn" onclick="openStopDialog()">Disconnect / Stop Node</button>
             </div>
             <div id="register-cta" class="register-cta hidden">
@@ -660,6 +661,7 @@ const API = "";
 const POLL_MS = 2500;
 let pollTimer = null;
 let lastStatus = null;
+let autoRegisterInFlight = false;
 
 const els = {};
 
@@ -676,7 +678,7 @@ function cacheElements() {
     "status-detail","progress-fill","progress-label","progress-detail","progress-copy","did-value",
     "status-network","status-registered","status-wallet","copy-did-btn","register-cta",
     "register-info","state-pill","state-pill-dot","state-pill-text","stop-dialog",
-    "register-btn","disconnect-btn","disconnect-confirm-btn","force-sync-btn"
+    "register-btn","disconnect-btn","disconnect-confirm-btn","force-sync-btn","reset-identity-btn"
   ].forEach(function(id){els[id] = $(id);});
 }
 
@@ -716,6 +718,13 @@ function backToChoices() {
   els["setup-restore"].classList.add("hidden");
   els["setup-create"].classList.add("hidden");
   els["setup-choice"].classList.remove("hidden");
+}
+
+function enterRecoveryMode(message) {
+  stopPolling();
+  setView("setup");
+  showRestore();
+  if (message) showError("restore-error", message);
 }
 
 function clearError(id) {
@@ -858,7 +867,10 @@ async function doRestore() {
     clearSeed();
     if (data.error) throw new Error(data.error);
     setView("dashboard");
-    await refreshStatus(true);
+    const status = await refreshStatus(true);
+    if (status && status.identity_registered === false) {
+      await registerIdentity(true);
+    }
   } catch (error) {
     showError("restore-error", error.message || "Restore failed.");
   } finally {
@@ -918,6 +930,14 @@ function mapState(status) {
       progress: 0
     };
   }
+  if (state === "api_unavailable") {
+    return {
+      key: "offline",
+      label: "API Unavailable",
+      detail: status && status.error ? status.error : "Node telemetry endpoints are not available from this validator.",
+      progress: 0
+    };
+  }
   return {
     key: "offline",
     label: "Offline",
@@ -953,14 +973,20 @@ function applyDashboardStatus(status) {
   els["hero-wallet"].textContent = status.wallet_id ? "Linked" : "Standby";
 
   els["status-network"].textContent = status.network_id || "Unknown";
-  els["status-registered"].textContent = status.identity_registered ? "Registered" : "Needs Action";
+  els["status-registered"].textContent =
+    status.identity_registered === true ? "Registered" :
+    status.identity_registered === false ? "Needs Action" :
+    "Unknown";
   els["status-wallet"].textContent = status.wallet_id || "Unavailable";
 
   els["status-detail"].textContent = mapped.detail;
   els["progress-copy"].textContent = mapped.detail;
   els["progress-fill"].style.width = Math.max(0, Math.min(100, mapped.progress)) + "%";
   els["progress-label"].textContent = mapped.progress + "%";
-  els["progress-detail"].textContent = status.identity_registered === false ? "Registration pending after identity creation." : "Based on the current bridge-reported state.";
+  els["progress-detail"].textContent =
+    status.error ? status.error :
+    status.identity_registered === false ? "Registration pending after identity creation." :
+    "Based on the current bridge-reported state.";
 
   els["state-pill"].className = "status-pill " + mapped.key;
   els["state-pill-text"].textContent = mapped.label;
@@ -968,6 +994,10 @@ function applyDashboardStatus(status) {
 
   const registerVisible = status.identity_registered === false;
   els["register-cta"].classList.toggle("hidden", !registerVisible);
+  const controlsAvailable = status.state !== "api_unavailable";
+  els["register-btn"].disabled = !controlsAvailable || autoRegisterInFlight;
+  els["force-sync-btn"].disabled = !controlsAvailable;
+  els["disconnect-btn"].disabled = !controlsAvailable;
 
   if (mapped.key === "ready") {
     els["progress-label"].textContent = "100%";
@@ -975,13 +1005,18 @@ function applyDashboardStatus(status) {
 }
 
 async function refreshStatus(force) {
+  let data = null;
   try {
-    const data = await requestJson("/api/status");
+    data = await requestJson("/api/status");
     applyDashboardStatus(data);
     if (data.state === "setup_required") {
-      stopPolling();
-      setView("setup");
-      backToChoices();
+      if (data.local_identity_error) {
+        enterRecoveryMode(data.local_identity_error + " Restore from seed or create a new identity.");
+      } else {
+        stopPolling();
+        setView("setup");
+        backToChoices();
+      }
     } else if (els["view-dashboard"].classList.contains("hidden")) {
       setView("dashboard");
     }
@@ -1003,6 +1038,8 @@ async function refreshStatus(force) {
     info.classList.add("hidden");
     info.textContent = "";
   }
+
+  return data;
 }
 
 function startPolling() {
@@ -1057,21 +1094,24 @@ function copyRegisterCommand() {
   info.classList.remove("hidden");
 }
 
-async function registerIdentity() {
+async function registerIdentity(isAutomatic) {
   const info = els["register-info"];
+  if (autoRegisterInFlight) return;
   info.classList.add("hidden");
   info.textContent = "";
+  autoRegisterInFlight = true;
   setBusy("register-btn", true, "Registering...");
   try {
     const data = await postControl("register_identity");
     if (data.error) throw new Error(data.error);
-    info.textContent = "Identity registered on-chain. Refreshing status.";
+    info.textContent = isAutomatic ? "Identity restored and registered on-chain. Refreshing status." : "Identity registered on-chain. Refreshing status.";
     info.classList.remove("hidden");
     await refreshStatus(true);
   } catch (error) {
     info.textContent = error.message || "Registration failed.";
     info.classList.remove("hidden");
   } finally {
+    autoRegisterInFlight = false;
     setBusy("register-btn", false, "Register Identity");
   }
 }
@@ -1092,6 +1132,28 @@ async function forceSync() {
     info.classList.remove("hidden");
   } finally {
     setBusy("force-sync-btn", false, "Force Sync");
+  }
+}
+
+async function resetLocalIdentity() {
+  const info = els["register-info"];
+  info.classList.add("hidden");
+  info.textContent = "";
+  setBusy("reset-identity-btn", true, "Clearing...");
+  try {
+    const data = await postControl("reset_local_identity");
+    if (data.error) throw new Error(data.error);
+    lastStatus = null;
+    clearSeed();
+    els["node-name"].value = "";
+    info.textContent = data.message || "Local identity removed.";
+    info.classList.remove("hidden");
+    enterRecoveryMode("Local identity cleared. Enter a seed phrase or create a new identity.");
+  } catch (error) {
+    info.textContent = error.message || "Failed to remove local identity.";
+    info.classList.remove("hidden");
+  } finally {
+    setBusy("reset-identity-btn", false, "Use Different Identity");
   }
 }
 
@@ -1133,7 +1195,11 @@ async function bootstrap() {
     const data = await requestJson("/api/status");
     if (data.state === "setup_required") {
       applyNavStatus(mapState(data), data);
-      setView("setup");
+      if (data.local_identity_error) {
+        enterRecoveryMode(data.local_identity_error + " Restore from seed or create a new identity.");
+      } else {
+        setView("setup");
+      }
       return;
     }
     setView("dashboard");

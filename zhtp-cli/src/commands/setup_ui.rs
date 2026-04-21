@@ -7,8 +7,7 @@ use crate::argument_parsing::ZhtpCli;
 use crate::commands::web4_utils::{default_keystore_path, load_identity_from_keystore};
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
-use std::sync::Arc;
-use tokio::sync::{watch, RwLock};
+use tokio::sync::watch;
 
 const UI_HTML: &str = include_str!("../ui/setup.html");
 const DEFAULT_UI_PORT: u16 = 7840;
@@ -22,7 +21,6 @@ pub async fn run_setup_ui(cli: &ZhtpCli, output: &dyn Output) -> CliResult<()> {
 
     // Try to connect to the QUIC node
     let quic_server = cli.server.clone();
-    let node_connected = Arc::new(RwLock::new(false));
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
     // Build HTTP routes
@@ -37,13 +35,11 @@ pub async fn run_setup_ui(cli: &ZhtpCli, output: &dyn Output) -> CliResult<()> {
     #[derive(Clone)]
     struct AppState {
         quic_server: String,
-        node_connected: Arc<RwLock<bool>>,
         shutdown_tx: watch::Sender<bool>,
     }
 
     let state = AppState {
         quic_server,
-        node_connected: node_connected.clone(),
         shutdown_tx,
     };
 
@@ -62,7 +58,6 @@ pub async fn run_setup_ui(cli: &ZhtpCli, output: &dyn Output) -> CliResult<()> {
     ) -> impl IntoResponse {
         match try_get_status(&state.quic_server).await {
             Ok(json) => {
-                *state.node_connected.write().await = true;
                 (StatusCode::OK, Json(json))
             }
             Err(e) => {
@@ -106,6 +101,10 @@ pub async fn run_setup_ui(cli: &ZhtpCli, output: &dyn Output) -> CliResult<()> {
                 Err(e) => (StatusCode::OK, Json(serde_json::json!({ "error": e }))),
             },
             "disconnect_node" => match try_disconnect_node(&state.quic_server).await {
+                Ok(json) => (StatusCode::OK, Json(json)),
+                Err(e) => (StatusCode::OK, Json(serde_json::json!({ "error": e }))),
+            },
+            "reset_local_identity" => match try_reset_local_identity().await {
                 Ok(json) => (StatusCode::OK, Json(json)),
                 Err(e) => (StatusCode::OK, Json(serde_json::json!({ "error": e }))),
             },
@@ -165,7 +164,19 @@ async fn try_get_status(server: &str) -> Result<serde_json::Value, String> {
             "chain_height": 0,
         }));
     }
-    let loaded = load_identity_from_keystore(&keystore).map_err(|e| e.to_string())?;
+    let loaded = match load_identity_from_keystore(&keystore) {
+        Ok(loaded) => loaded,
+        Err(e) => {
+            return Ok(serde_json::json!({
+                "state": "setup_required",
+                "chain_height": 0,
+                "local_identity_error": format!("Local identity could not be loaded: {}", e),
+            }));
+        }
+    };
+
+    // Save DID before identity is moved into the QUIC client
+    let local_did = loaded.identity.did.clone();
 
     let trust_config = lib_network::web4::trust::TrustConfig::bootstrap();
     let config = lib_network::client::ZhtpClientConfig {
@@ -177,9 +188,42 @@ async fn try_get_status(server: &str) -> Result<serde_json::Value, String> {
 
     client.connect(server).await.map_err(|e| format!("Connect failed: {}", e))?;
 
-    let response = client.get("/api/v1/node/status").await.map_err(|e| format!("Request failed: {}", e))?;
-    let json: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&response)
-        .map_err(|e| format!("Parse failed: {}", e))?;
+    let response = match client.get("/api/v1/node/status").await {
+        Ok(response) => response,
+        Err(e) => {
+            return Ok(serde_json::json!({
+                "state": "api_unavailable",
+                "did": local_did,
+                "identity_registered": serde_json::Value::Null,
+                "chain_height": 0,
+                "wallet_id": serde_json::Value::Null,
+                "sov_balance": "0",
+                "sov_balance_human": "0.0000",
+                "validator_count": 0,
+                "identity_count": 0,
+                "network_id": "unknown",
+                "error": format!("Node status endpoint unavailable: {}", e),
+            }));
+        }
+    };
+    let json: serde_json::Value = match lib_network::client::ZhtpClient::parse_json(&response) {
+        Ok(json) => json,
+        Err(e) => {
+            return Ok(serde_json::json!({
+                "state": "api_unavailable",
+                "did": local_did,
+                "identity_registered": serde_json::Value::Null,
+                "chain_height": 0,
+                "wallet_id": serde_json::Value::Null,
+                "sov_balance": "0",
+                "sov_balance_human": "0.0000",
+                "validator_count": 0,
+                "identity_count": 0,
+                "network_id": "unknown",
+                "error": format!("Node status response could not be parsed: {}", e),
+            }));
+        }
+    };
 
     Ok(json)
 }
@@ -276,64 +320,42 @@ async fn try_disconnect_node(server: &str) -> Result<serde_json::Value, String> 
     post_node_action(server, "/api/v1/node/shutdown").await
 }
 
-/// Restore identity from seed phrase — derives same keypair deterministically
-async fn try_restore_seed(seed_phrase: &str) -> Result<serde_json::Value, String> {
-    let words: Vec<&str> = seed_phrase.split_whitespace().collect();
-
-    // Support both 20-word (legacy) and 24-word (BIP39) phrases
-    if words.len() != 20 && words.len() != 24 {
-        return Err(format!("Expected 20 or 24 words, got {}", words.len()));
-    }
-
+async fn try_reset_local_identity() -> Result<serde_json::Value, String> {
     let keystore_path = default_keystore_path().map_err(|e| e.to_string())?;
+    let mut removed = Vec::new();
 
-    // Convert mnemonic → entropy → seed → identity
-    // The recovery phrase contains the entropy that deterministically derives the keypair.
-    let word_vec: Vec<String> = words.iter().map(|w| w.to_string()).collect();
-    let phrase = lib_identity::recovery::RecoveryPhrase::from_words(word_vec)
-        .map_err(|e| format!("Invalid seed phrase: {}", e))?;
-
-    // Derive 64-byte seed from entropy via HKDF
-    let mut seed = [0u8; 64];
-    let entropy = &phrase.entropy;
-    use sha2::Digest;
-    let hash = sha2::Sha512::digest(entropy);
-    seed.copy_from_slice(&hash);
-
-    // Recover identity from seed
-    let identity = lib_identity::ZhtpIdentity::recover_from_seed(
-        seed,
-        lib_identity::IdentityType::Device,
-        None,
-        None,
-        "restored-node",
-    )
-    .map_err(|e| format!("Failed to recover identity: {}", e))?;
-
-    let did = identity.did.clone();
-
-    // Save to keystore
-    std::fs::create_dir_all(&keystore_path).map_err(|e| format!("Keystore dir: {}", e))?;
-
-    let identity_json = serde_json::to_string_pretty(&identity)
-        .map_err(|e| format!("Serialize: {}", e))?;
-    let identity_path = keystore_path.join("user_identity.json");
-    std::fs::write(&identity_path, &identity_json)
-        .map_err(|e| format!("Write identity: {}", e))?;
-
-    // Save private key
-    if let Some(ref pk) = identity.private_key {
-        let pk_path = keystore_path.join("user_private_key.json");
-        crate::commands::web4_utils::save_private_key_to_file(pk, &pk_path)
-            .map_err(|e| format!("Write private key: {}", e))?;
+    for name in ["user_identity.json", "user_private_key.json"] {
+        let path = keystore_path.join(name);
+        if path.exists() {
+            std::fs::remove_file(&path)
+                .map_err(|e| format!("Failed to remove {}: {}", path.display(), e))?;
+            removed.push(name);
+        }
     }
 
     Ok(serde_json::json!({
         "success": true,
-        "did": did,
-        "message": "Identity restored from seed phrase",
+        "message": if removed.is_empty() {
+            "No local identity files were present."
+        } else {
+            "Local identity removed."
+        },
+        "removed_files": removed,
         "keystore": keystore_path.display().to_string(),
     }))
+}
+
+/// Restore identity from seed phrase.
+///
+/// NOTE: `RecoveryPhrase::from_words()` currently generates fresh random entropy
+/// instead of decoding the mnemonic back to the original entropy.  This means
+/// every call produces a DIFFERENT identity regardless of the words supplied.
+/// Until the mnemonic-to-entropy decode path is implemented in lib-identity,
+/// seed-based restore is intentionally disabled here.
+async fn try_restore_seed(_seed_phrase: &str) -> Result<serde_json::Value, String> {
+    Err("Seed restore not yet supported — use 'zhtp-cli identity create-did' instead. \
+         (RecoveryPhrase::from_words does not yet decode the mnemonic back to entropy.)"
+        .to_string())
 }
 
 /// Create new identity with random keypair

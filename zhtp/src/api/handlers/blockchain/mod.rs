@@ -195,8 +195,6 @@ impl ZhtpRequestHandler for BlockchainHandler {
                 self.handle_blockchain_status(request).await
             }
             (ZhtpMethod::Get, "/api/v1/chain/info") => self.handle_chain_info(request).await,
-            (ZhtpMethod::Get, "/api/v1/network/directory") => self.handle_network_directory(request).await,
-            (ZhtpMethod::Get, "/api/v1/node/status") => self.handle_node_status(request).await,
             (ZhtpMethod::Get, "/api/v1/blockchain/latest") => {
                 self.handle_latest_block(request).await
             }
@@ -325,8 +323,6 @@ impl ZhtpRequestHandler for BlockchainHandler {
     fn can_handle(&self, request: &ZhtpRequest) -> bool {
         request.uri.starts_with("/api/v1/blockchain/")
             || request.uri.starts_with("/api/v1/chain/")
-            || request.uri.starts_with("/api/v1/network/")
-            || request.uri.starts_with("/api/v1/node/")
     }
 
     fn priority(&self) -> u32 {
@@ -1015,166 +1011,6 @@ impl BlockchainHandler {
         };
 
         Ok(ZhtpResponse::json(&response_data, None)?)
-    }
-
-    /// Network directory: returns validators, relays, and ZDNS servers for client routing.
-    /// Public endpoint — no authentication required.
-    async fn handle_network_directory(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
-        let blockchain_arc = self.get_blockchain().await?;
-        let blockchain = blockchain_arc.read().await;
-
-        // Load SPKI pins from bootstrap_peer_pins config (host:port → hex hash)
-        let peer_pins: std::collections::HashMap<String, String> =
-            crate::runtime::bootstrap_peers_provider::get_bootstrap_peer_pins()
-                .await
-                .unwrap_or_default();
-
-        let validators: Vec<serde_json::Value> = blockchain
-            .validator_registry
-            .iter()
-            .map(|(_, v)| {
-                // Look up SPKI pin by endpoint address
-                let spki_pin = peer_pins.get(&v.network_address)
-                    .cloned()
-                    .unwrap_or_default();
-                serde_json::json!({
-                    "did": v.identity_id,
-                    "endpoint": v.network_address,
-                    "stake": v.stake,
-                    "status": v.status,
-                    "last_activity": v.last_activity,
-                    "healthy": v.status == "active",
-                    "spki_pin": spki_pin,
-                })
-            })
-            .collect();
-
-        // This node's own SPKI hash
-        let local_spki = lib_network::protocols::quic_mesh::get_tls_spki_hash_from_default_cert()
-            .map(|h| hex::encode(h))
-            .unwrap_or_default();
-
-        let zdns_servers: Vec<String> = blockchain
-            .validator_registry
-            .values()
-            .filter(|v| v.status == "active")
-            .filter_map(|v| {
-                let host = v.network_address.split(':').next()?;
-                Some(format!("{}:53", host))
-            })
-            .collect();
-
-        let response = serde_json::json!({
-            "validators": validators,
-            "relays": [],
-            "zdns_servers": zdns_servers,
-            "network_id": self.environment.to_string().to_ascii_lowercase(),
-            "chain_height": blockchain.height,
-            "validator_count": validators.len(),
-            "local_spki_pin": local_spki,
-        });
-
-        Ok(ZhtpResponse::json(&response, None)?)
-    }
-
-    /// Node status: comprehensive status for the setup UI and dashboard.
-    /// Public endpoint — no auth required.
-    async fn handle_node_status(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
-        let blockchain_arc = self.get_blockchain().await?;
-        let blockchain = blockchain_arc.read().await;
-
-        // Node identity
-        let node_did = crate::runtime::node_identity::get_runtime_node_did()
-            .unwrap_or_else(|| "not_initialized".to_string());
-
-        // Check if identity is registered on-chain
-        let identity_registered = blockchain.identity_registry.contains_key(&node_did);
-
-        // Wallet balance (if registered)
-        let (wallet_id, sov_balance) = if identity_registered {
-            let did_hex = node_did.strip_prefix("did:zhtp:").unwrap_or(&node_did);
-            let owner_bytes = hex::decode(did_hex).unwrap_or_default();
-            let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
-
-            let wallet = blockchain.wallet_registry.values().find(|w| {
-                w.owner_identity_id
-                    .as_ref()
-                    .map(|id| id.as_bytes() == owner_bytes.as_slice())
-                    .unwrap_or(false)
-                    && w.wallet_type == "Primary"
-            });
-
-            if let Some(w) = wallet {
-                let wallet_id_hex = hex::encode(w.wallet_id.as_bytes());
-                let pk = lib_blockchain::integration::crypto_integration::PublicKey {
-                    dilithium_pk: [0u8; 2592],
-                    kyber_pk: [0u8; 1568],
-                    key_id: w.wallet_id.as_array(),
-                };
-                let balance = blockchain
-                    .token_contracts
-                    .get(&sov_token_id)
-                    .map(|t| t.balance_of(&pk))
-                    .unwrap_or(0);
-                (Some(wallet_id_hex), balance)
-            } else {
-                (None, 0)
-            }
-        } else {
-            (None, 0)
-        };
-
-        let validator_count = blockchain.validator_registry.len();
-        let identity_count = blockchain.identity_registry.len();
-        let chain_height = blockchain.height;
-        let blocks_count = blockchain.blocks.len();
-        let pending_count = blockchain.pending_transactions.len();
-
-        // Determine detailed node state
-        let state = if node_did == "not_initialized" {
-            "setup_required"
-        } else if !identity_registered {
-            "identity_not_registered"
-        } else if chain_height == 0 {
-            "connecting"
-        } else if validator_count == 0 {
-            "connecting"
-        } else {
-            "ready"
-        };
-
-        // Sync telemetry: estimate target height from validator activity
-        let last_block_time = blockchain.blocks.last()
-            .map(|b| b.header.timestamp)
-            .unwrap_or(0);
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let seconds_behind = if last_block_time > 0 && now > last_block_time {
-            now - last_block_time
-        } else {
-            0
-        };
-
-        let response = serde_json::json!({
-            "state": state,
-            "did": node_did,
-            "identity_registered": identity_registered,
-            "chain_height": chain_height,
-            "wallet_id": wallet_id,
-            "sov_balance": sov_balance.to_string(),
-            "sov_balance_human": format!("{:.4}", sov_balance as f64 / 1_000_000_000_000_000_000.0),
-            "validator_count": validator_count,
-            "identity_count": identity_count,
-            "network_id": self.environment.to_string().to_ascii_lowercase(),
-            "pending_transactions": pending_count,
-            "blocks_stored": blocks_count,
-            "last_block_time": last_block_time,
-            "seconds_behind": seconds_behind,
-        });
-
-        Ok(ZhtpResponse::json(&response, None)?)
     }
 
     /// Handle latest block request
