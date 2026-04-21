@@ -495,7 +495,11 @@ impl BlockchainComponent {
                     let mut applied: u64 = 0;
                     for block in blocks {
                         let h = block.header.height;
-                        match bc.add_block_from_network_with_persistence(block).await {
+                        // Observer catch-up: use trusted replay (skip prev-hash validation)
+                        // because blocks may have been produced by a different binary version
+                        // with different hash computation (quorum_root, attestation ordering).
+                        // The blocks come from a bootstrap peer we explicitly configured.
+                        match bc.apply_block_trusted_for_sync_no_prev_hash(block).await {
                             Ok(()) => {
                                 applied += 1;
                                 current = h;

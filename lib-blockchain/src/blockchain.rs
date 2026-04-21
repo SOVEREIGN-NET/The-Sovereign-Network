@@ -898,6 +898,26 @@ impl Blockchain {
         }
     }
 
+    /// Apply a block from a trusted peer, skipping prev-hash validation.
+    /// Used by observer catch-up when the binary version differs from the one
+    /// that produced the blocks (hash computation may have changed).
+    pub async fn apply_block_trusted_for_sync_no_prev_hash(&mut self, block: Block) -> Result<()> {
+        if let Some(ref exec_arc) = self.executor {
+            use crate::execution::executor::BlockExecutor;
+            let trusted_exec = std::sync::Arc::new(BlockExecutor::new_trusted_replay(
+                std::sync::Arc::clone(exec_arc.store()),
+                exec_arc.fee_model().clone(),
+                Default::default(),
+            ));
+            let original = self.executor.replace(trusted_exec);
+            let result = self.process_and_commit_block(block).await;
+            self.executor = original;
+            result
+        } else {
+            self.process_and_commit_block(block).await
+        }
+    }
+
     /// Core block processing: verify, commit to chain, update state, emit events.
     /// Does NOT broadcast — callers decide whether to broadcast.
     async fn process_and_commit_block(&mut self, block: Block) -> Result<()> {

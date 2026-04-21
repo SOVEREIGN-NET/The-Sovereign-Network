@@ -875,7 +875,7 @@ async fn catchup_sync_from_peer(
                 drop(bc);
                 continue;
             }
-            match bc.apply_block_trusted_for_sync(block).await {
+            match bc.apply_block_trusted_for_sync_no_prev_hash(block).await {
                 Ok(()) => {
                     applied_in_page += 1;
                     total_applied += 1;
