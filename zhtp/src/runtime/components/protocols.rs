@@ -43,11 +43,11 @@ pub struct ProtocolsComponent {
     discovery_port: u16,
     is_edge_node: bool,
     /// Enable ZDNS transport server (UDP/TCP DNS on port 53)
-    enable_zdns_transport: bool,
+    pub enable_zdns_transport: bool,
     /// Gateway IP for ZDNS transport responses
-    zdns_gateway_ip: std::net::Ipv4Addr,
+    pub zdns_gateway_ip: std::net::Ipv4Addr,
     /// Bind address for ZDNS transport (defaults to localhost for safety)
-    zdns_bind_addr: std::net::IpAddr,
+    pub zdns_bind_addr: std::net::IpAddr,
     /// Enable HTTPS gateway for browser-based Web4 access
     enable_https_gateway: bool,
     /// HTTPS gateway configuration

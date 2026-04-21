@@ -1128,13 +1128,32 @@ impl RuntimeOrchestrator {
             let quic_port = self.config.protocols_config.quic_port;
             let discovery_port = self.config.protocols_config.discovery_port;
             let is_edge_node = *self.is_edge_node.read().await;
-            self.register_component(Arc::new(ProtocolsComponent::new_with_node_type_and_ports(
+            let mut protocols = ProtocolsComponent::new_with_node_type_and_ports(
                 environment,
                 api_port,
                 quic_port,
                 discovery_port,
                 is_edge_node,
-            )))
+            );
+
+            // Wire ZDNS config from [zdns] TOML section
+            if self.config.zdns_config.enabled {
+                let bind: std::net::IpAddr = self.config.zdns_config.bind.parse()
+                    .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+                let gateway_ip = local_ip_address::local_ip()
+                    .ok()
+                    .and_then(|ip| match ip {
+                        std::net::IpAddr::V4(v4) => Some(v4),
+                        _ => None,
+                    })
+                    .unwrap_or(std::net::Ipv4Addr::new(127, 0, 0, 1));
+                protocols.enable_zdns_transport = true;
+                protocols.zdns_gateway_ip = gateway_ip;
+                protocols.zdns_bind_addr = bind;
+                info!("🌐 ZDNS enabled: bind={}:{} gateway_ip={}", bind, self.config.zdns_config.port, gateway_ip);
+            }
+
+            self.register_component(Arc::new(protocols))
             .await?;
         }
 

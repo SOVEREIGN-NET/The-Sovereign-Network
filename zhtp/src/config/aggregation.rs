@@ -38,6 +38,43 @@ pub struct PartialConfig {
     pub storage_config: Option<PartialStorageConfig>,
     #[serde(default)]
     pub validator_config: Option<PartialValidatorConfig>,
+    #[serde(default)]
+    pub zdns: Option<PartialZdnsConfig>,
+}
+
+/// Partial ZDNS configuration
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PartialZdnsConfig {
+    /// Enable ZDNS server (default: false — opt-in)
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    /// Bind address (default: 0.0.0.0)
+    #[serde(default)]
+    pub bind: Option<String>,
+    /// Port (default: 53)
+    #[serde(default)]
+    pub port: Option<u16>,
+}
+
+/// ZDNS server configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZdnsNodeConfig {
+    /// Enable ZDNS DNS server
+    pub enabled: bool,
+    /// Bind address (default: 0.0.0.0 for public access)
+    pub bind: String,
+    /// DNS port (default: 53)
+    pub port: u16,
+}
+
+impl Default for ZdnsNodeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bind: "0.0.0.0".to_string(),
+            port: 53,
+        }
+    }
 }
 
 /// Partial network configuration (matches user-friendly [network_config] section)
@@ -210,6 +247,10 @@ pub struct NodeConfig {
     pub economics_config: EconomicsConfig,
     pub protocols_config: ProtocolsConfig,
     pub rewards_config: RewardsConfig,
+
+    /// ZDNS configuration (network directory DNS server)
+    #[serde(default)]
+    pub zdns_config: ZdnsNodeConfig,
 
     // Validator configuration (Gap 5)
     #[serde(default)]
@@ -813,6 +854,8 @@ impl Default for NodeConfig {
 
             rewards_config: RewardsConfig::default(),
 
+            zdns_config: ZdnsNodeConfig::default(),
+
             validator_config: None, // Gap 5: Disabled by default
 
             port_assignments: HashMap::new(),
@@ -1270,6 +1313,20 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
                                 config.consensus_config.validator_enabled = true;
                                 tracing::info!("  validator_config.enabled = true implies consensus_config.validator_enabled = true");
                             }
+                        }
+                    }
+
+                    // Merge [zdns] section
+                    if let Some(zdns) = partial.zdns {
+                        if zdns.enabled.unwrap_or(false) {
+                            config.zdns_config.enabled = true;
+                            tracing::info!("Loaded [zdns] section: enabled");
+                        }
+                        if let Some(bind) = zdns.bind {
+                            config.zdns_config.bind = bind;
+                        }
+                        if let Some(port) = zdns.port {
+                            config.zdns_config.port = port;
                         }
                     }
                 } else {
