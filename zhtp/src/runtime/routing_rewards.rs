@@ -228,13 +228,14 @@ impl RoutingRewardProcessor {
 
         info!("    Transaction added to pending pool");
 
-        // Reset counter (only reset claimed amount if capped)
+        // Reset counter: use partial reset when capped, full reset when exact match
         if claim_amount < stats.theoretical_tokens_earned {
-            // TODO: Partial reset - need to add this to mesh server
-            warn!("     Partial reset not yet implemented - resetting all");
+            self.network_component
+                .subtract_routing_rewards(claim_amount)
+                .await?;
+        } else {
+            self.network_component.reset_routing_rewards().await?;
         }
-
-        self.network_component.reset_routing_rewards().await?;
 
         info!("    Reward counter reset");
         info!("═══════════════════════════════════════════════════════");

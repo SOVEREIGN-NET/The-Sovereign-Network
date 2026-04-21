@@ -161,7 +161,7 @@ pub enum PricingMode {
     Fixed,
     /// Dynamic price (deprecated - no longer used)
     #[deprecated(
-        since = "Issue #1852",
+        since = "0.1.0",
         note = "Bonding curve is PRIMARY, oracle is observer-only"
     )]
     Dynamic,

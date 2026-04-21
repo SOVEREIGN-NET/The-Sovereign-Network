@@ -11,6 +11,7 @@ use crate::argument_parsing::{NodeAction, NodeArgs, ZhtpCli};
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
 
+use lib_protocols::types::ZhtpStatus;
 use std::path::PathBuf;
 use zhtp::config::environment::Environment;
 use zhtp::runtime::did_startup::WalletStartupManager;
@@ -157,20 +158,61 @@ async fn handle_node_command_impl(
             output.header("Node Status")?;
             output.print(&format!("Connecting to: {}", cli.server))?;
 
-            // Actually connect to running node and get status
             match crate::commands::web4_utils::connect_default(&cli.server).await {
-                Ok(client) => match client.get("/api/v1/node/status").await {
-                    Ok(response) => {
-                        let status: serde_json::Value =
-                            lib_network::client::ZhtpClient::parse_json(&response)
-                                .unwrap_or_else(|_| serde_json::json!({"raw": response}));
-                        output.success("Node is running")?;
-                        output.print(&serde_json::to_string_pretty(&status).unwrap_or_default())?;
+                Ok(client) => {
+                    // Probe registered endpoints in priority order.
+                    // `/api/v1/protocol/health` is a dedicated health endpoint.
+                    let status_endpoints = [
+                        "/api/v1/protocol/health",
+                        "/api/v1/protocol/info",
+                        "/api/v1/blockchain/status",
+                    ];
+
+                    let mut last_non_ok: Option<(String, String)> = None;
+                    let mut last_error: Option<String> = None;
+
+                    for endpoint in status_endpoints {
+                        match client.get(endpoint).await {
+                            Ok(response) => {
+                                if response.status == ZhtpStatus::Ok {
+                                    let status: serde_json::Value =
+                                        lib_network::client::ZhtpClient::parse_json(&response)
+                                            .unwrap_or_else(
+                                                |_| serde_json::json!({"raw": response}),
+                                            );
+                                    output.success("Node is running")?;
+                                    output.print(&format!(
+                                        "Health endpoint: {}",
+                                        endpoint
+                                    ))?;
+                                    output.print(
+                                        &serde_json::to_string_pretty(&status).unwrap_or_default(),
+                                    )?;
+                                    return Ok(());
+                                }
+
+                                last_non_ok = Some((
+                                    endpoint.to_string(),
+                                    format!("{} ({})", response.status, response.status_message),
+                                ));
+                            }
+                            Err(e) => {
+                                last_error = Some(format!("{}: {}", endpoint, e));
+                            }
+                        }
                     }
-                    Err(e) => {
-                        output.warning(&format!("Failed to get status: {}", e))?;
+
+                    if let Some((endpoint, status)) = last_non_ok {
+                        output.warning(&format!(
+                            "Node responded, but health check failed at {}: {}",
+                            endpoint, status
+                        ))?;
+                    } else if let Some(err) = last_error {
+                        output.warning(&format!("Failed to get node status: {}", err))?;
+                    } else {
+                        output.warning("Failed to get node status from known endpoints")?;
                     }
-                },
+                }
                 Err(e) => {
                     output.warning(&format!("Cannot connect to node at {}: {}", cli.server, e))?;
                     output.print("Is the node running? Start it with: zhtp-cli node start")?;

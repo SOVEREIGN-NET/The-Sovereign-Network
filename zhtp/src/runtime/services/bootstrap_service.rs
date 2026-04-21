@@ -213,20 +213,10 @@ impl BootstrapService {
         // Fetch missing blocks incrementally
         let start = local_height + 1;
         let end = peer_tip.height;
-        let block_page_wire = crate::runtime::negotiate_block_page_wire_version(client, peer_label)
-            .await
-            .context("Failed sync wire negotiation")?;
-        let blocks_path =
-            crate::runtime::block_range_path_for_wire(&block_page_wire, start, end)
-                .context("Failed to build block-range path for negotiated wire version")?;
+        let blocks_path = format!("/api/v1/blockchain/blocks/{}/{}", start, end);
 
         let blocks_response = timeout(Duration::from_secs(30), async {
-            info!(
-                "GET {} ({} blocks, wire={})",
-                blocks_path,
-                end - start + 1,
-                block_page_wire
-            );
+            info!("GET {} ({} blocks)", blocks_path, end - start + 1);
             client.get(&blocks_path).await
         })
         .await
@@ -248,25 +238,10 @@ impl BootstrapService {
             end - start + 1
         );
 
-        // Decode blocks according to negotiated page wire version.
-        let new_blocks: Vec<lib_blockchain::block::Block> = crate::runtime::decode_block_page_for_wire(
-            &block_page_wire,
-            &blocks_data,
-            start,
-            end,
-        )
-        .map_err(|e| {
-            crate::runtime::log_sync_decode_failure(
-                peer_label,
-                &blocks_path,
-                &block_page_wire,
-                start,
-                end,
-                &blocks_data,
-                &e,
-            );
-            anyhow::anyhow!("Failed to decode block page: {}", e)
-        })?;
+        // Deserialize blocks
+        let new_blocks: Vec<lib_blockchain::block::Block> =
+            crate::runtime::deserialize_blocks_compatible(&blocks_data)
+                .context("Failed to deserialize blocks")?;
 
         info!("Appending {} new blocks to local chain", new_blocks.len());
 

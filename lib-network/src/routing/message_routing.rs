@@ -15,6 +15,7 @@ use crate::identity::unified_peer::UnifiedPeerId;
 use crate::mesh::connection::MeshConnection;
 use crate::protocols::NetworkProtocol;
 use crate::relays::LongRangeRelay;
+use crate::routing::multi_hop::MultiHopRouter;
 use crate::transport::TransportManager;
 use crate::types::mesh_message::{MeshMessageEnvelope, ZhtpMeshMessage};
 use lib_identity::NodeId;
@@ -67,6 +68,8 @@ pub struct MeshMessageRouter {
     pub transport_manager: Option<TransportManager>,
     /// Optional event sink for POUW receipt generation on successful message delivery
     pub pouw_routing_tx: Option<tokio::sync::mpsc::Sender<MeshRoutingEvent>>,
+    /// Multi-hop routing engine with advanced pathfinding algorithms
+    pub multi_hop_router: Option<Arc<RwLock<MultiHopRouter>>>,
 }
 
 /// Routing table for mesh network
@@ -231,6 +234,7 @@ impl MeshMessageRouter {
             mesh_server: None, // Can be set later with set_mesh_server()
             transport_manager: None,
             pouw_routing_tx: None,
+            multi_hop_router: None,
         }
     }
 
@@ -240,6 +244,12 @@ impl MeshMessageRouter {
     /// convert routing events into `Web4ManifestRoute` receipts.
     pub fn with_pouw_routing_tx(mut self, tx: tokio::sync::mpsc::Sender<MeshRoutingEvent>) -> Self {
         self.pouw_routing_tx = Some(tx);
+        self
+    }
+
+    /// Attach a multi-hop routing engine for advanced pathfinding.
+    pub fn with_multi_hop_router(mut self, router: Arc<RwLock<MultiHopRouter>>) -> Self {
+        self.multi_hop_router = Some(router);
         self
     }
 
@@ -586,9 +596,32 @@ impl MeshMessageRouter {
         Err(anyhow!("No route found to destination"))
     }
 
+    /// Sync PeerRegistry topology into the MultiHopRouter graph
+    async fn sync_multi_hop_topology(&self) -> Result<()> {
+        let registry = self.peer_registry.read().await;
+
+        // Build MeshConnection map from registry entries
+        let mut connections: HashMap<PublicKey, MeshConnection> = HashMap::new();
+        for entry in registry.all_peers() {
+            if let Some(conn) = Self::peer_entry_to_mesh_connection(entry) {
+                connections.insert(entry.peer_id.public_key().clone(), conn);
+            }
+        }
+
+        drop(registry);
+
+        if let Some(ref mhr) = self.multi_hop_router {
+            let router = mhr.read().await;
+            router.update_topology(&connections).await?;
+        }
+
+        Ok(())
+    }
+
     /// Find multi-hop route through mesh network
     ///
     /// **MIGRATION (Ticket #146):** Updated to use UnifiedPeerId for routing
+    /// **MIGRATION (#2209):** Delegates to MultiHopRouter when available for advanced algorithms
     async fn find_mesh_route(
         &self,
         destination: &UnifiedPeerId,
@@ -596,7 +629,31 @@ impl MeshMessageRouter {
     ) -> Result<Vec<RouteHop>> {
         debug!("Searching mesh network for route");
 
-        // Ticket #149: Use peer_registry instead of mesh_connections
+        // Try MultiHopRouter first if configured (#2209)
+        if let Some(ref mhr) = self.multi_hop_router {
+            if let Err(e) = self.sync_multi_hop_topology().await {
+                warn!("Failed to sync multi-hop topology: {}", e);
+            }
+
+            let source_pk = sender.public_key().clone();
+            let dest_pk = destination.public_key().clone();
+
+            let router = mhr.read().await;
+            match router.find_multi_hop_path(&source_pk, &dest_pk, 1024).await {
+                Ok(hops) => {
+                    info!(
+                        "MultiHopRouter found route ({} hops, algorithm-selected)",
+                        hops.len()
+                    );
+                    return Ok(hops);
+                }
+                Err(e) => {
+                    debug!("MultiHopRouter could not find path: {}, falling back", e);
+                }
+            }
+        }
+
+        // Fallback: legacy Dijkstra over PeerRegistry + TopologyMap
         let registry = self.peer_registry.read().await;
         let routing_table = self.routing_table.read().await;
 
