@@ -3217,6 +3217,57 @@ impl RuntimeOrchestrator {
             crate::runtime::validator_ip::spawn_periodic_ip_update(own_did, 300);
         }
 
+        // ====================================================================
+        // Gateway auto-registration: if this node has ZDNS enabled, register
+        // it in the gateway_registry so it appears in the topology API and
+        // gateways.sov DNS queries.
+        // ====================================================================
+        if self.config.zdns_config.enabled {
+            if let Ok(blockchain_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
+                let wallet_guard = self.user_wallet.read().await;
+                if let Some(wallet) = wallet_guard.as_ref() {
+                    let did = format!("did:zhtp:{}", hex::encode(&wallet.node_identity.id.0));
+                    let gateway_key: [u8; 2592] = wallet.node_private_data
+                        .quantum_keypair.public_key.as_slice()
+                        .try_into()
+                        .unwrap_or([0u8; 2592]);
+                    // Determine endpoint IP: use STUN result or config bootstrap_peers
+                    let endpoint = crate::runtime::validator_ip::discover_public_ip().await
+                        .map(|ip| format!("{}:{}", ip, self.config.protocols_config.api_port))
+                        .unwrap_or_else(|| {
+                            // Fallback: use first bootstrap_peer that isn't this node
+                            self.config.network_config.bootstrap_peers.first()
+                                .cloned()
+                                .unwrap_or_default()
+                        });
+
+                    let mut blockchain = blockchain_arc.write().await;
+                    if !blockchain.gateway_exists(&did) {
+                        let gateway_info = lib_blockchain::blockchain::GatewayInfo {
+                            identity_id: did.clone(),
+                            stake: 1_000, // Genesis minimum
+                            gateway_key,
+                            endpoints: endpoint.clone(),
+                            commission_rate: 5,
+                            status: "active".to_string(),
+                            registered_at: blockchain.height,
+                            last_activity: blockchain.height,
+                            requests_forwarded: 0,
+                            slash_count: 0,
+                            accumulated_revenue: 0,
+                            admission_source: "bootstrap_genesis".to_string(),
+                        };
+                        match blockchain.register_gateway(gateway_info) {
+                            Ok(_) => info!("🌐 Gateway auto-registered: {} @ {}", &did[..30], endpoint),
+                            Err(e) => warn!("⚠️ Gateway registration failed: {}", e),
+                        }
+                    } else {
+                        info!("🌐 Gateway already registered: {}", &did[..30]);
+                    }
+                }
+            }
+        }
+
         info!("✅ ZHTP node started successfully");
         info!(
             "🌐 ZHTP server active on port {}",
