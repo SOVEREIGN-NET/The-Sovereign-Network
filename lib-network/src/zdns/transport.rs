@@ -74,6 +74,9 @@ pub struct ZdnsServerConfig {
     /// When set, `network.sov` returns all validator IPs from the on-chain registry
     /// instead of the single hardcoded gateway_ip.
     pub network_endpoint_provider: Option<NetworkEndpointProvider>,
+    /// Dynamic endpoint provider for `gateways.sov` queries.
+    /// Returns gateway node IPs (ZDNS servers, QUIC ingress proxies).
+    pub gateway_endpoint_provider: Option<NetworkEndpointProvider>,
 }
 
 impl Clone for ZdnsServerConfig {
@@ -87,6 +90,7 @@ impl Clone for ZdnsServerConfig {
             enable_rate_limit: self.enable_rate_limit,
             allowed_capabilities: self.allowed_capabilities.clone(),
             network_endpoint_provider: self.network_endpoint_provider.clone(),
+            gateway_endpoint_provider: self.gateway_endpoint_provider.clone(),
         }
     }
 }
@@ -115,6 +119,7 @@ impl Default for ZdnsServerConfig {
             // By default, only allow HttpServe and SpaServe (not DownloadOnly)
             allowed_capabilities: Some(vec![Web4Capability::HttpServe, Web4Capability::SpaServe]),
             network_endpoint_provider: None,
+            gateway_endpoint_provider: None,
         }
     }
 }
@@ -131,6 +136,7 @@ impl ZdnsServerConfig {
             enable_rate_limit: false, // Disabled for local testing
             allowed_capabilities: None, // Allow all for testing
             network_endpoint_provider: None,
+            gateway_endpoint_provider: None,
         }
     }
 
@@ -147,6 +153,7 @@ impl ZdnsServerConfig {
             enable_rate_limit: true,
             allowed_capabilities: Some(vec![Web4Capability::HttpServe, Web4Capability::SpaServe]),
             network_endpoint_provider: None,
+            gateway_endpoint_provider: None,
         }
     }
 
@@ -569,22 +576,30 @@ impl ZdnsTransportServer {
             return Some(DnsPacket::notimp(&query));
         }
 
-        // Special handling for network.sov — return all validator IPs
-        if (domain_lower == "network.sov" || domain_lower == "directory.sov")
-            && config.network_endpoint_provider.is_some()
-        {
-            let provider = config.network_endpoint_provider.as_ref().unwrap();
+        // Special handling for network topology DNS queries:
+        //   network.sov / directory.sov  → all validator IPs
+        //   validators.sov               → validator IPs only
+        //   gateways.sov                 → gateway IPs only
+        let topology_provider = match domain_lower.as_str() {
+            "network.sov" | "directory.sov" | "validators.sov" => {
+                config.network_endpoint_provider.as_ref()
+            }
+            "gateways.sov" => {
+                config.gateway_endpoint_provider.as_ref()
+            }
+            _ => None,
+        };
+        if let Some(provider) = topology_provider {
             let endpoints = provider();
             if endpoints.is_empty() {
-                debug!(domain = %domain_lower, "No network endpoints available (temporary)");
+                debug!(domain = %domain_lower, "No endpoints available (temporary)");
                 stats.write().await.errors += 1;
                 return Some(DnsPacket::servfail(&query));
             }
-            // Return all validator IPs as multiple A records
             debug!(
                 domain = %domain_lower,
                 count = endpoints.len(),
-                "Returning network directory A records"
+                "Returning topology A records"
             );
             stats.write().await.resolved += 1;
             return Some(DnsPacket::a_records(&query, &endpoints, config.default_ttl));

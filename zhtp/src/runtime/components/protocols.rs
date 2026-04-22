@@ -477,6 +477,24 @@ impl Component for ProtocolsComponent {
                     }
                 }));
                 info!(" ✓ ZDNS network endpoint provider wired to validator registry");
+
+                // Gateway endpoint provider: reads gateway IPs from gateway_registry.
+                let bc_ref2 = blockchain_arc.clone();
+                transport_config.gateway_endpoint_provider = Some(std::sync::Arc::new(move || {
+                    let bc = match bc_ref2.try_read() {
+                        Ok(bc) => bc,
+                        Err(_) => return vec![],
+                    };
+                    bc.gateway_registry
+                        .values()
+                        .filter(|g| g.status == "active")
+                        .filter_map(|g| {
+                            let host = g.endpoints.split(':').next()?;
+                            host.parse::<std::net::Ipv4Addr>().ok()
+                        })
+                        .collect()
+                }));
+                info!(" ✓ ZDNS gateway endpoint provider wired to gateway registry");
             }
             let transport_server = Arc::new(ZdnsTransportServer::new(
                 zdns_resolver.clone(),
