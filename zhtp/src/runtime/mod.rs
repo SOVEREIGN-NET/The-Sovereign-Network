@@ -3246,7 +3246,7 @@ impl RuntimeOrchestrator {
                     if !blockchain.gateway_exists(&did) {
                         let gateway_info = lib_blockchain::blockchain::GatewayInfo {
                             identity_id: did.clone(),
-                            stake: 1_000, // Genesis minimum
+                            stake: 10_000_000_000, // 10,000 SOV minimum for gateway
                             gateway_key,
                             endpoints: endpoint.clone(),
                             commission_rate: 5,
