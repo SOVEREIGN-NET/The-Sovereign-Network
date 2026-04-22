@@ -3244,9 +3244,12 @@ impl RuntimeOrchestrator {
 
                     let mut blockchain = blockchain_arc.write().await;
                     if !blockchain.gateway_exists(&did) {
+                        // Insert directly into gateway_registry — skip register_gateway()
+                        // which creates a redundant identity transaction that fails since
+                        // the identity already exists from Phase 6.
                         let gateway_info = lib_blockchain::blockchain::GatewayInfo {
                             identity_id: did.clone(),
-                            stake: 10_000_000_000, // 10,000 SOV minimum for gateway
+                            stake: 10_000_000_000,
                             gateway_key,
                             endpoints: endpoint.clone(),
                             commission_rate: 5,
@@ -3258,10 +3261,8 @@ impl RuntimeOrchestrator {
                             accumulated_revenue: 0,
                             admission_source: "bootstrap_genesis".to_string(),
                         };
-                        match blockchain.register_gateway(gateway_info) {
-                            Ok(_) => info!("🌐 Gateway auto-registered: {} @ {}", &did[..30], endpoint),
-                            Err(e) => warn!("⚠️ Gateway registration failed: {}", e),
-                        }
+                        blockchain.gateway_registry.insert(did.clone(), gateway_info);
+                        info!("🌐 Gateway auto-registered: {} @ {}", &did[..30], endpoint);
                     } else {
                         info!("🌐 Gateway already registered: {}", &did[..30]);
                     }
