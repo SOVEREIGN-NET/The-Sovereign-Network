@@ -314,20 +314,19 @@ async fn try_register_identity(server: &str) -> Result<serde_json::Value, String
         .map_err(|e| format!("Client error: {}", e))?;
     client.connect(server).await.map_err(|e| format!("Connect failed: {}", e))?;
 
-    let response = match client.post_json("/api/v1/identity/register", &body).await {
-        Ok(r) => r,
-        Err(e) => {
-            let err_str = e.to_string();
-            // 409 = identity already registered — that's success
-            if err_str.contains("409") || err_str.contains("already") {
-                return Ok(serde_json::json!({
-                    "status": "success",
-                    "message": "Identity already registered on-chain",
-                }));
-            }
-            return Err(format!("Registration failed: {}", e));
-        }
-    };
+    let response = client
+        .post_json("/api/v1/identity/register", &body)
+        .await
+        .map_err(|e| format!("Registration failed: {}", e))?;
+
+    // 409 = identity already registered on-chain — that's success
+    if response.status.code() == 409 {
+        return Ok(serde_json::json!({
+            "status": "success",
+            "message": "Identity already registered on-chain",
+        }));
+    }
+
     let result: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&response)
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
