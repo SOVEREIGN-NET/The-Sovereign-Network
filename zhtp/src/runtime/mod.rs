@@ -76,6 +76,7 @@ pub mod services;
 pub mod shared_blockchain;
 pub mod shared_dht;
 pub mod storage_provider; // Global access to storage for component sharing
+pub mod validator_ip;
 pub mod storage_rewards;
 #[cfg(test)]
 pub mod test_api_integration;
@@ -4081,6 +4082,27 @@ impl RuntimeOrchestrator {
         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
         info!("ZHTP system fully operational - ready for identity and transaction testing");
+
+        // ====================================================================
+        // Validator IP self-registration: discover public IP via STUN and
+        // update validator registry so ZDNS returns real IPs, not hostnames.
+        // ====================================================================
+        {
+            let own_did = {
+                let wallet_guard = self.user_wallet.read().await;
+                wallet_guard.as_ref().map(|w| {
+                    format!("did:zhtp:{}", hex::encode(&w.node_identity.id.0))
+                })
+            };
+            let stun_ip = crate::runtime::validator_ip::discover_public_ip().await;
+            crate::runtime::validator_ip::update_validator_ips(
+                own_did.as_deref(),
+                stun_ip,
+            )
+            .await;
+            // Re-check every 5 minutes in the background
+            crate::runtime::validator_ip::spawn_periodic_ip_update(own_did, 300);
+        }
 
         // Create a future that never completes to keep the node running
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));

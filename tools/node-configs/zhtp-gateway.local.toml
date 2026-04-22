@@ -1,0 +1,8 @@
+# Override: observer mode
+# SED: validator_enabled = true -> validator_enabled = false
+
+# Append: ZDNS server
+[zdns]
+enabled = true
+bind = "0.0.0.0"
+port = 53
