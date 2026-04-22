@@ -28,10 +28,6 @@ mod common;
 fn test_pubkey(id: u8) -> PublicKey { common::crypto_fixtures::seeded_public_key(id) }
 fn test_signature(pubkey: &PublicKey) -> Signature { common::crypto_fixtures::signature_for(pubkey) }
 
-// suppress unused import warning — SignatureAlgorithm kept for any inline uses below
-    }
-}
-
 /// Create a test block at the given height with transactions.
 fn test_block(height: u64, transactions: Vec<Transaction>) -> Block {
     let header = BlockHeader {
