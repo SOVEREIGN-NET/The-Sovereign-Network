@@ -702,7 +702,6 @@ impl MobileAuthHandler {
 
         Ok(json_ok(json!({ "certs": certs })))
     }
-}
 
     // -----------------------------------------------------------------------
     // Phase 4: Prepare a transaction (requires bearer + SubmitTx capability)
