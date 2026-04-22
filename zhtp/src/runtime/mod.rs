@@ -3226,9 +3226,10 @@ impl RuntimeOrchestrator {
             if let Ok(blockchain_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
                 let wallet_guard = self.user_wallet.read().await;
                 if let Some(wallet) = wallet_guard.as_ref() {
-                    let did = format!("did:zhtp:{}", hex::encode(&wallet.node_identity.id.0));
-                    let gateway_key: [u8; 2592] = wallet.node_private_data
-                        .quantum_keypair.public_key.as_slice()
+                    // Use user_identity (registered on-chain in Phase 6), not node_identity
+                    let did = format!("did:zhtp:{}", hex::encode(&wallet.user_identity.id.0));
+                    let gateway_key: [u8; 2592] = wallet.user_identity
+                        .public_key.as_bytes()
                         .try_into()
                         .unwrap_or([0u8; 2592]);
                     // Determine endpoint IP: use STUN result or config bootstrap_peers
