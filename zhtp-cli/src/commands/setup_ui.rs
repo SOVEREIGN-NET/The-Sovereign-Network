@@ -366,17 +366,48 @@ async fn try_reset_local_identity() -> Result<serde_json::Value, String> {
     }))
 }
 
-/// Restore identity from seed phrase.
+/// Restore identity from BIP39 seed phrase (20 or 24 words).
 ///
-/// NOTE: `RecoveryPhrase::from_words()` currently generates fresh random entropy
-/// instead of decoding the mnemonic back to the original entropy.  This means
-/// every call produces a DIFFERENT identity regardless of the words supplied.
-/// Until the mnemonic-to-entropy decode path is implemented in lib-identity,
-/// seed-based restore is intentionally disabled here.
-async fn try_restore_seed(_seed_phrase: &str) -> Result<serde_json::Value, String> {
-    Err("Seed restore not yet supported — use 'zhtp-cli identity create-did' instead. \
-         (RecoveryPhrase::from_words does not yet decode the mnemonic back to entropy.)"
-        .to_string())
+/// Decodes the mnemonic back to entropy, derives the Dilithium5 keypair,
+/// and saves the restored identity to the local keystore.
+async fn try_restore_seed(seed_phrase: &str) -> Result<serde_json::Value, String> {
+    let keystore_path = default_keystore_path().map_err(|e| e.to_string())?;
+
+    if keystore_path.join("user_identity.json").exists() {
+        return Err("Identity already exists. Delete keystore to restore from seed.".to_string());
+    }
+
+    let mut manager = lib_identity::identity::manager::IdentityManager::new();
+    let identity_id = manager
+        .import_identity_from_phrase(seed_phrase)
+        .await
+        .map_err(|e| format!("Seed restore failed: {}", e))?;
+
+    let identity = manager
+        .get_identity(&identity_id)
+        .ok_or_else(|| "Identity created but not found in manager".to_string())?;
+
+    let did = identity.did.clone();
+
+    // Save to keystore
+    std::fs::create_dir_all(&keystore_path).map_err(|e| format!("Keystore dir: {}", e))?;
+
+    let identity_json = serde_json::to_string_pretty(identity)
+        .map_err(|e| format!("Serialize: {}", e))?;
+    std::fs::write(keystore_path.join("user_identity.json"), &identity_json)
+        .map_err(|e| format!("Write identity: {}", e))?;
+
+    if let Some(ref pk) = identity.private_key {
+        crate::commands::web4_utils::save_private_key_to_file(pk, &keystore_path.join("user_private_key.json"))
+            .map_err(|e| format!("Write private key: {}", e))?;
+    }
+
+    Ok(serde_json::json!({
+        "success": true,
+        "did": did,
+        "message": "Identity restored from seed phrase",
+        "keystore": keystore_path.display().to_string(),
+    }))
 }
 
 /// Create new identity with random keypair

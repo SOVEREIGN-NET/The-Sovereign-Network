@@ -92,15 +92,66 @@ pub struct RecoveryPhrase {
 }
 
 impl RecoveryPhrase {
-    /// Create RecoveryPhrase from word list
+    /// Decode a BIP39 mnemonic word list back to the original entropy.
+    ///
+    /// Reverses `from_entropy`: words → 11-bit indices → 264 bits →
+    /// 256-bit entropy + 8-bit checksum. Validates the checksum.
     pub fn from_words(words: Vec<String>) -> Result<Self> {
-        use rand::RngCore;
-        let mut entropy = vec![0u8; 32]; // 256 bits
-        rand::rngs::OsRng.fill_bytes(&mut entropy);
+        use sha2::Digest;
+
+        if words.len() != 24 && words.len() != 20 {
+            return Err(anyhow::anyhow!(
+                "Expected 24 (BIP39) or 20 (legacy) words, got {}",
+                words.len()
+            ));
+        }
+
+        let wordlist = crate::recovery::get_bip39_wordlist();
+
+        // Map each word to its 11-bit index
+        let mut bits: Vec<u8> = Vec::with_capacity(words.len() * 11);
+        for word in &words {
+            let lower = word.to_lowercase();
+            let index = wordlist
+                .iter()
+                .position(|w| w == &lower)
+                .ok_or_else(|| anyhow::anyhow!("Unknown BIP39 word: '{}'", word))?;
+            for i in (0..11).rev() {
+                bits.push(((index >> i) & 1) as u8);
+            }
+        }
+
+        // 24 words × 11 bits = 264 bits = 256 entropy + 8 checksum
+        // 20 words × 11 bits = 220 bits = 212 entropy + 8 checksum (non-standard)
+        let entropy_bits = bits.len() - 8;
+        let entropy_bytes = entropy_bits / 8;
+
+        // Extract entropy bytes
+        let mut entropy = vec![0u8; entropy_bytes];
+        for (byte_idx, byte) in entropy.iter_mut().enumerate() {
+            for bit_idx in 0..8 {
+                let global = byte_idx * 8 + bit_idx;
+                if global < entropy_bits {
+                    *byte |= bits[global] << (7 - bit_idx);
+                }
+            }
+        }
+
+        // Extract and verify checksum (last 8 bits)
+        let mut stored_checksum: u8 = 0;
+        for i in 0..8 {
+            stored_checksum |= bits[entropy_bits + i] << (7 - i);
+        }
+        let computed_checksum = sha2::Sha256::digest(&entropy)[0];
+        if stored_checksum != computed_checksum {
+            return Err(anyhow::anyhow!(
+                "BIP39 checksum mismatch: seed phrase is invalid or corrupted"
+            ));
+        }
 
         Ok(Self {
             word_count: words.len(),
-            checksum: format!("{:x}", sha2::Sha256::digest(words.join(" ").as_bytes())),
+            checksum: format!("{:02x}", computed_checksum),
             language: "english".to_string(),
             words,
             entropy,
