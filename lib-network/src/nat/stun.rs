@@ -73,7 +73,11 @@ impl StunClient {
 
     /// Query a single STUN server for the public endpoint.
     async fn query_server(&self, server: &str, local_bind: SocketAddr) -> Result<SocketAddr> {
-        let server_addr: SocketAddr = server.parse()?;
+        // Resolve hostname to IP (server may be "stun.l.google.com:19302")
+        let server_addr: SocketAddr = tokio::net::lookup_host(server)
+            .await?
+            .find(|a| a.is_ipv4())
+            .ok_or_else(|| anyhow!("No IPv4 address for STUN server {}", server))?;
 
         let socket = UdpSocket::bind(local_bind).await?;
         socket.connect(server_addr).await?;
