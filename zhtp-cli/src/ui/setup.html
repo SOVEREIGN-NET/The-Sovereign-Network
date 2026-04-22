@@ -359,21 +359,33 @@ button,input{font:inherit}
 
 @media (max-width:1080px){
   .hero,.setup-grid,.dashboard-grid{grid-template-columns:1fr}
-  .hero-copy h1{max-width:none}
+  .hero-copy h1{max-width:none;font-size:clamp(2rem,5vw,5.2rem)}
 }
 @media (max-width:760px){
-  .shell{padding:12px}
-  .frame{min-height:calc(100vh - 24px);border-radius:22px}
-  .topbar,.main,.hero-copy,.hero-meta,.mission-card,.panel,.seed-panel,.metric,.progress-card,.did-card,.status-card,.logline{padding-left:18px;padding-right:18px}
+  .shell{padding:8px}
+  .frame{min-height:calc(100vh - 16px);border-radius:16px}
+  .topbar,.main,.hero-copy,.hero-meta,.mission-card,.panel,.seed-panel,.metric,.progress-card,.did-card,.status-card,.logline{padding-left:14px;padding-right:14px}
+  .main{padding:14px}
   .metrics{grid-template-columns:1fr}
   .metric.emphasis{grid-column:auto}
+  .metric-value{font-size:clamp(1.4rem,5vw,2.6rem)}
   .seed-grid,.status-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
   .status-rail{margin-left:0}
+  .did-value{font-size:clamp(10px,2.5vw,14px);word-break:break-all}
+  .did-actions{flex-direction:column}
+  .did-actions .btn{width:100%;text-align:center}
+  .brand-copy strong{font-size:clamp(14px,3.5vw,20px)}
+  .status-meta .value{font-size:clamp(12px,3vw,15px)}
+  #view-topology .nd{grid-template-columns:1fr 1fr !important}
+  #topo-cards{grid-template-columns:1fr !important}
 }
 @media (max-width:520px){
   .seed-grid,.status-grid,.hero-meta{grid-template-columns:1fr}
-  .topbar{align-items:flex-start;flex-direction:column}
+  .topbar{align-items:flex-start;flex-direction:column;gap:12px}
   .status-rail{width:100%;justify-content:flex-start}
+  .hero-copy h1{font-size:clamp(1.6rem,7vw,3rem)}
+  .hero-copy p{font-size:1rem}
+  .status-badge{font-size:10px;padding:8px 10px}
 }
 </style>
 </head>
@@ -643,26 +655,26 @@ button,input{font:inherit}
         </aside>
       </section>
       <section id="view-topology" class="hidden" style="padding:0">
-        <div style="padding:20px 28px 12px;display:flex;align-items:center;gap:16px;border-bottom:1px solid var(--line)">
+        <div style="padding:14px clamp(14px,3vw,28px) 12px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--line);flex-wrap:wrap">
           <button class="btn btn-secondary" type="button" onclick="setView('dashboard')" style="font-size:12px;padding:6px 14px">Back</button>
-          <div>
+          <div style="min-width:0">
             <div class="panel-label">Network</div>
-            <div style="font-family:var(--display);font-size:18px;text-transform:uppercase;letter-spacing:.06em">Topology Map</div>
+            <div style="font-family:var(--display);font-size:clamp(14px,3vw,18px);text-transform:uppercase;letter-spacing:.06em">Topology Map</div>
           </div>
-          <div style="margin-left:auto;display:flex;gap:16px;font-family:var(--mono);font-size:11px;color:var(--muted)">
-            <span>Validators <strong id="topo-v-count" style="color:var(--signal)">0</strong></span>
-            <span>Gateways <strong id="topo-g-count" style="color:var(--gold)">0</strong></span>
-            <span>Height <strong id="topo-height" style="color:var(--ink)">0</strong></span>
-            <span id="topo-update" style="font-size:10px">-</span>
+          <div style="margin-left:auto;display:flex;gap:clamp(8px,2vw,16px);font-family:var(--mono);font-size:clamp(9px,1.8vw,11px);color:var(--muted);flex-wrap:wrap">
+            <span>V <strong id="topo-v-count" style="color:var(--signal)">0</strong></span>
+            <span>G <strong id="topo-g-count" style="color:var(--gold)">0</strong></span>
+            <span>H <strong id="topo-height" style="color:var(--ink)">0</strong></span>
+            <span id="topo-update" style="font-size:clamp(8px,1.5vw,10px)">-</span>
           </div>
         </div>
 
-        <div style="padding:28px">
-          <div style="border:1px solid var(--line);border-radius:20px;background:var(--panel);padding:24px;margin-bottom:24px;min-height:260px">
-            <svg id="topo-svg" style="width:100%;height:240px"></svg>
+        <div style="padding:clamp(14px,3vw,28px)">
+          <div style="border:1px solid var(--line);border-radius:16px;background:var(--panel);padding:clamp(12px,2vw,24px);margin-bottom:clamp(14px,3vw,24px);min-height:200px;overflow:hidden">
+            <svg id="topo-svg" style="width:100%;height:clamp(180px,30vw,240px)"></svg>
           </div>
 
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px" id="topo-cards"></div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:clamp(10px,2vw,16px)" id="topo-cards"></div>
         </div>
       </section>
 
@@ -1044,7 +1056,7 @@ async function refreshStatus(force) {
         setView("setup");
         backToChoices();
       }
-    } else if (els["view-dashboard"].classList.contains("hidden")) {
+    } else if (els["view-setup"] && !els["view-setup"].classList.contains("hidden")) {
       setView("dashboard");
     }
   } catch (_error) {
