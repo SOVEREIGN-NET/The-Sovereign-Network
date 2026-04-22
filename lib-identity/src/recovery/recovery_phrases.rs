@@ -1358,7 +1358,7 @@ impl RecoveryPhraseManager {
         &self,
         phrase_words: &[String],
     ) -> Result<(crate::types::IdentityId, Vec<u8>, Vec<u8>, [u8; 32])> {
-        use lib_crypto::{derive_keys, hash_blake3};
+        use lib_crypto::hash_blake3;
 
         // Validate phrase format (accept both 20-word custom and 24-word BIP39 standard)
         if phrase_words.len() != 20 && phrase_words.len() != 24 {
@@ -1368,28 +1368,22 @@ impl RecoveryPhraseManager {
             ));
         }
 
-        // Join words to create seed material
-        let phrase_text = phrase_words.join(" ");
+        // Decode mnemonic back to entropy via BIP39
+        let recovery = RecoveryPhrase::from_words(phrase_words.to_vec())?;
+        let entropy = &recovery.entropy;
 
-        // Derive entropy from phrase using Blake3
-        let phrase_hash = hash_blake3(phrase_text.as_bytes());
-
-        // Generate identity seed from phrase
-        let seed_material = [phrase_hash.as_slice(), b"ZHTP_identity_seed_v1"].concat();
+        // Derive a 32-byte seed for Dilithium keygen
+        let seed_material = [entropy.as_slice(), b"ZHTP_identity_seed_v1"].concat();
         let identity_seed_hash = hash_blake3(&seed_material);
         let mut seed = [0u8; 32];
         seed.copy_from_slice(&identity_seed_hash);
 
-        // Derive private key from seed
-        let private_key_material = derive_keys(&seed, b"ZHTP_private_key_derivation", 64)?;
+        // Generate deterministic Dilithium5 keypair from seed
+        let (public_key_bytes, private_key_bytes) =
+            lib_crypto::post_quantum::dilithium5_keypair_from_entropy(&seed);
 
-        // Derive public key from private key
-        let public_key_material =
-            [&private_key_material[..32], b"ZHTP_public_key_derivation"].concat();
-        let public_key = hash_blake3(&public_key_material).to_vec();
-
-        // Create identity ID from public key
-        let identity_id_hash = hash_blake3(&[public_key.as_slice(), b"ZHTP_identity_id"].concat());
+        // Identity ID = blake3(dilithium_pk)
+        let identity_id_hash = hash_blake3(&public_key_bytes);
         let identity_id = lib_crypto::Hash::from_bytes(&identity_id_hash);
 
         tracing::info!(
@@ -1397,7 +1391,7 @@ impl RecoveryPhraseManager {
             hex::encode(&identity_id.0[..8])
         );
 
-        Ok((identity_id, private_key_material, public_key, seed))
+        Ok((identity_id, private_key_bytes, public_key_bytes, seed))
     }
 }
 
