@@ -10,6 +10,7 @@ use crate::output::Output;
 use tokio::sync::watch;
 
 const UI_HTML: &str = include_str!("../ui/setup.html");
+const TOPOLOGY_HTML: &str = include_str!("../../../zhtp/src/ui/topology.html");
 const DEFAULT_UI_PORT: u16 = 7840;
 
 /// Run the setup UI bridge
@@ -45,12 +46,18 @@ pub async fn run_setup_ui(cli: &ZhtpCli, output: &dyn Output) -> CliResult<()> {
 
     let app = Router::new()
         .route("/", get(serve_ui))
+        .route("/topology", get(serve_topology))
         .route("/api/status", get(proxy_status))
         .route("/api/control", post(proxy_control))
+        .route("/api/v1/network/directory", get(proxy_directory))
         .with_state(state);
 
     async fn serve_ui() -> Html<&'static str> {
         Html(UI_HTML)
+    }
+
+    async fn serve_topology() -> Html<&'static str> {
+        Html(TOPOLOGY_HTML)
     }
 
     async fn proxy_status(
@@ -69,6 +76,20 @@ pub async fn run_setup_ui(cli: &ZhtpCli, output: &dyn Output) -> CliResult<()> {
                     "identity_count": 0,
                 })))
             }
+        }
+    }
+
+    async fn proxy_directory(
+        State(state): State<AppState>,
+    ) -> impl IntoResponse {
+        match try_get_directory(&state.quic_server).await {
+            Ok(json) => (StatusCode::OK, Json(json)),
+            Err(e) => (StatusCode::OK, Json(serde_json::json!({
+                "network_id": "unknown",
+                "chain_height": 0,
+                "error": e,
+                "topology": { "validators": [], "gateways": [], "total_validators": 0, "total_gateways": 0, "connected_peers": 0 },
+            }))),
         }
     }
 
@@ -396,4 +417,29 @@ async fn try_create_new(name: &str) -> Result<serde_json::Value, String> {
         "message": format!("Node '{}' created", name),
         "keystore": keystore_path.display().to_string(),
     }))
+}
+
+async fn try_get_directory(server: &str) -> Result<serde_json::Value, String> {
+    let keystore = default_keystore_path().map_err(|e| e.to_string())?;
+    if !keystore.exists() {
+        return Err("No local identity — run setup first".to_string());
+    }
+    let loaded = load_identity_from_keystore(&keystore)
+        .map_err(|e| format!("Identity load failed: {}", e))?;
+
+    let trust_config = lib_network::web4::trust::TrustConfig::bootstrap();
+    let config = lib_network::client::ZhtpClientConfig {
+        allow_bootstrap: true,
+    };
+    let mut client = lib_network::client::ZhtpClient::new_with_config(loaded.identity, trust_config, config)
+        .await
+        .map_err(|e| format!("Client error: {}", e))?;
+
+    client.connect(server).await.map_err(|e| format!("Connect failed: {}", e))?;
+
+    let response = client.get("/api/v1/network/directory").await
+        .map_err(|e| format!("API request failed: {}", e))?;
+
+    serde_json::from_slice(&response.body)
+        .map_err(|e| format!("Invalid JSON response: {}", e))
 }
