@@ -1217,9 +1217,16 @@ async function disconnectNode() {
 async function bootstrap() {
   cacheElements();
   buildSeedGrid();
+
+  // Allow direct navigation via hash: #topology
+  if (window.location.hash === "#topology") {
+    setView("topology");
+    return;
+  }
+
   try {
     const data = await requestJson("/api/status");
-    if (data.state === "setup_required") {
+    if (data.state === "setup_required" && !data.did) {
       applyNavStatus(mapState(data), data);
       if (data.local_identity_error) {
         enterRecoveryMode(data.local_identity_error + " Restore from seed or create a new identity.");
@@ -1228,10 +1235,17 @@ async function bootstrap() {
       }
       return;
     }
+    // Identity exists — show dashboard even if node API is partially unavailable
     setView("dashboard");
     applyDashboardStatus(data);
   } catch (_error) {
-    setView("setup");
+    // Network error — still try dashboard if we can reach directory
+    try {
+      await fetch(API + "/api/v1/network/directory", { signal: AbortSignal.timeout(3000) });
+      setView("dashboard");
+    } catch (_) {
+      setView("setup");
+    }
   }
 }
 
