@@ -129,6 +129,55 @@ pub struct StatefulTransactionValidator<'a> {
     blockchain: Option<&'a crate::blockchain::Blockchain>,
 }
 
+// =========================================================================
+// Observer Admission helpers (observer-admission-3)
+// Free functions so they are reachable from both TransactionValidator and
+// StatefulTransactionValidator impl blocks.
+// =========================================================================
+
+/// Validates that an observer transaction carries its typed payload and has
+/// no UTXO inputs or outputs.  Reused in both stateless validation functions.
+fn validate_observer_tx_structure(tx: &Transaction) -> ValidationResult {
+    use crate::types::transaction_type::TransactionType;
+    let has_payload = match tx.transaction_type {
+        TransactionType::RegisterObserver => tx.register_observer_data().is_some(),
+        TransactionType::UpdateObserverMetadata => {
+            tx.update_observer_metadata_data().is_some()
+        }
+        TransactionType::SuspendObserver => tx.suspend_observer_data().is_some(),
+        TransactionType::RevokeObserver => tx.revoke_observer_data().is_some(),
+        TransactionType::ReauthorizeObserver => tx.reauthorize_observer_data().is_some(),
+        _ => return Ok(()),
+    };
+    if !has_payload {
+        return Err(ValidationError::MissingRequiredData);
+    }
+    if !tx.inputs.is_empty() || !tx.outputs.is_empty() {
+        return Err(ValidationError::InvalidInputs);
+    }
+    Ok(())
+}
+
+/// Derives the signer DID from `tx.signature.public_key.key_id` and returns
+/// `Err(InvalidSponsorBinding)` if it does not match `expected_did`.
+fn check_observer_signer(
+    tx: &Transaction,
+    expected_did: &str,
+    log_tag: &str,
+) -> Result<(), ValidationError> {
+    let signer_did = format!("did:zhtp:{}", hex::encode(tx.signature.public_key.key_id));
+    if signer_did != expected_did {
+        tracing::warn!(
+            "[{}] actor_did mismatch: payload={} signer={}",
+            log_tag,
+            expected_did,
+            signer_did,
+        );
+        return Err(ValidationError::InvalidSponsorBinding);
+    }
+    Ok(())
+}
+
 impl TransactionValidator {
     /// Create a new transaction validator
     pub fn new() -> Self {
@@ -435,45 +484,12 @@ impl TransactionValidator {
             // =================================================================
             // Observer Admission (observer-admission-3)
             // =================================================================
-            TransactionType::RegisterObserver => {
-                if transaction.register_observer_data().is_none() {
-                    return Err(ValidationError::MissingRequiredData);
-                }
-                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
-                    return Err(ValidationError::InvalidInputs);
-                }
-            }
-            TransactionType::UpdateObserverMetadata => {
-                if transaction.update_observer_metadata_data().is_none() {
-                    return Err(ValidationError::MissingRequiredData);
-                }
-                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
-                    return Err(ValidationError::InvalidInputs);
-                }
-            }
-            TransactionType::SuspendObserver => {
-                if transaction.suspend_observer_data().is_none() {
-                    return Err(ValidationError::MissingRequiredData);
-                }
-                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
-                    return Err(ValidationError::InvalidInputs);
-                }
-            }
-            TransactionType::RevokeObserver => {
-                if transaction.revoke_observer_data().is_none() {
-                    return Err(ValidationError::MissingRequiredData);
-                }
-                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
-                    return Err(ValidationError::InvalidInputs);
-                }
-            }
-            TransactionType::ReauthorizeObserver => {
-                if transaction.reauthorize_observer_data().is_none() {
-                    return Err(ValidationError::MissingRequiredData);
-                }
-                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
-                    return Err(ValidationError::InvalidInputs);
-                }
+            TransactionType::RegisterObserver
+            | TransactionType::UpdateObserverMetadata
+            | TransactionType::SuspendObserver
+            | TransactionType::RevokeObserver
+            | TransactionType::ReauthorizeObserver => {
+                validate_observer_tx_structure(transaction)?;
             }
 
             TransactionType::DomainRegistration => {
@@ -765,45 +781,12 @@ impl TransactionValidator {
             // =================================================================
             // Observer Admission (observer-admission-3)
             // =================================================================
-            TransactionType::RegisterObserver => {
-                if transaction.register_observer_data().is_none() {
-                    return Err(ValidationError::MissingRequiredData);
-                }
-                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
-                    return Err(ValidationError::InvalidInputs);
-                }
-            }
-            TransactionType::UpdateObserverMetadata => {
-                if transaction.update_observer_metadata_data().is_none() {
-                    return Err(ValidationError::MissingRequiredData);
-                }
-                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
-                    return Err(ValidationError::InvalidInputs);
-                }
-            }
-            TransactionType::SuspendObserver => {
-                if transaction.suspend_observer_data().is_none() {
-                    return Err(ValidationError::MissingRequiredData);
-                }
-                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
-                    return Err(ValidationError::InvalidInputs);
-                }
-            }
-            TransactionType::RevokeObserver => {
-                if transaction.revoke_observer_data().is_none() {
-                    return Err(ValidationError::MissingRequiredData);
-                }
-                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
-                    return Err(ValidationError::InvalidInputs);
-                }
-            }
-            TransactionType::ReauthorizeObserver => {
-                if transaction.reauthorize_observer_data().is_none() {
-                    return Err(ValidationError::MissingRequiredData);
-                }
-                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
-                    return Err(ValidationError::InvalidInputs);
-                }
+            TransactionType::RegisterObserver
+            | TransactionType::UpdateObserverMetadata
+            | TransactionType::SuspendObserver
+            | TransactionType::RevokeObserver
+            | TransactionType::ReauthorizeObserver => {
+                validate_observer_tx_structure(transaction)?;
             }
 
             TransactionType::DomainRegistration => {
@@ -2029,94 +2012,34 @@ impl<'a> StatefulTransactionValidator<'a> {
             // they do not control.
             // =================================================================
             TransactionType::RegisterObserver => {
-                if transaction.register_observer_data().is_none() {
-                    return Err(ValidationError::MissingRequiredData);
-                }
-                let data = transaction.register_observer_data().unwrap();
-                let signer_did = format!(
-                    "did:zhtp:{}",
-                    hex::encode(transaction.signature.public_key.key_id)
-                );
-                if signer_did != data.sponsor_user_did {
-                    tracing::warn!(
-                        "[REGISTER_OBSERVER] sponsor_user_did mismatch: payload={} signer={}",
-                        data.sponsor_user_did,
-                        signer_did
-                    );
-                    return Err(ValidationError::InvalidSponsorBinding);
-                }
+                let data = transaction
+                    .register_observer_data()
+                    .ok_or(ValidationError::MissingRequiredData)?;
+                check_observer_signer(transaction, &data.sponsor_user_did, "REGISTER_OBSERVER")?;
             }
             TransactionType::UpdateObserverMetadata => {
-                if transaction.update_observer_metadata_data().is_none() {
-                    return Err(ValidationError::MissingRequiredData);
-                }
-                let data = transaction.update_observer_metadata_data().unwrap();
-                let signer_did = format!(
-                    "did:zhtp:{}",
-                    hex::encode(transaction.signature.public_key.key_id)
-                );
-                if signer_did != data.actor_did {
-                    tracing::warn!(
-                        "[UPDATE_OBSERVER_META] actor_did mismatch: payload={} signer={}",
-                        data.actor_did,
-                        signer_did
-                    );
-                    return Err(ValidationError::InvalidSponsorBinding);
-                }
+                let data = transaction
+                    .update_observer_metadata_data()
+                    .ok_or(ValidationError::MissingRequiredData)?;
+                check_observer_signer(transaction, &data.actor_did, "UPDATE_OBSERVER_META")?;
             }
             TransactionType::SuspendObserver => {
-                if transaction.suspend_observer_data().is_none() {
-                    return Err(ValidationError::MissingRequiredData);
-                }
-                let data = transaction.suspend_observer_data().unwrap();
-                let signer_did = format!(
-                    "did:zhtp:{}",
-                    hex::encode(transaction.signature.public_key.key_id)
-                );
-                if signer_did != data.actor_did {
-                    tracing::warn!(
-                        "[SUSPEND_OBSERVER] actor_did mismatch: payload={} signer={}",
-                        data.actor_did,
-                        signer_did
-                    );
-                    return Err(ValidationError::InvalidSponsorBinding);
-                }
+                let data = transaction
+                    .suspend_observer_data()
+                    .ok_or(ValidationError::MissingRequiredData)?;
+                check_observer_signer(transaction, &data.actor_did, "SUSPEND_OBSERVER")?;
             }
             TransactionType::RevokeObserver => {
-                if transaction.revoke_observer_data().is_none() {
-                    return Err(ValidationError::MissingRequiredData);
-                }
-                let data = transaction.revoke_observer_data().unwrap();
-                let signer_did = format!(
-                    "did:zhtp:{}",
-                    hex::encode(transaction.signature.public_key.key_id)
-                );
-                if signer_did != data.actor_did {
-                    tracing::warn!(
-                        "[REVOKE_OBSERVER] actor_did mismatch: payload={} signer={}",
-                        data.actor_did,
-                        signer_did
-                    );
-                    return Err(ValidationError::InvalidSponsorBinding);
-                }
+                let data = transaction
+                    .revoke_observer_data()
+                    .ok_or(ValidationError::MissingRequiredData)?;
+                check_observer_signer(transaction, &data.actor_did, "REVOKE_OBSERVER")?;
             }
             TransactionType::ReauthorizeObserver => {
-                if transaction.reauthorize_observer_data().is_none() {
-                    return Err(ValidationError::MissingRequiredData);
-                }
-                let data = transaction.reauthorize_observer_data().unwrap();
-                let signer_did = format!(
-                    "did:zhtp:{}",
-                    hex::encode(transaction.signature.public_key.key_id)
-                );
-                if signer_did != data.sponsor_user_did {
-                    tracing::warn!(
-                        "[REAUTHORIZE_OBSERVER] sponsor_user_did mismatch: payload={} signer={}",
-                        data.sponsor_user_did,
-                        signer_did
-                    );
-                    return Err(ValidationError::InvalidSponsorBinding);
-                }
+                let data = transaction
+                    .reauthorize_observer_data()
+                    .ok_or(ValidationError::MissingRequiredData)?;
+                check_observer_signer(transaction, &data.sponsor_user_did, "REAUTHORIZE_OBSERVER")?;
             }
 
             TransactionType::DomainRegistration => {
@@ -3447,30 +3370,12 @@ pub mod utils {
             // =================================================================
             // Observer Admission (observer-admission-3)
             // =================================================================
-            TransactionType::RegisterObserver => {
-                transaction.register_observer_data().is_some()
-                    && transaction.inputs.is_empty()
-                    && transaction.outputs.is_empty()
-            }
-            TransactionType::UpdateObserverMetadata => {
-                transaction.update_observer_metadata_data().is_some()
-                    && transaction.inputs.is_empty()
-                    && transaction.outputs.is_empty()
-            }
-            TransactionType::SuspendObserver => {
-                transaction.suspend_observer_data().is_some()
-                    && transaction.inputs.is_empty()
-                    && transaction.outputs.is_empty()
-            }
-            TransactionType::RevokeObserver => {
-                transaction.revoke_observer_data().is_some()
-                    && transaction.inputs.is_empty()
-                    && transaction.outputs.is_empty()
-            }
-            TransactionType::ReauthorizeObserver => {
-                transaction.reauthorize_observer_data().is_some()
-                    && transaction.inputs.is_empty()
-                    && transaction.outputs.is_empty()
+            TransactionType::RegisterObserver
+            | TransactionType::UpdateObserverMetadata
+            | TransactionType::SuspendObserver
+            | TransactionType::RevokeObserver
+            | TransactionType::ReauthorizeObserver => {
+                validate_observer_tx_structure(transaction).is_ok()
             }
 
             TransactionType::DomainRegistration => {
