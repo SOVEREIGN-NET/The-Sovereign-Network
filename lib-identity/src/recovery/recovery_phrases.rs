@@ -121,37 +121,59 @@ impl RecoveryPhrase {
             }
         }
 
-        // 24 words × 11 bits = 264 bits = 256 entropy + 8 checksum
-        // 20 words × 11 bits = 220 bits = 212 entropy + 8 checksum (non-standard)
-        let entropy_bits = bits.len() - 8;
-        let entropy_bytes = entropy_bits / 8;
+        // Total bits from words. Standard BIP39: 24×11=264 = 256 entropy + 8 checksum.
+        // ZHTP legacy phrases: 24×11=264 bits used as raw entropy (no checksum).
+        // We try BIP39 checksum first; if it fails, treat all bits as entropy.
+        let total_bits = bits.len();
 
-        // Extract entropy bytes
-        let mut entropy = vec![0u8; entropy_bytes];
-        for (byte_idx, byte) in entropy.iter_mut().enumerate() {
+        // Try BIP39 first: last 8 bits are checksum
+        let bip39_entropy_bits = total_bits - 8;
+        let bip39_entropy_bytes = bip39_entropy_bits / 8;
+
+        let mut bip39_entropy = vec![0u8; bip39_entropy_bytes];
+        for (byte_idx, byte) in bip39_entropy.iter_mut().enumerate() {
             for bit_idx in 0..8 {
                 let global = byte_idx * 8 + bit_idx;
-                if global < entropy_bits {
+                if global < bip39_entropy_bits {
                     *byte |= bits[global] << (7 - bit_idx);
                 }
             }
         }
 
-        // Extract and verify checksum (last 8 bits)
         let mut stored_checksum: u8 = 0;
         for i in 0..8 {
-            stored_checksum |= bits[entropy_bits + i] << (7 - i);
+            stored_checksum |= bits[bip39_entropy_bits + i] << (7 - i);
         }
-        let computed_checksum = sha2::Sha256::digest(&entropy)[0];
-        if stored_checksum != computed_checksum {
-            return Err(anyhow::anyhow!(
-                "BIP39 checksum mismatch: seed phrase is invalid or corrupted"
-            ));
+        let computed_checksum = sha2::Sha256::digest(&bip39_entropy)[0];
+
+        if stored_checksum == computed_checksum {
+            // Valid BIP39 checksum
+            return Ok(Self {
+                word_count: words.len(),
+                checksum: format!("{:02x}", computed_checksum),
+                language: "english".to_string(),
+                words,
+                entropy: bip39_entropy,
+            });
+        }
+
+        // BIP39 checksum failed — treat as ZHTP legacy phrase where all bits are entropy.
+        // entropy_to_words() generates words from raw entropy without appending a checksum,
+        // so the full 264 bits (24 words × 11 bits) encode 33 bytes of entropy directly.
+        let raw_bytes = total_bits / 8; // 264/8 = 33 bytes, drop remainder bits
+        let mut entropy = vec![0u8; raw_bytes];
+        for (byte_idx, byte) in entropy.iter_mut().enumerate() {
+            for bit_idx in 0..8 {
+                let global = byte_idx * 8 + bit_idx;
+                if global < total_bits {
+                    *byte |= bits[global] << (7 - bit_idx);
+                }
+            }
         }
 
         Ok(Self {
             word_count: words.len(),
-            checksum: format!("{:02x}", computed_checksum),
+            checksum: String::new(),
             language: "english".to_string(),
             words,
             entropy,
