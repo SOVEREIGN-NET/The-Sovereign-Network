@@ -25,7 +25,7 @@ pub async fn discover_public_ip() -> Option<Ipv4Addr> {
             }
         }
         Err(e) => {
-            warn!("STUN discovery failed: {} — validator IPs may not appear in ZDNS", e);
+            tracing::debug!("STUN discovery skipped: {} (not needed if endpoints are configured)", e);
             None
         }
     }
