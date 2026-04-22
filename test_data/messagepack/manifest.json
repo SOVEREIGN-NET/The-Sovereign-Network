@@ -1,0 +1,42 @@
+{
+  "generated_at": "2026-04-22T19:16:17.634966+00:00",
+  "output_dir": "test_data/messagepack",
+  "file_count": 7,
+  "files": [
+    {
+      "file": "blockchain_transactions.msgpack",
+      "bytes": 1749085,
+      "source": "blockchain_transactions.json"
+    },
+    {
+      "file": "network_mesh_messages.msgpack",
+      "bytes": 189357,
+      "source": "network_mesh_messages.json"
+    },
+    {
+      "file": "governance_proposals.msgpack",
+      "bytes": 114446,
+      "source": "governance_proposals.json"
+    },
+    {
+      "file": "witness_metadata.msgpack",
+      "bytes": 259731,
+      "source": "witness_metadata.json"
+    },
+    {
+      "file": "token_economics.msgpack",
+      "bytes": 93292,
+      "source": "token_economics.json"
+    },
+    {
+      "file": "identity_records.msgpack",
+      "bytes": 173894,
+      "source": "identity_records.json"
+    },
+    {
+      "file": "mixed_workload.msgpack",
+      "bytes": 391366,
+      "source": null
+    }
+  ]
+}
