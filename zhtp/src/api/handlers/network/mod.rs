@@ -380,6 +380,9 @@ impl ZhtpRequestHandler for NetworkHandler {
             (ZhtpMethod::Get, "/api/v1/network/directory") => {
                 self.handle_get_directory(request).await
             }
+            (ZhtpMethod::Get, "/api/v1/network/topology") => {
+                self.handle_topology_ui(request).await
+            }
             (ZhtpMethod::Get, "/api/v1/network/status") => {
                 self.handle_get_network_status(request).await
             }
@@ -1122,6 +1125,11 @@ impl NetworkHandler {
         });
 
         Ok(ZhtpResponse::json(&response, None)?)
+    }
+
+    async fn handle_topology_ui(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        const TOPOLOGY_HTML: &str = include_str!("../../../ui/topology.html");
+        Ok(ZhtpResponse::html(TOPOLOGY_HTML.to_string(), None))
     }
 
     fn compute_local_spki() -> String {
