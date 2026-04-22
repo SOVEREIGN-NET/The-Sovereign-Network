@@ -578,6 +578,7 @@ button,input{font:inherit}
             <div class="did-actions">
               <button class="btn btn-secondary" type="button" id="copy-did-btn" onclick="copyDid()">Copy DID</button>
               <button class="btn btn-secondary" type="button" id="force-sync-btn" onclick="forceSync()">Force Sync</button>
+              <button class="btn btn-secondary" type="button" onclick="refreshStatus(true)" style="font-size:12px">Refresh</button>
               <button class="btn btn-secondary" type="button" onclick="setView('topology')" style="background:rgba(15,118,110,.1);border-color:var(--signal);color:var(--signal)">Network Topology</button>
               <button class="btn btn-secondary" type="button" id="reset-identity-btn" onclick="resetLocalIdentity()">Use Different Identity</button>
               <button class="btn btn-danger" type="button" id="disconnect-btn" onclick="openStopDialog()">Disconnect / Stop Node</button>
