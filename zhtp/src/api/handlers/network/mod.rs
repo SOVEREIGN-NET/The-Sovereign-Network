@@ -380,6 +380,9 @@ impl ZhtpRequestHandler for NetworkHandler {
             (ZhtpMethod::Get, "/api/v1/network/directory") => {
                 self.handle_get_directory(request).await
             }
+            (ZhtpMethod::Get, "/api/v1/network/topology") => {
+                self.handle_topology_ui(request).await
+            }
             (ZhtpMethod::Get, "/api/v1/network/status") => {
                 self.handle_get_network_status(request).await
             }
@@ -1033,7 +1036,7 @@ impl NetworkHandler {
     }
 
     async fn handle_get_directory(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        info!("API: Getting network directory");
+        info!("API: Getting network directory (topology)");
 
         let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
             .await
@@ -1041,64 +1044,110 @@ impl NetworkHandler {
         let blockchain = blockchain_arc.read().await;
         let environment = self.runtime.get_environment();
 
-        // Compute this node's SPKI pin first
-        let local_spki = {
-            let cert_paths = [
-                "./data/tls/server.crt",
-                "/opt/zhtp/data/tls/server.crt",
-                "/opt/zhtp/.zhtp/tls/server.crt",
-            ];
-            let mut pin = String::new();
-            for path in &cert_paths {
-                if let Ok(pem) = std::fs::read(path) {
-                    if let Some(Ok(cert_der)) = rustls_pemfile::certs(&mut pem.as_slice()).next() {
-                        if let Ok(hash) = lib_network::protocols::quic_mesh::QuicMeshProtocol::compute_spki_sha256(cert_der.as_ref()) {
-                            pin = hex::encode(hash);
-                            break;
-                        }
-                    }
-                }
-            }
-            pin
-        };
+        // Compute this node's SPKI pin
+        let local_spki = Self::compute_local_spki();
 
-        // Known validator SPKI pins (derived from their TLS certificates).
-        // These are stable — only change if a validator regenerates its cert.
-        let known_pins: std::collections::HashMap<&str, &str> = [
-            ("g1.thesovereignnetwork.org:9334", "611bd1197ee799c17ac46f3f27df45ec4580d924f0dc3597ba79bcad3d0fa970"),
-            ("g2.thesovereignnetwork.org:9334", "611bd1197ee799c17ac46f3f27df45ec4580d924f0dc3597ba79bcad3d0fa970"),
-            ("g3.thesovereignnetwork.org:9334", "eb71239b161a8ea0cdc94f3853298f3e063523c9860a9630cc57504b024a3f54"),
-        ].into_iter().collect();
+        // This node's identity
+        let node_did = self.runtime.get_user_wallet().await
+            .map(|w| format!("did:zhtp:{}", hex::encode(&w.node_identity.id.0)))
+            .unwrap_or_default();
+        let node_role = format!("{:?}", self.runtime.get_node_role().await).to_ascii_lowercase();
 
+        // Build validator entries from on-chain registry
         let validators: Vec<serde_json::Value> = blockchain
             .validator_registry
-            .iter()
-            .map(|(_, v)| {
-                let pin = known_pins.get(v.network_address.as_str())
-                    .unwrap_or(&"")
-                    .to_string();
+            .values()
+            .filter(|v| v.status == "active")
+            .map(|v| {
+                let ip = v.network_address.split(':').next().unwrap_or("");
                 serde_json::json!({
                     "did": v.identity_id,
+                    "role": "validator",
                     "endpoint": v.network_address,
+                    "ip": ip,
+                    "quic_port": 9334,
+                    "mesh_port": 9333,
                     "stake": v.stake,
                     "status": v.status,
+                    "blocks_validated": v.blocks_validated,
                     "last_activity": v.last_activity,
-                    "healthy": v.status == "active",
-                    "spki_pin": pin,
+                    "commission_rate": v.commission_rate,
+                    "admission": v.admission_source,
                 })
             })
             .collect();
 
+        // Gateway entries from on-chain registry (populated via GatewayRegistration transactions)
+        let gateways: Vec<serde_json::Value> = blockchain
+            .gateway_registry
+            .values()
+            .filter(|g| g.status == "active")
+            .map(|g| {
+                let ip = g.endpoints.split(':').next().unwrap_or("");
+                serde_json::json!({
+                    "did": g.identity_id,
+                    "role": "gateway",
+                    "endpoint": g.endpoints,
+                    "ip": ip,
+                    "quic_port": 9334,
+                    "zdns_port": 53,
+                    "status": g.status,
+                    "stake": g.stake,
+                    "commission_rate": g.commission_rate,
+                })
+            })
+            .collect();
+
+        // Peer count
+        let peer_count = self.runtime.get_connected_peers().await
+            .map(|p| p.len())
+            .unwrap_or(0);
+
         let response = serde_json::json!({
-            "validators": validators,
-            "relays": [],
             "network_id": environment.to_string().to_ascii_lowercase(),
             "chain_height": blockchain.height,
-            "validator_count": validators.len(),
-            "local_spki_pin": local_spki,
+            "timestamp": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            "this_node": {
+                "did": node_did,
+                "role": node_role,
+                "spki_pin": local_spki,
+            },
+            "topology": {
+                "validators": validators,
+                "gateways": gateways,
+                "total_validators": validators.len(),
+                "total_gateways": gateways.len(),
+                "connected_peers": peer_count,
+            },
         });
 
         Ok(ZhtpResponse::json(&response, None)?)
+    }
+
+    async fn handle_topology_ui(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        const TOPOLOGY_HTML: &str = include_str!("../../../ui/topology.html");
+        Ok(ZhtpResponse::html(TOPOLOGY_HTML.to_string(), None))
+    }
+
+    fn compute_local_spki() -> String {
+        let cert_paths = [
+            "./data/tls/server.crt",
+            "/opt/zhtp/data/tls/server.crt",
+            "/opt/zhtp/.zhtp/tls/server.crt",
+        ];
+        for path in &cert_paths {
+            if let Ok(pem) = std::fs::read(path) {
+                if let Some(Ok(cert_der)) = rustls_pemfile::certs(&mut pem.as_slice()).next() {
+                    if let Ok(hash) = lib_network::protocols::quic_mesh::QuicMeshProtocol::compute_spki_sha256(cert_der.as_ref()) {
+                        return hex::encode(hash);
+                    }
+                }
+            }
+        }
+        String::new()
     }
 
     async fn handle_get_network_status(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {

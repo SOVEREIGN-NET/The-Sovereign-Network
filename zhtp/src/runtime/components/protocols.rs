@@ -448,22 +448,21 @@ impl Component for ProtocolsComponent {
 
             // Wire dynamic endpoint provider: reads active validator IPs from on-chain registry.
             // Health filtering: only returns validators with status == "active".
-            // Bootstrap peer IPs as fallback (config has raw IPs, registry has hostnames).
+            //
+            // validator_ip::update_validator_ips() resolves hostnames to IPs at startup
+            // and periodically thereafter, so network_address should always be a raw IP
+            // by the time this closure runs. The bootstrap_peers fallback is kept for the
+            // brief window between ZDNS starting and the first STUN/DNS resolution completing.
             let bootstrap_ips = self.zdns_bootstrap_ips.clone();
             if let Ok(blockchain_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
                 let bc_ref = blockchain_arc.clone();
                 let fallback_ips = bootstrap_ips.clone();
                 transport_config.network_endpoint_provider = Some(std::sync::Arc::new(move || {
-                    // Synchronous closure called from DNS handler thread — MUST NOT block
-                    // on the async RwLock (would deadlock the tokio runtime). try_read()
-                    // returns immediately; on contention, fallback IPs → client retries
-                    // on next query (typically <1s). DNS TTL caching prevents stale results.
                     let bc = match bc_ref.try_read() {
                         Ok(bc) => bc,
                         Err(_) => return fallback_ips.clone(),
                     };
-                    // Try validator registry first (has health status).
-                    let mut ips: Vec<std::net::Ipv4Addr> = bc.validator_registry
+                    let ips: Vec<std::net::Ipv4Addr> = bc.validator_registry
                         .values()
                         .filter(|v| v.status == "active")
                         .filter_map(|v| {
@@ -471,14 +470,31 @@ impl Component for ProtocolsComponent {
                             host.parse::<std::net::Ipv4Addr>().ok()
                         })
                         .collect();
-                    // Fallback: use bootstrap config IPs if registry has no parseable IPs
-                    // (registry stores hostnames like g1.thesovereignnetwork.org, not raw IPs).
                     if ips.is_empty() {
-                        ips = fallback_ips.clone();
+                        fallback_ips.clone()
+                    } else {
+                        ips
                     }
-                    ips
                 }));
                 info!(" ✓ ZDNS network endpoint provider wired to validator registry");
+
+                // Gateway endpoint provider: reads gateway IPs from gateway_registry.
+                let bc_ref2 = blockchain_arc.clone();
+                transport_config.gateway_endpoint_provider = Some(std::sync::Arc::new(move || {
+                    let bc = match bc_ref2.try_read() {
+                        Ok(bc) => bc,
+                        Err(_) => return vec![],
+                    };
+                    bc.gateway_registry
+                        .values()
+                        .filter(|g| g.status == "active")
+                        .filter_map(|g| {
+                            let host = g.endpoints.split(':').next()?;
+                            host.parse::<std::net::Ipv4Addr>().ok()
+                        })
+                        .collect()
+                }));
+                info!(" ✓ ZDNS gateway endpoint provider wired to gateway registry");
             }
             let transport_server = Arc::new(ZdnsTransportServer::new(
                 zdns_resolver.clone(),

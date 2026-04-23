@@ -359,21 +359,33 @@ button,input{font:inherit}
 
 @media (max-width:1080px){
   .hero,.setup-grid,.dashboard-grid{grid-template-columns:1fr}
-  .hero-copy h1{max-width:none}
+  .hero-copy h1{max-width:none;font-size:clamp(2rem,5vw,5.2rem)}
 }
 @media (max-width:760px){
-  .shell{padding:12px}
-  .frame{min-height:calc(100vh - 24px);border-radius:22px}
-  .topbar,.main,.hero-copy,.hero-meta,.mission-card,.panel,.seed-panel,.metric,.progress-card,.did-card,.status-card,.logline{padding-left:18px;padding-right:18px}
+  .shell{padding:8px}
+  .frame{min-height:calc(100vh - 16px);border-radius:16px}
+  .topbar,.main,.hero-copy,.hero-meta,.mission-card,.panel,.seed-panel,.metric,.progress-card,.did-card,.status-card,.logline{padding-left:14px;padding-right:14px}
+  .main{padding:14px}
   .metrics{grid-template-columns:1fr}
   .metric.emphasis{grid-column:auto}
+  .metric-value{font-size:clamp(1.4rem,5vw,2.6rem)}
   .seed-grid,.status-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
   .status-rail{margin-left:0}
+  .did-value{font-size:clamp(10px,2.5vw,14px);word-break:break-all}
+  .did-actions{flex-direction:column}
+  .did-actions .btn{width:100%;text-align:center}
+  .brand-copy strong{font-size:clamp(14px,3.5vw,20px)}
+  .status-meta .value{font-size:clamp(12px,3vw,15px)}
+  #view-topology .nd{grid-template-columns:1fr 1fr !important}
+  #topo-cards{grid-template-columns:1fr !important}
 }
 @media (max-width:520px){
   .seed-grid,.status-grid,.hero-meta{grid-template-columns:1fr}
-  .topbar{align-items:flex-start;flex-direction:column}
+  .topbar{align-items:flex-start;flex-direction:column;gap:12px}
   .status-rail{width:100%;justify-content:flex-start}
+  .hero-copy h1{font-size:clamp(1.6rem,7vw,3rem)}
+  .hero-copy p{font-size:1rem}
+  .status-badge{font-size:10px;padding:8px 10px}
 }
 </style>
 </head>
@@ -578,6 +590,8 @@ button,input{font:inherit}
             <div class="did-actions">
               <button class="btn btn-secondary" type="button" id="copy-did-btn" onclick="copyDid()">Copy DID</button>
               <button class="btn btn-secondary" type="button" id="force-sync-btn" onclick="forceSync()">Force Sync</button>
+              <button class="btn btn-secondary" type="button" onclick="refreshStatus(true)" style="font-size:12px">Refresh</button>
+              <button class="btn btn-secondary" type="button" onclick="setView('topology')" style="background:rgba(15,118,110,.1);border-color:var(--signal);color:var(--signal)">Network Topology</button>
               <button class="btn btn-secondary" type="button" id="reset-identity-btn" onclick="resetLocalIdentity()">Use Different Identity</button>
               <button class="btn btn-danger" type="button" id="disconnect-btn" onclick="openStopDialog()">Disconnect / Stop Node</button>
             </div>
@@ -640,6 +654,30 @@ button,input{font:inherit}
           </article>
         </aside>
       </section>
+      <section id="view-topology" class="hidden" style="padding:0">
+        <div style="padding:14px clamp(14px,3vw,28px) 12px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--line);flex-wrap:wrap">
+          <button class="btn btn-secondary" type="button" onclick="setView('dashboard')" style="font-size:12px;padding:6px 14px">Back</button>
+          <div style="min-width:0">
+            <div class="panel-label">Network</div>
+            <div style="font-family:var(--display);font-size:clamp(14px,3vw,18px);text-transform:uppercase;letter-spacing:.06em">Topology Map</div>
+          </div>
+          <div style="margin-left:auto;display:flex;gap:clamp(8px,2vw,16px);font-family:var(--mono);font-size:clamp(9px,1.8vw,11px);color:var(--muted);flex-wrap:wrap">
+            <span>V <strong id="topo-v-count" style="color:var(--signal)">0</strong></span>
+            <span>G <strong id="topo-g-count" style="color:var(--gold)">0</strong></span>
+            <span>H <strong id="topo-height" style="color:var(--ink)">0</strong></span>
+            <span id="topo-update" style="font-size:clamp(8px,1.5vw,10px)">-</span>
+          </div>
+        </div>
+
+        <div style="padding:clamp(14px,3vw,28px)">
+          <div style="border:1px solid var(--line);border-radius:16px;background:var(--panel);padding:clamp(12px,2vw,24px);margin-bottom:clamp(14px,3vw,24px);min-height:200px;overflow:hidden">
+            <svg id="topo-svg" style="width:100%;height:clamp(180px,30vw,240px)"></svg>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:clamp(10px,2vw,16px)" id="topo-cards"></div>
+        </div>
+      </section>
+
     </main>
   </div>
 </div>
@@ -671,7 +709,7 @@ function $(id) {
 
 function cacheElements() {
   [
-    "view-setup","view-dashboard","setup-choice","setup-restore","setup-create",
+    "view-setup","view-dashboard","view-topology","setup-choice","setup-restore","setup-create",
     "restore-error","create-error","restore-btn","create-btn","node-name","seed-grid",
     "nav-dot","nav-state","nav-network","nav-height","hero-identity","hero-wallet",
     "metric-height","metric-balance","metric-balance-atoms","metric-validators","metric-identities",
@@ -689,10 +727,11 @@ function formatNumber(value) {
 }
 
 function setView(mode) {
-  const showSetup = mode === "setup";
-  els["view-setup"].classList.toggle("hidden", !showSetup);
-  els["view-dashboard"].classList.toggle("hidden", showSetup);
-  if (!showSetup) startPolling();
+  els["view-setup"].classList.toggle("hidden", mode !== "setup");
+  els["view-dashboard"].classList.toggle("hidden", mode !== "dashboard");
+  els["view-topology"].classList.toggle("hidden", mode !== "topology");
+  if (mode === "dashboard") startPolling();
+  if (mode === "topology") fetchTopology();
 }
 
 function showRestore() {
@@ -898,28 +937,32 @@ async function doCreate() {
 
 function mapState(status) {
   const state = status && status.state ? status.state : "connecting";
+  const behind = Number(status && status.seconds_behind || 0);
+  // Sync progress: <10s behind = 100%, 600s+ behind = 50%, linear in between
+  const syncPct = behind < 10 ? 100 : Math.max(50, Math.round(100 - (behind / 12)));
+
   if (state === "ready") {
     return {
       key: "ready",
       label: "Connected",
-      detail: "Node is online and serving current telemetry.",
-      progress: 100
+      detail: "Node is online and synced. " + (behind > 0 ? behind + "s behind tip." : "At chain tip."),
+      progress: syncPct
     };
   }
   if (state === "identity_not_registered") {
     return {
       key: "unregistered",
       label: "Unregistered",
-      detail: "Identity exists locally but is not registered on-chain.",
-      progress: 82
+      detail: "Identity exists locally but is not registered on-chain. Chain synced, " + behind + "s behind.",
+      progress: syncPct
     };
   }
   if (state === "connecting") {
     return {
       key: "syncing",
       label: "Syncing",
-      detail: "Bridge is attempting to connect to the node and fetch current status.",
-      progress: status && Number(status.chain_height) > 0 ? 68 : 34
+      detail: "Connecting to node. " + (status && Number(status.chain_height) > 0 ? "Height: " + Number(status.chain_height).toLocaleString() : "Waiting for peer data."),
+      progress: status && Number(status.chain_height) > 0 ? Math.min(90, syncPct) : 15
     };
   }
   if (state === "setup_required") {
@@ -1017,7 +1060,7 @@ async function refreshStatus(force) {
         setView("setup");
         backToChoices();
       }
-    } else if (els["view-dashboard"].classList.contains("hidden")) {
+    } else if (els["view-setup"] && !els["view-setup"].classList.contains("hidden")) {
       setView("dashboard");
     }
   } catch (_error) {
@@ -1191,9 +1234,16 @@ async function disconnectNode() {
 async function bootstrap() {
   cacheElements();
   buildSeedGrid();
+
+  // Allow direct navigation via hash: #topology
+  if (window.location.hash === "#topology") {
+    setView("topology");
+    return;
+  }
+
   try {
     const data = await requestJson("/api/status");
-    if (data.state === "setup_required") {
+    if (data.state === "setup_required" && !data.did) {
       applyNavStatus(mapState(data), data);
       if (data.local_identity_error) {
         enterRecoveryMode(data.local_identity_error + " Restore from seed or create a new identity.");
@@ -1202,14 +1252,188 @@ async function bootstrap() {
       }
       return;
     }
+    // Identity exists — show dashboard even if node API is partially unavailable
     setView("dashboard");
     applyDashboardStatus(data);
   } catch (_error) {
-    setView("setup");
+    // Network error — still try dashboard if we can reach directory
+    try {
+      await fetch(API + "/api/v1/network/directory", { signal: AbortSignal.timeout(3000) });
+      setView("dashboard");
+    } catch (_) {
+      setView("setup");
+    }
   }
 }
 
 bootstrap();
+
+// === Topology View ===
+let topoTimer = null;
+let topoData = null;
+
+async function fetchTopology() {
+  try {
+    const r = await fetch(API + "/api/v1/network/directory");
+    if (r.ok) topoData = await r.json();
+  } catch (_) {}
+  if (topoData) renderTopology(topoData);
+  clearInterval(topoTimer);
+  topoTimer = setInterval(async function() {
+    try {
+      const r = await fetch(API + "/api/v1/network/directory");
+      if (r.ok) { topoData = await r.json(); renderTopology(topoData); }
+    } catch (_) {}
+  }, 8000);
+}
+
+function renderTopology(d) {
+  var t = d.topology || {};
+  var vs = t.validators || [];
+  var gs = t.gateways || [];
+  $("topo-v-count").textContent = vs.length;
+  $("topo-g-count").textContent = gs.length;
+  $("topo-height").textContent = formatNumber(d.chain_height);
+  $("topo-update").textContent = new Date().toLocaleTimeString();
+
+  // SVG map
+  drawTopoSVG(vs, gs);
+
+  // Cards
+  var cards = $("topo-cards");
+  while (cards.firstChild) cards.removeChild(cards.firstChild);
+  vs.forEach(function(v, i) { cards.appendChild(topoCard(v, "validator", i)); });
+  gs.forEach(function(g, i) { cards.appendChild(topoCard(g, "gateway", i)); });
+}
+
+function topoCard(n, type, idx) {
+  var c = document.createElement("article");
+  c.className = "metric";
+  c.style.cssText = "padding:20px;border-left:3px solid " + (type === "validator" ? "var(--signal)" : "var(--gold)");
+
+  var role = document.createElement("div");
+  role.className = "panel-label";
+  role.textContent = type.toUpperCase() + " " + (idx + 1);
+  role.style.color = type === "validator" ? "var(--signal)" : "var(--gold)";
+  c.appendChild(role);
+
+  var ip = document.createElement("div");
+  ip.style.cssText = "font-family:var(--display);font-size:22px;margin:6px 0 4px;letter-spacing:.02em";
+  ip.textContent = n.ip || "-";
+  c.appendChild(ip);
+
+  var did = document.createElement("div");
+  did.style.cssText = "font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:12px;word-break:break-all";
+  did.textContent = (n.did || "").length > 30 ? n.did.substring(0, 20) + "..." + n.did.slice(-8) : (n.did || "-");
+  c.appendChild(did);
+
+  var grid = document.createElement("div");
+  grid.style.cssText = "display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px";
+
+  function addItem(label, value) {
+    var d = document.createElement("div");
+    var l = document.createElement("div");
+    l.className = "meta-key";
+    l.textContent = label;
+    var v = document.createElement("div");
+    v.style.cssText = "font-family:var(--mono);font-size:12px;font-weight:500";
+    v.textContent = value;
+    d.appendChild(l);
+    d.appendChild(v);
+    grid.appendChild(d);
+  }
+
+  addItem("Status", n.status || "-");
+  addItem("QUIC", ":" + (n.quic_port || 9334));
+  if (type === "validator") {
+    addItem("Mesh", ":" + (n.mesh_port || 9333));
+    addItem("Blocks", (n.blocks_validated || 0).toLocaleString());
+    addItem("Commission", (n.commission_rate || 0) + "%");
+    addItem("Admission", (n.admission || "-").replace(/_/g, " "));
+  } else {
+    addItem("ZDNS", ":" + (n.zdns_port || 53));
+    addItem("Commission", (n.commission_rate || 0) + "%");
+    addItem("Endpoint", n.endpoint || "-");
+  }
+  c.appendChild(grid);
+  return c;
+}
+
+function drawTopoSVG(vs, gs) {
+  var svg = $("topo-svg");
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  if (vs.length === 0 && gs.length === 0) return;
+
+  var w = svg.clientWidth || 800;
+  var h = 240;
+  svg.setAttribute("viewBox", "0 0 " + w + " " + h);
+  var ns = "http://www.w3.org/2000/svg";
+  var cx = w / 2, cy = h / 2;
+  var rad = Math.min(w * 0.33, 180);
+  var pos = [];
+
+  vs.forEach(function(v, i) {
+    var a = Math.PI + (Math.PI * (i + 0.5)) / vs.length;
+    pos.push({ x: cx + rad * Math.cos(a), y: cy - 15 + rad * 0.5 * Math.sin(a), t: "v", n: v, i: i });
+  });
+  gs.forEach(function(g, i) {
+    pos.push({ x: cx + (i - (gs.length - 1) / 2) * 120, y: cy + 75, t: "g", n: g, i: i });
+  });
+
+  // Validator mesh links
+  for (var i = 0; i < vs.length; i++) {
+    for (var j = i + 1; j < vs.length; j++) {
+      var ln = document.createElementNS(ns, "line");
+      ln.setAttribute("x1", pos[i].x); ln.setAttribute("y1", pos[i].y);
+      ln.setAttribute("x2", pos[j].x); ln.setAttribute("y2", pos[j].y);
+      ln.setAttribute("stroke", "rgba(15,118,110,.15)"); ln.setAttribute("stroke-width", "1");
+      ln.setAttribute("stroke-dasharray", "4 4");
+      svg.appendChild(ln);
+    }
+  }
+  // Gateway-validator links
+  for (var gi = vs.length; gi < pos.length; gi++) {
+    for (var vi = 0; vi < vs.length; vi++) {
+      var ln2 = document.createElementNS(ns, "line");
+      ln2.setAttribute("x1", pos[gi].x); ln2.setAttribute("y1", pos[gi].y);
+      ln2.setAttribute("x2", pos[vi].x); ln2.setAttribute("y2", pos[vi].y);
+      ln2.setAttribute("stroke", "rgba(159,106,31,.12)"); ln2.setAttribute("stroke-width", "1");
+      ln2.setAttribute("stroke-dasharray", "3 3");
+      svg.appendChild(ln2);
+    }
+  }
+  // Nodes
+  pos.forEach(function(p) {
+    var color = p.t === "v" ? "rgba(15,118,110," : "rgba(159,106,31,";
+    var r = p.t === "v" ? 20 : 16;
+
+    var outer = document.createElementNS(ns, "circle");
+    outer.setAttribute("cx", p.x); outer.setAttribute("cy", p.y); outer.setAttribute("r", r + 5);
+    outer.setAttribute("fill", color + ".08)");
+    svg.appendChild(outer);
+
+    var inner = document.createElementNS(ns, "circle");
+    inner.setAttribute("cx", p.x); inner.setAttribute("cy", p.y); inner.setAttribute("r", r);
+    inner.setAttribute("fill", color + ".14)");
+    inner.setAttribute("stroke", color + ".6)"); inner.setAttribute("stroke-width", "1.5");
+    svg.appendChild(inner);
+
+    var label = document.createElementNS(ns, "text");
+    label.setAttribute("x", p.x); label.setAttribute("y", p.y + 4);
+    label.setAttribute("text-anchor", "middle");
+    label.setAttribute("fill", color + "1)"); label.setAttribute("font-family", "IBM Plex Mono");
+    label.setAttribute("font-size", "10"); label.setAttribute("font-weight", "600");
+    label.textContent = (p.t === "v" ? "V" : "G") + (p.i + 1);
+    svg.appendChild(label);
+
+    var iplabel = document.createElementNS(ns, "text");
+    iplabel.setAttribute("x", p.x); iplabel.setAttribute("y", p.y + r + 14);
+    iplabel.setAttribute("text-anchor", "middle"); iplabel.setAttribute("fill", "var(--muted)");
+    iplabel.setAttribute("font-family", "IBM Plex Mono"); iplabel.setAttribute("font-size", "9");
+    iplabel.textContent = p.n.ip || "";
+    svg.appendChild(iplabel);
+  });
+}
 </script>
 </body>
 </html>

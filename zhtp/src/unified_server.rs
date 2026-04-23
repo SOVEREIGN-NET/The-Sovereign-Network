@@ -1875,6 +1875,7 @@ impl ZhtpUnifiedServer {
         let network_handler: Arc<dyn ZhtpRequestHandler> =
             Arc::new(NetworkHandler::new(runtime.clone()));
         router_write.register_handler("/api/v1/network".to_string(), network_handler.clone());
+        router_write.register_handler("/api/v1/node".to_string(), network_handler.clone());
         router_write.register_handler(
             "/api/v1/blockchain/network".to_string(),
             network_handler.clone(),

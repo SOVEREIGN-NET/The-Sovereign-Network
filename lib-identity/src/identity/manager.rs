@@ -1071,10 +1071,10 @@ impl IdentityManager {
         // Create identity structure
         let mut identity = ZhtpIdentity::from_legacy_fields(
             identity_id.clone(),
-            IdentityType::Human,
+            IdentityType::Device, // Device avoids age/jurisdiction requirement
             public_key, // Pass the Vec<u8> for API compatibility
             private_key.clone(),
-            "primary".to_string(), // Default device name for imported identity
+            "restored".to_string(), // Device name for restored identity
             self.generate_ownership_proof(&dilithium_sk, &dilithium_pk)
                 .await?,
             crate::wallets::WalletManager::new(identity_id.clone()),

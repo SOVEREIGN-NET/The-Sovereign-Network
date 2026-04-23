@@ -66,7 +66,7 @@ impl ConsensusMessageBroadcaster for ConsensusMeshBroadcaster {
         let quic_protocol = match quic_protocol_guard.as_ref() {
             Some(qp) => qp.clone(),
             None => {
-                debug!("QUIC protocol not available for consensus broadcast");
+                warn!("QUIC protocol not available for consensus broadcast — messages cannot reach other validators");
                 return Ok(()); // Best-effort, don't fail
             }
         };
@@ -80,9 +80,9 @@ impl ConsensusMessageBroadcaster for ConsensusMeshBroadcaster {
             .resolve_validator_peer_node_ids(validator_ids, target_height)
             .await;
         if target_peer_node_ids.is_empty() {
-            debug!(
-                "No validator targets resolved for consensus height {}, skipping broadcast",
-                target_height
+            warn!(
+                "No validator targets resolved for consensus height {} ({} validator_ids provided), skipping broadcast",
+                target_height, validator_ids.len()
             );
             return Ok(());
         }
@@ -101,7 +101,14 @@ impl ConsensusMessageBroadcaster for ConsensusMeshBroadcaster {
                 "No connected authenticated validator peers for consensus height {}",
                 target_height
             );
+            // Trigger reconnect to missing bootstrap peers
+            quic_protocol.try_reconnect_to_bootstrap().await;
             return Ok(());
+        }
+
+        // If we have some but not all validators, try reconnecting missing ones
+        if recipients.len() < target_peer_node_ids.len() {
+            quic_protocol.try_reconnect_to_bootstrap().await;
         }
 
         let mut delivered = 0usize;
@@ -2359,6 +2366,35 @@ impl Component for ConsensusComponent {
                 Err(e) => error!("Consensus loop exited with error: {}", e),
             }
         });
+
+        // Spawn periodic mesh reconnect: every 15s, try to connect to any
+        // bootstrap peers we're not yet connected to. This is needed because
+        // the initial mesh connections may fail when validators restart
+        // simultaneously and the reconnect-on-broadcast path only fires
+        // when there are zero peers.
+        if let Ok(mesh_router) = crate::runtime::mesh_router_provider::get_global_mesh_router().await {
+            let quic_guard = mesh_router.quic_protocol.read().await;
+            if let Some(quic) = quic_guard.as_ref().cloned() {
+                drop(quic_guard);
+                tokio::spawn(async move {
+                    let mut interval = tokio::time::interval(Duration::from_secs(15));
+                    interval.tick().await; // skip first
+                    loop {
+                        interval.tick().await;
+                        let bootstrap_count = quic.verifier().get_bootstrap_addrs().len();
+                        let connected = quic.peer_count();
+                        if connected < bootstrap_count {
+                            tracing::debug!(
+                                "Mesh reconnect: {}/{} peers connected, attempting reconnect",
+                                connected, bootstrap_count
+                            );
+                            quic.try_reconnect_to_bootstrap().await;
+                        }
+                    }
+                });
+                info!("🔄 Periodic mesh reconnect task started (every 15s)");
+            }
+        }
 
         // Spawn periodic validator re-sync background task.
         // Every 10 s, refresh ValidatorManager from blockchain.validator_registry so
