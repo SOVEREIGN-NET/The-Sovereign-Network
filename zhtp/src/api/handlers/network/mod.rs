@@ -1077,7 +1077,7 @@ impl NetworkHandler {
             })
             .collect();
 
-        // Build gateway entries from gateway registry
+        // Gateway entries from on-chain registry (populated via GatewayRegistration transactions)
         let gateways: Vec<serde_json::Value> = blockchain
             .gateway_registry
             .values()

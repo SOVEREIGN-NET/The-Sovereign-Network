@@ -3218,53 +3218,163 @@ impl RuntimeOrchestrator {
         }
 
         // ====================================================================
-        // Gateway auto-registration: if this node has ZDNS enabled, register
-        // it in the gateway_registry so it appears in the topology API and
-        // gateways.sov DNS queries.
+        // Gateway on-chain registration: if this node has ZDNS enabled,
+        // submit a GatewayRegistration transaction so all nodes learn about
+        // this gateway via block processing.
         // ====================================================================
         if self.config.zdns_config.enabled {
             if let Ok(blockchain_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
                 let wallet_guard = self.user_wallet.read().await;
                 if let Some(wallet) = wallet_guard.as_ref() {
-                    // Use user_identity (registered on-chain in Phase 6), not node_identity
                     let did = format!("did:zhtp:{}", hex::encode(&wallet.user_identity.id.0));
-                    let gateway_key: [u8; 2592] = wallet.user_identity
-                        .public_key.as_bytes()
+                    let gateway_key_bytes = wallet.user_identity.public_key.as_bytes();
+                    let gateway_key: [u8; 2592] = gateway_key_bytes
                         .try_into()
                         .unwrap_or([0u8; 2592]);
-                    // Determine endpoint IP: use STUN result or config bootstrap_peers
+
+                    // Determine public endpoint
                     let endpoint = crate::runtime::validator_ip::discover_public_ip().await
                         .map(|ip| format!("{}:{}", ip, self.config.protocols_config.api_port))
                         .unwrap_or_else(|| {
-                            // Fallback: use first bootstrap_peer that isn't this node
                             self.config.network_config.bootstrap_peers.first()
                                 .cloned()
                                 .unwrap_or_default()
                         });
 
-                    let mut blockchain = blockchain_arc.write().await;
-                    if !blockchain.gateway_exists(&did) {
-                        // Insert directly into gateway_registry — skip register_gateway()
-                        // which creates a redundant identity transaction that fails since
-                        // the identity already exists from Phase 6.
-                        let gateway_info = lib_blockchain::blockchain::GatewayInfo {
+                    let already_registered = {
+                        let bc = blockchain_arc.read().await;
+                        bc.gateway_exists(&did)
+                    };
+
+                    if !already_registered {
+                        let timestamp = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+
+                        let gateway_data = lib_blockchain::transaction::GatewayTransactionData {
                             identity_id: did.clone(),
-                            stake: 10_000_000_000,
-                            gateway_key,
+                            stake: 10_000_000_000, // 10,000 SOV
+                            gateway_key: gateway_key.to_vec(),
                             endpoints: endpoint.clone(),
                             commission_rate: 5,
-                            status: "active".to_string(),
-                            registered_at: blockchain.height,
-                            last_activity: blockchain.height,
-                            requests_forwarded: 0,
-                            slash_count: 0,
-                            accumulated_revenue: 0,
-                            admission_source: "bootstrap_genesis".to_string(),
+                            operation: lib_blockchain::transaction::GatewayOperation::Register,
+                            timestamp,
                         };
-                        blockchain.gateway_registry.insert(did.clone(), gateway_info);
-                        info!("🌐 Gateway auto-registered: {} @ {}", &did[..30], endpoint);
+
+                        // Build signature from user's quantum keypair
+                        let user_pk = &wallet.user_private_data.quantum_keypair;
+                        let dilithium_sk: [u8; 4896] = {
+                            let sk = &user_pk.private_key;
+                            let mut arr = [0u8; 4896];
+                            let len = sk.len().min(4896);
+                            arr[..len].copy_from_slice(&sk[..len]);
+                            arr
+                        };
+                        let pub_key = lib_crypto::PublicKey::new(gateway_key);
+                        let priv_key = lib_crypto::PrivateKey {
+                            dilithium_sk,
+                            dilithium_pk: gateway_key,
+                            kyber_sk: [0u8; 3168],
+                            master_seed: [0u8; 64],
+                        };
+                        let keypair = lib_crypto::KeyPair {
+                            public_key: pub_key.clone(),
+                            private_key: priv_key,
+                        };
+
+                        // Create temp tx to compute signing_hash, then sign it
+                        let memo = format!("Gateway registration: {} @ {}", &did[..30], endpoint).into_bytes();
+                        let empty_sig = lib_crypto::Signature {
+                            signature: vec![],
+                            public_key: lib_crypto::PublicKey::new([0u8; 2592]),
+                            algorithm: lib_crypto::SignatureAlgorithm::DEFAULT,
+                            timestamp,
+                        };
+                        let temp_tx = lib_blockchain::transaction::Transaction::new_gateway_registration(
+                            gateway_data.clone(),
+                            vec![],
+                            empty_sig,
+                            memo.clone(),
+                        );
+                        let signing_hash = temp_tx.signing_hash();
+
+                        match lib_crypto::sign_message(&keypair, signing_hash.as_bytes()) {
+                            Ok(sig) => {
+                                let real_sig = lib_crypto::Signature {
+                                    signature: sig.signature,
+                                    public_key: pub_key,
+                                    algorithm: lib_crypto::SignatureAlgorithm::DEFAULT,
+                                    timestamp,
+                                };
+                                let transaction = lib_blockchain::transaction::Transaction::new_gateway_registration(
+                                    gateway_data,
+                                    vec![],
+                                    real_sig,
+                                    memo,
+                                );
+
+                                // Submit to local mempool first
+                                {
+                                    let mut blockchain = blockchain_arc.write().await;
+                                    if let Err(e) = blockchain.add_pending_transaction(transaction.clone()) {
+                                        warn!("⚠️ Gateway registration tx local mempool: {}", e);
+                                    }
+                                }
+
+                                // Submit directly to a validator via QUIC broadcast endpoint.
+                                // Observers may not have mesh broadcast wired to validators.
+                                // Use bincode with fixint encoding (matches decode_client_transaction)
+                                use bincode::Options;
+                                let tx_bytes = bincode::DefaultOptions::new()
+                                    .with_fixint_encoding()
+                                    .allow_trailing_bytes()
+                                    .serialize(&transaction)
+                                    .unwrap_or_default();
+                                let tx_hex = hex::encode(&tx_bytes);
+                                let submit_body = serde_json::json!({
+                                    "transaction_data": tx_hex,
+                                });
+                                let own_ip = endpoint.split(':').next().unwrap_or("");
+                                if let Some(validator_ep) = self.config.network_config.bootstrap_peers
+                                    .iter()
+                                    .find(|p| {
+                                        let peer_ip = p.split(':').next().unwrap_or("");
+                                        peer_ip != own_ip && !peer_ip.is_empty()
+                                    })
+                                {
+                                    let validator_ep = validator_ep.clone();
+                                    let wallet_guard2 = self.user_wallet.read().await;
+                                    if let Some(w) = wallet_guard2.as_ref() {
+                                        let trust = lib_network::web4::trust::TrustConfig::bootstrap();
+                                        let cfg = lib_network::client::ZhtpClientConfig { allow_bootstrap: true };
+                                        match lib_network::client::ZhtpClient::new_with_config(
+                                            w.node_identity.clone(), trust, cfg
+                                        ).await {
+                                            Ok(mut client) => {
+                                                match client.connect(&validator_ep).await {
+                                                    Ok(()) => {
+                                                        match client.post_json("/api/v1/blockchain/transaction/broadcast", &submit_body).await {
+                                                            Ok(r) => {
+                                                                let body_str = String::from_utf8_lossy(&r.body);
+                                                                info!("🌐 Gateway tx broadcast to validator {}: status {} body={}", validator_ep, r.status.code(), &body_str[..body_str.len().min(200)]);
+                                                            }
+                                                            Err(e) => warn!("⚠️ Gateway tx broadcast to {}: {}", validator_ep, e),
+                                                        }
+                                                    }
+                                                    Err(e) => warn!("⚠️ Connect to validator {}: {}", validator_ep, e),
+                                                }
+                                            }
+                                            Err(e) => warn!("⚠️ QUIC client for gateway tx: {}", e),
+                                        }
+                                    }
+                                }
+                                info!("🌐 Gateway registration tx submitted: {} @ {}", &did[..30], endpoint);
+                            }
+                            Err(e) => warn!("⚠️ Failed to sign gateway registration: {}", e),
+                        }
                     } else {
-                        info!("🌐 Gateway already registered: {}", &did[..30]);
+                        info!("🌐 Gateway already registered on-chain: {}", &did[..30]);
                     }
                 }
             }
