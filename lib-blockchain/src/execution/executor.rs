@@ -2828,6 +2828,11 @@ impl BlockExecutor {
             // called from finish_block_processing().
             TransactionType::RecordOnRampTrade => Ok(TxOutcome::LegacySystem),
 
+            // Gateway lifecycle — state applied by process_gateway_transactions()
+            TransactionType::GatewayRegistration
+            | TransactionType::GatewayUpdate
+            | TransactionType::GatewayUnregister => Ok(TxOutcome::LegacySystem),
+
             TransactionType::TreasuryAllocation => {
                 self.apply_treasury_allocation(mutator, tx)?;
                 Ok(TxOutcome::TreasuryAllocation)
