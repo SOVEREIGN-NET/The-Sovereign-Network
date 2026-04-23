@@ -3212,6 +3212,7 @@ impl RuntimeOrchestrator {
         // ====================================================================
         // Validator IP self-registration: discover public IP via STUN and
         // update validator registry so ZDNS returns real IPs, not hostnames.
+        // Runs in a background task to avoid blocking startup on STUN timeouts.
         // ====================================================================
         {
             let own_did = {
@@ -3220,13 +3221,7 @@ impl RuntimeOrchestrator {
                     format!("did:zhtp:{}", hex::encode(&w.node_identity.id.0))
                 })
             };
-            let stun_ip = crate::runtime::validator_ip::discover_public_ip().await;
-            crate::runtime::validator_ip::update_validator_ips(
-                own_did.as_deref(),
-                stun_ip,
-            )
-            .await;
-            // Re-check every 5 minutes in the background
+            // Initial discovery + periodic re-check, all in background
             crate::runtime::validator_ip::spawn_periodic_ip_update(own_did, 300);
         }
 

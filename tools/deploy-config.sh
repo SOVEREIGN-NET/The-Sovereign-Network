@@ -28,8 +28,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHARED_CONFIG="$SCRIPT_DIR/node-configs/shared.toml"
 LOCAL_DIR="$SCRIPT_DIR/node-configs"
 
-ALL_NODES=(zhtp-g1 zhtp-g2 zhtp-g3 zhtp-g4 zhtp-g5 zhtp-gateway)
-SUDO_NODES=(zhtp-g4 zhtp-g5)  # nodes where deploy needs sudo
+ALL_NODES=(zhtp-g1 zhtp-g2 zhtp-g3 zhtp-g4 zhtp-g5 zhtp-gateway zhtp-gateway-2)
+SUDO_NODES=(zhtp-g4 zhtp-g5 zhtp-gateway-2)  # nodes where deploy needs sudo
 
 DO_RESTART=false
 if [[ "${1:-}" == "--restart" ]]; then
@@ -37,7 +37,11 @@ if [[ "${1:-}" == "--restart" ]]; then
     shift
 fi
 
-NODES=("${@:-${ALL_NODES[@]}}")
+if [[ $# -gt 0 ]]; then
+    NODES=("$@")
+else
+    NODES=("${ALL_NODES[@]}")
+fi
 
 if [[ ! -f "$SHARED_CONFIG" ]]; then
     echo "ERROR: $SHARED_CONFIG not found."

@@ -34,6 +34,11 @@ pub async fn discover_public_ip() -> Option<Ipv4Addr> {
 /// Update all validator registry entries that have hostname-based `network_address`
 /// by resolving them to IPs. Also update this node's own entry with STUN-discovered IP.
 ///
+/// NOTE: This mutates the local in-memory `validator_registry` only. The purpose is
+/// so that this node's ZDNS resolver returns raw IPs (not hostnames) in DNS responses.
+/// On-chain publication of endpoints is handled by `ValidatorUpdate` transactions
+/// separately; this is a local convenience for DNS serving.
+///
 /// Called once after startup completes and periodically thereafter.
 pub async fn update_validator_ips(own_did: Option<&str>, stun_ip: Option<Ipv4Addr>) {
     let blockchain_arc = match crate::runtime::blockchain_provider::get_global_blockchain().await {
@@ -66,15 +71,22 @@ pub async fn update_validator_ips(own_did: Option<&str>, stun_ip: Option<Ipv4Add
     }
 
     // 2. Resolve hostname-based entries for other validators.
-    //    This runs in a blocking task since DNS resolution is sync.
+    //    Resolution is performed asynchronously after collecting the entries.
     let entries_to_resolve: Vec<(String, String)> = blockchain
         .validator_registry
         .iter()
         .filter(|(did, _)| own_did.map_or(true, |own| *did != own))
         .filter(|(_, v)| {
-            // Only resolve entries that aren't already raw IPs
-            let host = v.network_address.split(':').next().unwrap_or("");
-            host.parse::<Ipv4Addr>().is_err() && !host.is_empty()
+            // Only resolve entries that aren't already raw IPs (v4 or v6).
+            let addr = &v.network_address;
+            // Handle bracketed IPv6 like [2001:db8::1]:9334
+            if addr.starts_with('[') {
+                return false; // already an IP
+            }
+            let host = addr.split(':').next().unwrap_or("");
+            host.parse::<Ipv4Addr>().is_err()
+                && host.parse::<std::net::Ipv6Addr>().is_err()
+                && !host.is_empty()
         })
         .map(|(did, v)| (did.clone(), v.network_address.clone()))
         .collect();
@@ -89,12 +101,14 @@ pub async fn update_validator_ips(own_did: Option<&str>, stun_ip: Option<Ipv4Add
             let mut blockchain = blockchain_arc.write().await;
             for (did, new_addr) in &resolved {
                 if let Some(validator) = blockchain.validator_registry.get_mut(did) {
-                    info!(
-                        "🌐 Resolved validator IP: {} → {}",
-                        validator.network_address, new_addr
-                    );
-                    validator.network_address = new_addr.clone();
-                    updated += 1;
+                    if validator.network_address != *new_addr {
+                        info!(
+                            "🌐 Resolved validator IP: {} → {}",
+                            validator.network_address, new_addr
+                        );
+                        validator.network_address = new_addr.clone();
+                        updated += 1;
+                    }
                 }
             }
         }
@@ -136,11 +150,14 @@ async fn resolve_hostnames(entries: Vec<(String, String)>) -> Vec<(String, Strin
 /// and updates the validator registry.
 pub fn spawn_periodic_ip_update(own_did: Option<String>, interval_secs: u64) {
     tokio::spawn(async move {
+        // Run immediately on startup (non-blocking — runs in this background task)
+        let stun_ip = discover_public_ip().await;
+        update_validator_ips(own_did.as_deref(), stun_ip).await;
+
+        // Then re-check periodically
         let mut interval =
             tokio::time::interval(tokio::time::Duration::from_secs(interval_secs));
-        // Skip the first tick (we already ran once at startup)
-        interval.tick().await;
-
+        interval.tick().await; // consume the first (immediate) tick
         loop {
             interval.tick().await;
             let stun_ip = discover_public_ip().await;
