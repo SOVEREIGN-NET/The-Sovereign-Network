@@ -937,28 +937,32 @@ async function doCreate() {
 
 function mapState(status) {
   const state = status && status.state ? status.state : "connecting";
+  const behind = Number(status && status.seconds_behind || 0);
+  // Sync progress: <10s behind = 100%, 600s+ behind = 50%, linear in between
+  const syncPct = behind < 10 ? 100 : Math.max(50, Math.round(100 - (behind / 12)));
+
   if (state === "ready") {
     return {
       key: "ready",
       label: "Connected",
-      detail: "Node is online and serving current telemetry.",
-      progress: 100
+      detail: "Node is online and synced. " + (behind > 0 ? behind + "s behind tip." : "At chain tip."),
+      progress: syncPct
     };
   }
   if (state === "identity_not_registered") {
     return {
       key: "unregistered",
       label: "Unregistered",
-      detail: "Identity exists locally but is not registered on-chain.",
-      progress: 82
+      detail: "Identity exists locally but is not registered on-chain. Chain synced, " + behind + "s behind.",
+      progress: syncPct
     };
   }
   if (state === "connecting") {
     return {
       key: "syncing",
       label: "Syncing",
-      detail: "Bridge is attempting to connect to the node and fetch current status.",
-      progress: status && Number(status.chain_height) > 0 ? 68 : 34
+      detail: "Connecting to node. " + (status && Number(status.chain_height) > 0 ? "Height: " + Number(status.chain_height).toLocaleString() : "Waiting for peer data."),
+      progress: status && Number(status.chain_height) > 0 ? Math.min(90, syncPct) : 15
     };
   }
   if (state === "setup_required") {

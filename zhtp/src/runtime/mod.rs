@@ -1572,11 +1572,19 @@ impl RuntimeOrchestrator {
         crate::runtime::blockchain_provider::set_global_blockchain(blockchain_arc.clone()).await?;
         info!("✓ Temporary blockchain initialized for sync reception");
 
-        // FIX: Store bootstrap peers in global provider so UnifiedServer can access them
-        let peers = network_info.bootstrap_peers.clone();
-        if !peers.is_empty() {
-            info!(" Bootstrap peers available for sync: {:?}", peers);
-            crate::runtime::bootstrap_peers_provider::set_bootstrap_peers(peers).await?;
+        // Store ALL bootstrap peers in global provider so UnifiedServer/QUIC mesh can access them.
+        // Use config peers as the base (always available), then merge in any discovery-found peers.
+        // This prevents the race condition where simultaneous restart leaves the QUIC mesh
+        // with only 1 peer (the one that happened to respond during the 30s discovery window).
+        let mut all_peers: Vec<String> = self.config.network_config.bootstrap_peers.clone();
+        for discovered in &network_info.bootstrap_peers {
+            if !all_peers.contains(discovered) {
+                all_peers.push(discovered.clone());
+            }
+        }
+        if !all_peers.is_empty() {
+            info!(" Bootstrap peers for mesh (config+discovery): {} peer(s)", all_peers.len());
+            crate::runtime::bootstrap_peers_provider::set_bootstrap_peers(all_peers).await?;
         }
 
         // Store bootstrap peer SPKI pins in global provider (Issue #922)
@@ -4858,8 +4866,10 @@ impl RuntimeOrchestrator {
         &self,
         runtime_arc: Arc<RuntimeOrchestrator>,
     ) -> Result<()> {
+        tracing::info!("🔌 register_runtime_handlers: acquiring components read lock...");
         // Get ProtocolsComponent from the components HashMap
         let components = self.components.read().await;
+        tracing::info!("🔌 register_runtime_handlers: components lock acquired, looking up Protocols...");
         let component = components
             .get(&ComponentId::Protocols)
             .ok_or_else(|| anyhow::anyhow!("ProtocolsComponent not found"))?;

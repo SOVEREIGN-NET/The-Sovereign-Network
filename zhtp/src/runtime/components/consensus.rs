@@ -66,7 +66,7 @@ impl ConsensusMessageBroadcaster for ConsensusMeshBroadcaster {
         let quic_protocol = match quic_protocol_guard.as_ref() {
             Some(qp) => qp.clone(),
             None => {
-                debug!("QUIC protocol not available for consensus broadcast");
+                warn!("QUIC protocol not available for consensus broadcast — messages cannot reach other validators");
                 return Ok(()); // Best-effort, don't fail
             }
         };
@@ -80,9 +80,9 @@ impl ConsensusMessageBroadcaster for ConsensusMeshBroadcaster {
             .resolve_validator_peer_node_ids(validator_ids, target_height)
             .await;
         if target_peer_node_ids.is_empty() {
-            debug!(
-                "No validator targets resolved for consensus height {}, skipping broadcast",
-                target_height
+            warn!(
+                "No validator targets resolved for consensus height {} ({} validator_ids provided), skipping broadcast",
+                target_height, validator_ids.len()
             );
             return Ok(());
         }
