@@ -117,6 +117,23 @@ impl PartialEq for PublicKey {
 
 impl Eq for PublicKey {}
 
+// Deterministic ordering for BTreeMap keys in consensus-critical state.
+// Orders by key_id first (fast), then full key bytes if key_ids collide.
+impl PartialOrd for PublicKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for PublicKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.key_id
+            .cmp(&other.key_id)
+            .then_with(|| self.dilithium_pk.cmp(&other.dilithium_pk))
+            .then_with(|| self.kyber_pk.cmp(&other.kyber_pk))
+    }
+}
+
 // Manual Hash implementation to match manual PartialEq implementation
 impl std::hash::Hash for PublicKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {

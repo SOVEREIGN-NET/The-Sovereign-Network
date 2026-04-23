@@ -2,7 +2,7 @@ use super::core::{TokenContract, TokenInfo};
 use crate::contracts::treasury_kernel::{CreditReason, DebitReason, KernelOpError, TreasuryKernel};
 use crate::contracts::utils;
 use crate::integration::crypto_integration::PublicKey;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// Token operation functions for contract system integration
 ///
@@ -171,7 +171,7 @@ pub fn create_deflationary_token(
 /// Batch transfers should be implemented using the new transfer(ctx, to, amount) API.
 
 /// Get all non-zero balances
-pub fn get_all_balances(contract: &TokenContract) -> HashMap<PublicKey, u128> {
+pub fn get_all_balances(contract: &TokenContract) -> BTreeMap<PublicKey, u128> {
     contract
         .balances_iter()
         .filter(|(_, &balance)| balance > 0)
@@ -180,7 +180,7 @@ pub fn get_all_balances(contract: &TokenContract) -> HashMap<PublicKey, u128> {
 }
 
 /// Get all allowances for an owner
-pub fn get_all_allowances(contract: &TokenContract, owner: &PublicKey) -> HashMap<PublicKey, u128> {
+pub fn get_all_allowances(contract: &TokenContract, owner: &PublicKey) -> BTreeMap<PublicKey, u128> {
     contract
         .get_owner_allowances(owner)
         .map(|allowances| {

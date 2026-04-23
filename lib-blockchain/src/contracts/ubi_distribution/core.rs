@@ -3,7 +3,7 @@ use crate::contracts::tokens::core::TokenContract;
 use crate::contracts::treasury_kernel::TreasuryKernel;
 use crate::integration::crypto_integration::PublicKey;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Universal Basic Income Distribution Contract
 ///
@@ -46,12 +46,12 @@ pub struct UbiDistributor {
 
     /// Registered citizens (by key_id only, never full PublicKey)
     /// Invariant U1: Each key_id appears at most once
-    registered: HashSet<[u8; 32]>,
+    registered: BTreeSet<[u8; 32]>,
 
     /// Payment tracking: (month_index, citizen_key_id) membership
     /// Invariant P1: Each citizen can claim at most once per month
     /// Implementation: per-month set of paid key_ids
-    paid: HashMap<MonthIndex, HashSet<[u8; 32]>>,
+    paid: BTreeMap<MonthIndex, BTreeSet<[u8; 32]>>,
 
     /// Schedule: month_index -> per-citizen amount
     /// Governance controls this; if not set, amount defaults to 0
@@ -61,7 +61,7 @@ pub struct UbiDistributor {
     /// - Not tied to calendar years or dates
     /// - Governance sets amounts for specific month indices
     /// - Examples: months 0-11 (year 1), 12-23 (year 2), 24-35 (year 3), etc.
-    schedule: HashMap<MonthIndex, u64>,
+    schedule: BTreeMap<MonthIndex, u64>,
 
     /// Phase C: UBI claim intent events (epoch -> list of claims)
     /// Records UbiClaimRecorded events for Treasury Kernel to process
@@ -70,7 +70,7 @@ pub struct UbiDistributor {
     /// **Design:** Passive client pattern - just record intent, Kernel executes
     /// - key: epoch (u64)
     /// - value: Vec<UbiClaimRecorded> events for that epoch
-    claim_events: HashMap<u64, Vec<UbiClaimRecorded>>,
+    claim_events: BTreeMap<u64, Vec<UbiClaimRecorded>>,
 }
 
 impl UbiDistributor {
@@ -96,10 +96,10 @@ impl UbiDistributor {
             balance: 0,
             total_received: 0,
             total_paid: 0,
-            registered: HashSet::new(),
-            paid: HashMap::new(),
-            schedule: HashMap::new(),
-            claim_events: HashMap::new(),
+            registered: BTreeSet::new(),
+            paid: BTreeMap::new(),
+            schedule: BTreeMap::new(),
+            claim_events: BTreeMap::new(),
         })
     }
 
@@ -332,7 +332,7 @@ impl UbiDistributor {
         }
 
         // Invariant P1: Check not already paid this month
-        let month_set = self.paid.entry(month).or_insert_with(HashSet::new);
+        let month_set = self.paid.entry(month).or_insert_with(BTreeSet::new);
         if month_set.contains(&id) {
             return Err(Error::AlreadyPaidThisMonth);
         }
@@ -519,10 +519,10 @@ impl UbiDistributor {
             balance: 0,
             total_received: 0,
             total_paid: 0,
-            registered: HashSet::with_capacity(expected_citizens),
-            paid: HashMap::new(),
-            schedule: HashMap::new(),
-            claim_events: HashMap::new(),
+            registered: BTreeSet::new(),
+            paid: BTreeMap::new(),
+            schedule: BTreeMap::new(),
+            claim_events: BTreeMap::new(),
         })
     }
 
