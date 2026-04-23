@@ -690,9 +690,15 @@ impl QuicMeshProtocol {
 
         // === On-Chain Identity Registry Verification ===
         // Reject peers whose DID is not registered in the blockchain identity registry.
+        // Skip for bootstrap peers: they are operator-configured and trusted by definition.
+        let is_bootstrap = self.verifier.get_bootstrap_addrs().contains(&peer_addr);
         if let Some(ref verifier) = self.identity_registry_verifier {
-            let peer_did = &handshake_result.verified_peer.identity.did;
-            verify_peer_registration(verifier.as_ref(), &connection, peer_did).await?;
+            if !is_bootstrap {
+                let peer_did = &handshake_result.verified_peer.identity.did;
+                verify_peer_registration(verifier.as_ref(), &connection, peer_did).await?;
+            } else {
+                debug!(peer_addr = %peer_addr, "Skipping identity registry check for bootstrap peer");
+            }
         }
 
         // Create PeerConnection from verified handshake result
@@ -1007,6 +1013,15 @@ impl QuicMeshProtocol {
             // No live peers — try to restore connectivity to bootstrap peers.
             self.try_reconnect_to_bootstrap().await;
             return Ok(0);
+        }
+
+        // Also check for missing bootstrap peers even when we have some connections.
+        // Without this, partial connectivity (e.g. 3/5 validators) never self-heals.
+        {
+            let bootstrap_count = self.verifier.get_bootstrap_addrs().len();
+            if peers.len() < bootstrap_count {
+                self.try_reconnect_to_bootstrap().await;
+            }
         }
 
         let mut success = 0;

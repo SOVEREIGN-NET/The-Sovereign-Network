@@ -2472,12 +2472,17 @@ impl RuntimeOrchestrator {
                 net_info.peer_count, net_info.chain_state
             );
 
-            // Store bootstrap peers for mesh sync
-            if !net_info.bootstrap_peers.is_empty() {
-                crate::runtime::bootstrap_peers_provider::set_bootstrap_peers(
-                    net_info.bootstrap_peers.clone(),
-                )
-                .await?;
+            // Store bootstrap peers for mesh sync: config peers + discovered peers
+            {
+                let mut all_peers: Vec<String> = self.config.network_config.bootstrap_peers.clone();
+                for discovered in &net_info.bootstrap_peers {
+                    if !all_peers.contains(discovered) {
+                        all_peers.push(discovered.clone());
+                    }
+                }
+                if !all_peers.is_empty() {
+                    crate::runtime::bootstrap_peers_provider::set_bootstrap_peers(all_peers).await?;
+                }
             }
 
             // Store bootstrap peer SPKI pins (Issue #922)
