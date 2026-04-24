@@ -1303,16 +1303,13 @@ impl WalletHandler {
         let identity_hash = Hash(identity_id_bytes);
 
         // Graph-traversal guard: WalletGraph / Read
+        // If denied (querying another identity), we still return transactions
+        // where the caller is the counterparty (sent-to or received-from).
         let principal = self.extract_principal(request);
         let identity_manager = self.identity_manager.read().await;
-        if !identity_manager.check_access(&principal, &identity_hash, AccessDomain::WalletGraph, AccessOperation::Read) {
-            drop(identity_manager);
-            return Ok(create_error_response(
-                ZhtpStatus::Forbidden,
-                "Access denied to wallet transactions".to_string(),
-            ));
-        }
+        let is_self_access = identity_manager.check_access(&principal, &identity_hash, AccessDomain::WalletGraph, AccessOperation::Read);
         drop(identity_manager);
+        let caller_hex = principal.did.strip_prefix("did:zhtp:").unwrap_or(&principal.did).to_string();
 
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
             Some(identity) => identity,
@@ -1410,6 +1407,16 @@ impl WalletHandler {
         drop(blockchain);
 
         let mut transactions: Vec<TransactionRecord> = tx_by_hash.into_values().collect();
+
+        // If caller is querying another identity's transactions, filter to only
+        // show transactions where the caller is the counterparty (sent-to or received-from).
+        // This allows "show activity with this contact" without exposing full history.
+        if !is_self_access {
+            transactions.retain(|tx| {
+                tx.from_wallet.as_deref() == Some(&caller_hex)
+                    || tx.to_address.as_deref() == Some(&caller_hex)
+            });
+        }
 
         // Sort by timestamp (newest first)
         transactions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
