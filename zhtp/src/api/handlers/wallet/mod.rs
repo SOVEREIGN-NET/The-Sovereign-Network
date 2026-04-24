@@ -259,24 +259,8 @@ impl WalletHandler {
         identity_id_bytes.copy_from_slice(&identity_hash);
         let identity_hash = Hash(identity_id_bytes);
 
-        // Graph-traversal guard: WalletGraph / Read
-        let principal = self.extract_principal(request);
-        let identity_manager = self.identity_manager.read().await;
-        let is_self_access = identity_manager.check_access(&principal, &identity_hash, AccessDomain::WalletGraph, AccessOperation::Read);
-        drop(identity_manager);
-
-        // Cross-identity: return minimal info (wallet types only, no balances)
-        if !is_self_access {
-            let identity = self.get_identity_by_id(&identity_id_bytes).await;
-            let wallet_count = identity.as_ref().map(|i| i.list_wallets().len()).unwrap_or(0);
-            return create_json_response(json!({
-                "status": "success",
-                "identity_id": identity_id,
-                "total_wallets": wallet_count,
-                "total_balance": "0",
-                "wallets": []
-            }));
-        }
+        // TODO: Gate cross-identity wallet list once mobile app is updated.
+        // For now, return full data to maintain backward compatibility.
 
         // Get the identity
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
@@ -491,21 +475,8 @@ impl WalletHandler {
         identity_id_bytes.copy_from_slice(&identity_hash);
         let identity_hash = Hash(identity_id_bytes);
 
-        // Graph-traversal guard: WalletGraph / Read
-        // Cross-identity: return zero balance (don't leak actual amounts)
-        let principal = self.extract_principal(request);
-        let identity_manager = self.identity_manager.read().await;
-        if !identity_manager.check_access(&principal, &identity_hash, AccessDomain::WalletGraph, AccessOperation::Read) {
-            drop(identity_manager);
-            return create_json_response(json!({
-                "status": "success",
-                "wallet_type": wallet_type_str,
-                "identity_id": identity_id,
-                "balance": "0",
-                "balance_human": "0.0000"
-            }));
-        }
-        drop(identity_manager);
+        // TODO: Gate cross-identity balance once mobile app is updated.
+        // For now, return full data to maintain backward compatibility.
 
         // Get the identity from stored state
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
@@ -652,25 +623,8 @@ impl WalletHandler {
         identity_id_bytes.copy_from_slice(&identity_hash);
         let identity_hash = Hash(identity_id_bytes);
 
-        // Graph-traversal guard: WalletGraph / Read
-        // Cross-identity: return empty statistics (don't leak financial data)
-        let principal = self.extract_principal(request);
-        let identity_manager = self.identity_manager.read().await;
-        if !identity_manager.check_access(&principal, &identity_hash, AccessDomain::WalletGraph, AccessOperation::Read) {
-            drop(identity_manager);
-            let response = json!({
-                "status": "success",
-                "identity_id": identity_id,
-                "statistics": { "total_balance": "0", "wallet_count": 0, "wallet_statistics": [] }
-            });
-            let json_response = serde_json::to_vec(&response)?;
-            return Ok(ZhtpResponse::success_with_content_type(
-                json_response,
-                "application/json".to_string(),
-                None,
-            ));
-        }
-        drop(identity_manager);
+        // TODO: Gate cross-identity statistics once mobile app is updated.
+        // For now, return full data to maintain backward compatibility.
 
         // Get the identity from stored state
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
@@ -1323,13 +1277,8 @@ impl WalletHandler {
         let identity_hash = Hash(identity_id_bytes);
 
         // Graph-traversal guard: WalletGraph / Read
-        // If denied (querying another identity), we still return transactions
-        // where the caller is the counterparty (sent-to or received-from).
-        let principal = self.extract_principal(request);
-        let identity_manager = self.identity_manager.read().await;
-        let is_self_access = identity_manager.check_access(&principal, &identity_hash, AccessDomain::WalletGraph, AccessOperation::Read);
-        drop(identity_manager);
-        let caller_hex = principal.did.strip_prefix("did:zhtp:").unwrap_or(&principal.did).to_string();
+        // TODO: Gate cross-identity transaction history once mobile app is updated.
+        // For now, return full data to maintain backward compatibility.
 
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
             Some(identity) => identity,
@@ -1427,16 +1376,6 @@ impl WalletHandler {
         drop(blockchain);
 
         let mut transactions: Vec<TransactionRecord> = tx_by_hash.into_values().collect();
-
-        // If caller is querying another identity's transactions, filter to only
-        // show transactions where the caller is the counterparty (sent-to or received-from).
-        // This allows "show activity with this contact" without exposing full history.
-        if !is_self_access {
-            transactions.retain(|tx| {
-                tx.from_wallet.as_deref() == Some(&caller_hex)
-                    || tx.to_address.as_deref() == Some(&caller_hex)
-            });
-        }
 
         // Sort by timestamp (newest first)
         transactions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
