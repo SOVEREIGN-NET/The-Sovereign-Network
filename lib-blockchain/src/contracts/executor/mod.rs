@@ -654,6 +654,13 @@ impl<S: ContractStorage> ContractExecutor<S> {
             writes.push((storage_key, dg_data));
         }
 
+        // Sort writes by key for deterministic ordering across all binary versions.
+        // BTreeMap already iterates in sorted order, but UBI/DevGrants writes are
+        // appended after token writes — sorting the full vector guarantees order.
+        // We sort once here so the WAL, storage commit, and state-root hash all
+        // use the same deterministic sequence without an extra clone.
+        writes.sort_by(|a, b| a.0.cmp(&b.0));
+
         // Derive a write-ahead log key specific to this block height
         // MUST match format used by WalRecoveryManager: wal:{height_bytes}
         let mut wal_key = Vec::new();
@@ -681,15 +688,9 @@ impl<S: ContractStorage> ContractExecutor<S> {
         // block-level consensus. With persistent-contracts feature, the storage layer
         // can compute more comprehensive state roots post-finalization via StateRootComputation.
         let state_root = {
-            // Sort writes by key for deterministic ordering across all binary versions.
-            // BTreeMap already iterates in sorted order, but UBI/DevGrants writes are
-            // appended after token writes — sorting the full vector guarantees order.
-            let mut sorted_writes = writes.clone();
-            sorted_writes.sort_by(|a, b| a.0.cmp(&b.0));
-
             let mut hasher = blake3::Hasher::new();
 
-            for (token_id, token) in &sorted_writes {
+            for (token_id, token) in &writes {
                 hasher.update(token_id);
                 hasher.update(token);
             }

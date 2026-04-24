@@ -46,27 +46,16 @@ pub fn extract_principal_from_request(request: &ZhtpRequest) -> SecurityPrincipa
 /// Determine the role for an authenticated DID by checking on-chain state.
 ///
 /// Council members get `Role::Council`, everyone else gets `Role::Citizen`.
-/// Uses `try_read()` on the blockchain — if the lock is contended, returns
-/// `Role::Citizen` (never elevates privileges on failure).
+/// Uses non-blocking read — if the lock is contended, returns `Role::Citizen`
+/// (never elevates privileges on failure).
 fn resolve_role_for_did(did: &str) -> Role {
     let provider = match crate::runtime::blockchain_provider::get_global_blockchain_provider() {
         Some(p) => p,
-        None => return Role::Citizen, // Blockchain not initialized yet
+        None => return Role::Citizen,
     };
 
-    let blockchain_arc = match provider.try_get_blockchain_sync() {
-        Some(arc) => arc,
-        None => return Role::Citizen, // Lock contended or not initialized
-    };
-
-    let guard = match blockchain_arc.try_read() {
-        Ok(g) => g,
-        Err(_) => return Role::Citizen, // Lock contended, safe fallback
-    };
-
-    if guard.is_council_member(did) {
-        Role::Council
-    } else {
-        Role::Citizen
+    match provider.is_council_member_sync(did) {
+        Some(true) => Role::Council,
+        _ => Role::Citizen, // Not council, not initialized, or lock contended
     }
 }
