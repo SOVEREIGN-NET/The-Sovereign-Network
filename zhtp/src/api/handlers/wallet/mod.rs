@@ -127,14 +127,10 @@ impl ZhtpRequestHandler for WalletHandler {
             (ZhtpMethod::Post, "/api/v1/wallet/staking/unstake") => {
                 self.handle_unstake_tokens(request).await
             }
-            // POST /api/v1/wallet/provision
-            (ZhtpMethod::Post, "/api/v1/wallet/provision") => {
-                self.handle_provision_wallet(request).await
-            }
-            // POST /api/v1/wallet/mint-sov
-            (ZhtpMethod::Post, "/api/v1/wallet/mint-sov") => {
-                self.handle_mint_sov(request).await
-            }
+            // POST /api/v1/wallet/provision — REMOVED: wallets are provisioned
+            // during identity registration only, never via standalone API.
+            // POST /api/v1/wallet/mint-sov — REMOVED: minting is Treasury Kernel
+            // only, never via API endpoint.
             _ => Ok(create_error_response(
                 ZhtpStatus::NotFound,
                 "Wallet endpoint not found".to_string(),
@@ -721,7 +717,17 @@ impl WalletHandler {
 
     /// Handle cross-wallet transfer
     async fn handle_cross_wallet_transfer(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let principal = self.extract_principal(&request);
         let req_data: CrossWalletTransferRequest = serde_json::from_slice(&request.body)?;
+
+        // Verify caller owns the identity
+        let caller_hex = principal.did.strip_prefix("did:zhtp:").unwrap_or(&principal.did);
+        if caller_hex != req_data.identity_id && principal.role != lib_access_control::Role::Council {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Cannot transfer from an identity you don't own".to_string(),
+            ));
+        }
 
         // Parse wallet types
         let from_wallet_type = match self.parse_wallet_type(&req_data.from_wallet) {
@@ -830,7 +836,17 @@ impl WalletHandler {
 
     /// Handle staking tokens
     async fn handle_stake_tokens(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let principal = self.extract_principal(&request);
         let req_data: StakingRequest = serde_json::from_slice(&request.body)?;
+
+        // Verify caller owns the identity
+        let caller_hex = principal.did.strip_prefix("did:zhtp:").unwrap_or(&principal.did);
+        if caller_hex != req_data.identity_id && principal.role != lib_access_control::Role::Council {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Cannot stake from an identity you don't own".to_string(),
+            ));
+        }
 
         // Parse identity ID
         let identity_hash = hex::decode(&req_data.identity_id)
@@ -926,7 +942,17 @@ impl WalletHandler {
 
     /// Handle unstaking tokens
     async fn handle_unstake_tokens(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let principal = self.extract_principal(&request);
         let req_data: StakingRequest = serde_json::from_slice(&request.body)?;
+
+        // Verify caller owns the identity
+        let caller_hex = principal.did.strip_prefix("did:zhtp:").unwrap_or(&principal.did);
+        if caller_hex != req_data.identity_id && principal.role != lib_access_control::Role::Council {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Cannot unstake from an identity you don't own".to_string(),
+            ));
+        }
 
         // Parse identity ID
         let identity_hash = hex::decode(&req_data.identity_id)
@@ -1404,8 +1430,18 @@ impl WalletHandler {
 
     /// Handle simple payment (matching old ZHTP API)
     async fn handle_simple_send(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let principal = self.extract_principal(&request);
         let send_req: SimpleSendRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
+
+        // Verify caller owns the from_identity
+        let caller_hex = principal.did.strip_prefix("did:zhtp:").unwrap_or(&principal.did);
+        if caller_hex != send_req.from_identity && principal.role != lib_access_control::Role::Council {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Cannot send from an identity you don't own".to_string(),
+            ));
+        }
 
         // Parse identity ID
         let identity_hash = hex::decode(&send_req.from_identity)

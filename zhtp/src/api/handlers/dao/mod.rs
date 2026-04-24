@@ -2025,6 +2025,14 @@ impl DaoHandler {
 
     /// POST /api/v1/dao/council/register
     async fn handle_register_council_member(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
+        let principal = extract_principal_from_request(request);
+        if principal.role != lib_access_control::Role::Council {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Council member registration requires Council role".to_string(),
+            ));
+        }
+
         let req: RegisterCouncilMemberRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
 
@@ -2113,6 +2121,14 @@ impl DaoHandler {
     /// One-time, irreversible. Requires a signed InitEntityRegistry transaction
     /// from a Bootstrap Council member.
     async fn handle_entity_registry_init(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
+        let principal = extract_principal_from_request(request);
+        if principal.role != lib_access_control::Role::Council {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Entity registry init requires Council role".to_string(),
+            ));
+        }
+
         #[derive(serde::Deserialize)]
         struct InitRequest {
             signed_tx: String,
