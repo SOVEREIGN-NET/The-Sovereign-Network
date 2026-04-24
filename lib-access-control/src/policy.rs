@@ -67,35 +67,12 @@ impl AccessPolicy {
         }
 
         // ── Council ──────────────────────────────────────────────────────
+        // Testnet: Council has full access except ZkProofPrivate.
+        // This will be tightened when ScopedGrant (#2280) is implemented.
         if principal.role == Council {
             return match (relation, domain, op) {
-                // Self: full except private data refs.
-                (Self_, PrivateDataRef, _) => Deny(DenyCrossIdentitySensitive),
-                (Self_, _, _) => Allow(AllowSelfFullAccess),
-
-                // Investigation scope: can read governance and filtered graphs.
-                (_, Governance, Read | Resolve | Traverse) => {
-                    if principal.has_capability(&Capability::Investigate) {
-                        Allow(AllowCouncilInvestigation)
-                    } else if principal.has_capability(&Capability::VoteGovernance) {
-                        Allow(AllowGovernanceRead)
-                    } else {
-                        Deny(DenyMissingCapability)
-                    }
-                }
-                (_, CoreIdentity, Read | Resolve) => Allow(AllowPublicCoreIdentity),
-                (_, ServiceEndpoints, Resolve) => Allow(AllowPublicCoreIdentity),
-                (_, NodeGraph | WalletGraph, Read) => {
-                    if principal.has_capability(&Capability::Investigate) {
-                        Allow(AllowCouncilInvestigation)
-                    } else {
-                        Deny(DenyMissingCapability)
-                    }
-                }
-                (_, NodeGraph | WalletGraph, Traverse | Enumerate) => Deny(DenyGraphTraversal),
-                (_, ZkProofPrivate | PrivateDataRef, _) => Deny(DenyPrivateZk),
-                (_, _, Subscribe) => Deny(DenySubscription),
-                (_, _, _) => Deny(DenyInsufficientRole),
+                (_, ZkProofPrivate, _) => Deny(DenyPrivateZk),
+                (_, _, _) => Allow(AllowCouncilInvestigation),
             };
         }
 
@@ -286,20 +263,24 @@ mod tests {
     }
 
     #[test]
-    fn council_investigation_requires_capability() {
+    fn council_has_full_access_except_zk_private() {
         let p = principal(Role::Council);
         let policy = AccessPolicy;
 
-        // Without Investigate capability: denied.
-        assert!(policy
-            .check_access(&p, SubjectRelation::External, Governance, Read)
-            .is_denied());
-
-        // With Investigate capability: allowed.
-        let p = principal(Role::Council).with_capability(Capability::Investigate);
+        // Testnet: Council has unrestricted access (except ZkProofPrivate).
         assert!(policy
             .check_access(&p, SubjectRelation::External, Governance, Read)
             .is_allowed());
+        assert!(policy
+            .check_access(&p, SubjectRelation::External, WalletGraph, Read)
+            .is_allowed());
+        assert!(policy
+            .check_access(&p, SubjectRelation::External, NodeGraph, Traverse)
+            .is_allowed());
+        // ZkProofPrivate still denied.
+        assert!(policy
+            .check_access(&p, SubjectRelation::External, ZkProofPrivate, Read)
+            .is_denied());
     }
 
     #[test]

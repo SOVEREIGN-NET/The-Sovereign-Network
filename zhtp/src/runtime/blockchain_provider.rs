@@ -57,6 +57,16 @@ impl BlockchainProvider {
         self.blockchain.read().await.is_some()
     }
 
+    /// Non-blocking, read-only council membership check for sync contexts.
+    /// Returns None if the lock is contended or blockchain isn't initialized.
+    /// Does NOT expose the blockchain Arc — callers cannot take a write lock.
+    pub fn is_council_member_sync(&self, did: &str) -> Option<bool> {
+        let outer = self.blockchain.try_read().ok()?;
+        let arc = outer.as_ref()?;
+        let bc = arc.try_read().ok()?;
+        Some(bc.is_council_member(did))
+    }
+
     /// Configure blockchain mutation access mode.
     pub async fn set_access_mode(&self, access_mode: BlockchainAccessMode) {
         *self.access_mode.write().await = access_mode;
