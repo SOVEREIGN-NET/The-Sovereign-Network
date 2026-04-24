@@ -117,6 +117,10 @@ AGENTS.md
 .ai/
 .llm/
 
+# All markdown — root + docs tree (kept locally, not committed)
+/*.md
+docs/**/*.md
+
 # Sensitive / local-only file patterns (issue #1934)
 tmp/
 *.b64
