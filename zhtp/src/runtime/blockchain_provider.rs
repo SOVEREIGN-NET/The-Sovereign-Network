@@ -57,6 +57,12 @@ impl BlockchainProvider {
         self.blockchain.read().await.is_some()
     }
 
+    /// Non-blocking access to the blockchain for sync contexts (e.g., principal extraction).
+    /// Returns None if the lock is contended or blockchain isn't initialized.
+    pub fn try_get_blockchain_sync(&self) -> Option<Arc<RwLock<Blockchain>>> {
+        self.blockchain.try_read().ok()?.as_ref().cloned()
+    }
+
     /// Configure blockchain mutation access mode.
     pub async fn set_access_mode(&self, access_mode: BlockchainAccessMode) {
         *self.access_mode.write().await = access_mode;
