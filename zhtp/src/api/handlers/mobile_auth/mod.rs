@@ -320,7 +320,7 @@ impl MobileAuthHandler {
         };
         let identity_id = lib_crypto::Hash::from_bytes(&identity_bytes);
 
-        // Create session
+        // Create session — bound to this node's DID for channel binding (#2160)
         let session = match self
             .store
             .create_session(
@@ -331,6 +331,7 @@ impl MobileAuthHandler {
                 user_agent.to_string(),
                 req.session_id.clone(),
                 req.device_id.clone(),
+                self.node_endpoint.clone(),
             )
             .await
         {
@@ -376,7 +377,7 @@ impl MobileAuthHandler {
 
         match self
             .store
-            .validate_access_token(&token, client_ip, user_agent)
+            .validate_access_token(&token, client_ip, user_agent, &self.node_endpoint)
             .await
         {
             Err(e) => {
@@ -418,7 +419,7 @@ impl MobileAuthHandler {
         // Validate first (ensure binding matches)
         if let Err(e) = self
             .store
-            .validate_access_token(&token, client_ip, user_agent)
+            .validate_access_token(&token, client_ip, user_agent, &self.node_endpoint)
             .await
         {
             return Ok(json_error(ZhtpStatus::Unauthorized, &e.to_string()));
@@ -464,7 +465,7 @@ impl MobileAuthHandler {
 
         match self
             .store
-            .rotate_refresh_token(&req.refresh_token, client_ip, user_agent)
+            .rotate_refresh_token(&req.refresh_token, client_ip, user_agent, &self.node_endpoint)
             .await
         {
             Err(e) => Ok(json_error(ZhtpStatus::Unauthorized, &e.to_string())),
@@ -524,7 +525,7 @@ impl MobileAuthHandler {
         };
         let session = match self
             .store
-            .validate_access_token(&token, client_ip, user_agent)
+            .validate_access_token(&token, client_ip, user_agent, &self.node_endpoint)
             .await
         {
             Err(e) => return Ok(json_error(ZhtpStatus::Unauthorized, &e.to_string())),
@@ -630,7 +631,7 @@ impl MobileAuthHandler {
         };
         let session = match self
             .store
-            .validate_access_token(&token, client_ip, user_agent)
+            .validate_access_token(&token, client_ip, user_agent, &self.node_endpoint)
             .await
         {
             Err(e) => return Ok(json_error(ZhtpStatus::Unauthorized, &e.to_string())),
@@ -690,7 +691,7 @@ impl MobileAuthHandler {
         };
         let session = match self
             .store
-            .validate_access_token(&token, client_ip, user_agent)
+            .validate_access_token(&token, client_ip, user_agent, &self.node_endpoint)
             .await
         {
             Err(e) => return Ok(json_error(ZhtpStatus::Unauthorized, &e.to_string())),
@@ -740,7 +741,7 @@ impl MobileAuthHandler {
         // Validate session (also enforces IP+UA binding)
         let session = match self
             .store
-            .validate_access_token(&token, client_ip, user_agent)
+            .validate_access_token(&token, client_ip, user_agent, &self.node_endpoint)
             .await
         {
             Err(e) => {
@@ -899,7 +900,7 @@ impl MobileAuthHandler {
         // Validate session (IP+UA binding enforced)
         let session = match self
             .store
-            .validate_access_token(&token, client_ip, user_agent)
+            .validate_access_token(&token, client_ip, user_agent, &self.node_endpoint)
             .await
         {
             Err(e) => {
@@ -1323,6 +1324,7 @@ mod tests {
             challenge_session_id: "s1".to_string(),
             device_id: None,
             revoked: false,
+            bound_node_did: NODE_ENDPOINT.to_string(),
         };
         store.insert_session_for_test(session).await;
 
@@ -1359,6 +1361,7 @@ mod tests {
             challenge_session_id: "s2".to_string(),
             device_id: None,
             revoked: false,
+            bound_node_did: NODE_ENDPOINT.to_string(),
         };
         store.insert_session_for_test(session).await;
 
@@ -1395,6 +1398,7 @@ mod tests {
             challenge_session_id: "s3".to_string(),
             device_id: None,
             revoked: false,
+            bound_node_did: NODE_ENDPOINT.to_string(),
         };
         store.insert_session_for_test(session).await;
 
@@ -1450,6 +1454,7 @@ mod tests {
             challenge_session_id: "s4".to_string(),
             device_id: None,
             revoked: false,
+            bound_node_did: NODE_ENDPOINT.to_string(),
         };
         store.insert_session_for_test(session).await;
 
@@ -1485,6 +1490,7 @@ mod tests {
             challenge_session_id: "s5".to_string(),
             device_id: None,
             revoked: false,
+            bound_node_did: NODE_ENDPOINT.to_string(),
         };
         store.insert_session_for_test(session).await;
 
@@ -1542,6 +1548,7 @@ mod tests {
             challenge_session_id: "s6".to_string(),
             device_id: None,
             revoked: false,
+            bound_node_did: NODE_ENDPOINT.to_string(),
         };
         store.insert_session_for_test(session).await;
 
@@ -1604,6 +1611,7 @@ mod tests {
             challenge_session_id: "s10".to_string(),
             device_id: None,
             revoked: false,
+            bound_node_did: NODE_ENDPOINT.to_string(),
         };
         store.insert_session_for_test(session).await;
 
@@ -1660,6 +1668,7 @@ mod tests {
                 challenge_session_id: cs.to_string(),
                 device_id: None,
                 revoked: false,
+                bound_node_did: NODE_ENDPOINT.to_string(),
             }).await;
         }
 
@@ -1715,6 +1724,7 @@ mod tests {
                 challenge_session_id: format!("cs_l_{}", i),
                 device_id: None,
                 revoked: false,
+                bound_node_did: NODE_ENDPOINT.to_string(),
             }).await;
         }
 
@@ -1761,6 +1771,7 @@ mod tests {
             challenge_session_id: "s13".to_string(),
             device_id: None,
             revoked: false,
+            bound_node_did: NODE_ENDPOINT.to_string(),
         };
         store.insert_session_for_test(session).await;
 

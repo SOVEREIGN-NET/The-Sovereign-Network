@@ -227,6 +227,9 @@ pub struct MobileDelegatedSession {
     pub device_id: Option<String>,
     /// Whether this session is still active
     pub revoked: bool,
+    /// DID of the node that issued this session — channel binding (#2160).
+    /// A captured token cannot be replayed through a different node.
+    pub bound_node_did: String,
 }
 
 impl MobileDelegatedSession {
@@ -240,11 +243,12 @@ impl MobileDelegatedSession {
         !self.revoked && now_secs() < self.refresh_expires_at
     }
 
-    /// Validate that request arrives from the same binding context (hijack protection)
-    pub fn validate_binding(&self, ip: &str, ua: &str) -> bool {
-        // Constant-time-safe comparison to avoid timing channels
+    /// Validate that the request arrives from the same binding context (hijack protection).
+    /// Checks IP, user-agent, AND the node DID the session was originally issued on (#2160).
+    pub fn validate_binding(&self, ip: &str, ua: &str, node_did: &str) -> bool {
         constant_time_eq(self.bound_ip.as_bytes(), ip.as_bytes())
             && constant_time_eq(self.bound_user_agent.as_bytes(), ua.as_bytes())
+            && constant_time_eq(self.bound_node_did.as_bytes(), node_did.as_bytes())
     }
 }
 
@@ -536,6 +540,7 @@ impl MobileAuthStore {
         bound_user_agent: String,
         challenge_session_id: String,
         device_id: Option<String>,
+        node_did: String,
     ) -> Result<MobileDelegatedSession> {
         self.enforce_session_limit(&identity_id).await;
 
@@ -580,6 +585,7 @@ impl MobileAuthStore {
             challenge_session_id,
             device_id,
             revoked: false,
+            bound_node_did: node_did,
         };
 
         let mut sessions = self.sessions.write().await;
@@ -598,19 +604,20 @@ impl MobileAuthStore {
         Ok(session)
     }
 
-    /// Validate a bearer access token and binding
+    /// Validate a bearer access token and binding (#2160: includes node DID channel binding)
     pub async fn validate_access_token(
         &self,
         token: &str,
         ip: &str,
         ua: &str,
+        node_did: &str,
     ) -> Result<MobileDelegatedSession> {
         let sessions = self.sessions.read().await;
         match sessions.get(token) {
             None => Err(anyhow!("Session not found")),
             Some(s) if s.revoked => Err(anyhow!("Session revoked")),
             Some(s) if !s.is_access_valid() => Err(anyhow!("Session expired")),
-            Some(s) if !s.validate_binding(ip, ua) => Err(anyhow!(
+            Some(s) if !s.validate_binding(ip, ua, node_did) => Err(anyhow!(
                 "Session binding mismatch (possible hijack attempt)"
             )),
             Some(s) => Ok(s.clone()),
@@ -623,6 +630,7 @@ impl MobileAuthStore {
         old_refresh_token: &str,
         ip: &str,
         ua: &str,
+        node_did: &str,
     ) -> Result<MobileDelegatedSession> {
         // Look up existing access token
         let access_token = {
@@ -646,7 +654,7 @@ impl MobileAuthStore {
         if now_secs() >= old_session.refresh_expires_at {
             return Err(anyhow!("Refresh token expired — must re-authenticate"));
         }
-        if !old_session.validate_binding(ip, ua) {
+        if !old_session.validate_binding(ip, ua, node_did) {
             return Err(anyhow!("Binding mismatch on refresh attempt"));
         }
 
@@ -654,7 +662,7 @@ impl MobileAuthStore {
         self.revoke_session(&access_token, "refresh_rotation")
             .await?;
 
-        // Issue new session with same capabilities
+        // Issue new session with same capabilities, preserving node binding
         self.create_session(
             old_session.identity_id.clone(),
             old_session.public_key_hex.clone(),
@@ -663,6 +671,7 @@ impl MobileAuthStore {
             ua.to_string(),
             old_session.challenge_session_id.clone(),
             old_session.device_id.clone(),
+            node_did.to_string(),
         )
         .await
     }
@@ -954,21 +963,53 @@ mod tests {
                 "TestAgent/1.0".to_string(),
                 "test-session-id".to_string(),
                 None,
+                "did:zhtp:test-node".to_string(),
             )
             .await
             .unwrap();
 
         // Correct binding passes
         store
-            .validate_access_token(&session.access_token, "192.168.1.1", "TestAgent/1.0")
+            .validate_access_token(&session.access_token, "192.168.1.1", "TestAgent/1.0", "did:zhtp:test-node")
             .await
             .unwrap();
 
         // Wrong IP rejected
         let mismatch = store
-            .validate_access_token(&session.access_token, "10.0.0.1", "TestAgent/1.0")
+            .validate_access_token(&session.access_token, "10.0.0.1", "TestAgent/1.0", "did:zhtp:test-node")
             .await;
         assert!(mismatch.is_err());
+    }
+
+    #[tokio::test]
+    async fn node_did_channel_binding_rejects_wrong_node() {
+        let store = MobileAuthStore::new();
+        let identity_id = lib_crypto::Hash::from_bytes(&[11u8; 32]);
+        let session = store
+            .create_session(
+                identity_id,
+                "pk".to_string(),
+                vec![Capability::ReadBalance],
+                "10.0.0.1".to_string(),
+                "UA/2.0".to_string(),
+                "sid-channel-bind".to_string(),
+                None,
+                "did:zhtp:node-A".to_string(),
+            )
+            .await
+            .unwrap();
+
+        // Correct node — passes
+        store
+            .validate_access_token(&session.access_token, "10.0.0.1", "UA/2.0", "did:zhtp:node-A")
+            .await
+            .unwrap();
+
+        // Different node — rejected even with correct IP + UA
+        let wrong_node = store
+            .validate_access_token(&session.access_token, "10.0.0.1", "UA/2.0", "did:zhtp:node-B")
+            .await;
+        assert!(wrong_node.is_err());
     }
 
     // -----------------------------------------------------------------------
@@ -988,6 +1029,7 @@ mod tests {
                 "UA".to_string(),
                 "sid1".to_string(),
                 None,
+                "did:zhtp:test-node".to_string(),
             )
             .await
             .unwrap();
@@ -997,25 +1039,25 @@ mod tests {
 
         // Rotate
         let new_session = store
-            .rotate_refresh_token(&old_refresh, "127.0.0.1", "UA")
+            .rotate_refresh_token(&old_refresh, "127.0.0.1", "UA", "did:zhtp:test-node")
             .await
             .unwrap();
 
         // Old access token should now be revoked
         let validation = store
-            .validate_access_token(&old_access, "127.0.0.1", "UA")
+            .validate_access_token(&old_access, "127.0.0.1", "UA", "did:zhtp:test-node")
             .await;
         assert!(validation.is_err());
 
         // New token works
         store
-            .validate_access_token(&new_session.access_token, "127.0.0.1", "UA")
+            .validate_access_token(&new_session.access_token, "127.0.0.1", "UA", "did:zhtp:test-node")
             .await
             .unwrap();
 
         // Old refresh token must fail (already used)
         let replay = store
-            .rotate_refresh_token(&old_refresh, "127.0.0.1", "UA")
+            .rotate_refresh_token(&old_refresh, "127.0.0.1", "UA", "did:zhtp:test-node")
             .await;
         assert!(replay.is_err());
     }
@@ -1104,6 +1146,7 @@ mod tests {
                     "UA".to_string(),
                     format!("sid-{}", i),
                     None,
+                    "did:zhtp:test-node".to_string(),
                 )
                 .await
                 .unwrap();
@@ -1120,6 +1163,7 @@ mod tests {
                 "UA".to_string(),
                 "sid-extra".to_string(),
                 None,
+                "did:zhtp:test-node".to_string(),
             )
             .await;
         assert!(extra.is_ok());
