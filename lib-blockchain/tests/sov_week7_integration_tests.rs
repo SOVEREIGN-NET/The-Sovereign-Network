@@ -12,48 +12,19 @@
 //! 4. Consensus Integration Tests (8 tests) - Fee collection hook integration
 //! 5. Performance Validation Tests (5 tests) - Scalability validation (1M citizens)
 
-use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+use lib_blockchain::integration::crypto_integration::{PublicKey, Signature};
 use lib_blockchain::transaction::{
     core::{ProfitDeclarationData, RevenueSource, UbiClaimData},
     Transaction, TransactionInput, TransactionOutput,
 };
 use lib_blockchain::types::{transaction_type::TransactionType, Hash};
 
-// =============================================================================
-// TEST FIXTURES & UTILITIES
-// =============================================================================
+mod common;
 
-/// Create a test signature
-fn create_test_signature() -> Signature {
-    Signature {
-        signature: vec![0x01, 0x02, 0x03, 0x04],
-        public_key: PublicKey::new([0x01; 2592]),
-        algorithm: SignatureAlgorithm::DEFAULT,
-        timestamp: 1000,
-    }
-}
-
-/// Create a test public key with specific bytes
-fn create_test_public_key(id: u8) -> PublicKey {
-    let mut dilithium_pk = [0u8; 2592];
-    dilithium_pk[0] = id;
-    PublicKey::new(dilithium_pk)
-}
-
-/// Create a test transaction input
-fn create_test_input() -> TransactionInput {
-    TransactionInput::new(
-        Hash::default(),
-        0,
-        Hash::default(),
-        lib_blockchain::integration::zk_integration::ZkTransactionProof::default(),
-    )
-}
-
-/// Create a test transaction output
-fn create_test_output() -> TransactionOutput {
-    TransactionOutput::new(Hash::default(), Hash::default(), create_test_public_key(1))
-}
+fn create_test_signature() -> Signature { common::crypto_fixtures::seeded_signature(1) }
+fn create_test_public_key(id: u8) -> PublicKey { common::crypto_fixtures::seeded_public_key(id) }
+fn create_test_input() -> TransactionInput { common::block_builders::test_input() }
+fn create_test_output() -> TransactionOutput { common::block_builders::test_output() }
 
 /// Create a test claim ID
 fn create_test_claim_id(citizen_id: u8, month: u64) -> Hash {

@@ -27,6 +27,8 @@ use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use tokio::sync::Barrier;
 
+mod common;
+
 /// Check if load tests should run (environment variable gate)
 fn should_run_load_tests() -> bool {
     std::env::var("ZHTP_RUN_LOAD_TESTS").is_ok()
@@ -118,13 +120,7 @@ impl MemoryTracker {
     }
 }
 
-/// Create a test sled backend
-fn create_test_backend() -> Result<(SledBackend, TempDir)> {
-    let temp_dir = TempDir::new()?;
-    let db_path = temp_dir.path().join("sled_db");
-    let backend = SledBackend::open(&db_path).map_err(|e| anyhow::anyhow!("{}", e))?;
-    Ok((backend, temp_dir))
-}
+fn create_test_backend() -> Result<(SledBackend, TempDir)> { common::storage_fixtures::test_backend() }
 
 // ============================================================================
 // Sled Backend Load Tests
