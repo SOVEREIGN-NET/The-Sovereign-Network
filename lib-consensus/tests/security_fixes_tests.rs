@@ -18,9 +18,9 @@ use lib_identity::IdentityId;
 use std::collections::HashMap;
 use std::time::SystemTime;
 
-fn create_test_identity(seed: &str) -> IdentityId {
-    Hash::from_bytes(&hash_blake3(seed.as_bytes()))
-}
+mod common;
+
+fn create_test_identity(seed: &str) -> IdentityId { common::consensus_fixtures::named_identity(seed) }
 
 fn create_test_key() -> Vec<u8> {
     vec![1u8; 32] // Non-zero key for testing

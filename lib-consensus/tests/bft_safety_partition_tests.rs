@@ -17,132 +17,18 @@ use lib_crypto::{hash_blake3, Hash, PostQuantumSignature, PublicKey, SignatureAl
 use lib_identity::IdentityId;
 use std::sync::Arc;
 
+mod common;
+
 // ============================================================================
-// Test Helpers
+// Test Helpers (delegating to common::consensus_fixtures)
 // ============================================================================
 
-/// Create deterministic test identity from name
-fn create_test_identity(name: &str) -> IdentityId {
-    Hash::from_bytes(&hash_blake3(name.as_bytes()))
-}
-
-fn validator_keys(seed: u8) -> ([u8; 2592], Vec<u8>, Vec<u8>) {
-    (
-        [seed; 2592],
-        vec![seed.wrapping_add(64); 32],
-        vec![seed.wrapping_add(128); 32],
-    )
-}
-
-/// Create test consensus configuration optimized for BFT testing
-fn create_bft_test_config() -> ConsensusConfig {
-    ConsensusConfig {
-        consensus_type: ConsensusType::ByzantineFaultTolerance,
-        min_stake: 1000 * 1_000_000,           // 1000 SOV
-        min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
-        max_validators: 10,
-        block_time: 1, // Fast for testing
-        epoch_length_blocks: 100,
-        propose_timeout: 100,
-        prevote_timeout: 50,
-        precommit_timeout: 50,
-        max_transactions_per_block: 1000,
-        max_difficulty: 0x00000000FFFFFFFF, // Permissive PoW difficulty target (unused in BFT; effectively trivial)
-        target_difficulty: 0x00000FFF, // Very permissive PoW target for testing (BFT ignores this field)
-        byzantine_threshold: 1.0 / 3.0, // Standard BFT threshold
-        slash_double_sign: 5,
-        slash_liveness: 1,
-        development_mode: false, // Production mode to enforce BFT requirements
-    }
-}
-
-/// Create test signature for proposals/votes
-fn create_test_signature(timestamp: u64) -> PostQuantumSignature {
-    let mut sig_bytes = vec![timestamp as u8; 64];
-    for i in 0..32 {
-        sig_bytes[i] = sig_bytes[i].wrapping_add(i as u8);
-    }
-
-    PostQuantumSignature {
-        signature: sig_bytes,
-        public_key: PublicKey {
-            dilithium_pk: [0u8; 2592],
-            kyber_pk: [0u8; 1568],
-            key_id: [0u8; 32],
-        },
-        algorithm: SignatureAlgorithm::DEFAULT,
-        timestamp,
-    }
-}
-
-/// Create test proposal
-fn create_test_proposal(
-    proposer: &IdentityId,
-    height: u64,
-    previous_hash: &Hash,
-    block_data: Vec<u8>,
-    timestamp: u64,
-) -> ConsensusProposal {
-    let proposal_id = Hash::from_bytes(&hash_blake3(
-        format!("proposal-{}-{}-{}", height, timestamp, proposer).as_bytes(),
-    ));
-
-    ConsensusProposal {
-        id: proposal_id,
-        proposer: proposer.clone(),
-        height,
-        round: 0,
-        protocol_version: 1,
-        previous_hash: previous_hash.clone(),
-        block_data,
-        timestamp,
-        signature: create_test_signature(timestamp),
-        consensus_proof: ConsensusProof {
-            consensus_type: ConsensusType::ByzantineFaultTolerance,
-            stake_proof: Some(
-                StakeProof::new(
-                    proposer.clone(),
-                    2000 * 1_000_000,
-                    Hash::from_bytes(&hash_blake3(
-                        format!("stake-{}-{}", proposer, timestamp).as_bytes(),
-                    )),
-                    height.saturating_sub(1),
-                    10_000,
-                )
-                .expect("valid stake proof"),
-            ),
-            storage_proof: None,
-            work_proof: None,
-            zk_did_proof: None,
-            timestamp,
-        },
-    }
-}
-
-/// Create test vote
-fn create_test_vote(
-    voter: &IdentityId,
-    proposal_id: &Hash,
-    vote_type: VoteType,
-    height: u64,
-    round: u32,
-    timestamp: u64,
-) -> ConsensusVote {
-    let vote_id = Hash::from_bytes(&hash_blake3(
-        format!("vote-{}-{}-{}-{}", voter, height, round, timestamp).as_bytes(),
-    ));
-
-    ConsensusVote {
-        id: vote_id,
-        voter: voter.clone(),
-        proposal_id: proposal_id.clone(),
-        vote_type,
-        height,
-        round,
-        timestamp,
-        signature: create_test_signature(timestamp),
-    }
-}
+fn create_test_identity(name: &str) -> IdentityId { common::consensus_fixtures::named_identity(name) }
+fn validator_keys(seed: u8) -> ([u8; 2592], Vec<u8>, Vec<u8>) { common::consensus_fixtures::validator_keys(seed) }
+fn create_bft_test_config() -> ConsensusConfig { common::consensus_fixtures::bft_test_config() }
+fn create_test_signature(timestamp: u64) -> PostQuantumSignature { common::consensus_fixtures::test_signature(timestamp) }
+fn create_test_proposal(proposer: &IdentityId, height: u64, previous_hash: &Hash, block_data: Vec<u8>, timestamp: u64) -> ConsensusProposal { common::consensus_fixtures::test_proposal(proposer, height, previous_hash, block_data, timestamp) }
+fn create_test_vote(voter: &IdentityId, proposal_id: &Hash, vote_type: VoteType, height: u64, round: u32, timestamp: u64) -> ConsensusVote { common::consensus_fixtures::test_vote(voter, proposal_id, vote_type, height, round, timestamp) }
 
 /// Setup consensus engine with N validators
 async fn setup_validators(

@@ -8,40 +8,11 @@ use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 use std::sync::Arc;
 
-/// Helper function to create test identity
-fn create_test_identity(name: &str) -> IdentityId {
-    Hash::from_bytes(&hash_blake3(name.as_bytes()))
-}
+mod common;
 
-fn validator_keys(seed: u8) -> ([u8; 2592], Vec<u8>, Vec<u8>) {
-    (
-        [seed; 2592],
-        vec![seed.wrapping_add(64); 32],
-        vec![seed.wrapping_add(128); 32],
-    )
-}
-
-/// Helper function to create test consensus config
-fn create_test_config() -> ConsensusConfig {
-    ConsensusConfig {
-        consensus_type: ConsensusType::ByzantineFaultTolerance,
-        min_stake: 1000 * 1_000_000,           // 1000 SOV
-        min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
-        max_validators: 10,
-        block_time: 1, // Fast for testing
-        epoch_length_blocks: 100,
-        propose_timeout: 100,
-        prevote_timeout: 50,
-        precommit_timeout: 50,
-        max_transactions_per_block: 1000,
-        max_difficulty: 0x00000000FFFFFFFF,
-        target_difficulty: 0x00000FFF,
-        byzantine_threshold: 1.0 / 3.0,
-        slash_double_sign: 5,
-        slash_liveness: 1,
-        development_mode: true, // Enable development mode for tests
-    }
-}
+fn create_test_identity(name: &str) -> IdentityId { common::consensus_fixtures::named_identity(name) }
+fn validator_keys(seed: u8) -> ([u8; 2592], Vec<u8>, Vec<u8>) { common::consensus_fixtures::validator_keys(seed) }
+fn create_test_config() -> ConsensusConfig { common::consensus_fixtures::basic_test_config() }
 
 #[tokio::test]
 async fn test_consensus_engine_initialization() -> Result<()> {

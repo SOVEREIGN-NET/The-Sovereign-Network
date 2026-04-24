@@ -11,6 +11,8 @@ use tempfile::TempDir;
 
 use lib_blockchain::block::{Block, BlockHeader};
 use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+
+mod common;
 use lib_blockchain::storage::{
     AccountState, Address, BlockchainStore, OutPoint, SledStore, TokenId, TxHash, Utxo, WalletState,
 };
@@ -25,56 +27,10 @@ fn create_test_store(dir: &TempDir) -> Arc<SledStore> {
     Arc::new(SledStore::open(dir.path()).unwrap())
 }
 
-fn create_dummy_public_key() -> PublicKey {
-    PublicKey::new([0u8; 2592])
-}
-
-fn create_dummy_signature() -> Signature {
-    Signature {
-        signature: vec![0u8; 64],
-        public_key: create_dummy_public_key(),
-        algorithm: SignatureAlgorithm::DEFAULT,
-        timestamp: 0,
-    }
-}
-
-fn create_genesis_block() -> Block {
-    let mut hash_bytes = [0u8; 32];
-    hash_bytes[0] = 0x01;
-    let block_hash = Hash::new(hash_bytes);
-
-    let header = BlockHeader {
-        version: 1,
-        previous_hash: Hash::default().into(),
-        data_helix_root: Hash::default().into(),
-        state_root: Hash::default().into(),
-        timestamp: 1000,
-        height: 0,
-        verification_helix_root: [0u8; 32],
-        bft_quorum_root: [0u8; 32],
-        block_hash,
-    };
-    Block::new(header, vec![])
-}
-
-fn create_block_at_height(height: u64, prev_hash: Hash) -> Block {
-    let mut hash_bytes = [0u8; 32];
-    hash_bytes[0..8].copy_from_slice(&height.to_be_bytes());
-    let block_hash = Hash::new(hash_bytes);
-
-    let header = BlockHeader {
-        version: 1,
-        previous_hash: prev_hash.into(),
-        data_helix_root: Hash::default().into(),
-        state_root: Hash::default().into(),
-        timestamp: 1000 + height * 600,
-        height,
-        verification_helix_root: [0u8; 32],
-        bft_quorum_root: [0u8; 32],
-        block_hash,
-    };
-    Block::new(header, vec![])
-}
+fn create_dummy_public_key() -> PublicKey { common::crypto_fixtures::dummy_public_key() }
+fn create_dummy_signature() -> Signature { common::crypto_fixtures::dummy_signature() }
+fn create_genesis_block() -> Block { common::block_builders::genesis_block() }
+fn create_block_at_height(height: u64, prev_hash: Hash) -> Block { common::block_builders::block_at_height(height, prev_hash) }
 
 // =============================================================================
 // Tests

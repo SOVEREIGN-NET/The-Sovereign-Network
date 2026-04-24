@@ -8,45 +8,13 @@ use lib_consensus::types::ConsensusStep;
 use lib_consensus::validators::validator_protocol::NetworkSummary;
 use lib_crypto::{hash_blake3, Hash, PostQuantumSignature, PublicKey, SignatureAlgorithm};
 use lib_identity::IdentityId;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-// Counter for generating unique test IDs
-static TEST_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
+mod common;
 
-/// Helper to create a unique test IdentityId
-fn create_unique_identity() -> IdentityId {
-    let id = TEST_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
-    Hash::from_bytes(&hash_blake3(format!("test-validator-{}", id).as_bytes()))
-}
-
-/// Helper to get current unix timestamp
-fn current_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-}
-
-/// Helper to create a valid test signature for testing
-fn create_test_signature(timestamp: u64) -> PostQuantumSignature {
-    // Create a valid test signature: >= 32 bytes, non-trivial pattern
-    let mut sig_bytes = vec![timestamp as u8; 64];
-    for i in 0..32 {
-        sig_bytes[i] = sig_bytes[i].wrapping_add(i as u8);
-    }
-
-    PostQuantumSignature {
-        signature: sig_bytes,
-        public_key: PublicKey {
-            dilithium_pk: [0u8; 2592],
-            kyber_pk: [0u8; 1568],
-            key_id: [0u8; 32],
-        },
-        algorithm: SignatureAlgorithm::DEFAULT,
-        timestamp,
-    }
-}
+fn create_unique_identity() -> IdentityId { common::consensus_fixtures::unique_identity() }
+fn current_timestamp() -> u64 { common::consensus_fixtures::current_timestamp() }
+fn create_test_signature(timestamp: u64) -> PostQuantumSignature { common::consensus_fixtures::test_signature(timestamp) }
 
 /// Helper to create a placeholder network summary for testing
 fn create_test_network_summary(active_count: u32) -> NetworkSummary {

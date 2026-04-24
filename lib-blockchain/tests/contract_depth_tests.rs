@@ -8,12 +8,9 @@ use lib_blockchain::contracts::executor::{
 };
 use lib_blockchain::integration::crypto_integration::PublicKey;
 
-/// Helper to create a test public key
-fn test_public_key(id: u8) -> PublicKey {
-    let mut dilithium_pk = [0u8; 2592];
-    dilithium_pk[0] = id;
-    PublicKey::new(dilithium_pk)
-}
+mod common;
+
+fn test_public_key(id: u8) -> PublicKey { common::crypto_fixtures::seeded_public_key(id) }
 
 /// Test 1: Call depth is initialized to 0 and max is set to DEFAULT_MAX_CALL_DEPTH
 #[test]

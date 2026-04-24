@@ -21,6 +21,8 @@ use lib_blockchain::transaction::{
 use lib_blockchain::types::{Hash, TransactionType};
 use lib_proofs::types::ZkProof;
 
+mod common;
+
 // =============================================================================
 // Test Helpers
 // =============================================================================
@@ -41,24 +43,9 @@ fn create_executor_with_fee_sink(
     BlockExecutor::from_config(store, config)
 }
 
-fn create_dummy_public_key() -> PublicKey {
-    PublicKey::new([0u8; 2592])
-}
-
-fn create_recipient_pk(seed: u8) -> PublicKey {
-    let mut key_data = [0u8; 2592];
-    key_data[0] = seed;
-    PublicKey::new(key_data)
-}
-
-fn create_dummy_signature() -> Signature {
-    Signature {
-        signature: vec![0u8; 64],
-        public_key: create_dummy_public_key(),
-        algorithm: SignatureAlgorithm::DEFAULT,
-        timestamp: 0,
-    }
-}
+fn create_dummy_public_key() -> PublicKey { common::crypto_fixtures::dummy_public_key() }
+fn create_recipient_pk(seed: u8) -> PublicKey { common::crypto_fixtures::seeded_public_key(seed) }
+fn create_dummy_signature() -> Signature { common::crypto_fixtures::dummy_signature() }
 
 fn create_dummy_zk_proof() -> ZkProof {
     ZkProof::default()

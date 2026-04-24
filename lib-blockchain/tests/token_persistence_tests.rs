@@ -6,12 +6,9 @@ use anyhow::Result;
 use lib_blockchain::contracts::executor::{ContractExecutor, MemoryStorage, SystemConfig};
 use lib_blockchain::integration::crypto_integration::PublicKey;
 
-/// Helper to create a test public key
-fn test_public_key(id: u8) -> PublicKey {
-    let mut dilithium_pk = [0u8; 2592];
-    dilithium_pk[0] = id;
-    PublicKey::new(dilithium_pk)
-}
+mod common;
+
+fn test_public_key(id: u8) -> PublicKey { common::crypto_fixtures::seeded_public_key(id) }
 
 /// Helper to create a test system config (by reference)
 fn test_system_config(governance_id: u8) -> SystemConfig {

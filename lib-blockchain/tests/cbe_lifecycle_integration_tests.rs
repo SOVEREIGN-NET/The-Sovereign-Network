@@ -30,6 +30,8 @@ use lib_blockchain::{
     integration::crypto_integration::PublicKey,
 };
 
+mod common;
+
 // ============================================================================
 // Test Constants
 // ============================================================================
@@ -48,11 +50,7 @@ const SOV_ATOMIC_UNITS: u128 = lib_types::sov::SCALE;
 // Test Helpers
 // ============================================================================
 
-fn test_pubkey(id: u8) -> PublicKey {
-    let mut pk = [0u8; 2592];
-    pk[0] = id;
-    PublicKey::new(pk)
-}
+fn test_pubkey(id: u8) -> PublicKey { common::crypto_fixtures::seeded_public_key(id) }
 
 fn governance() -> PublicKey {
     test_pubkey(0x01)
