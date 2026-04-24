@@ -69,6 +69,7 @@ pub mod network_blockchain_provider;
 pub mod node_identity;
 pub mod node_runtime;
 pub mod node_runtime_orchestrator;
+pub mod observer_admission_check;
 pub mod reward_orchestrator;
 pub mod routing_rewards;
 pub mod seed_storage;
@@ -146,6 +147,7 @@ async fn try_initial_sync_from_peer(
     store: std::sync::Arc<lib_blockchain::storage::SledStore>,
     peers: &[String],
     trusted_sync_sources: &[crate::config::TrustedSyncSource],
+    expected_network: &str,
 ) -> anyhow::Result<bool> {
     use lib_blockchain::storage::BlockchainStore;
     use lib_blockchain::sync::ChainSync;
@@ -230,12 +232,28 @@ async fn try_initial_sync_from_peer(
             }
         }
 
-        let peer_did = client.peer_did();
-        if !is_trusted_sync_source(peer, peer_did.as_deref(), trusted_sync_sources) {
+        let peer_did = client.peer_did().map(str::to_owned);
+        // observer-admission-5: gate the sync source on (operator allowlist)
+        // OR (canonical observer admission record matching local network).
+        // The legacy "empty allowlist ⇒ universal trust" rule is gone.
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let eligibility = crate::runtime::observer_admission_check::is_eligible_sync_source(
+            peer,
+            peer_did.as_deref(),
+            trusted_sync_sources,
+            store.as_ref() as &dyn lib_blockchain::storage::BlockchainStore,
+            expected_network,
+            now_secs,
+        );
+        if !eligibility.is_eligible() {
             warn!(
-                "⚠️  Skipping untrusted sync source {} (peer_did={})",
+                "⚠️  Skipping ineligible sync source {} (peer_did={}): {:?}",
                 peer_addr,
-                peer_did.as_deref().unwrap_or("unknown")
+                peer_did.as_deref().unwrap_or("unknown"),
+                eligibility,
             );
             continue;
         }
@@ -2233,6 +2251,7 @@ impl RuntimeOrchestrator {
                                 store.clone(),
                                 &net_info.bootstrap_peers,
                                 Self::trusted_sync_sources(&self.config),
+                                &self.config.blockchain_config.network_id,
                             )
                             .await
                             {
@@ -2342,6 +2361,7 @@ impl RuntimeOrchestrator {
                             store.clone(),
                             &retry_peers,
                             Self::trusted_sync_sources(&self.config),
+                            &self.config.blockchain_config.network_id,
                         )
                         .await
                         {
