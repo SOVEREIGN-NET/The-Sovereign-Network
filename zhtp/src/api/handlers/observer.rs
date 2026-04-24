@@ -197,6 +197,31 @@ impl ZhtpRequestHandler for ObserverHandler {
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/observer/surprisal/") => {
                 self.handle_get_surprisal_score(request).await
             }
+            // observer-admission-6: enrollment + lifecycle + read endpoints.
+            (ZhtpMethod::Post, "/api/v1/observer/admission/challenge") => {
+                crate::api::handlers::observer_admission::handle_admission_challenge(request).await
+            }
+            (ZhtpMethod::Post, path)
+                if path == "/api/v1/observer/admission/register"
+                    || path == "/api/v1/observer/admission/update"
+                    || path == "/api/v1/observer/admission/suspend"
+                    || path == "/api/v1/observer/admission/revoke"
+                    || path == "/api/v1/observer/admission/reauthorize" =>
+            {
+                let owned_path = path.to_string();
+                crate::api::handlers::observer_admission::dispatch_admission_write(
+                    &owned_path,
+                    request,
+                    self._runtime.as_ref(),
+                )
+                .await
+            }
+            (ZhtpMethod::Get, "/api/v1/observer/admission/status") => {
+                crate::api::handlers::observer_admission::handle_admission_status(request).await
+            }
+            (ZhtpMethod::Get, "/api/v1/observer/admission/by-sponsor") => {
+                crate::api::handlers::observer_admission::handle_admission_by_sponsor(request).await
+            }
             _ => Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
                 "Observer endpoint not found".to_string(),
