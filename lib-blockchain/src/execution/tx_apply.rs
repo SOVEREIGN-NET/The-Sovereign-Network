@@ -366,6 +366,23 @@ impl<'a> StateMutator<'a> {
         Ok(())
     }
 
+    /// Iterate observer records sponsored by the given user DID hash.
+    pub fn iter_observer_records_for_sponsor(
+        &self,
+        sponsor_did_hash: &[u8; 32],
+    ) -> TxApplyResult<Vec<lib_types::ObserverAdmissionRecord>> {
+        Ok(self
+            .store
+            .iter_observer_records_for_sponsor(sponsor_did_hash)?)
+    }
+
+    /// Retrieve the canonical observer admission policy.
+    pub fn get_observer_policy(
+        &self,
+    ) -> TxApplyResult<Option<lib_types::ObserverAdmissionPolicy>> {
+        Ok(self.store.get_observer_policy()?)
+    }
+
     // =========================================================================
     // Contract State Primitives
     // =========================================================================

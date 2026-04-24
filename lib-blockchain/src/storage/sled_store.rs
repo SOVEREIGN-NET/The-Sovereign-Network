@@ -2074,6 +2074,32 @@ impl BlockchainStore for SledStore {
         }
         Ok(records)
     }
+
+    fn get_observer_policy(
+        &self,
+    ) -> StorageResult<Option<lib_types::ObserverAdmissionPolicy>> {
+        match self.meta.get(keys::meta::OBSERVER_POLICY) {
+            Ok(Some(bytes)) => {
+                let policy: lib_types::ObserverAdmissionPolicy = Self::deserialize(&bytes)?;
+                Ok(Some(policy))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn save_observer_policy(
+        &self,
+        policy: &lib_types::ObserverAdmissionPolicy,
+    ) -> StorageResult<()> {
+        // Direct write to meta tree — like save_oracle_state, this is a
+        // metadata write that does not require an active block transaction.
+        let value = Self::serialize(policy)?;
+        self.meta
+            .insert(keys::meta::OBSERVER_POLICY, value)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
 }
 
 // =============================================================================

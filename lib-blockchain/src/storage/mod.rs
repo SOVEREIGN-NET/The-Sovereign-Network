@@ -1613,4 +1613,27 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
             })
             .collect())
     }
+
+    /// Retrieve the canonical observer admission policy.
+    ///
+    /// Returns `None` if no policy has been seeded yet (callers should treat
+    /// this as "genesis not yet bootstrapped" and fall back to
+    /// `crate::observer::default_policy()`).
+    fn get_observer_policy(
+        &self,
+    ) -> StorageResult<Option<lib_types::ObserverAdmissionPolicy>> {
+        Ok(None)
+    }
+
+    /// Persist the canonical observer admission policy.
+    ///
+    /// This is a metadata write — like `save_oracle_state`, it does not
+    /// require an active block transaction. Governance/genesis bootstrap
+    /// calls it directly.
+    fn save_observer_policy(
+        &self,
+        _policy: &lib_types::ObserverAdmissionPolicy,
+    ) -> StorageResult<()> {
+        Ok(())
+    }
 }

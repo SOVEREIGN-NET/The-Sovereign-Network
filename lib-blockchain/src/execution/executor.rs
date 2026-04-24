@@ -2588,8 +2588,50 @@ impl BlockExecutor {
             )));
         }
 
-        // Sybil resistance: burn a non-refundable SOV registration fee from the signer.
-        // This is debited before the record is written so InsufficientBalance is fatal.
+        // -------- Policy enforcement (observer-admission-4) ----------------
+        // Load canonical policy; fall back to protocol default if not yet
+        // seeded. Both branches are deterministic.
+        let policy = mutator
+            .get_observer_policy()?
+            .unwrap_or_else(crate::observer::default_policy);
+
+        // Anonymous sponsor + proof-level minimum.
+        if let Err(denial) =
+            crate::observer::policy::check_proof_level(data.sponsor_proof_level, &policy)
+        {
+            return Err(TxApplyError::InvalidType(format!(
+                "RegisterObserver: policy denial: {denial:?}"
+            )));
+        }
+
+        // Per-sponsor quota — count this sponsor's existing non-revoked records.
+        let sponsor_hash = crate::storage::did_to_hash(&data.sponsor_user_did);
+        let existing = mutator.iter_observer_records_for_sponsor(&sponsor_hash)?;
+        let active_count = existing
+            .iter()
+            .filter(|r| r.status != ObserverAdmissionStatus::Revoked)
+            .count() as u32;
+        if let Err(denial) = crate::observer::policy::check_sponsor_quota(
+            data.sponsor_proof_level,
+            active_count,
+            &policy,
+        ) {
+            return Err(TxApplyError::InvalidType(format!(
+                "RegisterObserver: policy denial: {denial:?}"
+            )));
+        }
+
+        // Initial status honors `auto_approve`.
+        let initial_status = if policy.auto_approve {
+            ObserverAdmissionStatus::Active
+        } else {
+            ObserverAdmissionStatus::Pending
+        };
+        // -------------------------------------------------------------------
+
+        // Sybil resistance: burn a non-refundable SOV registration fee from the
+        // signer. Debited only after all validation/policy checks pass so that
+        // policy denials do not consume the fee. InsufficientBalance is fatal.
         let fee = crate::transaction::fee::OBSERVER_REGISTRATION_FEE as u128;
         mutator.debit_token(&sov_token, &signer_addr, fee)?;
 
@@ -2605,7 +2647,7 @@ impl BlockExecutor {
                 proof_level: data.sponsor_proof_level,
                 sponsor_signature: data.sponsor_signature.clone(),
             },
-            status: ObserverAdmissionStatus::Pending,
+            status: initial_status,
             rate_limit_tier: data.rate_limit_tier,
             network: ObserverNetworkBinding {
                 allowed_network: data.allowed_network.clone(),
@@ -2624,9 +2666,10 @@ impl BlockExecutor {
         mutator.increment_token_nonce(&sov_token, &signer_addr)?;
 
         tracing::info!(
-            "[REGISTER_OBSERVER] did={} sponsor={} height={}",
+            "[REGISTER_OBSERVER] did={} sponsor={} status={:?} height={}",
             Self::trunc_did(&data.observer_node_did),
             Self::trunc_did(&data.sponsor_user_did),
+            initial_status,
             block_height,
         );
 
@@ -6413,13 +6456,14 @@ mod tests {
     #[test]
     fn test_register_observer_replay_is_deterministic() {
         // Apply the same chain twice into two fresh stores and verify the
-        // observer registry produces identical records.
+        // observer registry produces identical records. Uses distinct sponsors
+        // to stay under the per-sponsor quota enforced by admission-4 policy.
         let run = || -> Vec<lib_types::ObserverAdmissionRecord> {
             let (store, executor, prev_hash) = setup_observer_test();
 
             let tx_a = make_register_observer_tx_with_nonce(
                 "did:zhtp:repA",
-                "did:zhtp:repSponsor",
+                "did:zhtp:repSponsorA",
                 0,
             );
             let block2 = create_block_with_txs(2, prev_hash, vec![tx_a]);
@@ -6427,7 +6471,7 @@ mod tests {
 
             let tx_b = make_register_observer_tx_with_nonce(
                 "did:zhtp:repB",
-                "did:zhtp:repSponsor",
+                "did:zhtp:repSponsorB",
                 1,
             );
             let block3 = create_block_with_txs(3, block2.header.block_hash, vec![tx_b]);
@@ -6475,7 +6519,7 @@ mod tests {
         // expires_at in the past relative to block_height must be rejected.
         let (_store, executor, prev_hash) = setup_observer_test();
 
-        let mut data = RegisterObserverData {
+        let data = RegisterObserverData {
             observer_node_did: "did:zhtp:expired".to_string(),
             observer_public_key: vec![0u8; 32],
             endpoints: vec!["127.0.0.1:9000".to_string()],
@@ -6488,8 +6532,6 @@ mod tests {
             expires_at: Some(1), // height 2 > 1, so already expired
             nonce: 0,
         };
-        // Sanity: explicit override to make intent obvious.
-        data.expires_at = Some(1);
         let tx = Transaction::new_register_observer(0x03, data, create_dummy_signature());
 
         let result = apply_block_with_tx(&executor, 2, prev_hash, tx);
@@ -6547,5 +6589,185 @@ mod tests {
             result.is_err(),
             "RegisterObserver without sufficient SOV for fee must be rejected"
         );
+    }
+
+    // =========================================================================
+    // Observer Admission Policy Tests (observer-admission-4)
+    // =========================================================================
+
+    fn make_register_observer_tx_with_level_and_nonce(
+        observer_did: &str,
+        sponsor_did: &str,
+        level: lib_types::ObserverProofLevel,
+        nonce: u64,
+    ) -> Transaction {
+        let data = RegisterObserverData {
+            observer_node_did: observer_did.to_string(),
+            observer_public_key: vec![0u8; 32],
+            endpoints: vec!["127.0.0.1:9000".to_string()],
+            sponsor_user_did: sponsor_did.to_string(),
+            sponsor_proof_level: level,
+            sponsor_signature: vec![1u8; 32],
+            allowed_network: "testnet".to_string(),
+            trusted_sync_scope: None,
+            rate_limit_tier: lib_types::ObserverRateLimitTier::Standard,
+            expires_at: None,
+            nonce,
+        };
+        Transaction::new_register_observer(0x03, data, create_dummy_signature())
+    }
+
+    #[test]
+    fn test_anonymous_sponsor_register_rejected_by_policy() {
+        let (_store, executor, prev_hash) = setup_observer_test();
+
+        let tx = make_register_observer_tx_with_level_and_nonce(
+            "did:zhtp:nodeAnon",
+            "did:zhtp:sponsor1",
+            lib_types::ObserverProofLevel::None,
+            0,
+        );
+        let result = apply_block_with_tx(&executor, 2, prev_hash, tx);
+        assert!(
+            result.is_err(),
+            "anonymous (proof-level=None) sponsor must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_register_below_minimum_proof_level_rejected() {
+        let (store, executor, prev_hash) = setup_observer_test();
+
+        // Seed a stricter policy: minimum Enhanced.
+        let mut policy = crate::observer::default_policy();
+        policy.minimum_proof_level = lib_types::ObserverProofLevel::Enhanced;
+        store.save_observer_policy(&policy).unwrap();
+
+        let tx = make_register_observer_tx_with_level_and_nonce(
+            "did:zhtp:nodeLow",
+            "did:zhtp:sponsorLow",
+            lib_types::ObserverProofLevel::Basic,
+            0,
+        );
+        let result = apply_block_with_tx(&executor, 2, prev_hash, tx);
+        assert!(
+            result.is_err(),
+            "Basic sponsor under Enhanced minimum must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_sponsor_quota_exhausted_rejected() {
+        let (_store, executor, prev_hash) = setup_observer_test();
+
+        // Default policy + Basic sponsor → quota=1. First registration succeeds,
+        // second by the same sponsor must fail.
+        let tx1 = make_register_observer_tx_with_level_and_nonce(
+            "did:zhtp:q1",
+            "did:zhtp:sponsorQ",
+            lib_types::ObserverProofLevel::Basic,
+            0,
+        );
+        let block2 = create_block_with_txs(2, prev_hash, vec![tx1]);
+        executor.apply_block(&block2).expect("first registration");
+
+        let tx2 = make_register_observer_tx_with_level_and_nonce(
+            "did:zhtp:q2",
+            "did:zhtp:sponsorQ",
+            lib_types::ObserverProofLevel::Basic,
+            1,
+        );
+        let result = apply_block_with_tx(&executor, 3, block2.header.block_hash, tx2);
+        assert!(
+            result.is_err(),
+            "second observer for Basic sponsor must exhaust quota"
+        );
+    }
+
+    #[test]
+    fn test_revoked_observer_does_not_consume_quota() {
+        let (_store, executor, prev_hash) = setup_observer_test();
+
+        // Register, then revoke.
+        let tx1 = make_register_observer_tx_with_level_and_nonce(
+            "did:zhtp:rq1",
+            "did:zhtp:sponsorRQ",
+            lib_types::ObserverProofLevel::Basic,
+            0,
+        );
+        let block2 = create_block_with_txs(2, prev_hash, vec![tx1]);
+        executor.apply_block(&block2).unwrap();
+
+        let tx_rev = make_revoke_observer_tx_with_nonce(
+            "did:zhtp:rq1",
+            "did:zhtp:sponsorRQ",
+            1,
+        );
+        let block3 = create_block_with_txs(3, block2.header.block_hash, vec![tx_rev]);
+        executor.apply_block(&block3).unwrap();
+
+        // Now register a new observer under the same sponsor — should succeed
+        // because the revoked record does not consume quota.
+        let tx2 = make_register_observer_tx_with_level_and_nonce(
+            "did:zhtp:rq2",
+            "did:zhtp:sponsorRQ",
+            lib_types::ObserverProofLevel::Basic,
+            2,
+        );
+        apply_block_with_tx(&executor, 4, block3.header.block_hash, tx2)
+            .expect("revoked record must free quota");
+    }
+
+    #[test]
+    fn test_auto_approve_policy_creates_active_record() {
+        let (store, executor, prev_hash) = setup_observer_test();
+
+        let mut policy = crate::observer::default_policy();
+        policy.auto_approve = true;
+        store.save_observer_policy(&policy).unwrap();
+
+        let tx = make_register_observer_tx_with_level_and_nonce(
+            "did:zhtp:autoApprove",
+            "did:zhtp:sponsorA",
+            lib_types::ObserverProofLevel::Basic,
+            0,
+        );
+        apply_block_with_tx(&executor, 2, prev_hash, tx).unwrap();
+
+        let did_hash = crate::storage::did_to_hash(&"did:zhtp:autoApprove".to_string());
+        let record = store.get_observer_record(&did_hash).unwrap().unwrap();
+        assert_eq!(
+            record.status,
+            lib_types::ObserverAdmissionStatus::Active,
+            "auto_approve policy must land record in Active"
+        );
+    }
+
+    #[test]
+    fn test_evaluate_admission_active_record_authorized() {
+        use crate::observer::{evaluate_admission, AdmissionDecision};
+        let (store, executor, prev_hash) = setup_observer_test();
+
+        let mut policy = crate::observer::default_policy();
+        policy.auto_approve = true;
+        store.save_observer_policy(&policy).unwrap();
+
+        let tx = make_register_observer_tx_with_level_and_nonce(
+            "did:zhtp:evalAuth",
+            "did:zhtp:sponsorE",
+            lib_types::ObserverProofLevel::Basic,
+            0,
+        );
+        apply_block_with_tx(&executor, 2, prev_hash, tx).unwrap();
+
+        let did_hash = crate::storage::did_to_hash(&"did:zhtp:evalAuth".to_string());
+        let record = store.get_observer_record(&did_hash).unwrap().unwrap();
+
+        let decision = evaluate_admission(&record, &policy, "testnet", 100);
+        assert_eq!(decision, AdmissionDecision::Authorized);
+
+        // Wrong network → denied.
+        let denied = evaluate_admission(&record, &policy, "mainnet", 100);
+        assert!(matches!(denied, AdmissionDecision::Denied(_)));
     }
 }

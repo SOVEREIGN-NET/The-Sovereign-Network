@@ -24,6 +24,7 @@ mod fork_recovery; // gutted in Issue #936; kept as private to avoid orphan modu
 pub mod genesis;
 pub mod integration;
 pub mod mempool;
+pub mod observer;
 pub mod onramp;
 pub mod oracle;
 pub mod pricing;

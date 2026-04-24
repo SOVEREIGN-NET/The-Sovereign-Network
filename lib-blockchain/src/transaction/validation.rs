@@ -60,6 +60,18 @@ pub enum ValidationError {
     /// The sponsor DID in the transaction does not match the binding recorded
     /// in the canonical registry (or is empty on a new registration).
     InvalidSponsorBinding,
+    /// The sponsor's proof level is below the policy minimum.
+    SponsorProofLevelTooLow,
+    /// The sponsor has already used all observer slots for their proof level.
+    SponsorQuotaExhausted,
+    /// The sponsor is anonymous (empty DID or proof level None) and cannot
+    /// sponsor observers under any policy.
+    AnonymousSponsorRejected,
+    /// The observer record's expiry has passed.
+    ObserverExpired,
+    /// The observer record exists but is not currently authorized
+    /// (e.g. Pending, Suspended, Revoked, or fails policy network/proof check).
+    ObserverNotAuthorized,
 }
 
 impl std::fmt::Display for ValidationError {
@@ -106,6 +118,21 @@ impl std::fmt::Display for ValidationError {
             }
             ValidationError::InvalidSponsorBinding => {
                 write!(f, "Sponsor DID does not match the canonical sponsor binding")
+            }
+            ValidationError::SponsorProofLevelTooLow => {
+                write!(f, "Sponsor proof level is below the policy minimum")
+            }
+            ValidationError::SponsorQuotaExhausted => {
+                write!(f, "Sponsor has reached the observer quota for their proof level")
+            }
+            ValidationError::AnonymousSponsorRejected => {
+                write!(f, "Anonymous sponsors cannot register observers")
+            }
+            ValidationError::ObserverExpired => {
+                write!(f, "Observer admission record has expired")
+            }
+            ValidationError::ObserverNotAuthorized => {
+                write!(f, "Observer is not currently authorized by canonical admission state")
             }
         }
     }
