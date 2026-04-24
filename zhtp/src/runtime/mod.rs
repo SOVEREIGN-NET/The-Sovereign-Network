@@ -37,12 +37,16 @@ pub enum RemoteChainState {
     /// At least one peer explicitly reported genesis height with no committed blocks beyond it.
     GenesisOnly,
     /// At least one peer proved committed blocks beyond genesis.
-    Committed(u64),
+    ///
+    /// `hash` is the head block hash at `height` (defaults to all-zero when
+    /// the source did not report one — callers MUST treat all-zero as
+    /// "hash not yet proven" and not as a canonical commitment).
+    Committed { height: u64, hash: [u8; 32] },
 }
 
 impl RemoteChainState {
     pub fn has_committed_blocks(&self) -> bool {
-        matches!(self, Self::Committed(height) if *height > 0)
+        matches!(self, Self::Committed { height, .. } if *height > 0)
     }
 }
 
@@ -51,7 +55,10 @@ impl std::fmt::Display for RemoteChainState {
         match self {
             Self::Unknown => write!(f, "unknown"),
             Self::GenesisOnly => write!(f, "genesis-only"),
-            Self::Committed(height) => write!(f, "committed(height={height})"),
+            Self::Committed { height, hash } => {
+                let hash_prefix: String = hash.iter().take(4).map(|b| format!("{b:02x}")).collect();
+                write!(f, "committed(height={height},hash={hash_prefix}…)")
+            }
         }
     }
 }
@@ -5219,7 +5226,7 @@ impl RuntimeOrchestrator {
                                      observer startup will keep waiting for committed blocks",
                                     attempt
                                 ),
-                                RemoteChainState::Committed(_) => unreachable!(
+                                RemoteChainState::Committed { .. } => unreachable!(
                                     "guard excludes committed chain state"
                                 ),
                             }
@@ -5648,7 +5655,7 @@ mod runtime_orchestrator_tests {
 
         let network_info = crate::runtime::ExistingNetworkInfo {
             peer_count: 3,
-            chain_state: crate::runtime::RemoteChainState::Committed(42),
+            chain_state: crate::runtime::RemoteChainState::Committed { height: 42, hash: [0u8; 32] },
             network_id: "testnet".to_string(),
             bootstrap_peers: vec!["127.0.0.1:9334".to_string()],
             environment: crate::config::Environment::Development,
@@ -5853,7 +5860,7 @@ mod runtime_orchestrator_tests {
 
         let network_info = crate::runtime::ExistingNetworkInfo {
             peer_count: 4,
-            chain_state: crate::runtime::RemoteChainState::Committed(128),
+            chain_state: crate::runtime::RemoteChainState::Committed { height: 128, hash: [0u8; 32] },
             network_id: "observer-testnet".to_string(),
             bootstrap_peers: vec!["127.0.0.1:9334".to_string()],
             environment: Environment::Development,
@@ -5908,7 +5915,7 @@ mod runtime_orchestrator_tests {
 
         let discovered_network = crate::runtime::ExistingNetworkInfo {
             peer_count: 4,
-            chain_state: crate::runtime::RemoteChainState::Committed(128),
+            chain_state: crate::runtime::RemoteChainState::Committed { height: 128, hash: [0u8; 32] },
             network_id: "observer-sequence-testnet".to_string(),
             bootstrap_peers: vec!["127.0.0.1:9334".to_string(), "127.0.0.1:9335".to_string()],
             environment: Environment::Development,
@@ -5976,7 +5983,7 @@ mod runtime_orchestrator_tests {
             .expect("observer runtime should initialize");
         let network_info = crate::runtime::ExistingNetworkInfo {
             peer_count: 1,
-            chain_state: crate::runtime::RemoteChainState::Committed(42),
+            chain_state: crate::runtime::RemoteChainState::Committed { height: 42, hash: [0u8; 32] },
             network_id: "observer-runtime-join".to_string(),
             bootstrap_peers: vec!["127.0.0.1:1".to_string()],
             environment: Environment::Development,
@@ -6071,7 +6078,7 @@ mod runtime_orchestrator_tests {
 
         let discovered_network = crate::runtime::ExistingNetworkInfo {
             peer_count: 3,
-            chain_state: crate::runtime::RemoteChainState::Committed(64),
+            chain_state: crate::runtime::RemoteChainState::Committed { height: 64, hash: [0u8; 32] },
             network_id: "observer-shared-network".to_string(),
             bootstrap_peers: vec![
                 "127.0.0.1:9334".to_string(),
