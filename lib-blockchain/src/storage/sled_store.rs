@@ -2060,6 +2060,20 @@ impl BlockchainStore for SledStore {
             ))
         }
     }
+
+    fn iter_observer_records(&self) -> StorageResult<Vec<lib_types::ObserverAdmissionRecord>> {
+        let mut records = Vec::new();
+        for result in self.observer_registry.iter() {
+            match result {
+                Ok((_key, bytes)) => {
+                    let record: lib_types::ObserverAdmissionRecord = Self::deserialize(&bytes)?;
+                    records.push(record);
+                }
+                Err(e) => return Err(StorageError::Database(e.to_string())),
+            }
+        }
+        Ok(records)
+    }
 }
 
 // =============================================================================

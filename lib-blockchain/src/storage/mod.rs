@@ -1586,4 +1586,31 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     fn delete_observer_record(&self, _did_hash: &[u8; 32]) -> StorageResult<()> {
         Ok(())
     }
+
+    /// Iterate every observer admission record currently in the registry.
+    ///
+    /// Used by read endpoints (admission-6) and policy/quota evaluation (admission-4)
+    /// that need to enumerate the canonical set of admitted observers.
+    fn iter_observer_records(&self) -> StorageResult<Vec<lib_types::ObserverAdmissionRecord>> {
+        Ok(vec![])
+    }
+
+    /// Iterate every observer admission record sponsored by the given user DID hash.
+    ///
+    /// `sponsor_did_hash` is `blake3(sponsoring_user_did_string)`. Implementations
+    /// MAY use a secondary index; the default implementation filters via
+    /// `iter_observer_records`.
+    fn iter_observer_records_for_sponsor(
+        &self,
+        sponsor_did_hash: &[u8; 32],
+    ) -> StorageResult<Vec<lib_types::ObserverAdmissionRecord>> {
+        let all = self.iter_observer_records()?;
+        Ok(all
+            .into_iter()
+            .filter(|r| {
+                let h = crate::storage::did_to_hash(&r.sponsor.sponsoring_user_did);
+                &h == sponsor_did_hash
+            })
+            .collect())
+    }
 }

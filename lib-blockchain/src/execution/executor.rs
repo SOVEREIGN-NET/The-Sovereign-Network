@@ -6165,4 +6165,66 @@ mod tests {
         assert_eq!(record.sponsor.sponsoring_user_did, "did:zhtp:sponsor_abc");
         assert_eq!(record.sponsor.proof_level, lib_types::ObserverProofLevel::Basic);
     }
+
+    #[test]
+    fn test_iter_observer_records_returns_all_admitted() {
+        let store = create_test_store();
+        let executor = BlockExecutor::with_store(store.clone());
+        let genesis_hash = apply_genesis_and_get_hash(&executor);
+
+        let tx_a = make_register_observer_tx("did:zhtp:nodeA", "did:zhtp:sponsorX");
+        let block1 = create_block_with_txs(1, genesis_hash, vec![tx_a]);
+        executor.apply_block(&block1).unwrap();
+
+        let tx_b = make_register_observer_tx("did:zhtp:nodeB", "did:zhtp:sponsorY");
+        let block2 = create_block_with_txs(2, block1.header.block_hash, vec![tx_b]);
+        executor.apply_block(&block2).unwrap();
+
+        let all = store.iter_observer_records().unwrap();
+        assert_eq!(all.len(), 2);
+        let dids: Vec<String> = all
+            .iter()
+            .map(|r| r.node_info.observer_node_did.clone())
+            .collect();
+        assert!(dids.contains(&"did:zhtp:nodeA".to_string()));
+        assert!(dids.contains(&"did:zhtp:nodeB".to_string()));
+
+        // Per-sponsor filter (default trait impl uses iter_observer_records)
+        let sponsor_x_hash = crate::storage::did_to_hash(&"did:zhtp:sponsorX".to_string());
+        let by_sponsor = store
+            .iter_observer_records_for_sponsor(&sponsor_x_hash)
+            .unwrap();
+        assert_eq!(by_sponsor.len(), 1);
+        assert_eq!(by_sponsor[0].node_info.observer_node_did, "did:zhtp:nodeA");
+    }
+
+    #[test]
+    fn test_register_observer_replay_is_deterministic() {
+        // Apply the same chain twice into two fresh stores and verify the
+        // observer registry produces identical records.
+        let run = || -> Vec<lib_types::ObserverAdmissionRecord> {
+            let store = create_test_store();
+            let executor = BlockExecutor::with_store(store.clone());
+            let genesis_hash = apply_genesis_and_get_hash(&executor);
+
+            let tx_a = make_register_observer_tx("did:zhtp:repA", "did:zhtp:repSponsor");
+            let block1 = create_block_with_txs(1, genesis_hash, vec![tx_a]);
+            executor.apply_block(&block1).unwrap();
+
+            let tx_b = make_register_observer_tx("did:zhtp:repB", "did:zhtp:repSponsor");
+            let block2 = create_block_with_txs(2, block1.header.block_hash, vec![tx_b]);
+            executor.apply_block(&block2).unwrap();
+
+            let mut all = store.iter_observer_records().unwrap();
+            all.sort_by(|a, b| a.node_info.observer_node_did.cmp(&b.node_info.observer_node_did));
+            all
+        };
+
+        let first = run();
+        let second = run();
+        assert_eq!(
+            first, second,
+            "observer registry must be deterministic across replays"
+        );
+    }
 }
