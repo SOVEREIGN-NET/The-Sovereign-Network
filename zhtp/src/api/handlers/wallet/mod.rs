@@ -262,12 +262,20 @@ impl WalletHandler {
         // Graph-traversal guard: WalletGraph / Read
         let principal = self.extract_principal(request);
         let identity_manager = self.identity_manager.read().await;
-        if !identity_manager.check_access(&principal, &identity_hash, AccessDomain::WalletGraph, AccessOperation::Read) {
-            drop(identity_manager);
-            return Ok(create_error_response(
-                ZhtpStatus::Forbidden,
-                "Access denied to wallet list".to_string(),
-            ));
+        let is_self_access = identity_manager.check_access(&principal, &identity_hash, AccessDomain::WalletGraph, AccessOperation::Read);
+        drop(identity_manager);
+
+        // Cross-identity: return minimal info (wallet types only, no balances)
+        if !is_self_access {
+            let identity = self.get_identity_by_id(&identity_id_bytes).await;
+            let wallet_count = identity.as_ref().map(|i| i.list_wallets().len()).unwrap_or(0);
+            return create_json_response(json!({
+                "status": "success",
+                "identity_id": identity_id,
+                "total_wallets": wallet_count,
+                "total_balance": "0",
+                "wallets": []
+            }));
         }
 
         // Get the identity
@@ -484,14 +492,18 @@ impl WalletHandler {
         let identity_hash = Hash(identity_id_bytes);
 
         // Graph-traversal guard: WalletGraph / Read
+        // Cross-identity: return zero balance (don't leak actual amounts)
         let principal = self.extract_principal(request);
         let identity_manager = self.identity_manager.read().await;
         if !identity_manager.check_access(&principal, &identity_hash, AccessDomain::WalletGraph, AccessOperation::Read) {
             drop(identity_manager);
-            return Ok(create_error_response(
-                ZhtpStatus::Forbidden,
-                "Access denied to wallet balance".to_string(),
-            ));
+            return create_json_response(json!({
+                "status": "success",
+                "wallet_type": wallet_type_str,
+                "identity_id": identity_id,
+                "balance": "0",
+                "balance_human": "0.0000"
+            }));
         }
         drop(identity_manager);
 
@@ -641,13 +653,21 @@ impl WalletHandler {
         let identity_hash = Hash(identity_id_bytes);
 
         // Graph-traversal guard: WalletGraph / Read
+        // Cross-identity: return empty statistics (don't leak financial data)
         let principal = self.extract_principal(request);
         let identity_manager = self.identity_manager.read().await;
         if !identity_manager.check_access(&principal, &identity_hash, AccessDomain::WalletGraph, AccessOperation::Read) {
             drop(identity_manager);
-            return Ok(create_error_response(
-                ZhtpStatus::Forbidden,
-                "Access denied to wallet statistics".to_string(),
+            let response = json!({
+                "status": "success",
+                "identity_id": identity_id,
+                "statistics": { "total_balance": "0", "wallet_count": 0, "wallet_statistics": [] }
+            });
+            let json_response = serde_json::to_vec(&response)?;
+            return Ok(ZhtpResponse::success_with_content_type(
+                json_response,
+                "application/json".to_string(),
+                None,
             ));
         }
         drop(identity_manager);
