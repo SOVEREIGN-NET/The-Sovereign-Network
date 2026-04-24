@@ -58,26 +58,6 @@ prevote_timeout_ms = 1000
 precommit_timeout_ms = 1000
 
 [[consensus_config.council.members]]
-identity_id = "did:zhtp:da0c583fc07decd4ec6e0c341e198702d0dbb2772ede87ea84910b0136bceb65"
-wallet_id = "352e91e5934f02e736cde61c2da58d8d"
-stake_amount = 100000000
-
-[[consensus_config.council.members]]
-identity_id = "did:zhtp:22ceddadf411554b675e94df220489997e7541188865484fba699f04be168056"
-wallet_id = "5d943f46014d30d8e8b43975e6c6fae2"
-stake_amount = 100000000
-
-[[consensus_config.council.members]]
-identity_id = "did:zhtp:b448980ab32f171273221030c9a547e48942fff08184bca9bb99c800e6fcddf2"
-wallet_id = "b34550d2dee04cef3c34e2dabe225008"
-stake_amount = 100000000
-
-[[consensus_config.council.members]]
-identity_id = "did:zhtp:ee364ad7a51ede2a0642a708e59b3acd3f83bf4e24c7694c1d3cfbae14c8376a"
-wallet_id = "08ebfec05e34e2a8fad773a2b96ccf52"
-stake_amount = 100000000
-
-[[consensus_config.council.members]]
 identity_id = "did:zhtp:94563acff1be7506bde97263611d03d53c5f1a78ba3712eb986e275a1592c821"
 wallet_id = "bb12668e4a979ac4f9bf97203cd95394b51ca9bf6da445f474a82823a541b57e"
 stake_amount = 100000000
