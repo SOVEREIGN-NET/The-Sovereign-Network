@@ -86,6 +86,41 @@ deploy-prod-1.sh
 docs/plans/CONTRACT_DAO_PRODUCTION_READINESS_PLAN.md
 .gitnexus/kuzu
 
+# AI assistant artifacts — never commit
+.claude/
+.qwen/
+.codex/
+.cursor/
+.cursorrules
+.cursorignore
+.copilot/
+.github/copilot-instructions.md
+.gemini/
+.aider*
+.continue/
+.cline/
+.clinerules
+.windsurf/
+.windsurfrules
+.chatgpt/
+.anthropic/
+.sourcegraph/
+.tabnine/
+.zed/
+CLAUDE.md
+CLAUDE.local.md
+QWEN.md
+CODEX.md
+GEMINI.md
+CURSOR.md
+AGENTS.md
+.ai/
+.llm/
+
+# All markdown — root + docs tree (kept locally, not committed)
+/*.md
+docs/**/*.md
+
 # Sensitive / local-only file patterns (issue #1934)
 tmp/
 *.b64
