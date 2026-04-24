@@ -2,7 +2,7 @@ use super::types::*;
 use crate::contracts::tokens::core::TokenContract;
 use crate::integration::crypto_integration::PublicKey;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// Development Grants Fund Contract - Phase 2 Final Implementation
 ///
@@ -41,7 +41,7 @@ pub struct DevGrants {
     /// Approved grants (governance-binding payload storage)
     /// Maps proposal_id -> ApprovedGrant
     /// Once stored, recipient and amount are immutable
-    approved: HashMap<ProposalId, ApprovedGrant>,
+    approved: BTreeMap<ProposalId, ApprovedGrant>,
 
     /// Disbursement log (append-only, immutable)
     /// Each record includes actual token_burned amount
@@ -62,7 +62,7 @@ impl DevGrants {
             balance: 0,
             total_received: 0,
             total_disbursed: 0,
-            approved: HashMap::new(),
+            approved: BTreeMap::new(),
             disbursements: vec![],
         }
     }

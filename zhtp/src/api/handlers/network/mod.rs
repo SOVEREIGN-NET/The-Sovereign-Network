@@ -1053,6 +1053,18 @@ impl NetworkHandler {
             .unwrap_or_default();
         let node_role = format!("{:?}", self.runtime.get_node_role().await).to_ascii_lowercase();
 
+        // Known validator/gateway SPKI pins (SHA-256 of SubjectPublicKeyInfo DER).
+        // Keyed by IP. These are stable unless a node regenerates its TLS cert.
+        // TODO: move to on-chain validator registry so nodes publish their own pins.
+        let known_spki_pins: std::collections::HashMap<&str, &str> = [
+            ("77.42.37.161",   "611bd1197ee799c17ac46f3f27df45ec4580d924f0dc3597ba79bcad3d0fa970"), // g1
+            ("77.42.74.80",    "611bd1197ee799c17ac46f3f27df45ec4580d924f0dc3597ba79bcad3d0fa970"), // g2
+            ("178.105.9.247",  "eb71239b161a8ea0cdc94f3853298f3e063523c9860a9630cc57504b024a3f54"), // g3
+            ("148.113.140.176","939828e5fc146d3b2efb3255d53ba12b48f9da9c0a823bae145f6720eab3937c"), // g4
+            ("51.75.62.133",   "154afc2efe9d834f5264fd21033d49362599e358233d1c0d67ad487bab366d09"), // g5
+            ("91.98.113.188",  "611bd1197ee799c17ac46f3f27df45ec4580d924f0dc3597ba79bcad3d0fa970"), // gateway
+        ].into_iter().collect();
+
         // Build validator entries from on-chain registry
         let validators: Vec<serde_json::Value> = blockchain
             .validator_registry
@@ -1060,6 +1072,7 @@ impl NetworkHandler {
             .filter(|v| v.status == "active")
             .map(|v| {
                 let ip = v.network_address.split(':').next().unwrap_or("");
+                let spki_pin = known_spki_pins.get(ip).unwrap_or(&"").to_string();
                 serde_json::json!({
                     "did": v.identity_id,
                     "role": "validator",
@@ -1073,6 +1086,7 @@ impl NetworkHandler {
                     "last_activity": v.last_activity,
                     "commission_rate": v.commission_rate,
                     "admission": v.admission_source,
+                    "spki_pin": spki_pin,
                 })
             })
             .collect();
@@ -1084,6 +1098,7 @@ impl NetworkHandler {
             .filter(|g| g.status == "active")
             .map(|g| {
                 let ip = g.endpoints.split(':').next().unwrap_or("");
+                let spki_pin = known_spki_pins.get(ip).unwrap_or(&"").to_string();
                 serde_json::json!({
                     "did": g.identity_id,
                     "role": "gateway",
@@ -1094,6 +1109,7 @@ impl NetworkHandler {
                     "status": g.status,
                     "stake": g.stake,
                     "commission_rate": g.commission_rate,
+                    "spki_pin": spki_pin,
                 })
             })
             .collect();
@@ -1110,6 +1126,11 @@ impl NetworkHandler {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            // Back-compat: top-level fields for older clients
+            "validators": validators,
+            "validator_count": validators.len(),
+            "local_spki_pin": local_spki,
+            // New structured format
             "this_node": {
                 "did": node_did,
                 "role": node_role,
