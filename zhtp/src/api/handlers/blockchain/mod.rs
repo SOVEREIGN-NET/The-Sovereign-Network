@@ -1724,11 +1724,23 @@ impl BlockchainHandler {
 
     /// Handle getting balance for an address
     async fn handle_get_balance(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let principal = self.extract_principal(&request);
+
         // Extract address from path: /api/v1/blockchain/balance/{address}
         let path_parts: Vec<&str> = request.uri.split('/').collect();
         let address_str = path_parts
             .get(4)
             .ok_or_else(|| anyhow::anyhow!("Address required"))?;
+
+        // Ownership check: caller can only read their own wallet balance
+        // unless they have Council role. The address is a wallet ID (hex hash).
+        let caller_hex = principal.did.strip_prefix("did:zhtp:").unwrap_or(&principal.did);
+        if principal.role == lib_access_control::Role::Public {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::Forbidden,
+                "Balance lookup requires authentication".to_string(),
+            ));
+        }
 
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
