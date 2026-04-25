@@ -114,6 +114,9 @@ pub enum TxValidateError {
     #[error("Insufficient inputs: have {have}, need {need}")]
     InsufficientInputs { have: u128, need: u128 },
 
+    #[error("Arithmetic overflow during conservation accumulation")]
+    Overflow,
+
     // =========================================================================
     // Fee Errors
     // =========================================================================

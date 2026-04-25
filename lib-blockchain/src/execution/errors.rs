@@ -107,6 +107,12 @@ pub enum TxApplyError {
     #[error("Insufficient input value: have {have}, need {need}")]
     InsufficientInputs { have: u128, need: u128 },
 
+    #[error("Arithmetic overflow during conservation accumulation")]
+    Overflow,
+
+    #[error("Derived output amount is zero at index {index}")]
+    ZeroAmountOutput { index: usize },
+
     // =========================================================================
     // Token Errors (stateful)
     // =========================================================================

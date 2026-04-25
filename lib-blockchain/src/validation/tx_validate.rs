@@ -266,7 +266,9 @@ fn validate_transfer_stateful(
             return Err(TxValidateError::UnauthorizedSpend(outpoint));
         }
 
-        total_input = total_input.saturating_add(utxo.amount);
+        total_input = total_input
+            .checked_add(utxo.amount)
+            .ok_or(TxValidateError::Overflow)?;
     }
 
     // Note: Cannot calculate total_output from TransactionOutput because it uses
