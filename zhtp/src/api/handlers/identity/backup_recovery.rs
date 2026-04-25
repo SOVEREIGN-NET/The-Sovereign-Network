@@ -337,7 +337,7 @@ pub async fn handle_recover_identity(
     // For the 24-word BIP39 path we also keep the Dilithium pk so we can auto-create
     // the identity and wallet if they are not yet on-chain.
 
-    let (identity_id, opt_dilithium_pk) = if words.len() == 24 {
+    let (identity_id, opt_dilithium_pk, opt_root_secret) = if words.len() == 24 {
         // 24-word BIP39 standard - derive identity using lib-client's method:
         // 1. Extract 32-byte entropy from mnemonic (NOT BIP39 PBKDF2)
         // 2. Generate Dilithium keypair from entropy (deterministic)
@@ -367,7 +367,7 @@ pub async fn handle_recover_identity(
         let identity_id = lib_crypto::Hash::from_hex(id_hex)
             .map_err(|e| anyhow::anyhow!("Invalid identity hash: {}", e))?;
 
-        (identity_id, Some(rsk.public_key.clone()))
+        (identity_id, Some(rsk.public_key.clone()), Some(rs.0))
     } else {
         // 20-word custom format - use legacy Blake3 derivation
         let phrase_manager = recovery_phrase_manager.read().await;
@@ -376,7 +376,7 @@ pub async fn handle_recover_identity(
             .await
             .map_err(|e| anyhow::anyhow!("Identity recovery failed: {}", e))?;
         drop(phrase_manager);
-        (id, None::<Vec<u8>>)
+        (id, None::<Vec<u8>>, None::<[u8; 64]>)
     };
 
     // Look up identity — auto-create on-chain if this is a fresh device after seed entry.
@@ -394,7 +394,7 @@ pub async fn handle_recover_identity(
                 "Recovery: identity {} not found — auto-creating from seed",
                 hex::encode(&identity_id.0[..8])
             );
-            auto_create_identity_from_seed(&identity_manager, identity_id.clone(), dilithium_pk)
+            auto_create_identity_from_seed(&identity_manager, identity_id.clone(), dilithium_pk, opt_root_secret)
                 .await
                 .unwrap_or_else(|e| {
                     tracing::warn!("Recovery auto-create identity failed: {}", e);
@@ -453,6 +453,7 @@ async fn auto_create_identity_from_seed(
     identity_manager: &Arc<RwLock<IdentityManager>>,
     identity_id: lib_crypto::Hash,
     dilithium_pk: &[u8],
+    opt_root_secret: Option<[u8; 64]>,
 ) -> anyhow::Result<String> {
     let did = did_from_root_signing_public_key(dilithium_pk);
     let now_ts = std::time::SystemTime::now()
@@ -479,6 +480,33 @@ async fn auto_create_identity_from_seed(
                 Some("Recovered Identity".to_string()),
                 now_ts,
             );
+
+            // If we have the root secret, set up HD wallet recovery so the user
+            // can see their actual wallets (not just a server-side fallback).
+            if let Some(root_secret) = opt_root_secret {
+                if let Some(identity) = mgr.get_identity_mut(&identity_id) {
+                    // Derive wallet master seed using the same XOF as new_unified
+                    let mut wallet_master_seed = [0u8; 64];
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(&root_secret);
+                    hasher.update(b"ZHTP_WALLET_SEED_V1");
+                    let mut reader = hasher.finalize_xof();
+                    reader.fill(&mut wallet_master_seed);
+
+                    identity.wallet_master_seed = wallet_master_seed;
+                    identity.wallet_manager =
+                        lib_identity::wallets::WalletManager::from_master_seed(
+                            identity_id.clone(),
+                            wallet_master_seed,
+                        );
+
+                    // Recover wallets that were derived from this master seed
+                    let _ = identity
+                        .wallet_manager
+                        .recover_hd_wallets(HD_RECOVERY_SCAN_DEPTH)
+                        .await;
+                }
+            }
         }
     }
 
@@ -535,6 +563,9 @@ async fn auto_create_identity_from_seed(
 
 /// The default SOV welcome bonus minted when a wallet has no on-chain balance (5 000 SOV).
 const RECOVERY_SOV_WELCOME_BONUS: u128 = lib_types::sov::atoms(5_000);
+
+/// Number of HD derivation indices to scan during wallet recovery.
+const HD_RECOVERY_SCAN_DEPTH: u32 = 20;
 
 /// Migrate wallets belonging to `identity_id` that are registered on-chain but have
 /// no sled token balance. Submits a WalletRegistration transaction for each such
