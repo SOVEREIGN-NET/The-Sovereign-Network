@@ -639,6 +639,12 @@ impl BlockExecutor {
         let mutator = StateMutator::new(self.store.as_ref());
         let mut summary = StateChangesSummary::default();
         let mut total_fees: u128 = 0;
+        let mut add_total_fees = |fee: u128| -> BlockApplyResult<()> {
+            total_fees = total_fees.checked_add(fee).ok_or_else(|| {
+                BlockApplyError::ValidationFailed("total_fees overflow while applying block".to_string())
+            })?;
+            Ok(())
+        };
 
         // Initialize block-level resource accumulator
         let mut accumulator = BlockAccumulator::new();
