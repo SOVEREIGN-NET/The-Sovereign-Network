@@ -957,6 +957,14 @@ pub fn apply_coinbase(
         tx.outputs.len() as u128
     };
 
+    // Prevent zero-value reward UTXOs. Each reward output must receive at least one unit
+    // of block reward, otherwise integer division would produce zero-amount outputs.
+    if reward_output_count > 0 && block_reward < reward_output_count {
+        return Err(TxApplyError::MissingField(format!(
+            "Coinbase has {} reward outputs but block reward {} is insufficient to fund each output with a non-zero amount",
+            reward_output_count, block_reward
+        )));
+    }
     let amount_per_reward_output = if reward_output_count > 0 {
         block_reward / reward_output_count
     } else {
