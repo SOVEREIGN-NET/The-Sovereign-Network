@@ -2697,63 +2697,99 @@ impl BlockExecutor {
         Ok(())
     }
 
-    fn apply_suspend_observer(
-        &self,
+    /// Shared lifecycle helper for sponsor-driven observer state transitions
+    /// that record an action_meta entry (currently `SuspendObserver` and
+    /// `RevokeObserver`). Validates nonce, sponsor authority, and the source
+    /// status guard, then writes the new status and bumps the SOV nonce.
+    fn apply_observer_sponsor_lifecycle(
         mutator: &StateMutator<'_>,
         tx: &crate::transaction::Transaction,
         block_height: u64,
+        op_name: &'static str,
+        log_prefix: &'static str,
+        observer_did: &str,
+        actor_did: &str,
+        reason: &str,
+        nonce: u64,
+        target_status: lib_types::ObserverAdmissionStatus,
+        is_valid_source: impl Fn(lib_types::ObserverAdmissionStatus) -> bool,
     ) -> Result<(), TxApplyError> {
-        use lib_types::{ObserverAdmissionActionMeta, ObserverAdmissionStatus};
-
-        let data = tx.suspend_observer_data().ok_or_else(|| {
-            TxApplyError::InvalidType("SuspendObserver missing payload".to_string())
-        })?;
+        use lib_types::ObserverAdmissionActionMeta;
 
         // Replay protection: enforce monotonic SOV nonce on the signer.
         let (signer_addr, sov_token) =
-            Self::check_observer_nonce(mutator, tx, data.nonce, "SuspendObserver")?;
+            Self::check_observer_nonce(mutator, tx, nonce, op_name)?;
 
         let (did_hash, mut record) =
-            Self::load_observer_record(mutator, &data.observer_node_did, "SuspendObserver")?;
+            Self::load_observer_record(mutator, observer_did, op_name)?;
 
-        // Only the registered sponsor may suspend the observer.
-        if data.actor_did != record.sponsor.sponsoring_user_did {
+        // Only the registered sponsor may drive sponsor-scoped lifecycle changes.
+        if actor_did != record.sponsor.sponsoring_user_did {
             return Err(TxApplyError::InvalidType(format!(
-                "SuspendObserver: actor {} is not the sponsor",
-                Self::trunc_did(&data.actor_did),
+                "{op_name}: actor {} is not the sponsor",
+                Self::trunc_did(actor_did),
             )));
         }
 
-        // Only Active observers can be suspended.
-        if record.status != ObserverAdmissionStatus::Active {
+        if !is_valid_source(record.status) {
             return Err(TxApplyError::InvalidType(format!(
-                "SuspendObserver: observer {} status is {:?}, must be Active",
-                Self::trunc_did(&data.observer_node_did),
+                "{op_name}: observer {} status is {:?}, invalid transition to {:?}",
+                Self::trunc_did(observer_did),
                 record.status,
+                target_status,
             )));
         }
 
-        record.status = ObserverAdmissionStatus::Suspended;
+        record.status = target_status;
         record.action_meta = Some(ObserverAdmissionActionMeta {
-            actor_did: data.actor_did.clone(),
-            reason: data.reason.clone(),
+            actor_did: actor_did.to_string(),
+            reason: reason.to_string(),
             timestamp: block_height,
         });
         record.updated_at = block_height;
 
         mutator.put_observer_record(&did_hash, &record)?;
 
-        // Bump SOV nonce after a successful suspension.
+        // Bump SOV nonce after the lifecycle change has been persisted.
         mutator.increment_token_nonce(&sov_token, &signer_addr)?;
 
         tracing::info!(
-            "[SUSPEND_OBSERVER] did={} actor={} height={}",
-            Self::trunc_did(&data.observer_node_did),
-            Self::trunc_did(&data.actor_did),
+            "[{}] did={} actor={} height={}",
+            log_prefix,
+            Self::trunc_did(observer_did),
+            Self::trunc_did(actor_did),
             block_height,
         );
 
         Ok(())
+    }
+
+    fn apply_suspend_observer(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        block_height: u64,
+    ) -> Result<(), TxApplyError> {
+        use lib_types::ObserverAdmissionStatus;
+
+        let data = tx.suspend_observer_data().ok_or_else(|| {
+            TxApplyError::InvalidType("SuspendObserver missing payload".to_string())
+        })?;
+
+        Self::apply_observer_sponsor_lifecycle(
+            mutator,
+            tx,
+            block_height,
+            "SuspendObserver",
+            "SUSPEND_OBSERVER",
+            &data.observer_node_did,
+            &data.actor_did,
+            &data.reason,
+            data.nonce,
+            ObserverAdmissionStatus::Suspended,
+            // Only Active observers can be suspended.
+            |status| status == ObserverAdmissionStatus::Active,
+        )
     }
 
     fn apply_revoke_observer(
@@ -2762,56 +2798,26 @@ impl BlockExecutor {
         tx: &crate::transaction::Transaction,
         block_height: u64,
     ) -> Result<(), TxApplyError> {
-        use lib_types::{ObserverAdmissionActionMeta, ObserverAdmissionStatus};
+        use lib_types::ObserverAdmissionStatus;
 
         let data = tx.revoke_observer_data().ok_or_else(|| {
             TxApplyError::InvalidType("RevokeObserver missing payload".to_string())
         })?;
 
-        // Replay protection: enforce monotonic SOV nonce on the signer.
-        let (signer_addr, sov_token) =
-            Self::check_observer_nonce(mutator, tx, data.nonce, "RevokeObserver")?;
-
-        let (did_hash, mut record) =
-            Self::load_observer_record(mutator, &data.observer_node_did, "RevokeObserver")?;
-
-        // Only the registered sponsor may revoke the observer.
-        if data.actor_did != record.sponsor.sponsoring_user_did {
-            return Err(TxApplyError::InvalidType(format!(
-                "RevokeObserver: actor {} is not the sponsor",
-                Self::trunc_did(&data.actor_did),
-            )));
-        }
-
-        // Cannot revoke an already-revoked observer (idempotency guard).
-        if record.status == ObserverAdmissionStatus::Revoked {
-            return Err(TxApplyError::InvalidType(format!(
-                "RevokeObserver: observer {} is already Revoked",
-                Self::trunc_did(&data.observer_node_did),
-            )));
-        }
-
-        record.status = ObserverAdmissionStatus::Revoked;
-        record.action_meta = Some(ObserverAdmissionActionMeta {
-            actor_did: data.actor_did.clone(),
-            reason: data.reason.clone(),
-            timestamp: block_height,
-        });
-        record.updated_at = block_height;
-
-        mutator.put_observer_record(&did_hash, &record)?;
-
-        // Bump SOV nonce after a successful revocation.
-        mutator.increment_token_nonce(&sov_token, &signer_addr)?;
-
-        tracing::info!(
-            "[REVOKE_OBSERVER] did={} actor={} height={}",
-            Self::trunc_did(&data.observer_node_did),
-            Self::trunc_did(&data.actor_did),
+        Self::apply_observer_sponsor_lifecycle(
+            mutator,
+            tx,
             block_height,
-        );
-
-        Ok(())
+            "RevokeObserver",
+            "REVOKE_OBSERVER",
+            &data.observer_node_did,
+            &data.actor_did,
+            &data.reason,
+            data.nonce,
+            ObserverAdmissionStatus::Revoked,
+            // Cannot revoke an already-revoked observer (idempotency guard).
+            |status| status != ObserverAdmissionStatus::Revoked,
+        )
     }
 
     fn apply_reauthorize_observer(
@@ -6115,6 +6121,24 @@ mod tests {
         genesis.header.block_hash
     }
 
+    /// Test helper: overwrite an observer record's status by writing directly
+    /// through the store at `height`. Used to set up tests for transitions
+    /// whose source state can't be reached via normal tx flows in admission-3
+    /// (e.g. Active or Suspended without going through reauthorize).
+    fn seed_observer_status_at(
+        store: &Arc<dyn BlockchainStore>,
+        observer_did: &str,
+        status: lib_types::ObserverAdmissionStatus,
+        height: u64,
+    ) {
+        let did_hash = crate::storage::did_to_hash(&observer_did.to_string());
+        let mut record = store.get_observer_record(&did_hash).unwrap().unwrap();
+        record.status = status;
+        store.begin_block(height).unwrap();
+        store.put_observer_record(&did_hash, &record).unwrap();
+        store.commit_block().unwrap();
+    }
+
     fn apply_block_with_tx(
         executor: &BlockExecutor,
         height: u64,
@@ -6169,14 +6193,13 @@ mod tests {
         executor.apply_block(&block2).unwrap();
 
         // Seed Active status via a raw store write at height 3.
+        seed_observer_status_at(
+            &store,
+            "did:zhtp:node3",
+            lib_types::ObserverAdmissionStatus::Active,
+            3,
+        );
         let did_hash = crate::storage::did_to_hash(&"did:zhtp:node3".to_string());
-        {
-            let mut record = store.get_observer_record(&did_hash).unwrap().unwrap();
-            record.status = lib_types::ObserverAdmissionStatus::Active;
-            store.begin_block(3).unwrap();
-            store.put_observer_record(&did_hash, &record).unwrap();
-            store.commit_block().unwrap();
-        }
 
         // Now suspend at height 4 (signer nonce is 1 because register consumed 0).
         let tx_sus = make_suspend_observer_tx_with_nonce(
@@ -6284,14 +6307,13 @@ mod tests {
         executor.apply_block(&block2).unwrap();
 
         // Seed Suspended status via raw write at height 3.
+        seed_observer_status_at(
+            &store,
+            "did:zhtp:node7",
+            lib_types::ObserverAdmissionStatus::Suspended,
+            3,
+        );
         let did_hash = crate::storage::did_to_hash(&"did:zhtp:node7".to_string());
-        {
-            let mut record = store.get_observer_record(&did_hash).unwrap().unwrap();
-            record.status = lib_types::ObserverAdmissionStatus::Suspended;
-            store.begin_block(3).unwrap();
-            store.put_observer_record(&did_hash, &record).unwrap();
-            store.commit_block().unwrap();
-        }
 
         // Reauthorize as original sponsor at height 4 (nonce 1).
         let tx_rauth = make_reauthorize_observer_tx_with_nonce(
@@ -6320,14 +6342,12 @@ mod tests {
         executor.apply_block(&block2).unwrap();
 
         // Seed Suspended status via raw write at height 3.
-        let did_hash = crate::storage::did_to_hash(&"did:zhtp:node8".to_string());
-        {
-            let mut record = store.get_observer_record(&did_hash).unwrap().unwrap();
-            record.status = lib_types::ObserverAdmissionStatus::Suspended;
-            store.begin_block(3).unwrap();
-            store.put_observer_record(&did_hash, &record).unwrap();
-            store.commit_block().unwrap();
-        }
+        seed_observer_status_at(
+            &store,
+            "did:zhtp:node8",
+            lib_types::ObserverAdmissionStatus::Suspended,
+            3,
+        );
 
         // Wrong sponsor at height 4 (nonce 1).
         let tx_rauth = make_reauthorize_observer_tx_with_nonce(
