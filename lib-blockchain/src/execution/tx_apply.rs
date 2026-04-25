@@ -88,7 +88,7 @@ impl<'a> StateMutator<'a> {
         &self,
         tx_hash: &Hash,
         outputs: &[TransactionOutput],
-        amounts: &[u64],
+        amounts: &[u128],
         block_height: u64,
     ) -> TxApplyResult<()> {
         use crate::storage::TxHash;
@@ -720,10 +720,28 @@ pub fn apply_native_transfer(
     block_height: u64,
 ) -> TxApplyResult<TransferOutcome> {
     use crate::storage::TxHash;
+    use std::collections::HashSet;
 
-    let mut total_input: u64 = 0;
+    if tx.outputs.is_empty() {
+        return Err(TxApplyError::EmptyOutputs);
+    }
 
-    // Spend all inputs and sum their values
+    // Defense in depth: reject duplicate inputs even though stateless validation
+    // already does this. Apply layer must hold its own invariants — internal
+    // callers and future executor refactors may bypass the validation gate.
+    let mut seen_inputs: HashSet<(TxHash, u32)> = HashSet::with_capacity(tx.inputs.len());
+    for input in &tx.inputs {
+        let key = (
+            TxHash::new(input.previous_output.as_array()),
+            input.output_index,
+        );
+        if !seen_inputs.insert(key) {
+            return Err(TxApplyError::DuplicateInput(OutPoint::new(key.0, key.1)));
+        }
+    }
+
+    // Spend all inputs and sum their values with checked accumulation.
+    let mut total_input: u128 = 0;
     for input in &tx.inputs {
         let outpoint = OutPoint::new(
             TxHash::new(input.previous_output.as_array()),
@@ -731,11 +749,14 @@ pub fn apply_native_transfer(
         );
 
         let utxo = mutator.spend_utxo(&outpoint)?;
-        total_input = total_input.saturating_add(utxo.amount);
+        total_input = total_input
+            .checked_add(utxo.amount)
+            .ok_or(TxApplyError::Overflow)?;
     }
 
-    // Calculate available value after fee
-    let fee = tx.fee;
+    // Fee is u64 on Transaction; widen at the boundary into conservation math.
+    // Transaction.fee widening to u128 tracked in #2290.
+    let fee: u128 = tx.fee as u128;
     if total_input < fee {
         return Err(TxApplyError::InsufficientInputs {
             have: total_input,
@@ -744,25 +765,38 @@ pub fn apply_native_transfer(
     }
     let available = total_input - fee;
 
-    // Distribute available value equally among outputs
-    // (Phase 2 simplification - real implementation would use ZK proofs)
-    let output_count = tx.outputs.len() as u64;
-    if output_count == 0 {
-        return Err(TxApplyError::Internal("No outputs".to_string()));
-    }
+    // Phase 2 simplification: TransactionOutput uses ZK commitments, so we
+    // derive per-output amounts by equal distribution of (inputs − fee).
+    // amount_per_output == 0 with multiple outputs would mint zero-value
+    // UTXOs — reject up front.
+    let output_count = tx.outputs.len() as u128;
     let amount_per_output = available / output_count;
     let remainder = available % output_count;
+    if amount_per_output == 0 && output_count > 1 {
+        return Err(TxApplyError::InsufficientInputs {
+            have: available,
+            need: output_count,
+        });
+    }
 
-    let mut total_output: u64 = 0;
+    let mut total_output: u128 = 0;
     for (index, output) in tx.outputs.iter().enumerate() {
         let outpoint = OutPoint::new(TxHash::new(tx_hash.as_array()), index as u32);
 
-        // First output gets remainder
         let amount = if index == 0 {
-            amount_per_output + remainder
+            // Remainder folds into the first output. checked_add guards
+            // against the (impossible-by-construction) overflow of
+            // available/n + available%n, defense in depth only.
+            amount_per_output
+                .checked_add(remainder)
+                .ok_or(TxApplyError::Overflow)?
         } else {
             amount_per_output
         };
+
+        if amount == 0 {
+            return Err(TxApplyError::ZeroAmountOutput { index });
+        }
 
         // Derive address from recipient public key's 32-byte key_id
         // (blake3 hash of the dilithium public key bytes).
@@ -782,7 +816,23 @@ pub fn apply_native_transfer(
         };
 
         mutator.create_utxo(&outpoint, &utxo)?;
-        total_output = total_output.saturating_add(amount);
+        total_output = total_output
+            .checked_add(amount)
+            .ok_or(TxApplyError::Overflow)?;
+    }
+
+    // Strict conservation: outputs + fee == inputs. Holds by construction
+    // (output amounts are derived from available = inputs − fee), so this
+    // assertion catches future bugs in the distribution math.
+    let reconstructed = total_output
+        .checked_add(fee)
+        .ok_or(TxApplyError::Overflow)?;
+    if reconstructed != total_input {
+        return Err(TxApplyError::ValueMismatch {
+            inputs: total_input,
+            outputs: total_output,
+            fee,
+        });
     }
 
     Ok(TransferOutcome {
@@ -856,8 +906,8 @@ pub fn apply_coinbase(
     tx: &Transaction,
     tx_hash: &Hash,
     block_height: u64,
-    block_reward: u64,
-    fees_collected: u64,
+    block_reward: u128,
+    fees_collected: u128,
     fee_sink_address: &Address,
 ) -> TxApplyResult<CoinbaseOutcome> {
     use crate::storage::TxHash;
@@ -875,7 +925,9 @@ pub fn apply_coinbase(
         ));
     }
 
-    let expected_total = block_reward.saturating_add(fees_collected);
+    let expected_total = block_reward
+        .checked_add(fees_collected)
+        .ok_or(TxApplyError::Overflow)?;
 
     // Phase 3C: Validate fee sink output if fees were collected
     let mut fee_sink_output_found = false;
@@ -900,11 +952,19 @@ pub fn apply_coinbase(
 
     // Calculate distribution: reward goes to non-fee-sink outputs, fees go to fee sink
     let reward_output_count = if fees_collected > 0 {
-        tx.outputs.len().saturating_sub(1) as u64
+        tx.outputs.len().saturating_sub(1) as u128
     } else {
-        tx.outputs.len() as u64
+        tx.outputs.len() as u128
     };
 
+    // Prevent zero-value reward UTXOs. Each reward output must receive at least one unit
+    // of block reward, otherwise integer division would produce zero-amount outputs.
+    if reward_output_count > 0 && block_reward < reward_output_count {
+        return Err(TxApplyError::MissingField(format!(
+            "Coinbase has {} reward outputs but block reward {} is insufficient to fund each output with a non-zero amount",
+            reward_output_count, block_reward
+        )));
+    }
     let amount_per_reward_output = if reward_output_count > 0 {
         block_reward / reward_output_count
     } else {
@@ -916,7 +976,7 @@ pub fn apply_coinbase(
         0
     };
 
-    let mut total_output: u64 = 0;
+    let mut total_output: u128 = 0;
     let mut reward_output_index = 0;
 
     for (index, output) in tx.outputs.iter().enumerate() {
@@ -956,7 +1016,9 @@ pub fn apply_coinbase(
         };
 
         mutator.create_utxo(&outpoint, &utxo)?;
-        total_output = total_output.saturating_add(amount);
+        total_output = total_output
+            .checked_add(amount)
+            .ok_or(TxApplyError::Overflow)?;
     }
 
     // Verify total output matches expected
@@ -1071,17 +1133,273 @@ where
 pub struct TransferOutcome {
     pub inputs_spent: usize,
     pub outputs_created: usize,
-    pub total_value: u64,
-    pub fee: u64,
+    pub total_value: u128,
+    pub fee: u128,
 }
 
 /// Outcome of a coinbase transaction
 #[derive(Debug, Clone)]
 pub struct CoinbaseOutcome {
     pub outputs_created: usize,
-    pub total_reward: u64,
+    pub total_reward: u128,
     /// Phase 3C: Fees collected and routed to fee sink
-    pub fees_collected: u64,
+    pub fees_collected: u128,
     /// Phase 3C: Whether fee sink was credited
     pub fee_sink_credited: bool,
+}
+
+// =============================================================================
+// Apply-Layer Invariant Tests
+// =============================================================================
+//
+// These tests pin down the conservation, dedup, and overflow guards in
+// apply_native_transfer. Ported from the now-deleted lib-utxo::apply tests
+// and adapted to Phase 2 ZK-commitment output semantics (no per-output
+// amounts in TransactionOutput, so the equal-distribution path is exercised).
+
+#[cfg(test)]
+mod apply_native_transfer_tests {
+    use super::*;
+    use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+    use crate::integration::zk_integration::ZkTransactionProof;
+    use crate::storage::{BlockchainStore, SledStore, TxHash};
+    use crate::transaction::{Transaction, TransactionInput, TransactionOutput};
+    use std::sync::Arc;
+
+    fn fresh_store() -> Arc<dyn BlockchainStore> {
+        Arc::new(SledStore::open_temporary().unwrap())
+    }
+
+    fn tx_hash_for(seed: u8) -> Hash {
+        Hash::new([seed; 32])
+    }
+
+    fn dummy_signature() -> Signature {
+        Signature {
+            signature: vec![0u8; 64],
+            public_key: PublicKey::new([0u8; 2592]),
+            algorithm: SignatureAlgorithm::DEFAULT,
+            timestamp: 0,
+        }
+    }
+
+    fn make_input(prev_tx: u8, index: u32) -> TransactionInput {
+        TransactionInput::new(
+            tx_hash_for(prev_tx),
+            index,
+            tx_hash_for(0xAA),
+            ZkTransactionProof::default(),
+        )
+    }
+
+    fn make_output(recipient_seed: u8) -> TransactionOutput {
+        TransactionOutput::new(
+            tx_hash_for(0xBB),
+            tx_hash_for(0xCC),
+            PublicKey::new([recipient_seed; 2592]),
+        )
+    }
+
+    fn seed_utxo(store: &dyn BlockchainStore, prev_tx: u8, index: u32, amount: u128) {
+        let mutator = StateMutator::new(store);
+        let outpoint = OutPoint::new(TxHash::new(tx_hash_for(prev_tx).as_array()), index);
+        let utxo = Utxo {
+            amount,
+            owner: Address::new([0u8; 32]),
+            token: TokenId::NATIVE,
+            created_at_height: 0,
+            script: None,
+            merkle_leaf: None,
+        };
+        mutator.create_utxo(&outpoint, &utxo).unwrap();
+    }
+
+    #[test]
+    fn basic_transfer_conserves_value() {
+        let store = fresh_store();
+        store.begin_block(0).unwrap();
+        seed_utxo(store.as_ref(), 1, 0, 1_000);
+        store.commit_block().unwrap();
+
+        store.begin_block(1).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+        let tx = Transaction::new(
+            vec![make_input(1, 0)],
+            vec![make_output(0x10), make_output(0x11)],
+            100,
+            dummy_signature(),
+            vec![],
+        );
+        let outcome = apply_native_transfer(&mutator, &tx, &tx_hash_for(0xF0), 1).unwrap();
+        assert_eq!(outcome.total_value, 900);
+        assert_eq!(outcome.fee, 100);
+        assert_eq!(outcome.total_value + outcome.fee, 1_000);
+    }
+
+    #[test]
+    fn rejects_duplicate_input() {
+        let store = fresh_store();
+        store.begin_block(0).unwrap();
+        seed_utxo(store.as_ref(), 1, 0, 1_000);
+        store.commit_block().unwrap();
+
+        store.begin_block(1).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+        let tx = Transaction::new(
+            vec![make_input(1, 0), make_input(1, 0)],
+            vec![make_output(0x10)],
+            0,
+            dummy_signature(),
+            vec![],
+        );
+        let err = apply_native_transfer(&mutator, &tx, &tx_hash_for(0xF1), 1).unwrap_err();
+        assert!(matches!(err, TxApplyError::DuplicateInput(_)));
+    }
+
+    #[test]
+    fn rejects_zero_amount_derived_outputs() {
+        // available (5) < output_count (10) => amount_per_output == 0 with
+        // multiple outputs. Hardening must reject before any UTXO is created.
+        let store = fresh_store();
+        store.begin_block(0).unwrap();
+        seed_utxo(store.as_ref(), 1, 0, 5);
+        store.commit_block().unwrap();
+
+        store.begin_block(1).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+        let tx = Transaction::new(
+            vec![make_input(1, 0)],
+            (0..10).map(make_output).collect(),
+            0,
+            dummy_signature(),
+            vec![],
+        );
+        let err = apply_native_transfer(&mutator, &tx, &tx_hash_for(0xF2), 1).unwrap_err();
+        assert!(matches!(
+            err,
+            TxApplyError::InsufficientInputs { have: 5, need: 10 }
+        ));
+    }
+
+    #[test]
+    fn rejects_fee_exceeding_inputs() {
+        let store = fresh_store();
+        store.begin_block(0).unwrap();
+        seed_utxo(store.as_ref(), 1, 0, 50);
+        store.commit_block().unwrap();
+
+        store.begin_block(1).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+        let tx = Transaction::new(
+            vec![make_input(1, 0)],
+            vec![make_output(0x10)],
+            100,
+            dummy_signature(),
+            vec![],
+        );
+        let err = apply_native_transfer(&mutator, &tx, &tx_hash_for(0xF3), 1).unwrap_err();
+        assert!(matches!(
+            err,
+            TxApplyError::InsufficientInputs { have: 50, need: 100 }
+        ));
+    }
+
+    #[test]
+    fn rejects_overflow_on_input_accumulation() {
+        // Two UTXOs near u128::MAX overflow when summed — checked_add must catch it.
+        let store = fresh_store();
+        store.begin_block(0).unwrap();
+        seed_utxo(store.as_ref(), 1, 0, u128::MAX);
+        seed_utxo(store.as_ref(), 1, 1, 1);
+        store.commit_block().unwrap();
+
+        store.begin_block(1).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+        let tx = Transaction::new(
+            vec![make_input(1, 0), make_input(1, 1)],
+            vec![make_output(0x10)],
+            0,
+            dummy_signature(),
+            vec![],
+        );
+        let err = apply_native_transfer(&mutator, &tx, &tx_hash_for(0xF4), 1).unwrap_err();
+        assert!(matches!(err, TxApplyError::Overflow));
+    }
+
+    #[test]
+    fn propagates_utxo_not_found() {
+        let store = fresh_store();
+        store.begin_block(0).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+        let tx = Transaction::new(
+            vec![make_input(0xEE, 7)],
+            vec![make_output(0x10)],
+            0,
+            dummy_signature(),
+            vec![],
+        );
+        let err = apply_native_transfer(&mutator, &tx, &tx_hash_for(0xF5), 0).unwrap_err();
+        assert!(matches!(err, TxApplyError::UtxoNotFound(_)));
+    }
+
+    #[test]
+    fn rejects_empty_outputs() {
+        let store = fresh_store();
+        store.begin_block(0).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+        let tx = Transaction::new(
+            vec![make_input(1, 0)],
+            vec![],
+            0,
+            dummy_signature(),
+            vec![],
+        );
+        let err = apply_native_transfer(&mutator, &tx, &tx_hash_for(0xF6), 0).unwrap_err();
+        assert!(matches!(err, TxApplyError::EmptyOutputs));
+    }
+
+    #[test]
+    fn strict_conservation_with_remainder() {
+        // 1_000 input, fee 7, 3 outputs => 331/331/331 + remainder 0+remainder…
+        // 993 / 3 = 331 exactly, remainder 0. Confirm exact conservation.
+        let store = fresh_store();
+        store.begin_block(0).unwrap();
+        seed_utxo(store.as_ref(), 1, 0, 1_000);
+        store.commit_block().unwrap();
+
+        store.begin_block(1).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+        let tx = Transaction::new(
+            vec![make_input(1, 0)],
+            (0..3).map(make_output).collect(),
+            7,
+            dummy_signature(),
+            vec![],
+        );
+        let outcome = apply_native_transfer(&mutator, &tx, &tx_hash_for(0xF7), 1).unwrap();
+        assert_eq!(outcome.total_value + outcome.fee, 1_000);
+
+        // 7 doesn't divide cleanly: 993 % 3 = 0 (993 = 3*331). Pick one with remainder.
+        store.commit_block().unwrap();
+
+        // Second case: 1000 - 4 = 996, /3 = 332, remainder 0. Try 1000 - 5 = 995
+        // 995 / 3 = 331 r 2. First output gets 333, others 331 each. total=995+5=1000.
+        store.begin_block(2).unwrap();
+        seed_utxo(store.as_ref(), 2, 0, 1_000);
+        store.commit_block().unwrap();
+
+        store.begin_block(3).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+        let tx = Transaction::new(
+            vec![make_input(2, 0)],
+            (0..3).map(make_output).collect(),
+            5,
+            dummy_signature(),
+            vec![],
+        );
+        let outcome = apply_native_transfer(&mutator, &tx, &tx_hash_for(0xF8), 3).unwrap();
+        assert_eq!(outcome.total_value, 995);
+        assert_eq!(outcome.fee, 5);
+        assert_eq!(outcome.total_value + outcome.fee, 1_000);
+    }
 }
