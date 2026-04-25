@@ -59,13 +59,10 @@ pub use validators::{
     Validator, ValidatorManager, MAX_VALIDATORS, MAX_VALIDATORS_HARD_CAP, MIN_VALIDATORS,
 };
 
-#[cfg(feature = "dao")]
 pub use dao::*;
 
-#[cfg(feature = "byzantine")]
 pub use byzantine::*;
 
-#[cfg(feature = "rewards")]
 pub use rewards::*;
 
 /// Result type alias for consensus operations
