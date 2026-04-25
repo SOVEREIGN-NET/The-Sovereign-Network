@@ -74,5 +74,50 @@ run_gate \
   "DAO vote tx integration path" \
   cargo test --locked -p lib-blockchain --test consensus_integration_tests test_dao_vote_creation -- --nocapture
 
+# Observer admission release gates (epic: observer-admission-2..9).
+run_gate \
+  "Observer admission: replay determinism" \
+  cargo test --locked -p lib-blockchain --test observer_admission_integration_tests replay_determinism_for_admission_tx_sequence -- --nocapture
+
+run_gate \
+  "Observer admission: duplicate registration rejected" \
+  cargo test --locked -p lib-blockchain --test observer_admission_integration_tests duplicate_registration_rejected -- --nocapture
+
+run_gate \
+  "Observer admission: invalid sponsor binding rejected" \
+  cargo test --locked -p lib-blockchain --test observer_admission_integration_tests invalid_sponsor_binding_rejected -- --nocapture
+
+run_gate \
+  "Observer admission: anonymous sponsor policy rejection" \
+  cargo test --locked -p lib-blockchain --test observer_admission_integration_tests anonymous_sponsor_rejected_by_policy -- --nocapture
+
+run_gate \
+  "Observer admission: sponsor quota enforced (Basic tier)" \
+  cargo test --locked -p lib-blockchain --test observer_admission_integration_tests sponsor_quota_enforced_for_basic_tier -- --nocapture
+
+run_gate \
+  "Observer admission: pending observer cannot bootstrap" \
+  cargo test --locked -p lib-blockchain --test observer_admission_integration_tests pending_observer_cannot_bootstrap -- --nocapture
+
+run_gate \
+  "Observer admission: A->S->A transitions and bootstrap effects" \
+  cargo test --locked -p lib-blockchain --test observer_admission_integration_tests status_transitions_active_suspend_reauthorize -- --nocapture
+
+run_gate \
+  "Observer admission: revoke paths (A->R / S->R / P->R) terminal" \
+  cargo test --locked -p lib-blockchain --test observer_admission_integration_tests status_transitions_revoke_paths_all_deny_bootstrap -- --nocapture
+
+run_gate \
+  "Observer admission: trusted sync source / network enforcement" \
+  cargo test --locked -p lib-blockchain --test observer_admission_integration_tests trusted_sync_source_enforcement_via_evaluate_admission -- --nocapture
+
+run_gate \
+  "Observer admission: expired record denied bootstrap" \
+  cargo test --locked -p lib-blockchain --test observer_admission_integration_tests expired_record_denied_bootstrap -- --nocapture
+
+run_gate \
+  "Observer admission: observer module unit suite (policy + rate_limit + abuse)" \
+  cargo test --locked -p lib-blockchain --lib observer
+
 echo ""
 echo "[dao-ready-gates] All DAO-READY release gates passed"
