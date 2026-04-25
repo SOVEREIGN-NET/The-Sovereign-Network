@@ -3472,6 +3472,57 @@ dependencies = [
 ]
 
 [[package]]
+name = "lib-consensus-core"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "lib-crypto",
+ "lib-identity",
+ "lib-types",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "lib-consensus-net"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bincode",
+ "lib-consensus-core",
+ "lib-crypto",
+ "lib-identity",
+ "lib-network",
+ "lib-types",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "lib-consensus-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bincode",
+ "lib-blockchain",
+ "lib-consensus-core",
+ "lib-consensus-net",
+ "lib-crypto",
+ "lib-identity",
+ "lib-network",
+ "lib-types",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "lib-crypto"
 version = "0.1.0"
 dependencies = [
