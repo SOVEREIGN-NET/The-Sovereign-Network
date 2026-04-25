@@ -19,8 +19,19 @@ use serde::{Deserialize, Serialize};
 /// `Active` is required for an observer to sync or serve data, but
 /// record-level authorization may impose additional checks (e.g. expiry).
 /// All other states deny bootstrap, gap-fill, and long-range block import.
+///
+/// # Serialization contract
+///
+/// - **JSON** (`serde_json`): variant name string — `"Pending"`, `"Active"`,
+///   `"Suspended"`, `"Revoked"`. This is the stable external wire format.
+///   Golden representations are pinned in the test suite.
+/// - **Binary** (`bincode` v1.x): variant *ordinal index* as a
+///   little-endian `u32` (4 bytes). The `#[repr(u8)]` annotation controls
+///   Rust memory layout only and has no effect on serde output. Stability
+///   depends on variant **ordering** — appending new variants is safe;
+///   inserting or removing variants is a breaking change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[repr(u8)]
+#[repr(u8)] // layout only — not the serialized discriminant; see doc comment above
 pub enum ObserverAdmissionStatus {
     /// Enrollment submitted, awaiting approval.
     Pending = 0,
@@ -48,8 +59,16 @@ impl ObserverAdmissionStatus {
 /// Higher proof levels allow sponsoring more observers and receive
 /// higher rate-limit tiers. Exact quota mappings are governance-
 /// configurable; this type encodes the tier identity only.
+///
+/// # Serialization contract
+///
+/// - **JSON** (`serde_json`): variant name string — `"None"`, `"Basic"`,
+///   `"Enhanced"`, `"Organizational"`.
+/// - **Binary** (`bincode` v1.x): variant *ordinal index* as a
+///   little-endian `u32` (4 bytes). `#[repr(u8)]` is Rust-layout only;
+///   it does not affect serde output. Do not reorder variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[repr(u8)]
+#[repr(u8)] // layout only — not the serialized discriminant; see doc comment above
 pub enum ObserverProofLevel {
     /// Cannot sponsor any observers.
     None = 0,
@@ -85,8 +104,16 @@ impl ObserverProofLevel {
 /// Determines per-observer connection, sync, API, and bandwidth caps.
 /// Exact limits are enforcement-layer concerns; this type identifies
 /// which tier applies.
+///
+/// # Serialization contract
+///
+/// - **JSON** (`serde_json`): variant name string — `"Standard"`,
+///   `"Elevated"`, `"Organizational"`.
+/// - **Binary** (`bincode` v1.x): variant *ordinal index* as a
+///   little-endian `u32` (4 bytes). `#[repr(u8)]` is Rust-layout only;
+///   it does not affect serde output. Do not reorder variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[repr(u8)]
+#[repr(u8)] // layout only — not the serialized discriminant; see doc comment above
 pub enum ObserverRateLimitTier {
     /// Default tier for proof-level 1 sponsors.
     Standard = 0,
@@ -559,6 +586,78 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&ObserverRateLimitTier::Organizational).unwrap(),
             "\"Organizational\""
+        );
+    }
+
+    // ----- bincode golden-byte contract tests -----
+    //
+    // Bincode 1.x encodes unit-enum variants as their ordinal index
+    // (little-endian u32, 4 bytes).  This is independent of the `repr(u8)`
+    // numeric discriminant — `repr(u8)` is Rust memory-layout only.
+    //
+    // These tests document and pin the binary encoding so that:
+    //   a) it is clear the contract is ordinal-index-based, not repr-value-based;
+    //   b) any accidental variant reordering is caught immediately.
+    //
+    // Safe evolution: appending new variants at the end does not break these
+    // golden bytes.  Inserting variants in the middle is a breaking change.
+
+    #[test]
+    fn bincode_golden_bytes_admission_status() {
+        // index 0 = Pending, 1 = Active, 2 = Suspended, 3 = Revoked
+        assert_eq!(
+            bincode::serialize(&ObserverAdmissionStatus::Pending).unwrap().as_slice(),
+            &[0, 0, 0, 0]
+        );
+        assert_eq!(
+            bincode::serialize(&ObserverAdmissionStatus::Active).unwrap().as_slice(),
+            &[1, 0, 0, 0]
+        );
+        assert_eq!(
+            bincode::serialize(&ObserverAdmissionStatus::Suspended).unwrap().as_slice(),
+            &[2, 0, 0, 0]
+        );
+        assert_eq!(
+            bincode::serialize(&ObserverAdmissionStatus::Revoked).unwrap().as_slice(),
+            &[3, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn bincode_golden_bytes_proof_level() {
+        // index 0 = None, 1 = Basic, 2 = Enhanced, 3 = Organizational
+        assert_eq!(
+            bincode::serialize(&ObserverProofLevel::None).unwrap().as_slice(),
+            &[0, 0, 0, 0]
+        );
+        assert_eq!(
+            bincode::serialize(&ObserverProofLevel::Basic).unwrap().as_slice(),
+            &[1, 0, 0, 0]
+        );
+        assert_eq!(
+            bincode::serialize(&ObserverProofLevel::Enhanced).unwrap().as_slice(),
+            &[2, 0, 0, 0]
+        );
+        assert_eq!(
+            bincode::serialize(&ObserverProofLevel::Organizational).unwrap().as_slice(),
+            &[3, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn bincode_golden_bytes_rate_limit_tier() {
+        // index 0 = Standard, 1 = Elevated, 2 = Organizational
+        assert_eq!(
+            bincode::serialize(&ObserverRateLimitTier::Standard).unwrap().as_slice(),
+            &[0, 0, 0, 0]
+        );
+        assert_eq!(
+            bincode::serialize(&ObserverRateLimitTier::Elevated).unwrap().as_slice(),
+            &[1, 0, 0, 0]
+        );
+        assert_eq!(
+            bincode::serialize(&ObserverRateLimitTier::Organizational).unwrap().as_slice(),
+            &[2, 0, 0, 0]
         );
     }
 }
