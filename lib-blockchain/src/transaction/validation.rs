@@ -2149,10 +2149,9 @@ impl<'a> StatefulTransactionValidator<'a> {
             && transaction.transaction_type != TransactionType::DaoUnstake
             && transaction.transaction_type != TransactionType::DomainRegistration // owner_did↔signer binding enforced above
             && transaction.transaction_type != TransactionType::DomainUpdate // owner_did↔signer binding enforced above
-            // RegisterObserver: the sponsor may not have a registered identity yet.
-            // All other observer lifecycle types (Suspend/Revoke/Reauthorize/Update) require
-            // the actor to be a known identity, so they go through the normal check.
-            && transaction.transaction_type != TransactionType::RegisterObserver
+            // All observer admission lifecycle types (Register/Update/Suspend/Revoke/Reauthorize)
+            // require the actor/sponsor to be a registered identity (Sybil resistance);
+            // signer↔DID binding is separately enforced by `check_observer_signer` above.
             && !is_token_contract_execution(transaction)
         {
             tracing::debug!("[BREADCRUMB] validate_sender_identity_exists CALL");

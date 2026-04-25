@@ -2481,6 +2481,51 @@ impl BlockExecutor {
         s.chars().take(48).collect()
     }
 
+    /// Verify the per-signer SOV nonce attached to an observer-admission tx.
+    ///
+    /// Observer transactions reuse the canonical SOV nonce keyed by the signer's
+    /// `key_id` so that all signed activity from a given key is totally ordered
+    /// (Transfer / DaoStake / observer-admin all bump the same counter). This
+    /// blocks replay of a captured observer transaction.
+    ///
+    /// On success returns the signer `Address` and SOV `TokenId` so the caller
+    /// can perform follow-up debits and the post-success nonce increment without
+    /// recomputing them.
+    fn check_observer_nonce(
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        provided_nonce: u64,
+        op_name: &str,
+    ) -> Result<(Address, crate::storage::TokenId), TxApplyError> {
+        let signer_addr = Address::new(tx.signature.public_key.key_id);
+        let sov_token = Self::canonical_sov_token_id();
+        let expected = mutator.get_token_nonce(&sov_token, &signer_addr)?;
+        if provided_nonce != expected {
+            return Err(TxApplyError::InvalidType(format!(
+                "{}: invalid nonce expected={} got={}",
+                op_name, expected, provided_nonce,
+            )));
+        }
+        Ok((signer_addr, sov_token))
+    }
+
+    /// Reject an `expires_at` that is not strictly in the future. `None` is allowed.
+    fn check_observer_expires_at(
+        expires_at: Option<u64>,
+        block_height: u64,
+        op_name: &str,
+    ) -> Result<(), TxApplyError> {
+        if let Some(exp) = expires_at {
+            if exp <= block_height {
+                return Err(TxApplyError::InvalidType(format!(
+                    "{}: expires_at must be > current block height (expires_at={} height={})",
+                    op_name, exp, block_height,
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Load an observer record by DID, returning both the hash key and the record.
     fn load_observer_record(
         mutator: &StateMutator<'_>,
@@ -2527,6 +2572,13 @@ impl BlockExecutor {
             ));
         }
 
+        // Replay protection: enforce monotonic SOV nonce on the signer.
+        let (signer_addr, sov_token) =
+            Self::check_observer_nonce(mutator, tx, data.nonce, "RegisterObserver")?;
+
+        // expires_at, when set, must be strictly in the future.
+        Self::check_observer_expires_at(data.expires_at, block_height, "RegisterObserver")?;
+
         // Duplicate prevention — check sled-backed store.
         let did_hash = crate::storage::did_to_hash(&data.observer_node_did);
         if mutator.get_observer_record(&did_hash)?.is_some() {
@@ -2535,6 +2587,11 @@ impl BlockExecutor {
                 Self::trunc_did(&data.observer_node_did),
             )));
         }
+
+        // Sybil resistance: burn a non-refundable SOV registration fee from the signer.
+        // This is debited before the record is written so InsufficientBalance is fatal.
+        let fee = crate::transaction::fee::OBSERVER_REGISTRATION_FEE as u128;
+        mutator.debit_token(&sov_token, &signer_addr, fee)?;
 
         let now_ts = block_height; // use block_height as a proxy timestamp for determinism
         let record = ObserverAdmissionRecord {
@@ -2563,6 +2620,9 @@ impl BlockExecutor {
         // Persist to sled.
         mutator.put_observer_record(&did_hash, &record)?;
 
+        // Bump the SOV nonce only after the registration has succeeded.
+        mutator.increment_token_nonce(&sov_token, &signer_addr)?;
+
         tracing::info!(
             "[REGISTER_OBSERVER] did={} sponsor={} height={}",
             Self::trunc_did(&data.observer_node_did),
@@ -2582,6 +2642,19 @@ impl BlockExecutor {
         let data = tx.update_observer_metadata_data().ok_or_else(|| {
             TxApplyError::InvalidType("UpdateObserverMetadata missing payload".to_string())
         })?;
+
+        // Replay protection: enforce monotonic SOV nonce on the signer.
+        let (signer_addr, sov_token) =
+            Self::check_observer_nonce(mutator, tx, data.nonce, "UpdateObserverMetadata")?;
+
+        // If a new expires_at is being set (Some(Some(_))), it must be in the future.
+        if let Some(Some(new_exp)) = data.new_expires_at {
+            Self::check_observer_expires_at(
+                Some(new_exp),
+                block_height,
+                "UpdateObserverMetadata",
+            )?;
+        }
 
         let (did_hash, mut record) =
             Self::load_observer_record(mutator, &data.observer_node_did, "UpdateObserverMetadata")?;
@@ -2611,6 +2684,9 @@ impl BlockExecutor {
 
         mutator.put_observer_record(&did_hash, &record)?;
 
+        // Bump SOV nonce after a successful update.
+        mutator.increment_token_nonce(&sov_token, &signer_addr)?;
+
         tracing::info!(
             "[UPDATE_OBSERVER_META] did={} actor={} height={}",
             Self::trunc_did(&data.observer_node_did),
@@ -2632,6 +2708,10 @@ impl BlockExecutor {
         let data = tx.suspend_observer_data().ok_or_else(|| {
             TxApplyError::InvalidType("SuspendObserver missing payload".to_string())
         })?;
+
+        // Replay protection: enforce monotonic SOV nonce on the signer.
+        let (signer_addr, sov_token) =
+            Self::check_observer_nonce(mutator, tx, data.nonce, "SuspendObserver")?;
 
         let (did_hash, mut record) =
             Self::load_observer_record(mutator, &data.observer_node_did, "SuspendObserver")?;
@@ -2663,6 +2743,9 @@ impl BlockExecutor {
 
         mutator.put_observer_record(&did_hash, &record)?;
 
+        // Bump SOV nonce after a successful suspension.
+        mutator.increment_token_nonce(&sov_token, &signer_addr)?;
+
         tracing::info!(
             "[SUSPEND_OBSERVER] did={} actor={} height={}",
             Self::trunc_did(&data.observer_node_did),
@@ -2684,6 +2767,10 @@ impl BlockExecutor {
         let data = tx.revoke_observer_data().ok_or_else(|| {
             TxApplyError::InvalidType("RevokeObserver missing payload".to_string())
         })?;
+
+        // Replay protection: enforce monotonic SOV nonce on the signer.
+        let (signer_addr, sov_token) =
+            Self::check_observer_nonce(mutator, tx, data.nonce, "RevokeObserver")?;
 
         let (did_hash, mut record) =
             Self::load_observer_record(mutator, &data.observer_node_did, "RevokeObserver")?;
@@ -2714,6 +2801,9 @@ impl BlockExecutor {
 
         mutator.put_observer_record(&did_hash, &record)?;
 
+        // Bump SOV nonce after a successful revocation.
+        mutator.increment_token_nonce(&sov_token, &signer_addr)?;
+
         tracing::info!(
             "[REVOKE_OBSERVER] did={} actor={} height={}",
             Self::trunc_did(&data.observer_node_did),
@@ -2736,13 +2826,22 @@ impl BlockExecutor {
             TxApplyError::InvalidType("ReauthorizeObserver missing payload".to_string())
         })?;
 
+        // Replay protection: enforce monotonic SOV nonce on the signer.
+        let (signer_addr, sov_token) =
+            Self::check_observer_nonce(mutator, tx, data.nonce, "ReauthorizeObserver")?;
+
         let (did_hash, mut record) =
             Self::load_observer_record(mutator, &data.observer_node_did, "ReauthorizeObserver")?;
 
-        // Only Suspended observers can be reauthorized.
-        if record.status != ObserverAdmissionStatus::Suspended {
+        // Allowed source states: Suspended (sponsor lifts a suspension) or
+        // Pending (sponsor approves a freshly-registered observer). Active and
+        // Revoked are terminal for this transaction type.
+        if !matches!(
+            record.status,
+            ObserverAdmissionStatus::Suspended | ObserverAdmissionStatus::Pending
+        ) {
             return Err(TxApplyError::InvalidType(format!(
-                "ReauthorizeObserver: observer {} status is {:?}, must be Suspended",
+                "ReauthorizeObserver: observer {} status is {:?}, must be Pending or Suspended",
                 Self::trunc_did(&data.observer_node_did),
                 record.status,
             )));
@@ -2762,6 +2861,9 @@ impl BlockExecutor {
         record.updated_at = block_height;
 
         mutator.put_observer_record(&did_hash, &record)?;
+
+        // Bump SOV nonce after successful reauthorization.
+        mutator.increment_token_nonce(&sov_token, &signer_addr)?;
 
         tracing::info!(
             "[REAUTHORIZE_OBSERVER] did={} sponsor={} height={}",
@@ -5902,9 +6004,49 @@ mod tests {
         RegisterObserverData, SuspendObserverData, RevokeObserverData, ReauthorizeObserverData,
     };
 
-    fn make_register_observer_tx(
+    /// Compute the signer key_id used by the dummy observer test signature.
+    /// All observer test transactions share the same signer (`create_dummy_signature`),
+    /// so SOV nonces and balances must be tracked against this single address.
+    fn observer_test_signer_key_id() -> [u8; 32] {
+        create_dummy_signature().public_key.key_id
+    }
+
+    /// Seed the observer test signer with enough SOV to cover any number of
+    /// `RegisterObserver` registration-fee burns in a test. Must be called
+    /// AFTER genesis (height 0) and BEFORE the first observer block; uses
+    /// height 1 as a no-op seed block, so observer test blocks must start
+    /// at height 2.
+    fn seed_observer_test_signer_sov(store: &Arc<dyn BlockchainStore>) {
+        let sov_token = BlockExecutor::canonical_sov_token_id();
+        let addr = Address::new(observer_test_signer_key_id());
+        store.begin_block(1).unwrap();
+        store
+            .set_token_balance(
+                &sov_token,
+                &addr,
+                (crate::transaction::fee::OBSERVER_REGISTRATION_FEE as u128) * 32,
+            )
+            .unwrap();
+        store.commit_block().unwrap();
+    }
+
+    /// Standard observer-test setup: trusted-replay executor (skips prev-hash
+    /// continuity so we can interleave raw store writes with executor blocks),
+    /// genesis at height 0, and SOV signer seed at height 1. Returns the
+    /// `(store, executor, prev_hash)` triple; the caller's first observer
+    /// block should be height 2.
+    fn setup_observer_test() -> (Arc<dyn BlockchainStore>, BlockExecutor, Hash) {
+        let store = create_test_store();
+        let executor = create_trusted_replay_executor(store.clone());
+        let prev_hash = apply_genesis_and_get_hash(&executor);
+        seed_observer_test_signer_sov(&store);
+        (store, executor, prev_hash)
+    }
+
+    fn make_register_observer_tx_with_nonce(
         observer_did: &str,
         sponsor_did: &str,
+        nonce: u64,
     ) -> Transaction {
         let data = RegisterObserverData {
             observer_node_did: observer_did.to_string(),
@@ -5917,36 +6059,52 @@ mod tests {
             trusted_sync_scope: None,
             rate_limit_tier: lib_types::ObserverRateLimitTier::Standard,
             expires_at: None,
-            nonce: 1,
+            nonce,
         };
         Transaction::new_register_observer(0x03, data, create_dummy_signature())
     }
 
-    fn make_suspend_observer_tx(observer_did: &str, actor_did: &str) -> Transaction {
+    fn make_register_observer_tx(observer_did: &str, sponsor_did: &str) -> Transaction {
+        make_register_observer_tx_with_nonce(observer_did, sponsor_did, 0)
+    }
+
+    fn make_suspend_observer_tx_with_nonce(
+        observer_did: &str,
+        actor_did: &str,
+        nonce: u64,
+    ) -> Transaction {
         let data = SuspendObserverData {
             observer_node_did: observer_did.to_string(),
             actor_did: actor_did.to_string(),
             reason: "test suspension".to_string(),
-            nonce: 2,
+            nonce,
         };
         Transaction::new_suspend_observer(0x03, data, create_dummy_signature())
     }
 
-    fn make_revoke_observer_tx(observer_did: &str, actor_did: &str) -> Transaction {
+    fn make_revoke_observer_tx_with_nonce(
+        observer_did: &str,
+        actor_did: &str,
+        nonce: u64,
+    ) -> Transaction {
         let data = RevokeObserverData {
             observer_node_did: observer_did.to_string(),
             actor_did: actor_did.to_string(),
             reason: "test revocation".to_string(),
-            nonce: 3,
+            nonce,
         };
         Transaction::new_revoke_observer(0x03, data, create_dummy_signature())
     }
 
-    fn make_reauthorize_observer_tx(observer_did: &str, sponsor_did: &str) -> Transaction {
+    fn make_reauthorize_observer_tx_with_nonce(
+        observer_did: &str,
+        sponsor_did: &str,
+        nonce: u64,
+    ) -> Transaction {
         let data = crate::transaction::ReauthorizeObserverData {
             observer_node_did: observer_did.to_string(),
             sponsor_user_did: sponsor_did.to_string(),
-            nonce: 4,
+            nonce,
         };
         Transaction::new_reauthorize_observer(0x03, data, create_dummy_signature())
     }
@@ -5968,12 +6126,10 @@ mod tests {
 
     #[test]
     fn test_register_observer_creates_pending_record() {
-        let store = create_test_store();
-        let executor = BlockExecutor::with_store(store.clone());
-        let genesis_hash = apply_genesis_and_get_hash(&executor);
+        let (store, executor, prev_hash) = setup_observer_test();
 
         let tx = make_register_observer_tx("did:zhtp:node1", "did:zhtp:sponsor1");
-        apply_block_with_tx(&executor, 1, genesis_hash, tx).expect("register observer failed");
+        apply_block_with_tx(&executor, 2, prev_hash, tx).expect("register observer failed");
 
         let did_hash = crate::storage::did_to_hash(&"did:zhtp:node1".to_string());
         let record = store.get_observer_record(&did_hash).unwrap();
@@ -5986,50 +6142,50 @@ mod tests {
 
     #[test]
     fn test_duplicate_registration_rejected() {
-        let store = create_test_store();
-        let executor = BlockExecutor::with_store(store.clone());
-        let genesis_hash = apply_genesis_and_get_hash(&executor);
+        let (_store, executor, prev_hash) = setup_observer_test();
 
-        let tx1 = make_register_observer_tx("did:zhtp:node2", "did:zhtp:sponsor1");
-        let block1_hash = {
-            let block = create_block_with_txs(1, genesis_hash, vec![tx1]);
-            executor.apply_block(&block).unwrap();
-            block.header.block_hash
-        };
+        let tx1 = make_register_observer_tx_with_nonce("did:zhtp:node2", "did:zhtp:sponsor1", 0);
+        let block1 = create_block_with_txs(2, prev_hash, vec![tx1]);
+        executor.apply_block(&block1).unwrap();
 
-        // Duplicate registration in block 2 should fail
-        let tx2 = make_register_observer_tx("did:zhtp:node2", "did:zhtp:sponsor1");
-        let result = apply_block_with_tx(&executor, 2, block1_hash, tx2);
+        // Duplicate registration must fail (uses next nonce so the failure is
+        // duplicate-DID, not nonce mismatch).
+        let tx2 = make_register_observer_tx_with_nonce("did:zhtp:node2", "did:zhtp:sponsor1", 1);
+        let result = apply_block_with_tx(&executor, 3, block1.header.block_hash, tx2);
         assert!(result.is_err(), "duplicate observer registration should be rejected");
     }
 
     #[test]
     fn test_suspend_active_observer() {
-        let store = create_test_store();
-        let executor = create_trusted_replay_executor(store.clone());
-        let genesis_hash = apply_genesis_and_get_hash(&executor);
+        let (store, executor, prev_hash) = setup_observer_test();
 
-        // Register observer
-        let tx_reg = make_register_observer_tx("did:zhtp:node3", "did:zhtp:sponsor1");
-        let block1 = create_block_with_txs(1, genesis_hash, vec![tx_reg]);
-        executor.apply_block(&block1).unwrap();
+        // Register observer at height 2 (nonce 0).
+        let tx_reg = make_register_observer_tx_with_nonce(
+            "did:zhtp:node3",
+            "did:zhtp:sponsor1",
+            0,
+        );
+        let block2 = create_block_with_txs(2, prev_hash, vec![tx_reg]);
+        executor.apply_block(&block2).unwrap();
 
-        // Seed Active status via a proper begin_block/commit_block cycle at height 2.
-        // This simulates an off-chain governance activation (no ActivateObserver tx yet).
+        // Seed Active status via a raw store write at height 3.
         let did_hash = crate::storage::did_to_hash(&"did:zhtp:node3".to_string());
         {
             let mut record = store.get_observer_record(&did_hash).unwrap().unwrap();
             record.status = lib_types::ObserverAdmissionStatus::Active;
-            store.begin_block(2).unwrap();
+            store.begin_block(3).unwrap();
             store.put_observer_record(&did_hash, &record).unwrap();
             store.commit_block().unwrap();
         }
 
-        // Now suspend — height 3, previous is block1's hash (executor re-derives from store)
-        let block1_hash = block1.header.block_hash;
-        let tx_sus = make_suspend_observer_tx("did:zhtp:node3", "did:zhtp:sponsor1");
-        let block3 = create_block_with_txs(3, block1_hash, vec![tx_sus]);
-        executor.apply_block(&block3).unwrap();
+        // Now suspend at height 4 (signer nonce is 1 because register consumed 0).
+        let tx_sus = make_suspend_observer_tx_with_nonce(
+            "did:zhtp:node3",
+            "did:zhtp:sponsor1",
+            1,
+        );
+        let block4 = create_block_with_txs(4, block2.header.block_hash, vec![tx_sus]);
+        executor.apply_block(&block4).unwrap();
 
         let record = store.get_observer_record(&did_hash).unwrap().unwrap();
         assert_eq!(record.status, lib_types::ObserverAdmissionStatus::Suspended);
@@ -6039,33 +6195,45 @@ mod tests {
 
     #[test]
     fn test_suspend_pending_observer_rejected() {
-        let store = create_test_store();
-        let executor = BlockExecutor::with_store(store.clone());
-        let genesis_hash = apply_genesis_and_get_hash(&executor);
+        let (_store, executor, prev_hash) = setup_observer_test();
 
-        let tx_reg = make_register_observer_tx("did:zhtp:node4", "did:zhtp:sponsor1");
-        let block1 = create_block_with_txs(1, genesis_hash, vec![tx_reg]);
-        executor.apply_block(&block1).unwrap();
+        let tx_reg = make_register_observer_tx_with_nonce(
+            "did:zhtp:node4",
+            "did:zhtp:sponsor1",
+            0,
+        );
+        let block2 = create_block_with_txs(2, prev_hash, vec![tx_reg]);
+        executor.apply_block(&block2).unwrap();
 
-        // Try to suspend a Pending observer (must fail — only Active can be suspended)
-        let tx_sus = make_suspend_observer_tx("did:zhtp:node4", "did:zhtp:sponsor1");
-        let result = apply_block_with_tx(&executor, 2, block1.header.block_hash, tx_sus);
+        // Try to suspend a Pending observer (must fail — only Active can be suspended).
+        let tx_sus = make_suspend_observer_tx_with_nonce(
+            "did:zhtp:node4",
+            "did:zhtp:sponsor1",
+            1,
+        );
+        let result = apply_block_with_tx(&executor, 3, block2.header.block_hash, tx_sus);
         assert!(result.is_err(), "suspending a Pending observer should be rejected");
     }
 
     #[test]
     fn test_revoke_observer() {
-        let store = create_test_store();
-        let executor = BlockExecutor::with_store(store.clone());
-        let genesis_hash = apply_genesis_and_get_hash(&executor);
+        let (store, executor, prev_hash) = setup_observer_test();
 
-        let tx_reg = make_register_observer_tx("did:zhtp:node5", "did:zhtp:sponsor1");
-        let block1 = create_block_with_txs(1, genesis_hash, vec![tx_reg]);
-        executor.apply_block(&block1).unwrap();
-
-        let tx_rev = make_revoke_observer_tx("did:zhtp:node5", "did:zhtp:sponsor1");
-        let block2 = create_block_with_txs(2, block1.header.block_hash, vec![tx_rev]);
+        let tx_reg = make_register_observer_tx_with_nonce(
+            "did:zhtp:node5",
+            "did:zhtp:sponsor1",
+            0,
+        );
+        let block2 = create_block_with_txs(2, prev_hash, vec![tx_reg]);
         executor.apply_block(&block2).unwrap();
+
+        let tx_rev = make_revoke_observer_tx_with_nonce(
+            "did:zhtp:node5",
+            "did:zhtp:sponsor1",
+            1,
+        );
+        let block3 = create_block_with_txs(3, block2.header.block_hash, vec![tx_rev]);
+        executor.apply_block(&block3).unwrap();
 
         let did_hash = crate::storage::did_to_hash(&"did:zhtp:node5".to_string());
         let record = store.get_observer_record(&did_hash).unwrap().unwrap();
@@ -6075,49 +6243,64 @@ mod tests {
 
     #[test]
     fn test_double_revoke_rejected() {
-        let store = create_test_store();
-        let executor = BlockExecutor::with_store(store.clone());
-        let genesis_hash = apply_genesis_and_get_hash(&executor);
+        let (_store, executor, prev_hash) = setup_observer_test();
 
-        let tx_reg = make_register_observer_tx("did:zhtp:node6", "did:zhtp:sponsor1");
-        let block1 = create_block_with_txs(1, genesis_hash, vec![tx_reg]);
-        executor.apply_block(&block1).unwrap();
-
-        let tx_rev1 = make_revoke_observer_tx("did:zhtp:node6", "did:zhtp:sponsor1");
-        let block2 = create_block_with_txs(2, block1.header.block_hash, vec![tx_rev1]);
+        let tx_reg = make_register_observer_tx_with_nonce(
+            "did:zhtp:node6",
+            "did:zhtp:sponsor1",
+            0,
+        );
+        let block2 = create_block_with_txs(2, prev_hash, vec![tx_reg]);
         executor.apply_block(&block2).unwrap();
 
-        // Second revoke must fail
-        let tx_rev2 = make_revoke_observer_tx("did:zhtp:node6", "did:zhtp:sponsor1");
-        let result = apply_block_with_tx(&executor, 3, block2.header.block_hash, tx_rev2);
+        let tx_rev1 = make_revoke_observer_tx_with_nonce(
+            "did:zhtp:node6",
+            "did:zhtp:sponsor1",
+            1,
+        );
+        let block3 = create_block_with_txs(3, block2.header.block_hash, vec![tx_rev1]);
+        executor.apply_block(&block3).unwrap();
+
+        // Second revoke must fail (status no longer Active/Pending/Suspended).
+        let tx_rev2 = make_revoke_observer_tx_with_nonce(
+            "did:zhtp:node6",
+            "did:zhtp:sponsor1",
+            2,
+        );
+        let result = apply_block_with_tx(&executor, 4, block3.header.block_hash, tx_rev2);
         assert!(result.is_err(), "double-revoking an observer should be rejected");
     }
 
     #[test]
     fn test_reauthorize_suspended_observer() {
-        let store = create_test_store();
-        let executor = create_trusted_replay_executor(store.clone());
-        let genesis_hash = apply_genesis_and_get_hash(&executor);
+        let (store, executor, prev_hash) = setup_observer_test();
 
-        let tx_reg = make_register_observer_tx("did:zhtp:node7", "did:zhtp:sponsor1");
-        let block1 = create_block_with_txs(1, genesis_hash, vec![tx_reg]);
-        executor.apply_block(&block1).unwrap();
+        let tx_reg = make_register_observer_tx_with_nonce(
+            "did:zhtp:node7",
+            "did:zhtp:sponsor1",
+            0,
+        );
+        let block2 = create_block_with_txs(2, prev_hash, vec![tx_reg]);
+        executor.apply_block(&block2).unwrap();
 
-        // Seed Suspended status via begin_block/commit_block at height 2.
+        // Seed Suspended status via raw write at height 3.
         let did_hash = crate::storage::did_to_hash(&"did:zhtp:node7".to_string());
         {
             let mut record = store.get_observer_record(&did_hash).unwrap().unwrap();
             record.status = lib_types::ObserverAdmissionStatus::Suspended;
-            store.begin_block(2).unwrap();
+            store.begin_block(3).unwrap();
             store.put_observer_record(&did_hash, &record).unwrap();
             store.commit_block().unwrap();
         }
 
-        // Reauthorize as original sponsor — height 3
-        let block1_hash = block1.header.block_hash;
-        let tx_rauth = make_reauthorize_observer_tx("did:zhtp:node7", "did:zhtp:sponsor1");
-        let block3 = create_block_with_txs(3, block1_hash, vec![tx_rauth]);
-        executor.apply_block(&block3).unwrap();
+        // Reauthorize as original sponsor at height 4 (nonce 1).
+        let tx_rauth = make_reauthorize_observer_tx_with_nonce(
+            "did:zhtp:node7",
+            "did:zhtp:sponsor1",
+            1,
+        );
+        let block4 = create_block_with_txs(4, block2.header.block_hash, vec![tx_rauth]);
+        executor.apply_block(&block4).unwrap();
 
         let record = store.get_observer_record(&did_hash).unwrap().unwrap();
         assert_eq!(record.status, lib_types::ObserverAdmissionStatus::Active);
@@ -6126,39 +6309,42 @@ mod tests {
 
     #[test]
     fn test_reauthorize_wrong_sponsor_rejected() {
-        let store = create_test_store();
-        let executor = create_trusted_replay_executor(store.clone());
-        let genesis_hash = apply_genesis_and_get_hash(&executor);
+        let (store, executor, prev_hash) = setup_observer_test();
 
-        let tx_reg = make_register_observer_tx("did:zhtp:node8", "did:zhtp:sponsor1");
-        let block1 = create_block_with_txs(1, genesis_hash, vec![tx_reg]);
-        executor.apply_block(&block1).unwrap();
+        let tx_reg = make_register_observer_tx_with_nonce(
+            "did:zhtp:node8",
+            "did:zhtp:sponsor1",
+            0,
+        );
+        let block2 = create_block_with_txs(2, prev_hash, vec![tx_reg]);
+        executor.apply_block(&block2).unwrap();
 
-        // Seed Suspended status via begin_block/commit_block at height 2.
+        // Seed Suspended status via raw write at height 3.
         let did_hash = crate::storage::did_to_hash(&"did:zhtp:node8".to_string());
         {
             let mut record = store.get_observer_record(&did_hash).unwrap().unwrap();
             record.status = lib_types::ObserverAdmissionStatus::Suspended;
-            store.begin_block(2).unwrap();
+            store.begin_block(3).unwrap();
             store.put_observer_record(&did_hash, &record).unwrap();
             store.commit_block().unwrap();
         }
 
-        // Wrong sponsor — height 3
-        let block1_hash = block1.header.block_hash;
-        let tx_rauth = make_reauthorize_observer_tx("did:zhtp:node8", "did:zhtp:impostor");
-        let result = apply_block_with_tx(&executor, 3, block1_hash, tx_rauth);
+        // Wrong sponsor at height 4 (nonce 1).
+        let tx_rauth = make_reauthorize_observer_tx_with_nonce(
+            "did:zhtp:node8",
+            "did:zhtp:impostor",
+            1,
+        );
+        let result = apply_block_with_tx(&executor, 4, block2.header.block_hash, tx_rauth);
         assert!(result.is_err(), "reauthorize by wrong sponsor must be rejected");
     }
 
     #[test]
     fn test_sponsor_binding_stored() {
-        let store = create_test_store();
-        let executor = BlockExecutor::with_store(store.clone());
-        let genesis_hash = apply_genesis_and_get_hash(&executor);
+        let (store, executor, prev_hash) = setup_observer_test();
 
         let tx = make_register_observer_tx("did:zhtp:node9", "did:zhtp:sponsor_abc");
-        apply_block_with_tx(&executor, 1, genesis_hash, tx).unwrap();
+        apply_block_with_tx(&executor, 2, prev_hash, tx).unwrap();
 
         let did_hash = crate::storage::did_to_hash(&"did:zhtp:node9".to_string());
         let record = store.get_observer_record(&did_hash).unwrap().unwrap();
@@ -6168,17 +6354,23 @@ mod tests {
 
     #[test]
     fn test_iter_observer_records_returns_all_admitted() {
-        let store = create_test_store();
-        let executor = BlockExecutor::with_store(store.clone());
-        let genesis_hash = apply_genesis_and_get_hash(&executor);
+        let (store, executor, prev_hash) = setup_observer_test();
 
-        let tx_a = make_register_observer_tx("did:zhtp:nodeA", "did:zhtp:sponsorX");
-        let block1 = create_block_with_txs(1, genesis_hash, vec![tx_a]);
-        executor.apply_block(&block1).unwrap();
-
-        let tx_b = make_register_observer_tx("did:zhtp:nodeB", "did:zhtp:sponsorY");
-        let block2 = create_block_with_txs(2, block1.header.block_hash, vec![tx_b]);
+        let tx_a = make_register_observer_tx_with_nonce(
+            "did:zhtp:nodeA",
+            "did:zhtp:sponsorX",
+            0,
+        );
+        let block2 = create_block_with_txs(2, prev_hash, vec![tx_a]);
         executor.apply_block(&block2).unwrap();
+
+        let tx_b = make_register_observer_tx_with_nonce(
+            "did:zhtp:nodeB",
+            "did:zhtp:sponsorY",
+            1,
+        );
+        let block3 = create_block_with_txs(3, block2.header.block_hash, vec![tx_b]);
+        executor.apply_block(&block3).unwrap();
 
         let all = store.iter_observer_records().unwrap();
         assert_eq!(all.len(), 2);
@@ -6203,17 +6395,23 @@ mod tests {
         // Apply the same chain twice into two fresh stores and verify the
         // observer registry produces identical records.
         let run = || -> Vec<lib_types::ObserverAdmissionRecord> {
-            let store = create_test_store();
-            let executor = BlockExecutor::with_store(store.clone());
-            let genesis_hash = apply_genesis_and_get_hash(&executor);
+            let (store, executor, prev_hash) = setup_observer_test();
 
-            let tx_a = make_register_observer_tx("did:zhtp:repA", "did:zhtp:repSponsor");
-            let block1 = create_block_with_txs(1, genesis_hash, vec![tx_a]);
-            executor.apply_block(&block1).unwrap();
-
-            let tx_b = make_register_observer_tx("did:zhtp:repB", "did:zhtp:repSponsor");
-            let block2 = create_block_with_txs(2, block1.header.block_hash, vec![tx_b]);
+            let tx_a = make_register_observer_tx_with_nonce(
+                "did:zhtp:repA",
+                "did:zhtp:repSponsor",
+                0,
+            );
+            let block2 = create_block_with_txs(2, prev_hash, vec![tx_a]);
             executor.apply_block(&block2).unwrap();
+
+            let tx_b = make_register_observer_tx_with_nonce(
+                "did:zhtp:repB",
+                "did:zhtp:repSponsor",
+                1,
+            );
+            let block3 = create_block_with_txs(3, block2.header.block_hash, vec![tx_b]);
+            executor.apply_block(&block3).unwrap();
 
             let mut all = store.iter_observer_records().unwrap();
             all.sort_by(|a, b| a.node_info.observer_node_did.cmp(&b.node_info.observer_node_did));
@@ -6225,6 +6423,109 @@ mod tests {
         assert_eq!(
             first, second,
             "observer registry must be deterministic across replays"
+        );
+    }
+
+    // ---- New tests for observer-admission-3 review-fix coverage ----
+
+    #[test]
+    fn test_register_observer_replay_rejected() {
+        // Submitting the SAME tx (same nonce 0) twice must fail on the second
+        // application with a nonce-mismatch error (signer nonce is now 1).
+        let (_store, executor, prev_hash) = setup_observer_test();
+
+        let tx1 = make_register_observer_tx_with_nonce(
+            "did:zhtp:replay_a",
+            "did:zhtp:sponsor_replay",
+            0,
+        );
+        let block2 = create_block_with_txs(2, prev_hash, vec![tx1.clone()]);
+        executor.apply_block(&block2).unwrap();
+
+        // Replay the EXACT same tx (nonce 0) at the next height — must fail.
+        let result = apply_block_with_tx(&executor, 3, block2.header.block_hash, tx1);
+        assert!(
+            result.is_err(),
+            "replaying a RegisterObserver tx with the same nonce must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_register_observer_rejects_past_expiry() {
+        // expires_at in the past relative to block_height must be rejected.
+        let (_store, executor, prev_hash) = setup_observer_test();
+
+        let mut data = RegisterObserverData {
+            observer_node_did: "did:zhtp:expired".to_string(),
+            observer_public_key: vec![0u8; 32],
+            endpoints: vec!["127.0.0.1:9000".to_string()],
+            sponsor_user_did: "did:zhtp:sponsor_exp".to_string(),
+            sponsor_proof_level: lib_types::ObserverProofLevel::Basic,
+            sponsor_signature: vec![1u8; 32],
+            allowed_network: "testnet".to_string(),
+            trusted_sync_scope: None,
+            rate_limit_tier: lib_types::ObserverRateLimitTier::Standard,
+            expires_at: Some(1), // height 2 > 1, so already expired
+            nonce: 0,
+        };
+        // Sanity: explicit override to make intent obvious.
+        data.expires_at = Some(1);
+        let tx = Transaction::new_register_observer(0x03, data, create_dummy_signature());
+
+        let result = apply_block_with_tx(&executor, 2, prev_hash, tx);
+        assert!(
+            result.is_err(),
+            "RegisterObserver with expires_at <= block_height must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_reauthorize_pending_to_active() {
+        // A freshly-registered (Pending) observer can be reauthorized by its
+        // sponsor without first transitioning to Suspended.
+        let (store, executor, prev_hash) = setup_observer_test();
+
+        let tx_reg = make_register_observer_tx_with_nonce(
+            "did:zhtp:pending_reauth",
+            "did:zhtp:sponsor_reauth",
+            0,
+        );
+        let block2 = create_block_with_txs(2, prev_hash, vec![tx_reg]);
+        executor.apply_block(&block2).unwrap();
+
+        // Reauthorize directly from Pending — should succeed and set Active.
+        let tx_rauth = make_reauthorize_observer_tx_with_nonce(
+            "did:zhtp:pending_reauth",
+            "did:zhtp:sponsor_reauth",
+            1,
+        );
+        let block3 = create_block_with_txs(3, block2.header.block_hash, vec![tx_rauth]);
+        executor
+            .apply_block(&block3)
+            .expect("reauthorize from Pending should succeed");
+
+        let did_hash = crate::storage::did_to_hash(&"did:zhtp:pending_reauth".to_string());
+        let record = store.get_observer_record(&did_hash).unwrap().unwrap();
+        assert_eq!(record.status, lib_types::ObserverAdmissionStatus::Active);
+    }
+
+    #[test]
+    fn test_register_observer_insufficient_sov_rejected() {
+        // Without seeding SOV, the registration-fee debit must fail.
+        let store = create_test_store();
+        let executor = create_trusted_replay_executor(store.clone());
+        let prev_hash = apply_genesis_and_get_hash(&executor);
+        // Note: NO seed_observer_test_signer_sov() call.
+
+        let tx = make_register_observer_tx_with_nonce(
+            "did:zhtp:no_funds",
+            "did:zhtp:sponsor_nofund",
+            0,
+        );
+        let result = apply_block_with_tx(&executor, 1, prev_hash, tx);
+        assert!(
+            result.is_err(),
+            "RegisterObserver without sufficient SOV for fee must be rejected"
         );
     }
 }

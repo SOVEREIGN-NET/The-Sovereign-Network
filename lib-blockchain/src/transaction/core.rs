@@ -2644,6 +2644,14 @@ pub struct RegisterObserverData {
     /// DID of the sponsoring user (must match the transaction signer's identity).
     pub sponsor_user_did: String,
     /// Sponsor's proof level at enrollment time (snapshotted for determinism).
+    ///
+    /// **Limitation (admission-3):** This value is provided by the sponsor and is
+    /// NOT cross-validated against on-chain identity state because
+    /// `IdentityTransactionData` does not currently carry a canonical proof-level
+    /// field. Sponsor identity *existence* is enforced via
+    /// `validate_sender_identity_exists`, and signer↔DID binding is enforced via
+    /// `check_observer_signer`. Once a per-identity proof-level becomes canonical
+    /// on-chain, this field MUST be cross-checked at validation time.
     pub sponsor_proof_level: lib_types::ObserverProofLevel,
     /// Sponsor signature over the enrollment statement.
     pub sponsor_signature: Vec<u8>,
