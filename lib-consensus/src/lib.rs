@@ -10,9 +10,7 @@
 compile_error!("dev-insecure must not be enabled in release builds");
 
 pub mod byzantine;
-pub mod chain_evaluation;
 pub mod dao;
-pub mod difficulty;
 pub mod engines;
 pub mod evidence;
 pub mod fault_model;
@@ -29,8 +27,6 @@ pub mod types;
 pub mod validators;
 
 // Re-export commonly used types
-pub use chain_evaluation::{ChainDecision, ChainEvaluator, ChainMergeResult, ChainSummary};
-pub use difficulty::{DifficultyConfig, DifficultyError, DifficultyManager, DifficultyResult};
 pub use engines::consensus_engine::ValidatorSetUpdate;
 pub use engines::ConsensusEngine;
 pub use evidence::{

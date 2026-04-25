@@ -46,9 +46,11 @@ use tracing::{debug, error, info, warn};
 
 use lib_consensus::{
     ConsensusConfig, ConsensusEngine, ConsensusEvent, ConsensusProof, ConsensusProposal,
-    ConsensusStep, ConsensusType, ConsensusVote, DaoProposalType, DaoVoteChoice, DifficultyConfig,
-    DifficultyManager, NoOpBroadcaster, RewardCalculator, RewardRound, ValidatorStatus, VoteType,
+    ConsensusStep, ConsensusType, ConsensusVote, DaoProposalType, DaoVoteChoice, NoOpBroadcaster,
+    RewardCalculator, RewardRound, ValidatorStatus, VoteType,
 };
+// DifficultyConfig + DifficultyManager moved to lib-blockchain per CONS-107 / AD-003
+use crate::difficulty::{DifficultyConfig, DifficultyManager};
 use lib_crypto::{hash_blake3, Hash, KeyPair};
 use lib_identity::IdentityId;
 

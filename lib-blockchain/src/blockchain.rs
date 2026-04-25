@@ -1936,7 +1936,7 @@ impl Blockchain {
 
                     // Check if we should adjust at this height
                     if self.height % adjustment_interval != 0 {
-                        return Ok::<Option<(u32, lib_consensus::difficulty::DifficultyConfig)>, anyhow::Error>(None);
+                        return Ok::<Option<(u32, crate::difficulty::DifficultyConfig)>, anyhow::Error>(None);
                     }
                     if self.height < adjustment_interval {
                         return Ok(None);
@@ -4478,7 +4478,7 @@ impl Blockchain {
     pub async fn evaluate_and_merge_chain(
         &mut self,
         data: Vec<u8>,
-    ) -> Result<lib_consensus::ChainMergeResult> {
+    ) -> Result<crate::ChainMergeResult> {
         if !self.finalized_blocks.is_empty() {
             return Err(anyhow::anyhow!(
                 "Post-commit reorg forbidden: local chain contains finalized blocks"
@@ -4496,7 +4496,7 @@ impl Blockchain {
         if self.blocks.is_empty() || self.height == 0 {
             if import.blocks.is_empty() {
                 info!("Both local and imported chains are empty - nothing to merge");
-                return Ok(lib_consensus::ChainMergeResult::LocalKept);
+                return Ok(crate::ChainMergeResult::LocalKept);
             }
             let imported_height = import.blocks.len() as u64 - 1;
             info!("Local chain is empty - directly adopting imported chain (height={}, identities={}, validators={}, oracle_prices={})",
@@ -4542,7 +4542,7 @@ impl Blockchain {
             }
 
             info!("Successfully adopted imported chain during bootstrap");
-            return Ok(lib_consensus::ChainMergeResult::ImportedAdopted);
+            return Ok(crate::ChainMergeResult::ImportedAdopted);
         }
 
         // Verify all blocks in sequence
@@ -4590,10 +4590,10 @@ impl Blockchain {
 
         // Use consensus rules to decide which chain to adopt
         let decision =
-            lib_consensus::ChainEvaluator::evaluate_chains(&local_summary, &imported_summary);
+            crate::ChainEvaluator::evaluate_chains(&local_summary, &imported_summary);
 
         match decision {
-            lib_consensus::ChainDecision::KeepLocal => {
+            crate::ChainDecision::KeepLocal => {
                 info!(" Local chain is better - keeping current state");
                 info!(
                     "   Local: height={}, work={}, identities={}",
@@ -4605,9 +4605,9 @@ impl Blockchain {
                     imported_summary.total_work,
                     imported_summary.total_identities
                 );
-                Ok(lib_consensus::ChainMergeResult::LocalKept)
+                Ok(crate::ChainMergeResult::LocalKept)
             }
-            lib_consensus::ChainDecision::MergeContentOnly => {
+            crate::ChainDecision::MergeContentOnly => {
                 info!(" Local chain is longer - merging unique content from shorter chain");
                 info!(
                     "   Local: height={}, work={}, identities={}",
@@ -4624,18 +4624,18 @@ impl Blockchain {
                 match self.merge_unique_content(&import) {
                     Ok(merged_items) => {
                         info!(" Successfully merged unique content: {}", merged_items);
-                        Ok(lib_consensus::ChainMergeResult::ContentMerged)
+                        Ok(crate::ChainMergeResult::ContentMerged)
                     }
                     Err(e) => {
                         warn!("Failed to merge content: {} - keeping local only", e);
-                        Ok(lib_consensus::ChainMergeResult::Failed(format!(
+                        Ok(crate::ChainMergeResult::Failed(format!(
                             "Content merge error: {}",
                             e
                         )))
                     }
                 }
             }
-            lib_consensus::ChainDecision::AdoptImported => {
+            crate::ChainDecision::AdoptImported => {
                 info!(" Imported chain is better - performing intelligent merge");
                 info!(
                     "   Local: height={}, work={}, identities={}",
@@ -4673,7 +4673,7 @@ impl Blockchain {
                         Ok(merge_report) => {
                             info!(" Successfully merged chains with genesis consolidation");
                             info!("{}", merge_report);
-                            Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
+                            Ok(crate::ChainMergeResult::ImportedAdopted)
                         }
                         Err(e) => {
                             warn!(
@@ -4698,7 +4698,7 @@ impl Blockchain {
                                 self.oracle_state = oracle_state;
                             }
                             self.rebuild_dao_registry_index();
-                            Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
+                            Ok(crate::ChainMergeResult::ImportedAdopted)
                         }
                     }
                 } else {
@@ -4738,10 +4738,10 @@ impl Blockchain {
                     info!("   Validators: {}", self.validator_registry.len());
                     info!("   UTXOs: {}", self.utxo_set.len());
 
-                    Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
+                    Ok(crate::ChainMergeResult::ImportedAdopted)
                 }
             }
-            lib_consensus::ChainDecision::Merge => {
+            crate::ChainDecision::Merge => {
                 info!(" Merging compatible chains");
                 info!(
                     "   Local: height={}, work={}, identities={}, contracts={}",
@@ -4761,18 +4761,18 @@ impl Blockchain {
                 match self.merge_chain_content(&import) {
                     Ok(merged_items) => {
                         info!(" Successfully merged chains: {}", merged_items);
-                        Ok(lib_consensus::ChainMergeResult::Merged)
+                        Ok(crate::ChainMergeResult::Merged)
                     }
                     Err(e) => {
                         warn!("Failed to merge chains: {} - keeping local", e);
-                        Ok(lib_consensus::ChainMergeResult::Failed(format!(
+                        Ok(crate::ChainMergeResult::Failed(format!(
                             "Merge error: {}",
                             e
                         )))
                     }
                 }
             }
-            lib_consensus::ChainDecision::AdoptLocal => {
+            crate::ChainDecision::AdoptLocal => {
                 info!("🏆 Local chain is stronger - using as merge base");
                 info!(
                     "   Local: height={}, validators={}, identities={}",
@@ -4793,21 +4793,21 @@ impl Blockchain {
                     Ok(merge_report) => {
                         info!(" Successfully merged imported content into local chain");
                         info!("{}", merge_report);
-                        Ok(lib_consensus::ChainMergeResult::LocalKept)
+                        Ok(crate::ChainMergeResult::LocalKept)
                     }
                     Err(e) => {
                         warn!(
                             " Failed to merge imported content: {} - keeping local only",
                             e
                         );
-                        Ok(lib_consensus::ChainMergeResult::Failed(format!(
+                        Ok(crate::ChainMergeResult::Failed(format!(
                             "Import merge error: {}",
                             e
                         )))
                     }
                 }
             }
-            lib_consensus::ChainDecision::Reject => {
+            crate::ChainDecision::Reject => {
                 warn!("🚫 Networks are incompatible - merge rejected for safety");
                 warn!(
                     "   Local: height={}, validators={}, age={}d",
@@ -4825,11 +4825,11 @@ impl Blockchain {
                 );
                 warn!("   Networks differ too much in size or age to merge safely");
 
-                Ok(lib_consensus::ChainMergeResult::Failed(
+                Ok(crate::ChainMergeResult::Failed(
                     "Networks incompatible - safety threshold exceeded".to_string(),
                 ))
             }
-            lib_consensus::ChainDecision::Conflict => {
+            crate::ChainDecision::Conflict => {
                 warn!(" Chain conflict detected - different genesis blocks");
                 warn!(
                     "   Local genesis: {}",
@@ -4849,7 +4849,7 @@ impl Blockchain {
                 );
                 warn!("   These chains are from different networks and cannot be merged");
 
-                Ok(lib_consensus::ChainMergeResult::Failed(
+                Ok(crate::ChainMergeResult::Failed(
                     "Genesis hash mismatch - chains from different networks".to_string(),
                 ))
             }
@@ -4857,7 +4857,7 @@ impl Blockchain {
     }
 
     /// Create chain summary for local blockchain
-    async fn create_local_chain_summary_async(&self) -> lib_consensus::ChainSummary {
+    async fn create_local_chain_summary_async(&self) -> crate::ChainSummary {
         // Use the data helix root as the genesis content commitment.
         let genesis_hash = self
             .blocks
@@ -4938,7 +4938,7 @@ impl Blockchain {
             .filter(|id| id.identity_type.contains("bridge") || id.identity_type.contains("Bridge"))
             .count() as u64;
 
-        lib_consensus::ChainSummary {
+        crate::ChainSummary {
             height: self.get_height(),
             total_work: self.calculate_total_work(),
             total_transactions: self
@@ -5593,7 +5593,7 @@ impl Blockchain {
         utxo_set: &HashMap<Hash, TransactionOutput>,
         token_contracts: &HashMap<[u8; 32], crate::contracts::TokenContract>,
         web4_contracts: &HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
-    ) -> lib_consensus::ChainSummary {
+    ) -> crate::ChainSummary {
         // Use the data helix root as the genesis content commitment.
         let genesis_hash = blocks
             .first()
@@ -5671,7 +5671,7 @@ impl Blockchain {
             String::new()
         };
 
-        lib_consensus::ChainSummary {
+        crate::ChainSummary {
             height: blocks.len().saturating_sub(1) as u64,
             total_work: self.calculate_imported_total_work(blocks),
             total_transactions: blocks
