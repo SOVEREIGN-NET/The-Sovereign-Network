@@ -88,7 +88,7 @@ impl<'a> StateMutator<'a> {
         &self,
         tx_hash: &Hash,
         outputs: &[TransactionOutput],
-        amounts: &[u64],
+        amounts: &[u128],
         block_height: u64,
     ) -> TxApplyResult<()> {
         use crate::storage::TxHash;
@@ -721,7 +721,7 @@ pub fn apply_native_transfer(
 ) -> TxApplyResult<TransferOutcome> {
     use crate::storage::TxHash;
 
-    let mut total_input: u64 = 0;
+    let mut total_input: u128 = 0;
 
     // Spend all inputs and sum their values
     for input in &tx.inputs {
@@ -734,8 +734,8 @@ pub fn apply_native_transfer(
         total_input = total_input.saturating_add(utxo.amount);
     }
 
-    // Calculate available value after fee
-    let fee = tx.fee;
+    // Fee is u64 on Transaction; widen at the boundary into conservation math.
+    let fee: u128 = tx.fee as u128;
     if total_input < fee {
         return Err(TxApplyError::InsufficientInputs {
             have: total_input,
@@ -744,16 +744,16 @@ pub fn apply_native_transfer(
     }
     let available = total_input - fee;
 
-    // Distribute available value equally among outputs
+    // Distribute available value equally among outputs.
     // (Phase 2 simplification - real implementation would use ZK proofs)
-    let output_count = tx.outputs.len() as u64;
+    let output_count = tx.outputs.len() as u128;
     if output_count == 0 {
         return Err(TxApplyError::Internal("No outputs".to_string()));
     }
     let amount_per_output = available / output_count;
     let remainder = available % output_count;
 
-    let mut total_output: u64 = 0;
+    let mut total_output: u128 = 0;
     for (index, output) in tx.outputs.iter().enumerate() {
         let outpoint = OutPoint::new(TxHash::new(tx_hash.as_array()), index as u32);
 
@@ -856,8 +856,8 @@ pub fn apply_coinbase(
     tx: &Transaction,
     tx_hash: &Hash,
     block_height: u64,
-    block_reward: u64,
-    fees_collected: u64,
+    block_reward: u128,
+    fees_collected: u128,
     fee_sink_address: &Address,
 ) -> TxApplyResult<CoinbaseOutcome> {
     use crate::storage::TxHash;
@@ -900,9 +900,9 @@ pub fn apply_coinbase(
 
     // Calculate distribution: reward goes to non-fee-sink outputs, fees go to fee sink
     let reward_output_count = if fees_collected > 0 {
-        tx.outputs.len().saturating_sub(1) as u64
+        tx.outputs.len().saturating_sub(1) as u128
     } else {
-        tx.outputs.len() as u64
+        tx.outputs.len() as u128
     };
 
     let amount_per_reward_output = if reward_output_count > 0 {
@@ -916,7 +916,7 @@ pub fn apply_coinbase(
         0
     };
 
-    let mut total_output: u64 = 0;
+    let mut total_output: u128 = 0;
     let mut reward_output_index = 0;
 
     for (index, output) in tx.outputs.iter().enumerate() {
@@ -1071,17 +1071,17 @@ where
 pub struct TransferOutcome {
     pub inputs_spent: usize,
     pub outputs_created: usize,
-    pub total_value: u64,
-    pub fee: u64,
+    pub total_value: u128,
+    pub fee: u128,
 }
 
 /// Outcome of a coinbase transaction
 #[derive(Debug, Clone)]
 pub struct CoinbaseOutcome {
     pub outputs_created: usize,
-    pub total_reward: u64,
+    pub total_reward: u128,
     /// Phase 3C: Fees collected and routed to fee sink
-    pub fees_collected: u64,
+    pub fees_collected: u128,
     /// Phase 3C: Whether fee sink was credited
     pub fee_sink_credited: bool,
 }

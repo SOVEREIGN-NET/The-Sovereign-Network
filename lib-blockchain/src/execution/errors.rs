@@ -98,10 +98,14 @@ pub enum TxApplyError {
     UtxoAlreadySpent(OutPoint),
 
     #[error("Input/output value mismatch: inputs={inputs}, outputs={outputs}, fee={fee}")]
-    ValueMismatch { inputs: u64, outputs: u64, fee: u64 },
+    ValueMismatch {
+        inputs: u128,
+        outputs: u128,
+        fee: u128,
+    },
 
     #[error("Insufficient input value: have {have}, need {need}")]
-    InsufficientInputs { have: u64, need: u64 },
+    InsufficientInputs { have: u128, need: u128 },
 
     // =========================================================================
     // Token Errors (stateful)

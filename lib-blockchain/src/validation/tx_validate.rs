@@ -248,7 +248,7 @@ fn validate_transfer_stateful(
     // in a single-signer Transfer must be owned by the same address.
     let signer_address = derive_address_from_public_key(&tx.signature.public_key.as_bytes());
 
-    let mut total_input: u64 = 0;
+    let mut total_input: u128 = 0;
 
     for input in &tx.inputs {
         let outpoint = OutPoint::new(
@@ -273,10 +273,11 @@ fn validate_transfer_stateful(
     // ZK commitments instead of plain amounts. Value conservation is verified
     // during execution when UTXOs are actually created.
     // We only verify that total input covers the fee.
-    if total_input < tx.fee {
+    let fee: u128 = tx.fee as u128;
+    if total_input < fee {
         return Err(TxValidateError::InsufficientInputs {
             have: total_input,
-            need: tx.fee,
+            need: fee,
         });
     }
 

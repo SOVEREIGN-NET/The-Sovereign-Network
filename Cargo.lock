@@ -3795,9 +3795,6 @@ name = "lib-utxo"
 version = "0.1.0"
 dependencies = [
  "lib-types",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
 ]
 
 [[package]]
