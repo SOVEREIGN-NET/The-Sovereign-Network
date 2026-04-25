@@ -52,9 +52,12 @@ impl AdmissionDecision {
     }
 }
 
-/// Typed denial reasons. These map 1:1 to validation errors at the executor
-/// boundary so callers can surface a stable reason code without re-inspecting
-/// state.
+/// Typed denial reasons produced by policy evaluation.
+///
+/// Callers may map these to executor-boundary validation errors or stable
+/// reason codes, but that mapping is defined outside this module. As of v1
+/// the executor formats `PolicyDenial` into a generic `TxApplyError::InvalidType`
+/// string; future work may introduce stable per-variant error codes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PolicyDenial {
     /// Record exists but its lifecycle status forbids access.

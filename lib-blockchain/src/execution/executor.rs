@@ -1,4 +1,4 @@
-//! Block Executor (Single Authority)
+﻿//! Block Executor (Single Authority)
 //!
 //! The BlockExecutor is the **single entry point** for applying blocks to state.
 //! No consensus logic reads or writes state outside this module.
@@ -17,7 +17,7 @@
 //! commit_block
 //! ```
 //!
-//! **Any error → rollback_block()**
+//! **Any error â†’ rollback_block()**
 //!
 //! # Authorization Invariant (Phase 2)
 //!
@@ -530,7 +530,7 @@ impl BlockExecutor {
     /// commit_block
     /// ```
     ///
-    /// **Any error → rollback_block()**
+    /// **Any error â†’ rollback_block()**
     ///
     /// # Panic Safety
     ///
@@ -683,7 +683,7 @@ impl BlockExecutor {
         // receives and replays the genesis block its transactions don't satisfy
         // normal executor invariants (empty inputs, system recipients, etc.).
         // We accept the genesis block as-is: just record it in the store and
-        // return an empty outcome — the founding node already committed the state.
+        // return an empty outcome â€” the founding node already committed the state.
         if block_height == 0 {
             // Explicitly persist the canonical CBE zero-state so that reads
             // after genesis return a concrete record rather than an implicit
@@ -698,13 +698,13 @@ impl BlockExecutor {
             // migration path, or coordinating a breaking storage-format change.
             // Any such change without migration will corrupt deserialization of
             // existing chains.
-            // ── Genesis economic state with 20B treasury allocation (#2127) ──
+            // â”€â”€ Genesis economic state with 20B treasury allocation (#2127) â”€â”€
             {
                 use crate::contracts::bonding_curve::canonical::GENESIS_TREASURY_ALLOCATION;
 
                 let mut econ = lib_types::BondingCurveEconomicState::default();
                 econ.genesis_treasury_allocation = GENESIS_TREASURY_ALLOCATION;
-                // S_c stays 0 — this allocation is explicitly off-curve.
+                // S_c stays 0 â€” this allocation is explicitly off-curve.
 
                 self.store
                     .put_cbe_economic_state(&econ)
@@ -746,7 +746,7 @@ impl BlockExecutor {
         // Step 4: Apply transactions (Phase 3C: two-pass for fee routing)
         // =====================================================================
         //
-        // For each tx: validate_tx_stateless → validate_tx_stateful → apply_tx
+        // For each tx: validate_tx_stateless â†’ validate_tx_stateful â†’ apply_tx
         //
         // Phase 3C: Process non-coinbase transactions first to calculate fees
         // Then process coinbase with the collected fees for proper routing.
@@ -1247,7 +1247,7 @@ impl BlockExecutor {
                     }
                 }
 
-                // Step 2: Bind the proof to chain state — the Merkle root in the proof
+                // Step 2: Bind the proof to chain state â€” the Merkle root in the proof
                 // must match the current on-chain UTXO Merkle tree root.
                 if let Some(proof_root) = input.zk_proof.extract_merkle_root() {
                     let chain_root = self.store.get_utxo_merkle_root().ok().flatten();
@@ -1261,7 +1261,7 @@ impl BlockExecutor {
                         }
                     }
                     // If chain has no Merkle root yet (empty tree), allow the proof
-                    // through — the tree will be populated as UTXOs are created.
+                    // through â€” the tree will be populated as UTXOs are created.
                 }
             }
         }
@@ -1764,7 +1764,7 @@ impl BlockExecutor {
         mutator: &StateMutator<'_>,
         payload: &[u8],
     ) -> Result<CanonicalBondingCurveOutcome, TxApplyError> {
-        // ── 1. Parse ──────────────────────────────────────────────────────────
+        // â”€â”€ 1. Parse â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let curve_tx = decode_canonical_bonding_curve_tx(payload).map_err(|e| {
             TxApplyError::InvalidType(format!("Invalid canonical curve payload: {e}"))
         })?;
@@ -1775,34 +1775,34 @@ impl BlockExecutor {
             CanonicalBondingCurveTx::Sell(tx) => (tx.sender, tx.nonce, tx.amount_cbe, false),
         };
 
-        // ── 2. Non-zero amount ────────────────────────────────────────────────
+        // â”€â”€ 2. Non-zero amount â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if amount_in_or_cbe == 0 {
             return Err(TxApplyError::InvalidType(
                 "Canonical curve tx: amount must be non-zero".to_string(),
             ));
         }
 
-        // ── 3. Load global economic state ────────────────────────────────────
+        // â”€â”€ 3. Load global economic state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let econ = mutator.get_cbe_economic_state()?;
 
-        // ── 4. Phase / graduation check ───────────────────────────────────────
+        // â”€â”€ 4. Phase / graduation check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if econ.graduated {
             return Err(TxApplyError::InvalidType(
                 "CBE curve has graduated; BUY_CBE and SELL_CBE are no longer valid".to_string(),
             ));
         }
 
-        // ── 5. Sell-enabled gate (SELL_CBE only) ─────────────────────────────
+        // â”€â”€ 5. Sell-enabled gate (SELL_CBE only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if !is_buy && !econ.sell_enabled {
             return Err(TxApplyError::InvalidType(
                 "SELL_CBE is disabled by protocol flag sell_enabled=false".to_string(),
             ));
         }
 
-        // ── 6. Load account state (zero-default for new participants) ─────────
+        // â”€â”€ 6. Load account state (zero-default for new participants) â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let account = mutator.get_cbe_account_state(&sender)?;
 
-        // ── 7. Nonce check ────────────────────────────────────────────────────
+        // â”€â”€ 7. Nonce check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let expected_nonce = account.next_nonce.to_u64();
         let provided_nonce = tx_nonce.to_u64();
         if provided_nonce != expected_nonce {
@@ -1812,7 +1812,7 @@ impl BlockExecutor {
             });
         }
 
-        // ── 8. Balance check (reads from token_balances tree) ────────────────
+        // â”€â”€ 8. Balance check (reads from token_balances tree) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if is_buy {
             let sov_bal = mutator.get_token_balance_u128(
                 &Self::canonical_sov_token_id(),
@@ -1838,7 +1838,7 @@ impl BlockExecutor {
             }
         }
 
-        // ── 9. expected_s_c stale-state check ────────────────────────────────
+        // â”€â”€ 9. expected_s_c stale-state check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let expected_s_c = match &curve_tx {
             CanonicalBondingCurveTx::Buy(tx) => tx.expected_s_c,
             CanonicalBondingCurveTx::Sell(tx) => tx.expected_s_c,
@@ -1850,7 +1850,7 @@ impl BlockExecutor {
             )));
         }
 
-        // ── 10. Dispatch to typed economic computation ───────────────────────
+        // â”€â”€ 10. Dispatch to typed economic computation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let next_nonce = lib_types::Nonce48::from_u64(provided_nonce + 1)
             .ok_or_else(|| TxApplyError::InvalidType("nonce overflow".to_string()))?;
 
@@ -1890,24 +1890,24 @@ impl BlockExecutor {
             mint_with_reserve, GRAD_THRESHOLD, MAX_GROSS_SOV_PER_TX,
         };
 
-        // ── Validate caps ────────────────────────────────────────────────
+        // â”€â”€ Validate caps â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if amount_in > MAX_GROSS_SOV_PER_TX {
             return Err(TxApplyError::InvalidType(format!(
                 "BUY_CBE: amount_in {amount_in} exceeds MAX_GROSS_SOV_PER_TX"
             )));
         }
 
-        // ── On-ramp split ────────────────────────────────────────────────
+        // â”€â”€ On-ramp split â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let (sov_treasury_credit, reserve_credit, liquidity_credit) =
             compute_onramp_split(amount_in);
 
-        // ── Mint and slippage check ──────────────────────────────────────
+        // â”€â”€ Mint and slippage check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let delta_s = mint_with_reserve(reserve_credit, econ.s_c)
             .map_err(|e| TxApplyError::InvalidType(format!("BUY_CBE: mint overflow: {e:?}")))?;
 
         validate_buy_limits(amount_in, delta_s, max_price, econ.s_c)?;
 
-        // ── Mutate economic state ────────────────────────────────────────
+        // â”€â”€ Mutate economic state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         econ.s_c = econ
             .s_c
             .checked_add(delta_s)
@@ -1941,7 +1941,7 @@ impl BlockExecutor {
         mutator.put_cbe_economic_state(&econ)?;
         mutator.put_cbe_account_state(&sender, &account)?;
 
-        // ── Wire token ledgers ───────────────────────────────────────────
+        // â”€â”€ Wire token ledgers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         mutator.debit_token(
             &Self::canonical_sov_token_id(),
             &Address::new(sender),
@@ -1955,9 +1955,9 @@ impl BlockExecutor {
             delta_s,
         )?;
 
-        // ── Event-driven SOV minting ─────────────────────────────────────
+        // â”€â”€ Event-driven SOV minting â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // The 20% SOV treasury portion represents real SOV value entering
-        // the treasury. The same amount of SOV is minted as new supply —
+        // the treasury. The same amount of SOV is minted as new supply â€”
         // matching the value contributed.
         let sov_to_mint = sov_treasury_credit;
         if sov_to_mint > 0 {
@@ -2010,7 +2010,7 @@ impl BlockExecutor {
         }
         if econ.reserve_balance < sov_out {
             return Err(TxApplyError::InvalidType(format!(
-                "SELL_CBE: insolvent — reserve_balance {} < sov_out {sov_out}",
+                "SELL_CBE: insolvent â€” reserve_balance {} < sov_out {sov_out}",
                 econ.reserve_balance
             )));
         }
@@ -2055,11 +2055,11 @@ impl BlockExecutor {
         ))
     }
 
-    /// Apply a payroll mint — synthetic CBE bonding curve event (spec §6).
+    /// Apply a payroll mint â€” synthetic CBE bonding curve event (spec Â§6).
     ///
     /// Mints `amount_cbe` (X) CBE to the collaborator wallet and 0.25X to the SOV
     /// treasury address.  Records a PRE_BACKED entry for the full 1.25X gross.
-    /// No SOV enters the system — `s_c` does not change, `reserve_balance` is
+    /// No SOV enters the system â€” `s_c` does not change, `reserve_balance` is
     /// unaffected, and the floor price remains stable.
     fn apply_payroll_mint(
         &self,
@@ -2079,7 +2079,7 @@ impl BlockExecutor {
                 TxApplyError::InvalidType("ProcessPayroll missing payload".to_string())
             })?;
 
-        let amount_cbe = data.amount_cbe; // X — what the collaborator earns
+        let amount_cbe = data.amount_cbe; // X â€” what the collaborator earns
         let collaborator = data.collaborator_address;
         let deliverable_hash = data.deliverable_hash;
 
@@ -2089,13 +2089,13 @@ impl BlockExecutor {
             ));
         }
 
-        // ── 1. Compute gross mint (≈2.083X) and split ───────────────────────
+        // â”€â”€ 1. Compute gross mint (â‰ˆ2.083X) and split â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         //
-        // gross = X × 25 / 12  (X / 0.48)
-        //   20% gross → SOV treasury (DAO tax, held as CBE)
-        //   32% gross → locked reserve (backs floor price)
+        // gross = X Ã— 25 / 12  (X / 0.48)
+        //   20% gross â†’ SOV treasury (DAO tax, held as CBE)
+        //   32% gross â†’ locked reserve (backs floor price)
         //   collaborator receives exactly X (the amount they earned)
-        //   rounding dust (0–1 atoms) goes to reserve (backs floor price)
+        //   rounding dust (0â€“1 atoms) goes to reserve (backs floor price)
 
         let gross = amount_cbe
             .checked_mul(PAYROLL_GROSS_NUM)
@@ -2110,7 +2110,7 @@ impl BlockExecutor {
         let rounding_dust = gross - treasury_credit - base_reserve - collaborator_credit;
         let reserve_credit = base_reserve + rounding_dust;            // 32% + dust
 
-        // ── 2. Debt ceiling check (against gross) ───────────────────────────
+        // â”€â”€ 2. Debt ceiling check (against gross) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let mut econ = mutator.get_cbe_economic_state()?;
 
         let new_outstanding = econ
@@ -2122,12 +2122,12 @@ impl BlockExecutor {
 
         if new_outstanding > DEBT_CEILING {
             return Err(TxApplyError::InvalidType(format!(
-                "PAYROLL_MINT: debt ceiling breached — outstanding {} + gross {} > ceiling {}",
+                "PAYROLL_MINT: debt ceiling breached â€” outstanding {} + gross {} > ceiling {}",
                 econ.outstanding_pre_backed, gross, DEBT_CEILING
             )));
         }
 
-        // ── 3. Update pools ─────────────────────────────────────────────────
+        // â”€â”€ 3. Update pools â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Compensation pool tracks what collaborators received.
         econ.compensation_pool
             .mint(collaborator_credit)
@@ -2141,7 +2141,7 @@ impl BlockExecutor {
                 TxApplyError::InvalidType("PAYROLL_MINT: sov_treasury overflow".to_string())
             })?;
 
-        // Locked reserve (32% of gross — backs floor price).
+        // Locked reserve (32% of gross â€” backs floor price).
         econ.reserve_balance = econ
             .reserve_balance
             .checked_add(reserve_credit)
@@ -2149,7 +2149,7 @@ impl BlockExecutor {
                 TxApplyError::InvalidType("PAYROLL_MINT: reserve overflow".to_string())
             })?;
 
-        // ── 4. Record PRE_BACKED entry ──────────────────────────────────────
+        // â”€â”€ 4. Record PRE_BACKED entry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         econ.pre_backed_queue.push(lib_types::PreBackedEntry {
             block_height,
             amount_cbe: gross,
@@ -2160,10 +2160,10 @@ impl BlockExecutor {
         econ.outstanding_pre_backed = new_outstanding;
         econ.debt_state = compute_debt_state(new_outstanding);
 
-        // ── 5. SOVRN audit token ────────────────────────────────────────────
+        // â”€â”€ 5. SOVRN audit token â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // SOVRN tracks value-weighted liquidity. For payroll the reserve portion
         // (32% of gross) is the value that backs the floor.
-        // SOVRN_mint = reserve_credit × P(S_c) / SCALE
+        // SOVRN_mint = reserve_credit Ã— P(S_c) / SCALE
         {
             use crate::contracts::bonding_curve::canonical::{price_at_supply, SCALE};
             use crate::contracts::utils::u256_to_u128;
@@ -2179,20 +2179,20 @@ impl BlockExecutor {
                 .saturating_add(u256_to_u128(sovrn_mint).unwrap_or(0));
         }
 
-        // ── 6. Persist economic state ───────────────────────────────────────
+        // â”€â”€ 6. Persist economic state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         mutator.put_cbe_economic_state(&econ)?;
 
-        // ── 7. Credit CBE tokens ────────────────────────────────────────────
+        // â”€â”€ 7. Credit CBE tokens â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let cbe_token_id = TokenId::new(crate::Blockchain::derive_cbe_token_id_pub());
 
-        // 48% gross (≈ X) → collaborator wallet
+        // 48% gross (â‰ˆ X) â†’ collaborator wallet
         mutator.credit_token(
             &cbe_token_id,
             &Address::new(collaborator),
             collaborator_credit,
         )?;
 
-        // 20% gross → SOV treasury address (held as CBE)
+        // 20% gross â†’ SOV treasury address (held as CBE)
         let treasury_addr = *self.fee_model.protocol_params.fee_sink_address();
         mutator.credit_token(
             &cbe_token_id,
@@ -2200,7 +2200,7 @@ impl BlockExecutor {
             treasury_credit,
         )?;
 
-        // 32% gross → locked reserve (no token credit — reserve is an accounting
+        // 32% gross â†’ locked reserve (no token credit â€” reserve is an accounting
         // entry in BondingCurveEconomicState, not a wallet balance; it backs the
         // floor price and is only released at graduation or sell-back redemption).
 
@@ -2219,7 +2219,7 @@ impl BlockExecutor {
         Ok(())
     }
 
-    /// Apply a TreasuryAllocation transaction — transfer SOV from source treasury
+    /// Apply a TreasuryAllocation transaction â€” transfer SOV from source treasury
     /// to destination DAO wallet in the canonical token ledger.
     fn apply_treasury_allocation(
         &self,
@@ -2393,7 +2393,7 @@ impl BlockExecutor {
             ));
         }
 
-        // Load the stake record — it must exist.
+        // Load the stake record â€” it must exist.
         let record: DaoStakeRecord = mutator
             .get_dao_stake(&data.sector_dao_key_id, &data.staker)?
             .ok_or_else(|| {
@@ -2404,7 +2404,7 @@ impl BlockExecutor {
                 ))
             })?;
 
-        // Enforce the lock period — cannot unstake before locked_until.
+        // Enforce the lock period â€” cannot unstake before locked_until.
         if block_height < record.locked_until {
             return Err(TxApplyError::InvalidType(format!(
                 "DaoUnstake: stake still locked until height {} (current {})",
@@ -2430,7 +2430,7 @@ impl BlockExecutor {
         // Return locked SOV from DAO wallet back to staker.
         mutator.transfer_token(&sov_token, &dao_addr, &staker_addr, record.amount)?;
 
-        // Burn welfare tokens from staker — they're returning the service access voucher
+        // Burn welfare tokens from staker â€” they're returning the service access voucher
         // to reclaim their SOV. Burns exactly the amount that was minted on stake.
         if let Some(welfare_token_id) = Self::welfare_token_for_dao(&data.sector_dao_key_id) {
             mutator.debit_token(&welfare_token_id, &staker_addr, record.amount)?;
@@ -2476,7 +2476,7 @@ impl BlockExecutor {
     // the executor; the sled-backed store is the authoritative source of truth.
     // =========================================================================
 
-    /// Truncate a DID string to at most `n` Unicode scalar values for safe log output.
+    /// Truncate a DID string to at most 48 Unicode scalar values for safe log output.
     fn trunc_did(s: &str) -> String {
         s.chars().take(48).collect()
     }
@@ -2509,17 +2509,18 @@ impl BlockExecutor {
         Ok((signer_addr, sov_token))
     }
 
-    /// Reject an `expires_at` that is not strictly in the future. `None` is allowed.
+    /// Reject an `expires_at` that is not strictly in the future relative to the
+    /// current block timestamp (unix seconds). `None` is allowed.
     fn check_observer_expires_at(
         expires_at: Option<u64>,
-        block_height: u64,
+        block_timestamp_secs: u64,
         op_name: &str,
     ) -> Result<(), TxApplyError> {
         if let Some(exp) = expires_at {
-            if exp <= block_height {
+            if exp <= block_timestamp_secs {
                 return Err(TxApplyError::InvalidType(format!(
-                    "{}: expires_at must be > current block height (expires_at={} height={})",
-                    op_name, exp, block_height,
+                    "{}: expires_at must be > current block timestamp (expires_at={} timestamp={})",
+                    op_name, exp, block_timestamp_secs,
                 )));
             }
         }
@@ -2548,6 +2549,7 @@ impl BlockExecutor {
         mutator: &StateMutator<'_>,
         tx: &crate::transaction::Transaction,
         block_height: u64,
+        block_timestamp: u64,
     ) -> Result<(), TxApplyError> {
         use lib_types::{
             ObserverAdmissionRecord, ObserverAdmissionStatus, ObserverNodeInfo,
@@ -2576,10 +2578,11 @@ impl BlockExecutor {
         let (signer_addr, sov_token) =
             Self::check_observer_nonce(mutator, tx, data.nonce, "RegisterObserver")?;
 
-        // expires_at, when set, must be strictly in the future.
-        Self::check_observer_expires_at(data.expires_at, block_height, "RegisterObserver")?;
+        // expires_at, when set, must be strictly in the future relative to
+        // the block timestamp (unix seconds â€” matches the lib-types contract).
+        Self::check_observer_expires_at(data.expires_at, block_timestamp, "RegisterObserver")?;
 
-        // Duplicate prevention — check sled-backed store.
+        // Duplicate prevention â€” check sled-backed store.
         let did_hash = crate::storage::did_to_hash(&data.observer_node_did);
         if mutator.get_observer_record(&did_hash)?.is_some() {
             return Err(TxApplyError::InvalidType(format!(
@@ -2595,6 +2598,17 @@ impl BlockExecutor {
             .get_observer_policy()?
             .unwrap_or_else(crate::observer::default_policy);
 
+        // WARNING (trust hole, tracked for follow-up branch):
+        // `data.sponsor_proof_level` is a transaction-supplied field and is NOT
+        // currently bound to a canonical on-chain proof / identity attestation
+        // record. A malicious sponsor can claim a higher proof tier to bypass
+        // both the proof-level minimum and the per-tier sponsor quota below.
+        // Proper enforcement requires looking up the sponsor's actual proof
+        // level from on-chain identity state (planned for a subsequent
+        // observer-admission branch). Until then, these gates are retained as
+        // (a) defense-in-depth against accidental misconfiguration and
+        // (b) live exercise of the policy module's public API surface.
+        //
         // Anonymous sponsor + proof-level minimum.
         if let Err(denial) =
             crate::observer::policy::check_proof_level(data.sponsor_proof_level, &policy)
@@ -2604,7 +2618,7 @@ impl BlockExecutor {
             )));
         }
 
-        // Per-sponsor quota — count this sponsor's existing non-revoked records.
+        // Per-sponsor quota â€” count this sponsor's existing non-revoked records.
         let sponsor_hash = crate::storage::did_to_hash(&data.sponsor_user_did);
         let existing = mutator.iter_observer_records_for_sponsor(&sponsor_hash)?;
         let active_count = existing
@@ -2635,7 +2649,7 @@ impl BlockExecutor {
         let fee = crate::transaction::fee::OBSERVER_REGISTRATION_FEE as u128;
         mutator.debit_token(&sov_token, &signer_addr, fee)?;
 
-        let now_ts = block_height; // use block_height as a proxy timestamp for determinism
+        let now_ts = block_timestamp; // unix seconds, per ObserverAdmissionRecord contract
         let record = ObserverAdmissionRecord {
             node_info: ObserverNodeInfo {
                 observer_node_did: data.observer_node_did.clone(),
@@ -2681,6 +2695,7 @@ impl BlockExecutor {
         mutator: &StateMutator<'_>,
         tx: &crate::transaction::Transaction,
         block_height: u64,
+        block_timestamp: u64,
     ) -> Result<(), TxApplyError> {
         let data = tx.update_observer_metadata_data().ok_or_else(|| {
             TxApplyError::InvalidType("UpdateObserverMetadata missing payload".to_string())
@@ -2694,7 +2709,7 @@ impl BlockExecutor {
         if let Some(Some(new_exp)) = data.new_expires_at {
             Self::check_observer_expires_at(
                 Some(new_exp),
-                block_height,
+                block_timestamp,
                 "UpdateObserverMetadata",
             )?;
         }
@@ -2711,8 +2726,11 @@ impl BlockExecutor {
         }
 
         // Apply updates.
-        // Endpoints are always replaced (even with an empty list, to allow clearing).
-        record.node_info.endpoints = data.new_endpoints.clone();
+        // Endpoints are conditionally replaced: None = no change,
+        // Some(vec![]) = explicit clear, Some(vec) = replace with vec.
+        if let Some(ref new_endpoints) = data.new_endpoints {
+            record.node_info.endpoints = new_endpoints.clone();
+        }
         if let Some(ref net) = data.new_network {
             record.network.allowed_network = net.allowed_network.clone();
             record.network.trusted_sync_scope = net.trusted_sync_scope.clone();
@@ -2723,7 +2741,7 @@ impl BlockExecutor {
         if let Some(new_exp) = data.new_expires_at {
             record.expires_at = new_exp;
         }
-        record.updated_at = block_height;
+        record.updated_at = block_timestamp;
 
         mutator.put_observer_record(&did_hash, &record)?;
 
@@ -2744,10 +2762,16 @@ impl BlockExecutor {
     /// that record an action_meta entry (currently `SuspendObserver` and
     /// `RevokeObserver`). Validates nonce, sponsor authority, and the source
     /// status guard, then writes the new status and bumps the SOV nonce.
+    ///
+    /// Authority model (v1): only the registered sponsor of the observer
+    /// record may submit these transactions. A governance / council authority
+    /// path (e.g. threshold-approved suspension) is intentionally deferred to
+    /// a follow-up branch and is NOT enforced here.
     fn apply_observer_sponsor_lifecycle(
         mutator: &StateMutator<'_>,
         tx: &crate::transaction::Transaction,
         block_height: u64,
+        block_timestamp: u64,
         op_name: &'static str,
         log_prefix: &'static str,
         observer_did: &str,
@@ -2787,9 +2811,9 @@ impl BlockExecutor {
         record.action_meta = Some(ObserverAdmissionActionMeta {
             actor_did: actor_did.to_string(),
             reason: reason.to_string(),
-            timestamp: block_height,
+            timestamp: block_timestamp,
         });
-        record.updated_at = block_height;
+        record.updated_at = block_timestamp;
 
         mutator.put_observer_record(&did_hash, &record)?;
 
@@ -2812,6 +2836,7 @@ impl BlockExecutor {
         mutator: &StateMutator<'_>,
         tx: &crate::transaction::Transaction,
         block_height: u64,
+        block_timestamp: u64,
     ) -> Result<(), TxApplyError> {
         use lib_types::ObserverAdmissionStatus;
 
@@ -2823,6 +2848,7 @@ impl BlockExecutor {
             mutator,
             tx,
             block_height,
+            block_timestamp,
             "SuspendObserver",
             "SUSPEND_OBSERVER",
             &data.observer_node_did,
@@ -2840,6 +2866,7 @@ impl BlockExecutor {
         mutator: &StateMutator<'_>,
         tx: &crate::transaction::Transaction,
         block_height: u64,
+        block_timestamp: u64,
     ) -> Result<(), TxApplyError> {
         use lib_types::ObserverAdmissionStatus;
 
@@ -2851,6 +2878,7 @@ impl BlockExecutor {
             mutator,
             tx,
             block_height,
+            block_timestamp,
             "RevokeObserver",
             "REVOKE_OBSERVER",
             &data.observer_node_did,
@@ -2868,6 +2896,7 @@ impl BlockExecutor {
         mutator: &StateMutator<'_>,
         tx: &crate::transaction::Transaction,
         block_height: u64,
+        block_timestamp: u64,
     ) -> Result<(), TxApplyError> {
         use lib_types::ObserverAdmissionStatus;
 
@@ -2907,7 +2936,7 @@ impl BlockExecutor {
 
         record.status = ObserverAdmissionStatus::Active;
         record.action_meta = None; // Clear the suspension record.
-        record.updated_at = block_height;
+        record.updated_at = block_timestamp;
 
         mutator.put_observer_record(&did_hash, &record)?;
 
@@ -2947,7 +2976,7 @@ impl BlockExecutor {
         mutator: &StateMutator<'_>,
         tx: &crate::transaction::Transaction,
         block_height: u64,
-        _block_timestamp: u64,
+        block_timestamp: u64,
     ) -> Result<TxOutcome, TxApplyError> {
         let tx_hash = hash_transaction(tx);
 
@@ -3195,7 +3224,7 @@ impl BlockExecutor {
                 Ok(TxOutcome::ContractExecution(outcome))
             }
             // Known legacy system types: accepted as no-ops. This mirrors the allowlist in
-            // validate_tx_stateless — any type listed here must also be listed there.
+            // validate_tx_stateless â€” any type listed here must also be listed there.
             TransactionType::IdentityRegistration
             | TransactionType::IdentityUpdate
             | TransactionType::IdentityRevocation
@@ -3234,7 +3263,7 @@ impl BlockExecutor {
                 Ok(TxOutcome::LegacySystem)
             }
 
-            // NFT types — create, mint, transfer, burn
+            // NFT types â€” create, mint, transfer, burn
             TransactionType::NftCreateCollection
             | TransactionType::NftMint
             | TransactionType::NftTransfer
@@ -3250,23 +3279,23 @@ impl BlockExecutor {
             // Observer Admission (observer-admission-3)
             // ================================================================
             TransactionType::RegisterObserver => {
-                self.apply_register_observer(mutator, tx, block_height)?;
+                self.apply_register_observer(mutator, tx, block_height, block_timestamp)?;
                 Ok(TxOutcome::LegacySystem)
             }
             TransactionType::UpdateObserverMetadata => {
-                self.apply_update_observer_metadata(mutator, tx, block_height)?;
+                self.apply_update_observer_metadata(mutator, tx, block_height, block_timestamp)?;
                 Ok(TxOutcome::LegacySystem)
             }
             TransactionType::SuspendObserver => {
-                self.apply_suspend_observer(mutator, tx, block_height)?;
+                self.apply_suspend_observer(mutator, tx, block_height, block_timestamp)?;
                 Ok(TxOutcome::LegacySystem)
             }
             TransactionType::RevokeObserver => {
-                self.apply_revoke_observer(mutator, tx, block_height)?;
+                self.apply_revoke_observer(mutator, tx, block_height, block_timestamp)?;
                 Ok(TxOutcome::LegacySystem)
             }
             TransactionType::ReauthorizeObserver => {
-                self.apply_reauthorize_observer(mutator, tx, block_height)?;
+                self.apply_reauthorize_observer(mutator, tx, block_height, block_timestamp)?;
                 Ok(TxOutcome::LegacySystem)
             }
 
@@ -3323,7 +3352,7 @@ impl BlockExecutor {
             // called from finish_block_processing().
             TransactionType::RecordOnRampTrade => Ok(TxOutcome::LegacySystem),
 
-            // Gateway lifecycle — state applied by process_gateway_transactions()
+            // Gateway lifecycle â€” state applied by process_gateway_transactions()
             TransactionType::GatewayRegistration
             | TransactionType::GatewayUpdate
             | TransactionType::GatewayUnregister => Ok(TxOutcome::LegacySystem),
@@ -3334,7 +3363,7 @@ impl BlockExecutor {
             }
 
             // Coinbase is routed through apply_coinbase_with_fees, never here.
-            // (Handled above; this duplicate arm was removed — see the Coinbase arm near the top of this match.)
+            // (Handled above; this duplicate arm was removed â€” see the Coinbase arm near the top of this match.)
             _ => Err(TxApplyError::UnsupportedType(format!(
                 "{:?}",
                 tx.transaction_type
@@ -3571,7 +3600,7 @@ fn validate_buy_limits(
         / U256::from(delta_s);
     if effective > U256::from(max_price) {
         return Err(TxApplyError::InvalidType(format!(
-            "BUY_CBE: slippage — effective price {effective} > max_price {max_price}"
+            "BUY_CBE: slippage â€” effective price {effective} > max_price {max_price}"
         )));
     }
 
@@ -4090,7 +4119,7 @@ mod tests {
             TransactionType::ContentUpload,
             TransactionType::UbiDistribution,
             // DaoProposal/DaoVote/DaoExecution are Phase-2 types with structural
-            // validation — they are NOT listed here.
+            // validation â€” they are NOT listed here.
             TransactionType::DifficultyUpdate,
             TransactionType::UBIClaim,
             TransactionType::ProfitDeclaration,
@@ -4694,7 +4723,7 @@ mod tests {
         tx
     }
 
-    /// DAO full lifecycle: Proposal (block 1) → Vote (block 2) → Execution (block 3).
+    /// DAO full lifecycle: Proposal (block 1) â†’ Vote (block 2) â†’ Execution (block 3).
     ///
     /// SledStore writes are only visible after apply_batch in commit_block, so each
     /// lifecycle step must be in a separate block.
@@ -4830,7 +4859,7 @@ mod tests {
         let block2 = create_block_with_txs(2, block1.header.block_hash, vec![vote_tx]);
         executor.apply_block(&block2).unwrap();
 
-        // Block 3: vote at height 3 is past the deadline (3 > 2) — must be rejected
+        // Block 3: vote at height 3 is past the deadline (3 > 2) â€” must be rejected
         let late_vote_tx = create_dao_vote_tx(proposal_id, "carol", "Yes");
         let block3 = create_block_with_txs(3, block2.header.block_hash, vec![late_vote_tx]);
         let result = executor.apply_block(&block3);
@@ -4953,7 +4982,7 @@ mod tests {
         );
         assert_eq!(tx.version, TX_VERSION_V8);
 
-        // Roundtrip through bincode — bonding curve data must survive
+        // Roundtrip through bincode â€” bonding curve data must survive
         let bytes = bincode::serialize(&tx).expect("serialize");
         let decoded: Transaction = bincode::deserialize(&bytes).expect("deserialize");
         assert_eq!(decoded.version, TX_VERSION_V8);
@@ -5102,7 +5131,7 @@ mod tests {
         let mutator = StateMutator::new(store.as_ref());
         let executor = BlockExecutor::with_store(store.clone());
 
-        // max_price = 1 (1 atomic SOV per CBE) is impossibly cheap → slippage rejection.
+        // max_price = 1 (1 atomic SOV per CBE) is impossibly cheap â†’ slippage rejection.
         let payload =
             encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Buy(BondingCurveBuyTx {
                 action: BONDING_CURVE_BUY_ACTION,
@@ -5162,10 +5191,10 @@ mod tests {
             )
             .unwrap();
             // Pre-load reserve so the next buy tips graduation.
-            // reserve_credit of a 100 * SCALE buy ≈ 20 * SCALE; GRAD_THRESHOLD ≈ 2_745_966 * SCALE.
+            // reserve_credit of a 100 * SCALE buy â‰ˆ 20 * SCALE; GRAD_THRESHOLD â‰ˆ 2_745_966 * SCALE.
             // Use seeded econ state with reserve = GRAD_THRESHOLD - 1.
             // With 20/32/48 split, if reserve=R then the total deposit that produced it
-            // was R * 100/32 ≈ R * 3.125. SOV treasury = 20% and liquidity = 48%.
+            // was R * 100/32 â‰ˆ R * 3.125. SOV treasury = 20% and liquidity = 48%.
             let reserve_seeded = GRAD_THRESHOLD - 1;
             let implied_total = reserve_seeded * 100 / 32;
             seed.put_cbe_economic_state(&BondingCurveEconomicState {
@@ -5381,7 +5410,7 @@ mod tests {
             // sell_enabled=true so the solvency check (not the flag) is what triggers the error.
             seed.put_cbe_economic_state(&BondingCurveEconomicState {
                 s_c: cbe_amount,
-                reserve_balance: 0, // empty — solvency check must fail
+                reserve_balance: 0, // empty â€” solvency check must fail
                 sov_treasury_cbe_balance: 0,
                 liquidity_pool_balance: 0,
                 total_sov_minted: 0,
@@ -5626,7 +5655,7 @@ mod tests {
                 nonce: Nonce48::from_u64(0).unwrap(),
                 sender: signer.public_key.key_id,
                 amount_in: 1000,
-                max_price: u128::MAX, // no slippage restriction — routing test only
+                max_price: u128::MAX, // no slippage restriction â€” routing test only
                 expected_s_c: 0,
             }));
         let tx = crate::transaction::Transaction {
@@ -6271,7 +6300,7 @@ mod tests {
         let block2 = create_block_with_txs(2, prev_hash, vec![tx_reg]);
         executor.apply_block(&block2).unwrap();
 
-        // Try to suspend a Pending observer (must fail — only Active can be suspended).
+        // Try to suspend a Pending observer (must fail â€” only Active can be suspended).
         let tx_sus = make_suspend_observer_tx_with_nonce(
             "did:zhtp:node4",
             "did:zhtp:sponsor1",
@@ -6506,7 +6535,7 @@ mod tests {
         let block2 = create_block_with_txs(2, prev_hash, vec![tx1.clone()]);
         executor.apply_block(&block2).unwrap();
 
-        // Replay the EXACT same tx (nonce 0) at the next height — must fail.
+        // Replay the EXACT same tx (nonce 0) at the next height â€” must fail.
         let result = apply_block_with_tx(&executor, 3, block2.header.block_hash, tx1);
         assert!(
             result.is_err(),
@@ -6555,7 +6584,7 @@ mod tests {
         let block2 = create_block_with_txs(2, prev_hash, vec![tx_reg]);
         executor.apply_block(&block2).unwrap();
 
-        // Reauthorize directly from Pending — should succeed and set Active.
+        // Reauthorize directly from Pending â€” should succeed and set Active.
         let tx_rauth = make_reauthorize_observer_tx_with_nonce(
             "did:zhtp:pending_reauth",
             "did:zhtp:sponsor_reauth",
@@ -6660,7 +6689,7 @@ mod tests {
     fn test_sponsor_quota_exhausted_rejected() {
         let (_store, executor, prev_hash) = setup_observer_test();
 
-        // Default policy + Basic sponsor → quota=1. First registration succeeds,
+        // Default policy + Basic sponsor â†’ quota=1. First registration succeeds,
         // second by the same sponsor must fail.
         let tx1 = make_register_observer_tx_with_level_and_nonce(
             "did:zhtp:q1",
@@ -6706,7 +6735,7 @@ mod tests {
         let block3 = create_block_with_txs(3, block2.header.block_hash, vec![tx_rev]);
         executor.apply_block(&block3).unwrap();
 
-        // Now register a new observer under the same sponsor — should succeed
+        // Now register a new observer under the same sponsor â€” should succeed
         // because the revoked record does not consume quota.
         let tx2 = make_register_observer_tx_with_level_and_nonce(
             "did:zhtp:rq2",
@@ -6766,7 +6795,7 @@ mod tests {
         let decision = evaluate_admission(&record, &policy, "testnet", 100);
         assert_eq!(decision, AdmissionDecision::Authorized);
 
-        // Wrong network → denied.
+        // Wrong network â†’ denied.
         let denied = evaluate_admission(&record, &policy, "mainnet", 100);
         assert!(matches!(denied, AdmissionDecision::Denied(_)));
     }
