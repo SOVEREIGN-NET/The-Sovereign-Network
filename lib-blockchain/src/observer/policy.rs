@@ -203,6 +203,11 @@ pub fn default_policy() -> ObserverAdmissionPolicy {
         admission_required: true,
         auto_approve: false,
         quota_overrides: Vec::new(),
+        // observer-admission-8: reserved economic anti-sybil hook (unused in v1).
+        bond_amount: None,
+        // observer-admission-8: anti-abuse escalation thresholds.
+        abuse_suspend_threshold: 3,
+        abuse_revoke_threshold: 5,
     }
 }
 

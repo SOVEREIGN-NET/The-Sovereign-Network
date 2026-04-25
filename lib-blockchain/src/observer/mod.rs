@@ -11,7 +11,11 @@
 //! - admission-5+: bootstrap, API, anti-abuse all consume this module.
 
 pub mod policy;
+pub mod rate_limit;
+pub mod abuse;
 
 pub use policy::{
     default_policy, evaluate_admission, AdmissionDecision, PolicyDenial,
 };
+pub use rate_limit::{sponsor_aggregate_quota_per_minute, TokenBucket, SPONSOR_AGGREGATE_FACTOR};
+pub use abuse::{evaluate_escalation, record_violation, EscalationAction};

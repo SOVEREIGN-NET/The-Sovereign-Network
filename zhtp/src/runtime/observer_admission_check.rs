@@ -531,6 +531,9 @@ mod tests {
             admission_required: true,
             auto_approve: false,
             quota_overrides: vec![],
+            bond_amount: None,
+            abuse_suspend_threshold: 3,
+            abuse_revoke_threshold: 5,
         });
         store.insert(record(
             "did:zhtp:obs",
