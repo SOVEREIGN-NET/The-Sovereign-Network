@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::observer::{
+use crate::{
     build_height_trajectories, ConsensusBehaviorEventType, ConsensusNormalizedEvent,
     ConsensusPhaseType, HeightTrajectory, RoundTrajectory,
 };

@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use lib_identity::IdentityId;
 use serde::{Deserialize, Serialize};
 
-use crate::byzantine::ByzantineEvidence;
-use crate::engines::consensus_engine::ConsensusAuditLog;
-use crate::types::{ConsensusEvent, ConsensusStep, VoteType};
+use lib_consensus::byzantine::ByzantineEvidence;
+use lib_consensus::engines::consensus_engine::ConsensusAuditLog;
+use lib_consensus::types::{ConsensusEvent, ConsensusStep, VoteType};
 
 /// Canonical consensus behavior event vocabulary.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -491,7 +491,7 @@ mod tests {
     use super::*;
     use lib_crypto::{Hash, PostQuantumSignature};
 
-    use crate::byzantine::{PartitionSuspectedEvidence, ReplayEvidence};
+    use lib_consensus::byzantine::{PartitionSuspectedEvidence, ReplayEvidence};
 
     #[test]
     fn maps_step_started_propose_from_audit_log() {
@@ -647,7 +647,7 @@ mod tests {
     #[test]
     fn maps_commit_vote_observed_from_vote_received_event() {
         let event = ConsensusEvent::VoteReceived {
-            vote: crate::types::ConsensusVote {
+            vote: lib_consensus::types::ConsensusVote {
                 id: Hash::from_bytes(&[1u8; 32]),
                 voter: Hash::from_bytes(&[2u8; 32]),
                 proposal_id: Hash::from_bytes(&[3u8; 32]),

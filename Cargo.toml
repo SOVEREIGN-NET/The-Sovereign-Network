@@ -14,6 +14,7 @@ members = [
     "lib-consensus",
     "lib-consensus-core",
     "lib-consensus-net",
+    "lib-consensus-observer",
     "lib-consensus-runtime",
     "lib-crypto",
     "lib-dht",

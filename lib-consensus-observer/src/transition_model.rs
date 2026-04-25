@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-use crate::observer::state_encoder::EncodedConsensusState;
+use crate::state_encoder::EncodedConsensusState;
 
 /// Estimated total number of possible consensus state combinations.
 /// Used for Laplace smoothing denominator when no observations exist.
@@ -267,7 +267,7 @@ pub fn build_model_from_history(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::observer::state_encoder::{
+    use crate::state_encoder::{
         EncodedConsensusPhase, ExecutionStatus, ProposalStatus, RoundClass, TimeClass,
     };
 

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::observer::{ConsensusBehaviorEventType, ConsensusNormalizedEvent};
+use crate::{ConsensusBehaviorEventType, ConsensusNormalizedEvent};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ConsensusPhaseType {

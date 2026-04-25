@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::observer::{
+use crate::{
     state_encoder::{EncodedConsensusState, ExecutionStatus, TimeClass},
     surprisal_engine::SurprisalStats,
 };
@@ -378,7 +378,7 @@ pub struct ValidatorAnomalyScore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::observer::{
+    use crate::{
         state_encoder::{
             EncodedConsensusPhase, ExecutionStatus, ProposalStatus, RoundClass, TimeClass,
         },

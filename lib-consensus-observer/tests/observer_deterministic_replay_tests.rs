@@ -7,7 +7,7 @@
 //! - Replay tests proving identical outputs for identical input streams
 //! - Cross-module integration tests for end-to-end observer outputs
 
-use lib_consensus::observer::{
+use lib_consensus_observer::{
     encode_height_states, encode_round_states, EncodedConsensusPhase, EncodedConsensusState,
     ExecutionStatus, ParsedConsensusEvent, ParsedConsensusPhase, ParsedHeightTrajectory,
     ParsedPhaseTrajectory, ParsedRoundTrajectory, ProposalStatus, RoundClass, StateEncoderConfig,

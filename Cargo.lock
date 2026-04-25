@@ -3503,6 +3503,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "lib-consensus-observer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "lib-consensus",
+ "lib-crypto",
+ "lib-identity",
+ "lib-types",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "lib-consensus-runtime"
 version = "0.1.0"
 dependencies = [
