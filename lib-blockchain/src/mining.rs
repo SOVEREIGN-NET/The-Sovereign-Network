@@ -6,7 +6,7 @@
 use anyhow::Result;
 use tracing::{info, warn};
 
-use crate::validators::ValidatorManager;
+use lib_consensus::ValidatorManager;
 use lib_crypto::Hash;
 use lib_identity::IdentityId;
 

@@ -17,7 +17,6 @@ pub mod engines;
 pub mod evidence;
 pub mod fault_model;
 pub mod invariants;
-pub mod mining;
 pub mod network;
 pub mod observer;
 pub mod proofs;
@@ -38,7 +37,6 @@ pub use evidence::{
 pub use invariants::{
     check_invariant, enforce_consensus_invariants, ConsensusInvariant, ConsensusState,
 };
-pub use mining::{should_mine_block, IdentityData};
 pub use network::{
     check_consensus_health, BincodeConsensusCodec, CodecError, ConsensusMessageCodec,
     ConsensusMetrics,
