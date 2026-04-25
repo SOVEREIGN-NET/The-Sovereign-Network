@@ -3,7 +3,8 @@ use anyhow::Result;
 use axum::extract::{ConnectInfo, OriginalUri, Path, Query, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::body::Bytes;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::{engine::general_purpose, Engine as _};
 use lib_protocols::ZhtpResponse;
@@ -53,6 +54,7 @@ pub fn router(state: AppState) -> Router {
         .route("/favicon.ico", get(root_favicon))
         .route("/web4/content/:domain", get(raw_content_root))
         .route("/web4/content/:domain/*path", get(raw_content))
+        .route("/webhook/github", post(github_webhook))
         .route("/*path", get(root_site_path))
         .with_state(state)
 }
@@ -313,4 +315,102 @@ impl IntoResponse for AppError {
         }));
         (StatusCode::BAD_GATEWAY, body).into_response()
     }
+}
+
+/// POST /webhook/github — receives GitHub push events and triggers deploy.
+async fn github_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    // Verify webhook signature
+    let webhook_secret = std::env::var("GITHUB_WEBHOOK_SECRET").unwrap_or_default();
+    if !webhook_secret.is_empty() {
+        let sig = headers
+            .get("x-hub-signature-256")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if !crate::github_deploy::verify_webhook_signature(&webhook_secret, &body, sig) {
+            return (StatusCode::UNAUTHORIZED, Json(json!({ "error": "Invalid signature" })));
+        }
+    }
+
+    // Only handle push events
+    let event_type = headers
+        .get("x-github-event")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if event_type != "push" {
+        return (StatusCode::OK, Json(json!({ "status": "ignored", "event": event_type })));
+    }
+
+    // Parse push event
+    let event: crate::github_deploy::GitHubPushEvent = match serde_json::from_slice(&body) {
+        Ok(e) => e,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, Json(json!({ "error": format!("Invalid payload: {}", e) })));
+        }
+    };
+
+    // Only deploy pushes to default branch
+    if !event.is_default_branch() {
+        return (StatusCode::OK, Json(json!({
+            "status": "skipped",
+            "reason": "Not default branch",
+            "ref": event.git_ref,
+        })));
+    }
+
+    let repo = event.repository.full_name.clone();
+    let commit = event.after.clone();
+    let commit_short = commit[..8.min(commit.len())].to_string();
+    let repo_for_response = repo.clone();
+
+    tracing::info!("[webhook] Push to {} at {} — triggering deploy", repo, commit_short);
+
+    // Spawn deploy in background
+    let service = state.service.clone();
+    tokio::spawn(async move {
+        let work_dir = std::env::temp_dir().join("sov-deploy");
+        let _ = tokio::fs::create_dir_all(&work_dir).await;
+
+        let job = crate::github_deploy::DeployJob {
+            repo_url: event.repository.clone_url.clone(),
+            commit_sha: commit.clone(),
+            repo_full_name: repo.clone(),
+            branch: event.repository.default_branch.clone(),
+        };
+
+        // Set pending status
+        let github_token = std::env::var("GITHUB_APP_TOKEN").unwrap_or_default();
+        if !github_token.is_empty() {
+            let _ = crate::github_deploy::set_commit_status(
+                &repo, &commit, "pending", "Deploying to Sovereign Network...", None, &github_token,
+            ).await;
+        }
+
+        let result = crate::github_deploy::execute_deploy(&job, &service, &work_dir).await;
+
+        // Set final status
+        if !github_token.is_empty() {
+            let (state, desc, url) = if result.success {
+                let domain = result.domain.as_deref().unwrap_or("unknown");
+                ("success", format!("Deployed to {}", domain), Some(format!("https://{}", domain)))
+            } else {
+                let err = result.error.as_deref().unwrap_or("Unknown error");
+                ("failure", format!("Deploy failed: {}", &err[..err.len().min(140)]), None)
+            };
+            let _ = crate::github_deploy::set_commit_status(
+                &repo, &commit, state, &desc, url.as_deref(), &github_token,
+            ).await;
+        }
+
+        tracing::info!("[webhook] Deploy result for {}: success={}", repo, result.success);
+    });
+
+    (StatusCode::OK, Json(json!({
+        "status": "accepted",
+        "repo": repo_for_response,
+        "commit": commit_short,
+    })))
 }

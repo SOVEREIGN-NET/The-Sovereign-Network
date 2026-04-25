@@ -14,3 +14,4 @@ pub mod service;
 
 // api module is HTTP-only; not re-exported for library use.
 mod api;
+pub mod github_deploy;

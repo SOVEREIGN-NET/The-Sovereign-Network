@@ -2,6 +2,7 @@ mod api;
 mod backend_pool;
 mod config;
 mod discovery;
+pub mod github_deploy;
 mod identity;
 mod metrics;
 mod quic_server;
