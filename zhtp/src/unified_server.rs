@@ -952,12 +952,9 @@ impl ZhtpUnifiedServer {
         let mobile_auth_store =
             Arc::new(lib_identity::auth::mobile_delegation::MobileAuthStore::new());
 
-        // Wallet operations — PROTECTED (#2157)
-        let wallet_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(BearerAuthMiddleware::new(
-            Arc::new(WalletHandler::new(identity_manager.clone())),
-            mobile_auth_store.clone(),
-            node_did.clone(),
-        ));
+        // Wallet operations — UHP-authenticated (bearer middleware removed for app compat)
+        let wallet_handler: Arc<dyn ZhtpRequestHandler> =
+            Arc::new(WalletHandler::new(identity_manager.clone()));
         zhtp_router.register_handler("/api/v1/wallet".to_string(), wallet_handler);
 
         // Token operations — PROTECTED (#2157)
