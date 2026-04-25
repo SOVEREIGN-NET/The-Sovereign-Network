@@ -2,7 +2,7 @@
 
 **Epic:** [#2365](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2365)
 **Source:** `docs/forensics/bft-consensus-architecture-analysis.md`
-**Status:** Ratified (merged into `development` via the PR that closes [#2323](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2323))
+**Status:** Ratified (this PR closes [#2323](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2323))
 **Authority:** This document is the single source of truth for the consensus rewrite. Any deviation requires updating this document **first**, in a separate PR, before the deviating implementation lands.
 
 Each decision below carries an ID (`AD-NNN`), a one-line rationale, and a link to the architecture document section that develops it in full.
