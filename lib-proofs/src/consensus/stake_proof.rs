@@ -1,9 +1,19 @@
-//! Stake proof implementation for Proof of Stake consensus
+//! Stake proof implementation for Proof of Stake consensus.
+//!
+//! Relocated from `lib-consensus/src/proofs/stake_proof.rs` per **CONS-104**
+//! and **AD-003**. Uses `lib_crypto::Hash` directly instead of
+//! `lib_identity::IdentityId` because `lib-identity` already depends on
+//! `lib-proofs` (taking the reverse would create a cycle). `IdentityId` is a
+//! transparent alias for `Hash` (see `lib-identity/src/types/identity_types.rs:8`).
 
 use anyhow::Result;
 use lib_crypto::Hash;
-use lib_identity::IdentityId;
 use serde::{Deserialize, Serialize};
+
+/// Validator identity — alias of `Hash` (matches `lib_identity::IdentityId`).
+/// Defined locally to avoid a dependency on lib-identity, which would create
+/// a cycle since lib-identity depends on lib-proofs.
+pub type IdentityId = Hash;
 
 /// Proof of Stake for consensus participation
 #[derive(Debug, Clone, Serialize, Deserialize)]

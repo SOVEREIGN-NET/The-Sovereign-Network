@@ -16,7 +16,10 @@ pub use lib_types::consensus::{
 };
 
 // Re-export proof types from proofs module
-pub use crate::proofs::{ProofOfUsefulWork, StakeProof, StorageCapacityAttestation, WorkProof};
+// Consensus-mechanism proof types live in lib-proofs (CONS-104 / AD-003).
+// Storage attestation type stays in lib-storage (its canonical home).
+pub use lib_proofs::consensus::{ProofOfUsefulWork, StakeProof, WorkProof};
+pub use lib_storage::proofs::StorageCapacityAttestation;
 
 // Re-export heartbeat types from validator protocol module
 pub use crate::validators::validator_protocol::HeartbeatMessage;
