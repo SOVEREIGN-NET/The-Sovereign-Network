@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tracing::{debug, info, trace, warn};
 
-use crate::observer::{
+use crate::{
     build_height_trajectories, encode_height_states,
     event_normalizer::{
         normalize_consensus_event, ConsensusBehaviorEventType, ConsensusNormalizedEvent,
@@ -106,7 +106,7 @@ impl ObserverService {
     /// Ingest a consensus event for observation.
     ///
     /// This is non-blocking and cannot fail - events are best-effort.
-    pub fn ingest_event(&self, event: &crate::types::ConsensusEvent) {
+    pub fn ingest_event(&self, event: &lib_consensus::types::ConsensusEvent) {
         match normalize_consensus_event(event) {
             Ok(Some(normalized)) => {
                 trace!("Observer ingested event: {:?}", normalized.event_type);
@@ -127,7 +127,7 @@ impl ObserverService {
 
     /// Ingest a runtime signal for observation.
     pub fn ingest_runtime_signal(&self, signal: &RuntimeConsensusSignal) {
-        use crate::observer::event_normalizer::normalize_runtime_signal;
+        use crate::event_normalizer::normalize_runtime_signal;
 
         let normalized = normalize_runtime_signal(signal);
         trace!(
@@ -298,7 +298,7 @@ impl ObserverService {
 
     /// Get network health summary for recent heights.
     pub fn get_network_health(&self, window_size: usize) -> Option<NetworkHealthSummary> {
-        use crate::observer::height_scoring::compute_network_health;
+        use crate::height_scoring::compute_network_health;
 
         let analyses = self.get_recent_analyses(window_size);
         if analyses.is_empty() {
@@ -434,7 +434,7 @@ fn convert_event(event: &ConsensusNormalizedEvent) -> Option<ParsedConsensusEven
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{ConsensusEvent, ConsensusProof, ConsensusProposal, ConsensusType};
+    use lib_consensus::types::{ConsensusEvent, ConsensusProof, ConsensusProposal, ConsensusType};
     use lib_crypto::{Hash, PostQuantumSignature};
     use lib_identity::IdentityId;
 

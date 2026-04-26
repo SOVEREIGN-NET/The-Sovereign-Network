@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::observer::{
+use crate::{
     state_encoder::EncodedConsensusState,
     transition_model::{compute_sequence_probabilities, TransitionModel},
 };
@@ -285,7 +285,7 @@ pub fn compute_baseline_stats(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::observer::{
+    use crate::{
         state_encoder::{
             EncodedConsensusPhase, ExecutionStatus, ProposalStatus, RoundClass, TimeClass,
         },

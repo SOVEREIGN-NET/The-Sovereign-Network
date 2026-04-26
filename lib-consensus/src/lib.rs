@@ -18,7 +18,6 @@ pub mod evidence;
 pub mod fault_model;
 pub mod invariants;
 pub mod network;
-pub mod observer;
 pub mod proofs;
 pub mod rewards;
 pub mod slashing;
