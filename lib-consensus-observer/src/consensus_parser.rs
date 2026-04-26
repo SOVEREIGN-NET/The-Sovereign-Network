@@ -114,177 +114,184 @@ pub fn validate_height_grammar(height: &HeightTrajectory) -> Vec<GrammarViolatio
         violations.extend(validate_round_grammar(round));
     }
 
-    let commit_block_count = height
+    check_height_commit_block_count(height, &mut violations);
+    check_commit_block_in_final_round(height, &mut violations);
+    check_height_recovery_after_stall(height, &mut violations);
+    check_height_divergence_after_apply_failed(height, &mut violations);
+
+    violations
+}
+
+/// Each height must have exactly one BlockCommitted event.
+fn check_height_commit_block_count(
+    height: &HeightTrajectory,
+    violations: &mut Vec<GrammarViolation>,
+) {
+    let count = height
         .events
         .iter()
         .filter(|e| e.event_type == ConsensusBehaviorEventType::BlockCommitted)
         .count();
-    if commit_block_count == 0 {
-        violations.push(GrammarViolation::MissingCommitBlockAtHeight {
+    match count {
+        0 => violations.push(GrammarViolation::MissingCommitBlockAtHeight {
             height: height.height,
-        });
-    } else if commit_block_count > 1 {
-        violations.push(GrammarViolation::DuplicateCommitBlocksAtHeight {
+        }),
+        1 => {}
+        n => violations.push(GrammarViolation::DuplicateCommitBlocksAtHeight {
             height: height.height,
-            count: commit_block_count,
-        });
+            count: n,
+        }),
     }
+}
 
+/// A round that contains a BlockCommitted event must be the final round at the height.
+fn check_commit_block_in_final_round(
+    height: &HeightTrajectory,
+    violations: &mut Vec<GrammarViolation>,
+) {
     let final_round_number = height.rounds.last().map(|r| r.round_number);
     for round in &height.rounds {
-        let has_commit_in_round = round
+        let has_commit = round
             .events
             .iter()
             .any(|e| e.event_type == ConsensusBehaviorEventType::BlockCommitted);
-        if has_commit_in_round && Some(round.round_number) != final_round_number {
+        if has_commit && Some(round.round_number) != final_round_number {
             violations.push(GrammarViolation::CommitBlockNotInFinalRound {
                 height: height.height,
                 round: round.round_number,
             });
         }
     }
+}
 
-    let has_stalled = height
-        .events
-        .iter()
-        .any(|e| e.event_type == ConsensusBehaviorEventType::ConsensusStalled);
-    if has_stalled {
-        let has_catchup_start = height
-            .events
-            .iter()
-            .any(|e| e.event_type == ConsensusBehaviorEventType::CatchupSyncStarted);
-        if !has_catchup_start {
-            violations.push(GrammarViolation::MissingRecoveryCatchupStart {
-                height: height.height,
-            });
-        }
+/// If consensus stalled at this height, recovery events must follow:
+/// catchup_started → (catchup_succeeded | catchup_failed) → consensus_recovered.
+fn check_height_recovery_after_stall(
+    height: &HeightTrajectory,
+    violations: &mut Vec<GrammarViolation>,
+) {
+    let events = &height.events;
+    let has_event = |t| events.iter().any(|e| e.event_type == t);
 
-        let has_catchup_success = height
-            .events
-            .iter()
-            .any(|e| e.event_type == ConsensusBehaviorEventType::CatchupSyncSucceeded);
-        let has_catchup_failed = height
-            .events
-            .iter()
-            .any(|e| e.event_type == ConsensusBehaviorEventType::CatchupSyncFailed);
-        if !has_catchup_success && !has_catchup_failed {
-            violations.push(GrammarViolation::MissingRecoveryCatchupOutcome {
-                height: height.height,
-            });
-        }
-        if has_catchup_success
-            && !height
-                .events
-                .iter()
-                .any(|e| e.event_type == ConsensusBehaviorEventType::ConsensusRecovered)
-        {
-            violations.push(
-                GrammarViolation::MissingConsensusRecoveredAfterCatchupSuccess {
-                    height: height.height,
-                },
-            );
-        }
-
-        if let (Some(start_idx), Some(success_idx)) = (
-            first_event_index(
-                &height.events,
-                ConsensusBehaviorEventType::CatchupSyncStarted,
-            ),
-            first_event_index(
-                &height.events,
-                ConsensusBehaviorEventType::CatchupSyncSucceeded,
-            ),
-        ) {
-            if start_idx > success_idx {
-                violations.push(GrammarViolation::InvalidRecoveryOrder {
-                    height: height.height,
-                    expected_before: ConsensusBehaviorEventType::CatchupSyncStarted,
-                    found: ConsensusBehaviorEventType::CatchupSyncSucceeded,
-                });
-            }
-        }
-
-        if let (Some(success_idx), Some(recovered_idx)) = (
-            first_event_index(
-                &height.events,
-                ConsensusBehaviorEventType::CatchupSyncSucceeded,
-            ),
-            first_event_index(
-                &height.events,
-                ConsensusBehaviorEventType::ConsensusRecovered,
-            ),
-        ) {
-            if success_idx > recovered_idx {
-                violations.push(GrammarViolation::InvalidRecoveryOrder {
-                    height: height.height,
-                    expected_before: ConsensusBehaviorEventType::CatchupSyncSucceeded,
-                    found: ConsensusBehaviorEventType::ConsensusRecovered,
-                });
-            }
-        }
+    if !has_event(ConsensusBehaviorEventType::ConsensusStalled) {
+        return;
     }
 
-    let has_apply_failed = height
-        .events
-        .iter()
-        .any(|e| e.event_type == ConsensusBehaviorEventType::BlockApplyFailed);
-    if has_apply_failed {
-        if !height
-            .events
-            .iter()
-            .any(|e| e.event_type == ConsensusBehaviorEventType::ParentHashMismatch)
-        {
-            violations.push(GrammarViolation::MissingDivergenceParentHashMismatch {
-                height: height.height,
-            });
-        }
-        if !height
-            .events
-            .iter()
-            .any(|e| e.event_type == ConsensusBehaviorEventType::CatchupSyncStarted)
-        {
-            violations.push(GrammarViolation::MissingDivergenceCatchupStart {
-                height: height.height,
-            });
-        }
-
-        if let (Some(failed_idx), Some(parent_mismatch_idx)) = (
-            first_event_index(&height.events, ConsensusBehaviorEventType::BlockApplyFailed),
-            first_event_index(
-                &height.events,
-                ConsensusBehaviorEventType::ParentHashMismatch,
-            ),
-        ) {
-            if failed_idx > parent_mismatch_idx {
-                violations.push(GrammarViolation::InvalidDivergenceOrder {
-                    height: height.height,
-                    expected_before: ConsensusBehaviorEventType::BlockApplyFailed,
-                    found: ConsensusBehaviorEventType::ParentHashMismatch,
-                });
-            }
-        }
-
-        if let (Some(parent_mismatch_idx), Some(catchup_start_idx)) = (
-            first_event_index(
-                &height.events,
-                ConsensusBehaviorEventType::ParentHashMismatch,
-            ),
-            first_event_index(
-                &height.events,
-                ConsensusBehaviorEventType::CatchupSyncStarted,
-            ),
-        ) {
-            if parent_mismatch_idx > catchup_start_idx {
-                violations.push(GrammarViolation::InvalidDivergenceOrder {
-                    height: height.height,
-                    expected_before: ConsensusBehaviorEventType::ParentHashMismatch,
-                    found: ConsensusBehaviorEventType::CatchupSyncStarted,
-                });
-            }
-        }
+    if !has_event(ConsensusBehaviorEventType::CatchupSyncStarted) {
+        violations.push(GrammarViolation::MissingRecoveryCatchupStart {
+            height: height.height,
+        });
     }
 
-    violations
+    let has_catchup_success = has_event(ConsensusBehaviorEventType::CatchupSyncSucceeded);
+    let has_catchup_failed = has_event(ConsensusBehaviorEventType::CatchupSyncFailed);
+    if !has_catchup_success && !has_catchup_failed {
+        violations.push(GrammarViolation::MissingRecoveryCatchupOutcome {
+            height: height.height,
+        });
+    }
+
+    if has_catchup_success && !has_event(ConsensusBehaviorEventType::ConsensusRecovered) {
+        violations.push(
+            GrammarViolation::MissingConsensusRecoveredAfterCatchupSuccess {
+                height: height.height,
+            },
+        );
+    }
+
+    check_height_pair_order(
+        height,
+        violations,
+        ConsensusBehaviorEventType::CatchupSyncStarted,
+        ConsensusBehaviorEventType::CatchupSyncSucceeded,
+        |before, found| GrammarViolation::InvalidRecoveryOrder {
+            height: height.height,
+            expected_before: before,
+            found,
+        },
+    );
+
+    check_height_pair_order(
+        height,
+        violations,
+        ConsensusBehaviorEventType::CatchupSyncSucceeded,
+        ConsensusBehaviorEventType::ConsensusRecovered,
+        |before, found| GrammarViolation::InvalidRecoveryOrder {
+            height: height.height,
+            expected_before: before,
+            found,
+        },
+    );
+}
+
+/// If a block-apply failed, the divergence-handling sequence must be present in order:
+/// block_apply_failed → parent_hash_mismatch → catchup_started.
+fn check_height_divergence_after_apply_failed(
+    height: &HeightTrajectory,
+    violations: &mut Vec<GrammarViolation>,
+) {
+    let events = &height.events;
+    let has_event = |t| events.iter().any(|e| e.event_type == t);
+
+    if !has_event(ConsensusBehaviorEventType::BlockApplyFailed) {
+        return;
+    }
+
+    if !has_event(ConsensusBehaviorEventType::ParentHashMismatch) {
+        violations.push(GrammarViolation::MissingDivergenceParentHashMismatch {
+            height: height.height,
+        });
+    }
+
+    if !has_event(ConsensusBehaviorEventType::CatchupSyncStarted) {
+        violations.push(GrammarViolation::MissingDivergenceCatchupStart {
+            height: height.height,
+        });
+    }
+
+    check_height_pair_order(
+        height,
+        violations,
+        ConsensusBehaviorEventType::BlockApplyFailed,
+        ConsensusBehaviorEventType::ParentHashMismatch,
+        |before, found| GrammarViolation::InvalidDivergenceOrder {
+            height: height.height,
+            expected_before: before,
+            found,
+        },
+    );
+
+    check_height_pair_order(
+        height,
+        violations,
+        ConsensusBehaviorEventType::ParentHashMismatch,
+        ConsensusBehaviorEventType::CatchupSyncStarted,
+        |before, found| GrammarViolation::InvalidDivergenceOrder {
+            height: height.height,
+            expected_before: before,
+            found,
+        },
+    );
+}
+
+/// Generic helper: when both events are present at a height, the `before` must
+/// precede the `found`; otherwise emit the violation produced by `mk`.
+fn check_height_pair_order(
+    height: &HeightTrajectory,
+    violations: &mut Vec<GrammarViolation>,
+    before: ConsensusBehaviorEventType,
+    found: ConsensusBehaviorEventType,
+    mk: impl FnOnce(ConsensusBehaviorEventType, ConsensusBehaviorEventType) -> GrammarViolation,
+) {
+    let (Some(before_idx), Some(found_idx)) = (
+        first_event_index(&height.events, before),
+        first_event_index(&height.events, found),
+    ) else {
+        return;
+    };
+    if before_idx > found_idx {
+        violations.push(mk(before, found));
+    }
 }
 
 pub fn validate_round_grammar(round: &RoundTrajectory) -> Vec<GrammarViolation> {
@@ -296,296 +303,298 @@ pub fn validate_round_grammar(round: &RoundTrajectory) -> Vec<GrammarViolation> 
         return violations;
     }
 
-    let has_propose = round
-        .phases
-        .iter()
-        .any(|p| p.phase_type == ConsensusPhaseType::Propose);
-    let has_prevote = round
-        .phases
-        .iter()
-        .any(|p| p.phase_type == ConsensusPhaseType::PreVote);
-    let has_precommit = round
-        .phases
-        .iter()
-        .any(|p| p.phase_type == ConsensusPhaseType::PreCommit);
-    let has_commit = round
-        .phases
-        .iter()
-        .any(|p| p.phase_type == ConsensusPhaseType::Commit);
+    check_round_phase_order(round, &mut violations);
+    check_round_commit_quorum_pairing(round, &mut violations);
+    check_round_propose_outcome(round, &mut violations);
+    check_round_timeout_round_advance(round, &mut violations);
+    check_round_vote_commit_path(round, &mut violations);
+    check_round_apply_lifecycle(round, &mut violations);
 
-    if has_prevote && !has_propose {
+    violations
+}
+
+/// Phases inside a round must appear in order: Propose → PreVote → PreCommit → Commit.
+fn check_round_phase_order(round: &RoundTrajectory, violations: &mut Vec<GrammarViolation>) {
+    let has_phase = |t| round.phases.iter().any(|p| p.phase_type == t);
+    let propose = has_phase(ConsensusPhaseType::Propose);
+    let prevote = has_phase(ConsensusPhaseType::PreVote);
+    let precommit = has_phase(ConsensusPhaseType::PreCommit);
+    let commit = has_phase(ConsensusPhaseType::Commit);
+
+    if prevote && !propose {
         violations.push(GrammarViolation::InvalidPhaseOrder {
             round: round.round_number,
             expected_before: ConsensusPhaseType::Propose,
             found: ConsensusPhaseType::PreVote,
         });
     }
-    if has_precommit && !has_prevote {
+    if precommit && !prevote {
         violations.push(GrammarViolation::InvalidPhaseOrder {
             round: round.round_number,
             expected_before: ConsensusPhaseType::PreVote,
             found: ConsensusPhaseType::PreCommit,
         });
     }
-    if has_commit && !has_precommit {
+    if commit && !precommit {
         violations.push(GrammarViolation::InvalidPhaseOrder {
             round: round.round_number,
             expected_before: ConsensusPhaseType::PreCommit,
             found: ConsensusPhaseType::Commit,
         });
     }
+}
 
-    let has_timeout = round
-        .events
-        .iter()
-        .any(|e| e.event_type == ConsensusBehaviorEventType::StepTimeout);
-    let has_round_advance = round.events.iter().any(|e| {
-        matches!(
-            e.event_type,
-            ConsensusBehaviorEventType::RoundAdvanced
-                | ConsensusBehaviorEventType::HigherRoundObserved
-                | ConsensusBehaviorEventType::EnterNewRound
-        )
-    });
+/// CommitQuorumReached and BlockCommitted appear together or not at all within a round.
+fn check_round_commit_quorum_pairing(
+    round: &RoundTrajectory,
+    violations: &mut Vec<GrammarViolation>,
+) {
+    let quorum = round_has_event(round, ConsensusBehaviorEventType::CommitQuorumReached);
+    let commit = round_has_event(round, ConsensusBehaviorEventType::BlockCommitted);
 
-    let has_commit_quorum = round
-        .events
-        .iter()
-        .any(|e| e.event_type == ConsensusBehaviorEventType::CommitQuorumReached);
-    let has_block_commit = round
-        .events
-        .iter()
-        .any(|e| e.event_type == ConsensusBehaviorEventType::BlockCommitted);
-
-    if has_block_commit && !has_commit_quorum {
+    if commit && !quorum {
         violations.push(GrammarViolation::MissingCommitQuorum {
             round: round.round_number,
         });
     }
-    if has_commit_quorum && !has_block_commit {
+    if quorum && !commit {
         violations.push(GrammarViolation::MissingBlockCommit {
             round: round.round_number,
         });
     }
+}
 
-    if !has_propose {
+/// Every round must enter Propose and produce one of the propose outcomes
+/// (ProposalCreated | ProposalReceived | StepTimeout); EnterPropose must come first.
+fn check_round_propose_outcome(round: &RoundTrajectory, violations: &mut Vec<GrammarViolation>) {
+    let propose = round
+        .phases
+        .iter()
+        .any(|p| p.phase_type == ConsensusPhaseType::Propose);
+
+    let outcome_types = [
+        ConsensusBehaviorEventType::ProposalCreated,
+        ConsensusBehaviorEventType::ProposalReceived,
+        ConsensusBehaviorEventType::StepTimeout,
+    ];
+
+    if !propose {
         violations.push(GrammarViolation::MissingProposeEntry {
             round: round.round_number,
         });
     }
 
-    if has_propose
-        && !round.events.iter().any(|e| {
-            matches!(
-                e.event_type,
-                ConsensusBehaviorEventType::ProposalCreated
-                    | ConsensusBehaviorEventType::ProposalReceived
-                    | ConsensusBehaviorEventType::StepTimeout
-            )
-        })
+    if propose
+        && !round
+            .events
+            .iter()
+            .any(|e| outcome_types.contains(&e.event_type))
     {
         violations.push(GrammarViolation::MissingProposalOutcome {
             round: round.round_number,
         });
     }
-    if let (Some(enter_propose_idx), Some(outcome_idx), Some(outcome)) = (
-        first_event_index(&round.events, ConsensusBehaviorEventType::EnterPropose),
-        first_event_index_any(
-            &round.events,
-            &[
-                ConsensusBehaviorEventType::ProposalCreated,
-                ConsensusBehaviorEventType::ProposalReceived,
-                ConsensusBehaviorEventType::StepTimeout,
-            ],
-        ),
-        first_event_type_any(
-            &round.events,
-            &[
-                ConsensusBehaviorEventType::ProposalCreated,
-                ConsensusBehaviorEventType::ProposalReceived,
-                ConsensusBehaviorEventType::StepTimeout,
-            ],
-        ),
-    ) {
-        if enter_propose_idx > outcome_idx {
-            violations.push(GrammarViolation::InvalidEventOrder {
-                round: round.round_number,
-                expected_before: ConsensusBehaviorEventType::EnterPropose,
-                found: outcome,
-            });
-        }
-    }
 
-    if has_timeout && !has_round_advance {
+    check_round_pair_order_any(
+        round,
+        violations,
+        ConsensusBehaviorEventType::EnterPropose,
+        &outcome_types,
+    );
+}
+
+/// A StepTimeout must be followed by a round-advance event.
+fn check_round_timeout_round_advance(
+    round: &RoundTrajectory,
+    violations: &mut Vec<GrammarViolation>,
+) {
+    let timeout = round_has_event(round, ConsensusBehaviorEventType::StepTimeout);
+    let advance_types = [
+        ConsensusBehaviorEventType::RoundAdvanced,
+        ConsensusBehaviorEventType::HigherRoundObserved,
+        ConsensusBehaviorEventType::EnterNewRound,
+    ];
+    let has_advance = round
+        .events
+        .iter()
+        .any(|e| advance_types.contains(&e.event_type));
+
+    if timeout && !has_advance {
         violations.push(GrammarViolation::MissingRoundAdvanceAfterTimeout {
             round: round.round_number,
         });
     }
-    if let (Some(timeout_idx), Some(round_advance_idx), Some(round_advance_event)) = (
-        first_event_index(&round.events, ConsensusBehaviorEventType::StepTimeout),
-        first_event_index_any(
-            &round.events,
-            &[
-                ConsensusBehaviorEventType::RoundAdvanced,
-                ConsensusBehaviorEventType::HigherRoundObserved,
-                ConsensusBehaviorEventType::EnterNewRound,
-            ],
-        ),
-        first_event_type_any(
-            &round.events,
-            &[
-                ConsensusBehaviorEventType::RoundAdvanced,
-                ConsensusBehaviorEventType::HigherRoundObserved,
-                ConsensusBehaviorEventType::EnterNewRound,
-            ],
-        ),
-    ) {
-        if timeout_idx > round_advance_idx {
-            violations.push(GrammarViolation::InvalidEventOrder {
+
+    check_round_pair_order_any(
+        round,
+        violations,
+        ConsensusBehaviorEventType::StepTimeout,
+        &advance_types,
+    );
+}
+
+/// When the round committed (BlockCommitted, CommitQuorumReached, or Commit phase),
+/// the full vote-commit lifecycle must be present in order: enter-prevote → prevote-cast →
+/// enter-precommit → precommit-cast → enter-commit → commit-quorum → block-committed.
+fn check_round_vote_commit_path(round: &RoundTrajectory, violations: &mut Vec<GrammarViolation>) {
+    let commit_phase = round
+        .phases
+        .iter()
+        .any(|p| p.phase_type == ConsensusPhaseType::Commit);
+    let needs_path = round_has_event(round, ConsensusBehaviorEventType::BlockCommitted)
+        || round_has_event(round, ConsensusBehaviorEventType::CommitQuorumReached)
+        || commit_phase;
+
+    if !needs_path {
+        return;
+    }
+
+    let required_entries = [
+        (
+            ConsensusBehaviorEventType::EnterPreVote,
+            GrammarViolation::MissingPreVoteEntry {
                 round: round.round_number,
-                expected_before: ConsensusBehaviorEventType::StepTimeout,
-                found: round_advance_event,
-            });
+            },
+        ),
+        (
+            ConsensusBehaviorEventType::PreVoteCast,
+            GrammarViolation::MissingPreVoteCast {
+                round: round.round_number,
+            },
+        ),
+        (
+            ConsensusBehaviorEventType::EnterPreCommit,
+            GrammarViolation::MissingPreCommitEntry {
+                round: round.round_number,
+            },
+        ),
+        (
+            ConsensusBehaviorEventType::PreCommitCast,
+            GrammarViolation::MissingPreCommitCast {
+                round: round.round_number,
+            },
+        ),
+        (
+            ConsensusBehaviorEventType::EnterCommit,
+            GrammarViolation::MissingCommitEntry {
+                round: round.round_number,
+            },
+        ),
+    ];
+    for (event_type, missing_violation) in required_entries {
+        if !round_has_event(round, event_type) {
+            violations.push(missing_violation);
         }
     }
 
-    let needs_vote_commit_path = has_block_commit || has_commit_quorum || has_commit;
-    if needs_vote_commit_path {
-        if !round
-            .events
-            .iter()
-            .any(|e| e.event_type == ConsensusBehaviorEventType::EnterPreVote)
-        {
-            violations.push(GrammarViolation::MissingPreVoteEntry {
-                round: round.round_number,
-            });
-        }
-        if !round
-            .events
-            .iter()
-            .any(|e| e.event_type == ConsensusBehaviorEventType::PreVoteCast)
-        {
-            violations.push(GrammarViolation::MissingPreVoteCast {
-                round: round.round_number,
-            });
-        }
-        if !round
-            .events
-            .iter()
-            .any(|e| e.event_type == ConsensusBehaviorEventType::EnterPreCommit)
-        {
-            violations.push(GrammarViolation::MissingPreCommitEntry {
-                round: round.round_number,
-            });
-        }
-        if !round
-            .events
-            .iter()
-            .any(|e| e.event_type == ConsensusBehaviorEventType::PreCommitCast)
-        {
-            violations.push(GrammarViolation::MissingPreCommitCast {
-                round: round.round_number,
-            });
-        }
-        if !round
-            .events
-            .iter()
-            .any(|e| e.event_type == ConsensusBehaviorEventType::EnterCommit)
-        {
-            violations.push(GrammarViolation::MissingCommitEntry {
-                round: round.round_number,
-            });
-        }
-
-        validate_ordering(
-            &mut violations,
-            round.round_number,
-            &round.events,
+    let lifecycle_pairs = [
+        (
             ConsensusBehaviorEventType::EnterPreVote,
             ConsensusBehaviorEventType::PreVoteCast,
-        );
-        validate_ordering(
-            &mut violations,
-            round.round_number,
-            &round.events,
+        ),
+        (
             ConsensusBehaviorEventType::PreVoteCast,
             ConsensusBehaviorEventType::EnterPreCommit,
-        );
-        validate_ordering(
-            &mut violations,
-            round.round_number,
-            &round.events,
+        ),
+        (
             ConsensusBehaviorEventType::EnterPreCommit,
             ConsensusBehaviorEventType::PreCommitCast,
-        );
-        validate_ordering(
-            &mut violations,
-            round.round_number,
-            &round.events,
+        ),
+        (
             ConsensusBehaviorEventType::PreCommitCast,
             ConsensusBehaviorEventType::EnterCommit,
-        );
-        validate_ordering(
-            &mut violations,
-            round.round_number,
-            &round.events,
+        ),
+        (
             ConsensusBehaviorEventType::EnterCommit,
             ConsensusBehaviorEventType::CommitQuorumReached,
-        );
-        validate_ordering(
-            &mut violations,
-            round.round_number,
-            &round.events,
+        ),
+        (
             ConsensusBehaviorEventType::CommitQuorumReached,
             ConsensusBehaviorEventType::BlockCommitted,
+        ),
+    ];
+    for (before, after) in lifecycle_pairs {
+        validate_ordering(
+            violations,
+            round.round_number,
+            &round.events,
+            before,
+            after,
         );
     }
+}
 
-    let has_apply_start = round
+/// BlockCommitted must be followed by BlockApplyStarted, which must be followed by
+/// BlockApplySucceeded or BlockApplyFailed.
+fn check_round_apply_lifecycle(round: &RoundTrajectory, violations: &mut Vec<GrammarViolation>) {
+    let commit = round_has_event(round, ConsensusBehaviorEventType::BlockCommitted);
+    let apply_start = round_has_event(round, ConsensusBehaviorEventType::BlockApplyStarted);
+    let outcome_types = [
+        ConsensusBehaviorEventType::BlockApplySucceeded,
+        ConsensusBehaviorEventType::BlockApplyFailed,
+    ];
+    let apply_outcome = round
         .events
         .iter()
-        .any(|e| e.event_type == ConsensusBehaviorEventType::BlockApplyStarted);
-    let has_apply_outcome = round.events.iter().any(|e| {
-        matches!(
-            e.event_type,
-            ConsensusBehaviorEventType::BlockApplySucceeded
-                | ConsensusBehaviorEventType::BlockApplyFailed
-        )
-    });
-    if has_block_commit && !has_apply_start {
+        .any(|e| outcome_types.contains(&e.event_type));
+
+    if commit && !apply_start {
         violations.push(GrammarViolation::MissingApplyStartAfterCommit {
             round: round.round_number,
         });
     }
-    if has_apply_start && !has_apply_outcome {
+    if apply_start && !apply_outcome {
         violations.push(GrammarViolation::MissingApplyOutcomeAfterStart {
             round: round.round_number,
         });
     }
+
     validate_ordering(
-        &mut violations,
+        violations,
         round.round_number,
         &round.events,
         ConsensusBehaviorEventType::BlockCommitted,
         ConsensusBehaviorEventType::BlockApplyStarted,
     );
-    if let Some(outcome) = first_event_type_any(
-        &round.events,
-        &[
-            ConsensusBehaviorEventType::BlockApplySucceeded,
-            ConsensusBehaviorEventType::BlockApplyFailed,
-        ],
-    ) {
+    if let Some(outcome) = first_event_type_any(&round.events, &outcome_types) {
         validate_ordering(
-            &mut violations,
+            violations,
             round.round_number,
             &round.events,
             ConsensusBehaviorEventType::BlockApplyStarted,
             outcome,
         );
     }
+}
 
-    violations
+/// Predicate helper: does this round contain any event of the given type?
+fn round_has_event(round: &RoundTrajectory, event_type: ConsensusBehaviorEventType) -> bool {
+    round.events.iter().any(|e| e.event_type == event_type)
+}
+
+/// Generic ordering check across an `any-of` set of follower event types: when the
+/// `before` event and any `after` event are both present, `before` must precede the
+/// first occurrence of any `after`. Used to express "X must come before any of {Y, Z}".
+fn check_round_pair_order_any(
+    round: &RoundTrajectory,
+    violations: &mut Vec<GrammarViolation>,
+    before: ConsensusBehaviorEventType,
+    after_types: &[ConsensusBehaviorEventType],
+) {
+    let (Some(before_idx), Some(after_idx), Some(after)) = (
+        first_event_index(&round.events, before),
+        first_event_index_any(&round.events, after_types),
+        first_event_type_any(&round.events, after_types),
+    ) else {
+        return;
+    };
+    if before_idx > after_idx {
+        violations.push(GrammarViolation::InvalidEventOrder {
+            round: round.round_number,
+            expected_before: before,
+            found: after,
+        });
+    }
 }
 
 fn validate_ordering(
