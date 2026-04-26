@@ -27,9 +27,8 @@ def main():
             "Copy .env.example to .env, fill in your values, then: source .env",
             file=sys.stderr,
         )
-        # Return empty inventory so Ansible doesn't crash on --list
         print(json.dumps({"_meta": {"hostvars": {}}}))
-        sys.exit(0)
+        sys.exit(1)
 
     hosts = [h.strip() for h in hosts_raw.split(",") if h.strip()]
 

@@ -59,7 +59,8 @@ software, CLI tools, and supporting services.
 
 ### Prerequisites
 
-- **Rust 1.70+** — install from [rustup.rs](https://rustup.rs/)
+- **Rust nightly** — install from [rustup.rs](https://rustup.rs/); the repo's
+  `rust-toolchain.toml` pins to nightly automatically
 - 4 GB RAM, 10 GB storage minimum
 
 ### Build
@@ -91,22 +92,27 @@ cargo run -p zhtp -- node start --config config.toml --port 9334
 
 ### CLI usage
 
+From a fresh clone, run the CLI via Cargo:
+
 ```bash
 # Node management
-zhtp-cli node start --dev
-zhtp-cli node status
+cargo run -p zhtp-cli -- node start --dev
+cargo run -p zhtp-cli -- node status
 
 # Wallet operations
-zhtp-cli wallet create --name "MyWallet" --type citizen
-zhtp-cli wallet balance <address>
+cargo run -p zhtp-cli -- wallet create --name "MyWallet" --type citizen
+cargo run -p zhtp-cli -- wallet balance <address>
 
 # Identity
-zhtp-cli identity create-did Alice --type human
+cargo run -p zhtp-cli -- identity create-did Alice --type human
 
 # DAO governance
-zhtp-cli dao info
-zhtp-cli dao claim-ubi
+cargo run -p zhtp-cli -- dao info
+cargo run -p zhtp-cli -- dao claim-ubi
 ```
+
+Once installed (`cargo install --path zhtp-cli`), you can use bare `zhtp-cli`
+commands instead.
 
 See [`zhtp/README.md`](zhtp/README.md) for the full command reference.
 

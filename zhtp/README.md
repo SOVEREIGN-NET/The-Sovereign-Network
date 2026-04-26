@@ -151,18 +151,22 @@ cargo run -- node start --dev
 > Use the `zhtp-cli` direct commands below instead.
 
 #### Direct CLI Commands
+
+From a repo checkout, run via Cargo (`cargo install --path ../zhtp-cli` to
+install the binary globally):
+
 ```bash
 # Start a node
-zhtp-cli node start --config config.toml
+cargo run -p zhtp-cli -- node start --config config.toml
 
 # Wallet operations
-zhtp-cli wallet balance <address>
+cargo run -p zhtp-cli -- wallet balance <address>
 
 # DAO governance
-zhtp-cli dao claim-ubi
+cargo run -p zhtp-cli -- dao claim-ubi
 
 # Network info
-zhtp-cli network peers
+cargo run -p zhtp-cli -- network peers
 ```
 
 ## 📖 Usage Examples
