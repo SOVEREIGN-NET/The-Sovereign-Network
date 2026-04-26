@@ -2,9 +2,28 @@
 
 use super::*;
 use crate::types::ConsensusStepExt;
+use crate::validators::ValidatorManager;
+use lib_consensus_core::ports::ValidatorRewardInput;
 use lib_crypto::hash_blake3;
 use serde::{Deserialize, Serialize};
 use tracing::info;
+
+/// Build the `ValidatorRewardInput` slice the engine hands to
+/// `RewardCallback::on_round_finalized` (CONS-103). Keeps the trait
+/// independent of `ValidatorManager`.
+fn collect_validator_reward_inputs(manager: &ValidatorManager) -> Vec<ValidatorRewardInput> {
+    manager
+        .get_active_validators()
+        .iter()
+        .map(|v| ValidatorRewardInput {
+            identity: v.identity.clone(),
+            stake: v.stake,
+            storage_provided: v.storage_provided,
+            voting_power: v.voting_power,
+            reputation: v.reputation,
+        })
+        .collect()
+}
 
 // ============================================================================
 // CONSENSUS AUDIT LOGGING (BFT-J, Issue #1013)
@@ -256,15 +275,10 @@ impl ConsensusEngine {
                         });
                     }
 
-                    if let Err(e) = self
-                        .reward_calculator
-                        .calculate_round_rewards(&self.validator_manager, self.current_round.height)
-                    {
-                        tracing::warn!("Reward calculation error: {}", e);
-                        events.push(ConsensusEvent::RewardError {
-                            error: e.to_string(),
-                        });
-                    }
+                    self.reward_callback.on_round_finalized(
+                        &collect_validator_reward_inputs(&self.validator_manager),
+                        self.current_round.height,
+                    );
 
                     return Ok(events);
                 }
@@ -292,16 +306,12 @@ impl ConsensusEngine {
                             });
                         }
 
-                        // Calculate and distribute rewards
-                        if let Err(e) = self.reward_calculator.calculate_round_rewards(
-                            &self.validator_manager,
+                        // Distribute rewards (CONS-103 / AD-005 — fire-and-forget;
+                        // failures are observability events inside the adapter).
+                        self.reward_callback.on_round_finalized(
+                            &collect_validator_reward_inputs(&self.validator_manager),
                             self.current_round.height,
-                        ) {
-                            tracing::warn!("Reward calculation error: {}", e);
-                            events.push(ConsensusEvent::RewardError {
-                                error: e.to_string(),
-                            });
-                        }
+                        );
 
                         Ok(events)
                     }
@@ -952,11 +962,12 @@ impl ConsensusEngine {
         // Update validator activities and reputation
         self.update_validator_metrics(&proposal).await?;
 
-        // Calculate and distribute block rewards
-        let reward_round = self
-            .reward_calculator
-            .calculate_round_rewards(&self.validator_manager, self.current_round.height)?;
-        self.reward_calculator.distribute_rewards(&reward_round)?;
+        // Distribute block rewards via the runtime-injected callback
+        // (CONS-103 / AD-005 — fire-and-forget).
+        self.reward_callback.on_round_finalized(
+            &collect_validator_reward_inputs(&self.validator_manager),
+            self.current_round.height,
+        );
 
         // Collect and distribute fees from block.
         // Mirrors reward distribution pattern - happens at block finalization.

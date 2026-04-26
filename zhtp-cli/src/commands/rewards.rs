@@ -106,22 +106,26 @@ pub fn build_placeholder_reward_statistics() -> RewardStatistics {
 }
 
 /// Build a single placeholder reward round.
+///
+/// Per CONS-103, lib-economy reward types are now keyed by `IdentityId` and
+/// use `u128` SOV atoms (matching the rest of the value layer post-#2287).
 pub fn build_placeholder_reward_round(height: u64) -> RewardRound {
     let mut work_breakdown = HashMap::new();
-    work_breakdown.insert(UsefulWorkType::NetworkRouting.to_string(), 250);
-    work_breakdown.insert(UsefulWorkType::DataStorage.to_string(), 180);
-    work_breakdown.insert(UsefulWorkType::Validation.to_string(), 120);
+    work_breakdown.insert(UsefulWorkType::NetworkRouting, 250);
+    work_breakdown.insert(UsefulWorkType::DataStorage, 180);
+    work_breakdown.insert(UsefulWorkType::Validation, 120);
 
+    let placeholder_id = lib_crypto::Hash([0u8; 32]);
     let mut validator_rewards = HashMap::new();
     validator_rewards.insert(
-        [0u8; 32],
+        placeholder_id.clone(),
         ValidatorReward {
-            validator: [0u8; 32],
+            validator: placeholder_id,
             base_reward: 500,
             work_bonus: 250,
             participation_bonus: 80,
             total_reward: 830,
-            work_breakdown: work_breakdown.clone(),
+            work_breakdown,
         },
     );
 

@@ -132,3 +132,28 @@ The full passing-list is enumerated by the reproduction commands above; running 
 - **Adding a new known-issue** (e.g. the rewrite reveals a previously-hidden behavior gap): add a new KI-NN entry with file:line, root cause, and superseded-by link.
 - **Deleting a test** (because the rewrite renders it obsolete): move the entry to a "Deleted" section here with rationale and the CONS issue that justifies the deletion.
 - **Never silently delete or skip a test** without an entry in this document. Per CLAUDE.md memory rule: *own all failures*.
+
+---
+
+## Deleted in CONS-103
+
+### `lib-consensus/tests/reward_tests.rs` (11 tests)
+
+Deleted in PR for CONS-103. The file directly exercised `lib_consensus::RewardCalculator`'s public surface (`calculate_round_rewards(&ValidatorManager, height)`); both the type and the method signature moved out of `lib-consensus` per AD-003:
+
+- `RewardCalculator`, `RewardRound`, `ValidatorReward`, `RewardStatistics`, `UsefulWorkType` now live in `lib-economy/src/rewards/`.
+- Method signature is now `calculate_round_rewards(&[ValidatorRewardInput], height)` — neutral input (defined in `lib-consensus-core::ports`), no `ValidatorManager` coupling.
+- The engine consumes the calculator via `lib_consensus_core::ports::RewardCallback` (fire-and-forget, AD-005), not by direct `RewardCalculator` use.
+
+The 4 inline tests in `lib-economy/src/rewards/calculator.rs` (`calculator_zero_validators_zero_total`, `calculator_two_validators_history_grows`, `adapter_implements_callback_without_panic`, `adjust_base_reward_changes_subsequent_calculation`) cover the orchestration surface against the new signature. Re-creating the 11 lib-consensus tests against the new lib-economy surface is tracked as **optional follow-up** — the inline coverage is sufficient for CONS-103's scope; broader scenario coverage is in the larger reward-system overhaul that the rewrite does not undertake.
+
+---
+
+## Added in CONS-103
+
+### KI-09 · `lib-economy` test build fails on pre-existing u128 transaction-amount mismatches
+
+**File / line:** `lib-economy/src/transactions/...` (17 errors, all "expected `u128`, found `u64`" on `create_payment_transaction(...)` and friends).
+**Why it fails:** Transaction-creation helpers were widened to `u128` per PR #2287 (UTXO unification); the test files in lib-economy were not updated alongside. Same family as FN-01 (consensus tests) and KI-08 (zk_merkle_consensus_tests).
+**Verified pre-existing:** Stashed CONS-103 changes and re-ran `cargo test -p lib-economy --no-fail-fast` against bare `development` — same 17 errors. Out of scope for CONS-103.
+**Superseded by:** Out of scope for the consensus rewrite. Should be batched with KI-08 in a separate u128-test-fixup PR (mechanical `.into()` casts on the call sites). `cargo build --workspace` (production code) is unaffected.

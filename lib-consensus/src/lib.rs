@@ -17,7 +17,6 @@ pub mod fault_model;
 pub mod invariants;
 pub mod network;
 pub mod proofs;
-pub mod rewards;
 pub mod slashing;
 pub mod testing;
 pub mod types;
@@ -53,8 +52,6 @@ pub use validators::{
 pub use dao::*;
 
 pub use byzantine::*;
-
-pub use rewards::*;
 
 /// Result type alias for consensus operations
 pub type ConsensusResult<T> = Result<T, ConsensusError>;

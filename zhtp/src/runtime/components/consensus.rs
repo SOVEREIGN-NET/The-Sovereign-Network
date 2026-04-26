@@ -2348,6 +2348,14 @@ impl Component for ConsensusComponent {
         consensus_engine.set_block_commit_callback(Arc::new(block_committer));
         info!("🔗 Block commit callback wired to consensus engine");
 
+        // Wire reward distribution callback (CONS-103 / AD-005). The adapter
+        // owns the calculator + Mutex; failures are logged inside the adapter,
+        // never reach the engine.
+        consensus_engine.set_reward_callback(Arc::new(
+            lib_economy::rewards::ConsensusRewardAdapter::new(),
+        ));
+        info!("Reward distribution callback wired to consensus engine");
+
         // Wire a validator update channel so the periodic re-sync task can push
         // validator set changes into the running consensus loop without direct
         // engine access (the engine is moved into the spawned loop task).

@@ -266,14 +266,17 @@ impl MeshDiscoveryRewardManager {
         let network_adjusted_reward =
             (demand_adjusted_reward as f64 * utilization_multiplier) as u64;
 
-        // Apply final consensus adjustments using reward calculator
+        // Apply final consensus adjustments using reward calculator.
+        // Reward amounts widened to u128 in CONS-103 / PR #2287; cast at the
+        // u64 mesh-discovery boundary (these amounts are small and bounded).
         let mut reward_calculator = RewardCalculator::new();
-        reward_calculator.adjust_base_reward(economic_model.base_routing_rate * 80); // Use routing rate for discovery
+        reward_calculator.adjust_base_reward((economic_model.base_routing_rate * 80) as u128);
 
-        let work_bonus = reward_calculator.calculate_work_reward(
+        let work_bonus_atoms = reward_calculator.calculate_work_reward(
             crate::rewards::types::UsefulWorkType::MeshDiscovery,
             discovery_stats.peers_discovered,
         );
+        let work_bonus: u64 = work_bonus_atoms.try_into().unwrap_or(u64::MAX);
         let final_reward = network_adjusted_reward + work_bonus;
 
         // Create comprehensive reward structure

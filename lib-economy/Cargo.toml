@@ -21,6 +21,10 @@ lib-types = { path = "../lib-types" }
 lib-crypto = { path = "../lib-crypto" }
 lib-identity = { path = "../lib-identity" }
 lib-proofs = { path = "../lib-proofs" }
+# Implements lib-consensus-core::ports::RewardCallback (CONS-103 / AD-005).
+# Direction is intentional: lib-consensus-core defines the trait, lib-economy
+# provides the impl. lib-consensus-core has no knowledge of lib-economy.
+lib-consensus-core = { path = "../lib-consensus-core" }
 
 [dev-dependencies]
 criterion = "0.5"
