@@ -6,7 +6,7 @@
 use anyhow::Result;
 use tracing::{info, warn};
 
-use crate::validators::ValidatorManager;
+use lib_consensus::ValidatorManager;
 use lib_crypto::Hash;
 use lib_identity::IdentityId;
 
@@ -74,14 +74,20 @@ pub async fn should_mine_block(
     }
 }
 
-/// Check if this node's owner is the selected proposer
+/// Check if this node's owner is the selected proposer.
 ///
-/// This function handles the architecture where:
-/// - Validators are USER DIDs (humans/orgs)
-/// - Nodes are DEVICE identities controlled by USER DIDs  
-/// - node_id = NODE device IdentityId
-/// - Validator manager stores the original IdentityId Hash
-/// - proposer.identity = original IdentityId Hash from DID
+/// Architecture:
+/// - Validators are USER DIDs (humans/orgs).
+/// - Nodes are DEVICE identities controlled by USER DIDs.
+/// - `node_identity` = the local NODE device's IdentityId.
+/// - `proposer_identity` = the USER identity Hash chosen by `select_proposer`.
+/// - `identity_registry` maps each USER DID string to its controlled nodes.
+///
+/// Walks the registry, finds the USER that owns this node, and compares the
+/// USER's identity hash to the proposer's. Logs only the loaded-bearing
+/// outcomes (match found / search failed / malformed DIDs); per-candidate
+/// "did not match" noise is dropped — that case fires once per non-matching
+/// validator and only obscures real signal.
 fn check_if_proposer(
     node_identity: &IdentityId,
     proposer_identity: &Hash,
@@ -89,74 +95,66 @@ fn check_if_proposer(
 ) -> Result<bool> {
     let node_id_hex = hex::encode(node_identity.as_bytes());
 
-    info!(
-        "IDENTITY MATCHING: Looking for node '{}' in identity registry",
-        node_id_hex
-    );
-    info!(
-        "IDENTITY MATCHING: Identity registry has {} entries",
-        identity_registry.len()
-    );
-    info!(
-        "IDENTITY MATCHING: Proposer identity = {}",
-        hex::encode(&proposer_identity.as_bytes())
-    );
-
-    // Scan identity registry to find which USER controls this node
     for (did_string, identity_data) in identity_registry.iter() {
-        // Check if this USER identity's controlled_nodes contains our node
-        if identity_data.controlled_nodes.contains(&node_id_hex) {
-            let did_preview = if did_string.len() > 70 {
-                &did_string[..70]
-            } else {
-                did_string
-            };
+        if !identity_data.controlled_nodes.contains(&node_id_hex) {
+            continue;
+        }
 
+        let user_identity_hash = match decode_did_user_identity(did_string) {
+            Some(hash) => hash,
+            None => continue,
+        };
+
+        if user_identity_hash == *proposer_identity {
             info!(
-                "FOUND MATCHING USER: This node is controlled by {}",
-                did_preview
+                did = &did_string[..32.min(did_string.len())],
+                node_device = &node_id_hex[..32.min(node_id_hex.len())],
+                "node owner is proposer"
             );
-
-            // Extract the hex part from DID and convert to Hash
-            if let Some(identity_hex) = did_string.strip_prefix("did:zhtp:") {
-                if let Ok(identity_bytes) = hex::decode(identity_hex) {
-                    if identity_bytes.len() < 32 {
-                        warn!("Identity bytes too short: {} bytes", identity_bytes.len());
-                        continue;
-                    }
-
-                    let user_identity_hash = Hash::from_bytes(&identity_bytes[..32]);
-
-                    info!(
-                        "User identity hash: {}",
-                        hex::encode(&user_identity_hash.as_bytes())
-                    );
-
-                    // Compare original identity Hash with proposer's identity
-                    if user_identity_hash == *proposer_identity {
-                        info!(
-                            "Node owner is proposer: {}",
-                            &did_string[..32.min(did_string.len())]
-                        );
-                        info!(
-                            "  Node device ID: {}",
-                            &node_id_hex[..32.min(node_id_hex.len())]
-                        );
-                        return Ok(true);
-                    } else {
-                        info!("User identity does NOT match proposer");
-                    }
-                } else {
-                    warn!("Failed to decode identity hex from DID");
-                }
-            } else {
-                warn!("DID format invalid: {}", did_string);
-            }
+            return Ok(true);
         }
     }
 
-    info!("IDENTITY MATCHING FAILED: This node's owner is NOT the selected proposer");
+    info!(
+        node = &node_id_hex[..16.min(node_id_hex.len())],
+        registry_size = identity_registry.len(),
+        "this node's owner is not the selected proposer"
+    );
     Ok(false)
+}
+
+/// Decode the 32-byte USER identity hash from a `did:zhtp:<hex>` string.
+///
+/// Returns `None` (and warns) for malformed DIDs — non-`did:zhtp:` prefix,
+/// non-hex body, or fewer than 32 decoded bytes. Callers skip such entries
+/// rather than aborting the registry scan.
+fn decode_did_user_identity(did_string: &str) -> Option<Hash> {
+    let identity_hex = match did_string.strip_prefix("did:zhtp:") {
+        Some(hex) => hex,
+        None => {
+            warn!(did = did_string, "DID format invalid: missing did:zhtp: prefix");
+            return None;
+        }
+    };
+
+    let identity_bytes = match hex::decode(identity_hex) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            warn!(did = did_string, "failed to decode identity hex from DID");
+            return None;
+        }
+    };
+
+    if identity_bytes.len() < 32 {
+        warn!(
+            did = did_string,
+            len = identity_bytes.len(),
+            "DID identity bytes too short"
+        );
+        return None;
+    }
+
+    Some(Hash::from_bytes(&identity_bytes[..32]))
 }
 
 /// Identity data structure for mining coordination
