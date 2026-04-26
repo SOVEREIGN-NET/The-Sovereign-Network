@@ -3,18 +3,26 @@
 //! Refactored to query blockchain state instead of maintaining in-memory HashMaps.
 //! The blockchain is now the source of truth for proposals, votes, and treasury state.
 
+// CONS-106: dao module relocated from lib-consensus to lib-governance.
+// The crate::dao path still works because the module structure was preserved.
 use crate::dao::{
     DaoExecutionAction, DaoExecutionParams, DaoProposal, DaoProposalStatus, DaoProposalType,
     DaoTreasury, DaoVote, DaoVoteChoice, DaoVoteTally, GovernanceParameterUpdate,
     GovernanceParameterValue, PrivacyLevel,
 };
-use crate::types::ConsensusConfig;
-use crate::validators::validator_manager::{MAX_VALIDATORS_HARD_CAP, MIN_VALIDATORS};
 use anyhow::Result;
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
+use lib_types::consensus::{ConsensusConfig, MIN_BFT_VALIDATORS as MIN_VALIDATORS};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+// Validator count ceiling. Also defined in
+// `lib-consensus/src/validators/validator_manager.rs:14` as MAX_VALIDATORS_HARD_CAP;
+// duplicated here so lib-governance has zero dep on lib-consensus. If the cap
+// ever changes, update both sites — guarded by a CI architecture-invariant
+// test in CONS-603.
+const MAX_VALIDATORS_HARD_CAP: u32 = 21;
 
 /// DAO governance engine (blockchain-backed)
 #[derive(Debug, Clone)]

@@ -2356,6 +2356,15 @@ impl Component for ConsensusComponent {
         ));
         info!("Reward distribution callback wired to consensus engine");
 
+        // Wire governance round-finalize hook (CONS-106 / AD-005). The adapter
+        // captures the current Tokio runtime handle and runs the deprecated
+        // `process_expired_proposals` async path inside it. Failures are logged
+        // inside the adapter, never reach the engine.
+        consensus_engine.set_governance_callback(Arc::new(
+            lib_governance::dao::ConsensusGovernanceAdapter::new(),
+        ));
+        info!("Governance callback wired to consensus engine");
+
         // Wire a validator update channel so the periodic re-sync task can push
         // validator set changes into the running consensus loop without direct
         // engine access (the engine is moved into the spawned loop task).

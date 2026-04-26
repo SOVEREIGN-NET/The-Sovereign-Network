@@ -17,5 +17,8 @@
 //! - Existing: `CatchUpSyncTrigger` migrates from
 //!   `lib-consensus/src/types/mod.rs:494`.
 
+pub mod governance;
 pub mod rewards;
+
+pub use governance::{GovernanceCallback, NoOpGovernanceCallback};
 pub use rewards::{NoOpRewardCallback, RewardCallback, ValidatorRewardInput};

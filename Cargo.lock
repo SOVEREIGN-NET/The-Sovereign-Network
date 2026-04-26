@@ -3457,6 +3457,7 @@ dependencies = [
  "indexmap 1.9.3",
  "lib-consensus-core",
  "lib-crypto",
+ "lib-governance",
  "lib-identity",
  "lib-proofs",
  "lib-storage",
@@ -3602,13 +3603,19 @@ dependencies = [
 name = "lib-governance"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bincode",
  "blake3",
  "lib-access-control",
+ "lib-consensus-core",
+ "lib-crypto",
+ "lib-identity",
  "lib-types",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -9449,6 +9456,7 @@ dependencies = [
  "lib-consensus",
  "lib-crypto",
  "lib-economy",
+ "lib-governance",
  "lib-identity",
  "lib-identity-core",
  "lib-network",

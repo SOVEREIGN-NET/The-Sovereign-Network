@@ -258,12 +258,11 @@ impl ConsensusEngine {
 
                     let mut events = vec![ConsensusEvent::RoundCompleted { height }];
 
-                    if let Err(e) = self.dao_engine.process_expired_proposals().await {
-                        tracing::warn!("DAO processing error: {}", e);
-                        events.push(ConsensusEvent::DaoError {
-                            error: e.to_string(),
-                        });
-                    }
+                    // CONS-106 / AD-005: governance is fire-and-forget via the
+                    // runtime adapter. Failures are observability events inside
+                    // the adapter, not engine errors, so DaoError event is gone.
+                    self.governance_callback
+                        .on_round_finalized(self.current_round.height);
 
                     if let Err(e) = self
                         .byzantine_detector
@@ -287,13 +286,10 @@ impl ConsensusEngine {
                     Ok(_) => {
                         let mut events = vec![ConsensusEvent::RoundCompleted { height }];
 
-                        // Process DAO proposals
-                        if let Err(e) = self.dao_engine.process_expired_proposals().await {
-                            tracing::warn!("DAO processing error: {}", e);
-                            events.push(ConsensusEvent::DaoError {
-                                error: e.to_string(),
-                            });
-                        }
+                        // CONS-106 / AD-005: governance is fire-and-forget via
+                        // the runtime adapter; DaoError event no longer emitted.
+                        self.governance_callback
+                            .on_round_finalized(self.current_round.height);
 
                         // Check for Byzantine faults
                         if let Err(e) = self
@@ -978,10 +974,10 @@ impl ConsensusEngine {
             // See Invariant CE-ENG-4: Consensus correctness independent of fee collection
         }
 
-        // Process any DAO proposals that may have expired
-        if let Err(e) = self.dao_engine.process_expired_proposals().await {
-            tracing::warn!("Error processing DAO proposals: {}", e);
-        }
+        // CONS-106 / AD-005: process any DAO proposals via the fire-and-forget
+        // governance callback. Failures handled inside the adapter.
+        self.governance_callback
+            .on_round_finalized(self.current_round.height);
 
         tracing::info!(
             " Successfully processed committed block: {:?} at height {}",
