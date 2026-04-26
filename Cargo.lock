@@ -3687,6 +3687,7 @@ dependencies = [
  "hmac",
  "hostname",
  "jni",
+ "lib-blockchain",
  "lib-consensus",
  "lib-crypto",
  "lib-economy",
