@@ -18,18 +18,36 @@ Ansible playbook for deploying ZHTP nodes to Linux servers.
 
 ## Configuration
 
-Edit `inventory.ini` to configure target hosts:
+Host credentials are loaded from **environment variables** so that IPs and
+key paths stay out of version control.
 
-```ini
-[zhtp_dev]
-77.42.74.80 ansible_user=root ansible_ssh_private_key_file=~/.ssh/kode_ocr.pem
-91.98.113.188 ansible_user=root ansible_ssh_private_key_file=~/.ssh/kode_ocr.pem
+```bash
+cd deploy/ansible
+
+# 1. Copy the example env file and fill in your values
+cp .env.example .env
+# Edit .env with your real IPs, SSH user, and key path
+
+# 2. Source it
+source .env
 ```
+
+The `.env` file sets three variables:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `ZHTP_DEPLOY_HOSTS` | Comma-separated target IPs | `10.0.1.5,10.0.1.6` |
+| `ZHTP_DEPLOY_USER` | SSH user | `root` |
+| `ZHTP_DEPLOY_SSH_KEY` | Path to SSH private key | `~/.ssh/id_ed25519` |
+
+The dynamic inventory script (`inventory.py`) reads these variables and
+generates the Ansible host list automatically.
 
 ## Usage
 
 ```bash
 cd deploy/ansible
+source .env
 
 # Test connection
 ansible all -m ping
@@ -47,7 +65,7 @@ ansible-playbook playbook.yml --check
 ansible-playbook playbook.yml -e "start_service=false"
 
 # Target specific host
-ansible-playbook playbook.yml --limit 77.42.74.80
+ansible-playbook playbook.yml --limit 10.0.1.5
 ```
 
 ## What It Does

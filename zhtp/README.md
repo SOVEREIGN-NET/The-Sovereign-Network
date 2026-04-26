@@ -146,29 +146,23 @@ cargo run -- node start --dev
 
 ### Quick Start
 
-#### Method 1: Interactive CLI Mode (Recommended)
-```bash
-# Start the interactive ZHTP shell
-cargo run
+> **Note:** The interactive shell (`zhtp> …` prompt) is **not yet implemented** —
+> it requires server-side QUIC control surfaces that are still in development.
+> Use the `zhtp-cli` direct commands below instead.
 
-# Available commands in the shell(not all of them work):
-zhtp> help                    # Show all available commands
-zhtp> node start --port 9334  # Start the orchestrator node
-zhtp> node status             # Check node health
-zhtp> monitor system          # View system metrics
-zhtp> wallet create --name "MyWallet" --type citizen
-zhtp> dao info                # Check DAO status
-zhtp> identity create TestUser # Create new DID identity
-zhtp> network status          # Check mesh network status
-```
-
-#### Method 2: Direct Commands
+#### Direct CLI Commands
 ```bash
-# Execute single commands directly
-cargo run -- node start --config config.toml
-cargo run -- wallet balance <address>
-cargo run -- dao claim-ubi
-cargo run -- network peers
+# Start a node
+zhtp-cli node start --config config.toml
+
+# Wallet operations
+zhtp-cli wallet balance <address>
+
+# DAO governance
+zhtp-cli dao claim-ubi
+
+# Network info
+zhtp-cli network peers
 ```
 
 ## 📖 Usage Examples
@@ -433,11 +427,12 @@ cargo run -- node start --config dev-config.toml --dev
 ## Roadmap
 
 ### Phase 1: Foundation (Current)
-- Core orchestrator implementation
-- Configuration management system
-- CLI interface and interactive shell
-- Monitoring and health checks
-- API server with REST endpoints
+- ✅ Core orchestrator implementation
+- ✅ Configuration management system
+- ✅ CLI direct commands (`zhtp-cli`)
+- ⏳ Interactive shell (awaiting QUIC control surfaces)
+- ✅ API server with REST endpoints
+- ⏳ Consensus rewrite v2 (in progress)
 
 ### Phase 2: Network Integration
 -  Complete mesh networking implementation

@@ -49,8 +49,9 @@ LOCAL_STORAGE_PATHS.md
 DEPLOY_TOKEN_SPEC.md
 .vscode/settings.json
 
-# Ansible deployment (local config)
-deploy/ansible/
+# Ansible deployment (local config — .env holds secrets, everything else is safe)
+deploy/ansible/.env
+deploy/ansible/*.retry
 
 # Local documentation files
 docs/06_Financial_Projections_Tokenomics_Models*.docx
@@ -121,6 +122,7 @@ AGENTS.md
 # docs/ IS tracked: epic specs, forensic reports, decision records belong in version control.
 # Pre-existing local-only docs were moved to .docs/.
 /*.md
+!README.md
 .docs/**/*.md
 
 # Sensitive / local-only file patterns (issue #1934)
@@ -132,6 +134,7 @@ keystore*
 *.pem
 .env
 .env.*
+!.env.example
 
 # Operational docs (local only — published to wiki)
 .docs/node-hardening.md
