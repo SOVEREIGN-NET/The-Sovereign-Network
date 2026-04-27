@@ -964,18 +964,11 @@ impl ConsensusBlockchainAdapter {
 /// sync from racing at the same height (Apr 2 2026 postmortem fix).
 pub struct ConsensusBlockCommitter {
     blockchain_slot: SharedBlockchainSlot,
-    environment: crate::config::Environment,
 }
 
 impl ConsensusBlockCommitter {
-    pub fn new(
-        blockchain_slot: SharedBlockchainSlot,
-        environment: crate::config::Environment,
-    ) -> Self {
-        Self {
-            blockchain_slot,
-            environment,
-        }
+    pub fn new(blockchain_slot: SharedBlockchainSlot) -> Self {
+        Self { blockchain_slot }
     }
 }
 
@@ -2257,7 +2250,7 @@ impl Component for ConsensusComponent {
         // Wire block commit callback for BFT-finalized blocks
         // This is the critical bridge that commits blocks when BFT achieves 2/3+1 votes
         let block_committer =
-            ConsensusBlockCommitter::new(self.blockchain.clone(), self.environment.clone());
+            ConsensusBlockCommitter::new(self.blockchain.clone());
         consensus_engine.set_block_commit_callback(Arc::new(block_committer));
         info!("🔗 Block commit callback wired to consensus engine");
 
