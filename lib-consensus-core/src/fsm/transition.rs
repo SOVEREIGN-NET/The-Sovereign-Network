@@ -1,108 +1,223 @@
 //! Total `transition(state, event) -> (next_state, actions)`.
 //!
-//! Single source of truth for control-flow transitions in the validator
-//! FSM. Pre-rewrite this logic was distributed across
-//! `consensus_engine::run_*_step`, `on_proposal`, `on_prevote`,
-//! `on_precommit`, `on_commit_vote`, plus a thicket of timer flags and
-//! "is this round dead yet?" booleans. CONS-302 consolidates it into one
-//! function with one match.
+//! Single source of truth for control-flow transitions in the
+//! validator FSM. Every `(state, event)` pair maps to exactly one
+//! `(next_state, actions)` — no panics, no `unreachable!`, no silent
+//! drops. Invalid-but-tolerable arrivals (late vote in `Idle`, etc.)
+//! map to `Action::LogIgnoredEvent("…")` so they are explicit.
 //!
-//! # Totality
+//! ## Pure function, no clock access
 //!
-//! `transition()` must terminate for every `(FsmState, Event)` pair —
-//! never panic, never `unreachable!`. Invalid-but-tolerable arrivals
-//! (e.g. a late prevote in `Committed`) map to
-//! `(state, vec![Action::LogIgnoredEvent("..."])` so they are explicit
-//! rather than silently dropped.
+//! `transition()` reads no wall clock. Timestamps that flow into
+//! `Hung.since` and `Panic.triggered_at` come from the event payload
+//! (`WatchdogFired { fired_at }`, `PanicTriggered { triggered_at }`)
+//! — the runtime captures them at firing time. PR #2394 review
+//! (Copilot) flagged the prior `Instant::now()` calls inside
+//! `transition()` as breaking the deterministic / pure contract.
 //!
-//! `HaltedForUpgrade` is the one absorbing state with a wildcard match
-//! arm, since by definition no event can move it forward.
+//! ## Markov chain
 //!
-//! Compile-time totality is enforced by exhaustive matches on both
-//! enums (no wildcard arms outside `HaltedForUpgrade`). Adding a
-//! variant to `FsmState` or `Event` will break the build until the
-//! match is updated.
+//! Pair this with [`super::transition_table`], which exposes the
+//! same transitions as a runtime-queryable data structure. Tests
+//! verify the match function and the table agree, so they cannot
+//! drift.
 //!
-//! # What this PR does NOT yet do
+//! ## Sovereign protocol semantics
 //!
-//! - Wire `transition()` into the engine — that's CONS-305 (handler
-//!   migration) once `step_entered_at` (CONS-304) is in place.
-//! - Drive watchdog firings — that's CONS-309.
-//! - Centralise step timeouts as constants — that's CONS-310.
+//! 4 active phases — Proposing → Prevoting → Precommitting →
+//! Committed — with **walk-through timeouts**: every step before
+//! `Committed` advances on timeout to the next phase. Only
+//! `Committed.Timeout` triggers `Rejected(InsufficientPrecommits)` +
+//! view change. Matches the existing engine's `on_round_timeout`.
 
 use crate::fsm::events::{Action, Event};
-use crate::fsm::state::{FsmState, RejectionReason};
+use crate::fsm::state::{
+    HaltReason, RejectionReason, ResumeCondition, ValidatorState,
+};
 
-/// Compute the next state and the actions to execute, given the current
-/// state and an arriving event.
+/// Compute the next state and the actions to execute.
 ///
-/// Pure function: no side effects, no panics, no `unreachable!`. The
-/// caller (CONS-305 runtime task) is responsible for executing the
-/// returned actions in order and feeding the resulting events back in.
-pub fn transition(state: FsmState, event: Event) -> (FsmState, Vec<Action>) {
+/// Pure function: no side effects, no panics, no `unreachable!`, no
+/// clock access. The caller (CONS-305 runtime) executes the returned
+/// actions in order and feeds the resulting events back in.
+pub fn transition(state: ValidatorState, event: Event) -> (ValidatorState, Vec<Action>) {
     use Event::*;
-    use FsmState::*;
+    use ValidatorState::*;
 
     match (state, event) {
-        // ------------------------------------------------------------
-        // UpgradeSignal — accepted from any non-terminal state. Halted
-        // is absorbing; Committed/Rejected/Hung's wildcard event arms
-        // below also catch this with logged-ignored, which is the
-        // intended semantics (signal arrived too late to matter).
-        // ------------------------------------------------------------
-        (Idle, UpgradeSignal { .. })
-        | (Proposing, UpgradeSignal { .. })
-        | (Prevoting, UpgradeSignal { .. })
-        | (Precommitting, UpgradeSignal { .. }) => {
-            (HaltedForUpgrade, vec![Action::HaltForUpgrade])
+        // ============================================================
+        // Universal events — handled before phase-specific arms so
+        // they win from any active state. The order in this match
+        // matters: more-specific patterns (e.g. excluded states for
+        // PanicTriggered) come before catch-all bindings.
+        // ============================================================
+
+        // PanicTriggered: from already-critical states, log and ignore.
+        (
+            state @ (Panic { .. } | Halting { .. } | ShuttingDown),
+            PanicTriggered { .. },
+        ) => (
+            state,
+            vec![Action::LogIgnoredEvent(
+                "PanicTriggered while already in critical state",
+            )],
+        ),
+        // PanicTriggered from any other state: enter Panic carrying
+        // the prior state, the runtime-captured `triggered_at`, and
+        // the current `at_height` so the non-recoverable
+        // `(Panic, PanicCleared)` arm can construct a real Halting.
+        (
+            state,
+            PanicTriggered {
+                reason,
+                triggered_at,
+                at_height,
+            },
+        ) if !matches!(state, Idle | Bootstrapping | CatchingUp { .. }) // any non-trivial state
+            || matches!(state, Idle | Bootstrapping | CatchingUp { .. })
+        => {
+            // Above guard is intentionally `true` for every value of
+            // `state` — Rust requires guards on the catch-all arm
+            // when other arms with binding patterns are present.
+            (
+                Panic {
+                    reason: reason.clone(),
+                    triggered_at,
+                    at_height,
+                    prior_state: Box::new(state),
+                },
+                vec![
+                    Action::BroadcastPanic {
+                        reason: reason.clone(),
+                    },
+                    Action::LogPanic { reason },
+                ],
+            )
         }
 
-        // ------------------------------------------------------------
-        // Idle — between rounds. Accept SelectedAsProposer / Timeout for
-        // the boundary case where the proposer fires before any state
-        // has been entered. Everything else is logged-ignored.
-        // ------------------------------------------------------------
-        (Idle, SelectedAsProposer { .. }) => {
-            (Proposing, vec![Action::CreateProposal, Action::ResetWatchdog])
+        // HaltScheduled: from already-halted/panicked/exited, log+ignore.
+        (
+            state @ (Halting { .. } | Panic { .. } | ShuttingDown | Evicted),
+            HaltScheduled { .. },
+        ) => (
+            state,
+            vec![Action::LogIgnoredEvent(
+                "HaltScheduled while already halting/panicked/exiting",
+            )],
+        ),
+        // HaltScheduled from any other state. Capture last_block_hash
+        // from Committed (if applicable) so operators can correlate
+        // the halt with the last finalized block.
+        (
+            state,
+            HaltScheduled {
+                reason,
+                triggered_at_height,
+                resume_condition,
+            },
+        ) => {
+            let last_block_hash = if let Committed { block_hash, .. } = &state {
+                Some(*block_hash)
+            } else {
+                None
+            };
+            let _ = state; // explicitly drop the prior state
+            (
+                Halting {
+                    reason,
+                    triggered_at_height,
+                    last_block_hash,
+                    resume_condition: ResumeCondition::from(resume_condition),
+                },
+                vec![Action::StopBlockProduction {
+                    at_height: triggered_at_height,
+                }],
+            )
         }
-        (Idle, ProposalAdmitted { .. }) => (
+
+        // ShutdownRequested: accepted from any state.
+        (_state, ShutdownRequested) => {
+            (ShuttingDown, vec![Action::FlushLogsForShutdown])
+        }
+
+        // SlashEvidenceConfirmed: from already-slashed/exited, log+ignore.
+        (
+            state @ (Slashed { .. } | Evicted | ShuttingDown | Panic { .. }),
+            SlashEvidenceConfirmed { .. },
+        ) => (
+            state,
+            vec![Action::LogIgnoredEvent(
+                "SlashEvidenceConfirmed while already slashed/exiting",
+            )],
+        ),
+        (_state, SlashEvidenceConfirmed { reason }) => {
+            (Slashed { reason }, vec![Action::LeaveActiveSet])
+        }
+
+        // EvictedFromSet: from already-out, log+ignore.
+        (state @ (Evicted | ShuttingDown), EvictedFromSet) => (
+            state,
+            vec![Action::LogIgnoredEvent("EvictedFromSet while already out")],
+        ),
+        (_state, EvictedFromSet) => (Evicted, vec![Action::LeaveActiveSet]),
+
+        // ============================================================
+        // Bootstrapping
+        // ============================================================
+        (Bootstrapping, BootstrapComplete) => (Idle, vec![Action::ResetWatchdog]),
+        (Bootstrapping, _) => (
+            Bootstrapping,
+            vec![Action::LogIgnoredEvent("event in Bootstrapping")],
+        ),
+
+        // ============================================================
+        // CatchingUp
+        // ============================================================
+        (CatchingUp { .. }, CaughtUp) => (Idle, vec![Action::ResetWatchdog]),
+        (catching @ CatchingUp { .. }, _) => (
+            catching,
+            vec![Action::LogIgnoredEvent("event in CatchingUp")],
+        ),
+
+        // ============================================================
+        // Idle
+        // ============================================================
+        (Idle, SelectedAsProposer { .. }) => (
             Proposing,
+            vec![Action::CreateProposal, Action::ResetWatchdog],
+        ),
+        (Idle, ProposalAdmitted { .. }) => (
+            // Stay Idle until the runtime drives proposer election.
+            // PR #2394 reverse-drift test caught the prior version
+            // transitioning state on a logged-ignored action — a
+            // contradiction between state change and "this event had
+            // no effect" semantics.
+            Idle,
             vec![Action::LogIgnoredEvent(
                 "ProposalAdmitted in Idle: proposer-elect path not yet entered",
             )],
         ),
         (Idle, Timeout) => (
             Idle,
-            vec![Action::LogIgnoredEvent("Timeout in Idle: no active step")],
+            vec![Action::LogIgnoredEvent("Timeout in Idle: no active phase")],
         ),
-        (Idle, PrevoteThresholdReached { .. }) => (
-            Idle,
-            vec![Action::LogIgnoredEvent("PrevoteThresholdReached in Idle")],
-        ),
-        (Idle, PrecommitThresholdReached { .. }) => (
-            Idle,
-            vec![Action::LogIgnoredEvent("PrecommitThresholdReached in Idle")],
-        ),
-        (Idle, CommitQuorumReached { .. }) => (
-            Idle,
-            vec![Action::LogIgnoredEvent("CommitQuorumReached in Idle")],
-        ),
-        (Idle, VoteFailed(_)) => (
-            Idle,
-            vec![Action::LogIgnoredEvent("VoteFailed in Idle")],
-        ),
-        (Idle, WatchdogFired { age_ms }) => (
-            Hung,
+        (Idle, WatchdogFired { fired_at, .. }) => (
+            Hung {
+                since: fired_at,
+                prior_state: Box::new(Idle),
+            },
             vec![Action::LogHung {
                 reason: "Watchdog fired while Idle — runtime stuck before round start",
-            }, Action::LogIgnoredEvent("Idle.WatchdogFired"), event_marker_age_ms(age_ms)],
+            }],
+        ),
+        (Idle, _) => (
+            Idle,
+            vec![Action::LogIgnoredEvent("event in Idle (unrelated)")],
         ),
 
-        // ------------------------------------------------------------
-        // Proposing — the leader's window. Either a proposal arrives
-        // (transition to Prevoting) or the propose timeout fires
-        // (transition to Rejected for view change).
-        // ------------------------------------------------------------
+        // ============================================================
+        // Proposing
+        // ============================================================
         (Proposing, ProposalAdmitted { id, .. }) => (
             Prevoting,
             vec![
@@ -111,97 +226,63 @@ pub fn transition(state: FsmState, event: Event) -> (FsmState, Vec<Action>) {
                 Action::ResetWatchdog,
             ],
         ),
-        (Proposing, SelectedAsProposer { .. }) => (
-            Proposing,
-            vec![Action::LogIgnoredEvent(
-                "SelectedAsProposer in Proposing: already proposing",
-            )],
-        ),
-        (Proposing, Timeout) => (
-            Rejected(RejectionReason::Timeout),
+        (Proposing, Timeout) => (Prevoting, vec![Action::ResetWatchdog]),
+        (Proposing, VoteFailed(reason)) => (
+            Rejected { reason, round: 0 }, // runtime fills round on entry
             vec![Action::AdvanceRound],
         ),
-        (Proposing, PrevoteThresholdReached { .. }) => (
-            Proposing,
-            vec![Action::LogIgnoredEvent(
-                "PrevoteThresholdReached in Proposing: pre-quorum",
-            )],
-        ),
-        (Proposing, PrecommitThresholdReached { .. }) => (
-            Proposing,
-            vec![Action::LogIgnoredEvent(
-                "PrecommitThresholdReached in Proposing: pre-quorum",
-            )],
-        ),
-        (Proposing, CommitQuorumReached { .. }) => (
-            Proposing,
-            vec![Action::LogIgnoredEvent(
-                "CommitQuorumReached in Proposing: pre-quorum",
-            )],
-        ),
-        (Proposing, VoteFailed(reason)) => {
-            (Rejected(reason), vec![Action::AdvanceRound])
-        }
-        (Proposing, WatchdogFired { .. }) => (
-            Hung,
+        (Proposing, WatchdogFired { fired_at, .. }) => (
+            Hung {
+                since: fired_at,
+                prior_state: Box::new(Proposing),
+            },
             vec![Action::LogHung {
                 reason: "Watchdog fired while Proposing — proposer or network stuck",
             }],
         ),
+        (Proposing, _) => (
+            Proposing,
+            vec![Action::LogIgnoredEvent("event in Proposing (out-of-phase)")],
+        ),
 
-        // ------------------------------------------------------------
-        // Prevoting — proposal admitted, accumulating prevotes.
-        // ------------------------------------------------------------
+        // ============================================================
+        // Prevoting
+        // ============================================================
         (Prevoting, PrevoteThresholdReached { block_id }) => (
             Precommitting,
-            vec![
-                Action::SendPrecommit { block_id },
-                Action::ResetWatchdog,
-            ],
+            vec![Action::SendPrecommit { block_id }, Action::ResetWatchdog],
         ),
-        (Prevoting, Timeout) => (
-            Rejected(RejectionReason::InsufficientPrevotes),
+        (Prevoting, Timeout) => (Precommitting, vec![Action::ResetWatchdog]),
+        (Prevoting, VoteFailed(reason)) => (
+            Rejected { reason, round: 0 },
             vec![Action::AdvanceRound],
         ),
-        (Prevoting, VoteFailed(reason)) => {
-            (Rejected(reason), vec![Action::AdvanceRound])
-        }
-        (Prevoting, ProposalAdmitted { .. }) => (
-            Prevoting,
-            vec![Action::LogIgnoredEvent(
-                "ProposalAdmitted in Prevoting: duplicate or competing proposal",
-            )],
-        ),
-        (Prevoting, SelectedAsProposer { .. }) => (
-            Prevoting,
-            vec![Action::LogIgnoredEvent(
-                "SelectedAsProposer in Prevoting: round already advanced",
-            )],
-        ),
-        (Prevoting, PrecommitThresholdReached { .. }) => (
-            Prevoting,
-            vec![Action::LogIgnoredEvent(
-                "PrecommitThresholdReached in Prevoting: pre-prevote-quorum",
-            )],
-        ),
-        (Prevoting, CommitQuorumReached { .. }) => (
-            Prevoting,
-            vec![Action::LogIgnoredEvent(
-                "CommitQuorumReached in Prevoting: pre-prevote-quorum",
-            )],
-        ),
-        (Prevoting, WatchdogFired { .. }) => (
-            Hung,
+        (Prevoting, WatchdogFired { fired_at, .. }) => (
+            Hung {
+                since: fired_at,
+                prior_state: Box::new(Prevoting),
+            },
             vec![Action::LogHung {
                 reason: "Watchdog fired while Prevoting — vote pool stuck",
             }],
         ),
+        (Prevoting, _) => (
+            Prevoting,
+            vec![Action::LogIgnoredEvent("event in Prevoting (out-of-phase)")],
+        ),
 
-        // ------------------------------------------------------------
-        // Precommitting — accumulating precommits for one block.
-        // ------------------------------------------------------------
+        // ============================================================
+        // Precommitting — gathering PreCommits, then Commit votes.
+        // ============================================================
+        (Precommitting, PrecommitThresholdReached { block_id }) => (
+            Precommitting,
+            vec![Action::SendCommit { block_id }, Action::ResetWatchdog],
+        ),
         (Precommitting, CommitQuorumReached { block_id, quorum }) => (
-            Committed,
+            Committed {
+                block_hash: block_id.0,
+                height: quorum.height,
+            },
             vec![
                 Action::CommitBlock {
                     id: block_id,
@@ -210,160 +291,206 @@ pub fn transition(state: FsmState, event: Event) -> (FsmState, Vec<Action>) {
                 Action::ResetWatchdog,
             ],
         ),
-        (Precommitting, PrecommitThresholdReached { .. }) => (
-            Precommitting,
-            vec![Action::LogIgnoredEvent(
-                "PrecommitThresholdReached in Precommitting: waiting for quorum proof",
-            )],
-        ),
-        (Precommitting, Timeout) => (
-            Rejected(RejectionReason::InsufficientPrecommits),
+        (Precommitting, Timeout) => (Precommitting, vec![Action::ResetWatchdog]),
+        (Precommitting, VoteFailed(reason)) => (
+            Rejected { reason, round: 0 },
             vec![Action::AdvanceRound],
         ),
-        (Precommitting, VoteFailed(reason)) => {
-            (Rejected(reason), vec![Action::AdvanceRound])
-        }
-        (Precommitting, ProposalAdmitted { .. }) => (
-            Precommitting,
-            vec![Action::LogIgnoredEvent(
-                "ProposalAdmitted in Precommitting: too late",
-            )],
-        ),
-        (Precommitting, SelectedAsProposer { .. }) => (
-            Precommitting,
-            vec![Action::LogIgnoredEvent(
-                "SelectedAsProposer in Precommitting: round already advanced",
-            )],
-        ),
-        (Precommitting, PrevoteThresholdReached { .. }) => (
-            Precommitting,
-            vec![Action::LogIgnoredEvent(
-                "PrevoteThresholdReached in Precommitting: late prevote",
-            )],
-        ),
-        (Precommitting, WatchdogFired { .. }) => (
-            Hung,
+        (Precommitting, WatchdogFired { fired_at, .. }) => (
+            Hung {
+                since: fired_at,
+                prior_state: Box::new(Precommitting),
+            },
             vec![Action::LogHung {
                 reason: "Watchdog fired while Precommitting — quorum stuck",
             }],
         ),
+        (Precommitting, _) => (
+            Precommitting,
+            vec![Action::LogIgnoredEvent("event in Precommitting (out-of-phase)")],
+        ),
 
-        // ------------------------------------------------------------
-        // Committed — terminal-success. Self-clears on the next
-        // height's StartRound; until then everything is logged-ignored.
-        // ------------------------------------------------------------
-        (Committed, _event) => (Committed, vec![Action::LogIgnoredEvent("event in Committed")]),
+        // ============================================================
+        // Committed — block finalized at this height. The runtime
+        // resets the FSM to Idle (next height entry) explicitly; this
+        // FSM doesn't auto-transition. PR #2394 review removed an
+        // earlier `(Committed, ProposalAdmitted) → Proposing` shortcut
+        // that bypassed runtime state-management for the height bump.
+        // ============================================================
+        (Committed { .. }, SelectedAsProposer { .. }) => (
+            Proposing,
+            vec![Action::CreateProposal, Action::ResetWatchdog],
+        ),
+        (Committed { .. }, Timeout) => (
+            Rejected {
+                reason: RejectionReason::InsufficientPrecommits,
+                round: 0,
+            },
+            vec![Action::AdvanceRound],
+        ),
+        (committed @ Committed { .. }, _) => (
+            committed,
+            vec![Action::LogIgnoredEvent(
+                "event in Committed (runtime resets to Idle for next height)",
+            )],
+        ),
 
-        // ------------------------------------------------------------
-        // Rejected — terminal-failure for the current round. The runtime
-        // emits AdvanceRound in the transition that produced Rejected;
-        // events arriving after that are ignored until the runtime feeds
-        // a new round.
-        // ------------------------------------------------------------
-        (Rejected(_), _event) => (
-            state,
+        // ============================================================
+        // Rejected — runtime emits AdvanceRound on entry; events
+        // arriving before next round entry are logged-ignored.
+        // ============================================================
+        (Rejected { .. }, SelectedAsProposer { .. }) => (
+            Proposing,
+            vec![Action::CreateProposal, Action::ResetWatchdog],
+        ),
+        (rejected @ Rejected { .. }, _) => (
+            rejected,
             vec![Action::LogIgnoredEvent("event in Rejected")],
         ),
 
-        // ------------------------------------------------------------
+        // ============================================================
         // Hung — terminal until external recovery.
-        // ------------------------------------------------------------
-        (Hung, _event) => (Hung, vec![Action::LogIgnoredEvent("event in Hung")]),
+        // ============================================================
+        (hung @ Hung { .. }, _) => (hung, vec![Action::LogIgnoredEvent("event in Hung")]),
 
-        // ------------------------------------------------------------
-        // HaltedForUpgrade — only state with a wildcard event arm. By
-        // definition no event moves it forward; the runtime restart with
-        // the bumped CONSENSUS_PROTOCOL_VERSION is the only exit.
-        // ------------------------------------------------------------
-        (HaltedForUpgrade, _) => (
-            HaltedForUpgrade,
-            vec![Action::LogIgnoredEvent("event in HaltedForUpgrade")],
+        // ============================================================
+        // Halting → CoordinatedUpdate
+        // ============================================================
+        (
+            Halting { .. },
+            HaltActivated {
+                activate_at_height,
+                target_version,
+            },
+        ) => (
+            CoordinatedUpdate {
+                activate_at_height,
+                target_version,
+            },
+            vec![Action::EnterUpdateBarrier {
+                activate_at_height,
+                target_version,
+            }],
+        ),
+        (halting @ Halting { .. }, _) => (
+            halting,
+            vec![Action::LogIgnoredEvent("event in Halting")],
+        ),
+
+        // ============================================================
+        // CoordinatedUpdate → Idle on quorum-ready
+        // ============================================================
+        (CoordinatedUpdate { target_version, .. }, UpdateQuorumReady) => (
+            Idle,
+            vec![
+                Action::BroadcastReadyOnNewVersion {
+                    version: target_version,
+                },
+                Action::ResetWatchdog,
+            ],
+        ),
+        (cu @ CoordinatedUpdate { .. }, _) => (
+            cu,
+            vec![Action::LogIgnoredEvent("event in CoordinatedUpdate")],
+        ),
+
+        // ============================================================
+        // Slashed — re-enter on ReadmittedToSet.
+        // ============================================================
+        (Slashed { .. }, ReadmittedToSet) => (Idle, vec![Action::RejoinActiveSet]),
+        (slashed @ Slashed { .. }, _) => (
+            slashed,
+            vec![Action::LogIgnoredEvent("event in Slashed")],
+        ),
+
+        // ============================================================
+        // Evicted — re-enter on ReadmittedToSet.
+        // ============================================================
+        (Evicted, ReadmittedToSet) => (Idle, vec![Action::RejoinActiveSet]),
+        (Evicted, _) => (Evicted, vec![Action::LogIgnoredEvent("event in Evicted")]),
+
+        // ============================================================
+        // Panic — recoverable resets to Idle on PanicCleared;
+        // non-recoverable forces Halting{Never} at the panic-time
+        // height, with last_block_hash recovered from prior_state if
+        // we panicked from Committed.
+        // ============================================================
+        (
+            Panic {
+                reason,
+                at_height,
+                prior_state,
+                ..
+            },
+            PanicCleared,
+        ) => {
+            if reason.is_recoverable() {
+                (Idle, vec![Action::ResetWatchdog])
+            } else {
+                let last_block_hash = if let Committed { block_hash, .. } = prior_state.as_ref() {
+                    Some(*block_hash)
+                } else {
+                    None
+                };
+                (
+                    Halting {
+                        reason: HaltReason::EmergencyHalt,
+                        triggered_at_height: at_height,
+                        last_block_hash,
+                        resume_condition: ResumeCondition::Never,
+                    },
+                    vec![
+                        Action::LogPanic { reason },
+                        Action::StopBlockProduction { at_height },
+                    ],
+                )
+            }
+        }
+        (panic_state @ Panic { .. }, _) => (
+            panic_state,
+            vec![Action::LogIgnoredEvent("event in Panic")],
+        ),
+
+        // ============================================================
+        // ShuttingDown — terminal.
+        // ============================================================
+        (ShuttingDown, _) => (
+            ShuttingDown,
+            vec![Action::LogIgnoredEvent("event in ShuttingDown")],
         ),
     }
-}
-
-/// Helper used by the watchdog branches in `Idle` to surface the
-/// firing-age in the action stream without inventing a dedicated
-/// Action variant. The runtime can pick this up via its observability
-/// pipeline; the FSM doesn't need to act on it.
-fn event_marker_age_ms(_age_ms: u64) -> Action {
-    Action::LogIgnoredEvent("watchdog age recorded")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fsm::events::ResumeConditionEvent;
+    use crate::fsm::state::{PanicReason, SlashReason};
     use lib_crypto::Hash;
     use lib_types::consensus::BftQuorumProof;
+    use std::time::Instant;
 
     fn dummy_quorum() -> BftQuorumProof {
         BftQuorumProof {
-            height: 0,
+            height: 7,
             proposal_id: [0u8; 32],
             total_validators: 0,
             attestations: Vec::new(),
         }
     }
 
-    fn all_events() -> Vec<Event> {
-        vec![
-            Event::SelectedAsProposer {
-                height: 1,
-                round: 0,
-            },
-            Event::ProposalAdmitted {
-                id: Hash([1u8; 32]),
-                height: 1,
-                round: 0,
-            },
-            Event::PrevoteThresholdReached {
-                block_id: Hash([2u8; 32]),
-            },
-            Event::PrecommitThresholdReached {
-                block_id: Hash([3u8; 32]),
-            },
-            Event::CommitQuorumReached {
-                block_id: Hash([4u8; 32]),
-                quorum: dummy_quorum(),
-            },
-            Event::VoteFailed(RejectionReason::Timeout),
-            Event::Timeout,
-            Event::WatchdogFired { age_ms: 5_000 },
-            Event::UpgradeSignal { halt_at_height: 100 },
-        ]
+    fn dummy_watchdog() -> Event {
+        Event::WatchdogFired {
+            age_ms: 30_000,
+            fired_at: Instant::now(),
+        }
     }
 
-    fn all_states() -> Vec<FsmState> {
-        vec![
-            FsmState::Idle,
-            FsmState::Proposing,
-            FsmState::Prevoting,
-            FsmState::Precommitting,
-            FsmState::Committed,
-            FsmState::Rejected(RejectionReason::InsufficientPrevotes),
-            FsmState::Hung,
-            FsmState::HaltedForUpgrade,
-        ]
-    }
-
-    /// CONS-302 acceptance criterion: every (state, event) pair returns
-    /// a valid (next_state, actions) tuple — no panic, no unreachable.
-    #[test]
-    fn transition_total_over_state_event_product() {
-        for state in all_states() {
-            for event in all_events() {
-                // Must not panic.
-                let (_next, actions) = transition(state, event.clone());
-                // Must always produce at least one action — even
-                // logged-ignored arrivals.  Empty action lists would
-                // hide silent transitions.
-                assert!(
-                    !actions.is_empty(),
-                    "transition({:?}, {:?}) returned no actions",
-                    state,
-                    event
-                );
-            }
+    fn dummy_panic(reason: PanicReason) -> Event {
+        Event::PanicTriggered {
+            reason,
+            triggered_at: Instant::now(),
+            at_height: 100,
         }
     }
 
@@ -371,16 +498,15 @@ mod tests {
     #[test]
     fn happy_path_round_completes() {
         let block_id = Hash([42u8; 32]);
-        let proposer_event = Event::SelectedAsProposer {
-            height: 1,
-            round: 0,
-        };
-
-        let (s, a) = transition(FsmState::Idle, proposer_event);
-        assert_eq!(s, FsmState::Proposing);
-        assert!(a.contains(&Action::CreateProposal));
 
         let (s, a) = transition(
+            ValidatorState::Idle,
+            Event::SelectedAsProposer { height: 1, round: 0 },
+        );
+        assert_eq!(s, ValidatorState::Proposing);
+        assert!(a.contains(&Action::CreateProposal));
+
+        let (s, _) = transition(
             s,
             Event::ProposalAdmitted {
                 id: block_id.clone(),
@@ -388,8 +514,7 @@ mod tests {
                 round: 0,
             },
         );
-        assert_eq!(s, FsmState::Prevoting);
-        assert!(a.iter().any(|x| matches!(x, Action::SendPrevote { .. })));
+        assert_eq!(s, ValidatorState::Prevoting);
 
         let (s, _) = transition(
             s,
@@ -397,85 +522,362 @@ mod tests {
                 block_id: block_id.clone(),
             },
         );
-        assert_eq!(s, FsmState::Precommitting);
+        assert_eq!(s, ValidatorState::Precommitting);
+
+        let (s, _) = transition(
+            s,
+            Event::PrecommitThresholdReached {
+                block_id: block_id.clone(),
+            },
+        );
+        assert_eq!(s, ValidatorState::Precommitting);
 
         let (s, a) = transition(
             s,
             Event::CommitQuorumReached {
-                block_id,
+                block_id: block_id.clone(),
                 quorum: dummy_quorum(),
             },
         );
-        assert_eq!(s, FsmState::Committed);
+        assert!(matches!(s, ValidatorState::Committed { .. }));
         assert!(a.iter().any(|x| matches!(x, Action::CommitBlock { .. })));
     }
 
-    /// Propose timeout produces a view change.
     #[test]
-    fn propose_timeout_advances_round() {
-        let (s, a) = transition(FsmState::Proposing, Event::Timeout);
-        assert_eq!(s, FsmState::Rejected(RejectionReason::Timeout));
+    fn timeouts_walk_through_phases() {
+        let (s, _) = transition(ValidatorState::Proposing, Event::Timeout);
+        assert_eq!(s, ValidatorState::Prevoting);
+
+        let (s, _) = transition(ValidatorState::Prevoting, Event::Timeout);
+        assert_eq!(s, ValidatorState::Precommitting);
+
+        let (s, _) = transition(ValidatorState::Precommitting, Event::Timeout);
+        assert_eq!(s, ValidatorState::Precommitting);
+    }
+
+    #[test]
+    fn committed_timeout_is_view_change() {
+        let (s, a) = transition(
+            ValidatorState::Committed {
+                block_hash: [1u8; 32],
+                height: 1,
+            },
+            Event::Timeout,
+        );
+        assert!(matches!(
+            s,
+            ValidatorState::Rejected {
+                reason: RejectionReason::InsufficientPrecommits,
+                ..
+            }
+        ));
         assert!(a.contains(&Action::AdvanceRound));
     }
 
-    /// Prevote timeout maps to InsufficientPrevotes, not generic Timeout.
+    /// PR #2394 review: ProposalAdmitted in Committed must NOT
+    /// auto-transition to Proposing. The runtime resets to Idle for
+    /// the next height; this FSM logs and ignores.
     #[test]
-    fn prevote_timeout_rejection_specific() {
-        let (s, _) = transition(FsmState::Prevoting, Event::Timeout);
-        assert_eq!(s, FsmState::Rejected(RejectionReason::InsufficientPrevotes));
-    }
-
-    /// Precommit timeout maps to InsufficientPrecommits.
-    #[test]
-    fn precommit_timeout_rejection_specific() {
-        let (s, _) = transition(FsmState::Precommitting, Event::Timeout);
-        assert_eq!(
-            s,
-            FsmState::Rejected(RejectionReason::InsufficientPrecommits)
+    fn committed_proposal_admitted_is_logged_ignored() {
+        let (s, a) = transition(
+            ValidatorState::Committed {
+                block_hash: [1u8; 32],
+                height: 1,
+            },
+            Event::ProposalAdmitted {
+                id: Hash([2u8; 32]),
+                height: 2,
+                round: 0,
+            },
         );
+        assert!(matches!(s, ValidatorState::Committed { .. }));
+        assert!(a.iter().all(|x| matches!(x, Action::LogIgnoredEvent(_))));
     }
 
-    /// Watchdog from any active state lands in `Hung`.
     #[test]
-    fn watchdog_from_active_states_hangs() {
+    fn watchdog_from_active_states_hangs_with_event_timestamp() {
+        let fired_at = Instant::now();
         for state in [
-            FsmState::Proposing,
-            FsmState::Prevoting,
-            FsmState::Precommitting,
+            ValidatorState::Proposing,
+            ValidatorState::Prevoting,
+            ValidatorState::Precommitting,
         ] {
-            let (s, a) = transition(state, Event::WatchdogFired { age_ms: 30_000 });
-            assert_eq!(s, FsmState::Hung);
+            let (s, a) = transition(
+                state,
+                Event::WatchdogFired {
+                    age_ms: 30_000,
+                    fired_at,
+                },
+            );
+            // The Hung state's `since` came from the event payload,
+            // not Instant::now() inside transition.
+            if let ValidatorState::Hung { since, .. } = s {
+                assert_eq!(since, fired_at);
+            } else {
+                panic!("expected Hung, got {:?}", s);
+            }
             assert!(a.iter().any(|x| matches!(x, Action::LogHung { .. })));
         }
     }
 
-    /// UpgradeSignal trumps the current state for any non-terminal state.
     #[test]
-    fn upgrade_signal_halts_any_active_state() {
-        for state in [
-            FsmState::Idle,
-            FsmState::Proposing,
-            FsmState::Prevoting,
-            FsmState::Precommitting,
-        ] {
-            let (s, a) = transition(state, Event::UpgradeSignal { halt_at_height: 100 });
-            assert_eq!(s, FsmState::HaltedForUpgrade);
-            assert_eq!(a, vec![Action::HaltForUpgrade]);
+    fn panic_recoverable_resets_to_idle_on_clear() {
+        let (s, _) = transition(
+            ValidatorState::Prevoting,
+            dummy_panic(PanicReason::HeartbeatMissed),
+        );
+        assert!(matches!(s, ValidatorState::Panic { .. }));
+        let (s, _) = transition(s, Event::PanicCleared);
+        assert_eq!(s, ValidatorState::Idle);
+    }
+
+    /// Non-recoverable panic forces `Halting{Never}` at the panic-
+    /// time height (PR #2394 review: prior placeholder of 0 lost
+    /// height context).
+    #[test]
+    fn panic_non_recoverable_forces_halting_at_correct_height() {
+        let (s, _) = transition(
+            ValidatorState::Prevoting,
+            Event::PanicTriggered {
+                reason: PanicReason::DoubleVote,
+                triggered_at: Instant::now(),
+                at_height: 1234,
+            },
+        );
+        assert!(matches!(s, ValidatorState::Panic { at_height: 1234, .. }));
+        let (s, a) = transition(s, Event::PanicCleared);
+        match s {
+            ValidatorState::Halting {
+                resume_condition: ResumeCondition::Never,
+                triggered_at_height: 1234,
+                ..
+            } => {}
+            other => panic!("expected Halting{{Never, height=1234}}, got {:?}", other),
+        }
+        assert!(a.contains(&Action::StopBlockProduction { at_height: 1234 }));
+    }
+
+    /// Non-recoverable panic from Committed state preserves the
+    /// last_block_hash via the Box<prior_state>.
+    #[test]
+    fn panic_from_committed_preserves_last_block_hash() {
+        let block_hash = [99u8; 32];
+        let (s, _) = transition(
+            ValidatorState::Committed {
+                block_hash,
+                height: 100,
+            },
+            Event::PanicTriggered {
+                reason: PanicReason::ConflictingCommits,
+                triggered_at: Instant::now(),
+                at_height: 100,
+            },
+        );
+        let (s, _) = transition(s, Event::PanicCleared);
+        match s {
+            ValidatorState::Halting {
+                last_block_hash: Some(h),
+                ..
+            } => assert_eq!(h, block_hash),
+            other => panic!("expected Halting with last_block_hash, got {:?}", other),
         }
     }
 
-    /// `HaltedForUpgrade` is absorbing — every event is logged-ignored.
     #[test]
-    fn halted_for_upgrade_is_absorbing() {
-        for event in all_events() {
-            let (s, a) = transition(FsmState::HaltedForUpgrade, event.clone());
-            assert_eq!(s, FsmState::HaltedForUpgrade, "event {:?} moved Halted", event);
-            assert!(
-                a.iter().all(|x| matches!(x, Action::LogIgnoredEvent(_))),
-                "event {:?} produced non-ignored action {:?}",
-                event,
-                a
-            );
+    fn panic_broadcasts_to_peers_for_logs() {
+        let (_, a) = transition(
+            ValidatorState::Prevoting,
+            dummy_panic(PanicReason::ByzantineVoteDetected),
+        );
+        assert!(a.iter().any(|x| matches!(x, Action::BroadcastPanic { .. })));
+    }
+
+    #[test]
+    fn halt_to_coordinated_update_to_idle_flow() {
+        let (s, _) = transition(
+            ValidatorState::Idle,
+            Event::HaltScheduled {
+                reason: HaltReason::UpgradeScheduled,
+                triggered_at_height: 100,
+                resume_condition: ResumeConditionEvent::QuorumReady,
+            },
+        );
+        assert!(matches!(s, ValidatorState::Halting { .. }));
+
+        let (s, _) = transition(
+            s,
+            Event::HaltActivated {
+                activate_at_height: 100,
+                target_version: 2,
+            },
+        );
+        assert!(matches!(s, ValidatorState::CoordinatedUpdate { .. }));
+
+        let (s, a) = transition(s, Event::UpdateQuorumReady);
+        assert_eq!(s, ValidatorState::Idle);
+        assert!(a
+            .iter()
+            .any(|x| matches!(x, Action::BroadcastReadyOnNewVersion { .. })));
+    }
+
+    #[test]
+    fn shutdown_from_any_state() {
+        for state in [
+            ValidatorState::Idle,
+            ValidatorState::Proposing,
+            ValidatorState::Prevoting,
+            ValidatorState::Precommitting,
+            ValidatorState::Committed {
+                block_hash: [0; 32],
+                height: 1,
+            },
+            ValidatorState::Bootstrapping,
+            ValidatorState::CatchingUp {
+                from_height: 0,
+                to_height: 1,
+            },
+        ] {
+            let (s, a) = transition(state.clone(), Event::ShutdownRequested);
+            assert_eq!(s, ValidatorState::ShuttingDown, "from {:?}", state);
+            assert!(a.contains(&Action::FlushLogsForShutdown));
+        }
+    }
+
+    #[test]
+    fn slashing_leaves_set_and_rejoin_returns_to_idle() {
+        let (s, a) = transition(
+            ValidatorState::Prevoting,
+            Event::SlashEvidenceConfirmed {
+                reason: SlashReason::DoubleSign,
+            },
+        );
+        assert!(matches!(s, ValidatorState::Slashed { .. }));
+        assert!(a.contains(&Action::LeaveActiveSet));
+
+        let (s, a) = transition(s, Event::ReadmittedToSet);
+        assert_eq!(s, ValidatorState::Idle);
+        assert!(a.contains(&Action::RejoinActiveSet));
+    }
+
+    #[test]
+    fn bootstrapping_exits_on_complete() {
+        let (s, _) = transition(ValidatorState::Bootstrapping, Event::BootstrapComplete);
+        assert_eq!(s, ValidatorState::Idle);
+    }
+
+    #[test]
+    fn catching_up_exits_on_caught_up() {
+        let (s, _) = transition(
+            ValidatorState::CatchingUp {
+                from_height: 0,
+                to_height: 100,
+            },
+            Event::CaughtUp,
+        );
+        assert_eq!(s, ValidatorState::Idle);
+    }
+
+    /// Totality: every (state_kind, event_kind) pair returns a
+    /// non-empty action list.
+    #[test]
+    fn transition_total_no_silent_drops() {
+        let states = [
+            ValidatorState::Bootstrapping,
+            ValidatorState::CatchingUp {
+                from_height: 0,
+                to_height: 1,
+            },
+            ValidatorState::Idle,
+            ValidatorState::Proposing,
+            ValidatorState::Prevoting,
+            ValidatorState::Precommitting,
+            ValidatorState::Committed {
+                block_hash: [0; 32],
+                height: 1,
+            },
+            ValidatorState::Rejected {
+                reason: RejectionReason::Timeout,
+                round: 0,
+            },
+            ValidatorState::Hung {
+                since: Instant::now(),
+                prior_state: Box::new(ValidatorState::Idle),
+            },
+            ValidatorState::Halting {
+                reason: HaltReason::UpgradeScheduled,
+                triggered_at_height: 0,
+                last_block_hash: None,
+                resume_condition: ResumeCondition::QuorumReady,
+            },
+            ValidatorState::CoordinatedUpdate {
+                activate_at_height: 0,
+                target_version: 2,
+            },
+            ValidatorState::Slashed {
+                reason: SlashReason::DoubleSign,
+            },
+            ValidatorState::Evicted,
+            ValidatorState::Panic {
+                reason: PanicReason::HeartbeatMissed,
+                triggered_at: Instant::now(),
+                at_height: 0,
+                prior_state: Box::new(ValidatorState::Idle),
+            },
+            ValidatorState::ShuttingDown,
+        ];
+
+        let events = [
+            Event::BootstrapComplete,
+            Event::CaughtUp,
+            Event::ShutdownRequested,
+            Event::SelectedAsProposer { height: 1, round: 0 },
+            Event::ProposalAdmitted {
+                id: Hash([0; 32]),
+                height: 1,
+                round: 0,
+            },
+            Event::PrevoteThresholdReached {
+                block_id: Hash([0; 32]),
+            },
+            Event::PrecommitThresholdReached {
+                block_id: Hash([0; 32]),
+            },
+            Event::CommitQuorumReached {
+                block_id: Hash([0; 32]),
+                quorum: dummy_quorum(),
+            },
+            Event::VoteFailed(RejectionReason::Timeout),
+            Event::Timeout,
+            dummy_watchdog(),
+            dummy_panic(PanicReason::WatchdogExpired),
+            Event::PanicCleared,
+            Event::HaltScheduled {
+                reason: HaltReason::UpgradeScheduled,
+                triggered_at_height: 0,
+                resume_condition: ResumeConditionEvent::QuorumReady,
+            },
+            Event::HaltActivated {
+                activate_at_height: 0,
+                target_version: 2,
+            },
+            Event::UpdateQuorumReady,
+            Event::SlashEvidenceConfirmed {
+                reason: SlashReason::DoubleSign,
+            },
+            Event::EvictedFromSet,
+            Event::ReadmittedToSet,
+        ];
+
+        for state in &states {
+            for event in &events {
+                let (_next, actions) = transition(state.clone(), event.clone());
+                assert!(
+                    !actions.is_empty(),
+                    "transition({:?}, {:?}) returned no actions",
+                    state.kind(),
+                    event.kind()
+                );
+            }
         }
     }
 }

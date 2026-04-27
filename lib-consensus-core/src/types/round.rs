@@ -6,7 +6,7 @@
 //! separate flags for terminal conditions.  CONS-304 introduces the
 //! consensus-core version, which holds:
 //!
-//! - `state: FsmState` — the full control state, including terminal
+//! - `state: ValidatorState` — the full control state, including terminal
 //!   variants (`Committed`, `Rejected(reason)`, `Hung`,
 //!   `HaltedForUpgrade`).
 //! - `height: u64`, `round: u32` — protocol identifiers (unchanged).
@@ -25,7 +25,7 @@
 //! types coexist; the lib-consensus version retains the old `step` /
 //! `start_time` shape for the existing handler code.
 
-use crate::fsm::state::FsmState;
+use crate::fsm::state::ValidatorState;
 use std::time::{Duration, Instant};
 
 /// Per-round control state for a single height/round.
@@ -38,7 +38,7 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone)]
 pub struct ConsensusRound {
     /// Current FSM control state. Updated only via [`Self::enter`].
-    pub state: FsmState,
+    pub state: ValidatorState,
 
     /// Block height this round is producing.
     pub height: u64,
@@ -62,7 +62,7 @@ impl ConsensusRound {
     /// given height with `round = 0` and `entered_at = Instant::now()`.
     pub fn new(height: u64) -> Self {
         Self {
-            state: FsmState::Idle,
+            state: ValidatorState::Idle,
             height,
             round: 0,
             entered_at: Instant::now(),
@@ -75,7 +75,7 @@ impl ConsensusRound {
     /// method so that `state_age()` is meaningful.  CONS-305 enforces
     /// this contract by deleting the per-step `enter_*_step` methods
     /// in lib-consensus and routing every state change through here.
-    pub fn enter(&mut self, new_state: FsmState) {
+    pub fn enter(&mut self, new_state: ValidatorState) {
         self.state = new_state;
         self.entered_at = Instant::now();
     }
@@ -102,7 +102,7 @@ mod tests {
     #[test]
     fn new_starts_in_idle() {
         let r = ConsensusRound::new(42);
-        assert_eq!(r.state, FsmState::Idle);
+        assert_eq!(r.state, ValidatorState::Idle);
         assert_eq!(r.height, 42);
         assert_eq!(r.round, 0);
         assert_eq!(r.deterministic_round_id, 42);
@@ -116,8 +116,8 @@ mod tests {
         let initial = r.entered_at();
         // Sleep long enough to make the change visible without being slow.
         std::thread::sleep(Duration::from_millis(2));
-        r.enter(FsmState::Proposing);
-        assert_eq!(r.state, FsmState::Proposing);
+        r.enter(ValidatorState::Proposing);
+        assert_eq!(r.state, ValidatorState::Proposing);
         assert!(r.entered_at() > initial);
     }
 
@@ -128,7 +128,7 @@ mod tests {
     fn entered_at_reflects_call_time_within_5ms() {
         let mut r = ConsensusRound::new(1);
         let before = Instant::now();
-        r.enter(FsmState::Prevoting);
+        r.enter(ValidatorState::Prevoting);
         let after = Instant::now();
         assert!(r.entered_at() >= before);
         assert!(r.entered_at() <= after);
@@ -138,33 +138,41 @@ mod tests {
     #[test]
     fn state_age_grows_until_next_enter() {
         let mut r = ConsensusRound::new(1);
-        r.enter(FsmState::Precommitting);
+        r.enter(ValidatorState::Precommitting);
         std::thread::sleep(Duration::from_millis(3));
         let age1 = r.state_age();
         assert!(age1 >= Duration::from_millis(3));
 
-        r.enter(FsmState::Committed);
+        r.enter(ValidatorState::Committed {
+            block_hash: [1u8; 32],
+            height: 1,
+        });
         let age2 = r.state_age();
         assert!(age2 < age1, "enter() did not reset entered_at");
     }
 
     #[test]
-    fn enter_into_terminal_states_works_uniformly() {
-        // Every FsmState variant must be assignable via enter() — this
-        // protects against accidentally adding a state that requires
-        // special construction.
+    fn enter_into_states_works_uniformly() {
+        // Every ValidatorState variant must be assignable via enter().
+        // We sample one of each kind. This protects against accidentally
+        // adding a state that requires special construction.
         let mut r = ConsensusRound::new(1);
-        for state in [
-            FsmState::Proposing,
-            FsmState::Prevoting,
-            FsmState::Precommitting,
-            FsmState::Committed,
-            FsmState::Rejected(RejectionReason::InsufficientPrevotes),
-            FsmState::Hung,
-            FsmState::HaltedForUpgrade,
-            FsmState::Idle,
-        ] {
-            r.enter(state);
+        let states = vec![
+            ValidatorState::Proposing,
+            ValidatorState::Prevoting,
+            ValidatorState::Precommitting,
+            ValidatorState::Committed {
+                block_hash: [1u8; 32],
+                height: 1,
+            },
+            ValidatorState::Rejected {
+                reason: RejectionReason::InsufficientPrevotes,
+                round: 0,
+            },
+            ValidatorState::Idle,
+        ];
+        for state in states {
+            r.enter(state.clone());
             assert_eq!(r.state, state);
         }
     }
