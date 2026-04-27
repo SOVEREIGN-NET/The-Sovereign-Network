@@ -1540,9 +1540,14 @@ impl ConsensusEngine {
             self.dispatch_action(action).await;
         }
 
+        // CONS-305f: the per-step branch is reduced to the late-
+        // proposal case below. The Propose-step path used to call
+        // `enter_prevote_step` here; that work is now dispatched by
+        // the FSM `SendPrevote` action above (see the loop over
+        // `actions` returned by `transition()`).
         match self.current_round.step {
             ConsensusStep::Propose => {
-                self.enter_prevote_step().await?;
+                // Handled by FSM action dispatch above.
             }
             ConsensusStep::PreVote => {
                 // Proposal arrived after the local prevote timer already fired.
@@ -1722,11 +1727,12 @@ impl ConsensusEngine {
                 self.dispatch_action(action).await;
             }
 
-            // Allow late prevote quorum to still trigger precommit casting even if the
-            // prevote timeout already fired and step advanced to PreCommit. enter_precommit_step
-            // is idempotent for the step transition (guards against double-entry) but we bypass
-            // that guard here only if we haven't yet cast a precommit for this round.
-            self.enter_precommit_step().await?;
+            // CONS-305f: removed the direct `enter_precommit_step()`
+            // call here.  The FSM's `SendPrecommit` action dispatched
+            // above already calls `enter_precommit_step` via
+            // `dispatch_action` — keeping this redundant call meant
+            // the helper ran twice (idempotent re re-entry guards,
+            // but wasteful).
         }
 
         // **CE-L1, CE-L2**: Always check if commit quorum is reached, even in PreVote step
@@ -1858,10 +1864,9 @@ impl ConsensusEngine {
                 self.dispatch_action(action).await;
             }
 
-            // Allow late precommit quorum to still trigger commit vote casting even if the
-            // precommit timeout already fired and step advanced to Commit. enter_commit_step
-            // is idempotent for the step transition but we bypass that guard to cast the vote.
-            self.enter_commit_step().await?;
+            // CONS-305f: removed the direct `enter_commit_step()`
+            // call here. The FSM's `SendCommit` action dispatched
+            // above calls it via `dispatch_action`.
         }
 
         // **CE-L1, CE-L2**: Always check if commit quorum is reached, even in PreCommit step
@@ -2044,47 +2049,72 @@ impl ConsensusEngine {
     /// these per-action handlers progressively; for CONS-305a only
     /// `Timeout`-driven actions need handling, the rest are no-ops or
     /// pass through to the existing engine machinery.
+    /// Dispatch one FSM `Action` to the engine.
+    ///
+    /// CONS-305f cutover: dispatch_action is the canonical entry
+    /// point for state-entry side effects. Errors from the engine
+    /// helpers are logged at warn level and not propagated — actions
+    /// are best-effort (CE-ENG-4).
+    ///
+    /// **Recursion-free invariant**: the helpers called from here
+    /// (`enter_propose_step`, `enter_prevote_step`,
+    /// `enter_precommit_step`, `enter_commit_step`) MUST NOT call
+    /// `maybe_finalize` (which would re-enter dispatch_action via
+    /// `transition()` + `CommitBlock` action). Quorum-trigger
+    /// finalization runs separately at the handler level
+    /// (on_commit_vote / on_precommit / on_round_timeout's PreCommit
+    /// branch / run_commit_step).
     async fn dispatch_action(&mut self, action: lib_consensus_core::fsm::Action) {
         use lib_consensus_core::fsm::Action as A;
         match action {
             A::ResetWatchdog => {
-                // CONS-309 introduces the watchdog; for now this is a
-                // no-op observability hook.  We simply mark the
-                // round as not timed out so the next deadline is fresh.
                 self.current_round.timed_out = false;
             }
 
-            // CONS-305x staging: these actions are emitted by the FSM
-            // but the work is currently done by the existing engine
-            // helpers (`enter_prevote_step`, `enter_precommit_step`,
-            // `enter_commit_step`, `process_committed_block`, the
-            // proposal relay in `on_proposal`).  CONS-305f folds the
-            // helpers into per-action handlers and removes this
-            // branch.  Until then they are deliberate no-ops — NOT
-            // missing-handler debug logs (which would fire on every
-            // round and mislead operators per PR #2398 review).
-            A::CreateProposal
-            | A::BroadcastProposal { .. }
-            | A::SendPrevote { .. }
-            | A::SendPrecommit { .. }
-            | A::SendCommit { .. }
-            | A::CommitBlock { .. }
-            | A::AdvanceRound => {
-                // engine still does the work.
+            A::CreateProposal => {
+                if let Err(e) = self.enter_propose_step().await {
+                    tracing::warn!(error = ?e, "CreateProposal action failed");
+                }
+            }
+            A::SendPrevote { .. } => {
+                if let Err(e) = self.enter_prevote_step().await {
+                    tracing::warn!(error = ?e, "SendPrevote action failed");
+                }
+            }
+            A::SendPrecommit { .. } => {
+                if let Err(e) = self.enter_precommit_step().await {
+                    tracing::warn!(error = ?e, "SendPrecommit action failed");
+                }
+            }
+            A::SendCommit { .. } => {
+                if let Err(e) = self.enter_commit_step().await {
+                    tracing::warn!(error = ?e, "SendCommit action failed");
+                }
             }
 
-            // Logged-ignored arrivals (state didn't change, just
-            // observability).  Drop silently — the FSM's own
-            // observability hooks handle these.
+            // BroadcastProposal — proposal relay needs ownership of
+            // the proposal struct, which the FSM action carries only
+            // by Hash. Done at the call site in on_proposal.
+            A::BroadcastProposal { .. } => {}
+
+            // CommitBlock — process_committed_block is invoked from
+            // maybe_finalize when commit-vote quorum is detected. No-
+            // op here so the recursion invariant above holds.
+            A::CommitBlock { .. } => {}
+
+            // AdvanceRound — round-bump on view change. Done at the
+            // call site (on_round_timeout's Committed branch) where
+            // we have full sync_height context.
+            A::AdvanceRound => {}
+
+            // Observability — silent drop; FSM's own hooks log.
             A::LogIgnoredEvent(_) | A::LogHung { .. } | A::LogPanic { .. } => {}
 
-            // Operator/lifecycle actions wired in later CONS-305x
-            // stages.  Log at debug for visibility; engine code
-            // continues to handle them via existing paths.
+            // Lifecycle — log at debug for visibility.
             other => {
                 tracing::debug!(
                     fsm_action = ?other,
-                    "FSM emitted lifecycle action with no engine handler yet (CONS-305 in progress)"
+                    "FSM emitted lifecycle action with no engine handler yet"
                 );
             }
         }
@@ -2128,6 +2158,23 @@ impl ConsensusEngine {
             }
             ConsensusStep::PreCommit => {
                 self.enter_commit_step().await?;
+                // CONS-305f: maybe_finalize was previously called from
+                // inside enter_commit_step. Moved here so dispatch_action
+                // can call enter_commit_step without recursing through
+                // maybe_finalize → transition() → dispatch_action.
+                let target = self
+                    .current_round
+                    .valid_proposal
+                    .clone()
+                    .or(self.current_round.locked_proposal.clone());
+                if let Some(proposal_id) = target {
+                    self.maybe_finalize(
+                        self.current_round.height,
+                        self.current_round.round,
+                        &proposal_id,
+                    )
+                    .await?;
+                }
             }
             ConsensusStep::Commit => {
                 // Sync height with blockchain before advancing. This prevents the consensus
@@ -2490,17 +2537,19 @@ impl ConsensusEngine {
                     );
                 }
 
-                // Do NOT call process_committed_block directly here.
-                // We just cast our own commit vote (1 vote in pool) but may not yet have
-                // quorum. Let maybe_finalize decide: if other nodes' commit votes are already
-                // in the pool we commit immediately; otherwise on_commit_vote will trigger
-                // maybe_finalize again when the remaining votes arrive.
-                self.maybe_finalize(
-                    self.current_round.height,
-                    self.current_round.round,
-                    &proposal_id,
-                )
-                .await?;
+                // CONS-305f: maybe_finalize is no longer called from
+                // here. Calling it from inside enter_commit_step
+                // creates a `dispatch_action → enter_commit_step →
+                // maybe_finalize → transition() → dispatch_action`
+                // recursion that rustc rejects (E0733) once
+                // dispatch_action invokes enter_commit_step itself.
+                // Instead, callers that need an immediate
+                // post-cast-commit-vote quorum check call
+                // `maybe_finalize` themselves AFTER
+                // `enter_commit_step` returns. The two existing
+                // production callers (on_precommit, run_commit_step)
+                // already do this; on_round_timeout's PreCommit
+                // branch was updated to do the same.
             }
         }
 
