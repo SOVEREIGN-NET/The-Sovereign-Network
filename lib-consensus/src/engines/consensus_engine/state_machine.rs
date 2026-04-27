@@ -1788,6 +1788,25 @@ impl ConsensusEngine {
                 // First proposal to reach precommit quorum in this round
                 self.current_round.locked_proposal = Some(proposal_id.clone());
             }
+
+            // CONS-305c: route the precommit-quorum threshold through
+            // the FSM. `(Precommitting, PrecommitThresholdReached) →
+            // (Precommitting, [SendCommit, ResetWatchdog])` — state
+            // stays Precommitting (we are now waiting for the
+            // commit-vote quorum that maybe_finalize handles); the
+            // SendCommit action is the work that `enter_commit_step`
+            // already does.
+            let (next_fsm, actions) = lib_consensus_core::fsm::transition(
+                self.fsm_state.clone(),
+                lib_consensus_core::fsm::Event::PrecommitThresholdReached {
+                    block_id: proposal_id.clone(),
+                },
+            );
+            self.fsm_state = next_fsm;
+            for action in actions {
+                self.dispatch_action(action).await;
+            }
+
             // Allow late precommit quorum to still trigger commit vote casting even if the
             // precommit timeout already fired and step advanced to Commit. enter_commit_step
             // is idempotent for the step transition but we bypass that guard to cast the vote.
