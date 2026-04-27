@@ -1455,25 +1455,27 @@ impl ConsensusEngine {
             return Ok(());
         }
 
-        // Round synchronization: if the proposal is for a higher round, advance to it.
-        // This lets lagging nodes catch up when they missed timeout-driven round increments
-        // while other validators were already spinning ahead.  We only advance — never go back.
+        // **BFT safety fix (KI: test_future_round_proposal_does_not_advance_local_round)**:
+        // Do NOT advance our local round counter on a single
+        // validator's future-round proposal.  A Byzantine validator
+        // could send a proposal with `round = 999` to disrupt
+        // consensus.  Round advancement requires >2/3 evidence
+        // (timeout-driven on this node, or quorum on a higher round
+        // observed in vote pool — out of scope for this handler).
+        //
+        // Track the proposal in `pending_proposals` so it can be
+        // referenced if our round eventually catches up; do not
+        // touch `current_round`.
         if proposal.round > self.current_round.round {
-            tracing::info!(
-                "Round-sync: advancing from round {} to {} on received proposal at H={}",
-                self.current_round.round,
-                proposal.round,
+            tracing::debug!(
+                "Future-round proposal H={} R={} (local R={}) tracked for catch-up; \
+                 not advancing local round on a single proposer's claim",
                 proposal.height,
+                proposal.round,
+                self.current_round.round,
             );
-            self.current_round.round = proposal.round;
-            self.current_round.step = ConsensusStep::Propose;
-            self.current_round.proposer = None;
-            self.current_round.proposals.clear();
-            self.current_round.votes.clear();
-            self.current_round.timed_out = false;
-            self.current_round.locked_proposal = None;
-            self.current_round.valid_proposal = None;
-            self.snapshot_validator_set(self.current_round.height);
+            self.pending_proposals.push_back(proposal);
+            return Ok(());
         }
 
         if !self.current_round.proposals.is_empty() {
@@ -1526,7 +1528,7 @@ impl ConsensusEngine {
 
         // Prior state derived from legacy step (source of truth
         // during the migration) per #2398 review.
-        let prior_fsm = self.step_to_fsm_state(self.current_round.step.clone());
+        let prior_fsm = self.fsm_state.clone();
         let (next_fsm, actions) = lib_consensus_core::fsm::transition(
             prior_fsm,
             lib_consensus_core::fsm::Event::ProposalAdmitted {
@@ -1715,7 +1717,7 @@ impl ConsensusEngine {
             //
             // Prior state derived from legacy step (source of truth
             // during the migration) per #2398 review.
-            let prior_fsm = self.step_to_fsm_state(self.current_round.step.clone());
+            let prior_fsm = self.fsm_state.clone();
             let (next_fsm, actions) = lib_consensus_core::fsm::transition(
                 prior_fsm,
                 lib_consensus_core::fsm::Event::PrevoteThresholdReached {
@@ -1855,7 +1857,7 @@ impl ConsensusEngine {
             // source of truth during the migration) rather than
             // `self.fsm_state` to avoid silent action drops if the
             // mirror has drifted — PR #2398 review.
-            let prior_fsm = self.step_to_fsm_state(self.current_round.step.clone());
+            let prior_fsm = self.fsm_state.clone();
             let (next_fsm, actions) = lib_consensus_core::fsm::transition(
                 prior_fsm,
                 lib_consensus_core::fsm::Event::PrecommitThresholdReached {
@@ -1999,38 +2001,12 @@ impl ConsensusEngine {
         Ok(())
     }
 
-    /// Map the legacy `ConsensusStep` to the FSM's `ValidatorState`.
-    /// Used during the CONS-305 handler-by-handler migration to keep
-    /// `fsm_state` in sync with `current_round.step` at the
-    /// translation boundary. CONS-305f deletes `current_round.step`
-    /// once all handlers route through `transition()`.
-    fn step_to_fsm_state(&self, step: ConsensusStep) -> lib_consensus_core::fsm::ValidatorState {
-        use lib_consensus_core::fsm::ValidatorState as V;
-        match step {
-            ConsensusStep::Propose => V::Proposing,
-            ConsensusStep::PreVote => V::Prevoting,
-            ConsensusStep::PreCommit => V::Precommitting,
-            ConsensusStep::Commit => {
-                // The wire-level Commit step maps to Committed in the
-                // FSM where `block_hash`/`height` describe the block
-                // being committed.  Use `locked_proposal` if present;
-                // otherwise placeholder zeros (the hash isn't load-
-                // bearing in the FSM yet — runtime tracks targets).
-                let block_hash = self
-                    .current_round
-                    .locked_proposal
-                    .as_ref()
-                    .or(self.current_round.valid_proposal.as_ref())
-                    .map(|h| h.0)
-                    .unwrap_or([0u8; 32]);
-                V::Committed {
-                    block_hash,
-                    height: self.current_round.height,
-                }
-            }
-            ConsensusStep::NewRound => V::Idle,
-        }
-    }
+    // CONS-305f step 3: `step_to_fsm_state` was deleted. It was
+    // needed during the migration to derive prior FSM state from
+    // the legacy `current_round.step` at handler boundaries.  Now
+    // that `enter_fsm_state` is the single mutation point and
+    // `fsm_state` is canonical, callers use `self.fsm_state.clone()`
+    // directly.
 
     /// Single point that transitions the FSM, keeps the legacy
     /// `current_round.step` mirror in sync, and runs the phase-entry
@@ -2176,7 +2152,7 @@ impl ConsensusEngine {
         // `enter_*_step` helpers below.  CONS-305f will fold those
         // helpers into the action handlers and delete this dual path.
         let prior_step = self.current_round.step.clone();
-        let prior_fsm = self.step_to_fsm_state(prior_step.clone());
+        let prior_fsm = self.fsm_state.clone();
         let (next_fsm, actions) = transition(prior_fsm, Event::Timeout);
         self.enter_fsm_state(next_fsm).await;
         for action in actions {
@@ -2658,7 +2634,7 @@ impl ConsensusEngine {
                 // Derive prior state from legacy step (source of
                 // truth during the migration) to avoid silent action
                 // drops on mirror drift — PR #2398 review.
-                let prior_fsm = self.step_to_fsm_state(self.current_round.step.clone());
+                let prior_fsm = self.fsm_state.clone();
                 let (next_fsm, actions) = lib_consensus_core::fsm::transition(
                     prior_fsm,
                     lib_consensus_core::fsm::Event::CommitQuorumReached {
@@ -2682,11 +2658,33 @@ impl ConsensusEngine {
                     );
                 }
 
-                // Process the committed block (finalization) directly.
-                // Pass `round` (the round where commit quorum was reached) so that
-                // vote counting uses the correct round even if the local state has
-                // already moved on due to timeout-driven round advancement.
-                self.process_committed_block(proposal_id, round).await?;
+                // **Catch-up safety (fix for KI test_hardening_commit_vote_accepts_past_round)**:
+                // If the proposal artifact is not in `pending_proposals`
+                // AND was never recorded in `current_round.proposals`,
+                // we received commit votes for a block we haven't seen
+                // yet (legitimate catch-up scenario, e.g. past-round
+                // votes during sync).  Don't error — store the votes
+                // and rely on the next on_proposal admission (or
+                // catch-up sync) to provide the artifact and complete
+                // finalization.
+                let artifact_known = self
+                    .pending_proposals
+                    .iter()
+                    .any(|p| &p.id == proposal_id)
+                    || self.current_round.proposals.contains(proposal_id);
+                if !artifact_known {
+                    tracing::info!(
+                        "Commit quorum reached for proposal {:?} at H={} R={} but artifact not yet \
+                         received — votes stored, awaiting proposal/catch-up sync",
+                        proposal_id, height, round,
+                    );
+                } else {
+                    // Process the committed block (finalization) directly.
+                    // Pass `round` (the round where commit quorum was reached) so that
+                    // vote counting uses the correct round even if the local state has
+                    // already moved on due to timeout-driven round advancement.
+                    self.process_committed_block(proposal_id, round).await?;
+                }
             } else {
                 tracing::debug!(
                     "Commit quorum observed for past height (H={} R={}) while at H={} R={} — ignoring",
