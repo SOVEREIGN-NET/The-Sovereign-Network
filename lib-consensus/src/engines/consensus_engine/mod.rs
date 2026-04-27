@@ -249,7 +249,15 @@ mod tests;
 /// History:
 ///   1 — initial: proposal ID/signature include round + domain tags
 ///       `ZHTP/PROPOSAL/ID/v1` and `ZHTP/PROPOSAL/SIG/v1`
-pub const CONSENSUS_PROTOCOL_VERSION: u32 = 1;
+///   2 — CONS-201: `ValidatorMessage` collapsed from 5 variants to 3
+///       (deleted `Commit` and `RoundChange` variants); single canonical
+///       enum at `lib_consensus::validators::ValidatorMessage`. Old v1
+///       nodes encode/decode `Commit`/`RoundChange` variants that v2
+///       nodes cannot decode and would silently mis-route otherwise.
+///       Bumping enforces a hard cutover boundary — mixed-version nodes
+///       reject each other's proposals at admission time instead of
+///       silently mis-decoding the wire format.
+pub const CONSENSUS_PROTOCOL_VERSION: u32 = 2;
 
 /// Human-readable name of the consensus algorithm variant implemented here.
 ///
