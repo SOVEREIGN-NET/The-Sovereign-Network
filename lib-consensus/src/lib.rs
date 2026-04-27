@@ -16,7 +16,7 @@ pub mod evidence;
 pub mod fault_model;
 pub mod invariants;
 pub mod network;
-pub mod proofs;
+pub mod proof_verify;
 pub mod slashing;
 pub mod testing;
 pub mod types;
@@ -35,7 +35,15 @@ pub use network::{
     check_consensus_health, BincodeConsensusCodec, CodecError, ConsensusMessageCodec,
     ConsensusMetrics,
 };
-pub use proofs::*;
+// Consensus-mechanism proof types moved to lib-proofs (CONS-104 / AD-003).
+// Re-exported here for backward compatibility while in-flight migration completes.
+pub use lib_proofs::consensus::{ProofOfUsefulWork, StakeDelegation, StakeProof, WorkProof};
+// Storage attestation re-exports (these were never in lib-consensus's proofs/
+// module body — they were always lib-storage types re-exported through here).
+pub use lib_storage::proofs::{
+    ChallengeResult, ProofVerifier, RetrievalProof, StorageCapacityAttestation, StorageChallenge,
+    StorageProof, StorageProofProvider, StorageProofSummary, VerificationResult,
+};
 pub use slashing::{
     calculate_slash_amount, check_unjail_eligibility, check_unjail_eligibility_legacy,
     jail_end_block, liveness_jail_status, safety_ban_status, stake_after_unjail, BanReason,

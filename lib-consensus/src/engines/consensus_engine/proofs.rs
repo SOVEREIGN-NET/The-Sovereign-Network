@@ -1,6 +1,8 @@
 use super::*;
-use crate::proofs::StorageCapacityAttestation;
 use lib_crypto::{hash_blake3, Hash, PostQuantumSignature};
+// CONS-104 / AD-003: storage attestation type stays in lib-storage; it was
+// already there pre-CONS-104 and only re-exported through lib-consensus.
+use lib_storage::proofs::StorageCapacityAttestation;
 
 impl ConsensusEngine {
     /// Create a new proposal
@@ -308,7 +310,7 @@ impl ConsensusEngine {
         // This allows consensus to proceed on dev/testnet nodes that don't provide storage.
         // Production (Mainnet) deployments should always configure a real provider.
         let validator_hash = Hash::from_bytes(validator_id.as_bytes());
-        let unsigned = crate::proofs::StorageCapacityAttestation::new(
+        let unsigned = StorageCapacityAttestation::new(
             validator_hash,
             0,      // storage_capacity: none
             0,      // utilization: 0%

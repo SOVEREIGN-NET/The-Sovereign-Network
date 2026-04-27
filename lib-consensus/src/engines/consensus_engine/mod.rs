@@ -504,7 +504,7 @@ pub struct ConsensusEngine {
     /// Local validator signing keypair (required for proposal/vote signing)
     validator_keypair: Option<KeyPair>,
     /// Storage proof provider (lib-storage backed)
-    storage_proof_provider: Option<Arc<dyn crate::proofs::StorageProofProvider>>,
+    storage_proof_provider: Option<Arc<dyn lib_storage::proofs::StorageProofProvider>>,
     /// Blockchain provider for block production (injected by runtime)
     blockchain_provider: Option<Arc<dyn crate::types::ConsensusBlockchainProvider>>,
     /// Block commit callback for finalizing blocks to blockchain storage
@@ -950,7 +950,7 @@ impl ConsensusEngine {
     /// Set storage proof provider for Proof-of-Storage attestations
     pub fn set_storage_proof_provider(
         &mut self,
-        provider: Arc<dyn crate::proofs::StorageProofProvider>,
+        provider: Arc<dyn lib_storage::proofs::StorageProofProvider>,
     ) {
         self.storage_proof_provider = Some(provider);
     }
