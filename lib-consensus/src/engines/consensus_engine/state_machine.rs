@@ -1916,15 +1916,115 @@ impl ConsensusEngine {
         Ok(())
     }
 
+    /// Map the legacy `ConsensusStep` to the FSM's `ValidatorState`.
+    /// Used during the CONS-305 handler-by-handler migration to keep
+    /// `fsm_state` in sync with `current_round.step` at the
+    /// translation boundary. CONS-305f deletes `current_round.step`
+    /// once all handlers route through `transition()`.
+    fn step_to_fsm_state(&self, step: ConsensusStep) -> lib_consensus_core::fsm::ValidatorState {
+        use lib_consensus_core::fsm::ValidatorState as V;
+        match step {
+            ConsensusStep::Propose => V::Proposing,
+            ConsensusStep::PreVote => V::Prevoting,
+            ConsensusStep::PreCommit => V::Precommitting,
+            ConsensusStep::Commit => {
+                // The wire-level Commit step maps to Committed in the
+                // FSM where `block_hash`/`height` describe the block
+                // being committed.  Use `locked_proposal` if present;
+                // otherwise placeholder zeros (the hash isn't load-
+                // bearing in the FSM yet — runtime tracks targets).
+                let block_hash = self
+                    .current_round
+                    .locked_proposal
+                    .as_ref()
+                    .or(self.current_round.valid_proposal.as_ref())
+                    .map(|h| h.0)
+                    .unwrap_or([0u8; 32]);
+                V::Committed {
+                    block_hash,
+                    height: self.current_round.height,
+                }
+            }
+            ConsensusStep::NewRound => V::Idle,
+        }
+    }
+
+    /// Single point that transitions the FSM and keeps the legacy
+    /// `current_round.step` mirror in sync. Per CONS-305 spec: every
+    /// state mutation goes through `enter()`.
+    fn enter_fsm_state(&mut self, new_state: lib_consensus_core::fsm::ValidatorState) {
+        use lib_consensus_core::fsm::ValidatorState as V;
+        let new_step = match &new_state {
+            V::Proposing | V::Idle => ConsensusStep::Propose,
+            V::Prevoting => ConsensusStep::PreVote,
+            V::Precommitting => ConsensusStep::PreCommit,
+            V::Committed { .. } => ConsensusStep::Commit,
+            V::Rejected { .. } => ConsensusStep::NewRound,
+            // Lifecycle / failure states have no mirror — the engine
+            // can't represent them in the legacy enum. Keep
+            // `current_round.step` at NewRound for those (the runtime
+            // halts/recovers via the new FSM only).
+            _ => ConsensusStep::NewRound,
+        };
+        self.fsm_state = new_state;
+        self.current_round.step = new_step;
+    }
+
+    /// Dispatch a single FSM `Action` to the engine. CONS-305 stages
+    /// these per-action handlers progressively; for CONS-305a only
+    /// `Timeout`-driven actions need handling, the rest are no-ops or
+    /// pass through to the existing engine machinery.
+    async fn dispatch_action(&mut self, action: lib_consensus_core::fsm::Action) {
+        use lib_consensus_core::fsm::Action as A;
+        match action {
+            A::ResetWatchdog => {
+                // CONS-309 introduces the watchdog; for now this is a
+                // no-op observability hook.  We simply mark the
+                // round as not timed out so the next deadline is fresh.
+                self.current_round.timed_out = false;
+            }
+            // Other actions handled by later CONS-305x stages or by
+            // the existing handlers.  Logging the unhandled ones at
+            // debug level — never panic, never silently drop.
+            other => {
+                tracing::debug!(
+                    fsm_action = ?other,
+                    "FSM emitted action with no engine handler yet (CONS-305 in progress)"
+                );
+            }
+        }
+    }
+
     pub(super) async fn on_round_timeout(&mut self) -> ConsensusResult<()> {
+        use lib_consensus_core::fsm::{transition, Event};
+
         tracing::debug!(
-            "Round timeout at height {} round {} step {:?}",
+            "Round timeout at height {} round {} step {:?} fsm {:?}",
             self.current_round.height,
             self.current_round.round,
-            self.current_round.step
+            self.current_round.step,
+            self.fsm_state.kind(),
         );
 
-        match self.current_round.step {
+        // CONS-305a: route the timeout through the FSM. The FSM
+        // computes the next state and any actions; the runtime
+        // dispatches the actions and does the per-state-entry work
+        // (e.g. casting the next-phase vote) via the existing
+        // `enter_*_step` helpers below.  CONS-305f will fold those
+        // helpers into the action handlers and delete this dual path.
+        let prior_step = self.current_round.step.clone();
+        let prior_fsm = self.step_to_fsm_state(prior_step.clone());
+        let (next_fsm, actions) = transition(prior_fsm, Event::Timeout);
+        self.fsm_state = next_fsm;
+        for action in actions {
+            self.dispatch_action(action).await;
+        }
+
+        // Engine state-entry hooks. These will move into per-Action
+        // handlers in CONS-305f. Until then they keep the engine's
+        // existing semantics intact (cast next-phase vote, broadcast,
+        // advance round on Commit timeout).
+        match prior_step {
             ConsensusStep::Propose => {
                 self.enter_prevote_step().await?;
             }

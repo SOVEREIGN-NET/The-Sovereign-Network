@@ -462,6 +462,13 @@ pub struct ConsensusEngine {
     validator_manager: ValidatorManager,
     /// Current consensus round
     current_round: ConsensusRound,
+    /// FSM control state (CONS-301..305).  Mirrors `current_round.step`
+    /// during the handler-by-handler migration; kept in sync via
+    /// `enter_fsm_state()` whenever the round step changes.  When the
+    /// migration completes (CONS-305f) `current_round.step` and the
+    /// `enter_*_step` helpers go away and this becomes the single
+    /// source of truth.
+    fsm_state: lib_consensus_core::fsm::ValidatorState,
     /// Consensus configuration
     config: ConsensusConfig,
     /// Pending proposals queue
@@ -612,6 +619,10 @@ impl ConsensusEngine {
             validator_identity: None,
             validator_manager,
             current_round,
+            // Engine starts at step=Propose (see initial ConsensusRound
+            // above) — keep the FSM mirror aligned. The consensus loop
+            // promotes to other states via `enter_fsm_state()`.
+            fsm_state: lib_consensus_core::fsm::ValidatorState::Proposing,
             config,
             pending_proposals: VecDeque::new(),
             vote_pool: HashMap::new(), // Composite key prevents equivocation
