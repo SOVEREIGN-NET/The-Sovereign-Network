@@ -319,9 +319,7 @@ impl ConsensusEngine {
 
                         // Broadcast heartbeat (best-effort, ignore failures)
                         if let Err(e) = self.broadcaster.broadcast_to_validators(
-                            ValidatorMessage::Heartbeat {
-                                message: heartbeat_msg,
-                            },
+                            ValidatorMessage::Heartbeat(heartbeat_msg),
                             &validator_ids,
                         ).await {
                             tracing::debug!("Heartbeat broadcast failed: {}", e);
@@ -502,10 +500,11 @@ impl ConsensusEngine {
 
     async fn on_message(&mut self, msg: ValidatorMessage) -> ConsensusResult<()> {
         match msg {
-            ValidatorMessage::Propose { proposal } => {
-                self.on_proposal(proposal).await?;
+            ValidatorMessage::Propose(propose_msg) => {
+                self.on_proposal(propose_msg.proposal).await?;
             }
-            ValidatorMessage::Vote { vote } => {
+            ValidatorMessage::Vote(vote_msg) => {
+                let vote = vote_msg.vote;
                 // Compute payload hash for replay detection
                 let payload_bytes =
                     bincode::serialize(&vote).expect("Vote serialization cannot fail");
@@ -565,7 +564,7 @@ impl ConsensusEngine {
                     }
                 }
             }
-            ValidatorMessage::Heartbeat { message } => {
+            ValidatorMessage::Heartbeat(heartbeat_msg) => {
                 // Process heartbeat (advisory only, never affects consensus)
                 let is_validator = |vid: &IdentityId| {
                     self.validator_manager
@@ -574,9 +573,9 @@ impl ConsensusEngine {
                         .any(|v| v.identity == *vid)
                 };
 
-                let validator_id = message.validator.clone();
+                let validator_id = heartbeat_msg.validator.clone();
                 let result = self.heartbeat_tracker.process_heartbeat(
-                    message,
+                    heartbeat_msg,
                     is_validator,
                     self.current_round.height,
                 );

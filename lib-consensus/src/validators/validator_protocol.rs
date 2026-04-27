@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use lib_crypto::{Hash, KeyPair, PostQuantumSignature};
 use lib_identity::IdentityId;
@@ -33,18 +33,33 @@ pub trait ValidatorNetworkTransport: Send + Sync {
     ) -> Result<()>;
 }
 
-/// BFT consensus message types
+/// Canonical wire-level BFT consensus message.
+///
+/// CONS-201: Collapsed from a 5-variant form. The deleted variants:
+///
+/// - `Commit(CommitMessage)` — commit votes flow through `Vote(VoteMessage)`
+///   with `VoteType::Commit`. The CommitMessage layer added a separate
+///   message ID + signature path with no extra information beyond what
+///   the inner vote already carries; commit-handling code that relied on
+///   it was a translation shim into a synthesized `Vote`.
+/// - `RoundChange(RoundChangeMessage)` — view changes are driven by
+///   timeouts in this Tendermint-like BFT, not by explicit round-change
+///   messages. The receive-side handler synthesized a `Heartbeat` for
+///   liveness tracking; that pathway is now a no-op (heartbeats already
+///   carry the same liveness signal).
+///
+/// This is also the canonical `ValidatorMessage` for the consensus engine.
+/// The previous `lib_consensus::types::ValidatorMessage` (a thin
+/// 3-variant struct-variant enum) was removed in the same change; the
+/// `types::ValidatorMessage` re-export aliases this type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ValidatorMessage {
     /// Proposal message from block proposer
     Propose(ProposeMessage),
-    /// Vote message from validators
+    /// Vote message from validators (PreVote, PreCommit, or Commit votes
+    /// — distinguished by `VoteType` inside the inner `ConsensusVote`).
     Vote(VoteMessage),
-    /// Commit message for block finalization
-    Commit(CommitMessage),
-    /// Round change request
-    RoundChange(RoundChangeMessage),
-    /// Validator heartbeat
+    /// Validator heartbeat for liveness tracking.
     Heartbeat(HeartbeatMessage),
 }
 
@@ -82,47 +97,8 @@ pub struct VoteMessage {
     pub signature: PostQuantumSignature,
 }
 
-/// Commit message for block finalization
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommitMessage {
-    /// Message identifier
-    pub message_id: Hash,
-    /// Committing validator identity
-    pub committer: IdentityId,
-    /// Committed proposal hash
-    pub proposal_id: Hash,
-    /// Block height being committed
-    pub height: u64,
-    /// Consensus round
-    pub round: u32,
-    /// Commitment proof (aggregate signatures)
-    pub commitment_proof: CommitmentProof,
-    /// Message timestamp
-    pub timestamp: u64,
-    /// Committer signature over message
-    pub signature: PostQuantumSignature,
-}
-
-/// Round change message when consensus stalls
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RoundChangeMessage {
-    /// Message identifier
-    pub message_id: Hash,
-    /// Validator requesting round change
-    pub validator: IdentityId,
-    /// Current block height
-    pub height: u64,
-    /// New round number
-    pub new_round: u32,
-    /// Reason for round change
-    pub reason: RoundChangeReason,
-    /// Locked proposal from previous round (if any)
-    pub locked_proposal: Option<Hash>,
-    /// Message timestamp
-    pub timestamp: u64,
-    /// Validator signature over message
-    pub signature: PostQuantumSignature,
-}
+// CONS-201: `CommitMessage` and `RoundChangeMessage` were deleted along
+// with the `Commit` and `RoundChange` `ValidatorMessage` variants.
 
 /// Heartbeat message for liveness detection
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -176,29 +152,8 @@ pub struct ConsensusStateView {
     pub vote_counts: BTreeMap<Hash, u32>,
 }
 
-/// Commitment proof with aggregate signatures
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommitmentProof {
-    /// Aggregate signature from +2/3 validators
-    pub aggregate_signature: Vec<u8>,
-    /// Validator identities that signed
-    pub signers: Vec<IdentityId>,
-    /// Combined voting power
-    pub voting_power: u64,
-}
-
-/// Reasons for requesting round change
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum RoundChangeReason {
-    /// Round timeout expired
-    Timeout,
-    /// Invalid proposal received
-    InvalidProposal,
-    /// Conflicting proposals detected
-    ConflictingProposals,
-    /// Insufficient votes received
-    InsufficientVotes,
-}
+// CONS-201: `CommitmentProof` and `RoundChangeReason` were deleted along
+// with the `Commit` and `RoundChange` variants they supported.
 
 /// Network summary for heartbeats
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -294,8 +249,8 @@ impl Default for ValidatorProtocolConfig {
 
 const SIGNING_DOMAIN_PROPOSE: &[u8] = b"zhtp:consensus:validator-msg:v1:propose";
 const SIGNING_DOMAIN_VOTE: &[u8] = b"zhtp:consensus:validator-msg:v1:vote";
-const SIGNING_DOMAIN_COMMIT: &[u8] = b"zhtp:consensus:validator-msg:v1:commit";
-const SIGNING_DOMAIN_ROUND_CHANGE: &[u8] = b"zhtp:consensus:validator-msg:v1:round_change";
+// CONS-201: `SIGNING_DOMAIN_COMMIT` and `SIGNING_DOMAIN_ROUND_CHANGE`
+// were deleted along with the Commit and RoundChange variants.
 const SIGNING_DOMAIN_HEARTBEAT: &[u8] = b"zhtp:consensus:validator-msg:v1:heartbeat";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -316,27 +271,8 @@ struct VoteSigningPayload {
     timestamp: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct CommitSigningPayload {
-    message_id: Hash,
-    committer: IdentityId,
-    proposal_id: Hash,
-    height: u64,
-    round: u32,
-    commitment_proof: CommitmentProof,
-    timestamp: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RoundChangeSigningPayload {
-    message_id: Hash,
-    validator: IdentityId,
-    height: u64,
-    new_round: u32,
-    reason: RoundChangeReason,
-    locked_proposal: Option<Hash>,
-    timestamp: u64,
-}
+// CONS-201: `CommitSigningPayload` and `RoundChangeSigningPayload`
+// were deleted along with the Commit and RoundChange variants.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct HeartbeatSigningPayload {
@@ -488,75 +424,10 @@ impl ValidatorProtocol {
             .await
     }
 
-    /// Broadcast a commit message to finalize a block
-    pub async fn broadcast_commit(
-        &self,
-        proposal_id: Hash,
-        height: u64,
-        round: u32,
-        commitment_proof: CommitmentProof,
-    ) -> Result<()> {
-        let validator_id = self
-            .validator_identity
-            .as_ref()
-            .ok_or_else(|| anyhow!("Validator identity not set"))?;
-
-        let mut message = CommitMessage {
-            message_id: self.generate_message_id(),
-            committer: validator_id.clone(),
-            proposal_id: proposal_id.clone(),
-            height,
-            round,
-            commitment_proof,
-            timestamp: self.current_timestamp(),
-            signature: PostQuantumSignature::default(),
-        };
-
-        message.signature = self.sign_commit_message(&message)?;
-
-        info!(
-            "Broadcasting commit for proposal {} at height {} from validator {}",
-            proposal_id, height, validator_id
-        );
-
-        self.broadcast_message(ValidatorMessage::Commit(message))
-            .await
-    }
-
-    /// Request a round change due to timeout or other issues
-    pub async fn request_round_change(
-        &self,
-        height: u64,
-        new_round: u32,
-        reason: RoundChangeReason,
-        locked_proposal: Option<Hash>,
-    ) -> Result<()> {
-        let validator_id = self
-            .validator_identity
-            .as_ref()
-            .ok_or_else(|| anyhow!("Validator identity not set"))?;
-
-        let mut message = RoundChangeMessage {
-            message_id: self.generate_message_id(),
-            validator: validator_id.clone(),
-            height,
-            new_round,
-            reason: reason.clone(),
-            locked_proposal,
-            timestamp: self.current_timestamp(),
-            signature: PostQuantumSignature::default(),
-        };
-
-        message.signature = self.sign_round_change_message(&message)?;
-
-        warn!(
-            "Requesting round change to {} for height {} due to {:?}",
-            new_round, height, reason
-        );
-
-        self.broadcast_message(ValidatorMessage::RoundChange(message))
-            .await
-    }
+    // CONS-201: `broadcast_commit` and `request_round_change` were deleted
+    // along with the `Commit` and `RoundChange` variants. Commit votes now
+    // flow as `Vote(VoteMessage)` with `VoteType::Commit`, and round
+    // changes are driven by timeouts (no explicit RoundChange message).
 
     /// Send periodic heartbeat to maintain liveness
     pub async fn send_heartbeat(
@@ -609,8 +480,6 @@ impl ValidatorProtocol {
         match message {
             ValidatorMessage::Propose(msg) => self.handle_propose_message(msg).await,
             ValidatorMessage::Vote(msg) => self.handle_vote_message(msg).await,
-            ValidatorMessage::Commit(msg) => self.handle_commit_message(msg).await,
-            ValidatorMessage::RoundChange(msg) => self.handle_round_change_message(msg).await,
             ValidatorMessage::Heartbeat(msg) => self.handle_heartbeat_message(msg).await,
         }
     }
@@ -725,40 +594,8 @@ impl ValidatorProtocol {
             .sign(&Self::signing_bytes(SIGNING_DOMAIN_VOTE, &bytes))
     }
 
-    fn sign_commit_message(&self, message: &CommitMessage) -> Result<PostQuantumSignature> {
-        let payload = CommitSigningPayload {
-            message_id: message.message_id.clone(),
-            committer: message.committer.clone(),
-            proposal_id: message.proposal_id.clone(),
-            height: message.height,
-            round: message.round,
-            commitment_proof: message.commitment_proof.clone(),
-            timestamp: message.timestamp,
-        };
-        let bytes = bincode::serialize(&payload)
-            .map_err(|e| anyhow!("CommitSigningPayload encode failed: {e}"))?;
-        self.local_keypair()?
-            .sign(&Self::signing_bytes(SIGNING_DOMAIN_COMMIT, &bytes))
-    }
-
-    fn sign_round_change_message(
-        &self,
-        message: &RoundChangeMessage,
-    ) -> Result<PostQuantumSignature> {
-        let payload = RoundChangeSigningPayload {
-            message_id: message.message_id.clone(),
-            validator: message.validator.clone(),
-            height: message.height,
-            new_round: message.new_round,
-            reason: message.reason.clone(),
-            locked_proposal: message.locked_proposal.clone(),
-            timestamp: message.timestamp,
-        };
-        let bytes = bincode::serialize(&payload)
-            .map_err(|e| anyhow!("RoundChangeSigningPayload encode failed: {e}"))?;
-        self.local_keypair()?
-            .sign(&Self::signing_bytes(SIGNING_DOMAIN_ROUND_CHANGE, &bytes))
-    }
+    // CONS-201: `sign_commit_message` and `sign_round_change_message` were
+    // deleted along with the Commit and RoundChange variants.
 
     fn sign_heartbeat_message(&self, message: &HeartbeatMessage) -> Result<PostQuantumSignature> {
         let payload = HeartbeatSigningPayload {
@@ -826,48 +663,6 @@ impl ValidatorProtocol {
                     &m.signature,
                     m.timestamp,
                     SIGNING_DOMAIN_VOTE,
-                    &bytes,
-                )
-                .await
-            }
-            ValidatorMessage::Commit(m) => {
-                let payload = CommitSigningPayload {
-                    message_id: m.message_id.clone(),
-                    committer: m.committer.clone(),
-                    proposal_id: m.proposal_id.clone(),
-                    height: m.height,
-                    round: m.round,
-                    commitment_proof: m.commitment_proof.clone(),
-                    timestamp: m.timestamp,
-                };
-                let bytes = bincode::serialize(&payload)
-                    .map_err(|e| anyhow!("CommitSigningPayload encode failed: {e}"))?;
-                self.verify_signed(
-                    &m.committer,
-                    &m.signature,
-                    m.timestamp,
-                    SIGNING_DOMAIN_COMMIT,
-                    &bytes,
-                )
-                .await
-            }
-            ValidatorMessage::RoundChange(m) => {
-                let payload = RoundChangeSigningPayload {
-                    message_id: m.message_id.clone(),
-                    validator: m.validator.clone(),
-                    height: m.height,
-                    new_round: m.new_round,
-                    reason: m.reason.clone(),
-                    locked_proposal: m.locked_proposal.clone(),
-                    timestamp: m.timestamp,
-                };
-                let bytes = bincode::serialize(&payload)
-                    .map_err(|e| anyhow!("RoundChangeSigningPayload encode failed: {e}"))?;
-                self.verify_signed(
-                    &m.validator,
-                    &m.signature,
-                    m.timestamp,
-                    SIGNING_DOMAIN_ROUND_CHANGE,
                     &bytes,
                 )
                 .await
@@ -1049,10 +844,8 @@ impl ValidatorProtocol {
             message.proposer, message.proposal.height
         );
 
-        self.forward_to_consensus(crate::types::ValidatorMessage::Propose {
-            proposal: message.proposal,
-        })
-        .await
+        self.forward_to_consensus(ValidatorMessage::Propose(message))
+            .await
     }
 
     /// Handle incoming vote message: forward to consensus engine as `Vote`.
@@ -1062,63 +855,15 @@ impl ValidatorProtocol {
             message.voter, message.vote.proposal_id
         );
 
-        self.forward_to_consensus(crate::types::ValidatorMessage::Vote { vote: message.vote })
+        self.forward_to_consensus(ValidatorMessage::Vote(message))
             .await
     }
 
-    /// Handle incoming commit message: synthesize a `Vote` with `VoteType::Commit`
-    /// and forward to consensus engine.
-    async fn handle_commit_message(&self, message: CommitMessage) -> Result<()> {
-        info!(
-            "Received verified commit from {} for proposal {} at height {}",
-            message.committer, message.proposal_id, message.height
-        );
-
-        // Synthesize a ConsensusVote from the CommitMessage
-        // (same pattern as convert_network_to_consensus_message in message_handler.rs)
-        let commit_vote = ConsensusVote {
-            id: message.message_id,
-            height: message.height,
-            round: message.round,
-            vote_type: VoteType::Commit,
-            proposal_id: message.proposal_id,
-            voter: message.committer,
-            timestamp: message.timestamp,
-            signature: message.signature,
-        };
-
-        self.forward_to_consensus(crate::types::ValidatorMessage::Vote { vote: commit_vote })
-            .await
-    }
-
-    /// Handle round change request: convert to a heartbeat-like message to
-    /// maintain liveness tracking in the consensus engine.
-    async fn handle_round_change_message(&self, message: RoundChangeMessage) -> Result<()> {
-        warn!(
-            "Received verified round change from {} for round {} due to {:?}",
-            message.validator, message.new_round, message.reason
-        );
-
-        // Convert to Heartbeat for liveness tracking
-        // (same pattern as convert_network_to_consensus_message in message_handler.rs)
-        let heartbeat = HeartbeatMessage {
-            message_id: message.message_id,
-            validator: message.validator,
-            height: message.height,
-            round: message.new_round,
-            step: ConsensusStep::NewRound,
-            network_summary: NetworkSummary {
-                active_validators: 0,
-                health_score: 1.0,
-                block_rate: 0.0,
-            },
-            timestamp: message.timestamp,
-            signature: message.signature,
-        };
-
-        self.forward_to_consensus(crate::types::ValidatorMessage::Heartbeat { message: heartbeat })
-            .await
-    }
+    // CONS-201: `handle_commit_message` and `handle_round_change_message`
+    // were deleted along with the Commit and RoundChange variants. The
+    // commit-as-Vote translation is no longer needed because commit votes
+    // travel as `Vote(VoteMessage)` with `VoteType::Commit` end-to-end.
+    // Round changes are driven by timeouts, not by an inbound message.
 
     /// Handle heartbeat message
     async fn handle_heartbeat_message(&self, message: HeartbeatMessage) -> Result<()> {
@@ -1136,7 +881,7 @@ impl ValidatorProtocol {
             }
         }
 
-        self.forward_to_consensus(crate::types::ValidatorMessage::Heartbeat { message })
+        self.forward_to_consensus(ValidatorMessage::Heartbeat(message))
             .await
     }
 
@@ -1154,8 +899,6 @@ impl ValidatorProtocol {
         match message {
             ValidatorMessage::Propose(msg) => msg.message_id.clone(),
             ValidatorMessage::Vote(msg) => msg.message_id.clone(),
-            ValidatorMessage::Commit(msg) => msg.message_id.clone(),
-            ValidatorMessage::RoundChange(msg) => msg.message_id.clone(),
             ValidatorMessage::Heartbeat(msg) => msg.message_id.clone(),
         }
     }
@@ -1447,8 +1190,8 @@ mod tests {
         // Should receive the forwarded message on the consensus channel
         let forwarded = rx.try_recv().expect("Expected forwarded message");
         match forwarded {
-            crate::types::ValidatorMessage::Propose { proposal } => {
-                assert_eq!(proposal.height, 1);
+            crate::types::ValidatorMessage::Propose(msg) => {
+                assert_eq!(msg.proposal.height, 1);
             }
             other => panic!("Expected Propose, got {:?}", other),
         }
@@ -1493,9 +1236,9 @@ mod tests {
 
         let forwarded = rx.try_recv().expect("Expected forwarded vote");
         match forwarded {
-            crate::types::ValidatorMessage::Vote { vote } => {
-                assert_eq!(vote.height, 5);
-                assert_eq!(vote.vote_type, VoteType::PreVote);
+            crate::types::ValidatorMessage::Vote(msg) => {
+                assert_eq!(msg.vote.height, 5);
+                assert_eq!(msg.vote.vote_type, VoteType::PreVote);
             }
             other => panic!("Expected Vote, got {:?}", other),
         }
