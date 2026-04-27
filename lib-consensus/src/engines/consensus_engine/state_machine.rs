@@ -1796,8 +1796,13 @@ impl ConsensusEngine {
             // commit-vote quorum that maybe_finalize handles); the
             // SendCommit action is the work that `enter_commit_step`
             // already does.
+            // Derive the prior state from the legacy step (the
+            // source of truth during the migration) rather than
+            // `self.fsm_state` to avoid silent action drops if the
+            // mirror has drifted — PR #2398 review.
+            let prior_fsm = self.step_to_fsm_state(self.current_round.step.clone());
             let (next_fsm, actions) = lib_consensus_core::fsm::transition(
-                self.fsm_state.clone(),
+                prior_fsm,
                 lib_consensus_core::fsm::Event::PrecommitThresholdReached {
                     block_id: proposal_id.clone(),
                 },
@@ -2002,13 +2007,38 @@ impl ConsensusEngine {
                 // round as not timed out so the next deadline is fresh.
                 self.current_round.timed_out = false;
             }
-            // Other actions handled by later CONS-305x stages or by
-            // the existing handlers.  Logging the unhandled ones at
-            // debug level — never panic, never silently drop.
+
+            // CONS-305x staging: these actions are emitted by the FSM
+            // but the work is currently done by the existing engine
+            // helpers (`enter_prevote_step`, `enter_precommit_step`,
+            // `enter_commit_step`, `process_committed_block`, the
+            // proposal relay in `on_proposal`).  CONS-305f folds the
+            // helpers into per-action handlers and removes this
+            // branch.  Until then they are deliberate no-ops — NOT
+            // missing-handler debug logs (which would fire on every
+            // round and mislead operators per PR #2398 review).
+            A::CreateProposal
+            | A::BroadcastProposal { .. }
+            | A::SendPrevote { .. }
+            | A::SendPrecommit { .. }
+            | A::SendCommit { .. }
+            | A::CommitBlock { .. }
+            | A::AdvanceRound => {
+                // engine still does the work.
+            }
+
+            // Logged-ignored arrivals (state didn't change, just
+            // observability).  Drop silently — the FSM's own
+            // observability hooks handle these.
+            A::LogIgnoredEvent(_) | A::LogHung { .. } | A::LogPanic { .. } => {}
+
+            // Operator/lifecycle actions wired in later CONS-305x
+            // stages.  Log at debug for visibility; engine code
+            // continues to handle them via existing paths.
             other => {
                 tracing::debug!(
                     fsm_action = ?other,
-                    "FSM emitted action with no engine handler yet (CONS-305 in progress)"
+                    "FSM emitted lifecycle action with no engine handler yet (CONS-305 in progress)"
                 );
             }
         }
@@ -2492,8 +2522,12 @@ impl ConsensusEngine {
                     // height/proposal_id metadata to track state.
                     attestations: Vec::new(),
                 };
+                // Derive prior state from legacy step (source of
+                // truth during the migration) to avoid silent action
+                // drops on mirror drift — PR #2398 review.
+                let prior_fsm = self.step_to_fsm_state(self.current_round.step.clone());
                 let (next_fsm, actions) = lib_consensus_core::fsm::transition(
-                    self.fsm_state.clone(),
+                    prior_fsm,
                     lib_consensus_core::fsm::Event::CommitQuorumReached {
                         block_id: proposal_id.clone(),
                         quorum: bft_quorum,
