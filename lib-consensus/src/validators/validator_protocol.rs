@@ -285,6 +285,81 @@ struct HeartbeatSigningPayload {
     timestamp: u64,
 }
 
+/// Bytes the signature covers: domain separator + 0x00 + bincode(payload).
+/// Lifted out so engine-side and protocol-side signing produce identical
+/// bytes for the same envelope.
+pub(crate) fn signing_bytes(domain: &[u8], payload: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(domain.len() + 1 + payload.len());
+    out.extend_from_slice(domain);
+    out.push(0u8);
+    out.extend_from_slice(payload);
+    out
+}
+
+/// Sign a `ProposeMessage` outer envelope with the given keypair.
+///
+/// The envelope signature covers `ProposeSigningPayload`
+/// (`message_id` + `proposer` + `proposal` + `justification` + `timestamp`),
+/// not the inner `ConsensusProposal.signature`. Receivers reconstruct this
+/// exact payload in `verify_validator_message`. PR #2387 review (Copilot)
+/// caught the previous code reusing `proposal.signature` here, which would
+/// fail outer-envelope verification on Mainnet (where `bootstrap_tofu` is
+/// false).
+pub(crate) fn sign_propose_envelope(
+    message: &ProposeMessage,
+    keypair: &KeyPair,
+) -> Result<PostQuantumSignature> {
+    let payload = ProposeSigningPayload {
+        message_id: message.message_id.clone(),
+        proposer: message.proposer.clone(),
+        proposal: message.proposal.clone(),
+        justification: message.justification.clone(),
+        timestamp: message.timestamp,
+    };
+    let bytes = bincode::serialize(&payload)
+        .map_err(|e| anyhow!("ProposeSigningPayload encode failed: {e}"))?;
+    keypair.sign(&signing_bytes(SIGNING_DOMAIN_PROPOSE, &bytes))
+}
+
+/// Sign a `VoteMessage` outer envelope with the given keypair.
+///
+/// The envelope signature covers `VoteSigningPayload` (`message_id` +
+/// `voter` + inner `vote` + `consensus_state` + envelope `timestamp`).
+pub(crate) fn sign_vote_envelope(
+    message: &VoteMessage,
+    keypair: &KeyPair,
+) -> Result<PostQuantumSignature> {
+    let payload = VoteSigningPayload {
+        message_id: message.message_id.clone(),
+        voter: message.voter.clone(),
+        vote: message.vote.clone(),
+        consensus_state: message.consensus_state.clone(),
+        timestamp: message.timestamp,
+    };
+    let bytes = bincode::serialize(&payload)
+        .map_err(|e| anyhow!("VoteSigningPayload encode failed: {e}"))?;
+    keypair.sign(&signing_bytes(SIGNING_DOMAIN_VOTE, &bytes))
+}
+
+/// Sign a `HeartbeatMessage` outer envelope with the given keypair.
+pub(crate) fn sign_heartbeat_envelope(
+    message: &HeartbeatMessage,
+    keypair: &KeyPair,
+) -> Result<PostQuantumSignature> {
+    let payload = HeartbeatSigningPayload {
+        message_id: message.message_id.clone(),
+        validator: message.validator.clone(),
+        height: message.height,
+        round: message.round,
+        step: message.step.clone(),
+        network_summary: message.network_summary.clone(),
+        timestamp: message.timestamp,
+    };
+    let bytes = bincode::serialize(&payload)
+        .map_err(|e| anyhow!("HeartbeatSigningPayload encode failed: {e}"))?;
+    keypair.sign(&signing_bytes(SIGNING_DOMAIN_HEARTBEAT, &bytes))
+}
+
 /// Connection to a peer validator
 #[derive(Debug, Clone)]
 pub struct ValidatorPeerConnection {
@@ -558,59 +633,19 @@ impl ValidatorProtocol {
             .ok_or_else(|| anyhow!("Validator keypair not set"))
     }
 
-    fn signing_bytes(domain: &[u8], payload: &[u8]) -> Vec<u8> {
-        let mut out = Vec::with_capacity(domain.len() + 1 + payload.len());
-        out.extend_from_slice(domain);
-        out.push(0u8);
-        out.extend_from_slice(payload);
-        out
-    }
-
     fn sign_propose_message(&self, message: &ProposeMessage) -> Result<PostQuantumSignature> {
-        let payload = ProposeSigningPayload {
-            message_id: message.message_id.clone(),
-            proposer: message.proposer.clone(),
-            proposal: message.proposal.clone(),
-            justification: message.justification.clone(),
-            timestamp: message.timestamp,
-        };
-        let bytes = bincode::serialize(&payload)
-            .map_err(|e| anyhow!("ProposeSigningPayload encode failed: {e}"))?;
-        self.local_keypair()?
-            .sign(&Self::signing_bytes(SIGNING_DOMAIN_PROPOSE, &bytes))
+        sign_propose_envelope(message, self.local_keypair()?)
     }
 
     fn sign_vote_message(&self, message: &VoteMessage) -> Result<PostQuantumSignature> {
-        let payload = VoteSigningPayload {
-            message_id: message.message_id.clone(),
-            voter: message.voter.clone(),
-            vote: message.vote.clone(),
-            consensus_state: message.consensus_state.clone(),
-            timestamp: message.timestamp,
-        };
-        let bytes = bincode::serialize(&payload)
-            .map_err(|e| anyhow!("VoteSigningPayload encode failed: {e}"))?;
-        self.local_keypair()?
-            .sign(&Self::signing_bytes(SIGNING_DOMAIN_VOTE, &bytes))
+        sign_vote_envelope(message, self.local_keypair()?)
     }
 
     // CONS-201: `sign_commit_message` and `sign_round_change_message` were
     // deleted along with the Commit and RoundChange variants.
 
     fn sign_heartbeat_message(&self, message: &HeartbeatMessage) -> Result<PostQuantumSignature> {
-        let payload = HeartbeatSigningPayload {
-            message_id: message.message_id.clone(),
-            validator: message.validator.clone(),
-            height: message.height,
-            round: message.round,
-            step: message.step.clone(),
-            network_summary: message.network_summary.clone(),
-            timestamp: message.timestamp,
-        };
-        let bytes = bincode::serialize(&payload)
-            .map_err(|e| anyhow!("HeartbeatSigningPayload encode failed: {e}"))?;
-        self.local_keypair()?
-            .sign(&Self::signing_bytes(SIGNING_DOMAIN_HEARTBEAT, &bytes))
+        sign_heartbeat_envelope(message, self.local_keypair()?)
     }
 
     fn verify_timestamp_fresh(&self, timestamp: u64) -> Result<()> {
@@ -767,7 +802,7 @@ impl ValidatorProtocol {
             }
         }
 
-        let bytes = Self::signing_bytes(domain, payload);
+        let bytes = signing_bytes(domain, payload);
         let ok = signature.public_key.verify(&bytes, signature)?;
         if !ok {
             return Err(anyhow!(
@@ -1012,6 +1047,101 @@ mod tests {
         discovery.announce_validator(ann).await?;
 
         Ok((protocol, rx, kp, signer))
+    }
+
+    #[tokio::test]
+    async fn test_engine_envelope_signed_propose_verifies() -> Result<()> {
+        // PR #2387 review: confirm an engine-built ProposeMessage signed via
+        // `sign_propose_envelope` round-trips through ValidatorProtocol's
+        // outer-envelope verifier with `bootstrap_tofu = false` (Mainnet
+        // semantics). Pre-fix the engine reused the inner content signature
+        // and this verification deterministically failed.
+        let (mut protocol, mut rx, kp, signer) = setup_protocol_with_forwarder().await?;
+        protocol.config.bootstrap_tofu = false;
+
+        let now = protocol.current_timestamp();
+        let mut msg = ProposeMessage {
+            message_id: Hash::from_bytes(&[42u8; 32]),
+            proposer: signer.clone(),
+            proposal: ConsensusProposal {
+                id: Hash::from_bytes(&[1u8; 32]),
+                proposer: signer.clone(),
+                height: 1,
+                round: 0,
+                protocol_version: 1,
+                previous_hash: Hash::from_bytes(&[2u8; 32]),
+                block_data: b"block".to_vec(),
+                timestamp: now,
+                // Inner content signature deliberately default — the outer
+                // envelope is what's being verified here.
+                signature: PostQuantumSignature::default(),
+                consensus_proof: ConsensusProof {
+                    consensus_type: ConsensusType::ByzantineFaultTolerance,
+                    stake_proof: None,
+                    storage_proof: None,
+                    work_proof: None,
+                    zk_did_proof: None,
+                    timestamp: now,
+                },
+            },
+            justification: None,
+            timestamp: now,
+            signature: PostQuantumSignature::default(),
+        };
+        msg.signature = sign_propose_envelope(&msg, &kp)?;
+
+        protocol
+            .handle_message(ValidatorMessage::Propose(msg))
+            .await?;
+
+        let forwarded = rx.try_recv().expect("Expected forwarded message");
+        assert!(matches!(
+            forwarded,
+            crate::types::ValidatorMessage::Propose(_)
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_engine_envelope_signed_vote_verifies() -> Result<()> {
+        let (mut protocol, mut rx, kp, signer) = setup_protocol_with_forwarder().await?;
+        protocol.config.bootstrap_tofu = false;
+
+        let now = protocol.current_timestamp();
+        let vote = ConsensusVote {
+            id: Hash::from_bytes(&[10u8; 32]),
+            height: 5,
+            round: 0,
+            vote_type: VoteType::PreVote,
+            proposal_id: Hash::from_bytes(&[11u8; 32]),
+            voter: signer.clone(),
+            timestamp: now,
+            signature: PostQuantumSignature::default(),
+        };
+        let mut msg = VoteMessage {
+            message_id: Hash::from_bytes(&[99u8; 32]),
+            voter: signer.clone(),
+            vote,
+            consensus_state: ConsensusStateView {
+                height: 5,
+                round: 0,
+                step: ConsensusStep::PreVote,
+                known_proposals: vec![],
+                vote_counts: BTreeMap::new(),
+            },
+            timestamp: now,
+            signature: PostQuantumSignature::default(),
+        };
+        msg.signature = sign_vote_envelope(&msg, &kp)?;
+
+        protocol.handle_message(ValidatorMessage::Vote(msg)).await?;
+
+        let forwarded = rx.try_recv().expect("Expected forwarded vote");
+        assert!(matches!(
+            forwarded,
+            crate::types::ValidatorMessage::Vote(_)
+        ));
+        Ok(())
     }
 
     #[tokio::test]
