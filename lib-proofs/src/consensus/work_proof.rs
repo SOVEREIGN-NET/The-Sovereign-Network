@@ -111,11 +111,16 @@ impl WorkProof {
     /// Verify the work proof's hash integrity. Self-contained — no network
     /// state lookup. The cross-validator check that compares the claimed work
     /// against actual node activity lives in `lib_consensus::proof_verify`.
+    ///
+    /// Hashes against `self.routing_work` directly. PR #2383 review caught
+    /// the previous `routes_handled * 1000` reconstruction: `new()` stores
+    /// `routes_handled = routing_work / 1000`, so any `routing_work` that
+    /// isn't a multiple of 1000 lost its remainder and `verify()` would
+    /// deterministically fail.
     pub fn verify(&self) -> Result<bool> {
-        let routing_work = self.routes_handled * 1000;
         let hash_input = format!(
             "{}:{}:{}:{}:{}:{}:{}",
-            routing_work,
+            self.routing_work,
             self.data_stored,
             self.computations_performed,
             self.quality_score,
@@ -127,9 +132,13 @@ impl WorkProof {
         Ok(self.hash == expected_hash)
     }
 
-    /// Total useful work represented by this proof.
+    /// Total useful work represented by this proof. Uses `routing_work`
+    /// directly so the count doesn't undercount when the original wasn't
+    /// a multiple of 1000 (see `verify()`).
     pub fn total_work(&self) -> u64 {
-        (self.routes_handled * 1000) + self.data_stored + self.computations_performed
+        self.routing_work
+            .saturating_add(self.data_stored)
+            .saturating_add(self.computations_performed)
     }
 }
 

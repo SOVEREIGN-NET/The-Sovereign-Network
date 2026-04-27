@@ -220,12 +220,25 @@ impl RewardCalculator {
         }
     }
 
+    /// Sum of work bonuses across breakdown entries, in SOV atoms.
+    ///
+    /// Same unit fix as `calculate_work_reward` (PR #2383 review): scale
+    /// the float multiplier through `multiplier_to_ppm` and use
+    /// `lib_types::sov::atoms(10)` as the per-unit reward so bonuses are
+    /// expressed in atoms — matching `base_reward` and `participation_bonus`
+    /// at the call site in `calculate_validator_reward`.
     fn calculate_work_bonus(&self, work_breakdown: &HashMap<UsefulWorkType, u64>) -> u128 {
+        const MULTIPLIER_PPM_SCALE: u128 = 1_000_000;
+        let reward_per_unit = lib_types::sov::atoms(10);
         let mut total_bonus = 0u128;
         for (work_type, amount) in work_breakdown {
             if let Some(multiplier) = self.work_multipliers.get(work_type) {
-                let bonus = (*amount as f64 * multiplier * 10.0) as u128; // 10 SOV per unit
-                total_bonus += bonus;
+                let multiplier_ppm = Self::multiplier_to_ppm(*multiplier);
+                let bonus = (*amount as u128)
+                    .saturating_mul(reward_per_unit)
+                    .saturating_mul(multiplier_ppm)
+                    / MULTIPLIER_PPM_SCALE;
+                total_bonus = total_bonus.saturating_add(bonus);
             }
         }
         total_bonus

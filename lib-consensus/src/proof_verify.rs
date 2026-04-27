@@ -93,10 +93,18 @@ fn verify_compute_work(proof: &ProofOfUsefulWork, network_state: &NetworkState) 
 
 impl NetworkState {
     /// Routing work performed by a node, derived from network bandwidth records.
+    ///
+    /// Returns `0` if the network has no participants — divide-by-zero
+    /// guard caught in PR #2383 review (Copilot). With no participants
+    /// there is nothing to attribute work against, so a node should
+    /// neither earn nor be penalised for routing.
     pub fn get_node_routing_work(&self, node_id: &[u8; 32]) -> Result<u64> {
+        if self.total_participants == 0 {
+            return Ok(0);
+        }
         let base_routing = (self.total_bandwidth_shared / self.total_participants).max(1);
         let node_factor = (node_id[0] as u64 % 5) + 1; // 1-5 multiplier
-        let routing_work = base_routing * node_factor;
+        let routing_work = base_routing.saturating_mul(node_factor);
         Ok(routing_work.min(10_000)) // Cap at reasonable maximum
     }
 
