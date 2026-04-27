@@ -1,37 +1,44 @@
 //! Adapter implementing `lib_consensus_core::ports::GovernanceCallback` over
 //! the in-memory `DaoEngine`.
 //!
-//! Per **AD-005**, the trait is fire-and-forget: failures are logged here,
-//! never propagated to the engine. The engine just emits one
-//! `on_round_finalized(height)` per finalized round; this adapter walks
-//! expired proposals and runs them.
+//! Per **AD-005** the trait is fire-and-forget: failures are logged here,
+//! never propagated to the engine. The engine emits one
+//! `on_round_finalized(height)` per finalized round; this adapter spawns
+//! a task that walks expired proposals and runs them.
 //!
-//! Async work inside the adapter is bridged via a Tokio handle reference
-//! captured at construction (or `tokio::runtime::Handle::try_current()` if
-//! none is provided). If no runtime is available the call is logged and
-//! dropped — production callers always wire a handle.
+//! ## Why spawn (not `Handle::block_on`)
+//!
+//! `on_round_finalized` is invoked from inside the consensus engine's async
+//! event loop, i.e. from a thread that is *already* running on a Tokio
+//! runtime worker. Calling `Handle::block_on` from such a thread panics on
+//! a multi-thread runtime (`Cannot start a runtime from within a runtime`)
+//! and can deadlock on a current-thread runtime. PR #2385 review (Copilot)
+//! flagged this — fix is to schedule the async work via `Handle::spawn` and
+//! switch the engine lock to `tokio::sync::Mutex` so the guard can safely
+//! cross await points.
 
 use crate::dao::DaoEngine;
 use lib_consensus_core::ports::GovernanceCallback;
-use std::sync::Mutex;
+use std::sync::Arc;
 use tokio::runtime::Handle;
+use tokio::sync::Mutex;
 
 /// Runtime-side adapter that executes governance work in response to engine
 /// `on_round_finalized` events.
 pub struct ConsensusGovernanceAdapter {
-    engine: Mutex<DaoEngine>,
-    /// Runtime handle used to drive `process_expired_proposals` (which is
-    /// `async`). `None` means "use the ambient runtime if any" — primarily
-    /// for tests; production should pass an explicit handle.
+    engine: Arc<Mutex<DaoEngine>>,
+    /// Runtime handle used to spawn `process_expired_proposals`. `None`
+    /// means "discover the ambient runtime at call time" — primarily for
+    /// tests; production wires an explicit handle via [`with_runtime`].
     runtime: Option<Handle>,
 }
 
 impl ConsensusGovernanceAdapter {
     /// Create a new adapter wrapping a fresh `DaoEngine`. Captures the current
-    /// Tokio runtime handle if one is available.
+    /// Tokio runtime handle if one is available at construction time.
     pub fn new() -> Self {
         Self {
-            engine: Mutex::new(DaoEngine::new()),
+            engine: Arc::new(Mutex::new(DaoEngine::new())),
             runtime: Handle::try_current().ok(),
         }
     }
@@ -39,7 +46,7 @@ impl ConsensusGovernanceAdapter {
     /// Create from an existing `DaoEngine` and an explicit runtime handle.
     pub fn with_runtime(engine: DaoEngine, runtime: Handle) -> Self {
         Self {
-            engine: Mutex::new(engine),
+            engine: Arc::new(Mutex::new(engine)),
             runtime: Some(runtime),
         }
     }
@@ -65,31 +72,21 @@ impl GovernanceCallback for ConsensusGovernanceAdapter {
             }
         };
 
-        // Take a snapshot of the engine for the async work; the lock is held
-        // only briefly. If multiple finalize calls race, the second waits at
-        // the mutex — they are run sequentially.
-        let mut engine = match self.engine.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-
-        // process_expired_proposals is async; block_on within the captured
-        // runtime context. Using a block_in_place + handle.block_on pattern
-        // would deadlock on a current-thread runtime — for the multi-thread
-        // runtime that zhtp uses, plain `runtime.block_on` is fine when called
-        // from a non-runtime thread.
-        //
-        // The DaoEngine method is `#[deprecated]` (the canonical path is
-        // `blockchain.execute_dao_proposal` in lib-blockchain). Suppress the
-        // warning here — moving to the blockchain-backed path is a separate
-        // refactor outside CONS-106's scope.
-        #[allow(deprecated)]
-        if let Err(e) = runtime.block_on(engine.process_expired_proposals()) {
-            tracing::warn!(
-                error = %e,
-                height,
-                "DAO process_expired_proposals failed"
-            );
-        }
+        let engine = Arc::clone(&self.engine);
+        runtime.spawn(async move {
+            let mut engine = engine.lock().await;
+            // process_expired_proposals is `#[deprecated]` (the canonical path
+            // is `blockchain.execute_dao_proposal` in lib-blockchain). Suppress
+            // the warning here — moving to the blockchain-backed path is a
+            // separate refactor outside CONS-106's scope.
+            #[allow(deprecated)]
+            if let Err(e) = engine.process_expired_proposals().await {
+                tracing::warn!(
+                    error = %e,
+                    height,
+                    "DAO process_expired_proposals failed"
+                );
+            }
+        });
     }
 }
