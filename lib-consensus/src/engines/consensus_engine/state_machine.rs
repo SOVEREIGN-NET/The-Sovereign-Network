@@ -1727,22 +1727,14 @@ impl ConsensusEngine {
                 self.dispatch_action(action).await;
             }
 
-            // CONS-305f / PR #2403 review: keep the explicit
-            // `enter_precommit_step()` call here for the **late
-            // prevote quorum after timeout** path. When the local
-            // step has already advanced to PreCommit via the
-            // PreVote-step timeout, `prior_fsm = Precommitting`
-            // and the FSM treats `PrevoteThresholdReached` as
-            // logged-ignored (no SendPrecommit emitted from an
-            // already-Precommitting state). Without this call we'd
-            // never cast our precommit on a late prevote quorum.
-            //
-            // The on-TIME quorum path (Prevoting→Precommitting) is
-            // covered by step 2's phase-entry hook in
-            // `enter_fsm_state`; the helper is idempotent w.r.t.
-            // its own re-entry guard so the second call here is a
-            // no-op in that case.
-            self.enter_precommit_step().await?;
+            // CONS-305f / #2405: late-quorum guard removed. The
+            // FSM now emits `SendPrecommit` on `(Precommitting,
+            // PrevoteThresholdReached)` so `dispatch_action` casts
+            // the late precommit. On the on-TIME path (Prevoting →
+            // Precommitting kind change), `enter_fsm_state`'s
+            // phase-entry hook also runs `enter_precommit_step` —
+            // but since the helpers are idempotent, the action
+            // dispatch's later call is a safe no-op.
         }
 
         // **CE-L1, CE-L2**: Always check if commit quorum is reached, even in PreVote step
@@ -1874,17 +1866,13 @@ impl ConsensusEngine {
                 self.dispatch_action(action).await;
             }
 
-            // CONS-305f / PR #2403 review: keep the explicit
-            // `enter_commit_step()` call here for the **late
-            // precommit quorum after timeout** path.  Same shape
-            // as the on_prevote case above: when the local step
-            // has already advanced to Commit via the PreCommit-
-            // step timeout, the FSM is `Committed { ... }` and
-            // treats `PrecommitThresholdReached` as logged-
-            // ignored.  Without this call we'd never cast our
-            // commit vote on a late precommit quorum.  Helper is
-            // idempotent.
-            self.enter_commit_step().await?;
+            // CONS-305f / #2405: late-quorum guard removed. The
+            // FSM now emits `SendCommit` on `(Committed,
+            // PrecommitThresholdReached)` so `dispatch_action`
+            // casts the late commit vote. On the on-TIME path
+            // (Precommitting + PrecommitThresholdReached → stays
+            // Precommitting), the FSM also emits SendCommit and
+            // dispatch_action calls enter_commit_step (idempotent).
         }
 
         // **CE-L1, CE-L2**: Always check if commit quorum is reached, even in PreCommit step
@@ -2131,15 +2119,33 @@ impl ConsensusEngine {
                 self.current_round.timed_out = false;
             }
 
-            // CONS-305f step 2: state-kind-change phase entry runs
-            // in `enter_fsm_state` (canonical mutation point).  These
-            // FSM actions are emitted alongside state-kind changes
-            // so the work has already happened by the time we get
-            // here. No-op deliberately.
-            A::CreateProposal
-            | A::SendPrevote { .. }
-            | A::SendPrecommit { .. }
-            | A::SendCommit { .. } => {}
+            // Phase-entry side effects. `enter_fsm_state` ALSO calls
+            // these on state-kind change; the helpers are idempotent
+            // (re-entry guards), so the double-call on kind change is
+            // a safe no-op. Dispatching from here covers the intra-
+            // kind cases (Precommitting + PrecommitThresholdReached →
+            // stays Precommitting, casts commit vote) and the late-
+            // quorum cases now that #2405 emits Send* on those arms.
+            A::CreateProposal => {
+                if let Err(e) = self.enter_propose_step().await {
+                    tracing::warn!(error = ?e, "CreateProposal action failed");
+                }
+            }
+            A::SendPrevote { .. } => {
+                if let Err(e) = self.enter_prevote_step().await {
+                    tracing::warn!(error = ?e, "SendPrevote action failed");
+                }
+            }
+            A::SendPrecommit { .. } => {
+                if let Err(e) = self.enter_precommit_step().await {
+                    tracing::warn!(error = ?e, "SendPrecommit action failed");
+                }
+            }
+            A::SendCommit { .. } => {
+                if let Err(e) = self.enter_commit_step().await {
+                    tracing::warn!(error = ?e, "SendCommit action failed");
+                }
+            }
 
             // BroadcastProposal — proposal relay needs ownership of
             // the proposal struct, which the FSM action carries only

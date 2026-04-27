@@ -189,6 +189,14 @@ pub fn transition_table() -> Vec<TransitionRule> {
     // ----- Precommitting -----
     push(
         F::Specific(S::Precommitting),
+        E::PrevoteThresholdReached,
+        S::Precommitting,
+        vec![A::SendPrecommit, A::ResetWatchdog],
+        "Late prevote quorum after PreVote-step timeout — still cast \
+         our precommit (#2405).",
+    );
+    push(
+        F::Specific(S::Precommitting),
         E::PrecommitThresholdReached,
         S::Precommitting,
         vec![A::SendCommit, A::ResetWatchdog],
@@ -224,6 +232,15 @@ pub fn transition_table() -> Vec<TransitionRule> {
     );
 
     // ----- Committed -----
+    push(
+        F::Specific(S::Committed),
+        E::PrecommitThresholdReached,
+        S::Committed,
+        vec![A::SendCommit, A::ResetWatchdog],
+        "Late precommit quorum after PreCommit-step timeout (which \
+         the bridge maps to FSM Committed) — still cast our commit \
+         vote (#2405).",
+    );
     push(
         F::Specific(S::Committed),
         E::Timeout,

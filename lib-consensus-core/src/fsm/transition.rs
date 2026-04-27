@@ -274,6 +274,20 @@ pub fn transition(state: ValidatorState, event: Event) -> (ValidatorState, Vec<A
         // ============================================================
         // Precommitting — gathering PreCommits, then Commit votes.
         // ============================================================
+        // Late prevote quorum (#2405): when the runtime walked from
+        // PreVote step to PreCommit step on timeout BEFORE the prevote
+        // quorum arrived, a subsequent late prevote completing the
+        // quorum lands here.  Emit SendPrecommit so the late case
+        // still casts a precommit. Pre-#2405 this was logged-ignored
+        // and the runtime relied on a guarded direct enter_*_step
+        // call to recover.
+        (Precommitting, PrevoteThresholdReached { block_id }) => (
+            Precommitting,
+            vec![
+                Action::SendPrecommit { block_id },
+                Action::ResetWatchdog,
+            ],
+        ),
         (Precommitting, PrecommitThresholdReached { block_id }) => (
             Precommitting,
             vec![Action::SendCommit { block_id }, Action::ResetWatchdog],
@@ -327,6 +341,19 @@ pub fn transition(state: ValidatorState, event: Event) -> (ValidatorState, Vec<A
                 round: 0,
             },
             vec![Action::AdvanceRound],
+        ),
+        // Late precommit quorum (#2405): symmetric to the late
+        // prevote quorum on Precommitting above. When the runtime
+        // walked to wire-level Commit step on timeout but the FSM
+        // step_to_fsm_state mapping renders that as Committed, a
+        // subsequent late precommit quorum lands here. Emit
+        // SendCommit so the late case still casts a commit vote.
+        (committed @ Committed { .. }, PrecommitThresholdReached { block_id }) => (
+            committed,
+            vec![
+                Action::SendCommit { block_id },
+                Action::ResetWatchdog,
+            ],
         ),
         (committed @ Committed { .. }, _) => (
             committed,
