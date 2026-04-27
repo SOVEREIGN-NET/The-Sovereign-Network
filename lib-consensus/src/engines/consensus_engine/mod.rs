@@ -188,9 +188,14 @@ use tokio::sync::mpsc;
 use tokio::time::Sleep;
 
 use crate::byzantine::ByzantineFaultDetector;
-use crate::dao::dao_types::{DaoExecutionAction, DaoProposal};
-use crate::dao::dao_types::{GovernanceParameterUpdate, GovernanceParameterValue};
-use crate::dao::DaoEngine;
+// CONS-106 / AD-003: DAO module relocated to lib-governance. Engine still
+// imports `DaoEngine` directly for the synchronous validation paths
+// (`apply_governance_update_from_proposal`); the fire-and-forget
+// round-finalize path uses `lib_consensus_core::ports::GovernanceCallback`.
+use lib_governance::dao::dao_types::{DaoExecutionAction, DaoProposal};
+use lib_governance::dao::dao_types::{GovernanceParameterUpdate, GovernanceParameterValue};
+use lib_governance::dao::DaoEngine;
+use lib_consensus_core::ports::{GovernanceCallback, NoOpGovernanceCallback};
 use crate::invariants::{check_invariant, ConsensusInvariant, ConsensusState as InvariantState};
 use crate::types::*;
 use lib_consensus_core::ports::{NoOpRewardCallback, RewardCallback};
@@ -467,8 +472,17 @@ pub struct ConsensusEngine {
     pending_epoch_length_update: Option<PendingEpochLengthUpdate>,
     /// Whether consensus has begun (genesis window closed)
     chain_started: bool,
-    /// DAO governance engine
+    /// DAO governance engine — kept for the synchronous validation paths
+    /// (`apply_governance_update_from_proposal`, `validate_governance_update`,
+    /// `decode_execution_params`). Per CONS-106 / AD-003 the type itself
+    /// now lives in `lib_governance::dao` (was `crate::dao`).
     dao_engine: DaoEngine,
+    /// Governance round-finalize hook (CONS-106 / AD-005). Engine emits one
+    /// `on_round_finalized(height)` per finalized round; the runtime adapter
+    /// (`lib_governance::dao::ConsensusGovernanceAdapter`) walks expired
+    /// proposals. Defaults to a no-op so tests and bootstrap configurations
+    /// can run without wiring governance.
+    governance_callback: Arc<dyn GovernanceCallback>,
     /// Byzantine fault detection
     byzantine_detector: ByzantineFaultDetector,
     /// Reward distribution hook (CONS-103 / AD-005). Engine emits one
@@ -599,6 +613,7 @@ impl ConsensusEngine {
             pending_epoch_length_update: None,
             chain_started: false,
             dao_engine: DaoEngine::new(),
+            governance_callback: Arc::new(NoOpGovernanceCallback),
             byzantine_detector: ByzantineFaultDetector::new(),
             reward_callback: Arc::new(NoOpRewardCallback),
             fee_router: None,
@@ -861,6 +876,15 @@ impl ConsensusEngine {
     /// `lib_economy::ConsensusRewardAdapter` here at engine construction.
     pub fn set_reward_callback(&mut self, callback: Arc<dyn RewardCallback>) {
         self.reward_callback = callback;
+    }
+
+    /// Inject the governance round-finalize hook (CONS-106 / AD-005).
+    ///
+    /// Default is `NoOpGovernanceCallback`. Production runtimes wire
+    /// `lib_governance::dao::ConsensusGovernanceAdapter` here at engine
+    /// construction.
+    pub fn set_governance_callback(&mut self, callback: Arc<dyn GovernanceCallback>) {
+        self.governance_callback = callback;
     }
 
     /// Fire a `ConsensusEvent` to any attached liveness monitor / alert bridge.

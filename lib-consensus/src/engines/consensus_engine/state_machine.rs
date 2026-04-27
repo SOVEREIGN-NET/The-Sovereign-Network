@@ -258,12 +258,16 @@ impl ConsensusEngine {
 
                     let mut events = vec![ConsensusEvent::RoundCompleted { height }];
 
-                    if let Err(e) = self.dao_engine.process_expired_proposals().await {
-                        tracing::warn!("DAO processing error: {}", e);
-                        events.push(ConsensusEvent::DaoError {
-                            error: e.to_string(),
-                        });
-                    }
+                    // CONS-106 / AD-005: governance is fire-and-forget via the
+                    // runtime adapter. Failures are observability events inside
+                    // the adapter, not engine errors, so DaoError event is gone.
+                    //
+                    // Use `height` from the NewBlock event, not
+                    // `self.current_round.height`: `sync_height_with_blockchain`
+                    // above may have advanced the round to `blockchain_height + 1`,
+                    // so `current_round.height` no longer identifies the block
+                    // we are finalizing (PR #2385 Copilot review).
+                    self.governance_callback.on_round_finalized(height);
 
                     if let Err(e) = self
                         .byzantine_detector
@@ -277,7 +281,7 @@ impl ConsensusEngine {
 
                     self.reward_callback.on_round_finalized(
                         &collect_validator_reward_inputs(&self.validator_manager),
-                        self.current_round.height,
+                        height,
                     );
 
                     return Ok(events);
@@ -287,13 +291,12 @@ impl ConsensusEngine {
                     Ok(_) => {
                         let mut events = vec![ConsensusEvent::RoundCompleted { height }];
 
-                        // Process DAO proposals
-                        if let Err(e) = self.dao_engine.process_expired_proposals().await {
-                            tracing::warn!("DAO processing error: {}", e);
-                            events.push(ConsensusEvent::DaoError {
-                                error: e.to_string(),
-                            });
-                        }
+                        // CONS-106 / AD-005: governance is fire-and-forget via
+                        // the runtime adapter; DaoError event no longer emitted.
+                        // Use the event's `height` (the block we just finalized)
+                        // rather than `self.current_round.height` which may have
+                        // already advanced (PR #2385 Copilot review).
+                        self.governance_callback.on_round_finalized(height);
 
                         // Check for Byzantine faults
                         if let Err(e) = self
@@ -310,7 +313,7 @@ impl ConsensusEngine {
                         // failures are observability events inside the adapter).
                         self.reward_callback.on_round_finalized(
                             &collect_validator_reward_inputs(&self.validator_manager),
-                            self.current_round.height,
+                            height,
                         );
 
                         Ok(events)
@@ -963,10 +966,13 @@ impl ConsensusEngine {
         self.update_validator_metrics(&proposal).await?;
 
         // Distribute block rewards via the runtime-injected callback
-        // (CONS-103 / AD-005 — fire-and-forget).
+        // (CONS-103 / AD-005 — fire-and-forget). Pass the proposal's height —
+        // this block is what we are finalizing, not whatever the local round
+        // counter happens to be (PR #2385 Copilot review applied for symmetry
+        // with the governance fix below).
         self.reward_callback.on_round_finalized(
             &collect_validator_reward_inputs(&self.validator_manager),
-            self.current_round.height,
+            proposal.height,
         );
 
         // Collect and distribute fees from block.
@@ -978,10 +984,12 @@ impl ConsensusEngine {
             // See Invariant CE-ENG-4: Consensus correctness independent of fee collection
         }
 
-        // Process any DAO proposals that may have expired
-        if let Err(e) = self.dao_engine.process_expired_proposals().await {
-            tracing::warn!("Error processing DAO proposals: {}", e);
-        }
+        // CONS-106 / AD-005: process any DAO proposals via the fire-and-forget
+        // governance callback. Failures handled inside the adapter. Pass
+        // `proposal.height` — the height of the block we are committing —
+        // not `self.current_round.height` which may have already advanced
+        // (PR #2385 Copilot review).
+        self.governance_callback.on_round_finalized(proposal.height);
 
         tracing::info!(
             " Successfully processed committed block: {:?} at height {}",

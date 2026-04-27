@@ -10,6 +10,10 @@
 compile_error!("dev-insecure must not be enabled in release builds");
 
 pub mod byzantine;
+// Back-compat shim — actual DAO implementation lives in lib_governance::dao
+// per CONS-106 / AD-003. The `pub mod dao` here re-exports the new home so
+// existing `lib_consensus::dao::*` paths keep working until CONS-508 deletes
+// lib-consensus entirely.
 pub mod dao;
 pub mod engines;
 pub mod evidence;
@@ -57,6 +61,8 @@ pub use validators::{
     Validator, ValidatorManager, MAX_VALIDATORS, MAX_VALIDATORS_HARD_CAP, MIN_VALIDATORS,
 };
 
+// CONS-106 / AD-003: dao module moved to lib-governance. Re-exported here so
+// callers using `lib_consensus::Dao*` paths keep working during the rewrite.
 pub use dao::*;
 
 pub use byzantine::*;
