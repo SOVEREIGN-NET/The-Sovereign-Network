@@ -274,6 +274,17 @@ pub fn transition(state: ValidatorState, event: Event) -> (ValidatorState, Vec<A
         // ============================================================
         // Precommitting — gathering PreCommits, then Commit votes.
         // ============================================================
+        // Late prevote quorum (#2405): runtime walked PreVote → PreCommit
+        // on timeout BEFORE the prevote quorum arrived; a subsequent
+        // late prevote completing the quorum lands here. Emit
+        // SendPrecommit so the late case still casts a precommit.
+        (Precommitting, PrevoteThresholdReached { block_id }) => (
+            Precommitting,
+            vec![
+                Action::SendPrecommit { block_id },
+                Action::ResetWatchdog,
+            ],
+        ),
         (Precommitting, PrecommitThresholdReached { block_id }) => (
             Precommitting,
             vec![Action::SendCommit { block_id }, Action::ResetWatchdog],
@@ -327,6 +338,14 @@ pub fn transition(state: ValidatorState, event: Event) -> (ValidatorState, Vec<A
                 round: 0,
             },
             vec![Action::AdvanceRound],
+        ),
+        // Late precommit quorum (#2405): wire-level Commit step (the
+        // bridge maps that to FSM Committed) gathered enough
+        // precommits late. Emit SendCommit so the late case still
+        // casts our commit vote.
+        (committed @ Committed { .. }, PrecommitThresholdReached { block_id }) => (
+            committed,
+            vec![Action::SendCommit { block_id }, Action::ResetWatchdog],
         ),
         (committed @ Committed { .. }, _) => (
             committed,
