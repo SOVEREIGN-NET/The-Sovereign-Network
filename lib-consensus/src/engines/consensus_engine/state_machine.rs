@@ -1526,7 +1526,7 @@ impl ConsensusEngine {
 
         // Prior state derived from legacy step (source of truth
         // during the migration) per #2398 review.
-        let prior_fsm = self.step_to_fsm_state(self.current_round.step.clone());
+        let prior_fsm = self.fsm_state.clone();
         let (next_fsm, actions) = lib_consensus_core::fsm::transition(
             prior_fsm,
             lib_consensus_core::fsm::Event::ProposalAdmitted {
@@ -1715,7 +1715,7 @@ impl ConsensusEngine {
             //
             // Prior state derived from legacy step (source of truth
             // during the migration) per #2398 review.
-            let prior_fsm = self.step_to_fsm_state(self.current_round.step.clone());
+            let prior_fsm = self.fsm_state.clone();
             let (next_fsm, actions) = lib_consensus_core::fsm::transition(
                 prior_fsm,
                 lib_consensus_core::fsm::Event::PrevoteThresholdReached {
@@ -1855,7 +1855,7 @@ impl ConsensusEngine {
             // source of truth during the migration) rather than
             // `self.fsm_state` to avoid silent action drops if the
             // mirror has drifted — PR #2398 review.
-            let prior_fsm = self.step_to_fsm_state(self.current_round.step.clone());
+            let prior_fsm = self.fsm_state.clone();
             let (next_fsm, actions) = lib_consensus_core::fsm::transition(
                 prior_fsm,
                 lib_consensus_core::fsm::Event::PrecommitThresholdReached {
@@ -1999,38 +1999,12 @@ impl ConsensusEngine {
         Ok(())
     }
 
-    /// Map the legacy `ConsensusStep` to the FSM's `ValidatorState`.
-    /// Used during the CONS-305 handler-by-handler migration to keep
-    /// `fsm_state` in sync with `current_round.step` at the
-    /// translation boundary. CONS-305f deletes `current_round.step`
-    /// once all handlers route through `transition()`.
-    fn step_to_fsm_state(&self, step: ConsensusStep) -> lib_consensus_core::fsm::ValidatorState {
-        use lib_consensus_core::fsm::ValidatorState as V;
-        match step {
-            ConsensusStep::Propose => V::Proposing,
-            ConsensusStep::PreVote => V::Prevoting,
-            ConsensusStep::PreCommit => V::Precommitting,
-            ConsensusStep::Commit => {
-                // The wire-level Commit step maps to Committed in the
-                // FSM where `block_hash`/`height` describe the block
-                // being committed.  Use `locked_proposal` if present;
-                // otherwise placeholder zeros (the hash isn't load-
-                // bearing in the FSM yet — runtime tracks targets).
-                let block_hash = self
-                    .current_round
-                    .locked_proposal
-                    .as_ref()
-                    .or(self.current_round.valid_proposal.as_ref())
-                    .map(|h| h.0)
-                    .unwrap_or([0u8; 32]);
-                V::Committed {
-                    block_hash,
-                    height: self.current_round.height,
-                }
-            }
-            ConsensusStep::NewRound => V::Idle,
-        }
-    }
+    // CONS-305f step 3: `step_to_fsm_state` was deleted. It was
+    // needed during the migration to derive prior FSM state from
+    // the legacy `current_round.step` at handler boundaries.  Now
+    // that `enter_fsm_state` is the single mutation point and
+    // `fsm_state` is canonical, callers use `self.fsm_state.clone()`
+    // directly.
 
     /// Single point that transitions the FSM, keeps the legacy
     /// `current_round.step` mirror in sync, and runs the phase-entry
@@ -2176,7 +2150,7 @@ impl ConsensusEngine {
         // `enter_*_step` helpers below.  CONS-305f will fold those
         // helpers into the action handlers and delete this dual path.
         let prior_step = self.current_round.step.clone();
-        let prior_fsm = self.step_to_fsm_state(prior_step.clone());
+        let prior_fsm = self.fsm_state.clone();
         let (next_fsm, actions) = transition(prior_fsm, Event::Timeout);
         self.enter_fsm_state(next_fsm).await;
         for action in actions {
@@ -2658,7 +2632,7 @@ impl ConsensusEngine {
                 // Derive prior state from legacy step (source of
                 // truth during the migration) to avoid silent action
                 // drops on mirror drift — PR #2398 review.
-                let prior_fsm = self.step_to_fsm_state(self.current_round.step.clone());
+                let prior_fsm = self.fsm_state.clone();
                 let (next_fsm, actions) = lib_consensus_core::fsm::transition(
                     prior_fsm,
                     lib_consensus_core::fsm::Event::CommitQuorumReached {
