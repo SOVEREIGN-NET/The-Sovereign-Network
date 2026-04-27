@@ -325,10 +325,17 @@ pub enum ValidatorState {
     /// Runtime detected a critical error. Carries prior state for
     /// diagnostic resume; recoverable reasons (per
     /// [`PanicReason::is_recoverable`]) reset to `Idle`, non-
-    /// recoverable transition to `Halting{Never}`.
+    /// recoverable transition to `Halting{Never}` at `at_height`.
+    ///
+    /// `at_height` is captured from the runtime when the panic
+    /// fires (PR #2394 review) so the non-recoverable transition
+    /// can construct a real `Halting { triggered_at_height }` and
+    /// `StopBlockProduction { at_height }` instead of placeholder
+    /// zeros.
     Panic {
         reason: PanicReason,
         triggered_at: Instant,
+        at_height: u64,
         prior_state: Box<ValidatorState>,
     },
 
@@ -386,6 +393,10 @@ impl ValidatorState {
 
     /// True for states that the FSM does not exit on its own without
     /// external recovery (operator restart, re-registration, etc.).
+    ///
+    /// `Hung` is included per PR #2394 review (Copilot) — `transition()`
+    /// has no event arm that exits `Hung`, so it is genuinely terminal
+    /// until the operator restarts the runtime.
     pub fn requires_external_recovery(&self) -> bool {
         matches!(
             self,
@@ -394,6 +405,7 @@ impl ValidatorState {
                 ..
             } | ValidatorState::Evicted
                 | ValidatorState::ShuttingDown
+                | ValidatorState::Hung { .. }
         )
     }
 }
@@ -465,6 +477,7 @@ mod tests {
             ValidatorState::Panic {
                 reason: PanicReason::WatchdogExpired,
                 triggered_at: Instant::now(),
+                at_height: 100,
                 prior_state: Box::new(ValidatorState::Idle),
             },
             ValidatorState::ShuttingDown,

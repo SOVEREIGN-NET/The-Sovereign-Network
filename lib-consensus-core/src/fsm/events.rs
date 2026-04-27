@@ -27,6 +27,7 @@
 use crate::fsm::state::{HaltReason, PanicReason, RejectionReason, SlashReason};
 use lib_crypto::Hash;
 use lib_types::consensus::BftQuorumProof;
+use std::time::Instant;
 
 /// Inputs the FSM consumes during one [`transition`] call.
 ///
@@ -86,14 +87,24 @@ pub enum Event {
 
     // ----- Watchdog / panic -----
     /// Watchdog fired without observing any progress action for
-    /// longer than the configured threshold.
-    WatchdogFired { age_ms: u64 },
+    /// longer than the configured threshold. The runtime captures
+    /// `fired_at` so the FSM can record the firing instant in `Hung`
+    /// without calling `Instant::now()` itself (PR #2394 review:
+    /// keeps `transition()` time-free / pure).
+    WatchdogFired { age_ms: u64, fired_at: Instant },
 
     /// A condition that warrants entering [`ValidatorState::Panic`]
-    /// was observed.
+    /// was observed. Carries the height at which the panic fired and
+    /// the wall-clock instant captured by the runtime — both
+    /// propagate into the resulting `Panic` state so the FSM stays
+    /// time-free (PR #2394 review).
     ///
     /// [`ValidatorState::Panic`]: crate::fsm::state::ValidatorState::Panic
-    PanicTriggered { reason: PanicReason },
+    PanicTriggered {
+        reason: PanicReason,
+        triggered_at: Instant,
+        at_height: u64,
+    },
 
     /// The condition that put the FSM into Panic has cleared
     /// (recoverable panics only). Resets to `Idle`.
@@ -372,9 +383,14 @@ mod tests {
         };
         let _ = Event::VoteFailed(RejectionReason::Timeout);
         let _ = Event::Timeout;
-        let _ = Event::WatchdogFired { age_ms: 5_000 };
+        let _ = Event::WatchdogFired {
+            age_ms: 5_000,
+            fired_at: Instant::now(),
+        };
         let _ = Event::PanicTriggered {
             reason: PanicReason::WatchdogExpired,
+            triggered_at: Instant::now(),
+            at_height: 100,
         };
         let _ = Event::PanicCleared;
         let _ = Event::HaltScheduled {

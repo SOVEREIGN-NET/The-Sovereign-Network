@@ -4,11 +4,9 @@
 //! exposed here as a `Vec<TransitionRule>` for runtime queries:
 //!
 //! ```ignore
-//! use lib_consensus_core::fsm::transition_table::{transition_table, ValidatorStateKind};
+//! use lib_consensus_core::fsm::transition_table::*;
 //! let rules = transition_table();
-//! let from_prevoting: Vec<_> = rules.iter()
-//!     .filter(|r| r.from == ValidatorStateKind::Prevoting)
-//!     .collect();
+//! let from_prevoting: Vec<_> = transitions_from(ValidatorStateKind::Prevoting);
 //! ```
 //!
 //! Two consumers benefit:
@@ -18,20 +16,46 @@
 //!    audit the protocol against the running code.
 //! 2. **Test fuzzing** — drive `transition()` with every kind-pair
 //!    enumerated by the table and verify the function output matches
-//!    the table's claimed `(to, action_kinds)`. The table thus acts
-//!    as the source-of-truth spec; the function is the executable
-//!    realization.
+//!    the table's claimed `(to, action_kinds)`.
 //!
-//! ## Drift protection
+//! ## Universal-event encoding ([`FromKind::Any`])
 //!
-//! `tests::transition_function_matches_table` invokes `transition()`
-//! with one representative `(state, event)` per row in the table and
-//! asserts both the resulting state-kind and the action-kind sequence.
-//! Any divergence between table and function fails CI — the two
-//! cannot drift silently.
+//! Cross-cutting events (`PanicTriggered`, `HaltScheduled`,
+//! `ShutdownRequested`, `SlashEvidenceConfirmed`, `EvictedFromSet`)
+//! apply from "every active state" — encoding them as a single
+//! `(Specific(Idle), …)` row would have made `transitions_from(X)`
+//! incomplete for every other source state. Instead the table uses
+//! [`FromKind::Any`] for these rows, and [`transitions_from`]
+//! returns both the source-specific and `Any` rows that match a
+//! query state. PR #2394 review (Copilot).
+//!
+//! ## Drift protection (bidirectional)
+//!
+//! - **Forward**: `transition_function_matches_table` runs every row
+//!   through `transition()` and asserts the resulting state-kind and
+//!   action-kinds match the table.
+//! - **Reverse**: `function_transitions_appear_in_table` walks every
+//!   `(state_kind, event_kind)` product, calls `transition()`, and
+//!   for every result that produces a *meaningful* transition (state
+//!   change OR a non-`LogIgnoredEvent` action) verifies a matching
+//!   row exists in the table. This catches the case where the
+//!   function adds a transition that the table author forgot to
+//!   document. PR #2394 review (Copilot).
 
 use crate::fsm::events::{ActionKind, EventKind};
 use crate::fsm::state::ValidatorStateKind;
+
+/// Source side of a transition rule.
+///
+/// `Specific(K)` matches exactly state-kind `K`. `Any` matches every
+/// active state (the runtime restricts the actual set per the
+/// universal-event guards in `transition()` — e.g. `PanicTriggered`
+/// is logged-ignored from `Panic`/`Halting`/`ShuttingDown`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FromKind {
+    Specific(ValidatorStateKind),
+    Any,
+}
 
 /// One row of the transition matrix — a Markov chain edge.
 ///
@@ -39,26 +63,23 @@ use crate::fsm::state::ValidatorStateKind;
 /// real-world reason for the edge.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransitionRule {
-    pub from: ValidatorStateKind,
+    pub from: FromKind,
     pub event: EventKind,
     pub to: ValidatorStateKind,
-    /// Sequence of action *kinds* the transition emits.  Payload data
-    /// (block hashes, quorum proofs) is not represented here — the
-    /// table describes the *shape* of the transition, not its data.
     pub actions: Vec<ActionKind>,
-    /// One-line description of the edge for diagram labels and audit logs.
     pub doc: &'static str,
 }
 
 /// All transitions defined by the FSM, in source order.
 ///
-/// The list is intentionally hand-maintained alongside
-/// [`super::transition::transition`].  The drift-protection test in
-/// this module enforces that every row's `(from, event) -> (to,
-/// actions)` matches what `transition()` produces.
+/// The list is hand-maintained alongside
+/// [`super::transition::transition`]. Two drift-protection tests
+/// (forward and reverse) enforce the table cannot diverge from the
+/// function in either direction.
 pub fn transition_table() -> Vec<TransitionRule> {
     use ActionKind as A;
     use EventKind as E;
+    use FromKind as F;
     use ValidatorStateKind as S;
 
     let mut rules = Vec::new();
@@ -73,18 +94,16 @@ pub fn transition_table() -> Vec<TransitionRule> {
         });
     };
 
-    // ----- Bootstrapping -----
+    // ----- Lifecycle -----
     push(
-        S::Bootstrapping,
+        F::Specific(S::Bootstrapping),
         E::BootstrapComplete,
         S::Idle,
         vec![A::ResetWatchdog],
         "Genesis bootstrap finished — node is up and Idle.",
     );
-
-    // ----- CatchingUp -----
     push(
-        S::CatchingUp,
+        F::Specific(S::CatchingUp),
         E::CaughtUp,
         S::Idle,
         vec![A::ResetWatchdog],
@@ -93,99 +112,127 @@ pub fn transition_table() -> Vec<TransitionRule> {
 
     // ----- Idle -----
     push(
-        S::Idle,
+        F::Specific(S::Idle),
         E::SelectedAsProposer,
         S::Proposing,
         vec![A::CreateProposal, A::ResetWatchdog],
         "Local validator was elected proposer for this round.",
     );
+    push(
+        F::Specific(S::Idle),
+        E::WatchdogFired,
+        S::Hung,
+        vec![A::LogHung],
+        "Watchdog fired while Idle — runtime stuck before round start.",
+    );
 
     // ----- Proposing -----
     push(
-        S::Proposing,
+        F::Specific(S::Proposing),
         E::ProposalAdmitted,
         S::Prevoting,
         vec![A::BroadcastProposal, A::SendPrevote, A::ResetWatchdog],
         "Valid proposal admitted; broadcast it and cast our prevote.",
     );
     push(
-        S::Proposing,
+        F::Specific(S::Proposing),
         E::Timeout,
         S::Prevoting,
         vec![A::ResetWatchdog],
         "Proposal window timed out — walk forward to Prevoting.",
     );
     push(
-        S::Proposing,
+        F::Specific(S::Proposing),
         E::WatchdogFired,
         S::Hung,
         vec![A::LogHung],
         "Watchdog flagged Proposing as stuck.",
     );
+    push(
+        F::Specific(S::Proposing),
+        E::VoteFailed,
+        S::Rejected,
+        vec![A::AdvanceRound],
+        "Vote-tally rejection in Proposing — view change.",
+    );
 
     // ----- Prevoting -----
     push(
-        S::Prevoting,
+        F::Specific(S::Prevoting),
         E::PrevoteThresholdReached,
         S::Precommitting,
         vec![A::SendPrecommit, A::ResetWatchdog],
         "+2/3 prevotes for one block — send precommit and advance.",
     );
     push(
-        S::Prevoting,
+        F::Specific(S::Prevoting),
         E::Timeout,
         S::Precommitting,
         vec![A::ResetWatchdog],
         "Prevote window timed out — walk forward to Precommitting.",
     );
     push(
-        S::Prevoting,
+        F::Specific(S::Prevoting),
         E::WatchdogFired,
         S::Hung,
         vec![A::LogHung],
         "Watchdog flagged Prevoting as stuck.",
     );
+    push(
+        F::Specific(S::Prevoting),
+        E::VoteFailed,
+        S::Rejected,
+        vec![A::AdvanceRound],
+        "Vote-tally rejection in Prevoting — view change.",
+    );
 
     // ----- Precommitting -----
     push(
-        S::Precommitting,
+        F::Specific(S::Precommitting),
         E::PrecommitThresholdReached,
         S::Precommitting,
         vec![A::SendCommit, A::ResetWatchdog],
         "+2/3 precommits — send commit vote, stay gathering commits.",
     );
     push(
-        S::Precommitting,
+        F::Specific(S::Precommitting),
         E::CommitQuorumReached,
         S::Committed,
         vec![A::CommitBlock, A::ResetWatchdog],
         "Commit-vote quorum — block finalized, transition to Committed.",
     );
     push(
-        S::Precommitting,
+        F::Specific(S::Precommitting),
         E::Timeout,
         S::Precommitting,
         vec![A::ResetWatchdog],
         "Precommit window timed out — keep gathering commit votes.",
     );
     push(
-        S::Precommitting,
+        F::Specific(S::Precommitting),
         E::WatchdogFired,
         S::Hung,
         vec![A::LogHung],
         "Watchdog flagged Precommitting as stuck.",
     );
+    push(
+        F::Specific(S::Precommitting),
+        E::VoteFailed,
+        S::Rejected,
+        vec![A::AdvanceRound],
+        "Vote-tally rejection in Precommitting — view change.",
+    );
 
     // ----- Committed -----
     push(
-        S::Committed,
+        F::Specific(S::Committed),
         E::Timeout,
         S::Rejected,
         vec![A::AdvanceRound],
         "Commit-vote gathering timed out — view change.",
     );
     push(
-        S::Committed,
+        F::Specific(S::Committed),
         E::SelectedAsProposer,
         S::Proposing,
         vec![A::CreateProposal, A::ResetWatchdog],
@@ -194,58 +241,56 @@ pub fn transition_table() -> Vec<TransitionRule> {
 
     // ----- Rejected -----
     push(
-        S::Rejected,
+        F::Specific(S::Rejected),
         E::SelectedAsProposer,
         S::Proposing,
         vec![A::CreateProposal, A::ResetWatchdog],
         "Round +1 entry: this validator is proposer.",
     );
 
-    // ----- Universal: panic -----
-    // Source kind doesn't matter for this row — the table records the
-    // *event kind*'s effect, and PanicTriggered is handled in
-    // `handle_universal()` for any non-critical state.  We pick Idle as
-    // a representative source for the spec table.
+    // ----- Universal: PanicTriggered -----
     push(
-        S::Idle,
+        F::Any,
         E::PanicTriggered,
         S::Panic,
         vec![A::BroadcastPanic, A::LogPanic],
-        "Critical condition observed — enter Panic, broadcast to peers.",
+        "Critical condition observed — enter Panic, broadcast to peers. \
+         (Already-Panic/Halting/ShuttingDown sources log-ignore.)",
     );
+    // Two rows for (Panic, PanicCleared) — recoverable vs non-recoverable.
     push(
-        S::Panic,
+        F::Specific(S::Panic),
         E::PanicCleared,
         S::Idle,
         vec![A::ResetWatchdog],
-        "Recoverable panic cleared — return to Idle. \
-         (Non-recoverable: see Panic→Halting row.)",
+        "Recoverable panic cleared — return to Idle.",
     );
     push(
-        S::Panic,
+        F::Specific(S::Panic),
         E::PanicCleared,
         S::Halting,
         vec![A::LogPanic, A::StopBlockProduction],
-        "Non-recoverable panic — force Halting{Never}.",
+        "Non-recoverable panic — force Halting{Never} at the panic-time height.",
     );
 
-    // ----- Universal: halt + coordinated update -----
+    // ----- Universal: HaltScheduled / Halt -> CoordinatedUpdate -> Idle -----
     push(
-        S::Idle,
+        F::Any,
         E::HaltScheduled,
         S::Halting,
         vec![A::StopBlockProduction],
-        "Operator scheduled a coordinated halt.",
+        "Operator scheduled a coordinated halt. \
+         (Already-Halting/Panic/ShuttingDown/Evicted sources log-ignore.)",
     );
     push(
-        S::Halting,
+        F::Specific(S::Halting),
         E::HaltActivated,
         S::CoordinatedUpdate,
         vec![A::EnterUpdateBarrier],
         "Halt window reached — enter coordinated-update barrier.",
     );
     push(
-        S::CoordinatedUpdate,
+        F::Specific(S::CoordinatedUpdate),
         E::UpdateQuorumReady,
         S::Idle,
         vec![A::BroadcastReadyOnNewVersion, A::ResetWatchdog],
@@ -254,37 +299,39 @@ pub fn transition_table() -> Vec<TransitionRule> {
 
     // ----- Universal: shutdown -----
     push(
-        S::Idle,
+        F::Any,
         E::ShutdownRequested,
         S::ShuttingDown,
         vec![A::FlushLogsForShutdown],
         "Operator requested graceful shutdown.",
     );
 
-    // ----- Slashing / eviction -----
+    // ----- Universal: slashing / eviction -----
     push(
-        S::Idle,
+        F::Any,
         E::SlashEvidenceConfirmed,
         S::Slashed,
         vec![A::LeaveActiveSet],
-        "Slashable evidence confirmed — leave active set.",
+        "Slashable evidence confirmed — leave active set. \
+         (Already-Slashed/Evicted/ShuttingDown/Panic sources log-ignore.)",
     );
     push(
-        S::Idle,
+        F::Any,
         E::EvictedFromSet,
         S::Evicted,
         vec![A::LeaveActiveSet],
-        "Removed from active set.",
+        "Removed from active set. \
+         (Already-Evicted/ShuttingDown sources log-ignore.)",
     );
     push(
-        S::Slashed,
+        F::Specific(S::Slashed),
         E::ReadmittedToSet,
         S::Idle,
         vec![A::RejoinActiveSet],
         "Re-admitted after slashing window closed.",
     );
     push(
-        S::Evicted,
+        F::Specific(S::Evicted),
         E::ReadmittedToSet,
         S::Idle,
         vec![A::RejoinActiveSet],
@@ -294,17 +341,19 @@ pub fn transition_table() -> Vec<TransitionRule> {
     rules
 }
 
-/// Convenience query: all transitions originating from a specific
-/// state kind.
+/// All transitions whose `from` matches `state` — both
+/// `Specific(state)` rows and `Any` rows.
 pub fn transitions_from(state: ValidatorStateKind) -> Vec<TransitionRule> {
     transition_table()
         .into_iter()
-        .filter(|r| r.from == state)
+        .filter(|r| match r.from {
+            FromKind::Specific(s) => s == state,
+            FromKind::Any => true,
+        })
         .collect()
 }
 
-/// Convenience query: all transitions triggered by a specific event
-/// kind, regardless of source state.
+/// All transitions triggered by `event`, regardless of source.
 pub fn transitions_by_event(event: EventKind) -> Vec<TransitionRule> {
     transition_table()
         .into_iter()
@@ -333,9 +382,6 @@ mod tests {
         }
     }
 
-    /// Build a representative `(state, event)` pair for a `(from,
-    /// event_kind)` row. The variants chosen pair one canonical
-    /// payload with the kind under test.
     fn representative_state(kind: ValidatorStateKind) -> ValidatorState {
         match kind {
             ValidatorStateKind::Bootstrapping => ValidatorState::Bootstrapping,
@@ -374,11 +420,9 @@ mod tests {
             },
             ValidatorStateKind::Evicted => ValidatorState::Evicted,
             ValidatorStateKind::Panic => ValidatorState::Panic {
-                // Use a recoverable reason so the (Panic, PanicCleared)
-                // row that goes to Idle matches; the non-recoverable
-                // row to Halting is exercised separately below.
                 reason: PanicReason::HeartbeatMissed,
                 triggered_at: Instant::now(),
+                at_height: 0,
                 prior_state: Box::new(ValidatorState::Idle),
             },
             ValidatorStateKind::ShuttingDown => ValidatorState::ShuttingDown,
@@ -410,9 +454,14 @@ mod tests {
             },
             EventKind::VoteFailed => Event::VoteFailed(RejectionReason::Timeout),
             EventKind::Timeout => Event::Timeout,
-            EventKind::WatchdogFired => Event::WatchdogFired { age_ms: 1 },
+            EventKind::WatchdogFired => Event::WatchdogFired {
+                age_ms: 1,
+                fired_at: Instant::now(),
+            },
             EventKind::PanicTriggered => Event::PanicTriggered {
                 reason: PanicReason::WatchdogExpired,
+                triggered_at: Instant::now(),
+                at_height: 0,
             },
             EventKind::PanicCleared => Event::PanicCleared,
             EventKind::HaltScheduled => Event::HaltScheduled {
@@ -433,58 +482,166 @@ mod tests {
         }
     }
 
-    /// Drift protection: every row in the table must match what
-    /// `transition()` actually produces for one representative
-    /// (state, event) pair. If a row diverges from the function,
-    /// either the row or the function is wrong — fix one.
+    fn all_state_kinds() -> Vec<ValidatorStateKind> {
+        vec![
+            ValidatorStateKind::Bootstrapping,
+            ValidatorStateKind::CatchingUp,
+            ValidatorStateKind::Idle,
+            ValidatorStateKind::Proposing,
+            ValidatorStateKind::Prevoting,
+            ValidatorStateKind::Precommitting,
+            ValidatorStateKind::Committed,
+            ValidatorStateKind::Rejected,
+            ValidatorStateKind::Hung,
+            ValidatorStateKind::Halting,
+            ValidatorStateKind::CoordinatedUpdate,
+            ValidatorStateKind::Slashed,
+            ValidatorStateKind::Evicted,
+            ValidatorStateKind::Panic,
+            ValidatorStateKind::ShuttingDown,
+        ]
+    }
+
+    fn all_event_kinds() -> Vec<EventKind> {
+        vec![
+            EventKind::BootstrapComplete,
+            EventKind::CaughtUp,
+            EventKind::ShutdownRequested,
+            EventKind::SelectedAsProposer,
+            EventKind::ProposalAdmitted,
+            EventKind::PrevoteThresholdReached,
+            EventKind::PrecommitThresholdReached,
+            EventKind::CommitQuorumReached,
+            EventKind::VoteFailed,
+            EventKind::Timeout,
+            EventKind::WatchdogFired,
+            EventKind::PanicTriggered,
+            EventKind::PanicCleared,
+            EventKind::HaltScheduled,
+            EventKind::HaltActivated,
+            EventKind::UpdateQuorumReady,
+            EventKind::SlashEvidenceConfirmed,
+            EventKind::EvictedFromSet,
+            EventKind::ReadmittedToSet,
+        ]
+    }
+
+    /// Forward drift: every row's claimed (to_kind, action_kinds)
+    /// matches what `transition()` produces.
     ///
-    /// Two rows in the table cover the same (Panic, PanicCleared) pair
-    /// — recoverable→Idle and non-recoverable→Halting — disambiguated
-    /// by `prior_state`/`reason`. We exercise both branches here.
+    /// Skips:
+    /// - `(Panic, PanicCleared) -> Halting` (covered by `panic_non_recoverable_row`
+    ///   below — the test-time representative_state uses a *recoverable*
+    ///   reason to exercise the Idle row).
+    /// - `Any` rows applied to source states where the universal-event
+    ///   guard log-ignores (e.g. `PanicTriggered` from `Panic`).
     #[test]
     fn transition_function_matches_table() {
         for rule in transition_table() {
-            // The (Panic, PanicCleared) pair has two table rows. Skip
-            // the non-recoverable one for this generic walk; it's
-            // exercised in `panic_non_recoverable_row` below.
-            if rule.from == ValidatorStateKind::Panic
+            // Two rows share (Panic, PanicCleared); skip the Halting one.
+            if matches!(rule.from, FromKind::Specific(ValidatorStateKind::Panic))
                 && rule.event == EventKind::PanicCleared
                 && rule.to == ValidatorStateKind::Halting
             {
                 continue;
             }
 
-            let state = representative_state(rule.from);
-            let event = representative_event(rule.event);
-            let (next, actions) = transition(state.clone(), event.clone());
+            let source_kinds: Vec<ValidatorStateKind> = match rule.from {
+                FromKind::Specific(k) => vec![k],
+                // For Any rows, pick a single source state where the
+                // guard does NOT log-ignore (e.g. Idle).  Per-source
+                // log-ignore behaviour for Any rows is covered by the
+                // reverse drift test.
+                FromKind::Any => vec![ValidatorStateKind::Idle],
+            };
 
-            assert_eq!(
-                next.kind(),
-                rule.to,
-                "from {:?} via {:?} expected {:?}, got {:?}\n  doc: {}",
-                rule.from,
-                rule.event,
-                rule.to,
-                next.kind(),
-                rule.doc,
-            );
+            for source in source_kinds {
+                let state = representative_state(source);
+                let event = representative_event(rule.event);
+                let (next, actions) = transition(state.clone(), event.clone());
 
-            let action_kinds: Vec<ActionKind> = actions.iter().map(|a| a.kind()).collect();
-            assert_eq!(
-                action_kinds, rule.actions,
-                "from {:?} via {:?} action mismatch\n  doc: {}",
-                rule.from, rule.event, rule.doc,
-            );
+                assert_eq!(
+                    next.kind(),
+                    rule.to,
+                    "[forward drift] from {:?} (source={:?}) via {:?} expected {:?}, got {:?}\n  doc: {}",
+                    rule.from,
+                    source,
+                    rule.event,
+                    rule.to,
+                    next.kind(),
+                    rule.doc,
+                );
+
+                let action_kinds: Vec<ActionKind> =
+                    actions.iter().map(|a| a.kind()).collect();
+                assert_eq!(
+                    action_kinds, rule.actions,
+                    "[forward drift] from {:?} (source={:?}) via {:?} action mismatch\n  doc: {}",
+                    rule.from, source, rule.event, rule.doc,
+                );
+            }
+        }
+    }
+
+    /// Reverse drift: walk every (state_kind, event_kind) pair, run
+    /// `transition()`, and for every result that produces a
+    /// *meaningful* transition (state-kind change OR a non-
+    /// `LogIgnoredEvent` action) verify a matching row exists.
+    ///
+    /// Catches the case where the function adds a new transition the
+    /// table author forgot to document.
+    #[test]
+    fn function_transitions_appear_in_table() {
+        let table = transition_table();
+        for from_kind in all_state_kinds() {
+            for event_kind in all_event_kinds() {
+                let state = representative_state(from_kind);
+                let event = representative_event(event_kind);
+                let (next, actions) = transition(state, event);
+                let to_kind = next.kind();
+
+                let meaningful = to_kind != from_kind
+                    || actions
+                        .iter()
+                        .any(|a| !matches!(a, crate::fsm::events::Action::LogIgnoredEvent(_)));
+                if !meaningful {
+                    continue;
+                }
+
+                // Build the action-kind sequence for matching.
+                let action_kinds: Vec<ActionKind> =
+                    actions.iter().map(|a| a.kind()).collect();
+
+                let has_matching_row = table.iter().any(|r| {
+                    let from_matches = match r.from {
+                        FromKind::Specific(s) => s == from_kind,
+                        FromKind::Any => true,
+                    };
+                    from_matches
+                        && r.event == event_kind
+                        && r.to == to_kind
+                        && r.actions == action_kinds
+                });
+
+                assert!(
+                    has_matching_row,
+                    "[reverse drift] transition({:?}, {:?}) produced ({:?}, {:?}) \
+                     but no table row matches",
+                    from_kind, event_kind, to_kind, action_kinds,
+                );
+            }
         }
     }
 
     /// Non-recoverable Panic row: PanicCleared from a Panic with a
-    /// non-recoverable reason forces Halting{Never}.
+    /// non-recoverable reason forces Halting{Never} at the panic-
+    /// time height.
     #[test]
     fn panic_non_recoverable_row() {
         let state = ValidatorState::Panic {
             reason: PanicReason::DoubleVote,
             triggered_at: Instant::now(),
+            at_height: 1234,
             prior_state: Box::new(ValidatorState::Prevoting),
         };
         let (next, actions) = transition(state, Event::PanicCleared);
@@ -497,31 +654,38 @@ mod tests {
     }
 
     #[test]
-    fn transitions_from_query_works() {
+    fn transitions_from_query_includes_specific_and_any() {
         let from_prevoting = transitions_from(ValidatorStateKind::Prevoting);
-        // Prevoting has 3 explicit rows: PrevoteThresholdReached,
-        // Timeout, WatchdogFired.
-        assert_eq!(from_prevoting.len(), 3);
-        assert!(from_prevoting
+        // Specific Prevoting rows: PrevoteThresholdReached, Timeout,
+        // WatchdogFired, VoteFailed.
+        let specific_count = from_prevoting
             .iter()
-            .any(|r| r.event == EventKind::PrevoteThresholdReached));
-        assert!(from_prevoting
+            .filter(|r| matches!(r.from, FromKind::Specific(_)))
+            .count();
+        assert_eq!(specific_count, 4);
+
+        // `Any` rows: PanicTriggered, HaltScheduled, ShutdownRequested,
+        // SlashEvidenceConfirmed, EvictedFromSet — should all be visible.
+        let any_events: Vec<_> = from_prevoting
             .iter()
-            .any(|r| r.event == EventKind::Timeout));
-        assert!(from_prevoting
-            .iter()
-            .any(|r| r.event == EventKind::WatchdogFired));
+            .filter(|r| matches!(r.from, FromKind::Any))
+            .map(|r| r.event)
+            .collect();
+        assert!(any_events.contains(&EventKind::PanicTriggered));
+        assert!(any_events.contains(&EventKind::HaltScheduled));
+        assert!(any_events.contains(&EventKind::ShutdownRequested));
+        assert!(any_events.contains(&EventKind::SlashEvidenceConfirmed));
+        assert!(any_events.contains(&EventKind::EvictedFromSet));
     }
 
     #[test]
     fn transitions_by_event_query_works() {
         let by_timeout = transitions_by_event(EventKind::Timeout);
-        // Timeout is defined for 4 source states: Proposing, Prevoting,
-        // Precommitting, Committed.
+        // Timeout rows: Proposing, Prevoting, Precommitting, Committed.
         assert_eq!(by_timeout.len(), 4);
     }
 
-    /// Every row's doc string is non-empty — table is self-documenting.
+    /// Every row's doc string is non-empty.
     #[test]
     fn every_row_has_doc() {
         for rule in transition_table() {
