@@ -153,12 +153,37 @@ impl RewardCalculator {
         self.work_multipliers.get(work_type).copied().unwrap_or(1.0)
     }
 
-    /// Calculate the reward for a single unit of useful work — `amount × multiplier × 10`
-    /// in SOV atoms. Used by callers that want a per-category reward without going
-    /// through the full per-validator orchestration.
+    /// Convert a fractional multiplier (e.g. `1.2`) to an integer
+    /// parts-per-million representation so the work-reward math can stay in
+    /// integer space (no float→int truncation, no precision loss).
+    /// Negative or non-finite multipliers map to 0.
+    fn multiplier_to_ppm(multiplier: f64) -> u128 {
+        const MULTIPLIER_PPM_SCALE: f64 = 1_000_000.0;
+        if !multiplier.is_finite() || multiplier <= 0.0 {
+            return 0;
+        }
+        (multiplier * MULTIPLIER_PPM_SCALE).round() as u128
+    }
+
+    /// Calculate the reward for a single unit of useful work, in SOV atoms.
+    ///
+    /// `work_amount × 10 SOV × multiplier` — kept in integer atom units
+    /// throughout so the result is unit-consistent with the calculator's
+    /// `base_reward` (also atoms). Caught in PR #2382 review: the previous
+    /// implementation `(amount as f64 * multiplier * 10.0) as u128` produced
+    /// raw whole-SOV-ish numbers that were 18 orders of magnitude smaller
+    /// than the atom-scaled `base_reward`, making work bonuses effectively
+    /// invisible.
     pub fn calculate_work_reward(&self, work_type: UsefulWorkType, work_amount: u64) -> u128 {
+        const MULTIPLIER_PPM_SCALE: u128 = 1_000_000;
         let multiplier = self.work_multipliers.get(&work_type).copied().unwrap_or(1.0);
-        (work_amount as f64 * multiplier * 10.0) as u128
+        let multiplier_ppm = Self::multiplier_to_ppm(multiplier);
+        let reward_per_unit = lib_types::sov::atoms(10);
+
+        (work_amount as u128)
+            .saturating_mul(reward_per_unit)
+            .saturating_mul(multiplier_ppm)
+            / MULTIPLIER_PPM_SCALE
     }
 
     fn calculate_validator_reward(&self, v: &ValidatorRewardInput) -> ValidatorReward {

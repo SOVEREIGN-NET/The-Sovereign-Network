@@ -267,17 +267,32 @@ impl MeshDiscoveryRewardManager {
             (demand_adjusted_reward as f64 * utilization_multiplier) as u64;
 
         // Apply final consensus adjustments using reward calculator.
-        // Reward amounts widened to u128 in CONS-103 / PR #2287; cast at the
-        // u64 mesh-discovery boundary (these amounts are small and bounded).
+        // Reward amounts widened to u128 in CONS-103 / PR #2287. Promote
+        // base_routing_rate to u128 BEFORE the * 80 multiply so a large
+        // routing rate cannot wrap a u64 multiplication (caught in PR #2382
+        // review by Copilot).
         let mut reward_calculator = RewardCalculator::new();
-        reward_calculator.adjust_base_reward((economic_model.base_routing_rate * 80) as u128);
+        reward_calculator
+            .adjust_base_reward(u128::from(economic_model.base_routing_rate) * 80u128);
 
         let work_bonus_atoms = reward_calculator.calculate_work_reward(
             crate::rewards::types::UsefulWorkType::MeshDiscovery,
             discovery_stats.peers_discovered,
         );
-        let work_bonus: u64 = work_bonus_atoms.try_into().unwrap_or(u64::MAX);
-        let final_reward = network_adjusted_reward + work_bonus;
+        // Explicit clamp + log on overflow so callers can see when a u128 work
+        // bonus exceeded the u64 reward boundary (caught in PR #2382 review).
+        let work_bonus = match u64::try_from(work_bonus_atoms) {
+            Ok(v) => v,
+            Err(_) => {
+                info!(
+                    "Mesh discovery work bonus overflowed u64; clamping to u64::MAX (atoms={})",
+                    work_bonus_atoms
+                );
+                u64::MAX
+            }
+        };
+        // Use saturating_add so the final reward can't wrap.
+        let final_reward = network_adjusted_reward.saturating_add(work_bonus);
 
         // Create comprehensive reward structure
         let comprehensive_reward = TokenReward {

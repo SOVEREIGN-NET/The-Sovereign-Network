@@ -9517,6 +9517,7 @@ dependencies = [
  "lib-network",
  "lib-proofs",
  "lib-protocols",
+ "lib-types",
  "mime_guess",
  "open",
  "regex",
