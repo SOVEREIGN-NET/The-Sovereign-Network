@@ -2456,6 +2456,35 @@ impl ConsensusEngine {
             // guarantees we're committing the right block, and process_committed_block is
             // idempotent if the block was already applied.
             if self.current_round.height == height {
+                // CONS-305b: route the commit-quorum event through the
+                // FSM so the canonical state transitions to Committed
+                // alongside the legacy step bump below.  The FSM
+                // emits `[CommitBlock, ResetWatchdog]`; the actual
+                // finalization (process_committed_block) is called
+                // directly here for now, with the action handler
+                // staging in `dispatch_action()` for CONS-305f cleanup.
+                let bft_quorum = lib_types::consensus::BftQuorumProof {
+                    height,
+                    proposal_id: proposal_id.0,
+                    total_validators: total_validators as u32,
+                    // Attestations are aggregated by `process_committed_block`
+                    // when it builds the block's proof; for the FSM hook
+                    // we pass the empty list — the FSM only needs the
+                    // height/proposal_id metadata to track state.
+                    attestations: Vec::new(),
+                };
+                let (next_fsm, actions) = lib_consensus_core::fsm::transition(
+                    self.fsm_state.clone(),
+                    lib_consensus_core::fsm::Event::CommitQuorumReached {
+                        block_id: proposal_id.clone(),
+                        quorum: bft_quorum,
+                    },
+                );
+                self.fsm_state = next_fsm;
+                for action in actions {
+                    self.dispatch_action(action).await;
+                }
+
                 // Transition to Commit step if not already there
                 if self.current_round.step < ConsensusStep::Commit {
                     self.current_round.step = ConsensusStep::Commit;
