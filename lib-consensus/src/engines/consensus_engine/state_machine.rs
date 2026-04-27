@@ -1535,7 +1535,7 @@ impl ConsensusEngine {
                 round: proposal_round,
             },
         );
-        self.fsm_state = next_fsm;
+        self.enter_fsm_state(next_fsm).await;
         for action in actions {
             self.dispatch_action(action).await;
         }
@@ -1722,25 +1722,20 @@ impl ConsensusEngine {
                     block_id: proposal_id.clone(),
                 },
             );
-            self.fsm_state = next_fsm;
+            self.enter_fsm_state(next_fsm).await;
             for action in actions {
                 self.dispatch_action(action).await;
             }
 
-            // CONS-305f / PR #2403 review: keep the explicit
-            // `enter_precommit_step()` call here for the **late
-            // prevote quorum after timeout** path. When the local
-            // step has already advanced to PreCommit via the
-            // PreVote-step timeout, `prior_fsm = Precommitting`
-            // and the FSM treats this `PrevoteThresholdReached` as
-            // logged-ignored (it doesn't emit SendPrecommit from
-            // an already-Precommitting state). Without this call
-            // we'd never cast our precommit on a late prevote
-            // quorum. The helper is idempotent w.r.t. its own
-            // re-entry guard, so the ON-TIME quorum case (FSM
-            // dispatched SendPrecommit and dispatch_action ran
-            // enter_precommit_step) still works.
-            self.enter_precommit_step().await?;
+            // CONS-305f / #2405: late-quorum runtime guard removed.
+            // The FSM now emits `SendPrecommit` on
+            // `(Precommitting, PrevoteThresholdReached)` so
+            // `dispatch_action` casts the late precommit through
+            // `enter_precommit_step`.  On the on-TIME path
+            // (Prevoting → Precommitting kind change),
+            // `enter_fsm_state`'s phase-entry hook also runs
+            // `enter_precommit_step`; the helper is idempotent so
+            // the action dispatch's later call is a safe no-op.
         }
 
         // **CE-L1, CE-L2**: Always check if commit quorum is reached, even in PreVote step
@@ -1867,22 +1862,19 @@ impl ConsensusEngine {
                     block_id: proposal_id.clone(),
                 },
             );
-            self.fsm_state = next_fsm;
+            self.enter_fsm_state(next_fsm).await;
             for action in actions {
                 self.dispatch_action(action).await;
             }
 
-            // CONS-305f / PR #2403 review: keep the explicit
-            // `enter_commit_step()` call here for the **late
-            // precommit quorum after timeout** path.  Same shape
-            // as the on_prevote case above: when the local step
-            // has already advanced to Commit via the PreCommit-
-            // step timeout, the FSM is `Committed { ... }` and
-            // treats `PrecommitThresholdReached` as logged-
-            // ignored.  Without this call we'd never cast our
-            // commit vote on a late precommit quorum.  Helper is
-            // idempotent.
-            self.enter_commit_step().await?;
+            // CONS-305f / #2405: late-quorum runtime guard removed.
+            // The FSM now emits `SendCommit` on
+            // `(Committed, PrecommitThresholdReached)` so
+            // `dispatch_action` casts the late commit vote through
+            // `enter_commit_step`. On the on-TIME path
+            // (Precommitting + PrecommitThresholdReached → stays
+            // Precommitting), the FSM also emits SendCommit and
+            // dispatch_action calls enter_commit_step (idempotent).
         }
 
         // **CE-L1, CE-L2**: Always check if commit quorum is reached, even in PreCommit step
@@ -2040,25 +2032,59 @@ impl ConsensusEngine {
         }
     }
 
-    /// Single point that transitions the FSM and keeps the legacy
-    /// `current_round.step` mirror in sync. Per CONS-305 spec: every
-    /// state mutation goes through `enter()`.
-    fn enter_fsm_state(&mut self, new_state: lib_consensus_core::fsm::ValidatorState) {
+    /// Single point that transitions the FSM, keeps the legacy
+    /// `current_round.step` mirror in sync, and runs the phase-entry
+    /// hook on state-kind change. Per CONS-305 spec: every state
+    /// mutation goes through `enter()`.
+    ///
+    /// **Phase-entry hook**: when the FSM transitions to a different
+    /// state kind, the corresponding `enter_*_step` helper runs (cast
+    /// vote, broadcast, proposer election). Covers BOTH explicit
+    /// quorum-driven transitions AND walk-through timeouts uniformly.
+    /// Errors are logged at warn (best-effort, CE-ENG-4).
+    ///
+    /// **Recursion-free invariant**: `enter_*_step` MUST NOT call
+    /// `maybe_finalize`. Step 1 of CONS-305f moved that call out;
+    /// without it the recursion `dispatch_action(SendCommit) →
+    /// enter_commit_step → maybe_finalize → transition() →
+    /// dispatch_action(CommitBlock)` would resurface (E0733).
+    async fn enter_fsm_state(&mut self, new_state: lib_consensus_core::fsm::ValidatorState) {
         use lib_consensus_core::fsm::ValidatorState as V;
-        let new_step = match &new_state {
-            V::Proposing | V::Idle => ConsensusStep::Propose,
-            V::Prevoting => ConsensusStep::PreVote,
-            V::Precommitting => ConsensusStep::PreCommit,
-            V::Committed { .. } => ConsensusStep::Commit,
-            V::Rejected { .. } => ConsensusStep::NewRound,
-            // Lifecycle / failure states have no mirror — the engine
-            // can't represent them in the legacy enum. Keep
-            // `current_round.step` at NewRound for those (the runtime
-            // halts/recovers via the new FSM only).
-            _ => ConsensusStep::NewRound,
-        };
-        self.fsm_state = new_state;
-        self.current_round.step = new_step;
+        let prior_kind = self.fsm_state.kind();
+        let new_kind = new_state.kind();
+        self.fsm_state = new_state.clone();
+
+        // Phase-entry runs only on state-kind change so intra-kind
+        // transitions (e.g. Precommitting → Precommitting on
+        // PrecommitThresholdReached, or wire-level PreCommit→Commit
+        // step within FSM Precommitting kind) don't re-run proposer
+        // election or double-cast votes. Phase-entry helpers update
+        // `current_round.step` themselves.
+        if new_kind != prior_kind {
+            let entry_result = match &new_state {
+                V::Proposing => Some(self.enter_propose_step().await),
+                V::Prevoting => Some(self.enter_prevote_step().await),
+                V::Precommitting => Some(self.enter_precommit_step().await),
+                V::Committed { .. } => Some(self.enter_commit_step().await),
+                _ => None,
+            };
+            if let Some(Err(e)) = entry_result {
+                tracing::warn!(
+                    error = ?e,
+                    new_kind = ?new_kind,
+                    "Phase-entry hook failed (continuing per CE-ENG-4)"
+                );
+            }
+        }
+
+        // For terminal/between-round states, align the legacy step
+        // mirror so observability stays consistent.
+        match &new_state {
+            V::Idle | V::Rejected { .. } => {
+                self.current_round.step = ConsensusStep::NewRound;
+            }
+            _ => {}
+        }
     }
 
     /// Dispatch one FSM `Action` to the engine.
@@ -2152,7 +2178,7 @@ impl ConsensusEngine {
         let prior_step = self.current_round.step.clone();
         let prior_fsm = self.step_to_fsm_state(prior_step.clone());
         let (next_fsm, actions) = transition(prior_fsm, Event::Timeout);
-        self.fsm_state = next_fsm;
+        self.enter_fsm_state(next_fsm).await;
         for action in actions {
             self.dispatch_action(action).await;
         }
@@ -2640,7 +2666,7 @@ impl ConsensusEngine {
                         quorum: bft_quorum,
                     },
                 );
-                self.fsm_state = next_fsm;
+                self.enter_fsm_state(next_fsm).await;
                 for action in actions {
                     self.dispatch_action(action).await;
                 }
