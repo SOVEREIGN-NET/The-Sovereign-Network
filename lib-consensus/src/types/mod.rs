@@ -16,7 +16,10 @@ pub use lib_types::consensus::{
 };
 
 // Re-export proof types from proofs module
-pub use crate::proofs::{ProofOfUsefulWork, StakeProof, StorageCapacityAttestation, WorkProof};
+// Consensus-mechanism proof types live in lib-proofs (CONS-104 / AD-003).
+// Storage attestation type stays in lib-storage (its canonical home).
+pub use lib_proofs::consensus::{ProofOfUsefulWork, StakeProof, WorkProof};
+pub use lib_storage::proofs::StorageCapacityAttestation;
 
 // Re-export heartbeat types from validator protocol module
 pub use crate::validators::validator_protocol::HeartbeatMessage;
@@ -330,19 +333,13 @@ impl BlockMetadata {
     }
 }
 
-/// Canonical validator message for network broadcast
-///
-/// Invariant CE-ENG-2: ConsensusEngine broadcasts only signed, canonical ValidatorMessages.
-/// It never broadcasts raw Vote, Proposal, or internal structs.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ValidatorMessage {
-    /// Proposal message for new block
-    Propose { proposal: ConsensusProposal },
-    /// Vote message (PreVote, PreCommit, or Commit votes)
-    Vote { vote: ConsensusVote },
-    /// Heartbeat message for validator liveness detection
-    Heartbeat { message: HeartbeatMessage },
-}
+// CONS-201: The thin 3-variant `ValidatorMessage` previously defined here was
+// deleted. The canonical wire-level enum is `crate::validators::ValidatorMessage`
+// (variants: Propose / Vote / Heartbeat — the Commit and RoundChange variants
+// were also removed in CONS-201 as unreachable; commit votes flow through the
+// Vote variant via `VoteType::Commit`, and view changes are driven by timeouts
+// rather than explicit RoundChange messages).
+pub use crate::validators::ValidatorMessage;
 
 /// Message broadcaster trait for network distribution
 ///

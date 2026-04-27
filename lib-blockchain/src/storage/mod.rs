@@ -50,34 +50,9 @@ pub use sled_store::SledStore;
 
 // Import ALL canonical types from lib-types
 // These are the authoritative definitions for consensus-critical types
-pub use lib_types::primitives::{Address, Amount, BlockHash, BlockHeight, Bps, TokenId, TxHash};
-
-// =============================================================================
-// STORAGE-SPECIFIC TYPES
-// =============================================================================
-
-/// Reference to a specific output within a transaction
-///
-/// This is the canonical way to identify a UTXO. Never use tx hash alone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct OutPoint {
-    /// Transaction containing this output
-    pub tx: TxHash,
-    /// Index of the output within the transaction (0-based)
-    pub index: u32,
-}
-
-impl OutPoint {
-    pub fn new(tx: TxHash, index: u32) -> Self {
-        Self { tx, index }
-    }
-}
-
-impl fmt::Display for OutPoint {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.tx, self.index)
-    }
-}
+pub use lib_types::primitives::{
+    Address, Amount, BlockHash, BlockHeight, Bps, OutPoint, TokenId, TxHash, Utxo, UtxoMerkleProof,
+};
 
 // =============================================================================
 // EXTENSION TRAITS FOR CANONICAL TYPES
@@ -145,39 +120,8 @@ impl TokenIdExt for TokenId {
         self.0.to_vec()
     }
 }
-// UTXO TYPE
+// UTXO TYPE (canonical definitions live in lib_types::primitives; re-exported above)
 // =============================================================================
-
-/// Unspent Transaction Output
-///
-/// Represents spendable value at an OutPoint.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Utxo {
-    /// Amount in smallest unit (satoshi-equivalent)
-    pub amount: u64,
-    /// Owner's address (who can spend this)
-    pub owner: Address,
-    /// Token type (NATIVE for ZHTP, or custom token ID)
-    pub token: TokenId,
-    /// Block height when this UTXO was created
-    pub created_at_height: u64,
-    /// Optional lock script or conditions
-    pub script: Option<Vec<u8>>,
-    /// Poseidon Merkle leaf commitment (`[u8; 32]`).
-    /// When present, the node tracks this UTXO in the persistent Merkle tree.
-    pub merkle_leaf: Option<[u8; 32]>,
-}
-
-/// Merkle inclusion proof for a UTXO in the persistent Poseidon tree.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UtxoMerkleProof {
-    /// Leaf index of the UTXO commitment in the tree.
-    pub leaf_index: u64,
-    /// Sibling hashes from leaf to root.
-    pub siblings: Vec<[u8; 32]>,
-    /// Current Merkle root.
-    pub root: [u8; 32],
-}
 
 /// Consensus snapshot for token subsystem state.
 ///
@@ -224,23 +168,6 @@ pub struct DaoStakeRecord {
     pub staked_at_height: u64,
     /// Absolute block height when the lock expires (staked_at_height + lock_blocks)
     pub locked_until: u64,
-}
-
-impl Utxo {
-    pub fn new(amount: u64, owner: Address, token: TokenId, created_at_height: u64) -> Self {
-        Self {
-            amount,
-            owner,
-            token,
-            created_at_height,
-            script: None,
-            merkle_leaf: None,
-        }
-    }
-
-    pub fn native(amount: u64, owner: Address, created_at_height: u64) -> Self {
-        Self::new(amount, owner, TokenId::NATIVE, created_at_height)
-    }
 }
 
 // =============================================================================

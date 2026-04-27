@@ -30,6 +30,8 @@ lib-types = { path = "../lib-types" }
 lib-access-control = { path = "../lib-access-control" }
 lib-blockchain = { path = "../lib-blockchain", features = ["contracts"], optional = true }
 lib-consensus = { path = "../lib-consensus" }
+# CONS-106: needed to wire ConsensusGovernanceAdapter into the engine.
+lib-governance = { path = "../lib-governance" }
 lib-economy = { path = "../lib-economy" }
 lib-protocols = { path = "../lib-protocols" }
 zhtp-daemon = { path = "../zhtp-daemon" }

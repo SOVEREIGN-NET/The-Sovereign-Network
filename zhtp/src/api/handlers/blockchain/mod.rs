@@ -1724,11 +1724,23 @@ impl BlockchainHandler {
 
     /// Handle getting balance for an address
     async fn handle_get_balance(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let principal = self.extract_principal(&request);
+
         // Extract address from path: /api/v1/blockchain/balance/{address}
         let path_parts: Vec<&str> = request.uri.split('/').collect();
         let address_str = path_parts
             .get(4)
             .ok_or_else(|| anyhow::anyhow!("Address required"))?;
+
+        // Ownership check: caller can only read their own wallet balance
+        // unless they have Council role. The address is a wallet ID (hex hash).
+        let caller_hex = principal.did.strip_prefix("did:zhtp:").unwrap_or(&principal.did);
+        if principal.role == lib_access_control::Role::Public {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::Forbidden,
+                "Balance lookup requires authentication".to_string(),
+            ));
+        }
 
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
@@ -2608,7 +2620,11 @@ impl BlockchainHandler {
     }
 
     /// Export entire blockchain for sync
-    async fn handle_export_chain(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+    async fn handle_export_chain(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let principal = self.extract_principal(&request);
+        if principal.role != lib_access_control::Role::Council && principal.role != lib_access_control::Role::System {
+            return Ok(ZhtpResponse::error(ZhtpStatus::Forbidden, "Chain export requires Council role".to_string()));
+        }
         let blockchain_arc = self
             .get_blockchain()
             .await
@@ -2629,6 +2645,10 @@ impl BlockchainHandler {
 
     /// Import blockchain from another node
     async fn handle_import_chain(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let principal = self.extract_principal(&request);
+        if principal.role != lib_access_control::Role::Council && principal.role != lib_access_control::Role::System {
+            return Ok(ZhtpResponse::error(ZhtpStatus::Forbidden, "Chain import requires Council role".to_string()));
+        }
         // Validate that body is not empty
         if request.body.is_empty() {
             return Ok(ZhtpResponse::error(

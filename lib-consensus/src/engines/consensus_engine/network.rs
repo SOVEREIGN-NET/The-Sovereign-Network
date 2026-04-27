@@ -1,4 +1,5 @@
 use super::*;
+use super::state_machine::wrap_heartbeat;
 
 impl ConsensusEngine {
     /// Main consensus loop with tokio::select!
@@ -317,11 +318,14 @@ impl ConsensusEngine {
                             .map(|v| v.identity.clone())
                             .collect();
 
-                        // Broadcast heartbeat (best-effort, ignore failures)
+                        // Broadcast heartbeat (best-effort, ignore failures).
+                        // wrap_heartbeat signs the outer envelope so receivers
+                        // running with `bootstrap_tofu = false` (Mainnet) can
+                        // verify against `HeartbeatSigningPayload` instead of
+                        // dropping unsigned messages.
+                        let msg = wrap_heartbeat(heartbeat_msg, self.validator_keypair.as_ref());
                         if let Err(e) = self.broadcaster.broadcast_to_validators(
-                            ValidatorMessage::Heartbeat {
-                                message: heartbeat_msg,
-                            },
+                            msg,
                             &validator_ids,
                         ).await {
                             tracing::debug!("Heartbeat broadcast failed: {}", e);
@@ -502,10 +506,11 @@ impl ConsensusEngine {
 
     async fn on_message(&mut self, msg: ValidatorMessage) -> ConsensusResult<()> {
         match msg {
-            ValidatorMessage::Propose { proposal } => {
-                self.on_proposal(proposal).await?;
+            ValidatorMessage::Propose(propose_msg) => {
+                self.on_proposal(propose_msg.proposal).await?;
             }
-            ValidatorMessage::Vote { vote } => {
+            ValidatorMessage::Vote(vote_msg) => {
+                let vote = vote_msg.vote;
                 // Compute payload hash for replay detection
                 let payload_bytes =
                     bincode::serialize(&vote).expect("Vote serialization cannot fail");
@@ -565,7 +570,7 @@ impl ConsensusEngine {
                     }
                 }
             }
-            ValidatorMessage::Heartbeat { message } => {
+            ValidatorMessage::Heartbeat(heartbeat_msg) => {
                 // Process heartbeat (advisory only, never affects consensus)
                 let is_validator = |vid: &IdentityId| {
                     self.validator_manager
@@ -574,9 +579,9 @@ impl ConsensusEngine {
                         .any(|v| v.identity == *vid)
                 };
 
-                let validator_id = message.validator.clone();
+                let validator_id = heartbeat_msg.validator.clone();
                 let result = self.heartbeat_tracker.process_heartbeat(
-                    message,
+                    heartbeat_msg,
                     is_validator,
                     self.current_round.height,
                 );

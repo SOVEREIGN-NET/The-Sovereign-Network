@@ -481,7 +481,7 @@ async fn test_difficulty_governance_update() {
 #[tokio::test]
 async fn test_difficulty_manager_with_custom_config() {
     use lib_blockchain::initialize_consensus_integration_with_difficulty_config;
-    use lib_consensus::difficulty::DifficultyConfig;
+    use lib_blockchain::difficulty::DifficultyConfig;
 
     let blockchain = Arc::new(RwLock::new(Blockchain::new().unwrap()));
     let mempool = Arc::new(RwLock::new(Mempool::default()));

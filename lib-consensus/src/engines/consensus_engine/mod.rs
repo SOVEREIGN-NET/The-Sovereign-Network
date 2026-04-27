@@ -188,12 +188,17 @@ use tokio::sync::mpsc;
 use tokio::time::Sleep;
 
 use crate::byzantine::ByzantineFaultDetector;
-use crate::dao::dao_types::{DaoExecutionAction, DaoProposal};
-use crate::dao::dao_types::{GovernanceParameterUpdate, GovernanceParameterValue};
-use crate::dao::DaoEngine;
+// CONS-106 / AD-003: DAO module relocated to lib-governance. Engine still
+// imports `DaoEngine` directly for the synchronous validation paths
+// (`apply_governance_update_from_proposal`); the fire-and-forget
+// round-finalize path uses `lib_consensus_core::ports::GovernanceCallback`.
+use lib_governance::dao::dao_types::{DaoExecutionAction, DaoProposal};
+use lib_governance::dao::dao_types::{GovernanceParameterUpdate, GovernanceParameterValue};
+use lib_governance::dao::DaoEngine;
+use lib_consensus_core::ports::{GovernanceCallback, NoOpGovernanceCallback};
 use crate::invariants::{check_invariant, ConsensusInvariant, ConsensusState as InvariantState};
-use crate::rewards::RewardCalculator;
 use crate::types::*;
+use lib_consensus_core::ports::{NoOpRewardCallback, RewardCallback};
 use crate::validators::validator_manager::ValidatorInfo as ValidatorInfoTrait;
 use crate::validators::ValidatorManager;
 use crate::{ConsensusError, ConsensusResult};
@@ -244,7 +249,15 @@ mod tests;
 /// History:
 ///   1 — initial: proposal ID/signature include round + domain tags
 ///       `ZHTP/PROPOSAL/ID/v1` and `ZHTP/PROPOSAL/SIG/v1`
-pub const CONSENSUS_PROTOCOL_VERSION: u32 = 1;
+///   2 — CONS-201: `ValidatorMessage` collapsed from 5 variants to 3
+///       (deleted `Commit` and `RoundChange` variants); single canonical
+///       enum at `lib_consensus::validators::ValidatorMessage`. Old v1
+///       nodes encode/decode `Commit`/`RoundChange` variants that v2
+///       nodes cannot decode and would silently mis-route otherwise.
+///       Bumping enforces a hard cutover boundary — mixed-version nodes
+///       reject each other's proposals at admission time instead of
+///       silently mis-decoding the wire format.
+pub const CONSENSUS_PROTOCOL_VERSION: u32 = 2;
 
 /// Human-readable name of the consensus algorithm variant implemented here.
 ///
@@ -449,6 +462,13 @@ pub struct ConsensusEngine {
     validator_manager: ValidatorManager,
     /// Current consensus round
     current_round: ConsensusRound,
+    /// FSM control state (CONS-301..305).  Mirrors `current_round.step`
+    /// during the handler-by-handler migration; kept in sync via
+    /// `enter_fsm_state()` whenever the round step changes.  When the
+    /// migration completes (CONS-305f) `current_round.step` and the
+    /// `enter_*_step` helpers go away and this becomes the single
+    /// source of truth.
+    fsm_state: lib_consensus_core::fsm::ValidatorState,
     /// Consensus configuration
     config: ConsensusConfig,
     /// Pending proposals queue
@@ -467,12 +487,25 @@ pub struct ConsensusEngine {
     pending_epoch_length_update: Option<PendingEpochLengthUpdate>,
     /// Whether consensus has begun (genesis window closed)
     chain_started: bool,
-    /// DAO governance engine
+    /// DAO governance engine — kept for the synchronous validation paths
+    /// (`apply_governance_update_from_proposal`, `validate_governance_update`,
+    /// `decode_execution_params`). Per CONS-106 / AD-003 the type itself
+    /// now lives in `lib_governance::dao` (was `crate::dao`).
     dao_engine: DaoEngine,
+    /// Governance round-finalize hook (CONS-106 / AD-005). Engine emits one
+    /// `on_round_finalized(height)` per finalized round; the runtime adapter
+    /// (`lib_governance::dao::ConsensusGovernanceAdapter`) walks expired
+    /// proposals. Defaults to a no-op so tests and bootstrap configurations
+    /// can run without wiring governance.
+    governance_callback: Arc<dyn GovernanceCallback>,
     /// Byzantine fault detection
     byzantine_detector: ByzantineFaultDetector,
-    /// Reward calculation system
-    reward_calculator: RewardCalculator,
+    /// Reward distribution hook (CONS-103 / AD-005). Engine emits one
+    /// `on_round_finalized` per finalized round; the runtime adapter
+    /// (`lib_economy::ConsensusRewardAdapter`) owns the calculator and
+    /// distribution side effects. Defaults to a no-op so tests and bootstrap
+    /// configurations can run without wiring rewards.
+    reward_callback: Arc<dyn RewardCallback>,
     /// Fee collector for fee collection integration
     ///
     /// Implements the FeeCollector trait for collecting and distributing fees
@@ -500,7 +533,7 @@ pub struct ConsensusEngine {
     /// Local validator signing keypair (required for proposal/vote signing)
     validator_keypair: Option<KeyPair>,
     /// Storage proof provider (lib-storage backed)
-    storage_proof_provider: Option<Arc<dyn crate::proofs::StorageProofProvider>>,
+    storage_proof_provider: Option<Arc<dyn lib_storage::proofs::StorageProofProvider>>,
     /// Blockchain provider for block production (injected by runtime)
     blockchain_provider: Option<Arc<dyn crate::types::ConsensusBlockchainProvider>>,
     /// Block commit callback for finalizing blocks to blockchain storage
@@ -586,6 +619,10 @@ impl ConsensusEngine {
             validator_identity: None,
             validator_manager,
             current_round,
+            // Engine starts at step=Propose (see initial ConsensusRound
+            // above) — keep the FSM mirror aligned. The consensus loop
+            // promotes to other states via `enter_fsm_state()`.
+            fsm_state: lib_consensus_core::fsm::ValidatorState::Proposing,
             config,
             pending_proposals: VecDeque::new(),
             vote_pool: HashMap::new(), // Composite key prevents equivocation
@@ -595,8 +632,9 @@ impl ConsensusEngine {
             pending_epoch_length_update: None,
             chain_started: false,
             dao_engine: DaoEngine::new(),
+            governance_callback: Arc::new(NoOpGovernanceCallback),
             byzantine_detector: ByzantineFaultDetector::new(),
-            reward_calculator: RewardCalculator::new(),
+            reward_callback: Arc::new(NoOpRewardCallback),
             fee_router: None,
             broadcaster,
             message_rx: None,
@@ -851,6 +889,23 @@ impl ConsensusEngine {
         self.fee_router = Some(std::sync::Arc::new(std::sync::Mutex::new(fee_collector)));
     }
 
+    /// Inject the reward distribution hook (CONS-103 / AD-005).
+    ///
+    /// Default is `NoOpRewardCallback`. Production runtimes wire
+    /// `lib_economy::ConsensusRewardAdapter` here at engine construction.
+    pub fn set_reward_callback(&mut self, callback: Arc<dyn RewardCallback>) {
+        self.reward_callback = callback;
+    }
+
+    /// Inject the governance round-finalize hook (CONS-106 / AD-005).
+    ///
+    /// Default is `NoOpGovernanceCallback`. Production runtimes wire
+    /// `lib_governance::dao::ConsensusGovernanceAdapter` here at engine
+    /// construction.
+    pub fn set_governance_callback(&mut self, callback: Arc<dyn GovernanceCallback>) {
+        self.governance_callback = callback;
+    }
+
     /// Fire a `ConsensusEvent` to any attached liveness monitor / alert bridge.
     ///
     /// The send is best-effort (`let _ = tx.send(...)`): if no receiver is configured
@@ -938,7 +993,7 @@ impl ConsensusEngine {
     /// Set storage proof provider for Proof-of-Storage attestations
     pub fn set_storage_proof_provider(
         &mut self,
-        provider: Arc<dyn crate::proofs::StorageProofProvider>,
+        provider: Arc<dyn lib_storage::proofs::StorageProofProvider>,
     ) {
         self.storage_proof_provider = Some(provider);
     }

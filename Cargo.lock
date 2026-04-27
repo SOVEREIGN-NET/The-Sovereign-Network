@@ -3377,6 +3377,7 @@ dependencies = [
  "indexmap 2.13.0",
  "lib-access-control",
  "lib-consensus",
+ "lib-consensus-core",
  "lib-crypto",
  "lib-economy",
  "lib-fees",
@@ -3454,7 +3455,9 @@ dependencies = [
  "dashmap",
  "hex",
  "indexmap 1.9.3",
+ "lib-consensus-core",
  "lib-crypto",
+ "lib-governance",
  "lib-identity",
  "lib-proofs",
  "lib-storage",
@@ -3469,6 +3472,74 @@ dependencies = [
  "tokio-test",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "lib-consensus-core"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "lib-crypto",
+ "lib-identity",
+ "lib-types",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "lib-consensus-net"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bincode",
+ "lib-consensus-core",
+ "lib-crypto",
+ "lib-identity",
+ "lib-network",
+ "lib-types",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "lib-consensus-observer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "lib-consensus",
+ "lib-crypto",
+ "lib-identity",
+ "lib-types",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "lib-consensus-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bincode",
+ "lib-blockchain",
+ "lib-consensus-core",
+ "lib-consensus-net",
+ "lib-crypto",
+ "lib-identity",
+ "lib-network",
+ "lib-types",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3504,6 +3575,7 @@ dependencies = [
  "chrono",
  "criterion",
  "hex",
+ "lib-consensus-core",
  "lib-crypto",
  "lib-identity",
  "lib-proofs",
@@ -3531,13 +3603,19 @@ dependencies = [
 name = "lib-governance"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bincode",
  "blake3",
  "lib-access-control",
+ "lib-consensus-core",
+ "lib-crypto",
+ "lib-identity",
  "lib-types",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3619,6 +3697,7 @@ dependencies = [
  "hmac",
  "hostname",
  "jni",
+ "lib-blockchain",
  "lib-consensus",
  "lib-crypto",
  "lib-economy",
@@ -3685,6 +3764,7 @@ dependencies = [
  "num_cpus",
  "plonky2",
  "plonky2_field",
+ "rand 0.8.5",
  "serde",
  "serde_json",
  "tokio",
@@ -3795,9 +3875,6 @@ name = "lib-utxo"
 version = "0.1.0"
 dependencies = [
  "lib-types",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -9379,6 +9456,7 @@ dependencies = [
  "lib-consensus",
  "lib-crypto",
  "lib-economy",
+ "lib-governance",
  "lib-identity",
  "lib-identity-core",
  "lib-network",
@@ -9448,6 +9526,7 @@ dependencies = [
  "lib-network",
  "lib-proofs",
  "lib-protocols",
+ "lib-types",
  "mime_guess",
  "open",
  "regex",

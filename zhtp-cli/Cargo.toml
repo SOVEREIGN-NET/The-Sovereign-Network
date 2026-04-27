@@ -53,6 +53,9 @@ mime_guess = "2.0"
 lib-identity = { path = "../lib-identity" }
 lib-crypto = { path = "../lib-crypto" }
 lib-economy = { path = "../lib-economy" }
+# CONS-103 / PR #2382 review: needed for `lib_types::sov::atoms` so placeholder
+# reward amounts are scaled into the same units as real reward rounds.
+lib-types = { path = "../lib-types" }
 lib-network = { path = "../lib-network" }
 lib-blockchain = { path = "../lib-blockchain", features = ["contracts"] }
 lib-protocols = { path = "../lib-protocols" }

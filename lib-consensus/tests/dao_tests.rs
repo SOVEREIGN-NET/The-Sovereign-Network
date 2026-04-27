@@ -216,10 +216,13 @@ async fn test_governance_parameter_validation() -> Result<()> {
     assert!(result.is_ok());
 
     // Test multiple parameter update
+    // MaxValidators is bounded by MAX_VALIDATORS_HARD_CAP = 21
+    // (lib-types/src/consensus.rs § "Validator count bounds"). Any value > 21 is
+    // rejected by validate_governance_update.
     let multi_update = lib_consensus::GovernanceParameterUpdate {
         updates: vec![
             lib_consensus::GovernanceParameterValue::MinStake(5000),
-            lib_consensus::GovernanceParameterValue::MaxValidators(100),
+            lib_consensus::GovernanceParameterValue::MaxValidators(21),
         ],
     };
 

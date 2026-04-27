@@ -1,23 +1,27 @@
 //! Reward calculation types
 //!
-//! Types needed for reward calculations in the economics system
+//! Pure data types for reward calculations. Uses `IdentityId` (not `[u8; 32]`)
+//! and `u128` SOV atoms (not `u64`) to match the post-#2287 widening that aligns
+//! reward amounts with the rest of the value layer.
 
+use lib_identity::IdentityId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Individual validator reward information
+/// Individual validator reward information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatorReward {
-    pub validator: [u8; 32], // Using byte array instead of IdentityId to avoid dependencies
-    pub base_reward: u64,
-    pub work_bonus: u64,
-    pub participation_bonus: u64,
-    pub total_reward: u64,
-    pub work_breakdown: HashMap<String, u64>, // Work type as string to avoid dependencies
+    pub validator: IdentityId,
+    pub base_reward: u128,
+    pub work_bonus: u128,
+    pub participation_bonus: u128,
+    pub total_reward: u128,
+    pub work_breakdown: HashMap<UsefulWorkType, u64>,
 }
 
-/// Useful work types for reward calculation
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Useful-work categories for reward calculation. Each variant has a multiplier
+/// in `RewardCalculator::work_multipliers`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum UsefulWorkType {
     NetworkRouting,
     DataStorage,
@@ -31,33 +35,34 @@ pub enum UsefulWorkType {
 
 impl std::fmt::Display for UsefulWorkType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            UsefulWorkType::NetworkRouting => write!(f, "network_routing"),
-            UsefulWorkType::DataStorage => write!(f, "data_storage"),
-            UsefulWorkType::Computation => write!(f, "computation"),
-            UsefulWorkType::Validation => write!(f, "validation"),
-            UsefulWorkType::BridgeOperations => write!(f, "bridge_operations"),
-            UsefulWorkType::MeshDiscovery => write!(f, "mesh_discovery"),
-            UsefulWorkType::IspBypass => write!(f, "isp_bypass"),
-            UsefulWorkType::UbiDistribution => write!(f, "ubi_distribution"),
-        }
+        let name = match self {
+            UsefulWorkType::NetworkRouting => "network_routing",
+            UsefulWorkType::DataStorage => "data_storage",
+            UsefulWorkType::Computation => "computation",
+            UsefulWorkType::Validation => "validation",
+            UsefulWorkType::BridgeOperations => "bridge_operations",
+            UsefulWorkType::MeshDiscovery => "mesh_discovery",
+            UsefulWorkType::IspBypass => "isp_bypass",
+            UsefulWorkType::UbiDistribution => "ubi_distribution",
+        };
+        f.write_str(name)
     }
 }
 
-/// Reward round information
+/// Aggregate of one consensus round's reward distribution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RewardRound {
     pub height: u64,
-    pub total_rewards: u64,
-    pub validator_rewards: HashMap<[u8; 32], ValidatorReward>,
+    pub total_rewards: u128,
+    pub validator_rewards: HashMap<IdentityId, ValidatorReward>,
     pub timestamp: u64,
 }
 
-/// Reward system statistics
+/// Reward system statistics for diagnostics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RewardStatistics {
     pub total_rounds: u64,
-    pub total_rewards_distributed: u64,
-    pub average_rewards_per_round: u64,
-    pub current_base_reward: u64,
+    pub total_rewards_distributed: u128,
+    pub average_rewards_per_round: u128,
+    pub current_base_reward: u128,
 }

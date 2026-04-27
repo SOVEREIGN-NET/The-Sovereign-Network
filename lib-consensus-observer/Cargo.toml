@@ -1,0 +1,25 @@
+[package]
+name = "lib-consensus-observer"
+version = "0.1.0"
+edition = "2021"
+authors = ["ZHTP Developers"]
+description = "ZHTP Consensus Observer - deterministic, passive observer layer for consensus behavior analysis"
+license = "MIT"
+
+[dependencies]
+# Core dependencies
+serde = { version = "1.0", features = ["derive"] }
+anyhow = "1.0"
+thiserror = "1.0"
+tracing = "0.1"
+hex = "0.4"
+
+# ZHTP package dependencies
+lib-consensus = { path = "../lib-consensus" }
+lib-types = { path = "../lib-types" }
+lib-crypto = { path = "../lib-crypto" }
+lib-identity = { path = "../lib-identity" }
+
+[dev-dependencies]
+tracing-subscriber = "0.3"
+serde_json = "1.0"

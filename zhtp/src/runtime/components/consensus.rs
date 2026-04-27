@@ -72,10 +72,9 @@ impl ConsensusMessageBroadcaster for ConsensusMeshBroadcaster {
         };
         drop(quic_protocol_guard);
 
-        // Convert types::ValidatorMessage to validators::ValidatorMessage for mesh transport
-        let network_message = convert_to_network_message(&message);
-
-        let target_height = consensus_message_height(&message);
+        // CONS-201: engine produces the canonical wire enum directly; no
+        // translation needed.
+        let target_height = validator_message_height(&message);
         let target_peer_node_ids = self
             .resolve_validator_peer_node_ids(validator_ids, target_height)
             .await;
@@ -117,7 +116,7 @@ impl ConsensusMessageBroadcaster for ConsensusMeshBroadcaster {
                 .send_to_peer(
                     &peer_id,
                     lib_network::types::mesh_message::ZhtpMeshMessage::ValidatorMessage(
-                        network_message.clone(),
+                        message.clone(),
                     ),
                 )
                 .await
@@ -188,7 +187,7 @@ impl ValidatorNetworkTransport for QuicValidatorTransport {
         };
         drop(quic_protocol_guard);
 
-        let target_height = network_message_height(&message);
+        let target_height = validator_message_height(&message);
         let target_peer_node_ids = self
             .resolve_validator_peer_node_ids(recipients, target_height)
             .await;
@@ -237,103 +236,17 @@ impl ValidatorNetworkTransport for QuicValidatorTransport {
     }
 }
 
-/// Convert from lib_consensus::types::ValidatorMessage to lib_consensus::validators::ValidatorMessage
-fn convert_to_network_message(
-    msg: &ValidatorMessage,
-) -> lib_consensus::validators::ValidatorMessage {
-    use lib_consensus::validators::{
-        ConsensusStateView, ProposeMessage, ValidatorMessage as NetworkValidatorMessage,
-        VoteMessage,
-    };
-    use std::collections::BTreeMap;
+// CONS-201: `convert_to_network_message` and `consensus_message_height`
+// were deleted. The engine now produces the canonical wrapped enum
+// directly via `wrap_propose`/`wrap_vote` in state_machine.rs, so
+// `LibNetworkMessageBroadcaster::broadcast_to_validators` receives a
+// fully-formed `ValidatorMessage` and forwards it without translation.
 
+fn validator_message_height(msg: &ValidatorMessage) -> u64 {
     match msg {
-        ValidatorMessage::Propose { proposal } => {
-            NetworkValidatorMessage::Propose(ProposeMessage {
-                message_id: proposal.id.clone(),
-                proposer: proposal.proposer.clone(),
-                proposal: proposal.clone(),
-                justification: None,
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-                signature: proposal.signature.clone(),
-            })
-        }
-        ValidatorMessage::Vote { vote } => {
-            // Derive step from vote_type to ensure consistency
-            let step = match vote.vote_type {
-                lib_consensus::types::VoteType::PreVote => {
-                    lib_consensus::types::ConsensusStep::PreVote
-                }
-                lib_consensus::types::VoteType::PreCommit => {
-                    lib_consensus::types::ConsensusStep::PreCommit
-                }
-                lib_consensus::types::VoteType::Commit => {
-                    lib_consensus::types::ConsensusStep::Commit
-                }
-                lib_consensus::types::VoteType::Against => {
-                    // Against votes can occur during any voting step, default to PreVote
-                    lib_consensus::types::ConsensusStep::PreVote
-                }
-            };
-            let state_view = ConsensusStateView {
-                height: vote.height,
-                round: vote.round,
-                step,
-                known_proposals: vec![vote.proposal_id.clone()],
-                vote_counts: BTreeMap::new(),
-            };
-            NetworkValidatorMessage::Vote(VoteMessage {
-                message_id: {
-                    // Use a unique per-broadcast ID so the dedup cache never silently
-                    // drops re-broadcasts of the same vote (vote.id is deterministic
-                    // per height+round+voter, which caused 3600s suppression).
-                    let ts = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_nanos();
-                    let nonce = lib_crypto::generate_nonce();
-                    let mut data = format!("vote_bcast_{}", ts).into_bytes();
-                    data.extend_from_slice(&nonce);
-                    lib_crypto::Hash::from_bytes(&lib_crypto::hash_blake3(&data))
-                },
-                voter: vote.voter.clone(),
-                vote: vote.clone(),
-                consensus_state: state_view,
-                // Use real wall-clock timestamp for network freshness checks.
-                // The consensus engine uses a deterministic value internally, but the
-                // validator-protocol layer rejects messages with stale/future timestamps.
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-                signature: vote.signature.clone(),
-            })
-        }
-        ValidatorMessage::Heartbeat { message } => {
-            // HeartbeatMessage is the same type, just re-exported
-            NetworkValidatorMessage::Heartbeat(message.clone())
-        }
-    }
-}
-
-fn consensus_message_height(msg: &ValidatorMessage) -> u64 {
-    match msg {
-        ValidatorMessage::Propose { proposal } => proposal.height,
-        ValidatorMessage::Vote { vote } => vote.height,
-        ValidatorMessage::Heartbeat { message } => message.height,
-    }
-}
-
-fn network_message_height(msg: &lib_consensus::validators::ValidatorMessage) -> u64 {
-    match msg {
-        lib_consensus::validators::ValidatorMessage::Propose(m) => m.proposal.height,
-        lib_consensus::validators::ValidatorMessage::Vote(m) => m.vote.height,
-        lib_consensus::validators::ValidatorMessage::Commit(m) => m.height,
-        lib_consensus::validators::ValidatorMessage::RoundChange(m) => m.height,
-        lib_consensus::validators::ValidatorMessage::Heartbeat(m) => m.height,
+        ValidatorMessage::Propose(m) => m.proposal.height,
+        ValidatorMessage::Vote(m) => m.vote.height,
+        ValidatorMessage::Heartbeat(m) => m.height,
     }
 }
 
@@ -1051,18 +964,11 @@ impl ConsensusBlockchainAdapter {
 /// sync from racing at the same height (Apr 2 2026 postmortem fix).
 pub struct ConsensusBlockCommitter {
     blockchain_slot: SharedBlockchainSlot,
-    environment: crate::config::Environment,
 }
 
 impl ConsensusBlockCommitter {
-    pub fn new(
-        blockchain_slot: SharedBlockchainSlot,
-        environment: crate::config::Environment,
-    ) -> Self {
-        Self {
-            blockchain_slot,
-            environment,
-        }
+    pub fn new(blockchain_slot: SharedBlockchainSlot) -> Self {
+        Self { blockchain_slot }
     }
 }
 
@@ -2344,9 +2250,26 @@ impl Component for ConsensusComponent {
         // Wire block commit callback for BFT-finalized blocks
         // This is the critical bridge that commits blocks when BFT achieves 2/3+1 votes
         let block_committer =
-            ConsensusBlockCommitter::new(self.blockchain.clone(), self.environment.clone());
+            ConsensusBlockCommitter::new(self.blockchain.clone());
         consensus_engine.set_block_commit_callback(Arc::new(block_committer));
         info!("🔗 Block commit callback wired to consensus engine");
+
+        // Wire reward distribution callback (CONS-103 / AD-005). The adapter
+        // owns the calculator + Mutex; failures are logged inside the adapter,
+        // never reach the engine.
+        consensus_engine.set_reward_callback(Arc::new(
+            lib_economy::rewards::ConsensusRewardAdapter::new(),
+        ));
+        info!("Reward distribution callback wired to consensus engine");
+
+        // Wire governance round-finalize hook (CONS-106 / AD-005). The adapter
+        // captures the current Tokio runtime handle and runs the deprecated
+        // `process_expired_proposals` async path inside it. Failures are logged
+        // inside the adapter, never reach the engine.
+        consensus_engine.set_governance_callback(Arc::new(
+            lib_governance::dao::ConsensusGovernanceAdapter::new(),
+        ));
+        info!("Governance callback wired to consensus engine");
 
         // Wire a validator update channel so the periodic re-sync task can push
         // validator set changes into the running consensus loop without direct

@@ -13,8 +13,10 @@ extern crate lib_proofs;
 pub mod block;
 pub mod blockchain;
 pub mod byzantine_evidence;
+pub mod chain_evaluation;
 pub mod dao;
 pub mod dht_index;
+pub mod difficulty;
 pub mod edge_node_state;
 pub mod events;
 pub mod exchange;
@@ -24,6 +26,7 @@ mod fork_recovery; // gutted in Issue #936; kept as private to avoid orphan modu
 pub mod genesis;
 pub mod integration;
 pub mod mempool;
+pub mod mining;
 pub mod onramp;
 pub mod oracle;
 pub mod pricing;
@@ -162,8 +165,11 @@ pub use integration::consensus_integration::{
     ConsensusStatus,
 };
 
-// Re-export difficulty types from lib-consensus for convenience
-pub use lib_consensus::{DifficultyConfig, DifficultyError, DifficultyManager, DifficultyResult};
+// Re-export difficulty types (moved from lib-consensus per CONS-107 / AD-003)
+pub use difficulty::{DifficultyConfig, DifficultyError, DifficultyManager, DifficultyResult};
+
+// Re-export chain evaluation types (moved from lib-consensus per CONS-107 / AD-003)
+pub use chain_evaluation::{ChainDecision, ChainEvaluator, ChainMergeResult, ChainSummary};
 
 // Re-export storage types (Phase 1 storage layer)
 pub use storage::{
