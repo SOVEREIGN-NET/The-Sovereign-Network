@@ -1727,12 +1727,20 @@ impl ConsensusEngine {
                 self.dispatch_action(action).await;
             }
 
-            // CONS-305f: removed the direct `enter_precommit_step()`
-            // call here.  The FSM's `SendPrecommit` action dispatched
-            // above already calls `enter_precommit_step` via
-            // `dispatch_action` — keeping this redundant call meant
-            // the helper ran twice (idempotent re re-entry guards,
-            // but wasteful).
+            // CONS-305f / PR #2403 review: keep the explicit
+            // `enter_precommit_step()` call here for the **late
+            // prevote quorum after timeout** path. When the local
+            // step has already advanced to PreCommit via the
+            // PreVote-step timeout, `prior_fsm = Precommitting`
+            // and the FSM treats this `PrevoteThresholdReached` as
+            // logged-ignored (it doesn't emit SendPrecommit from
+            // an already-Precommitting state). Without this call
+            // we'd never cast our precommit on a late prevote
+            // quorum. The helper is idempotent w.r.t. its own
+            // re-entry guard, so the ON-TIME quorum case (FSM
+            // dispatched SendPrecommit and dispatch_action ran
+            // enter_precommit_step) still works.
+            self.enter_precommit_step().await?;
         }
 
         // **CE-L1, CE-L2**: Always check if commit quorum is reached, even in PreVote step
@@ -1864,9 +1872,17 @@ impl ConsensusEngine {
                 self.dispatch_action(action).await;
             }
 
-            // CONS-305f: removed the direct `enter_commit_step()`
-            // call here. The FSM's `SendCommit` action dispatched
-            // above calls it via `dispatch_action`.
+            // CONS-305f / PR #2403 review: keep the explicit
+            // `enter_commit_step()` call here for the **late
+            // precommit quorum after timeout** path.  Same shape
+            // as the on_prevote case above: when the local step
+            // has already advanced to Commit via the PreCommit-
+            // step timeout, the FSM is `Committed { ... }` and
+            // treats `PrecommitThresholdReached` as logged-
+            // ignored.  Without this call we'd never cast our
+            // commit vote on a late precommit quorum.  Helper is
+            // idempotent.
+            self.enter_commit_step().await?;
         }
 
         // **CE-L1, CE-L2**: Always check if commit quorum is reached, even in PreCommit step
@@ -2045,10 +2061,6 @@ impl ConsensusEngine {
         self.current_round.step = new_step;
     }
 
-    /// Dispatch a single FSM `Action` to the engine. CONS-305 stages
-    /// these per-action handlers progressively; for CONS-305a only
-    /// `Timeout`-driven actions need handling, the rest are no-ops or
-    /// pass through to the existing engine machinery.
     /// Dispatch one FSM `Action` to the engine.
     ///
     /// CONS-305f cutover: dispatch_action is the canonical entry
