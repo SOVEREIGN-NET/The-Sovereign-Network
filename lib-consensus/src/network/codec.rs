@@ -431,7 +431,7 @@ mod tests {
             proposer: IdentityId::from_bytes(b"test-proposer-id-1234567890123"),
             height: 100,
             round: 1,
-            protocol_version: 1,
+            protocol_version: crate::engines::consensus_engine::CONSENSUS_PROTOCOL_VERSION,
             previous_hash: Hash::from_bytes(b"prev-hash-123456789012345678901"),
             block_data: vec![1, 2, 3, 4, 5],
             timestamp: 1234567890,
