@@ -528,7 +528,7 @@ impl<'de> serde::Deserialize<'de> for CommitAttestation {
 /// Verify the Dilithium signature against the validator's registered consensus
 /// key.  Accept the proof if >= `(2 * total_validators / 3) + 1` unique
 /// attestations verify successfully.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BftQuorumProof {
     /// Block height this proof attests to.
     pub height: u64,
