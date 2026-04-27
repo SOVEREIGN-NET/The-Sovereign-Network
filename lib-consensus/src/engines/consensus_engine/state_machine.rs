@@ -1513,7 +1513,32 @@ impl ConsensusEngine {
             tracing::debug!("Proposal relay failed (non-critical): {}", e);
         }
 
+        // CONS-305e: route admitted proposal through the FSM. The
+        // proposal has passed every gate (no-fork, signature, proposer
+        // election, payload validity); the FSM advances Proposing →
+        // Prevoting and emits `[BroadcastProposal, SendPrevote,
+        // ResetWatchdog]`. The existing relay above + the
+        // `enter_prevote_step()` call below continue to do that work
+        // until CONS-305f folds them into the action handlers.
+        let proposal_height = proposal.height;
+        let proposal_round = proposal.round;
         self.pending_proposals.push_back(proposal);
+
+        // Prior state derived from legacy step (source of truth
+        // during the migration) per #2398 review.
+        let prior_fsm = self.step_to_fsm_state(self.current_round.step.clone());
+        let (next_fsm, actions) = lib_consensus_core::fsm::transition(
+            prior_fsm,
+            lib_consensus_core::fsm::Event::ProposalAdmitted {
+                id: proposal_id.clone(),
+                height: proposal_height,
+                round: proposal_round,
+            },
+        );
+        self.fsm_state = next_fsm;
+        for action in actions {
+            self.dispatch_action(action).await;
+        }
 
         match self.current_round.step {
             ConsensusStep::Propose => {
