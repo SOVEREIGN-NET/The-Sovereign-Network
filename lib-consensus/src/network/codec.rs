@@ -409,32 +409,6 @@ mod tests {
                 })
             }
             2 => {
-                // Commit message
-                ValidatorMessage::Commit(CommitMessage {
-                    message_id: hash.clone(),
-                    committer: identity,
-                    proposal_id: hash,
-                    height: 100,
-                    round: 1,
-                    commitment_proof: create_test_commitment_proof(),
-                    timestamp: 1234567890,
-                    signature: PostQuantumSignature::default(),
-                })
-            }
-            3 => {
-                // RoundChange message
-                ValidatorMessage::RoundChange(RoundChangeMessage {
-                    message_id: hash.clone(),
-                    validator: identity,
-                    height: 100,
-                    new_round: 2,
-                    reason: RoundChangeReason::Timeout,
-                    locked_proposal: Some(hash),
-                    timestamp: 1234567890,
-                    signature: PostQuantumSignature::default(),
-                })
-            }
-            4 => {
                 // Heartbeat message
                 ValidatorMessage::Heartbeat(HeartbeatMessage {
                     message_id: hash,
@@ -494,13 +468,8 @@ mod tests {
         }
     }
 
-    fn create_test_commitment_proof() -> CommitmentProof {
-        CommitmentProof {
-            aggregate_signature: vec![1, 2, 3, 4, 5],
-            signers: vec![IdentityId::from_bytes(b"validator-1-id-1234567890123456")],
-            voting_power: 1000,
-        }
-    }
+    // CONS-201: `create_test_commitment_proof` was deleted along with the
+    // `Commit` variant.
 
     fn create_test_network_summary() -> NetworkSummary {
         NetworkSummary {
@@ -551,38 +520,14 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_roundtrip_commit_message() {
-        let codec = BincodeConsensusCodec::new();
-        let original = create_test_message(2);
-
-        let encoded = codec.encode(&original).expect("Encode failed");
-        let decoded = codec.decode(&encoded).expect("Decode failed");
-
-        assert_eq!(
-            std::mem::discriminant(&original),
-            std::mem::discriminant(&decoded)
-        );
-    }
-
-    #[test]
-    fn test_roundtrip_round_change_message() {
-        let codec = BincodeConsensusCodec::new();
-        let original = create_test_message(3);
-
-        let encoded = codec.encode(&original).expect("Encode failed");
-        let decoded = codec.decode(&encoded).expect("Decode failed");
-
-        assert_eq!(
-            std::mem::discriminant(&original),
-            std::mem::discriminant(&decoded)
-        );
-    }
+    // CONS-201: `test_roundtrip_commit_message` and
+    // `test_roundtrip_round_change_message` were deleted along with the
+    // `Commit` and `RoundChange` variants.
 
     #[test]
     fn test_roundtrip_heartbeat_message() {
         let codec = BincodeConsensusCodec::new();
-        let original = create_test_message(4);
+        let original = create_test_message(2);
 
         let encoded = codec.encode(&original).expect("Encode failed");
         let decoded = codec.decode(&encoded).expect("Decode failed");
@@ -846,7 +791,9 @@ mod tests {
     fn test_full_codec_roundtrip_all_variants() {
         let codec = BincodeConsensusCodec::new();
 
-        for variant in 0..5 {
+        // CONS-201: collapsed from 5 variants (Propose / Vote / Commit /
+        // RoundChange / Heartbeat) to 3 (Propose / Vote / Heartbeat).
+        for variant in 0..3 {
             let original = create_test_message(variant);
             let framed = codec
                 .encode_framed(&original)

@@ -2,11 +2,119 @@
 
 use super::*;
 use crate::types::ConsensusStepExt;
+use crate::validators::validator_protocol::{
+    sign_propose_envelope, sign_vote_envelope, ConsensusStateView, ProposeMessage, VoteMessage,
+};
 use crate::validators::ValidatorManager;
 use lib_consensus_core::ports::ValidatorRewardInput;
-use lib_crypto::hash_blake3;
+use lib_crypto::{hash_blake3, KeyPair, PostQuantumSignature};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::info;
+
+/// Build a canonical `ValidatorMessage::Propose` and sign the outer
+/// envelope with the local validator keypair.
+///
+/// PR #2387 review (Copilot) caught the previous body reusing
+/// `proposal.signature` (which signs the inner `ConsensusProposal` payload,
+/// not the envelope) — receivers verify the envelope signature against
+/// `ProposeSigningPayload`, so the inner sig fails outer verification.
+/// Fix: sign with `sign_propose_envelope` after the envelope fields
+/// (`message_id`, `timestamp`, `justification`, etc.) are populated.
+///
+/// `keypair == None` (test contexts that never registered a keypair) skips
+/// signing and emits the message with a default placeholder signature; the
+/// receiver's TOFU path special-cases empty signatures, and Mainnet would
+/// reject — same conservative semantics as the rest of the broadcast path.
+fn wrap_propose(proposal: ConsensusProposal, keypair: Option<&KeyPair>) -> ValidatorMessage {
+    let message_id = proposal.id.clone();
+    let proposer = proposal.proposer.clone();
+    let mut msg = ProposeMessage {
+        message_id,
+        proposer,
+        proposal,
+        justification: None,
+        timestamp: now_secs(),
+        signature: PostQuantumSignature::default(),
+    };
+    if let Some(kp) = keypair {
+        match sign_propose_envelope(&msg, kp) {
+            Ok(sig) => msg.signature = sig,
+            Err(e) => tracing::warn!(
+                error = %e,
+                "Failed to sign Propose envelope; broadcasting with placeholder signature"
+            ),
+        }
+    } else {
+        tracing::debug!(
+            "No validator keypair; broadcasting Propose with placeholder signature (test mode)"
+        );
+    }
+    ValidatorMessage::Propose(msg)
+}
+
+/// Build a canonical `ValidatorMessage::Vote` and sign the outer envelope.
+///
+/// `message_id` is per-broadcast (timestamp+nonce) so the network-layer
+/// dedup cache doesn't suppress legitimate re-broadcasts of a vote whose
+/// content hash is otherwise deterministic.
+fn wrap_vote(vote: ConsensusVote, keypair: Option<&KeyPair>) -> ValidatorMessage {
+    let step = match vote.vote_type {
+        VoteType::PreVote => ConsensusStep::PreVote,
+        VoteType::PreCommit => ConsensusStep::PreCommit,
+        VoteType::Commit => ConsensusStep::Commit,
+        // `Against` votes can occur during any voting step; default to PreVote.
+        VoteType::Against => ConsensusStep::PreVote,
+    };
+    let consensus_state = ConsensusStateView {
+        height: vote.height,
+        round: vote.round,
+        step,
+        known_proposals: vec![vote.proposal_id.clone()],
+        vote_counts: BTreeMap::new(),
+    };
+    let voter = vote.voter.clone();
+    let message_id = {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let nonce = lib_crypto::generate_nonce();
+        let mut data = format!("vote_bcast_{}", ts).into_bytes();
+        data.extend_from_slice(&nonce);
+        lib_crypto::Hash::from_bytes(&hash_blake3(&data))
+    };
+    let mut msg = VoteMessage {
+        message_id,
+        voter,
+        vote,
+        consensus_state,
+        timestamp: now_secs(),
+        signature: PostQuantumSignature::default(),
+    };
+    if let Some(kp) = keypair {
+        match sign_vote_envelope(&msg, kp) {
+            Ok(sig) => msg.signature = sig,
+            Err(e) => tracing::warn!(
+                error = %e,
+                "Failed to sign Vote envelope; broadcasting with placeholder signature"
+            ),
+        }
+    } else {
+        tracing::debug!(
+            "No validator keypair; broadcasting Vote with placeholder signature (test mode)"
+        );
+    }
+    ValidatorMessage::Vote(msg)
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
 
 /// Build the `ValidatorRewardInput` slice the engine hands to
 /// `RewardCallback::on_round_finalized` (CONS-103). Keeps the trait
@@ -475,7 +583,7 @@ impl ConsensusEngine {
 
                 // Invariant CE-ENG-3: Broadcast after state transition (proposal now in state)
                 // Create canonical ValidatorMessage from already-formed proposal
-                let msg = ValidatorMessage::Propose { proposal };
+                let msg = wrap_propose(proposal, self.validator_keypair.as_ref());
 
                 // Invariant CE-ENG-5: Pass validator set explicitly, never query network
                 let validator_ids = self.get_active_validator_ids();
@@ -539,7 +647,7 @@ impl ConsensusEngine {
 
             // Invariant CE-ENG-3: Broadcast after state transition
             // Create canonical ValidatorMessage from already-formed vote
-            let msg = ValidatorMessage::Vote { vote };
+            let msg = wrap_vote(vote, self.validator_keypair.as_ref());
 
             // Invariant CE-ENG-5: Pass validator set explicitly, never query network
             let validator_ids = self.get_active_validator_ids();
@@ -608,7 +716,7 @@ impl ConsensusEngine {
 
                 // Invariant CE-ENG-3: Broadcast after state transition
                 // Create canonical ValidatorMessage from already-formed vote
-                let msg = ValidatorMessage::Vote { vote };
+                let msg = wrap_vote(vote, self.validator_keypair.as_ref());
 
                 // Invariant CE-ENG-5: Pass validator set explicitly, never query network
                 let validator_ids = self.get_active_validator_ids();
@@ -689,7 +797,7 @@ impl ConsensusEngine {
 
                 // Invariant CE-ENG-3: Broadcast after state transition
                 // Create canonical ValidatorMessage from already-formed vote
-                let msg = ValidatorMessage::Vote { vote };
+                let msg = wrap_vote(vote, self.validator_keypair.as_ref());
 
                 // Invariant CE-ENG-5: Pass validator set explicitly, never query network
                 let validator_ids = self.get_active_validator_ids();
@@ -1365,7 +1473,7 @@ impl ConsensusEngine {
         // and each node only relays a proposal once (the second time proposals is non-empty).
         let relay_proposal = proposal.clone();
         let relay_validator_ids = self.get_active_validator_ids();
-        let relay_msg = ValidatorMessage::Propose { proposal: relay_proposal };
+        let relay_msg = wrap_propose(relay_proposal, self.validator_keypair.as_ref());
         if let Err(e) = self
             .broadcaster
             .broadcast_to_validators(relay_msg, &relay_validator_ids)
@@ -1405,7 +1513,7 @@ impl ConsensusEngine {
                     let vote = self
                         .cast_vote(proposal_id.clone(), VoteType::PreVote)
                         .await?;
-                    let msg = ValidatorMessage::Vote { vote };
+                    let msg = wrap_vote(vote, self.validator_keypair.as_ref());
                     let validator_ids = self.get_active_validator_ids();
                     if let Err(e) = self
                         .broadcaster
@@ -1495,7 +1603,7 @@ impl ConsensusEngine {
         // to the voter still receive it (star-topology gossip).
         // Duplicate detection (vote_pool key) prevents relay loops: the second
         // time this vote arrives, the pool check fires and returns early without relay.
-        let relay_msg = ValidatorMessage::Vote { vote: vote.clone() };
+        let relay_msg = wrap_vote(vote.clone(), self.validator_keypair.as_ref());
         let relay_validator_ids = self.get_active_validator_ids();
         if let Err(e) = self
             .broadcaster
@@ -1608,7 +1716,7 @@ impl ConsensusEngine {
         // Relay precommit to all validators (star-topology gossip).
         // Critical: without this, nodes that are only connected to a hub (g1)
         // cannot collect precommits from non-hub validators — quorum is impossible.
-        let relay_msg = ValidatorMessage::Vote { vote: vote.clone() };
+        let relay_msg = wrap_vote(vote.clone(), self.validator_keypair.as_ref());
         let relay_validator_ids = self.get_active_validator_ids();
         if let Err(e) = self
             .broadcaster
@@ -1751,7 +1859,7 @@ impl ConsensusEngine {
         // g2 and g3 only have persistent QUIC connections to g1 (hub), not to each other.
         // Without relay, a commit vote from g3 never reaches g2, so g2 can never aggregate
         // the 3-of-3 commit quorum required to finalize a block.
-        let relay_msg = ValidatorMessage::Vote { vote: vote.clone() };
+        let relay_msg = wrap_vote(vote.clone(), self.validator_keypair.as_ref());
         let relay_validator_ids = self.get_active_validator_ids();
         if let Err(e) = self
             .broadcaster
@@ -1908,7 +2016,7 @@ impl ConsensusEngine {
                             &validator_id_str,
                         );
 
-                        let msg = ValidatorMessage::Propose { proposal };
+                        let msg = wrap_propose(proposal, self.validator_keypair.as_ref());
                         let validator_ids = self.get_active_validator_ids();
 
                         if let Err(e) = self
@@ -1969,7 +2077,7 @@ impl ConsensusEngine {
 
         if let Some(proposal_id) = self.current_round.proposals.first().cloned() {
             let vote = self.cast_vote(proposal_id, VoteType::PreVote).await?;
-            let msg = ValidatorMessage::Vote { vote };
+            let msg = wrap_vote(vote, self.validator_keypair.as_ref());
             let validator_ids = self.get_active_validator_ids();
 
             if let Err(e) = self
@@ -2053,7 +2161,7 @@ impl ConsensusEngine {
                     .await?;
                 self.current_round.valid_proposal = Some(proposal_id);
 
-                let msg = ValidatorMessage::Vote { vote };
+                let msg = wrap_vote(vote, self.validator_keypair.as_ref());
                 let validator_ids = self.get_active_validator_ids();
 
                 if let Err(e) = self
@@ -2142,7 +2250,7 @@ impl ConsensusEngine {
                     proposal_id
                 );
 
-                let msg = ValidatorMessage::Vote { vote };
+                let msg = wrap_vote(vote, self.validator_keypair.as_ref());
                 let validator_ids = self.get_active_validator_ids();
 
                 if let Err(e) = self
