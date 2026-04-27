@@ -47,8 +47,11 @@ use tracing::{debug, error, info, warn};
 use lib_consensus::{
     ConsensusConfig, ConsensusEngine, ConsensusEvent, ConsensusProof, ConsensusProposal,
     ConsensusStep, ConsensusType, ConsensusVote, DaoProposalType, DaoVoteChoice, NoOpBroadcaster,
-    RewardCalculator, RewardRound, ValidatorStatus, VoteType,
+    ValidatorStatus, VoteType,
 };
+// CONS-103 / AD-003: rewards moved out of lib-consensus into lib-economy.
+use lib_consensus_core::ports::ValidatorRewardInput;
+use lib_economy::rewards::{RewardCalculator, RewardRound};
 // DifficultyConfig + DifficultyManager moved to lib-blockchain per CONS-107 / AD-003
 use crate::difficulty::{DifficultyConfig, DifficultyManager};
 use lib_crypto::{hash_blake3, Hash, KeyPair};
@@ -1039,12 +1042,25 @@ impl BlockchainConsensusCoordinator {
         let consensus_engine = self.consensus_engine.read().await;
         let validator_manager = consensus_engine.validator_manager();
 
-        // Create a temporary reward calculator for this operation
+        // Create a temporary reward calculator for this operation.
+        // CONS-103: signature now takes a neutral &[ValidatorRewardInput] slice
+        // built from the snapshot, decoupling the calculator from ValidatorManager.
         let mut reward_calculator = RewardCalculator::new();
+        let inputs: Vec<ValidatorRewardInput> = validator_manager
+            .get_active_validators()
+            .iter()
+            .map(|v| ValidatorRewardInput {
+                identity: v.identity.clone(),
+                stake: v.stake,
+                storage_provided: v.storage_provided,
+                voting_power: v.voting_power,
+                reputation: v.reputation,
+            })
+            .collect();
 
         // Calculate rewards for the current round
         let reward_round =
-            reward_calculator.calculate_round_rewards(validator_manager, current_height)?;
+            reward_calculator.calculate_round_rewards(&inputs, current_height)?;
 
         // Create reward transactions
         let reward_transactions = self.create_reward_transactions(&reward_round).await?;

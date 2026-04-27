@@ -11,7 +11,11 @@
 //! - CONS-402: `BlockFinalizationSink` (replaces `BlockCommitCallback`),
 //!   `FinalizationError`.
 //! - CONS-403: `TransportInfo` (idle-timeout introspection).
-//! - CONS-404: `RewardCallback`, `FeeCallback`.
+//! - **CONS-103: `RewardCallback`** ← this PR.
+//! - CONS-404: `FeeCallback`.
 //! - CONS-106: `GovernanceCallback`.
 //! - Existing: `CatchUpSyncTrigger` migrates from
 //!   `lib-consensus/src/types/mod.rs:494`.
+
+pub mod rewards;
+pub use rewards::{NoOpRewardCallback, RewardCallback, ValidatorRewardInput};

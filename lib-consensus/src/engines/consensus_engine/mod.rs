@@ -192,8 +192,8 @@ use crate::dao::dao_types::{DaoExecutionAction, DaoProposal};
 use crate::dao::dao_types::{GovernanceParameterUpdate, GovernanceParameterValue};
 use crate::dao::DaoEngine;
 use crate::invariants::{check_invariant, ConsensusInvariant, ConsensusState as InvariantState};
-use crate::rewards::RewardCalculator;
 use crate::types::*;
+use lib_consensus_core::ports::{NoOpRewardCallback, RewardCallback};
 use crate::validators::validator_manager::ValidatorInfo as ValidatorInfoTrait;
 use crate::validators::ValidatorManager;
 use crate::{ConsensusError, ConsensusResult};
@@ -471,8 +471,12 @@ pub struct ConsensusEngine {
     dao_engine: DaoEngine,
     /// Byzantine fault detection
     byzantine_detector: ByzantineFaultDetector,
-    /// Reward calculation system
-    reward_calculator: RewardCalculator,
+    /// Reward distribution hook (CONS-103 / AD-005). Engine emits one
+    /// `on_round_finalized` per finalized round; the runtime adapter
+    /// (`lib_economy::ConsensusRewardAdapter`) owns the calculator and
+    /// distribution side effects. Defaults to a no-op so tests and bootstrap
+    /// configurations can run without wiring rewards.
+    reward_callback: Arc<dyn RewardCallback>,
     /// Fee collector for fee collection integration
     ///
     /// Implements the FeeCollector trait for collecting and distributing fees
@@ -596,7 +600,7 @@ impl ConsensusEngine {
             chain_started: false,
             dao_engine: DaoEngine::new(),
             byzantine_detector: ByzantineFaultDetector::new(),
-            reward_calculator: RewardCalculator::new(),
+            reward_callback: Arc::new(NoOpRewardCallback),
             fee_router: None,
             broadcaster,
             message_rx: None,
@@ -849,6 +853,14 @@ impl ConsensusEngine {
     /// * `fee_collector` - Implementation of FeeCollector trait (e.g., FeeRouter from lib-blockchain)
     pub fn set_fee_router<T: FeeCollector + 'static>(&mut self, fee_collector: T) {
         self.fee_router = Some(std::sync::Arc::new(std::sync::Mutex::new(fee_collector)));
+    }
+
+    /// Inject the reward distribution hook (CONS-103 / AD-005).
+    ///
+    /// Default is `NoOpRewardCallback`. Production runtimes wire
+    /// `lib_economy::ConsensusRewardAdapter` here at engine construction.
+    pub fn set_reward_callback(&mut self, callback: Arc<dyn RewardCallback>) {
+        self.reward_callback = callback;
     }
 
     /// Fire a `ConsensusEvent` to any attached liveness monitor / alert bridge.

@@ -26,6 +26,9 @@ lib-crypto = { path = "../lib-crypto" }
 lib-identity = { path = "../lib-identity" }
 lib-storage = { path = "../lib-storage" }
 lib-proofs = { path = "../lib-proofs" }
+# Port traits live here. lib-consensus-core has no knowledge of lib-consensus —
+# the dependency points one way only (CONS-103, AD-002, AD-005).
+lib-consensus-core = { path = "../lib-consensus-core" }
 
 # Time handling
 chrono = { version = "0.4", features = ["serde"] }
