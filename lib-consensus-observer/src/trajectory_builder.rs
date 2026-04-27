@@ -173,6 +173,41 @@ fn infer_missing_events(events: &[ConsensusNormalizedEvent]) -> Vec<ConsensusNor
     out
 }
 
+/// Whether the next event continues the current round or opens a new one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RoundBoundary {
+    Same,
+    AdvanceTo(u32),
+}
+
+/// Decide whether `event` opens a new round relative to `current_round`.
+///
+/// First event of a height never opens a new round (`has_events == false`).
+/// Otherwise an explicit `EnterNewRound` always advances; an event with a
+/// strictly higher `round` field implies an advance even without an
+/// `EnterNewRound` marker.
+fn detect_round_boundary(
+    event: &ConsensusNormalizedEvent,
+    current_round: u32,
+    has_events: bool,
+) -> RoundBoundary {
+    if !has_events {
+        return RoundBoundary::Same;
+    }
+    if event.event_type == ConsensusBehaviorEventType::EnterNewRound {
+        let next = if event.round > current_round {
+            event.round
+        } else {
+            current_round.saturating_add(1)
+        };
+        return RoundBoundary::AdvanceTo(next);
+    }
+    if event.round > current_round {
+        return RoundBoundary::AdvanceTo(event.round);
+    }
+    RoundBoundary::Same
+}
+
 fn split_rounds_with_inference(events: &[ConsensusNormalizedEvent]) -> Vec<RoundTrajectory> {
     if events.is_empty() {
         return Vec::new();
@@ -183,24 +218,9 @@ fn split_rounds_with_inference(events: &[ConsensusNormalizedEvent]) -> Vec<Round
     let mut current_round = events[0].round;
 
     for event in events {
-        let mut start_new_round = false;
-        let mut next_round = current_round;
-
-        if !current_events.is_empty() {
-            if event.event_type == ConsensusBehaviorEventType::EnterNewRound {
-                start_new_round = true;
-                next_round = if event.round > current_round {
-                    event.round
-                } else {
-                    current_round.saturating_add(1)
-                };
-            } else if event.round > current_round {
-                start_new_round = true;
-                next_round = event.round;
-            }
-        }
-
-        if start_new_round {
+        let boundary =
+            detect_round_boundary(event, current_round, !current_events.is_empty());
+        if let RoundBoundary::AdvanceTo(next_round) = boundary {
             rounds.push(build_round_trajectory(
                 current_round,
                 std::mem::take(&mut current_events),
@@ -502,6 +522,69 @@ mod tests {
             ]
         );
         assert!(round.events[1].inferred);
+    }
+
+    #[test]
+    fn boundary_first_event_of_height_does_not_advance() {
+        let event = ev(1, 0, ConsensusBehaviorEventType::EnterPropose, 100);
+        // has_events == false models "first event in the height" — even an
+        // explicit EnterNewRound here must stay in the current round, since
+        // there's no prior round to close out.
+        assert_eq!(
+            detect_round_boundary(&event, 0, false),
+            RoundBoundary::Same
+        );
+        let new_round_event = ev(1, 5, ConsensusBehaviorEventType::EnterNewRound, 100);
+        assert_eq!(
+            detect_round_boundary(&new_round_event, 0, false),
+            RoundBoundary::Same
+        );
+    }
+
+    #[test]
+    fn boundary_enter_new_round_with_higher_round_advances_to_event_round() {
+        let event = ev(1, 5, ConsensusBehaviorEventType::EnterNewRound, 100);
+        assert_eq!(
+            detect_round_boundary(&event, 2, true),
+            RoundBoundary::AdvanceTo(5)
+        );
+    }
+
+    #[test]
+    fn boundary_enter_new_round_with_same_round_increments_current() {
+        let event = ev(1, 2, ConsensusBehaviorEventType::EnterNewRound, 100);
+        assert_eq!(
+            detect_round_boundary(&event, 2, true),
+            RoundBoundary::AdvanceTo(3)
+        );
+    }
+
+    #[test]
+    fn boundary_higher_round_without_enter_new_round_advances_to_event_round() {
+        let event = ev(1, 4, ConsensusBehaviorEventType::EnterPropose, 100);
+        assert_eq!(
+            detect_round_boundary(&event, 1, true),
+            RoundBoundary::AdvanceTo(4)
+        );
+    }
+
+    #[test]
+    fn boundary_equal_round_keeps_current() {
+        let event = ev(1, 2, ConsensusBehaviorEventType::PreVoteCast, 100);
+        assert_eq!(
+            detect_round_boundary(&event, 2, true),
+            RoundBoundary::Same
+        );
+    }
+
+    #[test]
+    fn boundary_lower_round_keeps_current() {
+        // Out-of-order or stale event: never rewind the round counter.
+        let event = ev(1, 0, ConsensusBehaviorEventType::PreVoteCast, 100);
+        assert_eq!(
+            detect_round_boundary(&event, 3, true),
+            RoundBoundary::Same
+        );
     }
 
     #[test]
