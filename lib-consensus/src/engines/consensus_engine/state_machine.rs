@@ -1524,8 +1524,11 @@ impl ConsensusEngine {
         let proposal_round = proposal.round;
         self.pending_proposals.push_back(proposal);
 
+        // Prior state derived from legacy step (source of truth
+        // during the migration) per #2398 review.
+        let prior_fsm = self.step_to_fsm_state(self.current_round.step.clone());
         let (next_fsm, actions) = lib_consensus_core::fsm::transition(
-            self.fsm_state.clone(),
+            prior_fsm,
             lib_consensus_core::fsm::Event::ProposalAdmitted {
                 id: proposal_id.clone(),
                 height: proposal_height,
