@@ -1676,6 +1676,27 @@ impl ConsensusEngine {
                 // First proposal to reach quorum in this round
                 self.current_round.valid_proposal = Some(proposal_id.clone());
             }
+
+            // CONS-305d: route the prevote-quorum threshold through
+            // the FSM. `(Prevoting, PrevoteThresholdReached) →
+            // (Precommitting, [SendPrecommit, ResetWatchdog])`.  The
+            // existing `enter_precommit_step()` does the casting and
+            // broadcast; the FSM observes the state advance.
+            //
+            // Prior state derived from legacy step (source of truth
+            // during the migration) per #2398 review.
+            let prior_fsm = self.step_to_fsm_state(self.current_round.step.clone());
+            let (next_fsm, actions) = lib_consensus_core::fsm::transition(
+                prior_fsm,
+                lib_consensus_core::fsm::Event::PrevoteThresholdReached {
+                    block_id: proposal_id.clone(),
+                },
+            );
+            self.fsm_state = next_fsm;
+            for action in actions {
+                self.dispatch_action(action).await;
+            }
+
             // Allow late prevote quorum to still trigger precommit casting even if the
             // prevote timeout already fired and step advanced to PreCommit. enter_precommit_step
             // is idempotent for the step transition (guards against double-entry) but we bypass
