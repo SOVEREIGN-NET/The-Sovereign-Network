@@ -1455,25 +1455,27 @@ impl ConsensusEngine {
             return Ok(());
         }
 
-        // Round synchronization: if the proposal is for a higher round, advance to it.
-        // This lets lagging nodes catch up when they missed timeout-driven round increments
-        // while other validators were already spinning ahead.  We only advance — never go back.
+        // **BFT safety fix (KI: test_future_round_proposal_does_not_advance_local_round)**:
+        // Do NOT advance our local round counter on a single
+        // validator's future-round proposal.  A Byzantine validator
+        // could send a proposal with `round = 999` to disrupt
+        // consensus.  Round advancement requires >2/3 evidence
+        // (timeout-driven on this node, or quorum on a higher round
+        // observed in vote pool — out of scope for this handler).
+        //
+        // Track the proposal in `pending_proposals` so it can be
+        // referenced if our round eventually catches up; do not
+        // touch `current_round`.
         if proposal.round > self.current_round.round {
-            tracing::info!(
-                "Round-sync: advancing from round {} to {} on received proposal at H={}",
-                self.current_round.round,
-                proposal.round,
+            tracing::debug!(
+                "Future-round proposal H={} R={} (local R={}) tracked for catch-up; \
+                 not advancing local round on a single proposer's claim",
                 proposal.height,
+                proposal.round,
+                self.current_round.round,
             );
-            self.current_round.round = proposal.round;
-            self.current_round.step = ConsensusStep::Propose;
-            self.current_round.proposer = None;
-            self.current_round.proposals.clear();
-            self.current_round.votes.clear();
-            self.current_round.timed_out = false;
-            self.current_round.locked_proposal = None;
-            self.current_round.valid_proposal = None;
-            self.snapshot_validator_set(self.current_round.height);
+            self.pending_proposals.push_back(proposal);
+            return Ok(());
         }
 
         if !self.current_round.proposals.is_empty() {
@@ -2656,11 +2658,33 @@ impl ConsensusEngine {
                     );
                 }
 
-                // Process the committed block (finalization) directly.
-                // Pass `round` (the round where commit quorum was reached) so that
-                // vote counting uses the correct round even if the local state has
-                // already moved on due to timeout-driven round advancement.
-                self.process_committed_block(proposal_id, round).await?;
+                // **Catch-up safety (fix for KI test_hardening_commit_vote_accepts_past_round)**:
+                // If the proposal artifact is not in `pending_proposals`
+                // AND was never recorded in `current_round.proposals`,
+                // we received commit votes for a block we haven't seen
+                // yet (legitimate catch-up scenario, e.g. past-round
+                // votes during sync).  Don't error — store the votes
+                // and rely on the next on_proposal admission (or
+                // catch-up sync) to provide the artifact and complete
+                // finalization.
+                let artifact_known = self
+                    .pending_proposals
+                    .iter()
+                    .any(|p| &p.id == proposal_id)
+                    || self.current_round.proposals.contains(proposal_id);
+                if !artifact_known {
+                    tracing::info!(
+                        "Commit quorum reached for proposal {:?} at H={} R={} but artifact not yet \
+                         received — votes stored, awaiting proposal/catch-up sync",
+                        proposal_id, height, round,
+                    );
+                } else {
+                    // Process the committed block (finalization) directly.
+                    // Pass `round` (the round where commit quorum was reached) so that
+                    // vote counting uses the correct round even if the local state has
+                    // already moved on due to timeout-driven round advancement.
+                    self.process_committed_block(proposal_id, round).await?;
+                }
             } else {
                 tracing::debug!(
                     "Commit quorum observed for past height (H={} R={}) while at H={} R={} — ignoring",
