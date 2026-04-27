@@ -1103,6 +1103,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_engine_envelope_signed_heartbeat_verifies() -> Result<()> {
+        // Follow-up to PR #2387: confirm an engine-built HeartbeatMessage
+        // signed via `sign_heartbeat_envelope` round-trips through
+        // ValidatorProtocol's outer-envelope verifier with
+        // `bootstrap_tofu = false` (Mainnet semantics). Pre-fix the engine
+        // broadcast unsigned heartbeats; receivers in non-TOFU mode rejected.
+        let (mut protocol, _rx, kp, signer) = setup_protocol_with_forwarder().await?;
+        protocol.config.bootstrap_tofu = false;
+
+        let now = protocol.current_timestamp();
+        let mut msg = HeartbeatMessage {
+            message_id: Hash::from_bytes(&[55u8; 32]),
+            validator: signer.clone(),
+            height: 7,
+            round: 0,
+            step: ConsensusStep::Propose,
+            network_summary: NetworkSummary {
+                active_validators: 4,
+                health_score: 0.95,
+                block_rate: 1.0,
+            },
+            timestamp: now,
+            signature: PostQuantumSignature::default(),
+        };
+        msg.signature = sign_heartbeat_envelope(&msg, &kp)?;
+
+        // handle_message verifies the envelope; success means no error.
+        protocol
+            .handle_message(ValidatorMessage::Heartbeat(msg))
+            .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_engine_envelope_signed_vote_verifies() -> Result<()> {
         let (mut protocol, mut rx, kp, signer) = setup_protocol_with_forwarder().await?;
         protocol.config.bootstrap_tofu = false;

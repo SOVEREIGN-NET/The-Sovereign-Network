@@ -1,4 +1,5 @@
 use super::*;
+use super::state_machine::wrap_heartbeat;
 
 impl ConsensusEngine {
     /// Main consensus loop with tokio::select!
@@ -317,9 +318,14 @@ impl ConsensusEngine {
                             .map(|v| v.identity.clone())
                             .collect();
 
-                        // Broadcast heartbeat (best-effort, ignore failures)
+                        // Broadcast heartbeat (best-effort, ignore failures).
+                        // wrap_heartbeat signs the outer envelope so receivers
+                        // running with `bootstrap_tofu = false` (Mainnet) can
+                        // verify against `HeartbeatSigningPayload` instead of
+                        // dropping unsigned messages.
+                        let msg = wrap_heartbeat(heartbeat_msg, self.validator_keypair.as_ref());
                         if let Err(e) = self.broadcaster.broadcast_to_validators(
-                            ValidatorMessage::Heartbeat(heartbeat_msg),
+                            msg,
                             &validator_ids,
                         ).await {
                             tracing::debug!("Heartbeat broadcast failed: {}", e);

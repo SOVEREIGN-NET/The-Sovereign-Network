@@ -3,7 +3,8 @@
 use super::*;
 use crate::types::ConsensusStepExt;
 use crate::validators::validator_protocol::{
-    sign_propose_envelope, sign_vote_envelope, ConsensusStateView, ProposeMessage, VoteMessage,
+    sign_heartbeat_envelope, sign_propose_envelope, sign_vote_envelope, ConsensusStateView,
+    HeartbeatMessage, ProposeMessage, VoteMessage,
 };
 use crate::validators::ValidatorManager;
 use lib_consensus_core::ports::ValidatorRewardInput;
@@ -107,6 +108,36 @@ fn wrap_vote(vote: ConsensusVote, keypair: Option<&KeyPair>) -> ValidatorMessage
         );
     }
     ValidatorMessage::Vote(msg)
+}
+
+/// Wrap a `HeartbeatMessage` produced by `HeartbeatTracker` and sign the
+/// outer envelope. Same shape as `wrap_propose` / `wrap_vote`.
+///
+/// Pre-fix the engine broadcast heartbeats with a default placeholder
+/// signature (the tracker's `create_heartbeat_message` doesn't sign);
+/// receivers in TOFU mode special-cased the empty-public-key path and
+/// forwarded the message as advisory, but Mainnet (`bootstrap_tofu = false`)
+/// would reject. Pre-existing inheritance from before CONS-201; flagged as
+/// out of scope on PR #2387 and fixed here.
+pub(super) fn wrap_heartbeat(
+    message: HeartbeatMessage,
+    keypair: Option<&KeyPair>,
+) -> ValidatorMessage {
+    let mut msg = message;
+    if let Some(kp) = keypair {
+        match sign_heartbeat_envelope(&msg, kp) {
+            Ok(sig) => msg.signature = sig,
+            Err(e) => tracing::warn!(
+                error = %e,
+                "Failed to sign Heartbeat envelope; broadcasting with placeholder signature"
+            ),
+        }
+    } else {
+        tracing::debug!(
+            "No validator keypair; broadcasting Heartbeat with placeholder signature (test mode)"
+        );
+    }
+    ValidatorMessage::Heartbeat(msg)
 }
 
 fn now_secs() -> u64 {
