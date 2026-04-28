@@ -34,138 +34,18 @@ pub trait ValidatorNetworkTransport: Send + Sync {
     ) -> Result<()>;
 }
 
-/// Canonical wire-level BFT consensus message.
-///
-/// CONS-201: Collapsed from a 5-variant form. The deleted variants:
-///
-/// - `Commit(CommitMessage)` — commit votes flow through `Vote(VoteMessage)`
-///   with `VoteType::Commit`. The CommitMessage layer added a separate
-///   message ID + signature path with no extra information beyond what
-///   the inner vote already carries; commit-handling code that relied on
-///   it was a translation shim into a synthesized `Vote`.
-/// - `RoundChange(RoundChangeMessage)` — view changes are driven by
-///   timeouts in this Tendermint-like BFT, not by explicit round-change
-///   messages. The receive-side handler synthesized a `Heartbeat` for
-///   liveness tracking; that pathway is now a no-op (heartbeats already
-///   carry the same liveness signal).
-///
-/// This is also the canonical `ValidatorMessage` for the consensus engine.
-/// The previous `lib_consensus::types::ValidatorMessage` (a thin
-/// 3-variant struct-variant enum) was removed in the same change; the
-/// `types::ValidatorMessage` re-export aliases this type.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ValidatorMessage {
-    /// Proposal message from block proposer
-    Propose(ProposeMessage),
-    /// Vote message from validators (PreVote, PreCommit, or Commit votes
-    /// — distinguished by `VoteType` inside the inner `ConsensusVote`).
-    Vote(VoteMessage),
-    /// Validator heartbeat for liveness tracking.
-    Heartbeat(HeartbeatMessage),
-}
-
-/// Proposal message for new blocks
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProposeMessage {
-    /// Message identifier
-    pub message_id: Hash,
-    /// Proposer validator identity
-    pub proposer: IdentityId,
-    /// Consensus proposal
-    pub proposal: ConsensusProposal,
-    /// Justification for this proposal (previous round votes)
-    pub justification: Option<Justification>,
-    /// Message timestamp
-    pub timestamp: u64,
-    /// Proposer signature over message
-    pub signature: PostQuantumSignature,
-}
-
-/// Vote message for consensus proposals
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VoteMessage {
-    /// Message identifier
-    pub message_id: Hash,
-    /// Voting validator identity
-    pub voter: IdentityId,
-    /// Consensus vote
-    pub vote: ConsensusVote,
-    /// Validator's current view of consensus state
-    pub consensus_state: ConsensusStateView,
-    /// Message timestamp
-    pub timestamp: u64,
-    /// Voter signature over message
-    pub signature: PostQuantumSignature,
-}
-
-// CONS-201: `CommitMessage` and `RoundChangeMessage` were deleted along
-// with the `Commit` and `RoundChange` `ValidatorMessage` variants.
-
-/// Heartbeat message for liveness detection
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HeartbeatMessage {
-    /// Message identifier
-    pub message_id: Hash,
-    /// Validator sending heartbeat
-    pub validator: IdentityId,
-    /// Current block height
-    pub height: u64,
-    /// Current consensus round
-    pub round: u32,
-    /// Current consensus step
-    pub step: ConsensusStep,
-    /// Network view summary
-    pub network_summary: NetworkSummary,
-    /// Message timestamp
-    pub timestamp: u64,
-    /// Validator signature over message
-    pub signature: PostQuantumSignature,
-}
-
-/// Justification for a proposal (votes from previous round)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Justification {
-    /// Previous round number
-    pub round: u32,
-    /// Votes supporting this proposal
-    pub votes: Vec<ConsensusVote>,
-    /// Aggregate vote power
-    pub vote_power: u64,
-}
-
-/// Validator's view of consensus state
-///
-/// **CRITICAL INVARIANT**: Uses BTreeMap instead of HashMap for vote_counts
-/// to ensure canonical serialization order. This message is part of ValidatorMessage,
-/// which is signable and hashable. Non-deterministic HashMap iteration order would
-/// break signature/hash consensus across nodes. (CM-3, CM-4)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConsensusStateView {
-    /// Current block height
-    pub height: u64,
-    /// Current consensus round
-    pub round: u32,
-    /// Current consensus step
-    pub step: ConsensusStep,
-    /// Known proposals in this round
-    pub known_proposals: Vec<Hash>,
-    /// Vote counts by proposal (BTreeMap for canonical iteration order)
-    pub vote_counts: BTreeMap<Hash, u32>,
-}
-
-// CONS-201: `CommitmentProof` and `RoundChangeReason` were deleted along
-// with the `Commit` and `RoundChange` variants they supported.
-
-/// Network summary for heartbeats
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetworkSummary {
-    /// Number of active validators
-    pub active_validators: u32,
-    /// Network health score (0.0-1.0)
-    pub health_score: f64,
-    /// Recent block production rate
-    pub block_rate: f64,
-}
+// CONS-401: `ValidatorMessage`, `ProposeMessage`, `VoteMessage`,
+// `HeartbeatMessage`, `Justification`, `ConsensusStateView`, and
+// `NetworkSummary` migrated to `lib_consensus_core::types::messages`.
+// The trait that consumes them (`MessageBroadcaster`) needed to live
+// in `lib-consensus-core`, so the value types had to follow.
+// Re-exported here so existing
+// `lib_consensus_net::validator_protocol::ValidatorMessage` paths
+// keep working unchanged.
+pub use lib_consensus_core::types::{
+    ConsensusStateView, HeartbeatMessage, Justification, NetworkSummary, ProposeMessage,
+    ValidatorMessage, VoteMessage,
+};
 
 /// Validator P2P Protocol Handler
 ///

@@ -17,11 +17,13 @@
 //! - Existing: `CatchUpSyncTrigger` migrates from
 //!   `lib-consensus/src/types/mod.rs:494`.
 
+pub mod broadcaster;
 pub mod fees;
 pub mod governance;
 pub mod rewards;
 pub mod transport;
 
+pub use broadcaster::MessageBroadcaster;
 pub use fees::{FeeCallback, NoOpFeeCallback};
 pub use governance::{GovernanceCallback, NoOpGovernanceCallback};
 pub use rewards::{NoOpRewardCallback, RewardCallback, ValidatorRewardInput};
