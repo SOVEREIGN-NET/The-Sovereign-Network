@@ -1,25 +1,17 @@
-//! ZHTP UTXO Execution
+//! ZHTP UTXO types.
 //!
-//! This crate provides the canonical UTXO application logic for native transfers.
+//! This crate is a thin re-export of the canonical consensus UTXO types from
+//! [`lib_types::primitives`]. It exists to preserve the `lib_utxo::*` import
+//! path for downstream consumers. All type definitions, serialization, and
+//! impls live in `lib-types`.
 //!
-//! # Key Rules
+//! # Rationale
 //!
-//! 1. **Inputs must exist**: All referenced UTXOs must be present in state
-//! 2. **No double spend**: Each UTXO can only be spent once
-//! 3. **Outputs created before commit only**: New UTXOs are pending until block commit
-//!
-//! # Usage
-//!
-//! ```ignore
-//! use lib_utxo::{apply_native_transfer, UtxoStore};
-//!
-//! let outcome = apply_native_transfer(&store, &tx, tx_hash, height)?;
-//! ```
+//! Prior to unification, both `lib-utxo` and `lib-blockchain::storage` defined
+//! their own `Utxo` / `OutPoint` structs with divergent fields. The
+//! production, on-disk struct is the authoritative shape; the standalone
+//! `lib-utxo` version was an orphan spike. To remove drift, the canonical
+//! types now live in `lib-types::primitives` and every crate re-exports from
+//! there.
 
-pub mod apply;
-pub mod errors;
-pub mod types;
-
-pub use apply::apply_native_transfer;
-pub use errors::{UtxoError, UtxoResult};
-pub use types::*;
+pub use lib_types::primitives::{OutPoint, Utxo, UtxoMerkleProof};

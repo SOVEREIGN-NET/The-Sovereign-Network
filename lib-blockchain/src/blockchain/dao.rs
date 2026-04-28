@@ -941,20 +941,12 @@ impl Blockchain {
         self.refresh_executor_token_creation_fee_if_needed();
         self.difficulty_config.last_updated_at_height = self.height;
 
-        if let Some(ref coordinator) = self.consensus_coordinator {
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    let coord = coordinator.write().await;
-                    coord
-                        .apply_difficulty_governance_update(
-                            None,
-                            new_adjustment_interval,
-                            new_target_timespan,
-                        )
-                        .await
-                })
-            })?;
-        }
+        // CONS-505: the coordinator's `apply_difficulty_governance_update`
+        // call was the only side-effect this branch performed, and the
+        // coordinator's view of `DifficultyConfig` is now read directly
+        // off `Blockchain` (CONS-107). The local
+        // `self.difficulty_config.last_updated_at_height` set above is
+        // the authoritative side-effect; nothing further to do.
 
         self.executed_dao_proposals.insert(proposal_id);
         Ok(())

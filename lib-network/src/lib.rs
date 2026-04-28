@@ -99,16 +99,11 @@ pub use crate::encryption::{
 // Consensus message encryption (always available)
 pub use crate::consensus_encryption::{ConsensusAead, RoleDirection};
 
-// Consensus message broadcaster for validator communication (transport-dependent)
-#[cfg(any(
-    feature = "quic",
-    feature = "mdns",
-    feature = "lorawan",
-    feature = "full"
-))]
-pub use crate::message_broadcaster::{
-    BroadcastResult, MeshMessageBroadcaster, MessageBroadcaster, MockMessageBroadcaster,
-};
+// CONS-202: `lib_network::message_broadcaster::MessageBroadcaster` and its
+// `MeshMessageBroadcaster` impl + `BroadcastResult` + `MockMessageBroadcaster`
+// were deleted. The canonical engine-facing broadcaster trait is
+// `lib_consensus::types::MessageBroadcaster`; this module had no callers
+// outside its own crate (verified by `grep -r MeshMessageBroadcaster`).
 
 // Consensus receiver (transport-dependent)
 #[cfg(any(
@@ -232,13 +227,8 @@ pub mod dht;
     feature = "full"
 ))]
 pub mod fragmentation_v2; // Protocol-grade message fragmentation (session-scoped, versioned)
-#[cfg(any(
-    feature = "quic",
-    feature = "mdns",
-    feature = "lorawan",
-    feature = "full"
-))]
-pub mod message_broadcaster; // Consensus message broadcaster trait
+// CONS-202: `pub mod message_broadcaster;` deleted (see comment above the
+// re-export block).
 #[cfg(any(
     feature = "quic",
     feature = "mdns",

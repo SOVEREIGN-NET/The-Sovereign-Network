@@ -1,4 +1,5 @@
 use super::*;
+use super::state_machine::wrap_heartbeat;
 
 impl ConsensusEngine {
     /// Main consensus loop with tokio::select!
@@ -24,6 +25,10 @@ impl ConsensusEngine {
             ConsensusError::ValidatorError("Message receiver not set".to_string())
         })?;
         let mut validator_update_rx = self.validator_update_rx.take();
+        // CONS-309 / CONS-502b: receiver for runtime-injected FSM events
+        // (today: `WatchdogFired`). Optional — when `None`, the matching
+        // select branch never resolves and the engine behaves as before.
+        let mut runtime_event_rx = self.runtime_event_rx.take();
 
         // Sync consensus height with blockchain before starting
         // This ensures we start at the correct height after bootstrap mode
@@ -317,15 +322,13 @@ impl ConsensusEngine {
                             .map(|v| v.identity.clone())
                             .collect();
 
-                        // Broadcast heartbeat (best-effort, ignore failures)
-                        if let Err(e) = self.broadcaster.broadcast_to_validators(
-                            ValidatorMessage::Heartbeat {
-                                message: heartbeat_msg,
-                            },
-                            &validator_ids,
-                        ).await {
-                            tracing::debug!("Heartbeat broadcast failed: {}", e);
-                        }
+                        // Broadcast heartbeat (best-effort, ignore failures).
+                        // wrap_heartbeat signs the outer envelope so receivers
+                        // running with `bootstrap_tofu = false` (Mainnet) can
+                        // verify against `HeartbeatSigningPayload` instead of
+                        // dropping unsigned messages.
+                        let msg = wrap_heartbeat(heartbeat_msg, self.validator_keypair.as_ref());
+                        self.broadcast(msg, &validator_ids).await;
                     }
                 }
 
@@ -488,6 +491,22 @@ impl ConsensusEngine {
                     // height hasn't been sealed yet (e.g. bootstrap startup).
                     self.snapshot_validator_set(self.current_round.height);
                 }
+
+                // CONS-309 / CONS-502b: drain runtime-injected FSM events
+                // (today: `WatchdogFired` from the runtime's watchdog
+                // task). Each event flows through `transition()` exactly
+                // like a network message would, so the FSM stays the
+                // single source of truth and the runtime never mutates
+                // engine state directly.
+                Some(event) = recv_runtime_event(&mut runtime_event_rx) => {
+                    let prior = self.fsm_state.clone();
+                    let (next, actions) =
+                        lib_consensus_core::fsm::transition(prior, event);
+                    self.enter_fsm_state(next).await;
+                    for action in actions {
+                        self.dispatch_action(action).await;
+                    }
+                }
             }
         }
 
@@ -502,10 +521,11 @@ impl ConsensusEngine {
 
     async fn on_message(&mut self, msg: ValidatorMessage) -> ConsensusResult<()> {
         match msg {
-            ValidatorMessage::Propose { proposal } => {
-                self.on_proposal(proposal).await?;
+            ValidatorMessage::Propose(propose_msg) => {
+                self.on_proposal(propose_msg.proposal).await?;
             }
-            ValidatorMessage::Vote { vote } => {
+            ValidatorMessage::Vote(vote_msg) => {
+                let vote = vote_msg.vote;
                 // Compute payload hash for replay detection
                 let payload_bytes =
                     bincode::serialize(&vote).expect("Vote serialization cannot fail");
@@ -565,7 +585,7 @@ impl ConsensusEngine {
                     }
                 }
             }
-            ValidatorMessage::Heartbeat { message } => {
+            ValidatorMessage::Heartbeat(heartbeat_msg) => {
                 // Process heartbeat (advisory only, never affects consensus)
                 let is_validator = |vid: &IdentityId| {
                     self.validator_manager
@@ -574,9 +594,9 @@ impl ConsensusEngine {
                         .any(|v| v.identity == *vid)
                 };
 
-                let validator_id = message.validator.clone();
+                let validator_id = heartbeat_msg.validator.clone();
                 let result = self.heartbeat_tracker.process_heartbeat(
-                    message,
+                    heartbeat_msg,
                     is_validator,
                     self.current_round.height,
                 );
@@ -603,6 +623,19 @@ impl ConsensusEngine {
 async fn recv_validator_update(
     rx: &mut Option<tokio::sync::mpsc::Receiver<super::ValidatorSetUpdate>>,
 ) -> Option<super::ValidatorSetUpdate> {
+    match rx.as_mut() {
+        Some(rx) => rx.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Helper for `tokio::select!`: receives from the runtime FSM-event channel
+/// if present, or pends forever if the runtime hasn't installed one.
+/// Pending-forever keeps the channel branch dormant in the legacy zhtp path
+/// where `run_consensus_loop` is called directly without a runtime wrapper.
+async fn recv_runtime_event(
+    rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<lib_consensus_core::fsm::Event>>,
+) -> Option<lib_consensus_core::fsm::Event> {
     match rx.as_mut() {
         Some(rx) => rx.recv().await,
         None => std::future::pending().await,

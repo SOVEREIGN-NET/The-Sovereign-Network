@@ -26,6 +26,22 @@ lib-crypto = { path = "../lib-crypto" }
 lib-identity = { path = "../lib-identity" }
 lib-storage = { path = "../lib-storage" }
 lib-proofs = { path = "../lib-proofs" }
+# Port traits live here. lib-consensus-core has no knowledge of lib-consensus —
+# the dependency points one way only (CONS-103, AD-002, AD-005).
+lib-consensus-core = { path = "../lib-consensus-core" }
+# CONS-501: `validator_discovery` migrated to `lib-consensus-net`. Re-exported
+# from this crate's `validators::validator_discovery` so internal callers
+# don't break. The other 3 modules (codec, heartbeat, validator_protocol)
+# stay here until CONS-201 Scope B resolves the `ConsensusProof` /
+# lib-storage dep cycle (they transitively reference `StorageCapacityAttestation`,
+# which AD-002 forbids in `lib-consensus-core`).
+lib-consensus-net = { path = "../lib-consensus-net" }
+# DAO engine relocated to lib-governance per CONS-106 / AD-003. Imported back
+# for the synchronous validation paths (apply_governance_update_from_proposal)
+# that need direct access to validate/decode/apply on a configured DaoEngine.
+# The fire-and-forget round-finalize path uses lib-consensus-core's
+# GovernanceCallback trait instead.
+lib-governance = { path = "../lib-governance" }
 
 # Time handling
 chrono = { version = "0.4", features = ["serde"] }
@@ -40,11 +56,6 @@ proptest = "1.0"
 tracing-subscriber = "0.3"
 
 [features]
-default = ["full"]
-full = ["dao", "byzantine", "rewards", "ubi"]
-dao = []
-byzantine = []
-rewards = []
-ubi = []
-testing = []
+default      = []
+testing      = []
 dev-insecure = []

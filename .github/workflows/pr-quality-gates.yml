@@ -1,0 +1,321 @@
+name: PR Quality Gates
+
+on:
+  pull_request:
+    # `labeled` fires the workflow when an operator adds the
+    # `review-agents` label; `synchronize` re-runs subsequent pushes
+    # while the PR keeps the label. Other PR events (opened / closed /
+    # ready_for_review) are intentionally absent — the gate skips them.
+    types: [labeled, synchronize]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to review (optional — leaves blank to scan HEAD)"
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-quality-gates-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+# A reusable composite of setup steps would be ideal, but to keep the workflow
+# self-contained and selectable as required checks (one check per job name),
+# each job below is independently runnable.
+#
+# OPT-IN GATE: every job below is guarded by an `if:` that requires either the
+# `review-agents` label on the PR or a manual workflow_dispatch trigger. Other
+# PR events skip every job.
+
+jobs:
+  # ------------------------------------------------------------------ #
+  # Each job below MUST keep a stable `name:` so it can be selected as a
+  # required status check in the GitHub branch-protection rule. Do not
+  # rename without updating the rule in repository settings.
+  # ------------------------------------------------------------------ #
+
+  architecture:
+    name: architecture
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'review-agents')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run architecture review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/architecture_review.py
+
+  security:
+    name: security
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'review-agents')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run security review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/security_review.py
+
+  blockchain:
+    name: blockchain
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'review-agents')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run blockchain review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/blockchain_review.py
+
+  tokenomics:
+    name: tokenomics
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'review-agents')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run tokenomics review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/tokenomics_review.py
+
+  compliance:
+    name: compliance
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'review-agents')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run compliance review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/compliance_review.py
+
+  privacy_zkdid:
+    name: privacy_zkdid
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'review-agents')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run privacy/ZK-DID review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/privacy_zkdid_review.py
+
+  governance:
+    name: governance
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'review-agents')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run governance review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/governance_review.py
+
+  economic_risk:
+    name: economic_risk
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'review-agents')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run economic-risk review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/economic_risk_review.py
+
+  devops:
+    name: devops
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'review-agents')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run devops review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/devops_review.py
+
+  performance:
+    name: performance
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'review-agents')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run performance review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/performance_review.py
+
+  data_sovereignty:
+    name: data_sovereignty
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'review-agents')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run data-sovereignty review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/data_sovereignty_review.py
+
+  api:
+    name: api
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'review-agents')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run API review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/api_review.py
+
+  ux_safety:
+    name: ux_safety
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'review-agents')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run UX-safety review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/ux_safety_review.py
+
+  testing:
+    name: testing
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'review-agents')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run testing review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/testing_review.py
+
+  documentation:
+    name: documentation
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'review-agents')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run documentation review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/documentation_review.py
