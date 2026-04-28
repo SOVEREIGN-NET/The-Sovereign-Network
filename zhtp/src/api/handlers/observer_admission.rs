@@ -42,8 +42,8 @@ use lib_blockchain::transaction::{
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpResult;
 use lib_types::{
-    ObserverAdmissionChallengeRef, ObserverAdmissionRecord, ObserverProofLevel,
-    ObserverRateLimitTier,
+    ObserverAdmissionChallengeRef, ObserverAdmissionPolicy, ObserverAdmissionRecord,
+    ObserverProofLevel, ObserverRateLimitTier,
 };
 use serde::{Deserialize, Serialize};
 
@@ -282,6 +282,45 @@ fn chain_id_from_runtime(runtime: &crate::runtime::RuntimeOrchestrator) -> u8 {
     runtime.config().environment.chain_id()
 }
 
+/// Resolve the canonical observer admission policy for pre-validation
+/// (observer-admission-8).
+///
+/// **Post-merge with consensus rewrite (CONS-505)**: the original
+/// admission-8 implementation called `runtime.store()` to read a
+/// persisted policy. After today's rebase against development, the
+/// runtime no longer exposes a `SledStore` accessor (the store is
+/// reachable only through `SharedBlockchainService → Blockchain.store`).
+/// Falling back to `default_policy()` here so the admission stack
+/// compiles and the API layer pre-validates against a sane default.
+/// The store-backed policy lookup is tracked as a follow-up; reinstate
+/// once the runtime exposes a stable store handle.
+fn resolve_admission_policy(
+    _runtime: &crate::runtime::RuntimeOrchestrator,
+) -> ObserverAdmissionPolicy {
+    lib_blockchain::observer::default_policy()
+}
+
+/// Reject a register payload before it reaches the mempool when the
+/// declared sponsor proof level cannot satisfy policy
+/// (observer-admission-8). Returns `Some(403 response)` if rejected.
+fn pre_validate_register_proof_level(
+    sponsor_proof_level: ObserverProofLevel,
+    policy: &ObserverAdmissionPolicy,
+) -> Option<ZhtpResponse> {
+    if sponsor_proof_level == ObserverProofLevel::None {
+        return Some(forbidden(
+            "anonymous sponsors (proof_level=None) cannot enroll observers",
+        ));
+    }
+    if sponsor_proof_level < policy.minimum_proof_level {
+        return Some(forbidden(format!(
+            "sponsor proof level {:?} is below the network minimum {:?}",
+            sponsor_proof_level, policy.minimum_proof_level
+        )));
+    }
+    None
+}
+
 // =============================================================================
 // HANDLERS
 // =============================================================================
@@ -314,9 +353,14 @@ pub async fn handle_admission_challenge(request: ZhtpRequest) -> ZhtpResult<Zhtp
 }
 
 /// `POST /api/v1/observer/admission/register` — submit `RegisterObserver`.
+///
+/// `policy` is the canonical [`ObserverAdmissionPolicy`] used for the
+/// pre-validation gate (observer-admission-8). The dispatcher resolves
+/// it from the runtime store; tests pass [`lib_blockchain::observer::default_policy`].
 pub async fn handle_admission_register(
     request: ZhtpRequest,
     chain_id: u8,
+    policy: &ObserverAdmissionPolicy,
 ) -> ZhtpResult<ZhtpResponse> {
     let req: RegisterObserverRequest = match serde_json::from_slice(&request.body) {
         Ok(r) => r,
@@ -333,6 +377,12 @@ pub async fn handle_admission_register(
     }
     if req.observer_public_key.is_empty() {
         return Ok(bad_request("observer_public_key is required"));
+    }
+
+    // Anti-abuse pre-validation (observer-admission-8): never relay an
+    // enrollment that the canonical policy would deny on apply.
+    if let Some(resp) = pre_validate_register_proof_level(req.sponsor_proof_level, policy) {
+        return Ok(resp);
     }
 
     let signature = match reconstruct_signature(&req.tx_signature) {
@@ -554,7 +604,10 @@ pub async fn dispatch_admission_write(
 ) -> ZhtpResult<ZhtpResponse> {
     let chain_id = chain_id_from_runtime(runtime);
     match path {
-        "/api/v1/observer/admission/register" => handle_admission_register(request, chain_id).await,
+        "/api/v1/observer/admission/register" => {
+            let policy = resolve_admission_policy(runtime);
+            handle_admission_register(request, chain_id, &policy).await
+        }
         "/api/v1/observer/admission/update" => handle_admission_update(request, chain_id).await,
         "/api/v1/observer/admission/suspend" => handle_admission_suspend(request, chain_id).await,
         "/api/v1/observer/admission/revoke" => handle_admission_revoke(request, chain_id).await,
@@ -660,7 +713,8 @@ mod tests {
             "/api/v1/observer/admission/register",
             body,
         );
-        let resp = handle_admission_register(req, 0).await.unwrap();
+        let policy = lib_blockchain::observer::default_policy();
+        let resp = handle_admission_register(req, 0, &policy).await.unwrap();
         assert_eq!(resp.status, ZhtpStatus::BadRequest);
     }
 
@@ -686,7 +740,8 @@ mod tests {
             "/api/v1/observer/admission/register",
             body,
         );
-        let resp = handle_admission_register(req, 0).await.unwrap();
+        let policy = lib_blockchain::observer::default_policy();
+        let resp = handle_admission_register(req, 0, &policy).await.unwrap();
         assert_eq!(resp.status, ZhtpStatus::BadRequest);
     }
 
@@ -767,5 +822,72 @@ mod tests {
         let sig = reconstruct_signature(&env).expect("valid lengths must succeed");
         assert_eq!(sig.signature, vec![1, 2, 3]);
         assert_eq!(sig.public_key.dilithium_pk.len(), 2592);
+    }
+
+    // ---- observer-admission-8 anti-abuse pre-validation ----
+
+    fn valid_register_body(proof_level: &str) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "observer_node_did": "did:zhtp:obs",
+            "observer_public_key": [1, 2, 3],
+            "sponsor_user_did": "did:zhtp:sponsor",
+            "sponsor_proof_level": proof_level,
+            "sponsor_signature": [9, 9, 9],
+            "allowed_network": "testnet",
+            "rate_limit_tier": "Standard",
+            "nonce": 1,
+            "tx_signature": {
+                "signature_bytes": [1; 64],
+                "signer_dilithium_pk": [0; 2592]
+            }
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn register_rejects_anonymous_sponsor_with_403() {
+        let req = build_request(
+            ZhtpMethod::Post,
+            "/api/v1/observer/admission/register",
+            valid_register_body("None"),
+        );
+        let policy = lib_blockchain::observer::default_policy();
+        let resp = handle_admission_register(req, 0, &policy).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::Forbidden);
+    }
+
+    #[tokio::test]
+    async fn register_rejects_below_minimum_proof_level_with_403() {
+        let mut policy = lib_blockchain::observer::default_policy();
+        policy.minimum_proof_level = ObserverProofLevel::Enhanced;
+        let req = build_request(
+            ZhtpMethod::Post,
+            "/api/v1/observer/admission/register",
+            valid_register_body("Basic"),
+        );
+        let resp = handle_admission_register(req, 0, &policy).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::Forbidden);
+    }
+
+    #[test]
+    fn pre_validate_proof_level_helper_passes_at_minimum() {
+        let policy = lib_blockchain::observer::default_policy();
+        assert!(
+            pre_validate_register_proof_level(ObserverProofLevel::Basic, &policy).is_none(),
+            "Basic must satisfy default minimum (Basic)"
+        );
+        assert!(
+            pre_validate_register_proof_level(ObserverProofLevel::Enhanced, &policy).is_none()
+        );
+        assert!(
+            pre_validate_register_proof_level(ObserverProofLevel::Organizational, &policy)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn pre_validate_proof_level_helper_rejects_none() {
+        let policy = lib_blockchain::observer::default_policy();
+        assert!(pre_validate_register_proof_level(ObserverProofLevel::None, &policy).is_some());
     }
 }

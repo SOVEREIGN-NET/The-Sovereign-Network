@@ -2813,11 +2813,24 @@ impl BlockExecutor {
             )));
         }
 
+        // Preserve any anti-abuse counters carried on the prior action_meta
+        // entry across this state transition.
+        let prev_abuse_counter = record
+            .action_meta
+            .as_ref()
+            .map(|m| m.abuse_counter)
+            .unwrap_or(0);
+        let prev_last_violation = record
+            .action_meta
+            .as_ref()
+            .and_then(|m| m.last_violation_at);
         record.status = target_status;
         record.action_meta = Some(ObserverAdmissionActionMeta {
             actor_did: actor_did.to_string(),
             reason: reason.to_string(),
             timestamp: block_timestamp,
+            abuse_counter: prev_abuse_counter,
+            last_violation_at: prev_last_violation,
         });
         record.updated_at = block_timestamp;
 
