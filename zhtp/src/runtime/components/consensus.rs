@@ -123,30 +123,73 @@ impl ConsensusMessageBroadcaster for ConsensusMeshBroadcaster {
             quic_protocol.try_reconnect_to_bootstrap().await;
         }
 
+        // CONS-503: parallel fan-out with per-peer + global timeouts.
+        // Pre-CONS-503 the loop was sequential — one stalled peer
+        // serialized N peers behind it, blowing past the broadcast
+        // budget for the whole round. Each send now runs concurrently
+        // under a `per_peer_budget` cap (`total_budget / N`), with a
+        // global `total_budget` deadline as a backstop.
+        use futures::stream::{FuturesUnordered, StreamExt};
+        use lib_consensus_core::budget::MAX_BROADCAST_BUDGET_MS;
+
+        let recipient_count = recipients.len() as u32;
+        let total_budget = Duration::from_millis(MAX_BROADCAST_BUDGET_MS);
+        // saturating_div(0) returns 0 for `Duration`, but `recipients.is_empty()`
+        // already short-circuited above, so divisor >= 1.
+        let per_peer_budget = total_budget
+            .checked_div(recipient_count)
+            .unwrap_or(total_budget);
+
+        let mut tasks: FuturesUnordered<_> = recipients
+            .into_iter()
+            .map(|peer_id| {
+                let qp = quic_protocol.clone();
+                let msg = message.clone();
+                async move {
+                    tokio::time::timeout(
+                        per_peer_budget,
+                        qp.send_to_peer(
+                            &peer_id,
+                            lib_network::types::mesh_message::ZhtpMeshMessage::ValidatorMessage(
+                                msg,
+                            ),
+                        ),
+                    )
+                    .await
+                }
+            })
+            .collect();
+
+        let global_deadline = tokio::time::Instant::now() + total_budget;
         let mut delivered = 0usize;
-        for peer_id in recipients {
-            if quic_protocol
-                .send_to_peer(
-                    &peer_id,
-                    lib_network::types::mesh_message::ZhtpMeshMessage::ValidatorMessage(
-                        message.clone(),
-                    ),
-                )
-                .await
-                .is_ok()
-            {
-                delivered += 1;
+        let mut timed_out = 0usize;
+        let mut failed = 0usize;
+
+        loop {
+            match tokio::time::timeout_at(global_deadline, tasks.next()).await {
+                Ok(Some(Ok(Ok(_)))) => delivered += 1, // send returned Ok within per-peer budget
+                Ok(Some(Ok(Err(_)))) => failed += 1,    // send returned Err
+                Ok(Some(Err(_))) => timed_out += 1,    // per-peer timeout
+                Ok(None) => break,                      // all tasks drained
+                Err(_) => {
+                    // Global deadline hit — abandon remaining tasks
+                    timed_out += tasks.len();
+                    break;
+                }
             }
         }
 
         debug!(
-            "Consensus broadcast (height {}) delivered to {} validator peer(s)",
-            target_height, delivered
+            "Consensus broadcast (height {}) parallel fan-out: delivered={} failed={} timed_out={} of {} peers",
+            target_height, delivered, failed, timed_out, recipient_count
         );
         if delivered == 0 {
             Err(Box::new(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                "Consensus broadcast had zero successful deliveries",
+                format!(
+                    "Consensus broadcast had zero successful deliveries (failed={} timed_out={})",
+                    failed, timed_out
+                ),
             )))
         } else {
             Ok(())
