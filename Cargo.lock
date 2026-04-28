@@ -9456,6 +9456,7 @@ dependencies = [
  "lib-client",
  "lib-consensus",
  "lib-consensus-core",
+ "lib-consensus-runtime",
  "lib-crypto",
  "lib-economy",
  "lib-governance",

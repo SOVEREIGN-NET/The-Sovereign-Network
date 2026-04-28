@@ -33,6 +33,8 @@ lib-consensus = { path = "../lib-consensus" }
 # CONS-310 / AD-011: consensus-affecting constants live in lib-consensus-core
 # so changes are visible as cross-cutting protocol decisions.
 lib-consensus-core = { path = "../lib-consensus-core" }
+# CONS-502d: ConsensusRuntime wraps ConsensusEngine and runs the watchdog.
+lib-consensus-runtime = { path = "../lib-consensus-runtime" }
 # CONS-106: needed to wire ConsensusGovernanceAdapter into the engine.
 lib-governance = { path = "../lib-governance" }
 lib-economy = { path = "../lib-economy" }
