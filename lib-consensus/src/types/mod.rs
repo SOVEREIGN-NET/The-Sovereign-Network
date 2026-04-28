@@ -1,7 +1,7 @@
 //! Core types for ZHTP consensus system
 
 use async_trait::async_trait;
-use lib_crypto::{Hash, PostQuantumSignature};
+use lib_crypto::Hash;
 use lib_identity::IdentityId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -136,74 +136,76 @@ pub struct ConsensusRound {
     pub valid_proposal: Option<Hash>,
 }
 
-/// Consensus proposal for new blocks
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConsensusProposal {
-    /// Proposal identifier
-    pub id: Hash,
-    /// Proposer validator
-    pub proposer: IdentityId,
-    /// Block height
-    pub height: u64,
-    /// Consensus round this proposal is for
-    #[serde(default)]
-    pub round: u32,
-    /// Consensus wire-protocol version.
-    ///
-    /// Nodes reject proposals whose version doesn't match their own
-    /// `CONSENSUS_PROTOCOL_VERSION`, producing a clear error instead of
-    /// silently stalling on signature mismatches after an envelope change.
-    /// Defaults to 0 for proposals from pre-versioning nodes.
-    #[serde(default)]
-    pub protocol_version: u32,
-    /// Previous block hash
-    pub previous_hash: Hash,
-    /// Proposed block data
-    pub block_data: Vec<u8>,
-    /// Timestamp
-    pub timestamp: u64,
-    /// Proposer signature
-    pub signature: PostQuantumSignature,
-    /// Proof of stake/storage
-    pub consensus_proof: ConsensusProof,
+// CONS-201 Scope B: ConsensusProposal / ConsensusVote / ConsensusProof
+// migrated to `lib_consensus_core::types`. Re-exported here so existing
+// import paths (`lib_consensus::types::ConsensusProof`, etc.) keep
+// working. Encode/decode ergonomics for the now-opaque proof fields
+// live on the `ConsensusProofExt` trait below.
+pub use lib_consensus_core::types::{ConsensusProof, ConsensusProposal, ConsensusVote};
+
+/// CONS-201 Scope B: encode/decode helpers for `ConsensusProof`'s
+/// opaque proof fields. Lives in `lib-consensus` because it imports
+/// `lib_proofs` and `lib_storage` types — both forbidden in
+/// `lib-consensus-core` per AD-002.
+///
+/// Construction sites (`engines/consensus_engine/proofs.rs`,
+/// blockchain integration) call the `with_*` builders. Verifier sites
+/// (`engines/consensus_engine/validation.rs`) call the `decode_*`
+/// helpers. The wire format is bincode — same as the rest of the
+/// consensus codec.
+pub trait ConsensusProofExt {
+    /// Attach a stake proof. Bincode-serializes once; subsequent
+    /// reads via `decode_stake_proof` deserialize each call.
+    fn with_stake_proof(self, stake_proof: &StakeProof) -> Self;
+    /// Attach a storage attestation.
+    fn with_storage_proof(self, storage_proof: &StorageCapacityAttestation) -> Self;
+    /// Attach a useful-work proof.
+    fn with_work_proof(self, work_proof: &WorkProof) -> Self;
+    /// Decode the stake proof bytes if present. Returns `None` when
+    /// the field is unset, `Some(Err)` on a corrupt payload, and
+    /// `Some(Ok)` on success.
+    fn decode_stake_proof(&self) -> Option<Result<StakeProof, bincode::Error>>;
+    /// Decode the storage attestation bytes if present.
+    fn decode_storage_proof(&self) -> Option<Result<StorageCapacityAttestation, bincode::Error>>;
+    /// Decode the useful-work proof bytes if present.
+    fn decode_work_proof(&self) -> Option<Result<WorkProof, bincode::Error>>;
 }
 
-/// Consensus vote on a proposal
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConsensusVote {
-    /// Vote identifier
-    pub id: Hash,
-    /// Voter validator
-    pub voter: IdentityId,
-    /// Proposal being voted on
-    pub proposal_id: Hash,
-    /// Vote type
-    pub vote_type: VoteType,
-    /// Block height
-    pub height: u64,
-    /// Voting round
-    pub round: u32,
-    /// Timestamp
-    pub timestamp: u64,
-    /// Voter signature
-    pub signature: PostQuantumSignature,
-}
-
-/// Consensus proof combining different proof types
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConsensusProof {
-    /// Consensus mechanism type
-    pub consensus_type: ConsensusType,
-    /// Stake proof (for PoS)
-    pub stake_proof: Option<StakeProof>,
-    /// Storage proof (for PoStorage)
-    pub storage_proof: Option<StorageCapacityAttestation>,
-    /// Useful work proof (for PoUW)
-    pub work_proof: Option<WorkProof>,
-    /// ZK-DID proof for validator identity
-    pub zk_did_proof: Option<Vec<u8>>,
-    /// Timestamp
-    pub timestamp: u64,
+impl ConsensusProofExt for ConsensusProof {
+    fn with_stake_proof(mut self, stake_proof: &StakeProof) -> Self {
+        // Per the type-relocation invariant: encode-on-write, decode-
+        // on-read. The wire round-trip is bincode in both directions
+        // so a panic here is a real serialization bug we want to
+        // surface, not silently swallow.
+        self.stake_proof = Some(
+            bincode::serialize(stake_proof)
+                .expect("StakeProof serialization is infallible for valid inputs"),
+        );
+        self
+    }
+    fn with_storage_proof(mut self, storage_proof: &StorageCapacityAttestation) -> Self {
+        self.storage_proof = Some(
+            bincode::serialize(storage_proof)
+                .expect("StorageCapacityAttestation serialization is infallible"),
+        );
+        self
+    }
+    fn with_work_proof(mut self, work_proof: &WorkProof) -> Self {
+        self.work_proof = Some(
+            bincode::serialize(work_proof)
+                .expect("WorkProof serialization is infallible"),
+        );
+        self
+    }
+    fn decode_stake_proof(&self) -> Option<Result<StakeProof, bincode::Error>> {
+        self.stake_proof.as_deref().map(bincode::deserialize)
+    }
+    fn decode_storage_proof(&self) -> Option<Result<StorageCapacityAttestation, bincode::Error>> {
+        self.storage_proof.as_deref().map(bincode::deserialize)
+    }
+    fn decode_work_proof(&self) -> Option<Result<WorkProof, bincode::Error>> {
+        self.work_proof.as_deref().map(bincode::deserialize)
+    }
 }
 
 /// Network state for validation
@@ -369,21 +371,12 @@ pub use crate::validators::ValidatorMessage;
 /// **Invariant CE-ENG-7**: Deterministic emission. Given the same inputs, ConsensusEngine must emit
 /// the same sequence of ValidatorMessages, regardless of network behavior. This is what makes
 /// simulation and replay possible.
-#[async_trait]
-pub trait MessageBroadcaster: Send + Sync {
-    /// Broadcast message to all validators in the given validator set
-    ///
-    /// Invariant CE-ENG-5: ConsensusEngine passes validator set explicitly.
-    /// It never queries network state to determine "who to send to".
-    ///
-    /// Invariant CE-ENG-4: Consensus correctness MUST NOT depend on broadcast success,
-    /// failure, or reachability. This is best-effort telemetry only.
-    async fn broadcast_to_validators(
-        &self,
-        message: ValidatorMessage,
-        validator_ids: &[IdentityId],
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
-}
+// CONS-401: `MessageBroadcaster` migrated to
+// `lib_consensus_core::ports::broadcaster`. Single source of truth
+// per the issue's acceptance criterion. Re-exported here so existing
+// `lib_consensus::types::MessageBroadcaster` import paths keep
+// working unchanged.
+pub use lib_consensus_core::ports::MessageBroadcaster;
 
 /// Blockchain provider for consensus block production
 ///

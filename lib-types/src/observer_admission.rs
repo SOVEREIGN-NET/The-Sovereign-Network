@@ -123,6 +123,28 @@ pub enum ObserverRateLimitTier {
     Organizational = 2,
 }
 
+impl ObserverRateLimitTier {
+    /// Per-observer ingress quota in requests per minute (observer-admission-8).
+    ///
+    /// These are protocol-level defaults consumed by the `lib-blockchain`
+    /// token-bucket helper. They intentionally live on the canonical
+    /// type so every enforcement point (API, sync, RPC) sees the same
+    /// number, and they are deterministic / replay-safe.
+    pub const fn quota_per_minute(self) -> u32 {
+        match self {
+            Self::Standard => 60,
+            Self::Elevated => 300,
+            Self::Organizational => 1_200,
+        }
+    }
+
+    /// Refill rate (tokens per second) for a token bucket sized at
+    /// [`Self::quota_per_minute`].
+    pub fn refill_per_second(self) -> f64 {
+        f64::from(self.quota_per_minute()) / 60.0
+    }
+}
+
 // =============================================================================
 // NODE INFO
 // =============================================================================
@@ -229,6 +251,16 @@ pub struct ObserverAdmissionActionMeta {
     pub reason: String,
     /// Unix timestamp (seconds) when the action was taken.
     pub timestamp: u64,
+    /// Cumulative count of policy violations recorded against this
+    /// observer (observer-admission-8 anti-abuse). Persists across
+    /// status transitions so escalation thresholds are sticky.
+    /// Additive field: defaults to 0 for legacy records.
+    #[serde(default)]
+    pub abuse_counter: u32,
+    /// Last violation timestamp (unix seconds), if any.
+    /// Additive field: defaults to `None` for legacy records.
+    #[serde(default)]
+    pub last_violation_at: Option<u64>,
 }
 
 // =============================================================================
@@ -304,6 +336,28 @@ pub struct ObserverAdmissionPolicy {
     /// If empty, `ObserverProofLevel::default_max_observers()` applies.
     #[serde(default)]
     pub quota_overrides: Vec<ProofLevelQuota>,
+    /// Reserved for v2 economic anti-sybil: required bond (in base units)
+    /// to enroll an observer. `None` in v1 (observer-admission-8).
+    /// Additive field with explicit `None` default.
+    #[serde(default)]
+    pub bond_amount: Option<u64>,
+    /// Cumulative violation count at which an `Active` observer is
+    /// automatically suspended (observer-admission-8 anti-abuse).
+    /// Default 3 when not specified by governance.
+    #[serde(default = "default_abuse_suspend_threshold")]
+    pub abuse_suspend_threshold: u32,
+    /// Cumulative violation count at which an observer is automatically
+    /// revoked (observer-admission-8 anti-abuse). Default 5.
+    #[serde(default = "default_abuse_revoke_threshold")]
+    pub abuse_revoke_threshold: u32,
+}
+
+fn default_abuse_suspend_threshold() -> u32 {
+    3
+}
+
+fn default_abuse_revoke_threshold() -> u32 {
+    5
 }
 
 /// Per-proof-level quota override.
@@ -421,6 +475,9 @@ mod tests {
                 proof_level: ObserverProofLevel::Organizational,
                 max_observers: 25,
             }],
+            bond_amount: None,
+            abuse_suspend_threshold: 3,
+            abuse_revoke_threshold: 5,
         };
         let json = serde_json::to_string(&policy).expect("serialize");
         let back: ObserverAdmissionPolicy = serde_json::from_str(&json).expect("deserialize");
@@ -525,6 +582,8 @@ mod tests {
             actor_did: "did:zhtp:admin001".into(),
             reason: "abuse detected".into(),
             timestamp: 1700002000,
+            abuse_counter: 0,
+            last_violation_at: None,
         });
         let json = serde_json::to_string(&record).expect("serialize");
         let back: ObserverAdmissionRecord = serde_json::from_str(&json).expect("deserialize");

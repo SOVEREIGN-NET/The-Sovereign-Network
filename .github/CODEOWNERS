@@ -1,0 +1,48 @@
+# CODEOWNERS for The Sovereign Network
+#
+# NOTE: The teams referenced below (@SOVEREIGN-NET/<team>) are placeholders.
+# They MUST be created in GitHub Org settings (Settings → Teams) before
+# Code Owner review enforcement will take effect. Until then GitHub will
+# silently ignore unknown teams. See .github/BRANCH_PROTECTION_SETUP.md.
+#
+# Order matters: later patterns override earlier ones.
+
+# Default owners for everything in the repo
+*                                @SOVEREIGN-NET/core-maintainers
+
+# Smart contracts and on-chain protocol code
+/contracts/                      @SOVEREIGN-NET/protocol @SOVEREIGN-NET/security
+/smart-contracts/                @SOVEREIGN-NET/protocol @SOVEREIGN-NET/security
+/chain/                          @SOVEREIGN-NET/protocol
+/blockchain/                     @SOVEREIGN-NET/protocol
+
+# Tokenomics, treasury, and economic policy
+/tokenomics/                     @SOVEREIGN-NET/tokenomics @SOVEREIGN-NET/compliance
+/treasury/                       @SOVEREIGN-NET/tokenomics @SOVEREIGN-NET/compliance
+
+# Identity, ZK, and privacy
+/identity/                       @SOVEREIGN-NET/privacy @SOVEREIGN-NET/security
+/zk/                             @SOVEREIGN-NET/privacy @SOVEREIGN-NET/security
+
+# Governance and DAO
+/governance/                     @SOVEREIGN-NET/governance
+/dao/                            @SOVEREIGN-NET/governance
+
+# Infrastructure, CI, and ops
+/infra/                          @SOVEREIGN-NET/devops @SOVEREIGN-NET/security
+/.github/                        @SOVEREIGN-NET/devops @SOVEREIGN-NET/security
+
+# APIs and SDKs
+/api/                            @SOVEREIGN-NET/api
+/sdk/                            @SOVEREIGN-NET/api
+
+# Client surfaces
+/mobile/                         @SOVEREIGN-NET/ux @SOVEREIGN-NET/security
+/frontend/                       @SOVEREIGN-NET/ux
+
+# Documentation
+/docs/                           @SOVEREIGN-NET/documentation
+/docs/compliance/                @SOVEREIGN-NET/compliance
+
+# Data migrations
+/migrations/                     @SOVEREIGN-NET/data @SOVEREIGN-NET/devops

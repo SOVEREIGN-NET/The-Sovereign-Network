@@ -37,12 +37,16 @@ pub enum RemoteChainState {
     /// At least one peer explicitly reported genesis height with no committed blocks beyond it.
     GenesisOnly,
     /// At least one peer proved committed blocks beyond genesis.
-    Committed(u64),
+    ///
+    /// `hash` is the head block hash at `height` (defaults to all-zero when
+    /// the source did not report one — callers MUST treat all-zero as
+    /// "hash not yet proven" and not as a canonical commitment).
+    Committed { height: u64, hash: [u8; 32] },
 }
 
 impl RemoteChainState {
     pub fn has_committed_blocks(&self) -> bool {
-        matches!(self, Self::Committed(height) if *height > 0)
+        matches!(self, Self::Committed { height, .. } if *height > 0)
     }
 }
 
@@ -51,7 +55,10 @@ impl std::fmt::Display for RemoteChainState {
         match self {
             Self::Unknown => write!(f, "unknown"),
             Self::GenesisOnly => write!(f, "genesis-only"),
-            Self::Committed(height) => write!(f, "committed(height={height})"),
+            Self::Committed { height, hash } => {
+                let hash_prefix: String = hash.iter().take(4).map(|b| format!("{b:02x}")).collect();
+                write!(f, "committed(height={height},hash={hash_prefix}…)")
+            }
         }
     }
 }
@@ -69,6 +76,7 @@ pub mod network_blockchain_provider;
 pub mod node_identity;
 pub mod node_runtime;
 pub mod node_runtime_orchestrator;
+pub mod observer_admission_check;
 pub mod reward_orchestrator;
 pub mod routing_rewards;
 pub mod seed_storage;
@@ -146,6 +154,7 @@ async fn try_initial_sync_from_peer(
     store: std::sync::Arc<lib_blockchain::storage::SledStore>,
     peers: &[String],
     trusted_sync_sources: &[crate::config::TrustedSyncSource],
+    expected_network: &str,
 ) -> anyhow::Result<bool> {
     use lib_blockchain::storage::BlockchainStore;
     use lib_blockchain::sync::ChainSync;
@@ -230,12 +239,28 @@ async fn try_initial_sync_from_peer(
             }
         }
 
-        let peer_did = client.peer_did();
-        if !is_trusted_sync_source(peer, peer_did.as_deref(), trusted_sync_sources) {
+        let peer_did = client.peer_did().map(str::to_owned);
+        // observer-admission-5: gate the sync source on (operator allowlist)
+        // OR (canonical observer admission record matching local network).
+        // The legacy "empty allowlist ⇒ universal trust" rule is gone.
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let eligibility = crate::runtime::observer_admission_check::is_eligible_sync_source(
+            peer,
+            peer_did.as_deref(),
+            trusted_sync_sources,
+            store.as_ref() as &dyn lib_blockchain::storage::BlockchainStore,
+            expected_network,
+            now_secs,
+        );
+        if !eligibility.is_eligible() {
             warn!(
-                "⚠️  Skipping untrusted sync source {} (peer_did={})",
+                "⚠️  Skipping ineligible sync source {} (peer_did={}): {:?}",
                 peer_addr,
-                peer_did.as_deref().unwrap_or("unknown")
+                peer_did.as_deref().unwrap_or("unknown"),
+                eligibility,
             );
             continue;
         }
@@ -786,6 +811,9 @@ impl RuntimeOrchestrator {
     pub fn config(&self) -> &NodeConfig {
         &self.config
     }
+
+    // CONS-505 / admission-8 post-merge: store accessor removed because
+    // RuntimeOrchestrator does not own a SledStore field.
 
     /// Register a component with the orchestrator
     pub async fn register_component(&self, component: Arc<dyn Component>) -> Result<()> {
@@ -2233,6 +2261,7 @@ impl RuntimeOrchestrator {
                                 store.clone(),
                                 &net_info.bootstrap_peers,
                                 Self::trusted_sync_sources(&self.config),
+                                &self.config.blockchain_config.network_id,
                             )
                             .await
                             {
@@ -2342,6 +2371,7 @@ impl RuntimeOrchestrator {
                             store.clone(),
                             &retry_peers,
                             Self::trusted_sync_sources(&self.config),
+                            &self.config.blockchain_config.network_id,
                         )
                         .await
                         {
@@ -5199,7 +5229,7 @@ impl RuntimeOrchestrator {
                                      observer startup will keep waiting for committed blocks",
                                     attempt
                                 ),
-                                RemoteChainState::Committed(_) => unreachable!(
+                                RemoteChainState::Committed { .. } => unreachable!(
                                     "guard excludes committed chain state"
                                 ),
                             }
@@ -5628,7 +5658,7 @@ mod runtime_orchestrator_tests {
 
         let network_info = crate::runtime::ExistingNetworkInfo {
             peer_count: 3,
-            chain_state: crate::runtime::RemoteChainState::Committed(42),
+            chain_state: crate::runtime::RemoteChainState::Committed { height: 42, hash: [0u8; 32] },
             network_id: "testnet".to_string(),
             bootstrap_peers: vec!["127.0.0.1:9334".to_string()],
             environment: crate::config::Environment::Development,
@@ -5833,7 +5863,7 @@ mod runtime_orchestrator_tests {
 
         let network_info = crate::runtime::ExistingNetworkInfo {
             peer_count: 4,
-            chain_state: crate::runtime::RemoteChainState::Committed(128),
+            chain_state: crate::runtime::RemoteChainState::Committed { height: 128, hash: [0u8; 32] },
             network_id: "observer-testnet".to_string(),
             bootstrap_peers: vec!["127.0.0.1:9334".to_string()],
             environment: Environment::Development,
@@ -5888,7 +5918,7 @@ mod runtime_orchestrator_tests {
 
         let discovered_network = crate::runtime::ExistingNetworkInfo {
             peer_count: 4,
-            chain_state: crate::runtime::RemoteChainState::Committed(128),
+            chain_state: crate::runtime::RemoteChainState::Committed { height: 128, hash: [0u8; 32] },
             network_id: "observer-sequence-testnet".to_string(),
             bootstrap_peers: vec!["127.0.0.1:9334".to_string(), "127.0.0.1:9335".to_string()],
             environment: Environment::Development,
@@ -5956,7 +5986,7 @@ mod runtime_orchestrator_tests {
             .expect("observer runtime should initialize");
         let network_info = crate::runtime::ExistingNetworkInfo {
             peer_count: 1,
-            chain_state: crate::runtime::RemoteChainState::Committed(42),
+            chain_state: crate::runtime::RemoteChainState::Committed { height: 42, hash: [0u8; 32] },
             network_id: "observer-runtime-join".to_string(),
             bootstrap_peers: vec!["127.0.0.1:1".to_string()],
             environment: Environment::Development,
@@ -6051,7 +6081,7 @@ mod runtime_orchestrator_tests {
 
         let discovered_network = crate::runtime::ExistingNetworkInfo {
             peer_count: 3,
-            chain_state: crate::runtime::RemoteChainState::Committed(64),
+            chain_state: crate::runtime::RemoteChainState::Committed { height: 64, hash: [0u8; 32] },
             network_id: "observer-shared-network".to_string(),
             bootstrap_peers: vec![
                 "127.0.0.1:9334".to_string(),

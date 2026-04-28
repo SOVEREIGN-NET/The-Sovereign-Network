@@ -242,6 +242,18 @@ pub enum Action {
     /// event arrives in a state where it has no effect (e.g. late
     /// vote in `Idle`). Explicit instead of silent.
     LogIgnoredEvent(&'static str),
+
+    /// CONS-308: typed observability event for round rejection.
+    /// Emitted by `transition()` whenever it returns a
+    /// `(Rejected { reason, .. }, ...)` tuple. Sits alongside the
+    /// existing `Action::AdvanceRound` so operator subscribers
+    /// (structured tracing, dashboards) see the rejection reason
+    /// without parsing free-text log strings.
+    ///
+    /// Slim payload (`reason` only) — the FSM has no access to
+    /// `height`/`round` at transition time. The engine's
+    /// `dispatch_action` enriches the log with them on emission.
+    LogRoundRejected { reason: RejectionReason },
 }
 
 /// Discriminant of [`Event`] without payload data. Used by the
@@ -318,6 +330,7 @@ pub enum ActionKind {
     LogPanic,
     LogHung,
     LogIgnoredEvent,
+    LogRoundRejected,
 }
 
 impl Action {
@@ -343,6 +356,7 @@ impl Action {
             Action::LogPanic { .. } => ActionKind::LogPanic,
             Action::LogHung { .. } => ActionKind::LogHung,
             Action::LogIgnoredEvent(_) => ActionKind::LogIgnoredEvent,
+            Action::LogRoundRejected { .. } => ActionKind::LogRoundRejected,
         }
     }
 }

@@ -858,6 +858,7 @@ impl DiscoveryCoordinator {
 
         let mut observed_genesis_only = false;
         let mut highest_committed_height = 0u64;
+        let mut highest_committed_hash = [0u8; 32];
         let mut trusted_bootstrap_peers = Vec::new();
         let mut pending_peers = peers.iter().cloned();
         let mut probe_tasks = tokio::task::JoinSet::new();
@@ -882,8 +883,11 @@ impl DiscoveryCoordinator {
                     }
 
                     match peer_probe.chain_state {
-                        crate::runtime::RemoteChainState::Committed(height) => {
-                            highest_committed_height = highest_committed_height.max(height);
+                        crate::runtime::RemoteChainState::Committed { height, hash } => {
+                            if height >= highest_committed_height {
+                                highest_committed_height = height;
+                                highest_committed_hash = hash;
+                            }
                         }
                         crate::runtime::RemoteChainState::GenesisOnly => {
                             observed_genesis_only = true;
@@ -914,9 +918,10 @@ impl DiscoveryCoordinator {
 
         if highest_committed_height > 0 {
             Ok(RemoteChainProbe {
-                chain_state: crate::runtime::RemoteChainState::Committed(
-                    highest_committed_height,
-                ),
+                chain_state: crate::runtime::RemoteChainState::Committed {
+                    height: highest_committed_height,
+                    hash: highest_committed_hash,
+                },
                 trusted_bootstrap_peers,
             })
         } else if observed_genesis_only {
@@ -965,6 +970,8 @@ fn spawn_remote_chain_probe_task(
         #[derive(serde::Deserialize)]
         struct TipInfo {
             height: u64,
+            #[serde(default)]
+            head_hash: String,
         }
 
         let peer_addr = match peer.parse::<std::net::SocketAddr>() {
@@ -1011,7 +1018,15 @@ fn spawn_remote_chain_probe_task(
             }
         }
 
-        let peer_did = client.peer_did();
+        let peer_did = client.peer_did().map(str::to_owned);
+        // TODO(observer-admission-7 follow-up): the discovery probe currently
+        // applies only the operator-configured allowlist (`is_trusted_sync_source`).
+        // The canonical admission gate lives in
+        // `crate::runtime::observer_admission_check::select_trusted_sync_sources`
+        // and is already enforced in `try_initial_sync_from_peer` (admission-5).
+        // Wiring the SledStore through `DiscoveryConfig` so the probe can
+        // consult the on-chain observer registry is intentionally deferred:
+        // the authoritative gate runs before any sync handshake commits state.
         if !crate::runtime::is_trusted_sync_source(
             &peer,
             peer_did.as_deref(),
@@ -1070,7 +1085,16 @@ fn spawn_remote_chain_probe_task(
                 "      Peer {} reports committed chain height {}",
                 peer_addr, tip.height
             );
-            crate::runtime::RemoteChainState::Committed(tip.height)
+            // Decode head_hash hex; if missing or malformed treat as unknown ([0u8; 32]).
+            let mut hash = [0u8; 32];
+            if !tip.head_hash.is_empty() {
+                if let Ok(decoded) = hex::decode(tip.head_hash.trim_start_matches("0x")) {
+                    if decoded.len() == 32 {
+                        hash.copy_from_slice(&decoded);
+                    }
+                }
+            }
+            crate::runtime::RemoteChainState::Committed { height: tip.height, hash }
         };
 
         Some(PeerChainProbe {

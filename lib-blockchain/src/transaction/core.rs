@@ -2679,9 +2679,12 @@ pub struct UpdateObserverMetadataData {
     pub observer_node_did: String,
     /// DID of the actor authorizing the update (must be the sponsor).
     pub actor_did: String,
-    /// Replacement endpoint list (replaces the entire existing list).
+    /// Endpoint update.
+    /// - `None` (default) = no change to the existing endpoint list.
+    /// - `Some(vec)` = replace the entire endpoint list with `vec`.
+    /// - `Some(vec![])` = clear all endpoints.
     #[serde(default)]
-    pub new_endpoints: Vec<String>,
+    pub new_endpoints: Option<Vec<String>>,
     /// Updated network / sync-scope binding. `None` = no change.
     #[serde(default)]
     pub new_network: Option<ObserverNetworkUpdate>,

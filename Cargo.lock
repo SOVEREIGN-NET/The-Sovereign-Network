@@ -179,6 +179,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "architecture-invariants"
+version = "0.1.0"
+
+[[package]]
 name = "argon2"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3456,6 +3460,7 @@ dependencies = [
  "hex",
  "indexmap 1.9.3",
  "lib-consensus-core",
+ "lib-consensus-net",
  "lib-crypto",
  "lib-governance",
  "lib-identity",
@@ -3492,13 +3497,14 @@ dependencies = [
 name = "lib-consensus-net"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "bincode",
  "lib-consensus-core",
  "lib-crypto",
  "lib-identity",
- "lib-network",
  "lib-types",
+ "rand 0.8.5",
  "serde",
  "thiserror 1.0.69",
  "tokio",
@@ -3530,6 +3536,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "lib-blockchain",
+ "lib-consensus",
  "lib-consensus-core",
  "lib-consensus-net",
  "lib-crypto",
@@ -3699,6 +3706,7 @@ dependencies = [
  "jni",
  "lib-blockchain",
  "lib-consensus",
+ "lib-consensus-net",
  "lib-crypto",
  "lib-economy",
  "lib-identity",
@@ -9454,6 +9462,8 @@ dependencies = [
  "lib-blockchain",
  "lib-client",
  "lib-consensus",
+ "lib-consensus-core",
+ "lib-consensus-runtime",
  "lib-crypto",
  "lib-economy",
  "lib-governance",

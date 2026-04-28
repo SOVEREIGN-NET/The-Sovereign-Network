@@ -38,3 +38,8 @@ pub mod adapters;
 pub mod catch_up_sync;
 pub mod fork_policy;
 pub mod runtime;
+
+pub use catch_up_sync::{
+    run_catch_up_sync_task, BlockchainHeightProvider, CatchUpError, CatchUpPeer, CatchUpTransport,
+};
+pub use runtime::{ConsensusRuntime, RuntimeError};

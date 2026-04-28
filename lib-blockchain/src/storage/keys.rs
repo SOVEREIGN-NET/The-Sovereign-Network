@@ -249,6 +249,9 @@ pub mod meta {
 
     /// Key for UTXO Merkle tree: current root hash ([u8; 32]).
     pub const UTXO_MERKLE_ROOT: &[u8] = b"utxo_merkle_root";
+
+    /// Key for canonical observer admission policy (single global record).
+    pub const OBSERVER_POLICY: &[u8] = b"observer_policy";
 }
 
 // =============================================================================

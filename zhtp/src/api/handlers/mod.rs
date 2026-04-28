@@ -20,6 +20,7 @@ pub mod mobile_auth;
 pub mod monitor;
 pub mod network;
 pub mod observer;
+pub mod observer_admission;
 pub mod oracle;
 pub mod pouw;
 pub mod protocol;

@@ -152,7 +152,7 @@ pub fn transition_table() -> Vec<TransitionRule> {
         F::Specific(S::Proposing),
         E::VoteFailed,
         S::Rejected,
-        vec![A::AdvanceRound],
+        vec![A::LogRoundRejected, A::AdvanceRound],
         "Vote-tally rejection in Proposing — view change.",
     );
 
@@ -182,7 +182,7 @@ pub fn transition_table() -> Vec<TransitionRule> {
         F::Specific(S::Prevoting),
         E::VoteFailed,
         S::Rejected,
-        vec![A::AdvanceRound],
+        vec![A::LogRoundRejected, A::AdvanceRound],
         "Vote-tally rejection in Prevoting — view change.",
     );
 
@@ -227,7 +227,7 @@ pub fn transition_table() -> Vec<TransitionRule> {
         F::Specific(S::Precommitting),
         E::VoteFailed,
         S::Rejected,
-        vec![A::AdvanceRound],
+        vec![A::LogRoundRejected, A::AdvanceRound],
         "Vote-tally rejection in Precommitting — view change.",
     );
 
@@ -245,7 +245,7 @@ pub fn transition_table() -> Vec<TransitionRule> {
         F::Specific(S::Committed),
         E::Timeout,
         S::Rejected,
-        vec![A::AdvanceRound],
+        vec![A::LogRoundRejected, A::AdvanceRound],
         "Commit-vote gathering timed out — view change.",
     );
     push(

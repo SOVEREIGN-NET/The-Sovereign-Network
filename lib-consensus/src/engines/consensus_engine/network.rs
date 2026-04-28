@@ -25,6 +25,10 @@ impl ConsensusEngine {
             ConsensusError::ValidatorError("Message receiver not set".to_string())
         })?;
         let mut validator_update_rx = self.validator_update_rx.take();
+        // CONS-309 / CONS-502b: receiver for runtime-injected FSM events
+        // (today: `WatchdogFired`). Optional — when `None`, the matching
+        // select branch never resolves and the engine behaves as before.
+        let mut runtime_event_rx = self.runtime_event_rx.take();
 
         // Sync consensus height with blockchain before starting
         // This ensures we start at the correct height after bootstrap mode
@@ -324,12 +328,7 @@ impl ConsensusEngine {
                         // verify against `HeartbeatSigningPayload` instead of
                         // dropping unsigned messages.
                         let msg = wrap_heartbeat(heartbeat_msg, self.validator_keypair.as_ref());
-                        if let Err(e) = self.broadcaster.broadcast_to_validators(
-                            msg,
-                            &validator_ids,
-                        ).await {
-                            tracing::debug!("Heartbeat broadcast failed: {}", e);
-                        }
+                        self.broadcast(msg, &validator_ids).await;
                     }
                 }
 
@@ -492,6 +491,22 @@ impl ConsensusEngine {
                     // height hasn't been sealed yet (e.g. bootstrap startup).
                     self.snapshot_validator_set(self.current_round.height);
                 }
+
+                // CONS-309 / CONS-502b: drain runtime-injected FSM events
+                // (today: `WatchdogFired` from the runtime's watchdog
+                // task). Each event flows through `transition()` exactly
+                // like a network message would, so the FSM stays the
+                // single source of truth and the runtime never mutates
+                // engine state directly.
+                Some(event) = recv_runtime_event(&mut runtime_event_rx) => {
+                    let prior = self.fsm_state.clone();
+                    let (next, actions) =
+                        lib_consensus_core::fsm::transition(prior, event);
+                    self.enter_fsm_state(next).await;
+                    for action in actions {
+                        self.dispatch_action(action).await;
+                    }
+                }
             }
         }
 
@@ -608,6 +623,19 @@ impl ConsensusEngine {
 async fn recv_validator_update(
     rx: &mut Option<tokio::sync::mpsc::Receiver<super::ValidatorSetUpdate>>,
 ) -> Option<super::ValidatorSetUpdate> {
+    match rx.as_mut() {
+        Some(rx) => rx.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Helper for `tokio::select!`: receives from the runtime FSM-event channel
+/// if present, or pends forever if the runtime hasn't installed one.
+/// Pending-forever keeps the channel branch dormant in the legacy zhtp path
+/// where `run_consensus_loop` is called directly without a runtime wrapper.
+async fn recv_runtime_event(
+    rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<lib_consensus_core::fsm::Event>>,
+) -> Option<lib_consensus_core::fsm::Event> {
     match rx.as_mut() {
         Some(rx) => rx.recv().await,
         None => std::future::pending().await,

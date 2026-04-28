@@ -60,6 +60,18 @@ pub enum ValidationError {
     /// The sponsor DID in the transaction does not match the binding recorded
     /// in the canonical registry (or is empty on a new registration).
     InvalidSponsorBinding,
+    /// The sponsor's proof level is below the policy minimum.
+    SponsorProofLevelTooLow,
+    /// The sponsor has already used all observer slots for their proof level.
+    SponsorQuotaExhausted,
+    /// The sponsor is anonymous (empty DID or proof level None) and cannot
+    /// sponsor observers under any policy.
+    AnonymousSponsorRejected,
+    /// The observer record's expiry has passed.
+    ObserverExpired,
+    /// The observer record exists but is not currently authorized
+    /// (e.g. Pending, Suspended, Revoked, or fails policy network/proof check).
+    ObserverNotAuthorized,
 }
 
 impl std::fmt::Display for ValidationError {
@@ -106,6 +118,21 @@ impl std::fmt::Display for ValidationError {
             }
             ValidationError::InvalidSponsorBinding => {
                 write!(f, "Sponsor DID does not match the canonical sponsor binding")
+            }
+            ValidationError::SponsorProofLevelTooLow => {
+                write!(f, "Sponsor proof level is below the policy minimum")
+            }
+            ValidationError::SponsorQuotaExhausted => {
+                write!(f, "Sponsor has reached the observer quota for their proof level")
+            }
+            ValidationError::AnonymousSponsorRejected => {
+                write!(f, "Anonymous sponsors cannot register observers")
+            }
+            ValidationError::ObserverExpired => {
+                write!(f, "Observer admission record has expired")
+            }
+            ValidationError::ObserverNotAuthorized => {
+                write!(f, "Observer is not currently authorized by canonical admission state")
             }
         }
     }
@@ -196,8 +223,23 @@ impl TransactionValidator {
     /// Phase 2: TokenTransfer must have fee == 0 even when the caller passes
     /// is_system_transaction=false (to force signature validation). This ensures
     /// the mempool and BlockExecutor have consistent fee rules.
+    ///
+    /// Observer admission transactions (observer-admission-4) are treated as
+    /// non-system for signature/identity validation but pay their economic cost
+    /// via an explicit `OBSERVER_REGISTRATION_FEE` SOV debit in the executor,
+    /// not via `transaction.fee`. They MUST therefore carry `fee == 0` and are
+    /// fee-exempt at the stateless layer.
     fn compute_economics_is_system(transaction: &Transaction, is_system_transaction: bool) -> bool {
-        is_system_transaction || transaction.transaction_type == TransactionType::TokenTransfer
+        is_system_transaction
+            || matches!(
+                transaction.transaction_type,
+                TransactionType::TokenTransfer
+                    | TransactionType::RegisterObserver
+                    | TransactionType::UpdateObserverMetadata
+                    | TransactionType::SuspendObserver
+                    | TransactionType::RevokeObserver
+                    | TransactionType::ReauthorizeObserver
+            )
     }
 
     fn validate_canonical_bonding_curve_memo(
@@ -249,9 +291,18 @@ impl TransactionValidator {
         // Check if this is a system transaction (empty inputs = coinbase-style)
         let mut is_system_transaction = transaction.inputs.is_empty();
         // Typed token operations must pay fees even with empty inputs.
+        // Observer admission transactions (observer-admission-4) carry no
+        // inputs/outputs by design but MUST be authenticated and identity-bound;
+        // mark them non-system so signature + identity validation runs.
         if matches!(
             transaction.transaction_type,
-            TransactionType::TokenTransfer | TransactionType::TokenCreation
+            TransactionType::TokenTransfer
+                | TransactionType::TokenCreation
+                | TransactionType::RegisterObserver
+                | TransactionType::UpdateObserverMetadata
+                | TransactionType::SuspendObserver
+                | TransactionType::RevokeObserver
+                | TransactionType::ReauthorizeObserver
         ) {
             is_system_transaction = false;
         }
@@ -1684,10 +1735,18 @@ impl<'a> StatefulTransactionValidator<'a> {
         tracing::debug!("[BREADCRUMB] is_token_contract_execution = {}", is_token);
 
         let mut is_system_transaction = transaction.inputs.is_empty() && !is_token;
-        // TokenTransfer must pay fees even with empty inputs
+        // TokenTransfer must pay fees even with empty inputs.
+        // Observer admission transactions (observer-admission-4) require
+        // signature + identity validation despite having no inputs.
         if matches!(
             transaction.transaction_type,
-            TransactionType::TokenTransfer | TransactionType::TokenCreation
+            TransactionType::TokenTransfer
+                | TransactionType::TokenCreation
+                | TransactionType::RegisterObserver
+                | TransactionType::UpdateObserverMetadata
+                | TransactionType::SuspendObserver
+                | TransactionType::RevokeObserver
+                | TransactionType::ReauthorizeObserver
         ) {
             is_system_transaction = false;
         }

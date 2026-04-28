@@ -229,7 +229,10 @@ pub fn transition(state: ValidatorState, event: Event) -> (ValidatorState, Vec<A
         (Proposing, Timeout) => (Prevoting, vec![Action::ResetWatchdog]),
         (Proposing, VoteFailed(reason)) => (
             Rejected { reason, round: 0 }, // runtime fills round on entry
-            vec![Action::AdvanceRound],
+            vec![
+                Action::LogRoundRejected { reason },
+                Action::AdvanceRound,
+            ],
         ),
         (Proposing, WatchdogFired { fired_at, .. }) => (
             Hung {
@@ -255,7 +258,10 @@ pub fn transition(state: ValidatorState, event: Event) -> (ValidatorState, Vec<A
         (Prevoting, Timeout) => (Precommitting, vec![Action::ResetWatchdog]),
         (Prevoting, VoteFailed(reason)) => (
             Rejected { reason, round: 0 },
-            vec![Action::AdvanceRound],
+            vec![
+                Action::LogRoundRejected { reason },
+                Action::AdvanceRound,
+            ],
         ),
         (Prevoting, WatchdogFired { fired_at, .. }) => (
             Hung {
@@ -305,7 +311,10 @@ pub fn transition(state: ValidatorState, event: Event) -> (ValidatorState, Vec<A
         (Precommitting, Timeout) => (Precommitting, vec![Action::ResetWatchdog]),
         (Precommitting, VoteFailed(reason)) => (
             Rejected { reason, round: 0 },
-            vec![Action::AdvanceRound],
+            vec![
+                Action::LogRoundRejected { reason },
+                Action::AdvanceRound,
+            ],
         ),
         (Precommitting, WatchdogFired { fired_at, .. }) => (
             Hung {
@@ -337,7 +346,12 @@ pub fn transition(state: ValidatorState, event: Event) -> (ValidatorState, Vec<A
                 reason: RejectionReason::InsufficientPrecommits,
                 round: 0,
             },
-            vec![Action::AdvanceRound],
+            vec![
+                Action::LogRoundRejected {
+                    reason: RejectionReason::InsufficientPrecommits,
+                },
+                Action::AdvanceRound,
+            ],
         ),
         // Late precommit quorum (#2405): wire-level Commit step (the
         // bridge maps that to FSM Committed) gathered enough
@@ -897,6 +911,126 @@ mod tests {
                     event.kind()
                 );
             }
+        }
+    }
+
+    /// CONS-308: every transition into `Rejected` emits a typed
+    /// `LogRoundRejected` action carrying the same reason. Walks all
+    /// four entry points (Proposing/Prevoting/Precommitting via
+    /// `VoteFailed`, plus `Committed` via `Timeout`).
+    #[test]
+    fn transition_into_rejected_emits_typed_log_event() {
+        use RejectionReason::*;
+
+        // Each entry point's reason is determined by either the event
+        // payload (VoteFailed carries it) or the FSM hard-codes it
+        // (Committed.Timeout → InsufficientPrecommits). The test
+        // sweeps a representative reason per entry point so a future
+        // refactor that drops the LogRoundRejected emission fails
+        // here loudly.
+        let cases: Vec<(ValidatorState, Event, RejectionReason)> = vec![
+            (
+                ValidatorState::Proposing,
+                Event::VoteFailed(Timeout),
+                Timeout,
+            ),
+            (
+                ValidatorState::Prevoting,
+                Event::VoteFailed(InsufficientPrevotes),
+                InsufficientPrevotes,
+            ),
+            (
+                ValidatorState::Precommitting,
+                Event::VoteFailed(InsufficientPrecommits),
+                InsufficientPrecommits,
+            ),
+            (
+                ValidatorState::Committed {
+                    block_hash: [0; 32],
+                    height: 1,
+                },
+                Event::Timeout,
+                InsufficientPrecommits,
+            ),
+        ];
+
+        for (state, event, expected_reason) in cases {
+            let (next, actions) = transition(state.clone(), event.clone());
+            assert!(
+                matches!(next, ValidatorState::Rejected { .. }),
+                "transition({:?}, {:?}) expected Rejected, got {:?}",
+                state.kind(),
+                event.kind(),
+                next.kind()
+            );
+            let log_action = actions.iter().find_map(|a| match a {
+                Action::LogRoundRejected { reason } => Some(*reason),
+                _ => None,
+            });
+            assert_eq!(
+                log_action,
+                Some(expected_reason),
+                "transition({:?}, {:?}) did not emit LogRoundRejected with reason {:?}; \
+                 actions = {:?}",
+                state.kind(),
+                event.kind(),
+                expected_reason,
+                actions.iter().map(|a| a.kind()).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// CONS-601 watchdog escape coverage: every phase state where a
+    /// stuck round can occur must transition to `Hung` on
+    /// `WatchdogFired`. This is the FSM-level half of the integration
+    /// test the spec calls for; the runtime-spawn half is exercised
+    /// in `lib-consensus-runtime::tests::watchdog_*`.
+    ///
+    /// Asserts:
+    /// 1. (Idle | Proposing | Prevoting | Precommitting, WatchdogFired)
+    ///    → `Hung { prior_state: <input> }`.
+    /// 2. The emitted action list contains a `LogHung` so the
+    ///    observability layer sees the escape.
+    /// 3. `Hung`'s `prior_state` retains the input state's kind so
+    ///    operators can tell which phase wedged.
+    #[test]
+    fn watchdog_fires_lift_each_phase_state_into_hung() {
+        let phase_states = [
+            ValidatorState::Idle,
+            ValidatorState::Proposing,
+            ValidatorState::Prevoting,
+            ValidatorState::Precommitting,
+        ];
+        for state in phase_states {
+            let prior_kind = state.kind();
+            let event = Event::WatchdogFired {
+                age_ms: 1_500,
+                fired_at: Instant::now(),
+            };
+            let (next, actions) = transition(state.clone(), event);
+            match next {
+                ValidatorState::Hung { ref prior_state, .. } => {
+                    assert_eq!(
+                        prior_state.kind(),
+                        prior_kind,
+                        "Hung must remember which phase wedged: \
+                         expected prior_state kind {:?}, got {:?}",
+                        prior_kind,
+                        prior_state.kind()
+                    );
+                }
+                other => panic!(
+                    "WatchdogFired in {:?} did not produce Hung — got {:?}",
+                    prior_kind,
+                    other.kind()
+                ),
+            }
+            assert!(
+                actions.iter().any(|a| matches!(a, Action::LogHung { .. })),
+                "WatchdogFired in {:?} must emit Action::LogHung; got {:?}",
+                prior_kind,
+                actions.iter().map(|a| a.kind()).collect::<Vec<_>>()
+            );
         }
     }
 }
