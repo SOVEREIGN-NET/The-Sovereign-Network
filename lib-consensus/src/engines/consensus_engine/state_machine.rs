@@ -1198,6 +1198,33 @@ impl ConsensusEngine {
         proposal: &ConsensusProposal,
         quorum_proof: lib_types::consensus::BftQuorumProof,
     ) -> ConsensusResult<()> {
+        // CONS-307 channel path: dispatch to the runtime's commit
+        // executor and return immediately. Failures surface back via
+        // the runtime event channel as `Event::HaltScheduled`, which
+        // transitions the FSM to `Halting` on the next select! tick.
+        if let Some(tx) = &self.commit_tx {
+            let envelope = super::CommitEnvelope {
+                proposal: proposal.clone(),
+                quorum_proof,
+            };
+            if tx.send(envelope).is_err() {
+                tracing::warn!(
+                    height = proposal.height,
+                    "Commit channel closed — runtime executor dropped its receiver (CE-ENG-4)"
+                );
+            } else {
+                tracing::debug!(
+                    block_height = proposal.height,
+                    proposal_id = ?proposal.id,
+                    "BFT finalized block dispatched to commit executor"
+                );
+            }
+            return Ok(());
+        }
+
+        // Legacy path: direct await with halt-on-failure semantics.
+        // Reached when no runtime is attached (e.g. AD-011 fallback in
+        // zhtp, or unit tests using ConsensusEngine directly).
         if let Some(ref callback) = self.block_commit_callback {
             match callback
                 .commit_finalized_block_with_proof(proposal, quorum_proof)
