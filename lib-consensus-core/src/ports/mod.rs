@@ -19,6 +19,8 @@
 
 pub mod governance;
 pub mod rewards;
+pub mod transport;
 
 pub use governance::{GovernanceCallback, NoOpGovernanceCallback};
 pub use rewards::{NoOpRewardCallback, RewardCallback, ValidatorRewardInput};
+pub use transport::{NoOpTransportInfo, TransportInfo};
