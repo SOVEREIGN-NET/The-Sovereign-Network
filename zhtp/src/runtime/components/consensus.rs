@@ -12,6 +12,7 @@ use crate::runtime::{Component, ComponentHealth, ComponentId, ComponentMessage, 
 use crate::server::mesh::core::MeshRouter;
 use lib_blockchain::Blockchain;
 use lib_consensus::types::{MessageBroadcaster as ConsensusMessageBroadcaster, ValidatorMessage};
+use lib_consensus_core::budget::WRONG_CHAIN_HALT_THRESHOLD;
 use lib_consensus::validators::{
     ValidatorAnnouncement, ValidatorDiscoveryProtocol, ValidatorEndpoint,
     ValidatorNetworkTransport, ValidatorProtocol, ValidatorStatus,
@@ -386,10 +387,9 @@ async fn run_catch_up_sync_task(
     const FAST_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(3);
     const NORMAL_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(10);
     const RETRY_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(5);
-    // How many consecutive sync rounds in which at least one ahead peer rejects our
-    // chain before we declare an unrecoverable fork and wipe local state. Three rounds
-    // filter out transient rejections while detecting a genuine divergence quickly.
-    const WRONG_CHAIN_WIPE_THRESHOLD: u32 = 3;
+    // Consecutive sync-round threshold for declaring an unrecoverable fork.
+    // Sourced from `lib_consensus_core::budget::WRONG_CHAIN_HALT_THRESHOLD`
+    // (CONS-310 / AD-011) — see that crate for the BFT-safety rationale.
 
     let mut next_allowed_at = tokio::time::Instant::now();
     // Counts consecutive sync rounds in which ≥1 ahead peer returned a hash
@@ -489,10 +489,10 @@ async fn run_catch_up_sync_task(
                 prioritized_peers.len(),
                 from_height + 1,
                 consecutive_wrong_chain_rounds,
-                WRONG_CHAIN_WIPE_THRESHOLD,
+                WRONG_CHAIN_HALT_THRESHOLD,
             );
 
-            if consecutive_wrong_chain_rounds >= WRONG_CHAIN_WIPE_THRESHOLD {
+            if consecutive_wrong_chain_rounds >= WRONG_CHAIN_HALT_THRESHOLD {
                 // Unrecoverable fork: our local chain state diverged from every
                 // ahead peer we can reach. HALT consensus and alert the operator.
                 // DO NOT wipe sled — data destruction caused total chain loss in the
