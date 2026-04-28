@@ -1990,6 +1990,21 @@ impl ConsensusEngine {
             // Observability — silent drop; FSM's own hooks log.
             A::LogIgnoredEvent(_) | A::LogHung { .. } | A::LogPanic { .. } => {}
 
+            // CONS-308: typed round-rejection event. Enrich the FSM-
+            // emitted reason with the engine's current height/round
+            // so dashboards and structured-log consumers see full
+            // context. Emitting at WARN because every entry into
+            // `Rejected` is by definition a non-progress event the
+            // operator cares about.
+            A::LogRoundRejected { reason } => {
+                tracing::warn!(
+                    height = self.current_round.height,
+                    round = self.current_round.round,
+                    rejection_reason = ?reason,
+                    "FSM round rejected"
+                );
+            }
+
             // Lifecycle — log at debug for visibility.
             other => {
                 tracing::debug!(
