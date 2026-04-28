@@ -750,6 +750,202 @@ mod tests {
         assert!(res.is_ok(), "commit executor did not exit on sender drop");
     }
 
+    // ---------------- adapter-latency / hung-broadcaster (CONS-601) ----------------
+
+    /// Hung broadcaster: every `broadcast_to_validators` call sleeps
+    /// past the broadcast budget, modeling a stuck QUIC peer. Used to
+    /// prove that the executor's slow .await does NOT block envelope
+    /// producers (engines), which is the whole point of CONS-306's
+    /// channel split.
+    struct HungBroadcaster;
+
+    #[async_trait::async_trait]
+    impl lib_consensus::types::MessageBroadcaster for HungBroadcaster {
+        async fn broadcast_to_validators(
+            &self,
+            _message: lib_consensus::types::ValidatorMessage,
+            _validator_ids: &[lib_identity::IdentityId],
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            // Hang for an hour — well past any realistic budget.
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+            Ok(())
+        }
+    }
+
+    /// CONS-601 adapter-latency test (channel-side): send 100
+    /// envelopes into the broadcast channel while the executor is
+    /// stuck on a hung broadcaster. The producer side (the engine)
+    /// must complete all 100 sends in well under 100 ms — channel
+    /// sends are non-blocking so the hung executor can't back-pressure
+    /// the engine. Pre-CONS-306 this would have serialized at 100 ×
+    /// per-broadcast latency.
+    #[tokio::test]
+    async fn hung_broadcaster_does_not_block_envelope_producers() {
+        let broadcaster: Arc<dyn lib_consensus::types::MessageBroadcaster> =
+            Arc::new(HungBroadcaster);
+        let (tx, rx) = mpsc::unbounded_channel::<BroadcastEnvelope>();
+        let executor = spawn_broadcast_executor(rx, broadcaster);
+
+        // Producer-side timing: 100 sends should complete in <100 ms.
+        let start = std::time::Instant::now();
+        for i in 0..100 {
+            tx.send(BroadcastEnvelope {
+                message: lib_consensus::types::ValidatorMessage::Heartbeat(
+                    test_heartbeat_message(i),
+                ),
+                recipients: vec![],
+            })
+            .expect("send into open executor");
+        }
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "100 producer sends took {:?} — channel path should be non-blocking. \
+             Pre-CONS-306 regression suspected.",
+            elapsed
+        );
+
+        // Drop the sender so the executor exits; the executor itself is
+        // still wedged on the first broadcast's `.await` in this test —
+        // we abort it to free resources.
+        drop(tx);
+        executor.abort();
+    }
+
+    /// Build a minimal `HeartbeatMessage` for envelope-only tests.
+    /// Field values don't matter — the executor doesn't inspect them.
+    fn test_heartbeat_message(_seq: usize) -> lib_consensus::types::HeartbeatMessage {
+        lib_consensus::types::HeartbeatMessage {
+            message_id: lib_crypto::Hash::default(),
+            validator: lib_identity::IdentityId::default(),
+            height: 0,
+            round: 0,
+            step: lib_types::consensus::ConsensusStep::Propose,
+            network_summary: lib_consensus_core::types::NetworkSummary {
+                active_validators: 0,
+                health_score: 0.0,
+                block_rate: 0.0,
+            },
+            timestamp: 0,
+            signature: lib_crypto::PostQuantumSignature::default(),
+        }
+    }
+
+    // ---------------- concurrent-writer (CONS-601) ----------------
+
+    /// Concurrent-writer test (channel-side): broadcast and commit
+    /// executors running simultaneously must both make progress
+    /// without serializing on each other. The CONS-307 commit
+    /// executor's `runtime_event_tx` is shared with CONS-309's
+    /// watchdog injection, so a slow commit must not starve
+    /// watchdog signals nor block broadcasts.
+    ///
+    /// Pre-CONS-504 the BFT-finalize path took
+    /// `blockchain_arc.write().await` inline, which contended with
+    /// catch-up sync's writes. After the refactor both flows go
+    /// through dedicated executors; this test pins that property at
+    /// the executor level.
+    #[tokio::test]
+    async fn concurrent_broadcast_and_commit_executors_both_drain() {
+        let broadcast_calls = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let commit_calls = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+
+        let broadcaster: Arc<dyn lib_consensus::types::MessageBroadcaster> =
+            Arc::new(CountingBroadcaster {
+                calls: broadcast_calls.clone(),
+            });
+        let commit_callback: Arc<dyn lib_consensus::types::BlockCommitCallback> =
+            Arc::new(CountingCommitCallback {
+                calls: commit_calls.clone(),
+            });
+
+        let (b_tx, b_rx) = mpsc::unbounded_channel::<BroadcastEnvelope>();
+        let (c_tx, c_rx) = mpsc::unbounded_channel::<CommitEnvelope>();
+        let (event_tx, _event_rx) = mpsc::unbounded_channel::<Event>();
+
+        let b_handle = spawn_broadcast_executor(b_rx, broadcaster);
+        let c_handle = spawn_commit_executor(c_rx, commit_callback, event_tx);
+
+        // Interleave 50 broadcasts and 50 commits.
+        for i in 0..50 {
+            b_tx.send(BroadcastEnvelope {
+                message: lib_consensus::types::ValidatorMessage::Heartbeat(
+                    test_heartbeat_message(i),
+                ),
+                recipients: vec![],
+            })
+            .expect("broadcast send");
+            c_tx.send(test_commit_envelope(i as u64))
+                .expect("commit send");
+        }
+        drop(b_tx);
+        drop(c_tx);
+
+        // Both executors should drain + exit within 1 s.
+        let _ = tokio::time::timeout(Duration::from_secs(1), b_handle).await;
+        let _ = tokio::time::timeout(Duration::from_secs(1), c_handle).await;
+
+        assert_eq!(
+            broadcast_calls.load(std::sync::atomic::Ordering::SeqCst),
+            50,
+            "broadcast executor should drain all 50 envelopes"
+        );
+        assert_eq!(
+            commit_calls.load(std::sync::atomic::Ordering::SeqCst),
+            50,
+            "commit executor should drain all 50 envelopes"
+        );
+    }
+
+    /// Counting commit callback for the concurrent-writer test.
+    struct CountingCommitCallback {
+        calls: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    }
+
+    #[async_trait::async_trait]
+    impl lib_consensus::types::BlockCommitCallback for CountingCommitCallback {
+        async fn commit_finalized_block(
+            &self,
+            _proposal: &lib_consensus::types::ConsensusProposal,
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+        async fn get_active_validator_count(
+            &self,
+        ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(4)
+        }
+    }
+
+    /// Build a minimal `CommitEnvelope` for executor tests.
+    fn test_commit_envelope(height: u64) -> CommitEnvelope {
+        CommitEnvelope {
+            proposal: lib_consensus::types::ConsensusProposal {
+                id: lib_crypto::Hash::default(),
+                proposer: lib_identity::IdentityId::default(),
+                height,
+                round: 0,
+                protocol_version: 2,
+                previous_hash: lib_crypto::Hash::default(),
+                block_data: vec![],
+                timestamp: 0,
+                signature: lib_crypto::PostQuantumSignature::default(),
+                consensus_proof: lib_consensus_core::types::ConsensusProof::empty(
+                    lib_types::consensus::ConsensusType::ByzantineFaultTolerance,
+                    0,
+                ),
+            },
+            quorum_proof: lib_types::consensus::BftQuorumProof {
+                height,
+                proposal_id: [0; 32],
+                total_validators: 0,
+                attestations: vec![],
+            },
+        }
+    }
+
     #[tokio::test(start_paused = true)]
     async fn watchdog_exits_when_engine_event_channel_closes() {
         // If the engine drops its receiver (e.g. clean shutdown), the
