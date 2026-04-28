@@ -1477,4 +1477,90 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     ) -> StorageResult<Vec<DaoStakeRecord>> {
         Ok(vec![])
     }
+
+    // =========================================================================
+    // Observer Admission Operations (default no-ops for non-sled backends)
+    // =========================================================================
+
+    /// Retrieve an observer admission record by node DID hash.
+    ///
+    /// `did_hash` is `blake3(observer_node_did_string)`.
+    fn get_observer_record(
+        &self,
+        _did_hash: &[u8; 32],
+    ) -> StorageResult<Option<lib_types::ObserverAdmissionRecord>> {
+        Ok(None)
+    }
+
+    /// Persist (upsert) an observer admission record within the current block transaction.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn put_observer_record(
+        &self,
+        _did_hash: &[u8; 32],
+        _record: &lib_types::ObserverAdmissionRecord,
+    ) -> StorageResult<()> {
+        Ok(())
+    }
+
+    /// Delete an observer admission record within the current block transaction.
+    ///
+    /// Used when a record is superseded (currently unused, reserved for future purge).
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn delete_observer_record(&self, _did_hash: &[u8; 32]) -> StorageResult<()> {
+        Ok(())
+    }
+
+    /// Iterate every observer admission record currently in the registry.
+    ///
+    /// Used by read endpoints (admission-6) and policy/quota evaluation (admission-4)
+    /// that need to enumerate the canonical set of admitted observers.
+    fn iter_observer_records(&self) -> StorageResult<Vec<lib_types::ObserverAdmissionRecord>> {
+        Ok(vec![])
+    }
+
+    /// Iterate every observer admission record sponsored by the given user DID hash.
+    ///
+    /// `sponsor_did_hash` is `blake3(sponsoring_user_did_string)`. Implementations
+    /// MAY use a secondary index; the default implementation filters via
+    /// `iter_observer_records`.
+    fn iter_observer_records_for_sponsor(
+        &self,
+        sponsor_did_hash: &[u8; 32],
+    ) -> StorageResult<Vec<lib_types::ObserverAdmissionRecord>> {
+        let all = self.iter_observer_records()?;
+        Ok(all
+            .into_iter()
+            .filter(|r| {
+                let h = crate::storage::did_to_hash(&r.sponsor.sponsoring_user_did);
+                &h == sponsor_did_hash
+            })
+            .collect())
+    }
+
+    /// Retrieve the canonical observer admission policy.
+    ///
+    /// Returns `None` if no policy has been seeded yet (callers should treat
+    /// this as "genesis not yet bootstrapped" and fall back to
+    /// `crate::observer::default_policy()`).
+    fn get_observer_policy(
+        &self,
+    ) -> StorageResult<Option<lib_types::ObserverAdmissionPolicy>> {
+        Ok(None)
+    }
+
+    /// Persist the canonical observer admission policy.
+    ///
+    /// This is a metadata write — like `save_oracle_state`, it does not
+    /// require an active block transaction. Governance/genesis bootstrap
+    /// calls it directly.
+    fn save_observer_policy(
+        &self,
+        _policy: &lib_types::ObserverAdmissionPolicy,
+    ) -> StorageResult<()> {
+        Ok(())
+    }
 }

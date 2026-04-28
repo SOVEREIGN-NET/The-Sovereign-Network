@@ -318,6 +318,26 @@ pub struct Blockchain {
     /// On-chain employment contract registry — populated by CreateEmploymentContract txs.
     #[serde(default)]
     pub employment_registry: crate::contracts::employment::EmploymentRegistry,
+
+    // =========================================================================
+    // Observer Admission Registry (observer-admission-3)
+    // =========================================================================
+    /// Observer admission registry snapshot used for in-process reads (e.g.
+    /// API handlers that load a `Blockchain` from a snapshot).
+    ///
+    /// **The sled-backed store is the canonical source of truth.** The executor
+    /// does not populate this field during block application; it writes directly
+    /// to sled via `put_observer_record`.  This field is populated only when a
+    /// `Blockchain` is deserialized from a persisted snapshot that included
+    /// observer records.
+    ///
+    /// Do not use this field for eligibility checks during execution — query the
+    /// store instead.
+    #[serde(default)]
+    pub observer_registry: HashMap<String, lib_types::ObserverAdmissionRecord>,
+    /// Observer node DID → block height at which the record was first committed.
+    #[serde(default)]
+    pub observer_blocks: HashMap<String, u64>,
     // =========================================================================
     // DAO Treasury Execution (dao-2)
     // =========================================================================

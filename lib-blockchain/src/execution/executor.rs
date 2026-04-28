@@ -1,4 +1,4 @@
-//! Block Executor (Single Authority)
+﻿//! Block Executor (Single Authority)
 //!
 //! The BlockExecutor is the **single entry point** for applying blocks to state.
 //! No consensus logic reads or writes state outside this module.
@@ -17,7 +17,7 @@
 //! commit_block
 //! ```
 //!
-//! **Any error → rollback_block()**
+//! **Any error â†’ rollback_block()**
 //!
 //! # Authorization Invariant (Phase 2)
 //!
@@ -530,7 +530,7 @@ impl BlockExecutor {
     /// commit_block
     /// ```
     ///
-    /// **Any error → rollback_block()**
+    /// **Any error â†’ rollback_block()**
     ///
     /// # Panic Safety
     ///
@@ -689,7 +689,7 @@ impl BlockExecutor {
         // receives and replays the genesis block its transactions don't satisfy
         // normal executor invariants (empty inputs, system recipients, etc.).
         // We accept the genesis block as-is: just record it in the store and
-        // return an empty outcome — the founding node already committed the state.
+        // return an empty outcome â€” the founding node already committed the state.
         if block_height == 0 {
             // Explicitly persist the canonical CBE zero-state so that reads
             // after genesis return a concrete record rather than an implicit
@@ -704,13 +704,13 @@ impl BlockExecutor {
             // migration path, or coordinating a breaking storage-format change.
             // Any such change without migration will corrupt deserialization of
             // existing chains.
-            // ── Genesis economic state with 20B treasury allocation (#2127) ──
+            // â”€â”€ Genesis economic state with 20B treasury allocation (#2127) â”€â”€
             {
                 use crate::contracts::bonding_curve::canonical::GENESIS_TREASURY_ALLOCATION;
 
                 let mut econ = lib_types::BondingCurveEconomicState::default();
                 econ.genesis_treasury_allocation = GENESIS_TREASURY_ALLOCATION;
-                // S_c stays 0 — this allocation is explicitly off-curve.
+                // S_c stays 0 â€” this allocation is explicitly off-curve.
 
                 self.store
                     .put_cbe_economic_state(&econ)
@@ -752,7 +752,7 @@ impl BlockExecutor {
         // Step 4: Apply transactions (Phase 3C: two-pass for fee routing)
         // =====================================================================
         //
-        // For each tx: validate_tx_stateless → validate_tx_stateful → apply_tx
+        // For each tx: validate_tx_stateless â†’ validate_tx_stateful â†’ apply_tx
         //
         // Phase 3C: Process non-coinbase transactions first to calculate fees
         // Then process coinbase with the collected fees for proper routing.
@@ -1030,6 +1030,12 @@ impl BlockExecutor {
             | TransactionType::ProcessPayroll
             | TransactionType::DaoStake
             | TransactionType::DaoUnstake
+            // Observer admission - state applied by apply_register_observer et al.
+            | TransactionType::RegisterObserver
+            | TransactionType::UpdateObserverMetadata
+            | TransactionType::SuspendObserver
+            | TransactionType::RevokeObserver
+            | TransactionType::ReauthorizeObserver
             // Domain registration/update - state applied by process_domain_transactions
             | TransactionType::DomainRegistration
             | TransactionType::DomainUpdate
@@ -1247,7 +1253,7 @@ impl BlockExecutor {
                     }
                 }
 
-                // Step 2: Bind the proof to chain state — the Merkle root in the proof
+                // Step 2: Bind the proof to chain state â€” the Merkle root in the proof
                 // must match the current on-chain UTXO Merkle tree root.
                 if let Some(proof_root) = input.zk_proof.extract_merkle_root() {
                     let chain_root = self.store.get_utxo_merkle_root().ok().flatten();
@@ -1261,7 +1267,7 @@ impl BlockExecutor {
                         }
                     }
                     // If chain has no Merkle root yet (empty tree), allow the proof
-                    // through — the tree will be populated as UTXOs are created.
+                    // through â€” the tree will be populated as UTXOs are created.
                 }
             }
         }
@@ -1764,7 +1770,7 @@ impl BlockExecutor {
         mutator: &StateMutator<'_>,
         payload: &[u8],
     ) -> Result<CanonicalBondingCurveOutcome, TxApplyError> {
-        // ── 1. Parse ──────────────────────────────────────────────────────────
+        // â”€â”€ 1. Parse â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let curve_tx = decode_canonical_bonding_curve_tx(payload).map_err(|e| {
             TxApplyError::InvalidType(format!("Invalid canonical curve payload: {e}"))
         })?;
@@ -1775,34 +1781,34 @@ impl BlockExecutor {
             CanonicalBondingCurveTx::Sell(tx) => (tx.sender, tx.nonce, tx.amount_cbe, false),
         };
 
-        // ── 2. Non-zero amount ────────────────────────────────────────────────
+        // â”€â”€ 2. Non-zero amount â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if amount_in_or_cbe == 0 {
             return Err(TxApplyError::InvalidType(
                 "Canonical curve tx: amount must be non-zero".to_string(),
             ));
         }
 
-        // ── 3. Load global economic state ────────────────────────────────────
+        // â”€â”€ 3. Load global economic state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let econ = mutator.get_cbe_economic_state()?;
 
-        // ── 4. Phase / graduation check ───────────────────────────────────────
+        // â”€â”€ 4. Phase / graduation check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if econ.graduated {
             return Err(TxApplyError::InvalidType(
                 "CBE curve has graduated; BUY_CBE and SELL_CBE are no longer valid".to_string(),
             ));
         }
 
-        // ── 5. Sell-enabled gate (SELL_CBE only) ─────────────────────────────
+        // â”€â”€ 5. Sell-enabled gate (SELL_CBE only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if !is_buy && !econ.sell_enabled {
             return Err(TxApplyError::InvalidType(
                 "SELL_CBE is disabled by protocol flag sell_enabled=false".to_string(),
             ));
         }
 
-        // ── 6. Load account state (zero-default for new participants) ─────────
+        // â”€â”€ 6. Load account state (zero-default for new participants) â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let account = mutator.get_cbe_account_state(&sender)?;
 
-        // ── 7. Nonce check ────────────────────────────────────────────────────
+        // â”€â”€ 7. Nonce check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let expected_nonce = account.next_nonce.to_u64();
         let provided_nonce = tx_nonce.to_u64();
         if provided_nonce != expected_nonce {
@@ -1812,7 +1818,7 @@ impl BlockExecutor {
             });
         }
 
-        // ── 8. Balance check (reads from token_balances tree) ────────────────
+        // â”€â”€ 8. Balance check (reads from token_balances tree) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if is_buy {
             let sov_bal = mutator.get_token_balance_u128(
                 &Self::canonical_sov_token_id(),
@@ -1838,7 +1844,7 @@ impl BlockExecutor {
             }
         }
 
-        // ── 9. expected_s_c stale-state check ────────────────────────────────
+        // â”€â”€ 9. expected_s_c stale-state check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let expected_s_c = match &curve_tx {
             CanonicalBondingCurveTx::Buy(tx) => tx.expected_s_c,
             CanonicalBondingCurveTx::Sell(tx) => tx.expected_s_c,
@@ -1850,7 +1856,7 @@ impl BlockExecutor {
             )));
         }
 
-        // ── 10. Dispatch to typed economic computation ───────────────────────
+        // â”€â”€ 10. Dispatch to typed economic computation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let next_nonce = lib_types::Nonce48::from_u64(provided_nonce + 1)
             .ok_or_else(|| TxApplyError::InvalidType("nonce overflow".to_string()))?;
 
@@ -1890,24 +1896,24 @@ impl BlockExecutor {
             mint_with_reserve, GRAD_THRESHOLD, MAX_GROSS_SOV_PER_TX,
         };
 
-        // ── Validate caps ────────────────────────────────────────────────
+        // â”€â”€ Validate caps â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if amount_in > MAX_GROSS_SOV_PER_TX {
             return Err(TxApplyError::InvalidType(format!(
                 "BUY_CBE: amount_in {amount_in} exceeds MAX_GROSS_SOV_PER_TX"
             )));
         }
 
-        // ── On-ramp split ────────────────────────────────────────────────
+        // â”€â”€ On-ramp split â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let (sov_treasury_credit, reserve_credit, liquidity_credit) =
             compute_onramp_split(amount_in);
 
-        // ── Mint and slippage check ──────────────────────────────────────
+        // â”€â”€ Mint and slippage check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let delta_s = mint_with_reserve(reserve_credit, econ.s_c)
             .map_err(|e| TxApplyError::InvalidType(format!("BUY_CBE: mint overflow: {e:?}")))?;
 
         validate_buy_limits(amount_in, delta_s, max_price, econ.s_c)?;
 
-        // ── Mutate economic state ────────────────────────────────────────
+        // â”€â”€ Mutate economic state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         econ.s_c = econ
             .s_c
             .checked_add(delta_s)
@@ -1941,7 +1947,7 @@ impl BlockExecutor {
         mutator.put_cbe_economic_state(&econ)?;
         mutator.put_cbe_account_state(&sender, &account)?;
 
-        // ── Wire token ledgers ───────────────────────────────────────────
+        // â”€â”€ Wire token ledgers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         mutator.debit_token(
             &Self::canonical_sov_token_id(),
             &Address::new(sender),
@@ -1955,9 +1961,9 @@ impl BlockExecutor {
             delta_s,
         )?;
 
-        // ── Event-driven SOV minting ─────────────────────────────────────
+        // â”€â”€ Event-driven SOV minting â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // The 20% SOV treasury portion represents real SOV value entering
-        // the treasury. The same amount of SOV is minted as new supply —
+        // the treasury. The same amount of SOV is minted as new supply â€”
         // matching the value contributed.
         let sov_to_mint = sov_treasury_credit;
         if sov_to_mint > 0 {
@@ -2010,7 +2016,7 @@ impl BlockExecutor {
         }
         if econ.reserve_balance < sov_out {
             return Err(TxApplyError::InvalidType(format!(
-                "SELL_CBE: insolvent — reserve_balance {} < sov_out {sov_out}",
+                "SELL_CBE: insolvent â€” reserve_balance {} < sov_out {sov_out}",
                 econ.reserve_balance
             )));
         }
@@ -2055,11 +2061,11 @@ impl BlockExecutor {
         ))
     }
 
-    /// Apply a payroll mint — synthetic CBE bonding curve event (spec §6).
+    /// Apply a payroll mint â€” synthetic CBE bonding curve event (spec Â§6).
     ///
     /// Mints `amount_cbe` (X) CBE to the collaborator wallet and 0.25X to the SOV
     /// treasury address.  Records a PRE_BACKED entry for the full 1.25X gross.
-    /// No SOV enters the system — `s_c` does not change, `reserve_balance` is
+    /// No SOV enters the system â€” `s_c` does not change, `reserve_balance` is
     /// unaffected, and the floor price remains stable.
     fn apply_payroll_mint(
         &self,
@@ -2079,7 +2085,7 @@ impl BlockExecutor {
                 TxApplyError::InvalidType("ProcessPayroll missing payload".to_string())
             })?;
 
-        let amount_cbe = data.amount_cbe; // X — what the collaborator earns
+        let amount_cbe = data.amount_cbe; // X â€” what the collaborator earns
         let collaborator = data.collaborator_address;
         let deliverable_hash = data.deliverable_hash;
 
@@ -2089,13 +2095,13 @@ impl BlockExecutor {
             ));
         }
 
-        // ── 1. Compute gross mint (≈2.083X) and split ───────────────────────
+        // â”€â”€ 1. Compute gross mint (â‰ˆ2.083X) and split â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         //
-        // gross = X × 25 / 12  (X / 0.48)
-        //   20% gross → SOV treasury (DAO tax, held as CBE)
-        //   32% gross → locked reserve (backs floor price)
+        // gross = X Ã— 25 / 12  (X / 0.48)
+        //   20% gross â†’ SOV treasury (DAO tax, held as CBE)
+        //   32% gross â†’ locked reserve (backs floor price)
         //   collaborator receives exactly X (the amount they earned)
-        //   rounding dust (0–1 atoms) goes to reserve (backs floor price)
+        //   rounding dust (0â€“1 atoms) goes to reserve (backs floor price)
 
         let gross = amount_cbe
             .checked_mul(PAYROLL_GROSS_NUM)
@@ -2110,7 +2116,7 @@ impl BlockExecutor {
         let rounding_dust = gross - treasury_credit - base_reserve - collaborator_credit;
         let reserve_credit = base_reserve + rounding_dust;            // 32% + dust
 
-        // ── 2. Debt ceiling check (against gross) ───────────────────────────
+        // â”€â”€ 2. Debt ceiling check (against gross) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let mut econ = mutator.get_cbe_economic_state()?;
 
         let new_outstanding = econ
@@ -2122,12 +2128,12 @@ impl BlockExecutor {
 
         if new_outstanding > DEBT_CEILING {
             return Err(TxApplyError::InvalidType(format!(
-                "PAYROLL_MINT: debt ceiling breached — outstanding {} + gross {} > ceiling {}",
+                "PAYROLL_MINT: debt ceiling breached â€” outstanding {} + gross {} > ceiling {}",
                 econ.outstanding_pre_backed, gross, DEBT_CEILING
             )));
         }
 
-        // ── 3. Update pools ─────────────────────────────────────────────────
+        // â”€â”€ 3. Update pools â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Compensation pool tracks what collaborators received.
         econ.compensation_pool
             .mint(collaborator_credit)
@@ -2141,7 +2147,7 @@ impl BlockExecutor {
                 TxApplyError::InvalidType("PAYROLL_MINT: sov_treasury overflow".to_string())
             })?;
 
-        // Locked reserve (32% of gross — backs floor price).
+        // Locked reserve (32% of gross â€” backs floor price).
         econ.reserve_balance = econ
             .reserve_balance
             .checked_add(reserve_credit)
@@ -2149,7 +2155,7 @@ impl BlockExecutor {
                 TxApplyError::InvalidType("PAYROLL_MINT: reserve overflow".to_string())
             })?;
 
-        // ── 4. Record PRE_BACKED entry ──────────────────────────────────────
+        // â”€â”€ 4. Record PRE_BACKED entry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         econ.pre_backed_queue.push(lib_types::PreBackedEntry {
             block_height,
             amount_cbe: gross,
@@ -2160,10 +2166,10 @@ impl BlockExecutor {
         econ.outstanding_pre_backed = new_outstanding;
         econ.debt_state = compute_debt_state(new_outstanding);
 
-        // ── 5. SOVRN audit token ────────────────────────────────────────────
+        // â”€â”€ 5. SOVRN audit token â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // SOVRN tracks value-weighted liquidity. For payroll the reserve portion
         // (32% of gross) is the value that backs the floor.
-        // SOVRN_mint = reserve_credit × P(S_c) / SCALE
+        // SOVRN_mint = reserve_credit Ã— P(S_c) / SCALE
         {
             use crate::contracts::bonding_curve::canonical::{price_at_supply, SCALE};
             use crate::contracts::utils::u256_to_u128;
@@ -2179,20 +2185,20 @@ impl BlockExecutor {
                 .saturating_add(u256_to_u128(sovrn_mint).unwrap_or(0));
         }
 
-        // ── 6. Persist economic state ───────────────────────────────────────
+        // â”€â”€ 6. Persist economic state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         mutator.put_cbe_economic_state(&econ)?;
 
-        // ── 7. Credit CBE tokens ────────────────────────────────────────────
+        // â”€â”€ 7. Credit CBE tokens â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let cbe_token_id = TokenId::new(crate::Blockchain::derive_cbe_token_id_pub());
 
-        // 48% gross (≈ X) → collaborator wallet
+        // 48% gross (â‰ˆ X) â†’ collaborator wallet
         mutator.credit_token(
             &cbe_token_id,
             &Address::new(collaborator),
             collaborator_credit,
         )?;
 
-        // 20% gross → SOV treasury address (held as CBE)
+        // 20% gross â†’ SOV treasury address (held as CBE)
         let treasury_addr = *self.fee_model.protocol_params.fee_sink_address();
         mutator.credit_token(
             &cbe_token_id,
@@ -2200,7 +2206,7 @@ impl BlockExecutor {
             treasury_credit,
         )?;
 
-        // 32% gross → locked reserve (no token credit — reserve is an accounting
+        // 32% gross â†’ locked reserve (no token credit â€” reserve is an accounting
         // entry in BondingCurveEconomicState, not a wallet balance; it backs the
         // floor price and is only released at graduation or sell-back redemption).
 
@@ -2219,7 +2225,7 @@ impl BlockExecutor {
         Ok(())
     }
 
-    /// Apply a TreasuryAllocation transaction — transfer SOV from source treasury
+    /// Apply a TreasuryAllocation transaction â€” transfer SOV from source treasury
     /// to destination DAO wallet in the canonical token ledger.
     fn apply_treasury_allocation(
         &self,
@@ -2393,7 +2399,7 @@ impl BlockExecutor {
             ));
         }
 
-        // Load the stake record — it must exist.
+        // Load the stake record â€” it must exist.
         let record: DaoStakeRecord = mutator
             .get_dao_stake(&data.sector_dao_key_id, &data.staker)?
             .ok_or_else(|| {
@@ -2404,7 +2410,7 @@ impl BlockExecutor {
                 ))
             })?;
 
-        // Enforce the lock period — cannot unstake before locked_until.
+        // Enforce the lock period â€” cannot unstake before locked_until.
         if block_height < record.locked_until {
             return Err(TxApplyError::InvalidType(format!(
                 "DaoUnstake: stake still locked until height {} (current {})",
@@ -2430,7 +2436,7 @@ impl BlockExecutor {
         // Return locked SOV from DAO wallet back to staker.
         mutator.transfer_token(&sov_token, &dao_addr, &staker_addr, record.amount)?;
 
-        // Burn welfare tokens from staker — they're returning the service access voucher
+        // Burn welfare tokens from staker â€” they're returning the service access voucher
         // to reclaim their SOV. Burns exactly the amount that was minted on stake.
         if let Some(welfare_token_id) = Self::welfare_token_for_dao(&data.sector_dao_key_id) {
             mutator.debit_token(&welfare_token_id, &staker_addr, record.amount)?;
@@ -2453,6 +2459,500 @@ impl BlockExecutor {
             hex::encode(&data.staker[..6]),
             hex::encode(&data.sector_dao_key_id[..6]),
             record.amount,
+            block_height,
+        );
+
+        Ok(())
+    }
+
+    // =========================================================================
+    // Observer Admission Apply Methods (observer-admission-3)
+    //
+    // Stateful invariants enforced here:
+    //   - RegisterObserver: duplicate DID rejected; sponsor DID must be non-empty;
+    //     record created in Pending status.
+    //   - UpdateObserverMetadata: record must exist; only the sponsor may update.
+    //   - SuspendObserver: record must exist; status must be Active.
+    //   - RevokeObserver: record must exist; status must not already be Revoked.
+    //   - ReauthorizeObserver: record must exist; status must be Suspended;
+    //     caller must be original sponsor.
+    //
+    // All write paths: persist to sled (the canonical store).
+    // The in-memory `Blockchain::observer_registry` field is NOT populated by
+    // the executor; the sled-backed store is the authoritative source of truth.
+    // =========================================================================
+
+    /// Truncate a DID string to at most 48 Unicode scalar values for safe log output.
+    fn trunc_did(s: &str) -> String {
+        s.chars().take(48).collect()
+    }
+
+    /// Verify the per-signer SOV nonce attached to an observer-admission tx.
+    ///
+    /// Observer transactions reuse the canonical SOV nonce keyed by the signer's
+    /// `key_id` so that all signed activity from a given key is totally ordered
+    /// (Transfer / DaoStake / observer-admin all bump the same counter). This
+    /// blocks replay of a captured observer transaction.
+    ///
+    /// On success returns the signer `Address` and SOV `TokenId` so the caller
+    /// can perform follow-up debits and the post-success nonce increment without
+    /// recomputing them.
+    fn check_observer_nonce(
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        provided_nonce: u64,
+        op_name: &str,
+    ) -> Result<(Address, crate::storage::TokenId), TxApplyError> {
+        let signer_addr = Address::new(tx.signature.public_key.key_id);
+        let sov_token = Self::canonical_sov_token_id();
+        let expected = mutator.get_token_nonce(&sov_token, &signer_addr)?;
+        if provided_nonce != expected {
+            return Err(TxApplyError::InvalidType(format!(
+                "{}: invalid nonce expected={} got={}",
+                op_name, expected, provided_nonce,
+            )));
+        }
+        Ok((signer_addr, sov_token))
+    }
+
+    /// Reject an `expires_at` that is not strictly in the future relative to the
+    /// current block timestamp (unix seconds). `None` is allowed.
+    fn check_observer_expires_at(
+        expires_at: Option<u64>,
+        block_timestamp_secs: u64,
+        op_name: &str,
+    ) -> Result<(), TxApplyError> {
+        if let Some(exp) = expires_at {
+            if exp <= block_timestamp_secs {
+                return Err(TxApplyError::InvalidType(format!(
+                    "{}: expires_at must be > current block timestamp (expires_at={} timestamp={})",
+                    op_name, exp, block_timestamp_secs,
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Load an observer record by DID, returning both the hash key and the record.
+    fn load_observer_record(
+        mutator: &StateMutator<'_>,
+        did: &str,
+        op_name: &str,
+    ) -> Result<([u8; 32], lib_types::ObserverAdmissionRecord), TxApplyError> {
+        let did_hash = crate::storage::did_to_hash(did);
+        let record = mutator.get_observer_record(&did_hash)?.ok_or_else(|| {
+            TxApplyError::InvalidType(format!(
+                "{}: observer {} not found",
+                op_name,
+                Self::trunc_did(did),
+            ))
+        })?;
+        Ok((did_hash, record))
+    }
+
+    fn apply_register_observer(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        block_height: u64,
+        block_timestamp: u64,
+    ) -> Result<(), TxApplyError> {
+        use lib_types::{
+            ObserverAdmissionRecord, ObserverAdmissionStatus, ObserverNodeInfo,
+            ObserverSponsorBinding, ObserverNetworkBinding, ObserverAdmissionActionMeta,
+        };
+
+        let data = tx.register_observer_data().ok_or_else(|| {
+            TxApplyError::InvalidType("RegisterObserver missing payload".to_string())
+        })?;
+
+        // Sponsor DID must be present (binding is canonical).
+        if data.sponsor_user_did.is_empty() {
+            return Err(TxApplyError::InvalidType(
+                "RegisterObserver: sponsor_user_did must not be empty".to_string(),
+            ));
+        }
+
+        // Observer node DID must be present.
+        if data.observer_node_did.is_empty() {
+            return Err(TxApplyError::InvalidType(
+                "RegisterObserver: observer_node_did must not be empty".to_string(),
+            ));
+        }
+
+        // Replay protection: enforce monotonic SOV nonce on the signer.
+        let (signer_addr, sov_token) =
+            Self::check_observer_nonce(mutator, tx, data.nonce, "RegisterObserver")?;
+
+        // expires_at, when set, must be strictly in the future relative to
+        // the block timestamp (unix seconds â€” matches the lib-types contract).
+        Self::check_observer_expires_at(data.expires_at, block_timestamp, "RegisterObserver")?;
+
+        // Duplicate prevention â€” check sled-backed store.
+        let did_hash = crate::storage::did_to_hash(&data.observer_node_did);
+        if mutator.get_observer_record(&did_hash)?.is_some() {
+            return Err(TxApplyError::InvalidType(format!(
+                "RegisterObserver: observer {} is already registered",
+                Self::trunc_did(&data.observer_node_did),
+            )));
+        }
+
+        // -------- Policy enforcement (observer-admission-4) ----------------
+        // Load canonical policy; fall back to protocol default if not yet
+        // seeded. Both branches are deterministic.
+        let policy = mutator
+            .get_observer_policy()?
+            .unwrap_or_else(crate::observer::default_policy);
+
+        // WARNING (trust hole, tracked for follow-up branch):
+        // `data.sponsor_proof_level` is a transaction-supplied field and is NOT
+        // currently bound to a canonical on-chain proof / identity attestation
+        // record. A malicious sponsor can claim a higher proof tier to bypass
+        // both the proof-level minimum and the per-tier sponsor quota below.
+        // Proper enforcement requires looking up the sponsor's actual proof
+        // level from on-chain identity state (planned for a subsequent
+        // observer-admission branch). Until then, these gates are retained as
+        // (a) defense-in-depth against accidental misconfiguration and
+        // (b) live exercise of the policy module's public API surface.
+        //
+        // Anonymous sponsor + proof-level minimum.
+        if let Err(denial) =
+            crate::observer::policy::check_proof_level(data.sponsor_proof_level, &policy)
+        {
+            return Err(TxApplyError::InvalidType(format!(
+                "RegisterObserver: policy denial: {denial:?}"
+            )));
+        }
+
+        // Per-sponsor quota â€” count this sponsor's existing non-revoked records.
+        let sponsor_hash = crate::storage::did_to_hash(&data.sponsor_user_did);
+        let existing = mutator.iter_observer_records_for_sponsor(&sponsor_hash)?;
+        let active_count = existing
+            .iter()
+            .filter(|r| r.status != ObserverAdmissionStatus::Revoked)
+            .count() as u32;
+        if let Err(denial) = crate::observer::policy::check_sponsor_quota(
+            data.sponsor_proof_level,
+            active_count,
+            &policy,
+        ) {
+            return Err(TxApplyError::InvalidType(format!(
+                "RegisterObserver: policy denial: {denial:?}"
+            )));
+        }
+
+        // Initial status honors `auto_approve`.
+        let initial_status = if policy.auto_approve {
+            ObserverAdmissionStatus::Active
+        } else {
+            ObserverAdmissionStatus::Pending
+        };
+        // -------------------------------------------------------------------
+
+        // Sybil resistance: burn a non-refundable SOV registration fee from the
+        // signer. Debited only after all validation/policy checks pass so that
+        // policy denials do not consume the fee. InsufficientBalance is fatal.
+        let fee = crate::transaction::fee::OBSERVER_REGISTRATION_FEE as u128;
+        mutator.debit_token(&sov_token, &signer_addr, fee)?;
+
+        let now_ts = block_timestamp; // unix seconds, per ObserverAdmissionRecord contract
+        let record = ObserverAdmissionRecord {
+            node_info: ObserverNodeInfo {
+                observer_node_did: data.observer_node_did.clone(),
+                observer_public_key: data.observer_public_key.clone(),
+                endpoints: data.endpoints.clone(),
+            },
+            sponsor: ObserverSponsorBinding {
+                sponsoring_user_did: data.sponsor_user_did.clone(),
+                proof_level: data.sponsor_proof_level,
+                sponsor_signature: data.sponsor_signature.clone(),
+            },
+            status: initial_status,
+            rate_limit_tier: data.rate_limit_tier,
+            network: ObserverNetworkBinding {
+                allowed_network: data.allowed_network.clone(),
+                trusted_sync_scope: data.trusted_sync_scope.clone(),
+            },
+            created_at: now_ts,
+            updated_at: now_ts,
+            expires_at: data.expires_at,
+            action_meta: None,
+        };
+
+        // Persist to sled.
+        mutator.put_observer_record(&did_hash, &record)?;
+
+        // Bump the SOV nonce only after the registration has succeeded.
+        mutator.increment_token_nonce(&sov_token, &signer_addr)?;
+
+        tracing::info!(
+            "[REGISTER_OBSERVER] did={} sponsor={} status={:?} height={}",
+            Self::trunc_did(&data.observer_node_did),
+            Self::trunc_did(&data.sponsor_user_did),
+            initial_status,
+            block_height,
+        );
+
+        Ok(())
+    }
+
+    fn apply_update_observer_metadata(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        block_height: u64,
+        block_timestamp: u64,
+    ) -> Result<(), TxApplyError> {
+        let data = tx.update_observer_metadata_data().ok_or_else(|| {
+            TxApplyError::InvalidType("UpdateObserverMetadata missing payload".to_string())
+        })?;
+
+        // Replay protection: enforce monotonic SOV nonce on the signer.
+        let (signer_addr, sov_token) =
+            Self::check_observer_nonce(mutator, tx, data.nonce, "UpdateObserverMetadata")?;
+
+        // If a new expires_at is being set (Some(Some(_))), it must be in the future.
+        if let Some(Some(new_exp)) = data.new_expires_at {
+            Self::check_observer_expires_at(
+                Some(new_exp),
+                block_timestamp,
+                "UpdateObserverMetadata",
+            )?;
+        }
+
+        let (did_hash, mut record) =
+            Self::load_observer_record(mutator, &data.observer_node_did, "UpdateObserverMetadata")?;
+
+        // Only the registered sponsor may update observer metadata.
+        if data.actor_did != record.sponsor.sponsoring_user_did {
+            return Err(TxApplyError::InvalidType(format!(
+                "UpdateObserverMetadata: actor {} is not the sponsor",
+                Self::trunc_did(&data.actor_did),
+            )));
+        }
+
+        // Apply updates.
+        // Endpoints are conditionally replaced: None = no change,
+        // Some(vec![]) = explicit clear, Some(vec) = replace with vec.
+        if let Some(ref new_endpoints) = data.new_endpoints {
+            record.node_info.endpoints = new_endpoints.clone();
+        }
+        if let Some(ref net) = data.new_network {
+            record.network.allowed_network = net.allowed_network.clone();
+            record.network.trusted_sync_scope = net.trusted_sync_scope.clone();
+        }
+        if let Some(tier) = data.new_rate_limit_tier {
+            record.rate_limit_tier = tier;
+        }
+        if let Some(new_exp) = data.new_expires_at {
+            record.expires_at = new_exp;
+        }
+        record.updated_at = block_timestamp;
+
+        mutator.put_observer_record(&did_hash, &record)?;
+
+        // Bump SOV nonce after a successful update.
+        mutator.increment_token_nonce(&sov_token, &signer_addr)?;
+
+        tracing::info!(
+            "[UPDATE_OBSERVER_META] did={} actor={} height={}",
+            Self::trunc_did(&data.observer_node_did),
+            Self::trunc_did(&data.actor_did),
+            block_height,
+        );
+
+        Ok(())
+    }
+
+    /// Shared lifecycle helper for sponsor-driven observer state transitions
+    /// that record an action_meta entry (currently `SuspendObserver` and
+    /// `RevokeObserver`). Validates nonce, sponsor authority, and the source
+    /// status guard, then writes the new status and bumps the SOV nonce.
+    ///
+    /// Authority model (v1): only the registered sponsor of the observer
+    /// record may submit these transactions. A governance / council authority
+    /// path (e.g. threshold-approved suspension) is intentionally deferred to
+    /// a follow-up branch and is NOT enforced here.
+    fn apply_observer_sponsor_lifecycle(
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        block_height: u64,
+        block_timestamp: u64,
+        op_name: &'static str,
+        log_prefix: &'static str,
+        observer_did: &str,
+        actor_did: &str,
+        reason: &str,
+        nonce: u64,
+        target_status: lib_types::ObserverAdmissionStatus,
+        is_valid_source: impl Fn(lib_types::ObserverAdmissionStatus) -> bool,
+    ) -> Result<(), TxApplyError> {
+        use lib_types::ObserverAdmissionActionMeta;
+
+        // Replay protection: enforce monotonic SOV nonce on the signer.
+        let (signer_addr, sov_token) =
+            Self::check_observer_nonce(mutator, tx, nonce, op_name)?;
+
+        let (did_hash, mut record) =
+            Self::load_observer_record(mutator, observer_did, op_name)?;
+
+        // Only the registered sponsor may drive sponsor-scoped lifecycle changes.
+        if actor_did != record.sponsor.sponsoring_user_did {
+            return Err(TxApplyError::InvalidType(format!(
+                "{op_name}: actor {} is not the sponsor",
+                Self::trunc_did(actor_did),
+            )));
+        }
+
+        if !is_valid_source(record.status) {
+            return Err(TxApplyError::InvalidType(format!(
+                "{op_name}: observer {} status is {:?}, invalid transition to {:?}",
+                Self::trunc_did(observer_did),
+                record.status,
+                target_status,
+            )));
+        }
+
+        record.status = target_status;
+        record.action_meta = Some(ObserverAdmissionActionMeta {
+            actor_did: actor_did.to_string(),
+            reason: reason.to_string(),
+            timestamp: block_timestamp,
+        });
+        record.updated_at = block_timestamp;
+
+        mutator.put_observer_record(&did_hash, &record)?;
+
+        // Bump SOV nonce after the lifecycle change has been persisted.
+        mutator.increment_token_nonce(&sov_token, &signer_addr)?;
+
+        tracing::info!(
+            "[{}] did={} actor={} height={}",
+            log_prefix,
+            Self::trunc_did(observer_did),
+            Self::trunc_did(actor_did),
+            block_height,
+        );
+
+        Ok(())
+    }
+
+    fn apply_suspend_observer(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        block_height: u64,
+        block_timestamp: u64,
+    ) -> Result<(), TxApplyError> {
+        use lib_types::ObserverAdmissionStatus;
+
+        let data = tx.suspend_observer_data().ok_or_else(|| {
+            TxApplyError::InvalidType("SuspendObserver missing payload".to_string())
+        })?;
+
+        Self::apply_observer_sponsor_lifecycle(
+            mutator,
+            tx,
+            block_height,
+            block_timestamp,
+            "SuspendObserver",
+            "SUSPEND_OBSERVER",
+            &data.observer_node_did,
+            &data.actor_did,
+            &data.reason,
+            data.nonce,
+            ObserverAdmissionStatus::Suspended,
+            // Only Active observers can be suspended.
+            |status| status == ObserverAdmissionStatus::Active,
+        )
+    }
+
+    fn apply_revoke_observer(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        block_height: u64,
+        block_timestamp: u64,
+    ) -> Result<(), TxApplyError> {
+        use lib_types::ObserverAdmissionStatus;
+
+        let data = tx.revoke_observer_data().ok_or_else(|| {
+            TxApplyError::InvalidType("RevokeObserver missing payload".to_string())
+        })?;
+
+        Self::apply_observer_sponsor_lifecycle(
+            mutator,
+            tx,
+            block_height,
+            block_timestamp,
+            "RevokeObserver",
+            "REVOKE_OBSERVER",
+            &data.observer_node_did,
+            &data.actor_did,
+            &data.reason,
+            data.nonce,
+            ObserverAdmissionStatus::Revoked,
+            // Cannot revoke an already-revoked observer (idempotency guard).
+            |status| status != ObserverAdmissionStatus::Revoked,
+        )
+    }
+
+    fn apply_reauthorize_observer(
+        &self,
+        mutator: &StateMutator<'_>,
+        tx: &crate::transaction::Transaction,
+        block_height: u64,
+        block_timestamp: u64,
+    ) -> Result<(), TxApplyError> {
+        use lib_types::ObserverAdmissionStatus;
+
+        let data = tx.reauthorize_observer_data().ok_or_else(|| {
+            TxApplyError::InvalidType("ReauthorizeObserver missing payload".to_string())
+        })?;
+
+        // Replay protection: enforce monotonic SOV nonce on the signer.
+        let (signer_addr, sov_token) =
+            Self::check_observer_nonce(mutator, tx, data.nonce, "ReauthorizeObserver")?;
+
+        let (did_hash, mut record) =
+            Self::load_observer_record(mutator, &data.observer_node_did, "ReauthorizeObserver")?;
+
+        // Allowed source states: Suspended (sponsor lifts a suspension) or
+        // Pending (sponsor approves a freshly-registered observer). Active and
+        // Revoked are terminal for this transaction type.
+        if !matches!(
+            record.status,
+            ObserverAdmissionStatus::Suspended | ObserverAdmissionStatus::Pending
+        ) {
+            return Err(TxApplyError::InvalidType(format!(
+                "ReauthorizeObserver: observer {} status is {:?}, must be Pending or Suspended",
+                Self::trunc_did(&data.observer_node_did),
+                record.status,
+            )));
+        }
+
+        // Caller must be the original sponsor.
+        if data.sponsor_user_did != record.sponsor.sponsoring_user_did {
+            return Err(TxApplyError::InvalidType(format!(
+                "ReauthorizeObserver: sponsor_user_did mismatch: tx={} recorded={}",
+                Self::trunc_did(&data.sponsor_user_did),
+                Self::trunc_did(&record.sponsor.sponsoring_user_did),
+            )));
+        }
+
+        record.status = ObserverAdmissionStatus::Active;
+        record.action_meta = None; // Clear the suspension record.
+        record.updated_at = block_timestamp;
+
+        mutator.put_observer_record(&did_hash, &record)?;
+
+        // Bump SOV nonce after successful reauthorization.
+        mutator.increment_token_nonce(&sov_token, &signer_addr)?;
+
+        tracing::info!(
+            "[REAUTHORIZE_OBSERVER] did={} sponsor={} height={}",
+            Self::trunc_did(&data.observer_node_did),
+            Self::trunc_did(&data.sponsor_user_did),
             block_height,
         );
 
@@ -2482,7 +2982,7 @@ impl BlockExecutor {
         mutator: &StateMutator<'_>,
         tx: &crate::transaction::Transaction,
         block_height: u64,
-        _block_timestamp: u64,
+        block_timestamp: u64,
     ) -> Result<TxOutcome, TxApplyError> {
         let tx_hash = hash_transaction(tx);
 
@@ -2730,7 +3230,7 @@ impl BlockExecutor {
                 Ok(TxOutcome::ContractExecution(outcome))
             }
             // Known legacy system types: accepted as no-ops. This mirrors the allowlist in
-            // validate_tx_stateless — any type listed here must also be listed there.
+            // validate_tx_stateless â€” any type listed here must also be listed there.
             TransactionType::IdentityRegistration
             | TransactionType::IdentityUpdate
             | TransactionType::IdentityRevocation
@@ -2769,7 +3269,7 @@ impl BlockExecutor {
                 Ok(TxOutcome::LegacySystem)
             }
 
-            // NFT types — create, mint, transfer, burn
+            // NFT types â€” create, mint, transfer, burn
             TransactionType::NftCreateCollection
             | TransactionType::NftMint
             | TransactionType::NftTransfer
@@ -2778,6 +3278,30 @@ impl BlockExecutor {
                 // process_nft_transactions (called after executor.apply_block).
                 // The executor accepts them as pass-through so blocks containing
                 // NFT transactions don't fail validation.
+                Ok(TxOutcome::LegacySystem)
+            }
+
+            // ================================================================
+            // Observer Admission (observer-admission-3)
+            // ================================================================
+            TransactionType::RegisterObserver => {
+                self.apply_register_observer(mutator, tx, block_height, block_timestamp)?;
+                Ok(TxOutcome::LegacySystem)
+            }
+            TransactionType::UpdateObserverMetadata => {
+                self.apply_update_observer_metadata(mutator, tx, block_height, block_timestamp)?;
+                Ok(TxOutcome::LegacySystem)
+            }
+            TransactionType::SuspendObserver => {
+                self.apply_suspend_observer(mutator, tx, block_height, block_timestamp)?;
+                Ok(TxOutcome::LegacySystem)
+            }
+            TransactionType::RevokeObserver => {
+                self.apply_revoke_observer(mutator, tx, block_height, block_timestamp)?;
+                Ok(TxOutcome::LegacySystem)
+            }
+            TransactionType::ReauthorizeObserver => {
+                self.apply_reauthorize_observer(mutator, tx, block_height, block_timestamp)?;
                 Ok(TxOutcome::LegacySystem)
             }
 
@@ -2834,7 +3358,7 @@ impl BlockExecutor {
             // called from finish_block_processing().
             TransactionType::RecordOnRampTrade => Ok(TxOutcome::LegacySystem),
 
-            // Gateway lifecycle — state applied by process_gateway_transactions()
+            // Gateway lifecycle â€” state applied by process_gateway_transactions()
             TransactionType::GatewayRegistration
             | TransactionType::GatewayUpdate
             | TransactionType::GatewayUnregister => Ok(TxOutcome::LegacySystem),
@@ -2845,7 +3369,7 @@ impl BlockExecutor {
             }
 
             // Coinbase is routed through apply_coinbase_with_fees, never here.
-            // (Handled above; this duplicate arm was removed — see the Coinbase arm near the top of this match.)
+            // (Handled above; this duplicate arm was removed â€” see the Coinbase arm near the top of this match.)
             _ => Err(TxApplyError::UnsupportedType(format!(
                 "{:?}",
                 tx.transaction_type
@@ -3082,7 +3606,7 @@ fn validate_buy_limits(
         / U256::from(delta_s);
     if effective > U256::from(max_price) {
         return Err(TxApplyError::InvalidType(format!(
-            "BUY_CBE: slippage — effective price {effective} > max_price {max_price}"
+            "BUY_CBE: slippage â€” effective price {effective} > max_price {max_price}"
         )));
     }
 
@@ -3139,6 +3663,19 @@ mod tests {
 
     fn create_test_store() -> Arc<dyn BlockchainStore> {
         Arc::new(SledStore::open_temporary().unwrap())
+    }
+
+    /// Create a trusted-replay executor (skips prev-hash chain continuity check).
+    /// Used in tests that need to inject state between blocks without storing block headers.
+    fn create_trusted_replay_executor(store: Arc<dyn BlockchainStore>) -> BlockExecutor {
+        BlockExecutor {
+            store,
+            fee_model: FeeModelV2::default(),
+            limits: BlockLimits::default(),
+            token_creation_fee: DEFAULT_TOKEN_CREATION_FEE,
+            skip_fee_validation: true,
+            skip_prev_hash_validation: true,
+        }
     }
 
     /// Create executor with testing fee params (minimal fees for tests)
@@ -3588,7 +4125,7 @@ mod tests {
             TransactionType::ContentUpload,
             TransactionType::UbiDistribution,
             // DaoProposal/DaoVote/DaoExecution are Phase-2 types with structural
-            // validation — they are NOT listed here.
+            // validation â€” they are NOT listed here.
             TransactionType::DifficultyUpdate,
             TransactionType::UBIClaim,
             TransactionType::ProfitDeclaration,
@@ -4192,7 +4729,7 @@ mod tests {
         tx
     }
 
-    /// DAO full lifecycle: Proposal (block 1) → Vote (block 2) → Execution (block 3).
+    /// DAO full lifecycle: Proposal (block 1) â†’ Vote (block 2) â†’ Execution (block 3).
     ///
     /// SledStore writes are only visible after apply_batch in commit_block, so each
     /// lifecycle step must be in a separate block.
@@ -4328,7 +4865,7 @@ mod tests {
         let block2 = create_block_with_txs(2, block1.header.block_hash, vec![vote_tx]);
         executor.apply_block(&block2).unwrap();
 
-        // Block 3: vote at height 3 is past the deadline (3 > 2) — must be rejected
+        // Block 3: vote at height 3 is past the deadline (3 > 2) â€” must be rejected
         let late_vote_tx = create_dao_vote_tx(proposal_id, "carol", "Yes");
         let block3 = create_block_with_txs(3, block2.header.block_hash, vec![late_vote_tx]);
         let result = executor.apply_block(&block3);
@@ -4451,7 +4988,7 @@ mod tests {
         );
         assert_eq!(tx.version, TX_VERSION_V8);
 
-        // Roundtrip through bincode — bonding curve data must survive
+        // Roundtrip through bincode â€” bonding curve data must survive
         let bytes = bincode::serialize(&tx).expect("serialize");
         let decoded: Transaction = bincode::deserialize(&bytes).expect("deserialize");
         assert_eq!(decoded.version, TX_VERSION_V8);
@@ -4600,7 +5137,7 @@ mod tests {
         let mutator = StateMutator::new(store.as_ref());
         let executor = BlockExecutor::with_store(store.clone());
 
-        // max_price = 1 (1 atomic SOV per CBE) is impossibly cheap → slippage rejection.
+        // max_price = 1 (1 atomic SOV per CBE) is impossibly cheap â†’ slippage rejection.
         let payload =
             encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Buy(BondingCurveBuyTx {
                 action: BONDING_CURVE_BUY_ACTION,
@@ -4660,10 +5197,10 @@ mod tests {
             )
             .unwrap();
             // Pre-load reserve so the next buy tips graduation.
-            // reserve_credit of a 100 * SCALE buy ≈ 20 * SCALE; GRAD_THRESHOLD ≈ 2_745_966 * SCALE.
+            // reserve_credit of a 100 * SCALE buy â‰ˆ 20 * SCALE; GRAD_THRESHOLD â‰ˆ 2_745_966 * SCALE.
             // Use seeded econ state with reserve = GRAD_THRESHOLD - 1.
             // With 20/32/48 split, if reserve=R then the total deposit that produced it
-            // was R * 100/32 ≈ R * 3.125. SOV treasury = 20% and liquidity = 48%.
+            // was R * 100/32 â‰ˆ R * 3.125. SOV treasury = 20% and liquidity = 48%.
             let reserve_seeded = GRAD_THRESHOLD - 1;
             let implied_total = reserve_seeded * 100 / 32;
             seed.put_cbe_economic_state(&BondingCurveEconomicState {
@@ -4879,7 +5416,7 @@ mod tests {
             // sell_enabled=true so the solvency check (not the flag) is what triggers the error.
             seed.put_cbe_economic_state(&BondingCurveEconomicState {
                 s_c: cbe_amount,
-                reserve_balance: 0, // empty — solvency check must fail
+                reserve_balance: 0, // empty â€” solvency check must fail
                 sov_treasury_cbe_balance: 0,
                 liquidity_pool_balance: 0,
                 total_sov_minted: 0,
@@ -5124,7 +5661,7 @@ mod tests {
                 nonce: Nonce48::from_u64(0).unwrap(),
                 sender: signer.public_key.key_id,
                 amount_in: 1000,
-                max_price: u128::MAX, // no slippage restriction — routing test only
+                max_price: u128::MAX, // no slippage restriction â€” routing test only
                 expected_s_c: 0,
             }));
         let tx = crate::transaction::Transaction {
@@ -5541,5 +6078,731 @@ mod tests {
             store.get_utxo_merkle_proof(&outpoint).unwrap().is_none(),
             "Spent UTXO should be removed from the Merkle tree index"
         );
+    }
+
+    // =========================================================================
+    // Observer Admission Tests (observer-admission-3)
+    // =========================================================================
+
+    use crate::transaction::{
+        RegisterObserverData, SuspendObserverData, RevokeObserverData, ReauthorizeObserverData,
+    };
+
+    /// Compute the signer key_id used by the dummy observer test signature.
+    /// All observer test transactions share the same signer (`create_dummy_signature`),
+    /// so SOV nonces and balances must be tracked against this single address.
+    fn observer_test_signer_key_id() -> [u8; 32] {
+        create_dummy_signature().public_key.key_id
+    }
+
+    /// Seed the observer test signer with enough SOV to cover any number of
+    /// `RegisterObserver` registration-fee burns in a test. Must be called
+    /// AFTER genesis (height 0) and BEFORE the first observer block; uses
+    /// height 1 as a no-op seed block, so observer test blocks must start
+    /// at height 2.
+    fn seed_observer_test_signer_sov(store: &Arc<dyn BlockchainStore>) {
+        let sov_token = BlockExecutor::canonical_sov_token_id();
+        let addr = Address::new(observer_test_signer_key_id());
+        store.begin_block(1).unwrap();
+        store
+            .set_token_balance(
+                &sov_token,
+                &addr,
+                (crate::transaction::fee::OBSERVER_REGISTRATION_FEE as u128) * 32,
+            )
+            .unwrap();
+        store.commit_block().unwrap();
+    }
+
+    /// Standard observer-test setup: trusted-replay executor (skips prev-hash
+    /// continuity so we can interleave raw store writes with executor blocks),
+    /// genesis at height 0, and SOV signer seed at height 1. Returns the
+    /// `(store, executor, prev_hash)` triple; the caller's first observer
+    /// block should be height 2.
+    fn setup_observer_test() -> (Arc<dyn BlockchainStore>, BlockExecutor, Hash) {
+        let store = create_test_store();
+        let executor = create_trusted_replay_executor(store.clone());
+        let prev_hash = apply_genesis_and_get_hash(&executor);
+        seed_observer_test_signer_sov(&store);
+        (store, executor, prev_hash)
+    }
+
+    fn make_register_observer_tx_with_nonce(
+        observer_did: &str,
+        sponsor_did: &str,
+        nonce: u64,
+    ) -> Transaction {
+        let data = RegisterObserverData {
+            observer_node_did: observer_did.to_string(),
+            observer_public_key: vec![0u8; 32],
+            endpoints: vec!["127.0.0.1:9000".to_string()],
+            sponsor_user_did: sponsor_did.to_string(),
+            sponsor_proof_level: lib_types::ObserverProofLevel::Basic,
+            sponsor_signature: vec![1u8; 32],
+            allowed_network: "testnet".to_string(),
+            trusted_sync_scope: None,
+            rate_limit_tier: lib_types::ObserverRateLimitTier::Standard,
+            expires_at: None,
+            nonce,
+        };
+        Transaction::new_register_observer(0x03, data, create_dummy_signature())
+    }
+
+    fn make_register_observer_tx(observer_did: &str, sponsor_did: &str) -> Transaction {
+        make_register_observer_tx_with_nonce(observer_did, sponsor_did, 0)
+    }
+
+    fn make_suspend_observer_tx_with_nonce(
+        observer_did: &str,
+        actor_did: &str,
+        nonce: u64,
+    ) -> Transaction {
+        let data = SuspendObserverData {
+            observer_node_did: observer_did.to_string(),
+            actor_did: actor_did.to_string(),
+            reason: "test suspension".to_string(),
+            nonce,
+        };
+        Transaction::new_suspend_observer(0x03, data, create_dummy_signature())
+    }
+
+    fn make_revoke_observer_tx_with_nonce(
+        observer_did: &str,
+        actor_did: &str,
+        nonce: u64,
+    ) -> Transaction {
+        let data = RevokeObserverData {
+            observer_node_did: observer_did.to_string(),
+            actor_did: actor_did.to_string(),
+            reason: "test revocation".to_string(),
+            nonce,
+        };
+        Transaction::new_revoke_observer(0x03, data, create_dummy_signature())
+    }
+
+    fn make_reauthorize_observer_tx_with_nonce(
+        observer_did: &str,
+        sponsor_did: &str,
+        nonce: u64,
+    ) -> Transaction {
+        let data = crate::transaction::ReauthorizeObserverData {
+            observer_node_did: observer_did.to_string(),
+            sponsor_user_did: sponsor_did.to_string(),
+            nonce,
+        };
+        Transaction::new_reauthorize_observer(0x03, data, create_dummy_signature())
+    }
+
+    fn apply_genesis_and_get_hash(executor: &BlockExecutor) -> Hash {
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+        genesis.header.block_hash
+    }
+
+    /// Test helper: overwrite an observer record's status by writing directly
+    /// through the store at `height`. Used to set up tests for transitions
+    /// whose source state can't be reached via normal tx flows in admission-3
+    /// (e.g. Active or Suspended without going through reauthorize).
+    fn seed_observer_status_at(
+        store: &Arc<dyn BlockchainStore>,
+        observer_did: &str,
+        status: lib_types::ObserverAdmissionStatus,
+        height: u64,
+    ) {
+        let did_hash = crate::storage::did_to_hash(&observer_did.to_string());
+        let mut record = store.get_observer_record(&did_hash).unwrap().unwrap();
+        record.status = status;
+        store.begin_block(height).unwrap();
+        store.put_observer_record(&did_hash, &record).unwrap();
+        store.commit_block().unwrap();
+    }
+
+    fn apply_block_with_tx(
+        executor: &BlockExecutor,
+        height: u64,
+        prev_hash: Hash,
+        tx: Transaction,
+    ) -> Result<ApplyOutcome, BlockApplyError> {
+        executor.apply_block(&create_block_with_txs(height, prev_hash, vec![tx]))
+    }
+
+    #[test]
+    fn test_register_observer_creates_pending_record() {
+        let (store, executor, prev_hash) = setup_observer_test();
+
+        let tx = make_register_observer_tx("did:zhtp:node1", "did:zhtp:sponsor1");
+        apply_block_with_tx(&executor, 2, prev_hash, tx).expect("register observer failed");
+
+        let did_hash = crate::storage::did_to_hash(&"did:zhtp:node1".to_string());
+        let record = store.get_observer_record(&did_hash).unwrap();
+        assert!(record.is_some(), "observer record should exist after registration");
+        let record = record.unwrap();
+        assert_eq!(record.status, lib_types::ObserverAdmissionStatus::Pending);
+        assert_eq!(record.node_info.observer_node_did, "did:zhtp:node1");
+        assert_eq!(record.sponsor.sponsoring_user_did, "did:zhtp:sponsor1");
+    }
+
+    #[test]
+    fn test_duplicate_registration_rejected() {
+        let (_store, executor, prev_hash) = setup_observer_test();
+
+        let tx1 = make_register_observer_tx_with_nonce("did:zhtp:node2", "did:zhtp:sponsor1", 0);
+        let block1 = create_block_with_txs(2, prev_hash, vec![tx1]);
+        executor.apply_block(&block1).unwrap();
+
+        // Duplicate registration must fail (uses next nonce so the failure is
+        // duplicate-DID, not nonce mismatch).
+        let tx2 = make_register_observer_tx_with_nonce("did:zhtp:node2", "did:zhtp:sponsor1", 1);
+        let result = apply_block_with_tx(&executor, 3, block1.header.block_hash, tx2);
+        assert!(result.is_err(), "duplicate observer registration should be rejected");
+    }
+
+    #[test]
+    fn test_suspend_active_observer() {
+        let (store, executor, prev_hash) = setup_observer_test();
+
+        // Register observer at height 2 (nonce 0).
+        let tx_reg = make_register_observer_tx_with_nonce(
+            "did:zhtp:node3",
+            "did:zhtp:sponsor1",
+            0,
+        );
+        let block2 = create_block_with_txs(2, prev_hash, vec![tx_reg]);
+        executor.apply_block(&block2).unwrap();
+
+        // Seed Active status via a raw store write at height 3.
+        seed_observer_status_at(
+            &store,
+            "did:zhtp:node3",
+            lib_types::ObserverAdmissionStatus::Active,
+            3,
+        );
+        let did_hash = crate::storage::did_to_hash(&"did:zhtp:node3".to_string());
+
+        // Now suspend at height 4 (signer nonce is 1 because register consumed 0).
+        let tx_sus = make_suspend_observer_tx_with_nonce(
+            "did:zhtp:node3",
+            "did:zhtp:sponsor1",
+            1,
+        );
+        let block4 = create_block_with_txs(4, block2.header.block_hash, vec![tx_sus]);
+        executor.apply_block(&block4).unwrap();
+
+        let record = store.get_observer_record(&did_hash).unwrap().unwrap();
+        assert_eq!(record.status, lib_types::ObserverAdmissionStatus::Suspended);
+        assert!(record.action_meta.is_some());
+        assert_eq!(record.action_meta.as_ref().unwrap().actor_did, "did:zhtp:sponsor1");
+    }
+
+    #[test]
+    fn test_suspend_pending_observer_rejected() {
+        let (_store, executor, prev_hash) = setup_observer_test();
+
+        let tx_reg = make_register_observer_tx_with_nonce(
+            "did:zhtp:node4",
+            "did:zhtp:sponsor1",
+            0,
+        );
+        let block2 = create_block_with_txs(2, prev_hash, vec![tx_reg]);
+        executor.apply_block(&block2).unwrap();
+
+        // Try to suspend a Pending observer (must fail â€” only Active can be suspended).
+        let tx_sus = make_suspend_observer_tx_with_nonce(
+            "did:zhtp:node4",
+            "did:zhtp:sponsor1",
+            1,
+        );
+        let result = apply_block_with_tx(&executor, 3, block2.header.block_hash, tx_sus);
+        assert!(result.is_err(), "suspending a Pending observer should be rejected");
+    }
+
+    #[test]
+    fn test_revoke_observer() {
+        let (store, executor, prev_hash) = setup_observer_test();
+
+        let tx_reg = make_register_observer_tx_with_nonce(
+            "did:zhtp:node5",
+            "did:zhtp:sponsor1",
+            0,
+        );
+        let block2 = create_block_with_txs(2, prev_hash, vec![tx_reg]);
+        executor.apply_block(&block2).unwrap();
+
+        let tx_rev = make_revoke_observer_tx_with_nonce(
+            "did:zhtp:node5",
+            "did:zhtp:sponsor1",
+            1,
+        );
+        let block3 = create_block_with_txs(3, block2.header.block_hash, vec![tx_rev]);
+        executor.apply_block(&block3).unwrap();
+
+        let did_hash = crate::storage::did_to_hash(&"did:zhtp:node5".to_string());
+        let record = store.get_observer_record(&did_hash).unwrap().unwrap();
+        assert_eq!(record.status, lib_types::ObserverAdmissionStatus::Revoked);
+        assert!(record.action_meta.is_some());
+    }
+
+    #[test]
+    fn test_double_revoke_rejected() {
+        let (_store, executor, prev_hash) = setup_observer_test();
+
+        let tx_reg = make_register_observer_tx_with_nonce(
+            "did:zhtp:node6",
+            "did:zhtp:sponsor1",
+            0,
+        );
+        let block2 = create_block_with_txs(2, prev_hash, vec![tx_reg]);
+        executor.apply_block(&block2).unwrap();
+
+        let tx_rev1 = make_revoke_observer_tx_with_nonce(
+            "did:zhtp:node6",
+            "did:zhtp:sponsor1",
+            1,
+        );
+        let block3 = create_block_with_txs(3, block2.header.block_hash, vec![tx_rev1]);
+        executor.apply_block(&block3).unwrap();
+
+        // Second revoke must fail (status no longer Active/Pending/Suspended).
+        let tx_rev2 = make_revoke_observer_tx_with_nonce(
+            "did:zhtp:node6",
+            "did:zhtp:sponsor1",
+            2,
+        );
+        let result = apply_block_with_tx(&executor, 4, block3.header.block_hash, tx_rev2);
+        assert!(result.is_err(), "double-revoking an observer should be rejected");
+    }
+
+    #[test]
+    fn test_reauthorize_suspended_observer() {
+        let (store, executor, prev_hash) = setup_observer_test();
+
+        let tx_reg = make_register_observer_tx_with_nonce(
+            "did:zhtp:node7",
+            "did:zhtp:sponsor1",
+            0,
+        );
+        let block2 = create_block_with_txs(2, prev_hash, vec![tx_reg]);
+        executor.apply_block(&block2).unwrap();
+
+        // Seed Suspended status via raw write at height 3.
+        seed_observer_status_at(
+            &store,
+            "did:zhtp:node7",
+            lib_types::ObserverAdmissionStatus::Suspended,
+            3,
+        );
+        let did_hash = crate::storage::did_to_hash(&"did:zhtp:node7".to_string());
+
+        // Reauthorize as original sponsor at height 4 (nonce 1).
+        let tx_rauth = make_reauthorize_observer_tx_with_nonce(
+            "did:zhtp:node7",
+            "did:zhtp:sponsor1",
+            1,
+        );
+        let block4 = create_block_with_txs(4, block2.header.block_hash, vec![tx_rauth]);
+        executor.apply_block(&block4).unwrap();
+
+        let record = store.get_observer_record(&did_hash).unwrap().unwrap();
+        assert_eq!(record.status, lib_types::ObserverAdmissionStatus::Active);
+        assert!(record.action_meta.is_none(), "action_meta should be cleared on reauthorization");
+    }
+
+    #[test]
+    fn test_reauthorize_wrong_sponsor_rejected() {
+        let (store, executor, prev_hash) = setup_observer_test();
+
+        let tx_reg = make_register_observer_tx_with_nonce(
+            "did:zhtp:node8",
+            "did:zhtp:sponsor1",
+            0,
+        );
+        let block2 = create_block_with_txs(2, prev_hash, vec![tx_reg]);
+        executor.apply_block(&block2).unwrap();
+
+        // Seed Suspended status via raw write at height 3.
+        seed_observer_status_at(
+            &store,
+            "did:zhtp:node8",
+            lib_types::ObserverAdmissionStatus::Suspended,
+            3,
+        );
+
+        // Wrong sponsor at height 4 (nonce 1).
+        let tx_rauth = make_reauthorize_observer_tx_with_nonce(
+            "did:zhtp:node8",
+            "did:zhtp:impostor",
+            1,
+        );
+        let result = apply_block_with_tx(&executor, 4, block2.header.block_hash, tx_rauth);
+        assert!(result.is_err(), "reauthorize by wrong sponsor must be rejected");
+    }
+
+    #[test]
+    fn test_sponsor_binding_stored() {
+        let (store, executor, prev_hash) = setup_observer_test();
+
+        let tx = make_register_observer_tx("did:zhtp:node9", "did:zhtp:sponsor_abc");
+        apply_block_with_tx(&executor, 2, prev_hash, tx).unwrap();
+
+        let did_hash = crate::storage::did_to_hash(&"did:zhtp:node9".to_string());
+        let record = store.get_observer_record(&did_hash).unwrap().unwrap();
+        assert_eq!(record.sponsor.sponsoring_user_did, "did:zhtp:sponsor_abc");
+        assert_eq!(record.sponsor.proof_level, lib_types::ObserverProofLevel::Basic);
+    }
+
+    #[test]
+    fn test_iter_observer_records_returns_all_admitted() {
+        let (store, executor, prev_hash) = setup_observer_test();
+
+        let tx_a = make_register_observer_tx_with_nonce(
+            "did:zhtp:nodeA",
+            "did:zhtp:sponsorX",
+            0,
+        );
+        let block2 = create_block_with_txs(2, prev_hash, vec![tx_a]);
+        executor.apply_block(&block2).unwrap();
+
+        let tx_b = make_register_observer_tx_with_nonce(
+            "did:zhtp:nodeB",
+            "did:zhtp:sponsorY",
+            1,
+        );
+        let block3 = create_block_with_txs(3, block2.header.block_hash, vec![tx_b]);
+        executor.apply_block(&block3).unwrap();
+
+        let all = store.iter_observer_records().unwrap();
+        assert_eq!(all.len(), 2);
+        let dids: Vec<String> = all
+            .iter()
+            .map(|r| r.node_info.observer_node_did.clone())
+            .collect();
+        assert!(dids.contains(&"did:zhtp:nodeA".to_string()));
+        assert!(dids.contains(&"did:zhtp:nodeB".to_string()));
+
+        // Per-sponsor filter (default trait impl uses iter_observer_records)
+        let sponsor_x_hash = crate::storage::did_to_hash(&"did:zhtp:sponsorX".to_string());
+        let by_sponsor = store
+            .iter_observer_records_for_sponsor(&sponsor_x_hash)
+            .unwrap();
+        assert_eq!(by_sponsor.len(), 1);
+        assert_eq!(by_sponsor[0].node_info.observer_node_did, "did:zhtp:nodeA");
+    }
+
+    #[test]
+    fn test_register_observer_replay_is_deterministic() {
+        // Apply the same chain twice into two fresh stores and verify the
+        // observer registry produces identical records. Uses distinct sponsors
+        // to stay under the per-sponsor quota enforced by admission-4 policy.
+        let run = || -> Vec<lib_types::ObserverAdmissionRecord> {
+            let (store, executor, prev_hash) = setup_observer_test();
+
+            let tx_a = make_register_observer_tx_with_nonce(
+                "did:zhtp:repA",
+                "did:zhtp:repSponsorA",
+                0,
+            );
+            let block2 = create_block_with_txs(2, prev_hash, vec![tx_a]);
+            executor.apply_block(&block2).unwrap();
+
+            let tx_b = make_register_observer_tx_with_nonce(
+                "did:zhtp:repB",
+                "did:zhtp:repSponsorB",
+                1,
+            );
+            let block3 = create_block_with_txs(3, block2.header.block_hash, vec![tx_b]);
+            executor.apply_block(&block3).unwrap();
+
+            let mut all = store.iter_observer_records().unwrap();
+            all.sort_by(|a, b| a.node_info.observer_node_did.cmp(&b.node_info.observer_node_did));
+            all
+        };
+
+        let first = run();
+        let second = run();
+        assert_eq!(
+            first, second,
+            "observer registry must be deterministic across replays"
+        );
+    }
+
+    // ---- New tests for observer-admission-3 review-fix coverage ----
+
+    #[test]
+    fn test_register_observer_replay_rejected() {
+        // Submitting the SAME tx (same nonce 0) twice must fail on the second
+        // application with a nonce-mismatch error (signer nonce is now 1).
+        let (_store, executor, prev_hash) = setup_observer_test();
+
+        let tx1 = make_register_observer_tx_with_nonce(
+            "did:zhtp:replay_a",
+            "did:zhtp:sponsor_replay",
+            0,
+        );
+        let block2 = create_block_with_txs(2, prev_hash, vec![tx1.clone()]);
+        executor.apply_block(&block2).unwrap();
+
+        // Replay the EXACT same tx (nonce 0) at the next height â€” must fail.
+        let result = apply_block_with_tx(&executor, 3, block2.header.block_hash, tx1);
+        assert!(
+            result.is_err(),
+            "replaying a RegisterObserver tx with the same nonce must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_register_observer_rejects_past_expiry() {
+        // expires_at in the past relative to block_height must be rejected.
+        let (_store, executor, prev_hash) = setup_observer_test();
+
+        let data = RegisterObserverData {
+            observer_node_did: "did:zhtp:expired".to_string(),
+            observer_public_key: vec![0u8; 32],
+            endpoints: vec!["127.0.0.1:9000".to_string()],
+            sponsor_user_did: "did:zhtp:sponsor_exp".to_string(),
+            sponsor_proof_level: lib_types::ObserverProofLevel::Basic,
+            sponsor_signature: vec![1u8; 32],
+            allowed_network: "testnet".to_string(),
+            trusted_sync_scope: None,
+            rate_limit_tier: lib_types::ObserverRateLimitTier::Standard,
+            expires_at: Some(1), // height 2 > 1, so already expired
+            nonce: 0,
+        };
+        let tx = Transaction::new_register_observer(0x03, data, create_dummy_signature());
+
+        let result = apply_block_with_tx(&executor, 2, prev_hash, tx);
+        assert!(
+            result.is_err(),
+            "RegisterObserver with expires_at <= block_height must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_reauthorize_pending_to_active() {
+        // A freshly-registered (Pending) observer can be reauthorized by its
+        // sponsor without first transitioning to Suspended.
+        let (store, executor, prev_hash) = setup_observer_test();
+
+        let tx_reg = make_register_observer_tx_with_nonce(
+            "did:zhtp:pending_reauth",
+            "did:zhtp:sponsor_reauth",
+            0,
+        );
+        let block2 = create_block_with_txs(2, prev_hash, vec![tx_reg]);
+        executor.apply_block(&block2).unwrap();
+
+        // Reauthorize directly from Pending â€” should succeed and set Active.
+        let tx_rauth = make_reauthorize_observer_tx_with_nonce(
+            "did:zhtp:pending_reauth",
+            "did:zhtp:sponsor_reauth",
+            1,
+        );
+        let block3 = create_block_with_txs(3, block2.header.block_hash, vec![tx_rauth]);
+        executor
+            .apply_block(&block3)
+            .expect("reauthorize from Pending should succeed");
+
+        let did_hash = crate::storage::did_to_hash(&"did:zhtp:pending_reauth".to_string());
+        let record = store.get_observer_record(&did_hash).unwrap().unwrap();
+        assert_eq!(record.status, lib_types::ObserverAdmissionStatus::Active);
+    }
+
+    #[test]
+    fn test_register_observer_insufficient_sov_rejected() {
+        // Without seeding SOV, the registration-fee debit must fail.
+        let store = create_test_store();
+        let executor = create_trusted_replay_executor(store.clone());
+        let prev_hash = apply_genesis_and_get_hash(&executor);
+        // Note: NO seed_observer_test_signer_sov() call.
+
+        let tx = make_register_observer_tx_with_nonce(
+            "did:zhtp:no_funds",
+            "did:zhtp:sponsor_nofund",
+            0,
+        );
+        let result = apply_block_with_tx(&executor, 1, prev_hash, tx);
+        assert!(
+            result.is_err(),
+            "RegisterObserver without sufficient SOV for fee must be rejected"
+        );
+    }
+
+    // =========================================================================
+    // Observer Admission Policy Tests (observer-admission-4)
+    // =========================================================================
+
+    fn make_register_observer_tx_with_level_and_nonce(
+        observer_did: &str,
+        sponsor_did: &str,
+        level: lib_types::ObserverProofLevel,
+        nonce: u64,
+    ) -> Transaction {
+        let data = RegisterObserverData {
+            observer_node_did: observer_did.to_string(),
+            observer_public_key: vec![0u8; 32],
+            endpoints: vec!["127.0.0.1:9000".to_string()],
+            sponsor_user_did: sponsor_did.to_string(),
+            sponsor_proof_level: level,
+            sponsor_signature: vec![1u8; 32],
+            allowed_network: "testnet".to_string(),
+            trusted_sync_scope: None,
+            rate_limit_tier: lib_types::ObserverRateLimitTier::Standard,
+            expires_at: None,
+            nonce,
+        };
+        Transaction::new_register_observer(0x03, data, create_dummy_signature())
+    }
+
+    #[test]
+    fn test_anonymous_sponsor_register_rejected_by_policy() {
+        let (_store, executor, prev_hash) = setup_observer_test();
+
+        let tx = make_register_observer_tx_with_level_and_nonce(
+            "did:zhtp:nodeAnon",
+            "did:zhtp:sponsor1",
+            lib_types::ObserverProofLevel::None,
+            0,
+        );
+        let result = apply_block_with_tx(&executor, 2, prev_hash, tx);
+        assert!(
+            result.is_err(),
+            "anonymous (proof-level=None) sponsor must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_register_below_minimum_proof_level_rejected() {
+        let (store, executor, prev_hash) = setup_observer_test();
+
+        // Seed a stricter policy: minimum Enhanced.
+        let mut policy = crate::observer::default_policy();
+        policy.minimum_proof_level = lib_types::ObserverProofLevel::Enhanced;
+        store.save_observer_policy(&policy).unwrap();
+
+        let tx = make_register_observer_tx_with_level_and_nonce(
+            "did:zhtp:nodeLow",
+            "did:zhtp:sponsorLow",
+            lib_types::ObserverProofLevel::Basic,
+            0,
+        );
+        let result = apply_block_with_tx(&executor, 2, prev_hash, tx);
+        assert!(
+            result.is_err(),
+            "Basic sponsor under Enhanced minimum must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_sponsor_quota_exhausted_rejected() {
+        let (_store, executor, prev_hash) = setup_observer_test();
+
+        // Default policy + Basic sponsor â†’ quota=1. First registration succeeds,
+        // second by the same sponsor must fail.
+        let tx1 = make_register_observer_tx_with_level_and_nonce(
+            "did:zhtp:q1",
+            "did:zhtp:sponsorQ",
+            lib_types::ObserverProofLevel::Basic,
+            0,
+        );
+        let block2 = create_block_with_txs(2, prev_hash, vec![tx1]);
+        executor.apply_block(&block2).expect("first registration");
+
+        let tx2 = make_register_observer_tx_with_level_and_nonce(
+            "did:zhtp:q2",
+            "did:zhtp:sponsorQ",
+            lib_types::ObserverProofLevel::Basic,
+            1,
+        );
+        let result = apply_block_with_tx(&executor, 3, block2.header.block_hash, tx2);
+        assert!(
+            result.is_err(),
+            "second observer for Basic sponsor must exhaust quota"
+        );
+    }
+
+    #[test]
+    fn test_revoked_observer_does_not_consume_quota() {
+        let (_store, executor, prev_hash) = setup_observer_test();
+
+        // Register, then revoke.
+        let tx1 = make_register_observer_tx_with_level_and_nonce(
+            "did:zhtp:rq1",
+            "did:zhtp:sponsorRQ",
+            lib_types::ObserverProofLevel::Basic,
+            0,
+        );
+        let block2 = create_block_with_txs(2, prev_hash, vec![tx1]);
+        executor.apply_block(&block2).unwrap();
+
+        let tx_rev = make_revoke_observer_tx_with_nonce(
+            "did:zhtp:rq1",
+            "did:zhtp:sponsorRQ",
+            1,
+        );
+        let block3 = create_block_with_txs(3, block2.header.block_hash, vec![tx_rev]);
+        executor.apply_block(&block3).unwrap();
+
+        // Now register a new observer under the same sponsor â€” should succeed
+        // because the revoked record does not consume quota.
+        let tx2 = make_register_observer_tx_with_level_and_nonce(
+            "did:zhtp:rq2",
+            "did:zhtp:sponsorRQ",
+            lib_types::ObserverProofLevel::Basic,
+            2,
+        );
+        apply_block_with_tx(&executor, 4, block3.header.block_hash, tx2)
+            .expect("revoked record must free quota");
+    }
+
+    #[test]
+    fn test_auto_approve_policy_creates_active_record() {
+        let (store, executor, prev_hash) = setup_observer_test();
+
+        let mut policy = crate::observer::default_policy();
+        policy.auto_approve = true;
+        store.save_observer_policy(&policy).unwrap();
+
+        let tx = make_register_observer_tx_with_level_and_nonce(
+            "did:zhtp:autoApprove",
+            "did:zhtp:sponsorA",
+            lib_types::ObserverProofLevel::Basic,
+            0,
+        );
+        apply_block_with_tx(&executor, 2, prev_hash, tx).unwrap();
+
+        let did_hash = crate::storage::did_to_hash(&"did:zhtp:autoApprove".to_string());
+        let record = store.get_observer_record(&did_hash).unwrap().unwrap();
+        assert_eq!(
+            record.status,
+            lib_types::ObserverAdmissionStatus::Active,
+            "auto_approve policy must land record in Active"
+        );
+    }
+
+    #[test]
+    fn test_evaluate_admission_active_record_authorized() {
+        use crate::observer::{evaluate_admission, AdmissionDecision};
+        let (store, executor, prev_hash) = setup_observer_test();
+
+        let mut policy = crate::observer::default_policy();
+        policy.auto_approve = true;
+        store.save_observer_policy(&policy).unwrap();
+
+        let tx = make_register_observer_tx_with_level_and_nonce(
+            "did:zhtp:evalAuth",
+            "did:zhtp:sponsorE",
+            lib_types::ObserverProofLevel::Basic,
+            0,
+        );
+        apply_block_with_tx(&executor, 2, prev_hash, tx).unwrap();
+
+        let did_hash = crate::storage::did_to_hash(&"did:zhtp:evalAuth".to_string());
+        let record = store.get_observer_record(&did_hash).unwrap().unwrap();
+
+        let decision = evaluate_admission(&record, &policy, "testnet", 100);
+        assert_eq!(decision, AdmissionDecision::Authorized);
+
+        // Wrong network â†’ denied.
+        let denied = evaluate_admission(&record, &policy, "mainnet", 100);
+        assert!(matches!(denied, AdmissionDecision::Denied(_)));
     }
 }

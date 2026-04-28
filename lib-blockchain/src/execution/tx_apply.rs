@@ -339,6 +339,51 @@ impl<'a> StateMutator<'a> {
     }
 
     // =========================================================================
+    // Observer Admission Primitives (observer-admission-3)
+    // =========================================================================
+
+    /// Retrieve an observer admission record by node DID hash.
+    pub fn get_observer_record(
+        &self,
+        did_hash: &[u8; 32],
+    ) -> TxApplyResult<Option<lib_types::ObserverAdmissionRecord>> {
+        Ok(self.store.get_observer_record(did_hash)?)
+    }
+
+    /// Persist (upsert) an observer admission record within the current block transaction.
+    pub fn put_observer_record(
+        &self,
+        did_hash: &[u8; 32],
+        record: &lib_types::ObserverAdmissionRecord,
+    ) -> TxApplyResult<()> {
+        self.store.put_observer_record(did_hash, record)?;
+        Ok(())
+    }
+
+    /// Delete an observer admission record within the current block transaction.
+    pub fn delete_observer_record(&self, did_hash: &[u8; 32]) -> TxApplyResult<()> {
+        self.store.delete_observer_record(did_hash)?;
+        Ok(())
+    }
+
+    /// Iterate observer records sponsored by the given user DID hash.
+    pub fn iter_observer_records_for_sponsor(
+        &self,
+        sponsor_did_hash: &[u8; 32],
+    ) -> TxApplyResult<Vec<lib_types::ObserverAdmissionRecord>> {
+        Ok(self
+            .store
+            .iter_observer_records_for_sponsor(sponsor_did_hash)?)
+    }
+
+    /// Retrieve the canonical observer admission policy.
+    pub fn get_observer_policy(
+        &self,
+    ) -> TxApplyResult<Option<lib_types::ObserverAdmissionPolicy>> {
+        Ok(self.store.get_observer_policy()?)
+    }
+
+    // =========================================================================
     // Contract State Primitives
     // =========================================================================
 
