@@ -38,3 +38,5 @@ pub mod adapters;
 pub mod catch_up_sync;
 pub mod fork_policy;
 pub mod runtime;
+
+pub use runtime::{ConsensusRuntime, RuntimeError};

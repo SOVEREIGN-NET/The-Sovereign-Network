@@ -3530,6 +3530,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "lib-blockchain",
+ "lib-consensus",
  "lib-consensus-core",
  "lib-consensus-net",
  "lib-crypto",
