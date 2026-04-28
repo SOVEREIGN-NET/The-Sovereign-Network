@@ -198,7 +198,7 @@ use lib_governance::dao::DaoEngine;
 use lib_consensus_core::ports::{GovernanceCallback, NoOpGovernanceCallback};
 use crate::invariants::{check_invariant, ConsensusInvariant, ConsensusState as InvariantState};
 use crate::types::*;
-use lib_consensus_core::ports::{NoOpRewardCallback, RewardCallback};
+use lib_consensus_core::ports::{FeeCallback, NoOpFeeCallback, NoOpRewardCallback, RewardCallback};
 use crate::validators::validator_manager::ValidatorInfo as ValidatorInfoTrait;
 use crate::validators::ValidatorManager;
 use crate::{ConsensusError, ConsensusResult};
@@ -506,11 +506,12 @@ pub struct ConsensusEngine {
     /// distribution side effects. Defaults to a no-op so tests and bootstrap
     /// configurations can run without wiring rewards.
     reward_callback: Arc<dyn RewardCallback>,
-    /// Fee collector for fee collection integration
-    ///
-    /// Implements the FeeCollector trait for collecting and distributing fees
-    /// during block finalization. Uses Arc<Mutex<>> for thread-safe access.
-    fee_router: Option<std::sync::Arc<std::sync::Mutex<dyn FeeCollector>>>,
+    /// CONS-404 / AD-005: fire-and-forget fee distribution hook. The runtime
+    /// adapter (e.g. `lib_blockchain::contracts::economics::fee_router::
+    /// FeeRouterAdapter`) owns the FeeRouter mutex and the 45/30/15/10 split.
+    /// Defaults to a no-op so tests and bootstrap configurations can run
+    /// without wiring fees.
+    fee_callback: Arc<dyn FeeCallback>,
     /// Message broadcaster for network distribution
     ///
     /// Invariant CE-ENG-1: ConsensusEngine never constructs, configures, or inspects
@@ -635,7 +636,7 @@ impl ConsensusEngine {
             governance_callback: Arc::new(NoOpGovernanceCallback),
             byzantine_detector: ByzantineFaultDetector::new(),
             reward_callback: Arc::new(NoOpRewardCallback),
-            fee_router: None,
+            fee_callback: Arc::new(NoOpFeeCallback),
             broadcaster,
             message_rx: None,
             liveness_event_tx: None,
@@ -878,15 +879,13 @@ impl ConsensusEngine {
         self.validator_manager.get_active_validators().len()
     }
 
-    /// Set fee collector for fee collection integration
+    /// Inject the fee distribution hook (CONS-404 / AD-005).
     ///
-    /// Allows the consensus engine to collect and distribute fees at block finalization.
-    /// The fee collector must implement the FeeCollector trait.
-    ///
-    /// # Arguments
-    /// * `fee_collector` - Implementation of FeeCollector trait (e.g., FeeRouter from lib-blockchain)
-    pub fn set_fee_router<T: FeeCollector + 'static>(&mut self, fee_collector: T) {
-        self.fee_router = Some(std::sync::Arc::new(std::sync::Mutex::new(fee_collector)));
+    /// Default is `NoOpFeeCallback`. Production runtimes wire
+    /// `lib_blockchain::contracts::economics::fee_router::FeeRouterAdapter`
+    /// (or any other `FeeCallback` impl) here.
+    pub fn set_fee_callback(&mut self, callback: Arc<dyn FeeCallback>) {
+        self.fee_callback = callback;
     }
 
     /// Inject the reward distribution hook (CONS-103 / AD-005).
