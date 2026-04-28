@@ -3456,6 +3456,7 @@ dependencies = [
  "hex",
  "indexmap 1.9.3",
  "lib-consensus-core",
+ "lib-consensus-net",
  "lib-crypto",
  "lib-governance",
  "lib-identity",
@@ -3492,12 +3493,12 @@ dependencies = [
 name = "lib-consensus-net"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "bincode",
  "lib-consensus-core",
  "lib-crypto",
  "lib-identity",
- "lib-network",
  "lib-types",
  "serde",
  "thiserror 1.0.69",
@@ -3700,6 +3701,7 @@ dependencies = [
  "jni",
  "lib-blockchain",
  "lib-consensus",
+ "lib-consensus-net",
  "lib-crypto",
  "lib-economy",
  "lib-identity",
