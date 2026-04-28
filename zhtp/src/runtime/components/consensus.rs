@@ -1971,18 +1971,29 @@ impl Component for ConsensusComponent {
         // Protocols.start() is awaited before Consensus.start() in startup_sequence,
         // so the mesh router is guaranteed to be available here unless Protocols failed.
         // Development mode allows NoOpBroadcaster for single-node local testing.
-        let broadcaster: Arc<dyn ConsensusMessageBroadcaster> = match get_global_mesh_router().await
-        {
+        //
+        // CONS-502d: we keep a parallel `Arc<dyn TransportInfo>` handle so the
+        // consensus runtime's startup check (CONS-310 / CONS-403) can read the
+        // transport's idle timeout. In production it's the same
+        // `ConsensusMeshBroadcaster` pointer; in dev/NoOp it's `NoOpTransportInfo`.
+        let (broadcaster, transport_info): (
+            Arc<dyn ConsensusMessageBroadcaster>,
+            Arc<dyn lib_consensus_core::ports::TransportInfo>,
+        ) = match get_global_mesh_router().await {
             Ok(mesh_router) => {
                 info!("Mesh router available — multi-node consensus broadcasting enabled");
-                Arc::new(ConsensusMeshBroadcaster::new(mesh_router))
+                let mesh_b = Arc::new(ConsensusMeshBroadcaster::new(mesh_router));
+                (mesh_b.clone(), mesh_b)
             }
             Err(e) if is_development => {
                 warn!(
                     "Mesh router not available: {} — development mode, using NoOpBroadcaster",
                     e
                 );
-                Arc::new(NoOpBroadcaster)
+                (
+                    Arc::new(NoOpBroadcaster),
+                    Arc::new(lib_consensus_core::ports::NoOpTransportInfo),
+                )
             }
             Err(e) => {
                 return Err(anyhow::anyhow!(
@@ -2311,14 +2322,48 @@ impl Component for ConsensusComponent {
         // Engine is moved into the spawned loop — not accessible externally.
         *self.consensus_engine.write().await = None;
 
-        // Spawn the consensus loop as a background task.
-        tokio::spawn(async move {
-            info!("🚀 Starting BFT consensus loop...");
-            match consensus_engine.run_consensus_loop().await {
-                Ok(()) => info!("Consensus loop exited normally"),
-                Err(e) => error!("Consensus loop exited with error: {}", e),
+        // CONS-502d: prefer wrapping the engine in `ConsensusRuntime` so the
+        // startup transport-compatibility check (CONS-310 / CONS-403) and the
+        // watchdog spawn (CONS-309 / CONS-502b) go live. Fall back to the
+        // legacy direct-engine path if the transport's idle timeout exceeds
+        // `MAX_BROADCAST_BUDGET_MS * 100` — this is the AD-011 collision
+        // documented in lib_consensus_core::budget. Until the QUIC mesh idle
+        // timeout (300 s, issue #907) and `MAX_BROADCAST_BUDGET_MS` (currently
+        // 750 ms ⇒ 75 s ceiling) are reconciled, real production deployments
+        // hit this path and run without the watchdog. Logging at WARN so an
+        // operator notices and the AD-011 ticket gets driven to closure.
+        match lib_consensus_runtime::ConsensusRuntime::check_transport(transport_info.as_ref()) {
+            Ok(()) => {
+                info!(
+                    "🚀 Starting BFT consensus via ConsensusRuntime (transport={})",
+                    transport_info.name()
+                );
+                let runtime =
+                    lib_consensus_runtime::ConsensusRuntime::from_arc(consensus_engine, transport_info)
+                        .expect("transport already validated by check_transport");
+                tokio::spawn(async move {
+                    match runtime.run().await {
+                        Ok(()) => info!("Consensus loop exited normally (runtime path)"),
+                        Err(e) => error!("Consensus loop exited with error: {}", e),
+                    }
+                });
             }
-        });
+            Err(transport_err) => {
+                warn!(
+                    "AD-011 collision: {transport_err}. \
+                     Falling back to legacy direct-engine consensus loop without watchdog. \
+                     Reconcile lib_consensus_core::budget::MAX_BROADCAST_BUDGET_MS with the \
+                     QUIC mesh idle timeout to close this gap (tracked alongside #2345/#2352)."
+                );
+                tokio::spawn(async move {
+                    info!("🚀 Starting BFT consensus loop (legacy direct-engine path)...");
+                    match consensus_engine.run_consensus_loop().await {
+                        Ok(()) => info!("Consensus loop exited normally"),
+                        Err(e) => error!("Consensus loop exited with error: {}", e),
+                    }
+                });
+            }
+        }
 
         // Spawn periodic mesh reconnect: every 15s, try to connect to any
         // bootstrap peers we're not yet connected to. This is needed because

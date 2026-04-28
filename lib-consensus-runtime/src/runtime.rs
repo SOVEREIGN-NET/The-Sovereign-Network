@@ -89,6 +89,25 @@ pub struct ConsensusRuntime {
 }
 
 impl ConsensusRuntime {
+    /// Validate a transport against the consensus budget without
+    /// consuming an engine. Useful for callers that want to inspect
+    /// the result before committing the engine to a runtime — e.g.
+    /// zhtp logs the AD-011 collision and falls back to the legacy
+    /// direct-engine path until the QUIC idle vs.
+    /// `MAX_BROADCAST_BUDGET_MS` mismatch is reconciled.
+    pub fn check_transport(transport: &dyn TransportInfo) -> Result<(), RuntimeError> {
+        let ceiling_ms = transport_idle_ceiling_ms();
+        let actual_ms = transport.idle_timeout().as_millis();
+        if actual_ms > ceiling_ms {
+            return Err(RuntimeError::TransportIdleTooLong {
+                transport: transport.name().to_string(),
+                actual_ms,
+                ceiling_ms,
+            });
+        }
+        Ok(())
+    }
+
     /// Build a runtime around `engine`, asserting the transport is
     /// compatible with the consensus budget and installing the
     /// runtime-event channel + watchdog clock on the engine.
@@ -102,15 +121,7 @@ impl ConsensusRuntime {
         mut engine: ConsensusEngine,
         transport: &dyn TransportInfo,
     ) -> Result<Self, RuntimeError> {
-        let ceiling_ms = transport_idle_ceiling_ms();
-        let actual_ms = transport.idle_timeout().as_millis();
-        if actual_ms > ceiling_ms {
-            return Err(RuntimeError::TransportIdleTooLong {
-                transport: transport.name().to_string(),
-                actual_ms,
-                ceiling_ms,
-            });
-        }
+        Self::check_transport(transport)?;
 
         let watchdog_threshold = derive_watchdog_threshold(engine.config());
         let watchdog_clock = Arc::new(RwLock::new(Instant::now()));
