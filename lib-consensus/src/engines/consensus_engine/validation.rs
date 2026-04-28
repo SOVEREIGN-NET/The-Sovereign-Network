@@ -52,30 +52,37 @@ impl ConsensusEngine {
         &self,
         proof: &ConsensusProof,
     ) -> ConsensusResult<bool> {
+        // CONS-201 Scope B: proof fields are now opaque bytes —
+        // deserialize via `ConsensusProofExt` before verifying.
+        use crate::types::ConsensusProofExt;
         match proof.consensus_type {
-            ConsensusType::ProofOfStake => {
-                if let Some(stake_proof) = &proof.stake_proof {
-                    Ok(stake_proof.verify(self.current_round.height)?)
-                } else {
+            ConsensusType::ProofOfStake => match proof.decode_stake_proof() {
+                Some(Ok(stake_proof)) => Ok(stake_proof.verify(self.current_round.height)?),
+                Some(Err(e)) => {
+                    tracing::warn!("ConsensusProof.stake_proof decode failed: {}", e);
                     Ok(false)
                 }
-            }
-            ConsensusType::ProofOfStorage => {
-                if let Some(storage_proof) = &proof.storage_proof {
-                    Ok(storage_proof.verify()?)
-                } else {
+                None => Ok(false),
+            },
+            ConsensusType::ProofOfStorage => match proof.decode_storage_proof() {
+                Some(Ok(storage_proof)) => Ok(storage_proof.verify()?),
+                Some(Err(e)) => {
+                    tracing::warn!("ConsensusProof.storage_proof decode failed: {}", e);
                     Ok(false)
                 }
-            }
-            ConsensusType::ProofOfUsefulWork => {
-                if let Some(work_proof) = &proof.work_proof {
-                    Ok(work_proof.verify()?)
-                } else {
+                None => Ok(false),
+            },
+            ConsensusType::ProofOfUsefulWork => match proof.decode_work_proof() {
+                Some(Ok(work_proof)) => Ok(work_proof.verify()?),
+                Some(Err(e)) => {
+                    tracing::warn!("ConsensusProof.work_proof decode failed: {}", e);
                     Ok(false)
                 }
-            }
+                None => Ok(false),
+            },
             ConsensusType::ByzantineFaultTolerance => {
-                // For BFT, we rely on vote thresholds rather than individual proofs. This generic proof validator is not applicable to BFT proofs.
+                // For BFT, we rely on vote thresholds rather than individual proofs.
+                // This generic proof validator is not applicable to BFT proofs.
                 Ok(false)
             }
         }
