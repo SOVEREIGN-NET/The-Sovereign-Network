@@ -328,12 +328,7 @@ impl ConsensusEngine {
                         // verify against `HeartbeatSigningPayload` instead of
                         // dropping unsigned messages.
                         let msg = wrap_heartbeat(heartbeat_msg, self.validator_keypair.as_ref());
-                        if let Err(e) = self.broadcaster.broadcast_to_validators(
-                            msg,
-                            &validator_ids,
-                        ).await {
-                            tracing::debug!("Heartbeat broadcast failed: {}", e);
-                        }
+                        self.broadcast(msg, &validator_ids).await;
                     }
                 }
 
