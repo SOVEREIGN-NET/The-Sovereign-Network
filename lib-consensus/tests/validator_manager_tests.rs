@@ -415,7 +415,10 @@ fn test_sufficient_validators_check() -> Result<()> {
             5,
         )?;
 
-        if i >= 4 {
+        // BFT_MIN_VALIDATORS = 3 (lib-consensus/src/engines/consensus_engine/mod.rs:286).
+        // At n=3, f=0 — no Byzantine fault tolerance, but the protocol still requires
+        // unanimity (3 of 3 commits). This is the documented minimum for BFT mode.
+        if i >= 3 {
             assert!(manager.has_sufficient_validators());
         } else {
             assert!(!manager.has_sufficient_validators());

@@ -85,6 +85,10 @@ pub mod state;
 // NEW: Recursive proof system for hierarchical aggregation
 pub mod recursive;
 
+/// Consensus-mechanism proofs (Proof-of-Stake, Proof-of-Useful-Work).
+/// Relocated from `lib-consensus/src/proofs/` per CONS-104 / AD-003.
+pub mod consensus;
+
 // Type aliases for backward compatibility
 pub use types::zk_proof::ZkProof as ZeroKnowledgeProof;
 pub use types::MerkleProof;

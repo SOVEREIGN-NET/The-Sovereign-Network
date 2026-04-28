@@ -30,7 +30,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-use lib_consensus::validators::validator_discovery::{
+// CONS-501: `validator_discovery` lives in `lib-consensus-net::discovery`
+// after the module split. Importing directly from there satisfies the
+// "no `lib_consensus::validators::validator_discovery` deep imports
+// from outside lib-consensus" acceptance criterion.
+use lib_consensus_net::discovery::{
     ValidatorAnnouncement, ValidatorDiscoveryFilter, ValidatorDiscoveryTransport,
 };
 use lib_crypto::Hash;
@@ -526,7 +530,7 @@ mod tests {
 
     #[test]
     fn test_filter_matching() {
-        use lib_consensus::validators::validator_discovery::{ValidatorEndpoint, ValidatorStatus};
+        use lib_consensus_net::discovery::{ValidatorEndpoint, ValidatorStatus};
         use lib_crypto::PublicKey;
 
         let announcement = ValidatorAnnouncement {

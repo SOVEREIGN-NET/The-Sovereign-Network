@@ -598,7 +598,7 @@ impl MeshRouter {
                 // Try to evaluate and merge
                 match blockchain.evaluate_and_merge_chain(serialized).await {
                     Ok(merge_result) => {
-                        use lib_consensus::ChainMergeResult;
+                        use lib_blockchain::ChainMergeResult;
                         match merge_result {
                             ChainMergeResult::ImportedAdopted | ChainMergeResult::Merged => {
                                 info!("✅ Block {} accepted into blockchain", height);

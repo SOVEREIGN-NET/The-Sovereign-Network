@@ -283,7 +283,8 @@ fn test_fee_sink_receives_collected_fees() {
 
     // Verify fees collected matches the transfer fee
     assert_eq!(
-        outcome.fees_collected, transfer_fee,
+        outcome.fees_collected,
+        transfer_fee as u128,
         "Fees collected should match transfer fee"
     );
 }
@@ -355,7 +356,7 @@ fn test_fee_sink_balance_increases_deterministically() {
 
     let outcome1 = executor.apply_block(&block1).unwrap();
     assert_eq!(
-        outcome1.fees_collected, fee1,
+        outcome1.fees_collected, fee1 as u128,
         "Block 1 fees should be {}",
         fee1
     );
@@ -373,13 +374,13 @@ fn test_fee_sink_balance_increases_deterministically() {
 
     let outcome2 = executor.apply_block(&block2).unwrap();
     assert_eq!(
-        outcome2.fees_collected, fee2,
+        outcome2.fees_collected, fee2 as u128,
         "Block 2 fees should be {}",
         fee2
     );
 
     // Verify the fees are tracked correctly per block
-    let total_fees = fee1 + fee2;
+    let total_fees = (fee1 + fee2) as u128;
     assert_eq!(
         outcome1.fees_collected + outcome2.fees_collected,
         total_fees,
@@ -534,7 +535,7 @@ fn test_executor_outcome_reports_fee_routing() {
 
     // Verify the outcome correctly reports fees
     assert_eq!(
-        outcome.fees_collected, expected_fee,
+        outcome.fees_collected, expected_fee as u128,
         "Outcome should report correct fees"
     );
     assert_eq!(outcome.height, 2, "Height should be 2");

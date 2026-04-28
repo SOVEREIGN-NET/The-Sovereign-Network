@@ -105,29 +105,42 @@ pub fn build_placeholder_reward_statistics() -> RewardStatistics {
     }
 }
 
-/// Build a single placeholder reward round.
+/// Build a single placeholder reward round for CLI display.
+///
+/// CONS-103 changed lib-economy reward types to be keyed by `IdentityId` and
+/// to carry `u128` amounts (post-#2287 widening). The placeholder values
+/// below are scaled into SOV *atoms* via `lib_types::sov::atoms` so the CLI
+/// formatting prints sensible whole-SOV numbers — using bare integers here
+/// would print as `830 SOV` while real rounds carry `8.3e20`-class atoms,
+/// which Copilot flagged in the PR #2382 review as misleading.
 pub fn build_placeholder_reward_round(height: u64) -> RewardRound {
     let mut work_breakdown = HashMap::new();
-    work_breakdown.insert(UsefulWorkType::NetworkRouting.to_string(), 250);
-    work_breakdown.insert(UsefulWorkType::DataStorage.to_string(), 180);
-    work_breakdown.insert(UsefulWorkType::Validation.to_string(), 120);
+    work_breakdown.insert(UsefulWorkType::NetworkRouting, 250);
+    work_breakdown.insert(UsefulWorkType::DataStorage, 180);
+    work_breakdown.insert(UsefulWorkType::Validation, 120);
+
+    let placeholder_id = lib_crypto::Hash([0u8; 32]);
+    let base_reward = lib_types::sov::atoms(500);
+    let work_bonus = lib_types::sov::atoms(250);
+    let participation_bonus = lib_types::sov::atoms(80);
+    let total_reward = base_reward + work_bonus + participation_bonus;
 
     let mut validator_rewards = HashMap::new();
     validator_rewards.insert(
-        [0u8; 32],
+        placeholder_id.clone(),
         ValidatorReward {
-            validator: [0u8; 32],
-            base_reward: 500,
-            work_bonus: 250,
-            participation_bonus: 80,
-            total_reward: 830,
-            work_breakdown: work_breakdown.clone(),
+            validator: placeholder_id,
+            base_reward,
+            work_bonus,
+            participation_bonus,
+            total_reward,
+            work_breakdown,
         },
     );
 
     RewardRound {
         height,
-        total_rewards: 830,
+        total_rewards: total_reward,
         validator_rewards,
         timestamp: 1_700_000_000 + height * 300,
     }

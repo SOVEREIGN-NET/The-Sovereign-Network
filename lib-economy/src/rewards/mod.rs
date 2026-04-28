@@ -1,10 +1,12 @@
-//! Reward calculation system for economics
+//! Reward calculation system.
 //!
-//! This module provides reward calculation capabilities for the economics package
-//! without depending on lib-consensus to avoid circular dependencies
+//! Owns `RewardCalculator` (relocated from `lib-consensus/src/rewards/`
+//! in **CONS-103**) and the `ConsensusRewardAdapter` that implements
+//! `lib_consensus_core::ports::RewardCallback`. Depends on `lib-consensus-core`
+//! for the trait but never on `lib-consensus` itself — see **AD-003**.
 
 pub mod calculator;
 pub mod types;
 
-pub use calculator::*;
-pub use types::*;
+pub use calculator::{ConsensusRewardAdapter, RewardCalculator};
+pub use types::{RewardRound, RewardStatistics, UsefulWorkType, ValidatorReward};
