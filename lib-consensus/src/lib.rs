@@ -10,27 +10,23 @@
 compile_error!("dev-insecure must not be enabled in release builds");
 
 pub mod byzantine;
-pub mod chain_evaluation;
+// Back-compat shim — actual DAO implementation lives in lib_governance::dao
+// per CONS-106 / AD-003. The `pub mod dao` here re-exports the new home so
+// existing `lib_consensus::dao::*` paths keep working until CONS-508 deletes
+// lib-consensus entirely.
 pub mod dao;
-pub mod difficulty;
 pub mod engines;
 pub mod evidence;
 pub mod fault_model;
 pub mod invariants;
-pub mod mempool;
-pub mod mining;
 pub mod network;
-pub mod observer;
-pub mod proofs;
-pub mod rewards;
+pub mod proof_verify;
 pub mod slashing;
 pub mod testing;
 pub mod types;
 pub mod validators;
 
 // Re-export commonly used types
-pub use chain_evaluation::{ChainDecision, ChainEvaluator, ChainMergeResult, ChainSummary};
-pub use difficulty::{DifficultyConfig, DifficultyError, DifficultyManager, DifficultyResult};
 pub use engines::consensus_engine::ValidatorSetUpdate;
 pub use engines::ConsensusEngine;
 pub use evidence::{
@@ -39,13 +35,19 @@ pub use evidence::{
 pub use invariants::{
     check_invariant, enforce_consensus_invariants, ConsensusInvariant, ConsensusState,
 };
-pub use mempool::{Mempool, MempoolStats, MempoolTransaction};
-pub use mining::{should_mine_block, IdentityData};
 pub use network::{
     check_consensus_health, BincodeConsensusCodec, CodecError, ConsensusMessageCodec,
     ConsensusMetrics,
 };
-pub use proofs::*;
+// Consensus-mechanism proof types moved to lib-proofs (CONS-104 / AD-003).
+// Re-exported here for backward compatibility while in-flight migration completes.
+pub use lib_proofs::consensus::{ProofOfUsefulWork, StakeDelegation, StakeProof, WorkProof};
+// Storage attestation re-exports (these were never in lib-consensus's proofs/
+// module body — they were always lib-storage types re-exported through here).
+pub use lib_storage::proofs::{
+    ChallengeResult, ProofVerifier, RetrievalProof, StorageCapacityAttestation, StorageChallenge,
+    StorageProof, StorageProofProvider, StorageProofSummary, VerificationResult,
+};
 pub use slashing::{
     calculate_slash_amount, check_unjail_eligibility, check_unjail_eligibility_legacy,
     jail_end_block, liveness_jail_status, safety_ban_status, stake_after_unjail, BanReason,
@@ -59,14 +61,11 @@ pub use validators::{
     Validator, ValidatorManager, MAX_VALIDATORS, MAX_VALIDATORS_HARD_CAP, MIN_VALIDATORS,
 };
 
-#[cfg(feature = "dao")]
+// CONS-106 / AD-003: dao module moved to lib-governance. Re-exported here so
+// callers using `lib_consensus::Dao*` paths keep working during the rewrite.
 pub use dao::*;
 
-#[cfg(feature = "byzantine")]
 pub use byzantine::*;
-
-#[cfg(feature = "rewards")]
-pub use rewards::*;
 
 /// Result type alias for consensus operations
 pub type ConsensusResult<T> = Result<T, ConsensusError>;

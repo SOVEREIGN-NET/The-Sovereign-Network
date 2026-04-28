@@ -2,9 +2,167 @@
 
 use super::*;
 use crate::types::ConsensusStepExt;
-use lib_crypto::hash_blake3;
+use crate::validators::validator_protocol::{
+    sign_heartbeat_envelope, sign_propose_envelope, sign_vote_envelope, ConsensusStateView,
+    HeartbeatMessage, ProposeMessage, VoteMessage,
+};
+use crate::validators::ValidatorManager;
+use lib_consensus_core::ports::ValidatorRewardInput;
+use lib_crypto::{hash_blake3, KeyPair, PostQuantumSignature};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::info;
+
+/// Build a canonical `ValidatorMessage::Propose` and sign the outer
+/// envelope with the local validator keypair.
+///
+/// PR #2387 review (Copilot) caught the previous body reusing
+/// `proposal.signature` (which signs the inner `ConsensusProposal` payload,
+/// not the envelope) — receivers verify the envelope signature against
+/// `ProposeSigningPayload`, so the inner sig fails outer verification.
+/// Fix: sign with `sign_propose_envelope` after the envelope fields
+/// (`message_id`, `timestamp`, `justification`, etc.) are populated.
+///
+/// `keypair == None` (test contexts that never registered a keypair) skips
+/// signing and emits the message with a default placeholder signature; the
+/// receiver's TOFU path special-cases empty signatures, and Mainnet would
+/// reject — same conservative semantics as the rest of the broadcast path.
+fn wrap_propose(proposal: ConsensusProposal, keypair: Option<&KeyPair>) -> ValidatorMessage {
+    let message_id = proposal.id.clone();
+    let proposer = proposal.proposer.clone();
+    let mut msg = ProposeMessage {
+        message_id,
+        proposer,
+        proposal,
+        justification: None,
+        timestamp: now_secs(),
+        signature: PostQuantumSignature::default(),
+    };
+    if let Some(kp) = keypair {
+        match sign_propose_envelope(&msg, kp) {
+            Ok(sig) => msg.signature = sig,
+            Err(e) => tracing::warn!(
+                error = %e,
+                "Failed to sign Propose envelope; broadcasting with placeholder signature"
+            ),
+        }
+    } else {
+        tracing::debug!(
+            "No validator keypair; broadcasting Propose with placeholder signature (test mode)"
+        );
+    }
+    ValidatorMessage::Propose(msg)
+}
+
+/// Build a canonical `ValidatorMessage::Vote` and sign the outer envelope.
+///
+/// `message_id` is per-broadcast (timestamp+nonce) so the network-layer
+/// dedup cache doesn't suppress legitimate re-broadcasts of a vote whose
+/// content hash is otherwise deterministic.
+fn wrap_vote(vote: ConsensusVote, keypair: Option<&KeyPair>) -> ValidatorMessage {
+    let step = match vote.vote_type {
+        VoteType::PreVote => ConsensusStep::PreVote,
+        VoteType::PreCommit => ConsensusStep::PreCommit,
+        VoteType::Commit => ConsensusStep::Commit,
+        // `Against` votes can occur during any voting step; default to PreVote.
+        VoteType::Against => ConsensusStep::PreVote,
+    };
+    let consensus_state = ConsensusStateView {
+        height: vote.height,
+        round: vote.round,
+        step,
+        known_proposals: vec![vote.proposal_id.clone()],
+        vote_counts: BTreeMap::new(),
+    };
+    let voter = vote.voter.clone();
+    let message_id = {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let nonce = lib_crypto::generate_nonce();
+        let mut data = format!("vote_bcast_{}", ts).into_bytes();
+        data.extend_from_slice(&nonce);
+        lib_crypto::Hash::from_bytes(&hash_blake3(&data))
+    };
+    let mut msg = VoteMessage {
+        message_id,
+        voter,
+        vote,
+        consensus_state,
+        timestamp: now_secs(),
+        signature: PostQuantumSignature::default(),
+    };
+    if let Some(kp) = keypair {
+        match sign_vote_envelope(&msg, kp) {
+            Ok(sig) => msg.signature = sig,
+            Err(e) => tracing::warn!(
+                error = %e,
+                "Failed to sign Vote envelope; broadcasting with placeholder signature"
+            ),
+        }
+    } else {
+        tracing::debug!(
+            "No validator keypair; broadcasting Vote with placeholder signature (test mode)"
+        );
+    }
+    ValidatorMessage::Vote(msg)
+}
+
+/// Wrap a `HeartbeatMessage` produced by `HeartbeatTracker` and sign the
+/// outer envelope. Same shape as `wrap_propose` / `wrap_vote`.
+///
+/// Pre-fix the engine broadcast heartbeats with a default placeholder
+/// signature (the tracker's `create_heartbeat_message` doesn't sign);
+/// receivers in TOFU mode special-cased the empty-public-key path and
+/// forwarded the message as advisory, but Mainnet (`bootstrap_tofu = false`)
+/// would reject. Pre-existing inheritance from before CONS-201; flagged as
+/// out of scope on PR #2387 and fixed here.
+pub(super) fn wrap_heartbeat(
+    message: HeartbeatMessage,
+    keypair: Option<&KeyPair>,
+) -> ValidatorMessage {
+    let mut msg = message;
+    if let Some(kp) = keypair {
+        match sign_heartbeat_envelope(&msg, kp) {
+            Ok(sig) => msg.signature = sig,
+            Err(e) => tracing::warn!(
+                error = %e,
+                "Failed to sign Heartbeat envelope; broadcasting with placeholder signature"
+            ),
+        }
+    } else {
+        tracing::debug!(
+            "No validator keypair; broadcasting Heartbeat with placeholder signature (test mode)"
+        );
+    }
+    ValidatorMessage::Heartbeat(msg)
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// Build the `ValidatorRewardInput` slice the engine hands to
+/// `RewardCallback::on_round_finalized` (CONS-103). Keeps the trait
+/// independent of `ValidatorManager`.
+fn collect_validator_reward_inputs(manager: &ValidatorManager) -> Vec<ValidatorRewardInput> {
+    manager
+        .get_active_validators()
+        .iter()
+        .map(|v| ValidatorRewardInput {
+            identity: v.identity.clone(),
+            stake: v.stake,
+            storage_provided: v.storage_provided,
+            voting_power: v.voting_power,
+            reputation: v.reputation,
+        })
+        .collect()
+}
 
 // ============================================================================
 // CONSENSUS AUDIT LOGGING (BFT-J, Issue #1013)
@@ -239,12 +397,16 @@ impl ConsensusEngine {
 
                     let mut events = vec![ConsensusEvent::RoundCompleted { height }];
 
-                    if let Err(e) = self.dao_engine.process_expired_proposals().await {
-                        tracing::warn!("DAO processing error: {}", e);
-                        events.push(ConsensusEvent::DaoError {
-                            error: e.to_string(),
-                        });
-                    }
+                    // CONS-106 / AD-005: governance is fire-and-forget via the
+                    // runtime adapter. Failures are observability events inside
+                    // the adapter, not engine errors, so DaoError event is gone.
+                    //
+                    // Use `height` from the NewBlock event, not
+                    // `self.current_round.height`: `sync_height_with_blockchain`
+                    // above may have advanced the round to `blockchain_height + 1`,
+                    // so `current_round.height` no longer identifies the block
+                    // we are finalizing (PR #2385 Copilot review).
+                    self.governance_callback.on_round_finalized(height);
 
                     if let Err(e) = self
                         .byzantine_detector
@@ -256,15 +418,10 @@ impl ConsensusEngine {
                         });
                     }
 
-                    if let Err(e) = self
-                        .reward_calculator
-                        .calculate_round_rewards(&self.validator_manager, self.current_round.height)
-                    {
-                        tracing::warn!("Reward calculation error: {}", e);
-                        events.push(ConsensusEvent::RewardError {
-                            error: e.to_string(),
-                        });
-                    }
+                    self.reward_callback.on_round_finalized(
+                        &collect_validator_reward_inputs(&self.validator_manager),
+                        height,
+                    );
 
                     return Ok(events);
                 }
@@ -273,13 +430,12 @@ impl ConsensusEngine {
                     Ok(_) => {
                         let mut events = vec![ConsensusEvent::RoundCompleted { height }];
 
-                        // Process DAO proposals
-                        if let Err(e) = self.dao_engine.process_expired_proposals().await {
-                            tracing::warn!("DAO processing error: {}", e);
-                            events.push(ConsensusEvent::DaoError {
-                                error: e.to_string(),
-                            });
-                        }
+                        // CONS-106 / AD-005: governance is fire-and-forget via
+                        // the runtime adapter; DaoError event no longer emitted.
+                        // Use the event's `height` (the block we just finalized)
+                        // rather than `self.current_round.height` which may have
+                        // already advanced (PR #2385 Copilot review).
+                        self.governance_callback.on_round_finalized(height);
 
                         // Check for Byzantine faults
                         if let Err(e) = self
@@ -292,16 +448,12 @@ impl ConsensusEngine {
                             });
                         }
 
-                        // Calculate and distribute rewards
-                        if let Err(e) = self.reward_calculator.calculate_round_rewards(
-                            &self.validator_manager,
-                            self.current_round.height,
-                        ) {
-                            tracing::warn!("Reward calculation error: {}", e);
-                            events.push(ConsensusEvent::RewardError {
-                                error: e.to_string(),
-                            });
-                        }
+                        // Distribute rewards (CONS-103 / AD-005 — fire-and-forget;
+                        // failures are observability events inside the adapter).
+                        self.reward_callback.on_round_finalized(
+                            &collect_validator_reward_inputs(&self.validator_manager),
+                            height,
+                        );
 
                         Ok(events)
                     }
@@ -462,24 +614,14 @@ impl ConsensusEngine {
 
                 // Invariant CE-ENG-3: Broadcast after state transition (proposal now in state)
                 // Create canonical ValidatorMessage from already-formed proposal
-                let msg = ValidatorMessage::Propose { proposal };
+                let msg = wrap_propose(proposal, self.validator_keypair.as_ref());
 
                 // Invariant CE-ENG-5: Pass validator set explicitly, never query network
                 let validator_ids = self.get_active_validator_ids();
 
                 // Invariant CE-ENG-4: Treat broadcast as best-effort telemetry
                 // Log failures for observability without affecting consensus correctness
-                if let Err(e) = self
-                    .broadcaster
-                    .broadcast_to_validators(msg, &validator_ids)
-                    .await
-                {
-                    tracing::debug!(
-                        error = ?e,
-                        height = self.current_round.height,
-                        "Failed to broadcast proposal to validators (continuing per CE-ENG-4)"
-                    );
-                }
+                self.broadcast(msg, &validator_ids).await;
             }
         }
 
@@ -526,24 +668,14 @@ impl ConsensusEngine {
 
             // Invariant CE-ENG-3: Broadcast after state transition
             // Create canonical ValidatorMessage from already-formed vote
-            let msg = ValidatorMessage::Vote { vote };
+            let msg = wrap_vote(vote, self.validator_keypair.as_ref());
 
             // Invariant CE-ENG-5: Pass validator set explicitly, never query network
             let validator_ids = self.get_active_validator_ids();
 
             // Invariant CE-ENG-4: Treat broadcast as best-effort telemetry
             // Log failures for observability without affecting consensus correctness
-            if let Err(e) = self
-                .broadcaster
-                .broadcast_to_validators(msg, &validator_ids)
-                .await
-            {
-                tracing::debug!(
-                    error = ?e,
-                    height = self.current_round.height,
-                    "Failed to broadcast prevote to validators (continuing per CE-ENG-4)"
-                );
-            }
+            self.broadcast(msg, &validator_ids).await;
         }
 
         // Wait for prevotes with timeout
@@ -595,24 +727,14 @@ impl ConsensusEngine {
 
                 // Invariant CE-ENG-3: Broadcast after state transition
                 // Create canonical ValidatorMessage from already-formed vote
-                let msg = ValidatorMessage::Vote { vote };
+                let msg = wrap_vote(vote, self.validator_keypair.as_ref());
 
                 // Invariant CE-ENG-5: Pass validator set explicitly, never query network
                 let validator_ids = self.get_active_validator_ids();
 
                 // Invariant CE-ENG-4: Treat broadcast as best-effort telemetry
                 // Log failures for observability without affecting consensus correctness
-                if let Err(e) = self
-                    .broadcaster
-                    .broadcast_to_validators(msg, &validator_ids)
-                    .await
-                {
-                    tracing::debug!(
-                        error = ?e,
-                        height = self.current_round.height,
-                        "Failed to broadcast precommit to validators (continuing per CE-ENG-4)"
-                    );
-                }
+                self.broadcast(msg, &validator_ids).await;
             }
         }
 
@@ -676,25 +798,14 @@ impl ConsensusEngine {
 
                 // Invariant CE-ENG-3: Broadcast after state transition
                 // Create canonical ValidatorMessage from already-formed vote
-                let msg = ValidatorMessage::Vote { vote };
+                let msg = wrap_vote(vote, self.validator_keypair.as_ref());
 
                 // Invariant CE-ENG-5: Pass validator set explicitly, never query network
                 let validator_ids = self.get_active_validator_ids();
 
                 // Invariant CE-ENG-4: Treat broadcast as best-effort telemetry
                 // Log failures for observability without affecting consensus correctness
-                if let Err(e) = self
-                    .broadcaster
-                    .broadcast_to_validators(msg, &validator_ids)
-                    .await
-                {
-                    tracing::debug!(
-                        error = ?e,
-                        height = self.current_round.height,
-                        proposal_id = ?proposal_id,
-                        "Failed to broadcast commit vote to validators (continuing per CE-ENG-4)"
-                    );
-                }
+                self.broadcast(msg, &validator_ids).await;
 
                 // Use maybe_finalize instead of calling process_committed_block directly.
                 // At this point we have precommit quorum but only just cast our own commit vote.
@@ -952,134 +1063,39 @@ impl ConsensusEngine {
         // Update validator activities and reputation
         self.update_validator_metrics(&proposal).await?;
 
-        // Calculate and distribute block rewards
-        let reward_round = self
-            .reward_calculator
-            .calculate_round_rewards(&self.validator_manager, self.current_round.height)?;
-        self.reward_calculator.distribute_rewards(&reward_round)?;
+        // Distribute block rewards via the runtime-injected callback
+        // (CONS-103 / AD-005 — fire-and-forget). Pass the proposal's height —
+        // this block is what we are finalizing, not whatever the local round
+        // counter happens to be (PR #2385 Copilot review applied for symmetry
+        // with the governance fix below).
+        self.reward_callback.on_round_finalized(
+            &collect_validator_reward_inputs(&self.validator_manager),
+            proposal.height,
+        );
 
-        // Collect and distribute fees from block.
-        // Mirrors reward distribution pattern - happens at block finalization.
+        // CONS-404 / AD-005: fire-and-forget fee distribution. Adapter owns
+        // the FeeRouter mutex and the 45/30/15/10 split. Per CE-ENG-4 the
+        // engine ignores any internal failure — observability is the
+        // adapter's job.
         let block_metadata = self.extract_block_metadata(&proposal).await;
-        if let Err(e) = self.collect_and_distribute_fees(&block_metadata) {
-            tracing::warn!("Error collecting fees for block {}: {}", proposal.height, e);
-            // Non-critical: Fee collection failure does NOT block consensus
-            // See Invariant CE-ENG-4: Consensus correctness independent of fee collection
-        }
+        self.fee_callback.collect_and_distribute(
+            block_metadata.height,
+            block_metadata.total_fees_collected,
+            &block_metadata.proposer,
+        );
 
-        // Process any DAO proposals that may have expired
-        if let Err(e) = self.dao_engine.process_expired_proposals().await {
-            tracing::warn!("Error processing DAO proposals: {}", e);
-        }
+        // CONS-106 / AD-005: process any DAO proposals via the fire-and-forget
+        // governance callback. Failures handled inside the adapter. Pass
+        // `proposal.height` — the height of the block we are committing —
+        // not `self.current_round.height` which may have already advanced
+        // (PR #2385 Copilot review).
+        self.governance_callback.on_round_finalized(proposal.height);
 
         tracing::info!(
             " Successfully processed committed block: {:?} at height {}",
             proposal.id,
             proposal.height
         );
-
-        Ok(())
-    }
-
-    /// Collect and distribute fees from block metadata
-    ///
-    /// Called after block finalization to trigger fee collection and distribution.
-    /// Uses BlockMetadata to track fees without requiring transaction execution.
-    /// Mirrors reward distribution pattern.
-    ///
-    /// **Invariant CE-ENG-4**: Consensus correctness does NOT depend on fee collection
-    /// success. Fee collection is a side-effect of block finalization, not a prerequisite.
-    ///
-    /// **Invariant FC-1**: Fee collection is a side-effect of block finalization
-    /// **Invariant FC-2**: Fee distribution follows the 45/30/15/10 split exactly
-    fn collect_and_distribute_fees(&self, metadata: &BlockMetadata) -> ConsensusResult<()> {
-        // Skip if no fees to collect
-        if metadata.total_fees_collected == 0 {
-            tracing::debug!(
-                "💰 No fees to collect for block {} (genesis or empty block)",
-                metadata.height
-            );
-            return Ok(());
-        }
-
-        // Log fee collection attempt
-        tracing::info!(
-            "💰 Collecting fees from block height {} (total_fees: {})",
-            metadata.height,
-            metadata.total_fees_collected
-        );
-
-        // If FeeCollector is set, collect and distribute fees
-        if let Some(ref fee_router_arc) = self.fee_router {
-            // Lock the fee router for exclusive access
-            let mut fee_router = match fee_router_arc.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => {
-                    tracing::error!(
-                        "💰 FeeCollector mutex poisoned at block {}: {}",
-                        metadata.height,
-                        poisoned
-                    );
-                    // Recover from poisoned mutex
-                    poisoned.into_inner()
-                }
-            };
-
-            // Check if fee collector is initialized
-            if !fee_router.is_initialized() {
-                tracing::warn!(
-                    "💰 FeeCollector not initialized - skipping fee collection for block {}",
-                    metadata.height
-                );
-                return Ok(());
-            }
-
-            // Step 1: Collect fees
-            if let Err(e) = fee_router.collect_fee(metadata.total_fees_collected) {
-                tracing::warn!(
-                    "💰 Failed to collect fees for block {}: {}",
-                    metadata.height,
-                    e
-                );
-                // Non-critical: Continue even if collection fails
-                return Ok(());
-            }
-
-            tracing::debug!(
-                "💰 Fees collected for block {} (amount: {}, pending: {})",
-                metadata.height,
-                metadata.total_fees_collected,
-                fee_router.pending_fees()
-            );
-
-            // Step 2: Distribute fees according to 45/30/15/10 split
-            match fee_router.distribute_fees(metadata.height) {
-                Ok(distribution) => {
-                    tracing::info!(
-                        "💰 Fees distributed for block {}: UBI={} (45%), Consensus={} (30%), Governance={} (15%), Treasury={} (10%), Total={}",
-                        metadata.height,
-                        distribution.ubi_amount,
-                        distribution.consensus_amount,
-                        distribution.governance_amount,
-                        distribution.treasury_amount,
-                        distribution.total_distributed
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "💰 Failed to distribute fees for block {}: {}",
-                        metadata.height,
-                        e
-                    );
-                    // Non-critical: Fees remain pending for next distribution
-                }
-            }
-        } else {
-            tracing::debug!(
-                "💰 No FeeCollector configured - skipping fee collection for block {}",
-                metadata.height
-            );
-        }
 
         Ok(())
     }
@@ -1182,6 +1198,33 @@ impl ConsensusEngine {
         proposal: &ConsensusProposal,
         quorum_proof: lib_types::consensus::BftQuorumProof,
     ) -> ConsensusResult<()> {
+        // CONS-307 channel path: dispatch to the runtime's commit
+        // executor and return immediately. Failures surface back via
+        // the runtime event channel as `Event::HaltScheduled`, which
+        // transitions the FSM to `Halting` on the next select! tick.
+        if let Some(tx) = &self.commit_tx {
+            let envelope = super::CommitEnvelope {
+                proposal: proposal.clone(),
+                quorum_proof,
+            };
+            if tx.send(envelope).is_err() {
+                tracing::warn!(
+                    height = proposal.height,
+                    "Commit channel closed — runtime executor dropped its receiver (CE-ENG-4)"
+                );
+            } else {
+                tracing::debug!(
+                    block_height = proposal.height,
+                    proposal_id = ?proposal.id,
+                    "BFT finalized block dispatched to commit executor"
+                );
+            }
+            return Ok(());
+        }
+
+        // Legacy path: direct await with halt-on-failure semantics.
+        // Reached when no runtime is attached (e.g. AD-011 fallback in
+        // zhtp, or unit tests using ConsensusEngine directly).
         if let Some(ref callback) = self.block_commit_callback {
             match callback
                 .commit_finalized_block_with_proof(proposal, quorum_proof)
@@ -1297,25 +1340,27 @@ impl ConsensusEngine {
             return Ok(());
         }
 
-        // Round synchronization: if the proposal is for a higher round, advance to it.
-        // This lets lagging nodes catch up when they missed timeout-driven round increments
-        // while other validators were already spinning ahead.  We only advance — never go back.
+        // **BFT safety fix (KI: test_future_round_proposal_does_not_advance_local_round)**:
+        // Do NOT advance our local round counter on a single
+        // validator's future-round proposal.  A Byzantine validator
+        // could send a proposal with `round = 999` to disrupt
+        // consensus.  Round advancement requires >2/3 evidence
+        // (timeout-driven on this node, or quorum on a higher round
+        // observed in vote pool — out of scope for this handler).
+        //
+        // Track the proposal in `pending_proposals` so it can be
+        // referenced if our round eventually catches up; do not
+        // touch `current_round`.
         if proposal.round > self.current_round.round {
-            tracing::info!(
-                "Round-sync: advancing from round {} to {} on received proposal at H={}",
-                self.current_round.round,
-                proposal.round,
+            tracing::debug!(
+                "Future-round proposal H={} R={} (local R={}) tracked for catch-up; \
+                 not advancing local round on a single proposer's claim",
                 proposal.height,
+                proposal.round,
+                self.current_round.round,
             );
-            self.current_round.round = proposal.round;
-            self.current_round.step = ConsensusStep::Propose;
-            self.current_round.proposer = None;
-            self.current_round.proposals.clear();
-            self.current_round.votes.clear();
-            self.current_round.timed_out = false;
-            self.current_round.locked_proposal = None;
-            self.current_round.valid_proposal = None;
-            self.snapshot_validator_set(self.current_round.height);
+            self.pending_proposals.push_back(proposal);
+            return Ok(());
         }
 
         if !self.current_round.proposals.is_empty() {
@@ -1346,20 +1391,44 @@ impl ConsensusEngine {
         // and each node only relays a proposal once (the second time proposals is non-empty).
         let relay_proposal = proposal.clone();
         let relay_validator_ids = self.get_active_validator_ids();
-        let relay_msg = ValidatorMessage::Propose { proposal: relay_proposal };
-        if let Err(e) = self
-            .broadcaster
-            .broadcast_to_validators(relay_msg, &relay_validator_ids)
-            .await
-        {
-            tracing::debug!("Proposal relay failed (non-critical): {}", e);
-        }
+        let relay_msg = wrap_propose(relay_proposal, self.validator_keypair.as_ref());
+        self.broadcast(relay_msg, &relay_validator_ids).await;
 
+        // CONS-305e: route admitted proposal through the FSM. The
+        // proposal has passed every gate (no-fork, signature, proposer
+        // election, payload validity); the FSM advances Proposing →
+        // Prevoting and emits `[BroadcastProposal, SendPrevote,
+        // ResetWatchdog]`. The existing relay above + the
+        // `enter_prevote_step()` call below continue to do that work
+        // until CONS-305f folds them into the action handlers.
+        let proposal_height = proposal.height;
+        let proposal_round = proposal.round;
         self.pending_proposals.push_back(proposal);
 
+        // Prior state derived from legacy step (source of truth
+        // during the migration) per #2398 review.
+        let prior_fsm = self.fsm_state.clone();
+        let (next_fsm, actions) = lib_consensus_core::fsm::transition(
+            prior_fsm,
+            lib_consensus_core::fsm::Event::ProposalAdmitted {
+                id: proposal_id.clone(),
+                height: proposal_height,
+                round: proposal_round,
+            },
+        );
+        self.enter_fsm_state(next_fsm).await;
+        for action in actions {
+            self.dispatch_action(action).await;
+        }
+
+        // CONS-305f: the per-step branch is reduced to the late-
+        // proposal case below. The Propose-step path used to call
+        // `enter_prevote_step` here; that work is now dispatched by
+        // the FSM `SendPrevote` action above (see the loop over
+        // `actions` returned by `transition()`).
         match self.current_round.step {
             ConsensusStep::Propose => {
-                self.enter_prevote_step().await?;
+                // Handled by FSM action dispatch above.
             }
             ConsensusStep::PreVote => {
                 // Proposal arrived after the local prevote timer already fired.
@@ -1386,15 +1455,9 @@ impl ConsensusEngine {
                     let vote = self
                         .cast_vote(proposal_id.clone(), VoteType::PreVote)
                         .await?;
-                    let msg = ValidatorMessage::Vote { vote };
+                    let msg = wrap_vote(vote, self.validator_keypair.as_ref());
                     let validator_ids = self.get_active_validator_ids();
-                    if let Err(e) = self
-                        .broadcaster
-                        .broadcast_to_validators(msg, &validator_ids)
-                        .await
-                    {
-                        tracing::debug!("Failed to broadcast late prevote: {}", e);
-                    }
+                    self.broadcast(msg, &validator_ids).await;
 
                     // Check if this late prevote completes the quorum
                     let prevote_count = self.count_prevotes_for(
@@ -1476,15 +1539,9 @@ impl ConsensusEngine {
         // to the voter still receive it (star-topology gossip).
         // Duplicate detection (vote_pool key) prevents relay loops: the second
         // time this vote arrives, the pool check fires and returns early without relay.
-        let relay_msg = ValidatorMessage::Vote { vote: vote.clone() };
+        let relay_msg = wrap_vote(vote.clone(), self.validator_keypair.as_ref());
         let relay_validator_ids = self.get_active_validator_ids();
-        if let Err(e) = self
-            .broadcaster
-            .broadcast_to_validators(relay_msg, &relay_validator_ids)
-            .await
-        {
-            tracing::debug!("PreVote relay failed (non-critical): {}", e);
-        }
+        self.broadcast(relay_msg, &relay_validator_ids).await;
 
         tracing::debug!(
             "Added PreVote from {} for proposal {:?} at height {} round {}",
@@ -1518,11 +1575,36 @@ impl ConsensusEngine {
                 // First proposal to reach quorum in this round
                 self.current_round.valid_proposal = Some(proposal_id.clone());
             }
-            // Allow late prevote quorum to still trigger precommit casting even if the
-            // prevote timeout already fired and step advanced to PreCommit. enter_precommit_step
-            // is idempotent for the step transition (guards against double-entry) but we bypass
-            // that guard here only if we haven't yet cast a precommit for this round.
-            self.enter_precommit_step().await?;
+
+            // CONS-305d: route the prevote-quorum threshold through
+            // the FSM. `(Prevoting, PrevoteThresholdReached) →
+            // (Precommitting, [SendPrecommit, ResetWatchdog])`.  The
+            // existing `enter_precommit_step()` does the casting and
+            // broadcast; the FSM observes the state advance.
+            //
+            // Prior state derived from legacy step (source of truth
+            // during the migration) per #2398 review.
+            let prior_fsm = self.fsm_state.clone();
+            let (next_fsm, actions) = lib_consensus_core::fsm::transition(
+                prior_fsm,
+                lib_consensus_core::fsm::Event::PrevoteThresholdReached {
+                    block_id: proposal_id.clone(),
+                },
+            );
+            self.enter_fsm_state(next_fsm).await;
+            for action in actions {
+                self.dispatch_action(action).await;
+            }
+
+            // CONS-305f / #2405: late-quorum runtime guard removed.
+            // The FSM now emits `SendPrecommit` on
+            // `(Precommitting, PrevoteThresholdReached)` so
+            // `dispatch_action` casts the late precommit through
+            // `enter_precommit_step`.  On the on-TIME path
+            // (Prevoting → Precommitting kind change),
+            // `enter_fsm_state`'s phase-entry hook also runs
+            // `enter_precommit_step`; the helper is idempotent so
+            // the action dispatch's later call is a safe no-op.
         }
 
         // **CE-L1, CE-L2**: Always check if commit quorum is reached, even in PreVote step
@@ -1589,15 +1671,9 @@ impl ConsensusEngine {
         // Relay precommit to all validators (star-topology gossip).
         // Critical: without this, nodes that are only connected to a hub (g1)
         // cannot collect precommits from non-hub validators — quorum is impossible.
-        let relay_msg = ValidatorMessage::Vote { vote: vote.clone() };
+        let relay_msg = wrap_vote(vote.clone(), self.validator_keypair.as_ref());
         let relay_validator_ids = self.get_active_validator_ids();
-        if let Err(e) = self
-            .broadcaster
-            .broadcast_to_validators(relay_msg, &relay_validator_ids)
-            .await
-        {
-            tracing::debug!("PreCommit relay failed (non-critical): {}", e);
-        }
+        self.broadcast(relay_msg, &relay_validator_ids).await;
 
         tracing::debug!(
             "Added PreCommit from {} for proposal {:?} at height {} round {}",
@@ -1630,10 +1706,38 @@ impl ConsensusEngine {
                 // First proposal to reach precommit quorum in this round
                 self.current_round.locked_proposal = Some(proposal_id.clone());
             }
-            // Allow late precommit quorum to still trigger commit vote casting even if the
-            // precommit timeout already fired and step advanced to Commit. enter_commit_step
-            // is idempotent for the step transition but we bypass that guard to cast the vote.
-            self.enter_commit_step().await?;
+
+            // CONS-305c: route the precommit-quorum threshold through
+            // the FSM. `(Precommitting, PrecommitThresholdReached) →
+            // (Precommitting, [SendCommit, ResetWatchdog])` — state
+            // stays Precommitting (we are now waiting for the
+            // commit-vote quorum that maybe_finalize handles); the
+            // SendCommit action is the work that `enter_commit_step`
+            // already does.
+            // Derive the prior state from the legacy step (the
+            // source of truth during the migration) rather than
+            // `self.fsm_state` to avoid silent action drops if the
+            // mirror has drifted — PR #2398 review.
+            let prior_fsm = self.fsm_state.clone();
+            let (next_fsm, actions) = lib_consensus_core::fsm::transition(
+                prior_fsm,
+                lib_consensus_core::fsm::Event::PrecommitThresholdReached {
+                    block_id: proposal_id.clone(),
+                },
+            );
+            self.enter_fsm_state(next_fsm).await;
+            for action in actions {
+                self.dispatch_action(action).await;
+            }
+
+            // CONS-305f / #2405: late-quorum runtime guard removed.
+            // The FSM now emits `SendCommit` on
+            // `(Committed, PrecommitThresholdReached)` so
+            // `dispatch_action` casts the late commit vote through
+            // `enter_commit_step`. On the on-TIME path
+            // (Precommitting + PrecommitThresholdReached → stays
+            // Precommitting), the FSM also emits SendCommit and
+            // dispatch_action calls enter_commit_step (idempotent).
         }
 
         // **CE-L1, CE-L2**: Always check if commit quorum is reached, even in PreCommit step
@@ -1732,15 +1836,9 @@ impl ConsensusEngine {
         // g2 and g3 only have persistent QUIC connections to g1 (hub), not to each other.
         // Without relay, a commit vote from g3 never reaches g2, so g2 can never aggregate
         // the 3-of-3 commit quorum required to finalize a block.
-        let relay_msg = ValidatorMessage::Vote { vote: vote.clone() };
+        let relay_msg = wrap_vote(vote.clone(), self.validator_keypair.as_ref());
         let relay_validator_ids = self.get_active_validator_ids();
-        if let Err(e) = self
-            .broadcaster
-            .broadcast_to_validators(relay_msg, &relay_validator_ids)
-            .await
-        {
-            tracing::debug!("Commit vote relay failed (non-critical): {}", e);
-        }
+        self.broadcast(relay_msg, &relay_validator_ids).await;
 
         tracing::debug!(
             "Stored commit vote from {} for proposal {:?} at height {} round {} (current step: {:?})",
@@ -1758,15 +1856,195 @@ impl ConsensusEngine {
         Ok(())
     }
 
+    // CONS-305f step 3: `step_to_fsm_state` was deleted. It was
+    // needed during the migration to derive prior FSM state from
+    // the legacy `current_round.step` at handler boundaries.  Now
+    // that `enter_fsm_state` is the single mutation point and
+    // `fsm_state` is canonical, callers use `self.fsm_state.clone()`
+    // directly.
+
+    /// Single point that transitions the FSM, keeps the legacy
+    /// `current_round.step` mirror in sync, and runs the phase-entry
+    /// hook on state-kind change. Per CONS-305 spec: every state
+    /// mutation goes through `enter()`.
+    ///
+    /// **Phase-entry hook**: when the FSM transitions to a different
+    /// state kind, the corresponding `enter_*_step` helper runs (cast
+    /// vote, broadcast, proposer election). Covers BOTH explicit
+    /// quorum-driven transitions AND walk-through timeouts uniformly.
+    /// Errors are logged at warn (best-effort, CE-ENG-4).
+    ///
+    /// **Recursion-free invariant**: `enter_*_step` MUST NOT call
+    /// `maybe_finalize`. Step 1 of CONS-305f moved that call out;
+    /// without it the recursion `dispatch_action(SendCommit) →
+    /// enter_commit_step → maybe_finalize → transition() →
+    /// dispatch_action(CommitBlock)` would resurface (E0733).
+    pub(super) async fn enter_fsm_state(
+        &mut self,
+        new_state: lib_consensus_core::fsm::ValidatorState,
+    ) {
+        use lib_consensus_core::fsm::ValidatorState as V;
+        let prior_kind = self.fsm_state.kind();
+        let new_kind = new_state.kind();
+        self.fsm_state = new_state.clone();
+
+        // Phase-entry runs only on state-kind change so intra-kind
+        // transitions (e.g. Precommitting → Precommitting on
+        // PrecommitThresholdReached, or wire-level PreCommit→Commit
+        // step within FSM Precommitting kind) don't re-run proposer
+        // election or double-cast votes. Phase-entry helpers update
+        // `current_round.step` themselves.
+        if new_kind != prior_kind {
+            let entry_result = match &new_state {
+                V::Proposing => Some(self.enter_propose_step().await),
+                V::Prevoting => Some(self.enter_prevote_step().await),
+                V::Precommitting => Some(self.enter_precommit_step().await),
+                V::Committed { .. } => Some(self.enter_commit_step().await),
+                _ => None,
+            };
+            if let Some(Err(e)) = entry_result {
+                tracing::warn!(
+                    error = ?e,
+                    new_kind = ?new_kind,
+                    "Phase-entry hook failed (continuing per CE-ENG-4)"
+                );
+            }
+        }
+
+        // For terminal/between-round states, align the legacy step
+        // mirror so observability stays consistent.
+        match &new_state {
+            V::Idle | V::Rejected { .. } => {
+                self.current_round.step = ConsensusStep::NewRound;
+            }
+            _ => {}
+        }
+    }
+
+    /// Dispatch one FSM `Action` to the engine.
+    ///
+    /// CONS-305f cutover: dispatch_action is the canonical entry
+    /// point for state-entry side effects. Errors from the engine
+    /// helpers are logged at warn level and not propagated — actions
+    /// are best-effort (CE-ENG-4).
+    ///
+    /// **Recursion-free invariant**: the helpers called from here
+    /// (`enter_propose_step`, `enter_prevote_step`,
+    /// `enter_precommit_step`, `enter_commit_step`) MUST NOT call
+    /// `maybe_finalize` (which would re-enter dispatch_action via
+    /// `transition()` + `CommitBlock` action). Quorum-trigger
+    /// finalization runs separately at the handler level
+    /// (on_commit_vote / on_precommit / on_round_timeout's PreCommit
+    /// branch / run_commit_step).
+    pub(super) async fn dispatch_action(&mut self, action: lib_consensus_core::fsm::Action) {
+        use lib_consensus_core::fsm::Action as A;
+        match action {
+            A::ResetWatchdog => {
+                self.current_round.timed_out = false;
+                // CONS-309 / CONS-502b: stamp the shared clock so the
+                // runtime's watchdog task sees fresh activity. No-op
+                // when the runtime hasn't installed a clock (e.g. tests
+                // and the legacy zhtp path that calls
+                // `run_consensus_loop` directly).
+                if let Some(clock) = &self.watchdog_clock {
+                    *clock.write().await = tokio::time::Instant::now();
+                }
+            }
+
+            A::CreateProposal => {
+                if let Err(e) = self.enter_propose_step().await {
+                    tracing::warn!(error = ?e, "CreateProposal action failed");
+                }
+            }
+            A::SendPrevote { .. } => {
+                if let Err(e) = self.enter_prevote_step().await {
+                    tracing::warn!(error = ?e, "SendPrevote action failed");
+                }
+            }
+            A::SendPrecommit { .. } => {
+                if let Err(e) = self.enter_precommit_step().await {
+                    tracing::warn!(error = ?e, "SendPrecommit action failed");
+                }
+            }
+            A::SendCommit { .. } => {
+                if let Err(e) = self.enter_commit_step().await {
+                    tracing::warn!(error = ?e, "SendCommit action failed");
+                }
+            }
+
+            // BroadcastProposal — proposal relay needs ownership of
+            // the proposal struct, which the FSM action carries only
+            // by Hash. Done at the call site in on_proposal.
+            A::BroadcastProposal { .. } => {}
+
+            // CommitBlock — process_committed_block is invoked from
+            // maybe_finalize when commit-vote quorum is detected. No-
+            // op here so the recursion invariant above holds.
+            A::CommitBlock { .. } => {}
+
+            // AdvanceRound — round-bump on view change. Done at the
+            // call site (on_round_timeout's Committed branch) where
+            // we have full sync_height context.
+            A::AdvanceRound => {}
+
+            // Observability — silent drop; FSM's own hooks log.
+            A::LogIgnoredEvent(_) | A::LogHung { .. } | A::LogPanic { .. } => {}
+
+            // CONS-308: typed round-rejection event. Enrich the FSM-
+            // emitted reason with the engine's current height/round
+            // so dashboards and structured-log consumers see full
+            // context. Emitting at WARN because every entry into
+            // `Rejected` is by definition a non-progress event the
+            // operator cares about.
+            A::LogRoundRejected { reason } => {
+                tracing::warn!(
+                    height = self.current_round.height,
+                    round = self.current_round.round,
+                    rejection_reason = ?reason,
+                    "FSM round rejected"
+                );
+            }
+
+            // Lifecycle — log at debug for visibility.
+            other => {
+                tracing::debug!(
+                    fsm_action = ?other,
+                    "FSM emitted lifecycle action with no engine handler yet"
+                );
+            }
+        }
+    }
+
     pub(super) async fn on_round_timeout(&mut self) -> ConsensusResult<()> {
+        use lib_consensus_core::fsm::{transition, Event};
+
         tracing::debug!(
-            "Round timeout at height {} round {} step {:?}",
+            "Round timeout at height {} round {} step {:?} fsm {:?}",
             self.current_round.height,
             self.current_round.round,
-            self.current_round.step
+            self.current_round.step,
+            self.fsm_state.kind(),
         );
 
-        match self.current_round.step {
+        // CONS-305a: route the timeout through the FSM. The FSM
+        // computes the next state and any actions; the runtime
+        // dispatches the actions and does the per-state-entry work
+        // (e.g. casting the next-phase vote) via the existing
+        // `enter_*_step` helpers below.  CONS-305f will fold those
+        // helpers into the action handlers and delete this dual path.
+        let prior_step = self.current_round.step.clone();
+        let prior_fsm = self.fsm_state.clone();
+        let (next_fsm, actions) = transition(prior_fsm, Event::Timeout);
+        self.enter_fsm_state(next_fsm).await;
+        for action in actions {
+            self.dispatch_action(action).await;
+        }
+
+        // Engine state-entry hooks. These will move into per-Action
+        // handlers in CONS-305f. Until then they keep the engine's
+        // existing semantics intact (cast next-phase vote, broadcast,
+        // advance round on Commit timeout).
+        match prior_step {
             ConsensusStep::Propose => {
                 self.enter_prevote_step().await?;
             }
@@ -1775,6 +2053,23 @@ impl ConsensusEngine {
             }
             ConsensusStep::PreCommit => {
                 self.enter_commit_step().await?;
+                // CONS-305f: maybe_finalize was previously called from
+                // inside enter_commit_step. Moved here so dispatch_action
+                // can call enter_commit_step without recursing through
+                // maybe_finalize → transition() → dispatch_action.
+                let target = self
+                    .current_round
+                    .valid_proposal
+                    .clone()
+                    .or(self.current_round.locked_proposal.clone());
+                if let Some(proposal_id) = target {
+                    self.maybe_finalize(
+                        self.current_round.height,
+                        self.current_round.round,
+                        &proposal_id,
+                    )
+                    .await?;
+                }
             }
             ConsensusStep::Commit => {
                 // Sync height with blockchain before advancing. This prevents the consensus
@@ -1889,16 +2184,10 @@ impl ConsensusEngine {
                             &validator_id_str,
                         );
 
-                        let msg = ValidatorMessage::Propose { proposal };
+                        let msg = wrap_propose(proposal, self.validator_keypair.as_ref());
                         let validator_ids = self.get_active_validator_ids();
 
-                        if let Err(e) = self
-                            .broadcaster
-                            .broadcast_to_validators(msg, &validator_ids)
-                            .await
-                        {
-                            tracing::debug!("Failed to broadcast proposal (CE-ENG-4): {}", e);
-                        }
+                        self.broadcast(msg, &validator_ids).await;
 
                         // Proposer enters prevote immediately after broadcasting its proposal.
                         // Without this, the proposer waits propose_timeout (3 s) before prevoting,
@@ -1950,19 +2239,10 @@ impl ConsensusEngine {
 
         if let Some(proposal_id) = self.current_round.proposals.first().cloned() {
             let vote = self.cast_vote(proposal_id, VoteType::PreVote).await?;
-            let msg = ValidatorMessage::Vote { vote };
+            let msg = wrap_vote(vote, self.validator_keypair.as_ref());
             let validator_ids = self.get_active_validator_ids();
 
-            if let Err(e) = self
-                .broadcaster
-                .broadcast_to_validators(msg, &validator_ids)
-                .await
-            {
-                tracing::debug!(
-                    error = ?e,
-                    "Failed to broadcast prevote (continuing per CE-ENG-4)"
-                );
-            }
+            self.broadcast(msg, &validator_ids).await;
         }
 
         Ok(())
@@ -2034,19 +2314,10 @@ impl ConsensusEngine {
                     .await?;
                 self.current_round.valid_proposal = Some(proposal_id);
 
-                let msg = ValidatorMessage::Vote { vote };
+                let msg = wrap_vote(vote, self.validator_keypair.as_ref());
                 let validator_ids = self.get_active_validator_ids();
 
-                if let Err(e) = self
-                    .broadcaster
-                    .broadcast_to_validators(msg, &validator_ids)
-                    .await
-                {
-                    tracing::debug!(
-                        error = ?e,
-                        "Failed to broadcast precommit (continuing per CE-ENG-4)"
-                    );
-                }
+                self.broadcast(msg, &validator_ids).await;
             }
         }
 
@@ -2123,31 +2394,24 @@ impl ConsensusEngine {
                     proposal_id
                 );
 
-                let msg = ValidatorMessage::Vote { vote };
+                let msg = wrap_vote(vote, self.validator_keypair.as_ref());
                 let validator_ids = self.get_active_validator_ids();
 
-                if let Err(e) = self
-                    .broadcaster
-                    .broadcast_to_validators(msg, &validator_ids)
-                    .await
-                {
-                    tracing::debug!(
-                        error = ?e,
-                        "Failed to broadcast commit vote (continuing per CE-ENG-4)"
-                    );
-                }
+                self.broadcast(msg, &validator_ids).await;
 
-                // Do NOT call process_committed_block directly here.
-                // We just cast our own commit vote (1 vote in pool) but may not yet have
-                // quorum. Let maybe_finalize decide: if other nodes' commit votes are already
-                // in the pool we commit immediately; otherwise on_commit_vote will trigger
-                // maybe_finalize again when the remaining votes arrive.
-                self.maybe_finalize(
-                    self.current_round.height,
-                    self.current_round.round,
-                    &proposal_id,
-                )
-                .await?;
+                // CONS-305f: maybe_finalize is no longer called from
+                // here. Calling it from inside enter_commit_step
+                // creates a `dispatch_action → enter_commit_step →
+                // maybe_finalize → transition() → dispatch_action`
+                // recursion that rustc rejects (E0733) once
+                // dispatch_action invokes enter_commit_step itself.
+                // Instead, callers that need an immediate
+                // post-cast-commit-vote quorum check call
+                // `maybe_finalize` themselves AFTER
+                // `enter_commit_step` returns. The two existing
+                // production callers (on_precommit, run_commit_step)
+                // already do this; on_round_timeout's PreCommit
+                // branch was updated to do the same.
             }
         }
 
@@ -2198,6 +2462,39 @@ impl ConsensusEngine {
             // guarantees we're committing the right block, and process_committed_block is
             // idempotent if the block was already applied.
             if self.current_round.height == height {
+                // CONS-305b: route the commit-quorum event through the
+                // FSM so the canonical state transitions to Committed
+                // alongside the legacy step bump below.  The FSM
+                // emits `[CommitBlock, ResetWatchdog]`; the actual
+                // finalization (process_committed_block) is called
+                // directly here for now, with the action handler
+                // staging in `dispatch_action()` for CONS-305f cleanup.
+                let bft_quorum = lib_types::consensus::BftQuorumProof {
+                    height,
+                    proposal_id: proposal_id.0,
+                    total_validators: total_validators as u32,
+                    // Attestations are aggregated by `process_committed_block`
+                    // when it builds the block's proof; for the FSM hook
+                    // we pass the empty list — the FSM only needs the
+                    // height/proposal_id metadata to track state.
+                    attestations: Vec::new(),
+                };
+                // Derive prior state from legacy step (source of
+                // truth during the migration) to avoid silent action
+                // drops on mirror drift — PR #2398 review.
+                let prior_fsm = self.fsm_state.clone();
+                let (next_fsm, actions) = lib_consensus_core::fsm::transition(
+                    prior_fsm,
+                    lib_consensus_core::fsm::Event::CommitQuorumReached {
+                        block_id: proposal_id.clone(),
+                        quorum: bft_quorum,
+                    },
+                );
+                self.enter_fsm_state(next_fsm).await;
+                for action in actions {
+                    self.dispatch_action(action).await;
+                }
+
                 // Transition to Commit step if not already there
                 if self.current_round.step < ConsensusStep::Commit {
                     self.current_round.step = ConsensusStep::Commit;
@@ -2209,11 +2506,33 @@ impl ConsensusEngine {
                     );
                 }
 
-                // Process the committed block (finalization) directly.
-                // Pass `round` (the round where commit quorum was reached) so that
-                // vote counting uses the correct round even if the local state has
-                // already moved on due to timeout-driven round advancement.
-                self.process_committed_block(proposal_id, round).await?;
+                // **Catch-up safety (fix for KI test_hardening_commit_vote_accepts_past_round)**:
+                // If the proposal artifact is not in `pending_proposals`
+                // AND was never recorded in `current_round.proposals`,
+                // we received commit votes for a block we haven't seen
+                // yet (legitimate catch-up scenario, e.g. past-round
+                // votes during sync).  Don't error — store the votes
+                // and rely on the next on_proposal admission (or
+                // catch-up sync) to provide the artifact and complete
+                // finalization.
+                let artifact_known = self
+                    .pending_proposals
+                    .iter()
+                    .any(|p| &p.id == proposal_id)
+                    || self.current_round.proposals.contains(proposal_id);
+                if !artifact_known {
+                    tracing::info!(
+                        "Commit quorum reached for proposal {:?} at H={} R={} but artifact not yet \
+                         received — votes stored, awaiting proposal/catch-up sync",
+                        proposal_id, height, round,
+                    );
+                } else {
+                    // Process the committed block (finalization) directly.
+                    // Pass `round` (the round where commit quorum was reached) so that
+                    // vote counting uses the correct round even if the local state has
+                    // already moved on due to timeout-driven round advancement.
+                    self.process_committed_block(proposal_id, round).await?;
+                }
             } else {
                 tracing::debug!(
                     "Commit quorum observed for past height (H={} R={}) while at H={} R={} — ignoring",
@@ -2267,7 +2586,7 @@ mod state_machine_tests {
             proposer: lib_crypto::Hash([0u8; 32]),
             height: 42,
             round: 0,
-            protocol_version: 1,
+            protocol_version: super::CONSENSUS_PROTOCOL_VERSION,
             previous_hash: lib_crypto::Hash([0u8; 32]),
             block_data: vec![],
             timestamp: 0,

@@ -270,7 +270,7 @@ pub struct ApplyOutcome {
     /// Summary of state changes
     pub state_changes: StateChangesSummary,
     /// Total fees collected from transactions
-    pub fees_collected: u64,
+    pub fees_collected: u128,
 }
 
 /// Summary of state changes (counts only, not full diff)
@@ -638,7 +638,13 @@ impl BlockExecutor {
 
         let mutator = StateMutator::new(self.store.as_ref());
         let mut summary = StateChangesSummary::default();
-        let mut total_fees: u64 = 0;
+        let mut total_fees: u128 = 0;
+        let mut add_total_fees = |fee: u128| -> BlockApplyResult<()> {
+            total_fees = total_fees.checked_add(fee).ok_or_else(|| {
+                BlockApplyError::ValidationFailed("total_fees overflow while applying block".to_string())
+            })?;
+            Ok(())
+        };
 
         // Initialize block-level resource accumulator
         let mut accumulator = BlockAccumulator::new();
@@ -2993,8 +2999,8 @@ impl BlockExecutor {
                     tx,
                     &tx_hash,
                     block_height,
-                    self.fee_model.block_reward as u64,
-                    0, // No fees in legacy path
+                    self.fee_model.block_reward,
+                    0u128, // No fees in legacy path
                     fee_sink,
                 )?;
                 Ok(TxOutcome::Coinbase(outcome))
@@ -3403,7 +3409,7 @@ impl BlockExecutor {
         mutator: &StateMutator<'_>,
         tx: &crate::transaction::Transaction,
         block_height: u64,
-        fees_collected: u64,
+        fees_collected: u128,
     ) -> Result<CoinbaseOutcome, TxApplyError> {
         if tx.transaction_type != TransactionType::Coinbase {
             return Err(TxApplyError::InvalidType(
@@ -3419,7 +3425,7 @@ impl BlockExecutor {
             tx,
             &tx_hash,
             block_height,
-            self.fee_model.block_reward as u64,
+            self.fee_model.block_reward,
             fees_collected,
             fee_sink_address,
         )
