@@ -371,21 +371,12 @@ pub use crate::validators::ValidatorMessage;
 /// **Invariant CE-ENG-7**: Deterministic emission. Given the same inputs, ConsensusEngine must emit
 /// the same sequence of ValidatorMessages, regardless of network behavior. This is what makes
 /// simulation and replay possible.
-#[async_trait]
-pub trait MessageBroadcaster: Send + Sync {
-    /// Broadcast message to all validators in the given validator set
-    ///
-    /// Invariant CE-ENG-5: ConsensusEngine passes validator set explicitly.
-    /// It never queries network state to determine "who to send to".
-    ///
-    /// Invariant CE-ENG-4: Consensus correctness MUST NOT depend on broadcast success,
-    /// failure, or reachability. This is best-effort telemetry only.
-    async fn broadcast_to_validators(
-        &self,
-        message: ValidatorMessage,
-        validator_ids: &[IdentityId],
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
-}
+// CONS-401: `MessageBroadcaster` migrated to
+// `lib_consensus_core::ports::broadcaster`. Single source of truth
+// per the issue's acceptance criterion. Re-exported here so existing
+// `lib_consensus::types::MessageBroadcaster` import paths keep
+// working unchanged.
+pub use lib_consensus_core::ports::MessageBroadcaster;
 
 /// Blockchain provider for consensus block production
 ///

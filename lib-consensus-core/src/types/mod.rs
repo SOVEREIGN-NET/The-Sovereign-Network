@@ -14,8 +14,13 @@
 //!   they live next to the network codec until CONS-501b moves them
 //!   alongside `lib-consensus-net`'s remaining modules.
 
+pub mod messages;
 pub mod proposal;
 pub mod round;
 
+pub use messages::{
+    ConsensusStateView, HeartbeatMessage, Justification, NetworkSummary, ProposeMessage,
+    ValidatorMessage, VoteMessage,
+};
 pub use proposal::{ConsensusProof, ConsensusProposal, ConsensusVote};
 pub use round::ConsensusRound;
