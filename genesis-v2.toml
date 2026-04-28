@@ -1,0 +1,98 @@
+# Sovereign Network Genesis Configuration — v2 (CONS-604)
+#
+# v2 is the clean cutover for the consensus rewrite (epic CONS-001..606).
+# v1 testnet state is preserved at `archive/genesis-v1.toml`. Cutover
+# datetime, rationale, and recovery procedure: `docs/protocol/v2-cutover.md`.
+#
+# This file is the single source of truth for genesis state from v2 height 0.
+# Embedded at compile time via `include_bytes!` in
+# `lib-blockchain/src/genesis/mod.rs`.
+#
+# Public keys are empty until the mainnet key ceremony.
+# Tracked: CONS-604 (#2362), CONS-605 cutover runbook (#2363).
+#
+# === Wire-protocol invariant ===
+# CONSENSUS_PROTOCOL_VERSION must equal 2 from genesis-v2 height 0.
+# That constant lives at:
+#   lib-consensus/src/engines/consensus_engine/mod.rs::CONSENSUS_PROTOCOL_VERSION
+# Wire-format byte-stability is pinned in
+#   lib-consensus-net/src/codec/mod.rs::tests::byte_stability::*
+# Bumping the protocol version requires regenerating both fixtures.
+
+[chain]
+# v2 chain ID — distinct from v1's `1` so cross-version replays are
+# rejected. Operators MUST update node configs to match.
+chain_id     = 2
+name         = "Sovereign Network v2"
+# Placeholder — set to the actual cutover datetime at the key ceremony.
+# Parsed by `GenesisConfig::genesis_timestamp()` (RFC 3339).
+# When the cutover date is finalized, replace and rerun the embedded-bytes
+# regeneration step in CONS-605.
+genesis_time = "2026-05-01T00:00:00Z"
+
+[sov]
+# SOV is minted exclusively via UBI — no initial allocation at genesis.
+# v1 supply is NOT carried over: cutover is a clean slate per CONS-606.
+initial_supply = 0
+
+# [cbe_token] section intentionally absent — EPIC-001 Phase 1E.
+# CBE economic parameters live in
+#   lib-blockchain/src/contracts/bonding_curve/canonical.rs
+# CBE bonding curve config remains in [cbe_curve] below.
+
+[entity_registry]
+# Dilithium5 public keys (hex-encoded) for treasury addresses.
+# Set to "" until the v2 key ceremony. Issue #1880 (TSR).
+cbe_treasury_key       = ""
+nonprofit_treasury_key = ""
+
+[bootstrap_council]
+# Minimum number of council members required to authorize governance actions.
+threshold = 1
+# Bootstrap council for v2. Operators replace this list at the key
+# ceremony with the v2 council members' DIDs + wallets.
+# Same identities as v1 are acceptable if so chosen — the chain_id
+# bump alone is what makes v2 a separate chain.
+members = [
+    # Placeholder — replace with v2 council members at key ceremony.
+    # { did = "did:zhtp:<32-byte-hex>", wallet = "<32-byte-hex>" },
+]
+
+[bonding_curve]
+# CBE public sale bonding curve parameters (legacy in-memory curve).
+# Same parameters as v1 — economic policy is unchanged across the
+# cutover; only the consensus protocol version differs.
+reserve_ratio_ppm    = 200_000   # 20% reserve ratio
+graduation_threshold = 2_745_966  # USD — must match GRADUATION_THRESHOLD_USD
+
+[cbe_curve]
+# Canonical 18-decimal integer bonding curve (BFT-A / #1922). Unchanged
+# from v1. `p_start_0` must match `canonical.rs::P_START_0` exactly.
+p_start_0 = 313_345_700_000_000
+
+# === Initial validator set ===
+# Operator-supplied. Each entry registers a validator at v2 height 0
+# with the listed stake + storage. The set is the BFT committee for
+# the first round; CONS-305 round-robin proposer selection cycles
+# through it.
+#
+# Empty by default — populate at the v2 key ceremony before deploy.
+# Same identities as v1 are acceptable; entries must use Dilithium5
+# consensus keys (hex-encoded). The genesis loader rejects an empty
+# initial validator set if `chain.name` contains "Mainnet" — testnet
+# bootstraps with the bootstrap_council until validators register.
+#
+# [[allocations.identities]]
+# did = "did:zhtp:<32-byte-hex>"
+# consensus_key = "<2592-byte Dilithium5 hex>"
+# stake = 2_000
+# storage = 1_073_741_824   # 1 GiB
+# commission_rate = 1_000   # 10% basis points
+
+# === Migration policy ===
+# Per CONS-606 (#2364), v2 is a clean restart: no v1 state migrates.
+# Operators wishing to preserve v1 balances should run the v1 chain to
+# its halt height (per CONS-605 runbook), capture the snapshot via
+# `zhtp-cli genesis migrate-state`, and append `[[allocations.identities]]`
+# entries here at the key ceremony. The default genesis-v2.toml ships
+# empty.
