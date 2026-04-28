@@ -573,6 +573,26 @@ pub struct ConsensusEngine {
     /// Uses `tokio::time::Instant` so paused-clock unit tests in the
     /// runtime can advance virtual time and still observe correct ages.
     watchdog_clock: Option<Arc<tokio::sync::RwLock<tokio::time::Instant>>>,
+    /// CONS-306: outbound broadcast channel. When set, every engine
+    /// broadcast hop emits a `BroadcastEnvelope` here instead of
+    /// awaiting `broadcaster.broadcast_to_validators(...)` inline.
+    /// `None` keeps the legacy direct-await path. Per AD-006 the
+    /// goal is to remove `.await` on side effects from the engine —
+    /// when the runtime is enabled and this channel is wired, the
+    /// `.broadcaster` field becomes a fallback only (the runtime
+    /// holds the canonical impl on its executor task).
+    broadcast_tx: Option<tokio::sync::mpsc::UnboundedSender<BroadcastEnvelope>>,
+}
+
+/// CONS-306 outbound envelope: a `ValidatorMessage` plus the validator
+/// set to deliver it to. The engine constructs these in
+/// `enter_*_step`, `wrap_heartbeat`, etc. and emits them via
+/// `broadcast_tx`. The runtime's executor task drains the channel and
+/// calls the broadcaster `.await` exactly once per envelope.
+#[derive(Debug, Clone)]
+pub struct BroadcastEnvelope {
+    pub message: ValidatorMessage,
+    pub recipients: Vec<IdentityId>,
 }
 
 /// Validator set update message sent from the runtime to the consensus loop.
@@ -669,6 +689,7 @@ impl ConsensusEngine {
             bft_active_height: None,
             runtime_event_rx: None,
             watchdog_clock: None,
+            broadcast_tx: None,
         })
     }
 
@@ -699,6 +720,69 @@ impl ConsensusEngine {
         clock: Arc<tokio::sync::RwLock<tokio::time::Instant>>,
     ) {
         self.watchdog_clock = Some(clock);
+    }
+
+    /// CONS-306: install the runtime's broadcast queue. Once set, the
+    /// `broadcast()` helper (used by every engine hop that previously
+    /// awaited `broadcaster.broadcast_to_validators`) emits the
+    /// envelope here instead — a non-blocking channel send. The
+    /// runtime's executor task is the single owner of the actual
+    /// `.broadcaster.broadcast_to_validators(...).await` per AD-006.
+    pub fn set_broadcast_sender(
+        &mut self,
+        tx: tokio::sync::mpsc::UnboundedSender<BroadcastEnvelope>,
+    ) {
+        self.broadcast_tx = Some(tx);
+    }
+
+    /// Clone the broadcaster Arc so the runtime can hand it to its
+    /// executor task. Visible to runtime callers only — kept narrow
+    /// because no part of the engine should be reaching for the
+    /// broadcaster outside the broadcast hop.
+    pub fn broadcaster_arc(&self) -> Arc<dyn MessageBroadcaster> {
+        Arc::clone(&self.broadcaster)
+    }
+
+    /// CONS-306: single broadcast hop used by every `enter_*_step`,
+    /// heartbeat, and proposal-relay site in the engine. When
+    /// `broadcast_tx` is set (runtime path), this is a non-blocking
+    /// channel send and never `.await`s on the broadcaster. When the
+    /// channel is absent (legacy direct path), it falls back to the
+    /// pre-CONS-306 `.broadcaster.broadcast_to_validators(...).await`.
+    /// In both cases failures are logged and dropped per CE-ENG-4.
+    pub(super) async fn broadcast(
+        &self,
+        message: ValidatorMessage,
+        recipients: &[IdentityId],
+    ) {
+        if let Some(tx) = &self.broadcast_tx {
+            // Channel path: non-blocking. The cost is one Vec clone
+            // for `recipients`. SendError means the runtime executor
+            // dropped its receiver; per CE-ENG-4 we don't retry.
+            if tx
+                .send(BroadcastEnvelope {
+                    message,
+                    recipients: recipients.to_vec(),
+                })
+                .is_err()
+            {
+                tracing::debug!(
+                    "Broadcast channel closed — runtime executor exited; dropping envelope (CE-ENG-4)"
+                );
+            }
+            return;
+        }
+        // Legacy path: direct await. Only reached when no runtime is
+        // attached (e.g. the AD-011 fallback in zhtp). Once that
+        // collision is resolved and the runtime path is universal,
+        // this branch and the `.broadcaster` field can both go away.
+        if let Err(e) = self
+            .broadcaster
+            .broadcast_to_validators(message, recipients)
+            .await
+        {
+            tracing::debug!(error = ?e, "Broadcast failed (continuing per CE-ENG-4)");
+        }
     }
 
     /// Set the validator update receiver. The consensus loop processes updates

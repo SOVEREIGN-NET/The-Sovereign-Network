@@ -621,17 +621,7 @@ impl ConsensusEngine {
 
                 // Invariant CE-ENG-4: Treat broadcast as best-effort telemetry
                 // Log failures for observability without affecting consensus correctness
-                if let Err(e) = self
-                    .broadcaster
-                    .broadcast_to_validators(msg, &validator_ids)
-                    .await
-                {
-                    tracing::debug!(
-                        error = ?e,
-                        height = self.current_round.height,
-                        "Failed to broadcast proposal to validators (continuing per CE-ENG-4)"
-                    );
-                }
+                self.broadcast(msg, &validator_ids).await;
             }
         }
 
@@ -685,17 +675,7 @@ impl ConsensusEngine {
 
             // Invariant CE-ENG-4: Treat broadcast as best-effort telemetry
             // Log failures for observability without affecting consensus correctness
-            if let Err(e) = self
-                .broadcaster
-                .broadcast_to_validators(msg, &validator_ids)
-                .await
-            {
-                tracing::debug!(
-                    error = ?e,
-                    height = self.current_round.height,
-                    "Failed to broadcast prevote to validators (continuing per CE-ENG-4)"
-                );
-            }
+            self.broadcast(msg, &validator_ids).await;
         }
 
         // Wait for prevotes with timeout
@@ -754,17 +734,7 @@ impl ConsensusEngine {
 
                 // Invariant CE-ENG-4: Treat broadcast as best-effort telemetry
                 // Log failures for observability without affecting consensus correctness
-                if let Err(e) = self
-                    .broadcaster
-                    .broadcast_to_validators(msg, &validator_ids)
-                    .await
-                {
-                    tracing::debug!(
-                        error = ?e,
-                        height = self.current_round.height,
-                        "Failed to broadcast precommit to validators (continuing per CE-ENG-4)"
-                    );
-                }
+                self.broadcast(msg, &validator_ids).await;
             }
         }
 
@@ -835,18 +805,7 @@ impl ConsensusEngine {
 
                 // Invariant CE-ENG-4: Treat broadcast as best-effort telemetry
                 // Log failures for observability without affecting consensus correctness
-                if let Err(e) = self
-                    .broadcaster
-                    .broadcast_to_validators(msg, &validator_ids)
-                    .await
-                {
-                    tracing::debug!(
-                        error = ?e,
-                        height = self.current_round.height,
-                        proposal_id = ?proposal_id,
-                        "Failed to broadcast commit vote to validators (continuing per CE-ENG-4)"
-                    );
-                }
+                self.broadcast(msg, &validator_ids).await;
 
                 // Use maybe_finalize instead of calling process_committed_block directly.
                 // At this point we have precommit quorum but only just cast our own commit vote.
@@ -1406,13 +1365,7 @@ impl ConsensusEngine {
         let relay_proposal = proposal.clone();
         let relay_validator_ids = self.get_active_validator_ids();
         let relay_msg = wrap_propose(relay_proposal, self.validator_keypair.as_ref());
-        if let Err(e) = self
-            .broadcaster
-            .broadcast_to_validators(relay_msg, &relay_validator_ids)
-            .await
-        {
-            tracing::debug!("Proposal relay failed (non-critical): {}", e);
-        }
+        self.broadcast(relay_msg, &relay_validator_ids).await;
 
         // CONS-305e: route admitted proposal through the FSM. The
         // proposal has passed every gate (no-fork, signature, proposer
@@ -1477,13 +1430,7 @@ impl ConsensusEngine {
                         .await?;
                     let msg = wrap_vote(vote, self.validator_keypair.as_ref());
                     let validator_ids = self.get_active_validator_ids();
-                    if let Err(e) = self
-                        .broadcaster
-                        .broadcast_to_validators(msg, &validator_ids)
-                        .await
-                    {
-                        tracing::debug!("Failed to broadcast late prevote: {}", e);
-                    }
+                    self.broadcast(msg, &validator_ids).await;
 
                     // Check if this late prevote completes the quorum
                     let prevote_count = self.count_prevotes_for(
@@ -1567,13 +1514,7 @@ impl ConsensusEngine {
         // time this vote arrives, the pool check fires and returns early without relay.
         let relay_msg = wrap_vote(vote.clone(), self.validator_keypair.as_ref());
         let relay_validator_ids = self.get_active_validator_ids();
-        if let Err(e) = self
-            .broadcaster
-            .broadcast_to_validators(relay_msg, &relay_validator_ids)
-            .await
-        {
-            tracing::debug!("PreVote relay failed (non-critical): {}", e);
-        }
+        self.broadcast(relay_msg, &relay_validator_ids).await;
 
         tracing::debug!(
             "Added PreVote from {} for proposal {:?} at height {} round {}",
@@ -1705,13 +1646,7 @@ impl ConsensusEngine {
         // cannot collect precommits from non-hub validators — quorum is impossible.
         let relay_msg = wrap_vote(vote.clone(), self.validator_keypair.as_ref());
         let relay_validator_ids = self.get_active_validator_ids();
-        if let Err(e) = self
-            .broadcaster
-            .broadcast_to_validators(relay_msg, &relay_validator_ids)
-            .await
-        {
-            tracing::debug!("PreCommit relay failed (non-critical): {}", e);
-        }
+        self.broadcast(relay_msg, &relay_validator_ids).await;
 
         tracing::debug!(
             "Added PreCommit from {} for proposal {:?} at height {} round {}",
@@ -1876,13 +1811,7 @@ impl ConsensusEngine {
         // the 3-of-3 commit quorum required to finalize a block.
         let relay_msg = wrap_vote(vote.clone(), self.validator_keypair.as_ref());
         let relay_validator_ids = self.get_active_validator_ids();
-        if let Err(e) = self
-            .broadcaster
-            .broadcast_to_validators(relay_msg, &relay_validator_ids)
-            .await
-        {
-            tracing::debug!("Commit vote relay failed (non-critical): {}", e);
-        }
+        self.broadcast(relay_msg, &relay_validator_ids).await;
 
         tracing::debug!(
             "Stored commit vote from {} for proposal {:?} at height {} round {} (current step: {:?})",
@@ -2216,13 +2145,7 @@ impl ConsensusEngine {
                         let msg = wrap_propose(proposal, self.validator_keypair.as_ref());
                         let validator_ids = self.get_active_validator_ids();
 
-                        if let Err(e) = self
-                            .broadcaster
-                            .broadcast_to_validators(msg, &validator_ids)
-                            .await
-                        {
-                            tracing::debug!("Failed to broadcast proposal (CE-ENG-4): {}", e);
-                        }
+                        self.broadcast(msg, &validator_ids).await;
 
                         // Proposer enters prevote immediately after broadcasting its proposal.
                         // Without this, the proposer waits propose_timeout (3 s) before prevoting,
@@ -2277,16 +2200,7 @@ impl ConsensusEngine {
             let msg = wrap_vote(vote, self.validator_keypair.as_ref());
             let validator_ids = self.get_active_validator_ids();
 
-            if let Err(e) = self
-                .broadcaster
-                .broadcast_to_validators(msg, &validator_ids)
-                .await
-            {
-                tracing::debug!(
-                    error = ?e,
-                    "Failed to broadcast prevote (continuing per CE-ENG-4)"
-                );
-            }
+            self.broadcast(msg, &validator_ids).await;
         }
 
         Ok(())
@@ -2361,16 +2275,7 @@ impl ConsensusEngine {
                 let msg = wrap_vote(vote, self.validator_keypair.as_ref());
                 let validator_ids = self.get_active_validator_ids();
 
-                if let Err(e) = self
-                    .broadcaster
-                    .broadcast_to_validators(msg, &validator_ids)
-                    .await
-                {
-                    tracing::debug!(
-                        error = ?e,
-                        "Failed to broadcast precommit (continuing per CE-ENG-4)"
-                    );
-                }
+                self.broadcast(msg, &validator_ids).await;
             }
         }
 
@@ -2450,16 +2355,7 @@ impl ConsensusEngine {
                 let msg = wrap_vote(vote, self.validator_keypair.as_ref());
                 let validator_ids = self.get_active_validator_ids();
 
-                if let Err(e) = self
-                    .broadcaster
-                    .broadcast_to_validators(msg, &validator_ids)
-                    .await
-                {
-                    tracing::debug!(
-                        error = ?e,
-                        "Failed to broadcast commit vote (continuing per CE-ENG-4)"
-                    );
-                }
+                self.broadcast(msg, &validator_ids).await;
 
                 // CONS-305f: maybe_finalize is no longer called from
                 // here. Calling it from inside enter_commit_step

@@ -31,6 +31,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use lib_consensus::engines::consensus_engine::BroadcastEnvelope;
+use lib_consensus::types::MessageBroadcaster;
 use lib_consensus::{ConsensusEngine, ConsensusError};
 use lib_consensus_core::budget::{MAX_BROADCAST_BUDGET_MS, WATCHDOG_THRESHOLD_MULTIPLIER};
 use lib_consensus_core::fsm::Event;
@@ -75,8 +77,8 @@ fn transport_idle_ceiling_ms() -> u128 {
     u128::from(MAX_BROADCAST_BUDGET_MS) * 100
 }
 
-/// Owns the `ConsensusEngine` plus the watchdog task. CONS-502c will
-/// add the action executor; CONS-502d wires this from zhtp.
+/// Owns the `ConsensusEngine`, the watchdog task, and the broadcast
+/// executor task (CONS-306). CONS-502d wires this from zhtp.
 pub struct ConsensusRuntime {
     engine: ConsensusEngine,
     transport_name: String,
@@ -86,6 +88,14 @@ pub struct ConsensusRuntime {
     /// task; the matching sender is already installed on the engine via
     /// `set_runtime_event_receiver`.
     runtime_event_tx_for_watchdog: mpsc::UnboundedSender<Event>,
+    /// CONS-306: broadcast envelopes from the engine. The executor task
+    /// drains this and is the **only** caller of
+    /// `broadcaster.broadcast_to_validators(...).await` once
+    /// `set_broadcast_sender` has been wired on the engine.
+    broadcast_rx: Option<mpsc::UnboundedReceiver<BroadcastEnvelope>>,
+    /// CONS-306: the broadcaster Arc cloned out of the engine so the
+    /// executor task can call it without borrowing the engine.
+    broadcaster: Arc<dyn MessageBroadcaster>,
 }
 
 impl ConsensusRuntime {
@@ -130,12 +140,22 @@ impl ConsensusRuntime {
         engine.set_watchdog_clock(watchdog_clock.clone());
         engine.set_runtime_event_receiver(event_rx);
 
+        // CONS-306: wire the broadcast queue. After this point, every
+        // `enter_*_step` / heartbeat / proposal-relay call in the
+        // engine emits envelopes here instead of awaiting the
+        // broadcaster directly.
+        let (broadcast_tx, broadcast_rx) = mpsc::unbounded_channel::<BroadcastEnvelope>();
+        let broadcaster = engine.broadcaster_arc();
+        engine.set_broadcast_sender(broadcast_tx);
+
         Ok(Self {
             engine,
             transport_name: transport.name().to_string(),
             watchdog_threshold,
             watchdog_clock,
             runtime_event_tx_for_watchdog: event_tx,
+            broadcast_rx: Some(broadcast_rx),
+            broadcaster,
         })
     }
 
@@ -169,8 +189,9 @@ impl ConsensusRuntime {
         self.watchdog_threshold
     }
 
-    /// Drive the consensus loop with the watchdog spawned alongside.
-    /// On engine exit (graceful or error) the watchdog is aborted.
+    /// Drive the consensus loop with the watchdog and the broadcast
+    /// executor spawned alongside. On engine exit (graceful or error)
+    /// both background tasks are aborted.
     pub async fn run(mut self) -> Result<(), ConsensusError> {
         tracing::info!(
             "ConsensusRuntime starting (transport={}, watchdog_threshold={:?})",
@@ -183,10 +204,39 @@ impl ConsensusRuntime {
             self.runtime_event_tx_for_watchdog.clone(),
             WATCHDOG_POLL_INTERVAL,
         );
+        let broadcast_handle = self
+            .broadcast_rx
+            .take()
+            .map(|rx| spawn_broadcast_executor(rx, self.broadcaster.clone()));
         let result = self.engine.run_consensus_loop().await;
         watchdog_handle.abort();
+        if let Some(h) = broadcast_handle {
+            h.abort();
+        }
         result
     }
+}
+
+/// CONS-306 broadcast executor: drains envelopes from the engine and
+/// is the **only** caller of `broadcast_to_validators(...).await`.
+/// Per CE-ENG-4 each broadcast is best-effort — failures are logged
+/// and dropped, never retried (retry is the responsibility of the
+/// FSM via timeouts).
+pub(crate) fn spawn_broadcast_executor(
+    mut rx: mpsc::UnboundedReceiver<BroadcastEnvelope>,
+    broadcaster: Arc<dyn MessageBroadcaster>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        while let Some(env) = rx.recv().await {
+            if let Err(e) = broadcaster
+                .broadcast_to_validators(env.message, &env.recipients)
+                .await
+            {
+                tracing::debug!(error = ?e, "Broadcast executor: send failed (CE-ENG-4)");
+            }
+        }
+        tracing::debug!("Broadcast executor exited — engine sender dropped");
+    })
 }
 
 /// Derive the watchdog threshold from the engine's per-phase timeouts.
@@ -528,6 +578,48 @@ mod tests {
             .expect("rx closed");
         assert!(matches!(second, Event::WatchdogFired { .. }));
         handle.abort();
+    }
+
+    // ---------------- broadcast executor (CONS-306) ----------------
+
+    /// Counting fake broadcaster — records every envelope it sees.
+    /// Lives in this module so the executor's contract is tested
+    /// without dragging in an end-to-end engine fixture.
+    struct CountingBroadcaster {
+        calls: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    }
+
+    #[async_trait::async_trait]
+    impl lib_consensus::types::MessageBroadcaster for CountingBroadcaster {
+        async fn broadcast_to_validators(
+            &self,
+            _message: lib_consensus::types::ValidatorMessage,
+            _validator_ids: &[lib_identity::IdentityId],
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn broadcast_executor_exits_on_sender_drop() {
+        // Closing the sender side cleanly exits the executor, freeing
+        // its task slot so the runtime's `run()` can return. End-to-
+        // end "drains every envelope" coverage lands in the engine
+        // integration test added alongside the CONS-309 stuck-FSM
+        // assertion (separate PR — needs a real engine fixture).
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let broadcaster: Arc<dyn lib_consensus::types::MessageBroadcaster> =
+            Arc::new(CountingBroadcaster {
+                calls: calls.clone(),
+            });
+        let (tx, rx) = mpsc::unbounded_channel::<BroadcastEnvelope>();
+        let handle = spawn_broadcast_executor(rx, broadcaster);
+        drop(tx);
+        let res = tokio::time::timeout(Duration::from_secs(1), handle).await;
+        assert!(res.is_ok(), "executor did not exit on sender drop");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     #[tokio::test(start_paused = true)]
