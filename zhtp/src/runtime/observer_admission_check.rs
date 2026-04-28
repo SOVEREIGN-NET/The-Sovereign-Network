@@ -155,6 +155,46 @@ pub fn is_eligible_sync_source(
     evaluate_observer_admission_for_sync(store, peer_did, expected_network, now)
 }
 
+/// Trusted sync-source selector (observer-admission-7).
+///
+/// Filters a candidate set of `(peer_address, peer_did)` tuples down to
+/// only those eligible to act as sync sources, consulting both the
+/// operator-configured allowlist and the on-chain observer admission
+/// registry via [`is_eligible_sync_source`].
+///
+/// This is the canonical function the discovery / bootstrap layers
+/// should use when populating their sync-source pool. It centralizes
+/// the admission gate so the network layer never has to reason about
+/// admission policy directly (lib-network has no `lib-blockchain`
+/// dependency, so this orchestration lives in the runtime crate).
+///
+/// Returns the input tuples (in input order) that the gate accepted.
+pub fn select_trusted_sync_sources<I>(
+    peers: I,
+    trusted_sync_sources: &[crate::config::TrustedSyncSource],
+    store: &dyn BlockchainStore,
+    expected_network: &str,
+    now: u64,
+) -> Vec<(String, Option<String>)>
+where
+    I: IntoIterator<Item = (String, Option<String>)>,
+{
+    peers
+        .into_iter()
+        .filter(|(addr, did)| {
+            is_eligible_sync_source(
+                addr,
+                did.as_deref(),
+                trusted_sync_sources,
+                store,
+                expected_network,
+                now,
+            )
+            .is_eligible()
+        })
+        .collect()
+}
+
 // =============================================================================
 // TESTS
 // =============================================================================
@@ -512,5 +552,92 @@ mod tests {
             )) => {}
             other => panic!("expected proof-level-too-low denial, got {other:?}"),
         }
+    }
+
+    // ---- select_trusted_sync_sources (observer-admission-7) ----
+
+    #[test]
+    fn selector_returns_empty_for_no_candidates() {
+        let store = MockObserverStore::default();
+        let out = select_trusted_sync_sources(
+            std::iter::empty::<(String, Option<String>)>(),
+            &[],
+            &store,
+            "testnet",
+            100,
+        );
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn selector_keeps_only_admitted_peers_in_input_order() {
+        let store = MockObserverStore::default();
+        store.insert(record(
+            "did:zhtp:good",
+            "did:zhtp:sponsor",
+            ObserverAdmissionStatus::Active,
+            "testnet",
+        ));
+        let candidates = vec![
+            ("10.0.0.1:9334".to_string(), Some("did:zhtp:stranger".to_string())),
+            ("10.0.0.2:9334".to_string(), Some("did:zhtp:good".to_string())),
+            ("10.0.0.3:9334".to_string(), None),
+        ];
+        let out = select_trusted_sync_sources(candidates, &[], &store, "testnet", 100);
+        assert_eq!(
+            out,
+            vec![("10.0.0.2:9334".to_string(), Some("did:zhtp:good".to_string()))]
+        );
+    }
+
+    #[test]
+    fn selector_rejects_all_when_none_admitted_or_allowlisted() {
+        let store = MockObserverStore::default();
+        let candidates = vec![
+            ("10.0.0.1:9334".to_string(), Some("did:zhtp:a".to_string())),
+            ("10.0.0.2:9334".to_string(), Some("did:zhtp:b".to_string())),
+        ];
+        let out = select_trusted_sync_sources(candidates, &[], &store, "testnet", 100);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn selector_preserves_unknown_state_by_not_inventing_eligibility() {
+        // No records, no allowlist — selector must not fabricate eligibility.
+        // Even if the discovery layer's RemoteChainState is Unknown, this
+        // selector returns no candidates rather than guessing.
+        let store = MockObserverStore::default();
+        let candidates = vec![("10.0.0.1:9334".to_string(), None)];
+        let out = select_trusted_sync_sources(candidates, &[], &store, "testnet", 100);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn selector_honors_operator_allowlist_for_unadmitted_peer() {
+        let store = MockObserverStore::default();
+        let trusted = vec![crate::config::TrustedSyncSource {
+            address: "10.0.0.1:9334".to_string(),
+            peer_did: None,
+        }];
+        let candidates = vec![
+            ("10.0.0.1:9334".to_string(), None),
+            ("10.0.0.2:9334".to_string(), Some("did:zhtp:rando".to_string())),
+        ];
+        let out = select_trusted_sync_sources(candidates, &trusted, &store, "testnet", 100);
+        assert_eq!(out, vec![("10.0.0.1:9334".to_string(), None)]);
+    }
+
+    #[test]
+    fn selector_excludes_network_mismatched_admitted_peer() {
+        let store = MockObserverStore::default();
+        store.insert(record(
+            "did:zhtp:obs",
+            "did:zhtp:sponsor",
+            ObserverAdmissionStatus::Active,
+            "mainnet",
+        ));
+        let candidates = vec![("10.0.0.1:9334".to_string(), Some("did:zhtp:obs".to_string()))];
+        let out = select_trusted_sync_sources(candidates, &[], &store, "testnet", 100);
+        assert!(out.is_empty());
     }
 }
