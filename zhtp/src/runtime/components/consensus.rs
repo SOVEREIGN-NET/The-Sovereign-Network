@@ -450,157 +450,84 @@ impl lib_consensus::types::CatchUpSyncTrigger for CatchUpSyncChannel {
     }
 }
 
-/// Background task: receives catch-up triggers and downloads missing blocks.
-async fn run_catch_up_sync_task(
-    mut rx: tokio::sync::mpsc::Receiver<u64>,
+// CONS-506: the catch-up sync orchestrator (cooldowns, fork detection,
+// `WRONG_CHAIN_HALT_THRESHOLD` enforcement) moved to
+// `lib_consensus_runtime::catch_up_sync::run_catch_up_sync_task`.
+// zhtp now provides the network + state seams via two trait
+// implementations below (`ZhtpCatchUpTransport` +
+// `ZhtpBlockchainHeightProvider`) and spawns the runtime orchestrator
+// at the wire-up site.
+
+/// CONS-506: zhtp-side `CatchUpTransport` adapter. Wraps the existing
+/// `catchup_get_connected_peers` + `catchup_sync_from_peer` helpers.
+/// Validator-aware peer prioritization happens inside
+/// `connected_peers` so the orchestrator gets peers in the order it
+/// should try them.
+struct ZhtpCatchUpTransport {
     blockchain_slot: SharedBlockchainSlot,
-    sled_path: std::path::PathBuf,
     bft_active_height: Arc<std::sync::atomic::AtomicU64>,
-) {
-    const FAST_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(3);
-    const NORMAL_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(10);
-    const RETRY_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(5);
-    // Consecutive sync-round threshold for declaring an unrecoverable fork.
-    // Sourced from `lib_consensus_core::budget::WRONG_CHAIN_HALT_THRESHOLD`
-    // (CONS-310 / AD-011) — see that crate for the BFT-safety rationale.
+}
 
-    let mut next_allowed_at = tokio::time::Instant::now();
-    // Counts consecutive sync rounds in which ≥1 ahead peer returned a hash
-    // mismatch and zero blocks were successfully applied. Resets on any success.
-    let mut consecutive_wrong_chain_rounds: u32 = 0;
-
-    while let Some(_trigger_height) = rx.recv().await {
-        // Drain any duplicate triggers buffered while we were processing.
-        while rx.try_recv().is_ok() {}
-
-        // Adaptive rate-limit.
-        let now = tokio::time::Instant::now();
-        if now < next_allowed_at {
-            debug!(
-                "Catch-up sync cooldown ({:.1}s remaining), skipping",
-                (next_allowed_at - now).as_secs_f32()
-            );
-            continue;
-        }
-
-        // Read current local blockchain height (may have advanced since trigger).
-        let from_height = {
-            let slot = blockchain_slot.read().await;
-            match slot.as_ref() {
-                Some(bc_arc) => bc_arc.read().await.height,
-                None => {
-                    warn!("Catch-up sync: blockchain slot not populated yet");
-                    continue;
-                }
-            }
-        };
-
-        info!(
-            "🔄 Catch-up sync: local blockchain height={}, downloading newer blocks",
-            from_height
-        );
-
-        let peers = catchup_get_connected_peers().await;
-        if peers.is_empty() {
-            warn!("Catch-up sync: no connected peers available");
-            next_allowed_at = tokio::time::Instant::now() + RETRY_COOLDOWN;
-            continue;
-        }
-
-        let prioritized_peers = prioritize_catchup_peers(peers, &blockchain_slot).await;
-        let mut synced_blocks = 0usize;
-        // Peers that were strictly ahead of us but returned "Invalid previous block hash".
-        // `catchup_sync_from_peer` returns Ok(0) for peers that are NOT ahead, so any
-        // hash-mismatch Err came from a peer that was genuinely ahead — unlike the old
-        // `wrong_chain_peers == prioritized_peers.len()` check, this correctly excludes
-        // same-height peers (e.g. other nodes on the same stale fork) from the count.
-        let mut ahead_peers_rejecting: u32 = 0;
-        for peer in &prioritized_peers {
-            match catchup_sync_from_peer(
-                &peer.addr,
-                from_height,
-                &blockchain_slot,
-                &bft_active_height,
-            )
-            .await
-            {
-                Ok(0) => {
-                    debug!(
-                        "Catch-up sync: peer {} at same height ({})",
-                        peer.addr, from_height
-                    );
-                }
-                Ok(n) => {
-                    info!(
-                        "✅ Catch-up sync: applied {} block(s) from {} (local height now ~{})",
-                        n,
-                        peer.addr,
-                        from_height + n as u64
-                    );
-                    synced_blocks = n;
-                    break;
-                }
-                Err(e) => {
-                    warn!("Catch-up sync from {} failed: {}", peer.addr, e);
-                    if e.downcast_ref::<HashMismatchError>().is_some() {
-                        ahead_peers_rejecting += 1;
-                    }
-                }
-            }
-        }
-
-        if synced_blocks > 0 {
-            // Successful sync — reset the divergence counter.
-            consecutive_wrong_chain_rounds = 0;
-        } else if ahead_peers_rejecting > 0 && from_height > 0 {
-            // At least one ahead peer rejected our chain this round.
-            consecutive_wrong_chain_rounds += 1;
-            warn!(
-                "⚠️  Wrong-chain signal: {}/{} ahead peer(s) reject height {} \
-                ({}/{} consecutive round(s))",
-                ahead_peers_rejecting,
-                prioritized_peers.len(),
-                from_height + 1,
-                consecutive_wrong_chain_rounds,
-                WRONG_CHAIN_HALT_THRESHOLD,
-            );
-
-            if consecutive_wrong_chain_rounds >= WRONG_CHAIN_HALT_THRESHOLD {
-                // Unrecoverable fork: our local chain state diverged from every
-                // ahead peer we can reach. HALT consensus and alert the operator.
-                // DO NOT wipe sled — data destruction caused total chain loss in the
-                // Apr 2 2026 incident. The operator must manually investigate and
-                // decide whether to resync from a peer or restore from backup.
-                error!(
-                    "CHAIN FORK DETECTED at height {}: {} consecutive round(s) of hash \
-                    mismatch from {} ahead peer(s). Consensus HALTED. \
-                    Sled preserved at {:?} for operator investigation. \
-                    To recover: stop the node, rsync sled from an authoritative peer, restart.",
-                    from_height + 1,
-                    consecutive_wrong_chain_rounds,
-                    ahead_peers_rejecting,
-                    sled_path,
-                );
-                // Halt the sync loop — do not wipe, do not exit.
-                // The node stays running (API accessible) but stops syncing.
-                break;
-            }
-        } else {
-            // No hash mismatches this round — reset.
-            consecutive_wrong_chain_rounds = 0;
-        }
-
-        next_allowed_at = tokio::time::Instant::now()
-            + if synced_blocks >= 200 {
-                FAST_COOLDOWN
-            } else if synced_blocks > 0 {
-                NORMAL_COOLDOWN
-            } else {
-                RETRY_COOLDOWN
-            };
+#[async_trait::async_trait]
+impl lib_consensus_runtime::CatchUpTransport for ZhtpCatchUpTransport {
+    async fn connected_peers(&self) -> Vec<lib_consensus_runtime::CatchUpPeer> {
+        let raw = catchup_get_connected_peers().await;
+        let prioritized = prioritize_catchup_peers(raw, &self.blockchain_slot).await;
+        prioritized
+            .into_iter()
+            .map(|p| lib_consensus_runtime::CatchUpPeer {
+                node_id: p.node_id,
+                addr: p.addr,
+            })
+            .collect()
     }
 
-    info!("Catch-up sync task exited");
+    async fn sync_from_peer(
+        &self,
+        peer_addr: &str,
+        our_height: u64,
+    ) -> Result<usize, lib_consensus_runtime::CatchUpError> {
+        match catchup_sync_from_peer(
+            peer_addr,
+            our_height,
+            &self.blockchain_slot,
+            &self.bft_active_height,
+        )
+        .await
+        {
+            Ok(n) => Ok(n),
+            Err(e) => {
+                // Translate the typed `HashMismatchError` (still
+                // sentinel-detected via downcast for compatibility
+                // with the legacy helper's anyhow::Error signature)
+                // into the runtime's typed `CatchUpError::HashMismatch`.
+                if let Some(hm) = e.downcast_ref::<HashMismatchError>() {
+                    Err(lib_consensus_runtime::CatchUpError::HashMismatch {
+                        our_height_plus_one: our_height + 1,
+                        detail: hm.0.clone(),
+                    })
+                } else {
+                    Err(lib_consensus_runtime::CatchUpError::Transport(e))
+                }
+            }
+        }
+    }
+}
+
+/// CONS-506: zhtp-side `BlockchainHeightProvider` adapter.
+struct ZhtpBlockchainHeightProvider {
+    blockchain_slot: SharedBlockchainSlot,
+}
+
+#[async_trait::async_trait]
+impl lib_consensus_runtime::BlockchainHeightProvider for ZhtpBlockchainHeightProvider {
+    async fn current_height(&self) -> Option<u64> {
+        let slot = self.blockchain_slot.read().await;
+        match slot.as_ref() {
+            Some(bc_arc) => Some(bc_arc.read().await.height),
+            None => None,
+        }
+    }
 }
 
 /// Returned by `catchup_sync_from_peer` when a peer that is strictly ahead of us
@@ -2411,20 +2338,31 @@ impl Component for ConsensusComponent {
         // Wire catch-up sync trigger.
         // Channel capacity of 2 means triggers are coalesced: if two divergence
         // events fire before the task drains the channel, only one sync runs.
+        //
+        // CONS-506: orchestrator lives in `lib-consensus-runtime`. zhtp
+        // provides the network + state seams via `ZhtpCatchUpTransport`
+        // and `ZhtpBlockchainHeightProvider`.
         {
             let (catch_up_tx, catch_up_rx) = tokio::sync::mpsc::channel::<u64>(2);
             crate::runtime::blockchain_provider::set_global_catchup_trigger(catch_up_tx.clone());
             let trigger = Arc::new(CatchUpSyncChannel { tx: catch_up_tx });
             consensus_engine.set_catch_up_sync_trigger(trigger);
-            let blockchain_slot_for_sync = self.blockchain.clone();
+            let transport: Arc<dyn lib_consensus_runtime::CatchUpTransport> =
+                Arc::new(ZhtpCatchUpTransport {
+                    blockchain_slot: self.blockchain.clone(),
+                    bft_active_height: bft_active_height.clone(),
+                });
+            let height_provider: Arc<dyn lib_consensus_runtime::BlockchainHeightProvider> =
+                Arc::new(ZhtpBlockchainHeightProvider {
+                    blockchain_slot: self.blockchain.clone(),
+                });
             let sled_path_for_sync = crate::node_data_dir().join("sled");
-            let bft_height_for_sync = bft_active_height.clone();
             tokio::spawn(async move {
-                run_catch_up_sync_task(
+                lib_consensus_runtime::run_catch_up_sync_task(
                     catch_up_rx,
-                    blockchain_slot_for_sync,
+                    transport,
+                    height_provider,
                     sled_path_for_sync,
-                    bft_height_for_sync,
                 )
                 .await;
             });
