@@ -31,9 +31,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use lib_consensus::engines::consensus_engine::BroadcastEnvelope;
-use lib_consensus::types::MessageBroadcaster;
+use lib_consensus::engines::consensus_engine::{BroadcastEnvelope, CommitEnvelope};
+use lib_consensus::types::{BlockCommitCallback, MessageBroadcaster};
 use lib_consensus::{ConsensusEngine, ConsensusError};
+use lib_consensus_core::fsm::events::ResumeConditionEvent;
+use lib_consensus_core::fsm::state::HaltReason;
 use lib_consensus_core::budget::{MAX_BROADCAST_BUDGET_MS, WATCHDOG_THRESHOLD_MULTIPLIER};
 use lib_consensus_core::fsm::Event;
 use lib_consensus_core::ports::TransportInfo;
@@ -96,6 +98,14 @@ pub struct ConsensusRuntime {
     /// CONS-306: the broadcaster Arc cloned out of the engine so the
     /// executor task can call it without borrowing the engine.
     broadcaster: Arc<dyn MessageBroadcaster>,
+    /// CONS-307: commit envelopes from the engine. `Some(_)` only when
+    /// the engine has a `block_commit_callback` configured — without
+    /// one there's nothing for the executor to do, so the runtime
+    /// skips the channel + spawn entirely.
+    commit_rx: Option<mpsc::UnboundedReceiver<CommitEnvelope>>,
+    /// CONS-307: the commit callback Arc cloned out of the engine.
+    /// `None` when the engine has no callback — see `commit_rx`.
+    commit_callback: Option<Arc<dyn BlockCommitCallback>>,
 }
 
 impl ConsensusRuntime {
@@ -148,6 +158,19 @@ impl ConsensusRuntime {
         let broadcaster = engine.broadcaster_arc();
         engine.set_broadcast_sender(broadcast_tx);
 
+        // CONS-307: wire the commit queue if a callback is installed.
+        // No callback ⇒ no commit work ⇒ no executor needed; the
+        // engine continues to log finalized blocks via the legacy
+        // "no commit callback configured" branch.
+        let (commit_rx, commit_callback) = match engine.block_commit_callback_arc() {
+            Some(cb) => {
+                let (tx, rx) = mpsc::unbounded_channel::<CommitEnvelope>();
+                engine.set_commit_sender(tx);
+                (Some(rx), Some(cb))
+            }
+            None => (None, None),
+        };
+
         Ok(Self {
             engine,
             transport_name: transport.name().to_string(),
@@ -156,6 +179,8 @@ impl ConsensusRuntime {
             runtime_event_tx_for_watchdog: event_tx,
             broadcast_rx: Some(broadcast_rx),
             broadcaster,
+            commit_rx,
+            commit_callback,
         })
     }
 
@@ -189,9 +214,9 @@ impl ConsensusRuntime {
         self.watchdog_threshold
     }
 
-    /// Drive the consensus loop with the watchdog and the broadcast
-    /// executor spawned alongside. On engine exit (graceful or error)
-    /// both background tasks are aborted.
+    /// Drive the consensus loop with the watchdog, broadcast executor,
+    /// and commit executor spawned alongside. On engine exit (graceful
+    /// or error) all background tasks are aborted.
     pub async fn run(mut self) -> Result<(), ConsensusError> {
         tracing::info!(
             "ConsensusRuntime starting (transport={}, watchdog_threshold={:?})",
@@ -208,9 +233,20 @@ impl ConsensusRuntime {
             .broadcast_rx
             .take()
             .map(|rx| spawn_broadcast_executor(rx, self.broadcaster.clone()));
+        let commit_handle = match (self.commit_rx.take(), self.commit_callback.clone()) {
+            (Some(rx), Some(cb)) => Some(spawn_commit_executor(
+                rx,
+                cb,
+                self.runtime_event_tx_for_watchdog.clone(),
+            )),
+            _ => None,
+        };
         let result = self.engine.run_consensus_loop().await;
         watchdog_handle.abort();
         if let Some(h) = broadcast_handle {
+            h.abort();
+        }
+        if let Some(h) = commit_handle {
             h.abort();
         }
         result
@@ -236,6 +272,64 @@ pub(crate) fn spawn_broadcast_executor(
             }
         }
         tracing::debug!("Broadcast executor exited — engine sender dropped");
+    })
+}
+
+/// CONS-307 commit executor: drains commit envelopes from the engine
+/// and is the **only** caller of `commit_finalized_block_with_proof
+/// (...).await`. On Err the executor injects
+/// `Event::HaltScheduled { reason: HaltReason::ConsensusFailure, .. }`
+/// into the engine's runtime-event channel — the FSM's
+/// `(_, HaltScheduled)` arm transitions to `Halting`, halting consensus
+/// at the boundary check on the next tick. Recovery is operator-driven
+/// (`ResumeCondition::ManualRestart`).
+///
+/// Why `ConsensusFailure` and not a dedicated `StorageCommitFailure`
+/// variant: the latter would require a `HaltReason` enum extension
+/// and corresponding drift-protection test churn. The current
+/// `ConsensusFailure` doc reads "Consensus stuck for too long; manual
+/// halt to investigate" which fits a persistent-storage commit
+/// failure well enough as a runbook-driven halt cause. Refining the
+/// taxonomy is tracked alongside CONS-505 / 504.
+pub(crate) fn spawn_commit_executor(
+    mut rx: mpsc::UnboundedReceiver<CommitEnvelope>,
+    callback: Arc<dyn BlockCommitCallback>,
+    runtime_event_tx: mpsc::UnboundedSender<Event>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        while let Some(env) = rx.recv().await {
+            let height = env.proposal.height;
+            match callback
+                .commit_finalized_block_with_proof(&env.proposal, env.quorum_proof)
+                .await
+            {
+                Ok(()) => {
+                    tracing::info!(
+                        block_height = height,
+                        "Commit executor: BFT finalized block + quorum proof committed"
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(
+                        error = ?e,
+                        height = height,
+                        "Commit executor: commit failed — scheduling consensus halt to prevent fork"
+                    );
+                    let halt = Event::HaltScheduled {
+                        reason: HaltReason::ConsensusFailure,
+                        triggered_at_height: height,
+                        resume_condition: ResumeConditionEvent::ManualRestart,
+                    };
+                    if runtime_event_tx.send(halt).is_err() {
+                        tracing::error!(
+                            "Commit executor: runtime event channel closed; cannot signal halt"
+                        );
+                        break;
+                    }
+                }
+            }
+        }
+        tracing::debug!("Commit executor exited — engine sender dropped");
     })
 }
 
@@ -620,6 +714,40 @@ mod tests {
         let res = tokio::time::timeout(Duration::from_secs(1), handle).await;
         assert!(res.is_ok(), "executor did not exit on sender drop");
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    // ---------------- commit executor (CONS-307) ----------------
+
+    /// Failing fake commit callback that always returns Err — used to
+    /// drive the commit-executor's halt-feedback path.
+    struct FailingCommitCallback;
+
+    #[async_trait::async_trait]
+    impl lib_consensus::types::BlockCommitCallback for FailingCommitCallback {
+        async fn commit_finalized_block(
+            &self,
+            _proposal: &lib_consensus::types::ConsensusProposal,
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            Err("simulated storage failure".into())
+        }
+        async fn get_active_validator_count(
+            &self,
+        ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(4)
+        }
+    }
+
+    #[tokio::test]
+    async fn commit_executor_exits_on_sender_drop() {
+        // Same clean-shutdown contract as the broadcast executor.
+        let cb: Arc<dyn lib_consensus::types::BlockCommitCallback> =
+            Arc::new(FailingCommitCallback);
+        let (tx, rx) = mpsc::unbounded_channel::<CommitEnvelope>();
+        let (event_tx, _event_rx) = mpsc::unbounded_channel::<Event>();
+        let handle = spawn_commit_executor(rx, cb, event_tx);
+        drop(tx);
+        let res = tokio::time::timeout(Duration::from_secs(1), handle).await;
+        assert!(res.is_ok(), "commit executor did not exit on sender drop");
     }
 
     #[tokio::test(start_paused = true)]

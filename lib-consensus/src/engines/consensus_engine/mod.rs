@@ -582,6 +582,13 @@ pub struct ConsensusEngine {
     /// `.broadcaster` field becomes a fallback only (the runtime
     /// holds the canonical impl on its executor task).
     broadcast_tx: Option<tokio::sync::mpsc::UnboundedSender<BroadcastEnvelope>>,
+    /// CONS-307: outbound commit channel. When set, the
+    /// `apply_block_to_state_with_proof` hop emits a `CommitEnvelope`
+    /// here instead of awaiting the `block_commit_callback` inline.
+    /// Same legacy-fallback contract as `broadcast_tx`. Failures from
+    /// the runtime's commit executor are surfaced via the existing
+    /// `runtime_event_rx` channel as `Event::HaltScheduled`.
+    commit_tx: Option<tokio::sync::mpsc::UnboundedSender<CommitEnvelope>>,
 }
 
 /// CONS-306 outbound envelope: a `ValidatorMessage` plus the validator
@@ -593,6 +600,18 @@ pub struct ConsensusEngine {
 pub struct BroadcastEnvelope {
     pub message: ValidatorMessage,
     pub recipients: Vec<IdentityId>,
+}
+
+/// CONS-307 commit envelope: a finalized proposal plus its quorum
+/// proof, produced by the engine when 2f+1 commit votes are observed
+/// and dispatched to the runtime's commit-executor task. The engine
+/// no longer awaits the commit callback inline — failures surface
+/// as a `Event::HaltScheduled` on the runtime event channel and
+/// transition the FSM to `Halting`.
+#[derive(Debug, Clone)]
+pub struct CommitEnvelope {
+    pub proposal: ConsensusProposal,
+    pub quorum_proof: lib_types::consensus::BftQuorumProof,
 }
 
 /// Validator set update message sent from the runtime to the consensus loop.
@@ -690,6 +709,7 @@ impl ConsensusEngine {
             runtime_event_rx: None,
             watchdog_clock: None,
             broadcast_tx: None,
+            commit_tx: None,
         })
     }
 
@@ -741,6 +761,27 @@ impl ConsensusEngine {
     /// broadcaster outside the broadcast hop.
     pub fn broadcaster_arc(&self) -> Arc<dyn MessageBroadcaster> {
         Arc::clone(&self.broadcaster)
+    }
+
+    /// CONS-307: install the runtime's commit queue. Once set,
+    /// `apply_block_to_state_with_proof` emits a `CommitEnvelope` here
+    /// instead of awaiting `block_commit_callback` inline. Failures
+    /// from the runtime's commit executor surface back via the
+    /// `runtime_event_rx` channel (`Event::HaltScheduled`).
+    pub fn set_commit_sender(
+        &mut self,
+        tx: tokio::sync::mpsc::UnboundedSender<CommitEnvelope>,
+    ) {
+        self.commit_tx = Some(tx);
+    }
+
+    /// Clone the block-commit callback Arc so the runtime's commit
+    /// executor task can call it. Returns `None` when no callback is
+    /// configured — the runtime then skips spawning the executor.
+    pub fn block_commit_callback_arc(
+        &self,
+    ) -> Option<Arc<dyn crate::types::BlockCommitCallback>> {
+        self.block_commit_callback.as_ref().map(Arc::clone)
     }
 
     /// CONS-306: single broadcast hop used by every `enter_*_step`,
