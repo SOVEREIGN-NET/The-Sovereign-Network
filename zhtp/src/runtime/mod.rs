@@ -812,13 +812,8 @@ impl RuntimeOrchestrator {
         &self.config
     }
 
-    // CONS-505 / admission-8 post-merge: the original implementation
-    // returned `&self.store` but that field was not present on the
-    // development-side `RuntimeOrchestrator` struct. Removed the
-    // accessor; the single call site
-    // (`zhtp::api::handlers::observer_admission::resolve_admission_policy`)
-    // falls back to `default_policy()` until the runtime exposes a
-    // stable store handle.
+    // CONS-505 / admission-8 post-merge: store accessor removed because
+    // RuntimeOrchestrator does not own a SledStore field.
 
     /// Register a component with the orchestrator
     pub async fn register_component(&self, component: Arc<dyn Component>) -> Result<()> {

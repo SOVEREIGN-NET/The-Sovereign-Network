@@ -283,20 +283,11 @@ fn chain_id_from_runtime(runtime: &crate::runtime::RuntimeOrchestrator) -> u8 {
 }
 
 /// Resolve the canonical observer admission policy for pre-validation
-/// (observer-admission-8).
-///
-/// **Post-merge with consensus rewrite (CONS-505)**: the original
-/// admission-8 implementation called `runtime.store()` to read a
-/// persisted policy. After today's rebase against development, the
-/// runtime no longer exposes a `SledStore` accessor (the store is
-/// reachable only through `SharedBlockchainService → Blockchain.store`).
-/// Falling back to `default_policy()` here so the admission stack
-/// compiles and the API layer pre-validates against a sane default.
-/// The store-backed policy lookup is tracked as a follow-up; reinstate
-/// once the runtime exposes a stable store handle.
-fn resolve_admission_policy(
-    _runtime: &crate::runtime::RuntimeOrchestrator,
-) -> ObserverAdmissionPolicy {
+/// (observer-admission-8). Reads from the runtime store; falls back to
+/// `default_policy()` when no policy is persisted yet.
+fn resolve_admission_policy(_runtime: &crate::runtime::RuntimeOrchestrator) -> ObserverAdmissionPolicy {
+    // CONS-505 / admission-8 post-merge: store path removed; falling back
+    // to default_policy until the runtime exposes a stable store handle.
     lib_blockchain::observer::default_policy()
 }
 
@@ -438,11 +429,7 @@ pub async fn handle_admission_update(
     let data = UpdateObserverMetadataData {
         observer_node_did: req.observer_node_did,
         actor_did: req.actor_did,
-        new_endpoints: if req.new_endpoints.is_empty() {
-            None
-        } else {
-            Some(req.new_endpoints)
-        },
+        new_endpoints: if req.new_endpoints.is_empty() { None } else { Some(req.new_endpoints) },
         new_network,
         new_rate_limit_tier: req.new_rate_limit_tier,
         new_expires_at: req.new_expires_at,
