@@ -1088,6 +1088,90 @@ impl lib_consensus::types::FeeCollector for FeeRouter {
 }
 
 // ============================================================================
+// CONSENSUS PORT ADAPTER (CONS-404 / AD-005)
+// ============================================================================
+
+/// Adapter that lets the new `lib_consensus_core::ports::FeeCallback` port
+/// drive the existing `FeeRouter` contract. The engine calls
+/// `collect_and_distribute(...)` once per finalized block; this adapter
+/// owns the mutex, runs the collect + distribute pair, and surfaces any
+/// failure as a tracing event (per CE-ENG-4 the engine ignores it).
+///
+/// This is the production wiring for CONS-404. Bootstrap and tests still
+/// use `NoOpFeeCallback`.
+pub struct FeeRouterAdapter {
+    inner: std::sync::Arc<std::sync::Mutex<FeeRouter>>,
+}
+
+impl FeeRouterAdapter {
+    pub fn new(fee_router: std::sync::Arc<std::sync::Mutex<FeeRouter>>) -> Self {
+        Self { inner: fee_router }
+    }
+}
+
+impl lib_consensus_core::ports::FeeCallback for FeeRouterAdapter {
+    fn collect_and_distribute(
+        &self,
+        height: u64,
+        total_fees_collected: u64,
+        _proposer: &lib_identity::IdentityId,
+    ) {
+        if total_fees_collected == 0 {
+            tracing::debug!(
+                "💰 No fees to collect for block {} (genesis or empty block)",
+                height
+            );
+            return;
+        }
+
+        // Recover from a poisoned mutex rather than propagating; consensus
+        // does not branch on this and a panic here would silently take the
+        // engine down.
+        let mut router = match self.inner.lock() {
+            Ok(g) => g,
+            Err(p) => {
+                tracing::error!("💰 FeeRouter mutex poisoned at block {}: {}", height, p);
+                p.into_inner()
+            }
+        };
+
+        if !router.initialized {
+            tracing::warn!(
+                "💰 FeeRouter not initialized — skipping fee collection for block {}",
+                height
+            );
+            return;
+        }
+
+        if let Err(e) = router.collect(total_fees_collected) {
+            tracing::warn!(
+                "💰 collect_fee failed for block {} (amount {}): {}",
+                height,
+                total_fees_collected,
+                e
+            );
+            return;
+        }
+
+        match router.distribute(height) {
+            Ok(d) => tracing::info!(
+                "💰 Fees distributed for block {}: UBI={} ConsensusDAO={} EmergencyReserve={} DevGrants={} (total={})",
+                height,
+                d.ubi_pool,
+                d.dao_pool,
+                d.emergency_reserve,
+                d.dev_grants,
+                d.ubi_pool
+                    .saturating_add(d.dao_pool)
+                    .saturating_add(d.emergency_reserve)
+                    .saturating_add(d.dev_grants),
+            ),
+            Err(e) => tracing::warn!("💰 distribute_fees failed for block {}: {}", height, e),
+        }
+    }
+}
+
+// ============================================================================
 // UNIT TESTS
 // ============================================================================
 

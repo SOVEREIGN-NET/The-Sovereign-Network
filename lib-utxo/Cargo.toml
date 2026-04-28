@@ -2,15 +2,8 @@
 name = "lib-utxo"
 version = "0.1.0"
 edition = "2021"
-description = "ZHTP UTXO Execution - Native transfer application"
+description = "Thin re-export of canonical UTXO primitives from lib-types"
 license = "MIT"
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
-thiserror = "1.0"
-
-# Internal dependencies
 lib-types = { path = "../lib-types" }
-
-[dev-dependencies]
-serde_json = "1.0"

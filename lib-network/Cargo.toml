@@ -126,6 +126,9 @@ lib-proofs = { path = "../lib-proofs" }
 lib-economy = { path = "../lib-economy" }
 lib-identity = { path = "../lib-identity" }
 lib-consensus = { path = "../lib-consensus" }
+# CONS-501: validator-discovery types now live in `lib-consensus-net::discovery`.
+lib-consensus-net = { path = "../lib-consensus-net" }
+lib-blockchain = { path = "../lib-blockchain", default-features = false }
 nix = { version = "0.30.1", features = ["socket"] }
 
 # Platform-specific GATT and Bluetooth APIs

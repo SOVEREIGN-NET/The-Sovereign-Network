@@ -24,6 +24,9 @@
 //! ```
 
 pub mod council;
+/// DAO governance — proposal lifecycle, voting, treasury, parameter updates.
+/// Relocated from `lib-consensus/src/dao/` per CONS-106 / AD-003.
+pub mod dao;
 pub mod errors;
 pub mod fields;
 pub mod pending;

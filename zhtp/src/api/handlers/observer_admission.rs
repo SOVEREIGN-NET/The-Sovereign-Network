@@ -283,16 +283,21 @@ fn chain_id_from_runtime(runtime: &crate::runtime::RuntimeOrchestrator) -> u8 {
 }
 
 /// Resolve the canonical observer admission policy for pre-validation
-/// (observer-admission-8). Reads from the runtime store; falls back to
-/// `default_policy()` when no policy is persisted yet.
+/// (observer-admission-8).
+///
+/// **Post-merge with consensus rewrite (CONS-505)**: the original
+/// admission-8 implementation called `runtime.store()` to read a
+/// persisted policy. After today's rebase against development, the
+/// runtime no longer exposes a `SledStore` accessor (the store is
+/// reachable only through `SharedBlockchainService → Blockchain.store`).
+/// Falling back to `default_policy()` here so the admission stack
+/// compiles and the API layer pre-validates against a sane default.
+/// The store-backed policy lookup is tracked as a follow-up; reinstate
+/// once the runtime exposes a stable store handle.
 fn resolve_admission_policy(
-    runtime: &crate::runtime::RuntimeOrchestrator,
+    _runtime: &crate::runtime::RuntimeOrchestrator,
 ) -> ObserverAdmissionPolicy {
-    use lib_blockchain::storage::BlockchainStore;
-    match runtime.store().get_observer_policy() {
-        Ok(Some(policy)) => policy,
-        _ => lib_blockchain::observer::default_policy(),
-    }
+    lib_blockchain::observer::default_policy()
 }
 
 /// Reject a register payload before it reaches the mempool when the
@@ -334,7 +339,7 @@ pub async fn handle_admission_challenge(request: ZhtpRequest) -> ZhtpResult<Zhtp
     let mut nonce = [0u8; 32];
     use rand::RngCore;
     rand::thread_rng().fill_bytes(&mut nonce);
-    let challenge_id = format!("{:x}", lib_crypto::hash_blake3(&nonce));
+    let challenge_id = hex::encode(lib_crypto::hash_blake3(&nonce));
 
     let challenge = ObserverAdmissionChallengeRef {
         challenge_id,
@@ -433,7 +438,11 @@ pub async fn handle_admission_update(
     let data = UpdateObserverMetadataData {
         observer_node_did: req.observer_node_did,
         actor_did: req.actor_did,
-        new_endpoints: req.new_endpoints,
+        new_endpoints: if req.new_endpoints.is_empty() {
+            None
+        } else {
+            Some(req.new_endpoints)
+        },
         new_network,
         new_rate_limit_tier: req.new_rate_limit_tier,
         new_expires_at: req.new_expires_at,

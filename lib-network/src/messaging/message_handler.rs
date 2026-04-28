@@ -2159,74 +2159,11 @@ impl MeshMessageHandler {
     }
 }
 
-/// Convert from network ValidatorMessage format to consensus engine format
-///
-/// The network layer uses `lib_consensus::validators::ValidatorMessage` (the wire format),
-/// while the consensus engine uses `lib_consensus::types::ValidatorMessage` (the internal format).
-/// This function bridges the two representations.
-#[allow(dead_code)]
-fn convert_network_to_consensus_message(
-    msg: &lib_consensus::validators::ValidatorMessage,
-) -> lib_consensus::types::ValidatorMessage {
-    use lib_consensus::types::{ConsensusVote, ValidatorMessage as ConsensusMessage, VoteType};
-    use lib_consensus::validators::ValidatorMessage as NetworkMessage;
-
-    match msg {
-        NetworkMessage::Propose(propose_msg) => ConsensusMessage::Propose {
-            proposal: propose_msg.proposal.clone(),
-        },
-        NetworkMessage::Vote(vote_msg) => ConsensusMessage::Vote {
-            vote: vote_msg.vote.clone(),
-        },
-        NetworkMessage::Commit(commit_msg) => {
-            // Commit messages are converted to Vote with VoteType::Commit
-            let commit_vote = ConsensusVote {
-                id: commit_msg.message_id.clone(),
-                height: commit_msg.height,
-                round: commit_msg.round,
-                vote_type: VoteType::Commit,
-                proposal_id: commit_msg.proposal_id.clone(),
-                voter: commit_msg.committer.clone(),
-                timestamp: commit_msg.timestamp,
-                signature: commit_msg.signature.clone(),
-            };
-            ConsensusMessage::Vote { vote: commit_vote }
-        }
-        NetworkMessage::RoundChange(round_change_msg) => {
-            // Round change messages don't have a direct mapping in the consensus engine
-            // Log and convert to a heartbeat-like message to maintain liveness tracking
-            tracing::debug!(
-                "Received RoundChange from validator {:?} for height {} -> round {}",
-                round_change_msg.validator,
-                round_change_msg.height,
-                round_change_msg.new_round
-            );
-            // Create a heartbeat to keep the validator marked as responsive
-            use lib_consensus::validators::NetworkSummary;
-            let heartbeat = lib_consensus::types::HeartbeatMessage {
-                message_id: round_change_msg.message_id.clone(),
-                validator: round_change_msg.validator.clone(),
-                height: round_change_msg.height,
-                round: round_change_msg.new_round,
-                step: lib_consensus::types::ConsensusStep::NewRound,
-                network_summary: NetworkSummary {
-                    active_validators: 0,
-                    health_score: 1.0,
-                    block_rate: 0.0,
-                },
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-                signature: round_change_msg.signature.clone(),
-            };
-            ConsensusMessage::Heartbeat { message: heartbeat }
-        }
-        NetworkMessage::Heartbeat(heartbeat_msg) => ConsensusMessage::Heartbeat {
-            message: heartbeat_msg.clone(),
-        },
-    }
-}
+// CONS-201: `convert_network_to_consensus_message` was a dead-code
+// (#[allow(dead_code)]) shim that translated wire `ValidatorMessage` →
+// engine `ValidatorMessage`. After CONS-201 the two enums are one and
+// the same, and the shim's Commit/RoundChange translation paths no
+// longer have variants to translate.
 
 #[cfg(test)]
 mod tests {
