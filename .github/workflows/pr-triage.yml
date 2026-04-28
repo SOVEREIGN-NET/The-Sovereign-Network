@@ -1,9 +1,12 @@
 name: PR Triage
 
 on:
+  # Opt-in gate: same as pr-quality-gates.yml. Triggers only when an
+  # operator adds the `review-agents` label or runs workflow_dispatch.
+  # Default PR turnaround stays fast.
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-  merge_group:
+    types: [labeled, synchronize]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,6 +20,7 @@ concurrency:
 jobs:
   triage:
     name: triage
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'review-agents')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -38,10 +42,9 @@ jobs:
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             echo "base_sha=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
             echo "base_ref=${{ github.event.pull_request.base.ref }}" >> "$GITHUB_OUTPUT"
-          elif [[ "${{ github.event_name }}" == "merge_group" ]]; then
-            echo "base_sha=${{ github.event.merge_group.base_sha }}" >> "$GITHUB_OUTPUT"
-            echo "base_ref=${{ github.event.merge_group.base_ref }}" >> "$GITHUB_OUTPUT"
           else
+            # workflow_dispatch — no base; agents that need it should
+            # fall back to development.
             echo "base_sha=" >> "$GITHUB_OUTPUT"
             echo "base_ref=" >> "$GITHUB_OUTPUT"
           fi

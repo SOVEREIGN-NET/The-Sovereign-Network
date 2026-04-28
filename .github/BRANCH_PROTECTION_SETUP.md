@@ -8,6 +8,28 @@ status checks; making those checks **required** is a one-time manual step.
 This document is the canonical setup guide. Apply these settings to `main`
 (and any other long-lived branch you want to protect, e.g. `release/*`).
 
+## Opt-in trigger — the `review-agents` label
+
+Both workflows (`pr-quality-gates.yml`, `pr-triage.yml`) are gated on the
+PR carrying the `review-agents` label. Without the label, every job's
+`if:` evaluates to false and the workflow skips immediately. This keeps
+default PR turnaround fast and lets reviewers opt in only when they want
+the heavy review pass.
+
+How to opt in:
+
+- **Per PR:** add the `review-agents` label. The workflow fires on the
+  `labeled` event and re-runs on every push (`synchronize`) while the
+  label remains.
+- **Manual:** `gh workflow run pr-quality-gates.yml` (or the **Run
+  workflow** button). The `if:` includes
+  `github.event_name == 'workflow_dispatch'` so manual runs always
+  execute regardless of the label.
+
+If you decide later to make the gates run on every PR by default, drop
+the `if:` lines and switch the `on:` filter back to
+`[opened, synchronize, reopened, ready_for_review]`.
+
 ## 1. Choose: Branch Protection Rule or Ruleset
 
 GitHub supports both. Either works. **Rulesets** are the newer mechanism and
