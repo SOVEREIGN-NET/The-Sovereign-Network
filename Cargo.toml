@@ -12,6 +12,10 @@ members = [
     "lib-blockchain",
     "lib-client",
     "lib-consensus",
+    "lib-consensus-core",
+    "lib-consensus-net",
+    "lib-consensus-observer",
+    "lib-consensus-runtime",
     "lib-crypto",
     "lib-dht",
     "lib-dns",
@@ -31,6 +35,7 @@ members = [
     "explorer",
     "tests/lib-identity/test-lib-identity-imports",
     "tests/integration",
+    "tests/architecture-invariants",
     "tools/sled-wallet-lookup",
 ]
 

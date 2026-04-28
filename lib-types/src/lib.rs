@@ -20,7 +20,9 @@ pub mod storage;
 pub mod tokenomics;
 
 // Canonical consensus types (Phase 1)
-pub use primitives::{Address, Amount, BlockHash, BlockHeight, Bps, TokenId, TxHash};
+pub use primitives::{
+    Address, Amount, BlockHash, BlockHeight, Bps, OutPoint, TokenId, TxHash, Utxo, UtxoMerkleProof,
+};
 
 pub use bonding_curve::{
     BondingCurveAccountState, BondingCurveBand, BondingCurveBuyReceipt, BondingCurveBuyTx,

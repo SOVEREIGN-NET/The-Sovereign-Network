@@ -29,7 +29,7 @@ async fn test_full_consensus_flow() -> Result<()> {
 
     for (i, (name, stake, storage)) in validators.iter().enumerate() {
         let identity = create_test_identity(name);
-        let consensus_key = [i as u8; 2592];
+        let consensus_key = [(i + 1) as u8; 2592];
         let commission_rate = 5;
 
         consensus_engine
@@ -81,7 +81,7 @@ async fn test_dao_governance_integration() -> Result<()> {
                 identity,
                 2000 * 1_000_000,
                 200 * 1024 * 1024 * 1024,
-                [i as u8; 2592], // consensus_key
+                [(i + 1) as u8; 2592], // consensus_key
                 vec![0xEEu8; 32],  // networking_key
                 vec![0xFFu8; 32],  // rewards_key
                 5,
@@ -153,7 +153,7 @@ async fn test_byzantine_fault_handling() -> Result<()> {
                 identity,
                 2000 * 1_000_000,
                 200 * 1024 * 1024 * 1024,
-                [i as u8; 2592], // consensus_key
+                [(i + 1) as u8; 2592], // consensus_key
                 vec![0xEEu8; 32],  // networking_key
                 vec![0xFFu8; 32],  // rewards_key
                 5,
@@ -220,7 +220,7 @@ async fn test_consensus_with_insufficient_validators() -> Result<()> {
                 identity,
                 2000 * 1_000_000,
                 200 * 1024 * 1024 * 1024,
-                [i as u8; 2592], // consensus_key
+                [(i + 1) as u8; 2592], // consensus_key
                 vec![0xEEu8; 32],  // networking_key
                 vec![0xFFu8; 32],  // rewards_key
                 5,
@@ -274,7 +274,7 @@ async fn test_validator_lifecycle_management() -> Result<()> {
                 identity,
                 2000 * 1_000_000,
                 200 * 1024 * 1024 * 1024,
-                [i as u8; 2592], // consensus_key
+                [(i + 1) as u8; 2592], // consensus_key
                 vec![0xEEu8; 32],  // networking_key
                 vec![0xFFu8; 32],  // rewards_key
                 5,
@@ -332,7 +332,7 @@ async fn test_treasury_integration() -> Result<()> {
                 identity,
                 2000 * 1_000_000,
                 200 * 1024 * 1024 * 1024,
-                [i as u8; 2592], // consensus_key
+                [(i + 1) as u8; 2592], // consensus_key
                 vec![0xEEu8; 32],  // networking_key
                 vec![0xFFu8; 32],  // rewards_key
                 5,
@@ -369,7 +369,7 @@ async fn test_reward_system_integration() -> Result<()> {
                 identity,
                 *stake,
                 *storage,
-                [i as u8; 2592],
+                [(i + 1) as u8; 2592],
                 vec![0xEEu8; 32],
                 vec![0xFFu8; 32],
                 5,
@@ -473,7 +473,7 @@ async fn test_system_resilience_under_load() -> Result<()> {
                 identity,
                 1000 * 1_000_000,
                 100 * 1024 * 1024 * 1024,
-                [i as u8; 2592], // consensus_key
+                [(i + 1) as u8; 2592], // consensus_key
                 vec![0xEEu8; 32],  // networking_key
                 vec![0xFFu8; 32],  // rewards_key
                 5,

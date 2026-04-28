@@ -300,7 +300,7 @@ pub async fn handle_admission_challenge(request: ZhtpRequest) -> ZhtpResult<Zhtp
     let mut nonce = [0u8; 32];
     use rand::RngCore;
     rand::thread_rng().fill_bytes(&mut nonce);
-    let challenge_id = format!("{:x}", lib_crypto::hash_blake3(&nonce));
+    let challenge_id = hex::encode(lib_crypto::hash_blake3(&nonce));
 
     let challenge = ObserverAdmissionChallengeRef {
         challenge_id,
@@ -388,7 +388,11 @@ pub async fn handle_admission_update(
     let data = UpdateObserverMetadataData {
         observer_node_did: req.observer_node_did,
         actor_did: req.actor_did,
-        new_endpoints: req.new_endpoints,
+        new_endpoints: if req.new_endpoints.is_empty() {
+            None
+        } else {
+            Some(req.new_endpoints)
+        },
         new_network,
         new_rate_limit_tier: req.new_rate_limit_tier,
         new_expires_at: req.new_expires_at,

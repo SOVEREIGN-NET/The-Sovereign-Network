@@ -117,9 +117,11 @@ AGENTS.md
 .ai/
 .llm/
 
-# All markdown — root + docs tree (kept locally, not committed)
+# All markdown — root + .docs tree (kept locally, not committed).
+# docs/ IS tracked: epic specs, forensic reports, decision records belong in version control.
+# Pre-existing local-only docs were moved to .docs/.
 /*.md
-docs/**/*.md
+.docs/**/*.md
 
 # Sensitive / local-only file patterns (issue #1934)
 tmp/
@@ -132,9 +134,9 @@ keystore*
 .env.*
 
 # Operational docs (local only — published to wiki)
-docs/node-hardening.md
-docs/security-assessment-g1.md
-docs/bonding-curve-gap-analysis.md
+.docs/node-hardening.md
+.docs/security-assessment-g1.md
+.docs/bonding-curve-gap-analysis.md
 
 # Operational / payroll artifacts
 payroll.md

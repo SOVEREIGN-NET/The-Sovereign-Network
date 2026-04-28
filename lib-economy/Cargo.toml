@@ -12,7 +12,7 @@ anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 hex = "0.4"
-tracing = { version = "0.1", optional = true }
+tracing = "0.1"
 tokio = { version = "1.0", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 
@@ -21,6 +21,10 @@ lib-types = { path = "../lib-types" }
 lib-crypto = { path = "../lib-crypto" }
 lib-identity = { path = "../lib-identity" }
 lib-proofs = { path = "../lib-proofs" }
+# Implements lib-consensus-core::ports::RewardCallback (CONS-103 / AD-005).
+# Direction is intentional: lib-consensus-core defines the trait, lib-economy
+# provides the impl. lib-consensus-core has no knowledge of lib-economy.
+lib-consensus-core = { path = "../lib-consensus-core" }
 
 [dev-dependencies]
 criterion = "0.5"
@@ -33,8 +37,14 @@ wasm-bindgen = "0.2"
 web-sys = "0.3"
 
 [features]
+# CONS-103 / PR #2382 review: `tracing` is no longer optional.  The previous
+# config gated it behind the `std` feature, but every src/ file (including
+# rewards/calculator.rs and wallets/mesh_discovery_rewards.rs) called
+# `tracing::*` unconditionally, so `--no-default-features` already broke
+# compilation. Making it a plain dep matches actual usage and removes the
+# theatrical feature flag.
 default = ["std"]
-std = ["tracing"]
+std = []
 wasm = []
 
 [lib]
