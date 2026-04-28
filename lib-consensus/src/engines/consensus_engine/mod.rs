@@ -188,12 +188,17 @@ use tokio::sync::mpsc;
 use tokio::time::Sleep;
 
 use crate::byzantine::ByzantineFaultDetector;
-use crate::dao::dao_types::{DaoExecutionAction, DaoProposal};
-use crate::dao::dao_types::{GovernanceParameterUpdate, GovernanceParameterValue};
-use crate::dao::DaoEngine;
+// CONS-106 / AD-003: DAO module relocated to lib-governance. Engine still
+// imports `DaoEngine` directly for the synchronous validation paths
+// (`apply_governance_update_from_proposal`); the fire-and-forget
+// round-finalize path uses `lib_consensus_core::ports::GovernanceCallback`.
+use lib_governance::dao::dao_types::{DaoExecutionAction, DaoProposal};
+use lib_governance::dao::dao_types::{GovernanceParameterUpdate, GovernanceParameterValue};
+use lib_governance::dao::DaoEngine;
+use lib_consensus_core::ports::{GovernanceCallback, NoOpGovernanceCallback};
 use crate::invariants::{check_invariant, ConsensusInvariant, ConsensusState as InvariantState};
-use crate::rewards::RewardCalculator;
 use crate::types::*;
+use lib_consensus_core::ports::{FeeCallback, NoOpFeeCallback, NoOpRewardCallback, RewardCallback};
 use crate::validators::validator_manager::ValidatorInfo as ValidatorInfoTrait;
 use crate::validators::ValidatorManager;
 use crate::{ConsensusError, ConsensusResult};
@@ -244,7 +249,15 @@ mod tests;
 /// History:
 ///   1 — initial: proposal ID/signature include round + domain tags
 ///       `ZHTP/PROPOSAL/ID/v1` and `ZHTP/PROPOSAL/SIG/v1`
-pub const CONSENSUS_PROTOCOL_VERSION: u32 = 1;
+///   2 — CONS-201: `ValidatorMessage` collapsed from 5 variants to 3
+///       (deleted `Commit` and `RoundChange` variants); single canonical
+///       enum at `lib_consensus::validators::ValidatorMessage`. Old v1
+///       nodes encode/decode `Commit`/`RoundChange` variants that v2
+///       nodes cannot decode and would silently mis-route otherwise.
+///       Bumping enforces a hard cutover boundary — mixed-version nodes
+///       reject each other's proposals at admission time instead of
+///       silently mis-decoding the wire format.
+pub const CONSENSUS_PROTOCOL_VERSION: u32 = 2;
 
 /// Human-readable name of the consensus algorithm variant implemented here.
 ///
@@ -449,6 +462,13 @@ pub struct ConsensusEngine {
     validator_manager: ValidatorManager,
     /// Current consensus round
     current_round: ConsensusRound,
+    /// FSM control state (CONS-301..305).  Mirrors `current_round.step`
+    /// during the handler-by-handler migration; kept in sync via
+    /// `enter_fsm_state()` whenever the round step changes.  When the
+    /// migration completes (CONS-305f) `current_round.step` and the
+    /// `enter_*_step` helpers go away and this becomes the single
+    /// source of truth.
+    fsm_state: lib_consensus_core::fsm::ValidatorState,
     /// Consensus configuration
     config: ConsensusConfig,
     /// Pending proposals queue
@@ -467,17 +487,31 @@ pub struct ConsensusEngine {
     pending_epoch_length_update: Option<PendingEpochLengthUpdate>,
     /// Whether consensus has begun (genesis window closed)
     chain_started: bool,
-    /// DAO governance engine
+    /// DAO governance engine — kept for the synchronous validation paths
+    /// (`apply_governance_update_from_proposal`, `validate_governance_update`,
+    /// `decode_execution_params`). Per CONS-106 / AD-003 the type itself
+    /// now lives in `lib_governance::dao` (was `crate::dao`).
     dao_engine: DaoEngine,
+    /// Governance round-finalize hook (CONS-106 / AD-005). Engine emits one
+    /// `on_round_finalized(height)` per finalized round; the runtime adapter
+    /// (`lib_governance::dao::ConsensusGovernanceAdapter`) walks expired
+    /// proposals. Defaults to a no-op so tests and bootstrap configurations
+    /// can run without wiring governance.
+    governance_callback: Arc<dyn GovernanceCallback>,
     /// Byzantine fault detection
     byzantine_detector: ByzantineFaultDetector,
-    /// Reward calculation system
-    reward_calculator: RewardCalculator,
-    /// Fee collector for fee collection integration
-    ///
-    /// Implements the FeeCollector trait for collecting and distributing fees
-    /// during block finalization. Uses Arc<Mutex<>> for thread-safe access.
-    fee_router: Option<std::sync::Arc<std::sync::Mutex<dyn FeeCollector>>>,
+    /// Reward distribution hook (CONS-103 / AD-005). Engine emits one
+    /// `on_round_finalized` per finalized round; the runtime adapter
+    /// (`lib_economy::ConsensusRewardAdapter`) owns the calculator and
+    /// distribution side effects. Defaults to a no-op so tests and bootstrap
+    /// configurations can run without wiring rewards.
+    reward_callback: Arc<dyn RewardCallback>,
+    /// CONS-404 / AD-005: fire-and-forget fee distribution hook. The runtime
+    /// adapter (e.g. `lib_blockchain::contracts::economics::fee_router::
+    /// FeeRouterAdapter`) owns the FeeRouter mutex and the 45/30/15/10 split.
+    /// Defaults to a no-op so tests and bootstrap configurations can run
+    /// without wiring fees.
+    fee_callback: Arc<dyn FeeCallback>,
     /// Message broadcaster for network distribution
     ///
     /// Invariant CE-ENG-1: ConsensusEngine never constructs, configures, or inspects
@@ -500,7 +534,7 @@ pub struct ConsensusEngine {
     /// Local validator signing keypair (required for proposal/vote signing)
     validator_keypair: Option<KeyPair>,
     /// Storage proof provider (lib-storage backed)
-    storage_proof_provider: Option<Arc<dyn crate::proofs::StorageProofProvider>>,
+    storage_proof_provider: Option<Arc<dyn lib_storage::proofs::StorageProofProvider>>,
     /// Blockchain provider for block production (injected by runtime)
     blockchain_provider: Option<Arc<dyn crate::types::ConsensusBlockchainProvider>>,
     /// Block commit callback for finalizing blocks to blockchain storage
@@ -525,6 +559,59 @@ pub struct ConsensusEngine {
     /// Catch-up sync reads this to avoid writing blocks that BFT will finalize.
     /// Updated at the start of each consensus round.
     bft_active_height: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// CONS-309 / CONS-502b: receiver for FSM events injected by the
+    /// runtime layer (today: `Event::WatchdogFired` from
+    /// `lib_consensus_runtime::ConsensusRuntime`'s watchdog task).
+    /// `None` until `set_runtime_event_receiver` is called — running the
+    /// engine without it just means no watchdog, no harm.
+    runtime_event_rx:
+        Option<tokio::sync::mpsc::UnboundedReceiver<lib_consensus_core::fsm::Event>>,
+    /// CONS-309 / CONS-502b: shared "last reset" instant the runtime's
+    /// watchdog task reads each tick. Updated by `dispatch_action` when
+    /// the FSM emits `Action::ResetWatchdog`. `None` when no runtime is
+    /// attached (the engine still works; the watchdog just doesn't run).
+    /// Uses `tokio::time::Instant` so paused-clock unit tests in the
+    /// runtime can advance virtual time and still observe correct ages.
+    watchdog_clock: Option<Arc<tokio::sync::RwLock<tokio::time::Instant>>>,
+    /// CONS-306: outbound broadcast channel. When set, every engine
+    /// broadcast hop emits a `BroadcastEnvelope` here instead of
+    /// awaiting `broadcaster.broadcast_to_validators(...)` inline.
+    /// `None` keeps the legacy direct-await path. Per AD-006 the
+    /// goal is to remove `.await` on side effects from the engine —
+    /// when the runtime is enabled and this channel is wired, the
+    /// `.broadcaster` field becomes a fallback only (the runtime
+    /// holds the canonical impl on its executor task).
+    broadcast_tx: Option<tokio::sync::mpsc::UnboundedSender<BroadcastEnvelope>>,
+    /// CONS-307: outbound commit channel. When set, the
+    /// `apply_block_to_state_with_proof` hop emits a `CommitEnvelope`
+    /// here instead of awaiting the `block_commit_callback` inline.
+    /// Same legacy-fallback contract as `broadcast_tx`. Failures from
+    /// the runtime's commit executor are surfaced via the existing
+    /// `runtime_event_rx` channel as `Event::HaltScheduled`.
+    commit_tx: Option<tokio::sync::mpsc::UnboundedSender<CommitEnvelope>>,
+}
+
+/// CONS-306 outbound envelope: a `ValidatorMessage` plus the validator
+/// set to deliver it to. The engine constructs these in
+/// `enter_*_step`, `wrap_heartbeat`, etc. and emits them via
+/// `broadcast_tx`. The runtime's executor task drains the channel and
+/// calls the broadcaster `.await` exactly once per envelope.
+#[derive(Debug, Clone)]
+pub struct BroadcastEnvelope {
+    pub message: ValidatorMessage,
+    pub recipients: Vec<IdentityId>,
+}
+
+/// CONS-307 commit envelope: a finalized proposal plus its quorum
+/// proof, produced by the engine when 2f+1 commit votes are observed
+/// and dispatched to the runtime's commit-executor task. The engine
+/// no longer awaits the commit callback inline — failures surface
+/// as a `Event::HaltScheduled` on the runtime event channel and
+/// transition the FSM to `Halting`.
+#[derive(Debug, Clone)]
+pub struct CommitEnvelope {
+    pub proposal: ConsensusProposal,
+    pub quorum_proof: lib_types::consensus::BftQuorumProof,
 }
 
 /// Validator set update message sent from the runtime to the consensus loop.
@@ -586,6 +673,10 @@ impl ConsensusEngine {
             validator_identity: None,
             validator_manager,
             current_round,
+            // Engine starts at step=Propose (see initial ConsensusRound
+            // above) — keep the FSM mirror aligned. The consensus loop
+            // promotes to other states via `enter_fsm_state()`.
+            fsm_state: lib_consensus_core::fsm::ValidatorState::Proposing,
             config,
             pending_proposals: VecDeque::new(),
             vote_pool: HashMap::new(), // Composite key prevents equivocation
@@ -595,9 +686,10 @@ impl ConsensusEngine {
             pending_epoch_length_update: None,
             chain_started: false,
             dao_engine: DaoEngine::new(),
+            governance_callback: Arc::new(NoOpGovernanceCallback),
             byzantine_detector: ByzantineFaultDetector::new(),
-            reward_calculator: RewardCalculator::new(),
-            fee_router: None,
+            reward_callback: Arc::new(NoOpRewardCallback),
+            fee_callback: Arc::new(NoOpFeeCallback),
             broadcaster,
             message_rx: None,
             liveness_event_tx: None,
@@ -614,12 +706,124 @@ impl ConsensusEngine {
             engine_start_time,
             validator_update_rx: None,
             bft_active_height: None,
+            runtime_event_rx: None,
+            watchdog_clock: None,
+            broadcast_tx: None,
+            commit_tx: None,
         })
     }
 
     /// Set the message receiver (from network layer)
     pub fn set_message_receiver(&mut self, rx: mpsc::Receiver<ValidatorMessage>) {
         self.message_rx = Some(rx);
+    }
+
+    /// CONS-309 / CONS-502b: install the runtime's FSM-event channel.
+    /// The `run_consensus_loop` `tokio::select!` then drains it, feeding
+    /// each event into `transition()` exactly like a network message.
+    /// Without this set the engine still runs — just nobody can inject
+    /// `WatchdogFired` etc.
+    pub fn set_runtime_event_receiver(
+        &mut self,
+        rx: tokio::sync::mpsc::UnboundedReceiver<lib_consensus_core::fsm::Event>,
+    ) {
+        self.runtime_event_rx = Some(rx);
+    }
+
+    /// CONS-309 / CONS-502b: install the shared "last reset" clock.
+    /// `dispatch_action` updates this on every `Action::ResetWatchdog`;
+    /// the runtime's watchdog task reads it each poll tick. Must be set
+    /// alongside `set_runtime_event_receiver` to make the watchdog
+    /// loop closed.
+    pub fn set_watchdog_clock(
+        &mut self,
+        clock: Arc<tokio::sync::RwLock<tokio::time::Instant>>,
+    ) {
+        self.watchdog_clock = Some(clock);
+    }
+
+    /// CONS-306: install the runtime's broadcast queue. Once set, the
+    /// `broadcast()` helper (used by every engine hop that previously
+    /// awaited `broadcaster.broadcast_to_validators`) emits the
+    /// envelope here instead — a non-blocking channel send. The
+    /// runtime's executor task is the single owner of the actual
+    /// `.broadcaster.broadcast_to_validators(...).await` per AD-006.
+    pub fn set_broadcast_sender(
+        &mut self,
+        tx: tokio::sync::mpsc::UnboundedSender<BroadcastEnvelope>,
+    ) {
+        self.broadcast_tx = Some(tx);
+    }
+
+    /// Clone the broadcaster Arc so the runtime can hand it to its
+    /// executor task. Visible to runtime callers only — kept narrow
+    /// because no part of the engine should be reaching for the
+    /// broadcaster outside the broadcast hop.
+    pub fn broadcaster_arc(&self) -> Arc<dyn MessageBroadcaster> {
+        Arc::clone(&self.broadcaster)
+    }
+
+    /// CONS-307: install the runtime's commit queue. Once set,
+    /// `apply_block_to_state_with_proof` emits a `CommitEnvelope` here
+    /// instead of awaiting `block_commit_callback` inline. Failures
+    /// from the runtime's commit executor surface back via the
+    /// `runtime_event_rx` channel (`Event::HaltScheduled`).
+    pub fn set_commit_sender(
+        &mut self,
+        tx: tokio::sync::mpsc::UnboundedSender<CommitEnvelope>,
+    ) {
+        self.commit_tx = Some(tx);
+    }
+
+    /// Clone the block-commit callback Arc so the runtime's commit
+    /// executor task can call it. Returns `None` when no callback is
+    /// configured — the runtime then skips spawning the executor.
+    pub fn block_commit_callback_arc(
+        &self,
+    ) -> Option<Arc<dyn crate::types::BlockCommitCallback>> {
+        self.block_commit_callback.as_ref().map(Arc::clone)
+    }
+
+    /// CONS-306: single broadcast hop used by every `enter_*_step`,
+    /// heartbeat, and proposal-relay site in the engine. When
+    /// `broadcast_tx` is set (runtime path), this is a non-blocking
+    /// channel send and never `.await`s on the broadcaster. When the
+    /// channel is absent (legacy direct path), it falls back to the
+    /// pre-CONS-306 `.broadcaster.broadcast_to_validators(...).await`.
+    /// In both cases failures are logged and dropped per CE-ENG-4.
+    pub(super) async fn broadcast(
+        &self,
+        message: ValidatorMessage,
+        recipients: &[IdentityId],
+    ) {
+        if let Some(tx) = &self.broadcast_tx {
+            // Channel path: non-blocking. The cost is one Vec clone
+            // for `recipients`. SendError means the runtime executor
+            // dropped its receiver; per CE-ENG-4 we don't retry.
+            if tx
+                .send(BroadcastEnvelope {
+                    message,
+                    recipients: recipients.to_vec(),
+                })
+                .is_err()
+            {
+                tracing::debug!(
+                    "Broadcast channel closed — runtime executor exited; dropping envelope (CE-ENG-4)"
+                );
+            }
+            return;
+        }
+        // Legacy path: direct await. Only reached when no runtime is
+        // attached (e.g. the AD-011 fallback in zhtp). Once that
+        // collision is resolved and the runtime path is universal,
+        // this branch and the `.broadcaster` field can both go away.
+        if let Err(e) = self
+            .broadcaster
+            .broadcast_to_validators(message, recipients)
+            .await
+        {
+            tracing::debug!(error = ?e, "Broadcast failed (continuing per CE-ENG-4)");
+        }
     }
 
     /// Set the validator update receiver. The consensus loop processes updates
@@ -840,15 +1044,30 @@ impl ConsensusEngine {
         self.validator_manager.get_active_validators().len()
     }
 
-    /// Set fee collector for fee collection integration
+    /// Inject the fee distribution hook (CONS-404 / AD-005).
     ///
-    /// Allows the consensus engine to collect and distribute fees at block finalization.
-    /// The fee collector must implement the FeeCollector trait.
+    /// Default is `NoOpFeeCallback`. Production runtimes wire
+    /// `lib_blockchain::contracts::economics::fee_router::FeeRouterAdapter`
+    /// (or any other `FeeCallback` impl) here.
+    pub fn set_fee_callback(&mut self, callback: Arc<dyn FeeCallback>) {
+        self.fee_callback = callback;
+    }
+
+    /// Inject the reward distribution hook (CONS-103 / AD-005).
     ///
-    /// # Arguments
-    /// * `fee_collector` - Implementation of FeeCollector trait (e.g., FeeRouter from lib-blockchain)
-    pub fn set_fee_router<T: FeeCollector + 'static>(&mut self, fee_collector: T) {
-        self.fee_router = Some(std::sync::Arc::new(std::sync::Mutex::new(fee_collector)));
+    /// Default is `NoOpRewardCallback`. Production runtimes wire
+    /// `lib_economy::ConsensusRewardAdapter` here at engine construction.
+    pub fn set_reward_callback(&mut self, callback: Arc<dyn RewardCallback>) {
+        self.reward_callback = callback;
+    }
+
+    /// Inject the governance round-finalize hook (CONS-106 / AD-005).
+    ///
+    /// Default is `NoOpGovernanceCallback`. Production runtimes wire
+    /// `lib_governance::dao::ConsensusGovernanceAdapter` here at engine
+    /// construction.
+    pub fn set_governance_callback(&mut self, callback: Arc<dyn GovernanceCallback>) {
+        self.governance_callback = callback;
     }
 
     /// Fire a `ConsensusEvent` to any attached liveness monitor / alert bridge.
@@ -938,7 +1157,7 @@ impl ConsensusEngine {
     /// Set storage proof provider for Proof-of-Storage attestations
     pub fn set_storage_proof_provider(
         &mut self,
-        provider: Arc<dyn crate::proofs::StorageProofProvider>,
+        provider: Arc<dyn lib_storage::proofs::StorageProofProvider>,
     ) {
         self.storage_proof_provider = Some(provider);
     }

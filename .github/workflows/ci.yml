@@ -3,8 +3,22 @@ name: CI
 on:
   push:
     branches: [development, main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.github/**/*.md'
   pull_request:
     branches: [development, main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.github/**/*.md'
   workflow_dispatch:
     inputs:
       deploy:

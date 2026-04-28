@@ -1,0 +1,315 @@
+# Review Policy
+#
+# Maps changed-path patterns to risk_level, required review agents,
+# recommended human reviewers, and whether tests are required.
+#
+# Risk levels: low, medium, high, critical
+# Agents: architecture, security, blockchain, tokenomics, compliance,
+#         privacy_zkdid, governance, economic_risk, devops, performance,
+#         data_sovereignty, api, ux_safety, testing, documentation
+#
+# `match` patterns use simple glob semantics (fnmatch). Pattern order
+# matters: the FIRST matching rule wins for path classification, but
+# all matching rules contribute their required_agents to the union.
+
+defaults:
+  risk_level: low
+  required_agents:
+    - architecture
+    - security
+    - testing
+    - documentation
+  recommended_reviewers:
+    - "@SOVEREIGN-NET/core-maintainers"
+  requires_tests: false
+  allows_override: true
+
+rules:
+  # ---------------- CRITICAL ----------------
+  - name: smart_contracts
+    match:
+      - "contracts/**"
+      - "smart-contracts/**"
+      - "**/*.sol"
+      - "**/*.cairo"
+      - "**/*.vy"
+    risk_level: critical
+    required_agents:
+      - architecture
+      - security
+      - blockchain
+      - tokenomics
+      - compliance
+      - economic_risk
+      - testing
+      - documentation
+    recommended_reviewers:
+      - "@SOVEREIGN-NET/protocol"
+      - "@SOVEREIGN-NET/security"
+      - "@SOVEREIGN-NET/tokenomics"
+    requires_tests: true
+    allows_override: false
+
+  - name: chain_core
+    match:
+      - "chain/**"
+      - "blockchain/**"
+      - "consensus/**"
+      - "node/**"
+    risk_level: critical
+    required_agents:
+      - architecture
+      - security
+      - blockchain
+      - performance
+      - testing
+      - documentation
+    recommended_reviewers:
+      - "@SOVEREIGN-NET/protocol"
+      - "@SOVEREIGN-NET/security"
+    requires_tests: true
+    allows_override: false
+
+  - name: tokenomics_treasury
+    match:
+      - "tokenomics/**"
+      - "treasury/**"
+    risk_level: critical
+    required_agents:
+      - architecture
+      - security
+      - tokenomics
+      - compliance
+      - economic_risk
+      - governance
+      - testing
+      - documentation
+    recommended_reviewers:
+      - "@SOVEREIGN-NET/tokenomics"
+      - "@SOVEREIGN-NET/compliance"
+    requires_tests: true
+    allows_override: false
+
+  - name: identity_zk
+    match:
+      - "identity/**"
+      - "zk/**"
+      - "**/zkdid/**"
+      - "**/*zkproof*"
+    risk_level: critical
+    required_agents:
+      - architecture
+      - security
+      - privacy_zkdid
+      - data_sovereignty
+      - testing
+      - documentation
+    recommended_reviewers:
+      - "@SOVEREIGN-NET/privacy"
+      - "@SOVEREIGN-NET/security"
+    requires_tests: true
+    allows_override: false
+
+  - name: governance
+    match:
+      - "governance/**"
+      - "dao/**"
+    risk_level: critical
+    required_agents:
+      - architecture
+      - security
+      - governance
+      - tokenomics
+      - compliance
+      - economic_risk
+      - testing
+      - documentation
+    recommended_reviewers:
+      - "@SOVEREIGN-NET/governance"
+      - "@SOVEREIGN-NET/compliance"
+    requires_tests: true
+    allows_override: false
+
+  - name: production_infra
+    match:
+      - "infra/prod/**"
+      - "infra/production/**"
+      - "infra/**/prod/**"
+      - "**/k8s/prod/**"
+      - "**/terraform/prod/**"
+    risk_level: critical
+    required_agents:
+      - architecture
+      - security
+      - devops
+      - data_sovereignty
+      - documentation
+    recommended_reviewers:
+      - "@SOVEREIGN-NET/devops"
+      - "@SOVEREIGN-NET/security"
+    requires_tests: false
+    allows_override: false
+
+  - name: migrations
+    match:
+      - "migrations/**"
+      - "**/migrations/**"
+      - "**/*.migration.sql"
+    risk_level: critical
+    required_agents:
+      - architecture
+      - security
+      - devops
+      - data_sovereignty
+      - documentation
+    recommended_reviewers:
+      - "@SOVEREIGN-NET/data"
+      - "@SOVEREIGN-NET/devops"
+    requires_tests: false
+    allows_override: false
+
+  # ---------------- HIGH ----------------
+  - name: api_surface
+    match:
+      - "api/**"
+      - "sdk/**"
+      - "**/openapi*.yaml"
+      - "**/openapi*.yml"
+      - "**/openapi*.json"
+      - "**/*.proto"
+    risk_level: high
+    required_agents:
+      - architecture
+      - security
+      - api
+      - performance
+      - testing
+      - documentation
+    recommended_reviewers:
+      - "@SOVEREIGN-NET/api"
+      - "@SOVEREIGN-NET/security"
+    requires_tests: true
+    allows_override: true
+
+  - name: ci_workflows
+    match:
+      - ".github/workflows/**"
+      - ".github/actions/**"
+    risk_level: high
+    required_agents:
+      - security
+      - devops
+      - documentation
+    recommended_reviewers:
+      - "@SOVEREIGN-NET/devops"
+      - "@SOVEREIGN-NET/security"
+    requires_tests: false
+    allows_override: false
+
+  - name: mobile_wallet
+    match:
+      - "mobile/**"
+      - "**/wallet/**"
+    risk_level: high
+    required_agents:
+      - architecture
+      - security
+      - ux_safety
+      - privacy_zkdid
+      - testing
+      - documentation
+    recommended_reviewers:
+      - "@SOVEREIGN-NET/ux"
+      - "@SOVEREIGN-NET/security"
+    requires_tests: true
+    allows_override: true
+
+  # ---------------- MEDIUM ----------------
+  - name: frontend
+    match:
+      - "frontend/**"
+      - "web/**"
+    risk_level: medium
+    required_agents:
+      - architecture
+      - security
+      - ux_safety
+      - testing
+      - documentation
+    recommended_reviewers:
+      - "@SOVEREIGN-NET/ux"
+    requires_tests: true
+    allows_override: true
+
+  - name: infra_nonprod
+    match:
+      - "infra/**"
+    risk_level: medium
+    required_agents:
+      - security
+      - devops
+      - documentation
+    recommended_reviewers:
+      - "@SOVEREIGN-NET/devops"
+    requires_tests: false
+    allows_override: true
+
+  - name: agent_scripts
+    match:
+      - ".github/agents/**"
+    risk_level: medium
+    required_agents:
+      - security
+      - devops
+      - testing
+      - documentation
+    recommended_reviewers:
+      - "@SOVEREIGN-NET/devops"
+      - "@SOVEREIGN-NET/security"
+    requires_tests: false
+    allows_override: true
+
+  # ---------------- LOW ----------------
+  - name: documentation
+    match:
+      - "docs/**"
+      - "**/*.md"
+      - "README*"
+    risk_level: low
+    required_agents:
+      - documentation
+    recommended_reviewers:
+      - "@SOVEREIGN-NET/documentation"
+    requires_tests: false
+    allows_override: true
+
+  - name: compliance_docs
+    match:
+      - "docs/compliance/**"
+    risk_level: high
+    required_agents:
+      - compliance
+      - documentation
+    recommended_reviewers:
+      - "@SOVEREIGN-NET/compliance"
+    requires_tests: false
+    allows_override: false
+
+  - name: tests_only
+    match:
+      - "**/tests/**"
+      - "**/test_*.py"
+      - "**/*_test.go"
+      - "**/*.test.ts"
+      - "**/*.test.tsx"
+      - "**/*.test.js"
+      - "**/*.spec.ts"
+      - "**/*.spec.tsx"
+      - "**/*.spec.js"
+    risk_level: low
+    required_agents:
+      - testing
+    recommended_reviewers:
+      - "@SOVEREIGN-NET/core-maintainers"
+    requires_tests: false
+    allows_override: true

@@ -812,13 +812,8 @@ impl RuntimeOrchestrator {
         &self.config
     }
 
-    /// Access the underlying canonical SledStore (observer-admission-8).
-    ///
-    /// Used by API handlers that need to read on-chain admission policy
-    /// before relaying a request into the mempool.
-    pub fn store(&self) -> &std::sync::Arc<lib_blockchain::storage::SledStore> {
-        &self.store
-    }
+    // CONS-505 / admission-8 post-merge: store accessor removed because
+    // RuntimeOrchestrator does not own a SledStore field.
 
     /// Register a component with the orchestrator
     pub async fn register_component(&self, component: Arc<dyn Component>) -> Result<()> {
