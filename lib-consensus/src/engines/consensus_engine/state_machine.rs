@@ -1923,7 +1923,10 @@ impl ConsensusEngine {
     /// without it the recursion `dispatch_action(SendCommit) →
     /// enter_commit_step → maybe_finalize → transition() →
     /// dispatch_action(CommitBlock)` would resurface (E0733).
-    async fn enter_fsm_state(&mut self, new_state: lib_consensus_core::fsm::ValidatorState) {
+    pub(super) async fn enter_fsm_state(
+        &mut self,
+        new_state: lib_consensus_core::fsm::ValidatorState,
+    ) {
         use lib_consensus_core::fsm::ValidatorState as V;
         let prior_kind = self.fsm_state.kind();
         let new_kind = new_state.kind();
@@ -1977,11 +1980,19 @@ impl ConsensusEngine {
     /// finalization runs separately at the handler level
     /// (on_commit_vote / on_precommit / on_round_timeout's PreCommit
     /// branch / run_commit_step).
-    async fn dispatch_action(&mut self, action: lib_consensus_core::fsm::Action) {
+    pub(super) async fn dispatch_action(&mut self, action: lib_consensus_core::fsm::Action) {
         use lib_consensus_core::fsm::Action as A;
         match action {
             A::ResetWatchdog => {
                 self.current_round.timed_out = false;
+                // CONS-309 / CONS-502b: stamp the shared clock so the
+                // runtime's watchdog task sees fresh activity. No-op
+                // when the runtime hasn't installed a clock (e.g. tests
+                // and the legacy zhtp path that calls
+                // `run_consensus_loop` directly).
+                if let Some(clock) = &self.watchdog_clock {
+                    *clock.write().await = tokio::time::Instant::now();
+                }
             }
 
             A::CreateProposal => {

@@ -559,6 +559,20 @@ pub struct ConsensusEngine {
     /// Catch-up sync reads this to avoid writing blocks that BFT will finalize.
     /// Updated at the start of each consensus round.
     bft_active_height: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// CONS-309 / CONS-502b: receiver for FSM events injected by the
+    /// runtime layer (today: `Event::WatchdogFired` from
+    /// `lib_consensus_runtime::ConsensusRuntime`'s watchdog task).
+    /// `None` until `set_runtime_event_receiver` is called — running the
+    /// engine without it just means no watchdog, no harm.
+    runtime_event_rx:
+        Option<tokio::sync::mpsc::UnboundedReceiver<lib_consensus_core::fsm::Event>>,
+    /// CONS-309 / CONS-502b: shared "last reset" instant the runtime's
+    /// watchdog task reads each tick. Updated by `dispatch_action` when
+    /// the FSM emits `Action::ResetWatchdog`. `None` when no runtime is
+    /// attached (the engine still works; the watchdog just doesn't run).
+    /// Uses `tokio::time::Instant` so paused-clock unit tests in the
+    /// runtime can advance virtual time and still observe correct ages.
+    watchdog_clock: Option<Arc<tokio::sync::RwLock<tokio::time::Instant>>>,
 }
 
 /// Validator set update message sent from the runtime to the consensus loop.
@@ -653,12 +667,38 @@ impl ConsensusEngine {
             engine_start_time,
             validator_update_rx: None,
             bft_active_height: None,
+            runtime_event_rx: None,
+            watchdog_clock: None,
         })
     }
 
     /// Set the message receiver (from network layer)
     pub fn set_message_receiver(&mut self, rx: mpsc::Receiver<ValidatorMessage>) {
         self.message_rx = Some(rx);
+    }
+
+    /// CONS-309 / CONS-502b: install the runtime's FSM-event channel.
+    /// The `run_consensus_loop` `tokio::select!` then drains it, feeding
+    /// each event into `transition()` exactly like a network message.
+    /// Without this set the engine still runs — just nobody can inject
+    /// `WatchdogFired` etc.
+    pub fn set_runtime_event_receiver(
+        &mut self,
+        rx: tokio::sync::mpsc::UnboundedReceiver<lib_consensus_core::fsm::Event>,
+    ) {
+        self.runtime_event_rx = Some(rx);
+    }
+
+    /// CONS-309 / CONS-502b: install the shared "last reset" clock.
+    /// `dispatch_action` updates this on every `Action::ResetWatchdog`;
+    /// the runtime's watchdog task reads it each poll tick. Must be set
+    /// alongside `set_runtime_event_receiver` to make the watchdog
+    /// loop closed.
+    pub fn set_watchdog_clock(
+        &mut self,
+        clock: Arc<tokio::sync::RwLock<tokio::time::Instant>>,
+    ) {
+        self.watchdog_clock = Some(clock);
     }
 
     /// Set the validator update receiver. The consensus loop processes updates
