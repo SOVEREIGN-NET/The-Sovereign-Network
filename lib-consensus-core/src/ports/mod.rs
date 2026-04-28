@@ -19,12 +19,14 @@
 
 pub mod broadcaster;
 pub mod fees;
+pub mod finalization;
 pub mod governance;
 pub mod rewards;
 pub mod transport;
 
 pub use broadcaster::MessageBroadcaster;
 pub use fees::{FeeCallback, NoOpFeeCallback};
+pub use finalization::{BlockFinalizationSink, FinalizationError, NoOpBlockFinalizationSink};
 pub use governance::{GovernanceCallback, NoOpGovernanceCallback};
 pub use rewards::{NoOpRewardCallback, RewardCallback, ValidatorRewardInput};
 pub use transport::{NoOpTransportInfo, TransportInfo};
