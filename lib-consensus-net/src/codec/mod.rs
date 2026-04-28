@@ -814,4 +814,171 @@ mod tests {
             );
         }
     }
+
+    // ===== WIRE-FORMAT BYTE-STABILITY (CONS-601) =====
+    //
+    // Pin specific bytes for fixed-input messages so any change to the
+    // codec layout (variant tag width, field reorder, derive change)
+    // breaks these tests with a clear diff. The fixtures use
+    // deterministic inputs (zero hashes, zero IdentityIds, zero
+    // signatures) to keep the expected output byte-stable across runs.
+    //
+    // CRITICAL: when these tests fail, the wire format CHANGED. That's
+    // a CONSENSUS_PROTOCOL_VERSION bump per CONS-203. Bump
+    // `lib-consensus/src/engines/consensus_engine/mod.rs::
+    // CONSENSUS_PROTOCOL_VERSION` and regenerate the expected byte
+    // sequences below. DO NOT silently update the expected bytes
+    // without a version bump.
+
+    #[cfg(test)]
+    mod byte_stability {
+        use super::super::*;
+        use lib_consensus_core::types::{
+            ConsensusProof, ConsensusProposal, ConsensusStateView, ConsensusVote,
+            HeartbeatMessage, NetworkSummary, ProposeMessage, ValidatorMessage, VoteMessage,
+        };
+        use lib_crypto::{Hash, PostQuantumSignature};
+        use lib_identity::IdentityId;
+        use lib_types::consensus::{ConsensusStep, ConsensusType, VoteType};
+
+        /// Construct a fully-zero `ValidatorMessage` of the given
+        /// variant for stable-byte testing. All hashes, signatures,
+        /// and identities are zero-filled so the bincode output is
+        /// deterministic and byte-stable across runs.
+        fn zero_message(variant: u8) -> ValidatorMessage {
+            let zero_hash = Hash::default();
+            let zero_id = IdentityId::default();
+            let zero_sig = PostQuantumSignature::default();
+            let zero_proof = ConsensusProof::empty(ConsensusType::ByzantineFaultTolerance, 0);
+            let zero_proposal = ConsensusProposal {
+                id: zero_hash.clone(),
+                proposer: zero_id.clone(),
+                height: 0,
+                round: 0,
+                protocol_version: 0,
+                previous_hash: zero_hash.clone(),
+                block_data: vec![],
+                timestamp: 0,
+                signature: zero_sig.clone(),
+                consensus_proof: zero_proof,
+            };
+            let zero_vote = ConsensusVote {
+                id: zero_hash.clone(),
+                voter: zero_id.clone(),
+                proposal_id: zero_hash.clone(),
+                vote_type: VoteType::PreVote,
+                height: 0,
+                round: 0,
+                timestamp: 0,
+                signature: zero_sig.clone(),
+            };
+            match variant {
+                0 => ValidatorMessage::Propose(ProposeMessage {
+                    message_id: zero_hash.clone(),
+                    proposer: zero_id,
+                    proposal: zero_proposal,
+                    justification: None,
+                    timestamp: 0,
+                    signature: zero_sig,
+                }),
+                1 => ValidatorMessage::Vote(VoteMessage {
+                    message_id: zero_hash.clone(),
+                    voter: zero_id.clone(),
+                    vote: zero_vote,
+                    consensus_state: ConsensusStateView {
+                        height: 0,
+                        round: 0,
+                        step: ConsensusStep::Propose,
+                        known_proposals: vec![],
+                        vote_counts: std::collections::BTreeMap::new(),
+                    },
+                    timestamp: 0,
+                    signature: zero_sig,
+                }),
+                2 => ValidatorMessage::Heartbeat(HeartbeatMessage {
+                    message_id: zero_hash.clone(),
+                    validator: zero_id,
+                    height: 0,
+                    round: 0,
+                    step: ConsensusStep::Propose,
+                    network_summary: NetworkSummary {
+                        active_validators: 0,
+                        health_score: 0.0,
+                        block_rate: 0.0,
+                    },
+                    timestamp: 0,
+                    signature: zero_sig,
+                }),
+                _ => panic!("invalid variant"),
+            }
+        }
+
+        /// Pin the encoded byte length of each variant. Length-only
+        /// pinning is more robust than full byte sequences (which
+        /// vary if `PostQuantumSignature::default()` changes its
+        /// internal layout) but still catches accidental field
+        /// additions / removals — those change the byte count.
+        ///
+        /// Run with `--nocapture` to see actual lengths when this
+        /// fails; update the expected values **and** bump
+        /// `CONSENSUS_PROTOCOL_VERSION` per CONS-203.
+        #[test]
+        fn propose_message_byte_length_is_pinned() {
+            let codec = BincodeConsensusCodec::new();
+            let encoded = codec.encode(&zero_message(0)).expect("encode");
+            // Bincode-encoded zero ProposeMessage. If this changes,
+            // bump CONSENSUS_PROTOCOL_VERSION.
+            assert_eq!(
+                encoded.len(),
+                8_677,
+                "ProposeMessage encoded length changed — wire format \
+                 drifted. Bump CONSENSUS_PROTOCOL_VERSION (CONS-203)."
+            );
+        }
+
+        #[test]
+        fn vote_message_byte_length_is_pinned() {
+            let codec = BincodeConsensusCodec::new();
+            let encoded = codec.encode(&zero_message(1)).expect("encode");
+            assert_eq!(
+                encoded.len(),
+                8_684,
+                "VoteMessage encoded length changed — wire format \
+                 drifted. Bump CONSENSUS_PROTOCOL_VERSION (CONS-203)."
+            );
+        }
+
+        #[test]
+        fn heartbeat_message_byte_length_is_pinned() {
+            let codec = BincodeConsensusCodec::new();
+            let encoded = codec.encode(&zero_message(2)).expect("encode");
+            assert_eq!(
+                encoded.len(),
+                4_340,
+                "HeartbeatMessage encoded length changed — wire format \
+                 drifted. Bump CONSENSUS_PROTOCOL_VERSION (CONS-203)."
+            );
+        }
+
+        /// Variant tag pinning. Bincode encodes enum discriminants as
+        /// `u32` little-endian. If the variant order in
+        /// `ValidatorMessage` changes, this test breaks loudly —
+        /// older nodes would deserialize a Vote as a Heartbeat etc.,
+        /// catastrophic on the wire.
+        #[test]
+        fn variant_tags_are_zero_one_two() {
+            let codec = BincodeConsensusCodec::new();
+            for (variant, expected_tag) in &[(0u8, 0u32), (1, 1), (2, 2)] {
+                let encoded = codec.encode(&zero_message(*variant)).expect("encode");
+                let tag = u32::from_le_bytes([encoded[0], encoded[1], encoded[2], encoded[3]]);
+                assert_eq!(
+                    tag, *expected_tag,
+                    "Variant {} tag drifted: expected {}, got {}. \
+                     Reordering ValidatorMessage variants is a wire-format \
+                     break — bump CONSENSUS_PROTOCOL_VERSION (CONS-203).",
+                    variant, expected_tag, tag
+                );
+            }
+        }
+    }
 }
