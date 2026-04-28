@@ -1356,6 +1356,106 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
     }
 }
 
+/// CONS-504: `BlockFinalizationSink` adapter wrapping `ConsensusBlockCommitter`.
+///
+/// Owns a dedicated writer task fed by an unbounded `mpsc` channel. The
+/// engine calls `finalized()` synchronously — the envelope lands on the
+/// channel and `finalized()` returns. The writer task drains the channel
+/// and runs the existing async `commit_finalized_block_with_proof` logic
+/// (preserving every BFT-safety check from the legacy path: divergence
+/// detection, idempotent re-commit, sled preservation policy).
+///
+/// Failures from the writer task are stored in a shared
+/// `recent_failure` slot. The engine polls this between rounds via
+/// `recent_failure()`; a `Some(...)` drives the FSM into `Halting` per
+/// CONS-307's halt-on-commit-failure semantics.
+///
+/// Why a wrapper instead of a full rewrite of `ConsensusBlockCommitter`:
+/// the 290-LOC legacy callback contains subtle BFT-safety logic
+/// (chain-divergence detection, the Apr 2 2026 sled-preservation
+/// policy, hash-vs-proposal-ID tampering check). Reproducing that in a
+/// fresh writer-task-native impl risks dropping a check. CONS-508
+/// retires the legacy path; until then both shapes share the same
+/// underlying logic.
+pub struct ConsensusBlockFinalizationSink {
+    writer_tx: tokio::sync::mpsc::UnboundedSender<lib_consensus::engines::consensus_engine::CommitEnvelope>,
+    recent_failure: Arc<tokio::sync::RwLock<Option<lib_consensus_core::ports::FinalizationError>>>,
+}
+
+impl ConsensusBlockFinalizationSink {
+    /// Build a sink and spawn its writer task. The task reads from the
+    /// returned channel sender (held inside the sink) and writes
+    /// blocks to `blockchain_slot` via the existing
+    /// `ConsensusBlockCommitter::commit_finalized_block_with_proof`
+    /// logic.
+    pub fn new(blockchain_slot: SharedBlockchainSlot) -> Self {
+        use lib_consensus::types::BlockCommitCallback;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<
+            lib_consensus::engines::consensus_engine::CommitEnvelope,
+        >();
+        let recent_failure = Arc::new(tokio::sync::RwLock::new(None));
+        let recent_failure_clone = recent_failure.clone();
+        let committer = ConsensusBlockCommitter::new(blockchain_slot);
+        tokio::spawn(async move {
+            while let Some(env) = rx.recv().await {
+                let height = env.proposal.height;
+                if let Err(e) = committer
+                    .commit_finalized_block_with_proof(&env.proposal, env.quorum_proof)
+                    .await
+                {
+                    error!(
+                        height = height,
+                        error = %e,
+                        "BFT commit failed in finalization sink writer task — buffering for engine halt"
+                    );
+                    *recent_failure_clone.write().await = Some(
+                        lib_consensus_core::ports::FinalizationError::StorageFailure {
+                            height,
+                            detail: e.to_string(),
+                        },
+                    );
+                }
+            }
+            debug!("ConsensusBlockFinalizationSink writer task exited — sender dropped");
+        });
+        Self {
+            writer_tx: tx,
+            recent_failure,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl lib_consensus_core::ports::BlockFinalizationSink for ConsensusBlockFinalizationSink {
+    fn finalized(
+        &self,
+        proposal: lib_consensus_core::types::ConsensusProposal,
+        proof: lib_types::consensus::BftQuorumProof,
+    ) {
+        // Sync send — never .await on `blockchain_arc.write()` from
+        // here. The writer task owns that lock exclusively.
+        if self
+            .writer_tx
+            .send(lib_consensus::engines::consensus_engine::CommitEnvelope {
+                proposal,
+                quorum_proof: proof,
+            })
+            .is_err()
+        {
+            tracing::warn!(
+                "BlockFinalizationSink writer task closed; commit envelope dropped (CE-ENG-4)"
+            );
+        }
+    }
+
+    async fn recent_failure(&self) -> Option<lib_consensus_core::ports::FinalizationError> {
+        // Drain-on-read: each call reports a failure at most once.
+        // The writer task re-buffers if the same error recurs on the
+        // next envelope.
+        self.recent_failure.write().await.take()
+    }
+}
+
 #[async_trait::async_trait]
 impl lib_consensus::types::ConsensusBlockchainProvider for ConsensusBlockchainAdapter {
     async fn get_latest_block_hash(
