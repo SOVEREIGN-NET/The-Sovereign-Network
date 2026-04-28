@@ -35,7 +35,7 @@ impl Blockchain {
             service_performance: HashMap::new(),
             outcome_reports: HashMap::new(),
             economic_processor: Some(EconomicTransactionProcessor::new()),
-            consensus_coordinator: None,
+            // CONS-505: consensus_coordinator field deleted.
             storage_manager: None,
             store: None,
             proof_aggregator: None,

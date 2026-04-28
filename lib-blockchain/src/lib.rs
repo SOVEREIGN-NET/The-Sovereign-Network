@@ -158,11 +158,13 @@ pub use integration::economic_integration::{
     EconomicTransactionProcessor, TreasuryStats,
 };
 
-// Re-export consensus integration
+// Re-export consensus integration helpers (post-CONS-505).
+// `BlockchainConsensusCoordinator`, `initialize_consensus_integration`,
+// and `initialize_consensus_integration_with_difficulty_config` were
+// deleted along with the parallel orchestrator. The single consensus
+// driver is `lib_consensus_runtime::ConsensusRuntime`.
 pub use integration::consensus_integration::{
-    create_dao_proposal_transaction, create_dao_vote_transaction, initialize_consensus_integration,
-    initialize_consensus_integration_with_difficulty_config, BlockchainConsensusCoordinator,
-    ConsensusStatus,
+    create_dao_proposal_transaction, create_dao_vote_transaction, ConsensusStatus,
 };
 
 // Re-export difficulty types (moved from lib-consensus per CONS-107 / AD-003)
