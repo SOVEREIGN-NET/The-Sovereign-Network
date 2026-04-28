@@ -1,0 +1,18 @@
+[package]
+name = "architecture-invariants"
+version = "0.1.0"
+edition = "2021"
+authors = ["Sovereign Network Team"]
+license = "MIT OR Apache-2.0"
+description = "CI-enforced architecture invariants for the consensus rewrite (CONS-603)."
+publish = false
+
+# This crate intentionally has no runtime dependencies. Its tests shell
+# out to `grep` to scan the workspace source tree for forbidden
+# patterns. Adding tests here that run as part of `cargo test
+# --workspace` ratchets the architecture: any regression that
+# reintroduces a deleted pattern fails CI.
+
+[dependencies]
+
+[dev-dependencies]
