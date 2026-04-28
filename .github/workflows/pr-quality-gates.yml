@@ -1,0 +1,294 @@
+name: PR Quality Gates
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-quality-gates-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+# A reusable composite of setup steps would be ideal, but to keep the workflow
+# self-contained and selectable as required checks (one check per job name),
+# each job below is independently runnable.
+
+jobs:
+  # ------------------------------------------------------------------ #
+  # Each job below MUST keep a stable `name:` so it can be selected as a
+  # required status check in the GitHub branch-protection rule. Do not
+  # rename without updating the rule in repository settings.
+  # ------------------------------------------------------------------ #
+
+  architecture:
+    name: architecture
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run architecture review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/architecture_review.py
+
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run security review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/security_review.py
+
+  blockchain:
+    name: blockchain
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run blockchain review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/blockchain_review.py
+
+  tokenomics:
+    name: tokenomics
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run tokenomics review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/tokenomics_review.py
+
+  compliance:
+    name: compliance
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run compliance review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/compliance_review.py
+
+  privacy_zkdid:
+    name: privacy_zkdid
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run privacy/ZK-DID review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/privacy_zkdid_review.py
+
+  governance:
+    name: governance
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run governance review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/governance_review.py
+
+  economic_risk:
+    name: economic_risk
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run economic-risk review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/economic_risk_review.py
+
+  devops:
+    name: devops
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run devops review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/devops_review.py
+
+  performance:
+    name: performance
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run performance review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/performance_review.py
+
+  data_sovereignty:
+    name: data_sovereignty
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run data-sovereignty review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/data_sovereignty_review.py
+
+  api:
+    name: api
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run API review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/api_review.py
+
+  ux_safety:
+    name: ux_safety
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run UX-safety review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/ux_safety_review.py
+
+  testing:
+    name: testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run testing review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/testing_review.py
+
+  documentation:
+    name: documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run documentation review
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python .github/agents/documentation_review.py
