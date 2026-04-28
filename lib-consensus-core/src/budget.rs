@@ -18,24 +18,36 @@
 //!
 //! ## Runtime startup check (CONS-310 acceptance criterion)
 //!
-//! The runtime is expected to assert at startup that the transport's
-//! reported idle timeout (`TransportInfo::idle_timeout()`, CONS-403)
-//! does not exceed `MAX_BROADCAST_BUDGET_MS * 100`. If it does, the
-//! transport will silently swallow stuck-broadcast scenarios that this
-//! crate's watchdog would otherwise surface, masking liveness bugs.
-//! That assertion lives in `lib-consensus-runtime`'s startup path —
+//! Once `lib-consensus-runtime` lands (CONS-502), it will assert at
+//! startup that the transport's reported idle timeout
+//! (`TransportInfo::idle_timeout()` — `crate::ports::transport`,
+//! populated by CONS-403) does not exceed
+//! `MAX_BROADCAST_BUDGET_MS * 100`. If it does, the transport will
+//! silently swallow stuck-broadcast scenarios that this crate's
+//! watchdog would otherwise surface, masking liveness bugs. That
+//! assertion will live in `lib-consensus-runtime`'s startup path —
 //! intentionally NOT here so this module stays a pure data file with
 //! no IO or trait dependencies.
+//!
+//! At the time CONS-310 lands, the zhtp QUIC mesh idle timeout is
+//! 300 s, which exceeds the 75 s ceiling. AD-011 surfaces this as a
+//! cross-cutting protocol decision: resolution belongs to CONS-502
+//! when the runtime check first exists.
 
-/// Inbound messages from a chain whose previous-hash chain disagrees
-/// with our local chain that we tolerate before halting consensus.
+/// Number of consecutive catch-up sync rounds in which at least one
+/// ahead peer rejects our chain (hash mismatch on the previous block)
+/// before this node halts consensus.
+///
 /// Three rounds is enough to ride out a transient peer reordering
-/// (a couple of late messages from a forked peer) but short enough
-/// that a sustained fork attempt is caught quickly.
+/// (a couple of late rejections from a forked peer) but short enough
+/// that a sustained fork attempt is caught quickly. The watchdog
+/// counts *sync rounds* (one trigger per `catch_up_sync_loop`
+/// iteration), not raw inbound messages.
 ///
 /// Replaces the prior `WRONG_CHAIN_WIPE_THRESHOLD` magic number that
-/// lived in `zhtp/src/runtime/components/consensus.rs:479`. Moved here
-/// per CONS-310 / AD-011.
+/// lived inside `catch_up_sync_loop` in
+/// `zhtp/src/runtime/components/consensus.rs`. Moved here per
+/// CONS-310 / AD-011.
 pub const WRONG_CHAIN_HALT_THRESHOLD: u32 = 3;
 
 /// Maximum wall-clock budget (milliseconds) for completing one round
