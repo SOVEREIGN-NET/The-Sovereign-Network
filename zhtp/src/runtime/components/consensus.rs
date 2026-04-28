@@ -13,6 +13,7 @@ use crate::server::mesh::core::MeshRouter;
 use lib_blockchain::Blockchain;
 use lib_consensus::types::{MessageBroadcaster as ConsensusMessageBroadcaster, ValidatorMessage};
 use lib_consensus_core::budget::WRONG_CHAIN_HALT_THRESHOLD;
+use lib_consensus_core::ports::TransportInfo;
 use lib_consensus::validators::{
     ValidatorAnnouncement, ValidatorDiscoveryProtocol, ValidatorEndpoint,
     ValidatorNetworkTransport, ValidatorProtocol, ValidatorStatus,
@@ -31,6 +32,17 @@ pub struct ConsensusMeshBroadcaster {
 }
 
 impl ConsensusMeshBroadcaster {
+    /// Idle timeout reported to the consensus runtime for the broadcast
+    /// startup check (CONS-403). Mirrors the QUIC server/client config in
+    /// `lib-network/src/protocols/quic_mesh.rs:1706` and `:1760`. If those
+    /// constants change, update this value too — the runtime startup check
+    /// surfaces the divergence as a configuration error.
+    const QUIC_MESH_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+    /// Operator-facing transport name (CONS-403). Used in startup-check
+    /// errors and dashboards.
+    const TRANSPORT_NAME: &'static str = "zhtp-quic-mesh";
+
     pub fn new(mesh_router: Arc<MeshRouter>) -> Self {
         Self { mesh_router }
     }
@@ -139,6 +151,24 @@ impl ConsensusMessageBroadcaster for ConsensusMeshBroadcaster {
         } else {
             Ok(())
         }
+    }
+}
+
+/// CONS-403: expose the QUIC mesh's idle timeout to the consensus runtime
+/// startup check so a misconfigured transport (idle > budget × 100) is
+/// caught before it can silently swallow stuck broadcasts.
+///
+/// We do **not** read the value out of `quinn::TransportConfig` at runtime —
+/// the config is built inside `lib-network` and isn't exposed. We mirror the
+/// constant instead. If the QUIC config is ever made tunable, this adapter
+/// must learn to read it (and the runtime check will catch any drift).
+impl TransportInfo for ConsensusMeshBroadcaster {
+    fn idle_timeout(&self) -> std::time::Duration {
+        Self::QUIC_MESH_IDLE_TIMEOUT
+    }
+
+    fn name(&self) -> &str {
+        Self::TRANSPORT_NAME
     }
 }
 
