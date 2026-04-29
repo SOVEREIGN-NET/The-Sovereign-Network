@@ -2113,6 +2113,27 @@ impl ConsensusEngine {
                     // can find the correct validator membership for this height.
                     self.snapshot_validator_set(self.current_round.height);
                 }
+                // CONS-305: Reset FSM from Rejected/Committed to Idle → Proposing
+                // The FSM's Rejected state ignores all events by design.
+                // The runtime is responsible for resetting it when advancing rounds.
+                if matches!(
+                    self.fsm_state,
+                    lib_consensus_core::fsm::ValidatorState::Rejected { .. }
+                        | lib_consensus_core::fsm::ValidatorState::Committed { .. }
+                ) {
+                    self.fsm_state = lib_consensus_core::fsm::ValidatorState::Idle;
+                    let (next, actions) = lib_consensus_core::fsm::transition(
+                        self.fsm_state.clone(),
+                        lib_consensus_core::fsm::events::Event::SelectedAsProposer {
+                            height: self.current_round.height,
+                            round: self.current_round.round,
+                        },
+                    );
+                    self.enter_fsm_state(next).await;
+                    for action in actions {
+                        self.dispatch_action(action).await;
+                    }
+                }
                 // Start the propose step for the synced/advanced height.
                 if let Err(e) = self.enter_propose_step().await {
                     tracing::warn!(
