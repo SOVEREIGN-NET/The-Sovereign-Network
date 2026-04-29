@@ -2137,6 +2137,9 @@ impl ConsensusEngine {
     /// All nodes must call this so `current_round.proposer` is set before any
     /// incoming proposals are processed by `on_proposal()`.
     pub(super) async fn enter_propose_step(&mut self) -> ConsensusResult<()> {
+        // Set the step to Propose so timers and token matching work correctly.
+        self.current_round.step = ConsensusStep::Propose;
+
         // Select proposer from the frozen snapshot for this height.
         let proposer_id = self
             .compute_proposer_for_round(self.current_round.height, self.current_round.round);
