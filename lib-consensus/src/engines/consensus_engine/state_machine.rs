@@ -2052,10 +2052,26 @@ impl ConsensusEngine {
             self.dispatch_action(action).await;
         }
 
-        // CONS-305: The FSM transition + enter_fsm_state already handles
-        // phase-entry via the hooks at lines 1898-1902. The old match
-        // prior_step block is removed to prevent double-calling
-        // enter_*_step() and FSM/engine step desync.
+        // CONS-305: If the FSM landed in Rejected (from VoteFailed or Timeout),
+        // the runtime must reset to Idle → Proposing for the next round.
+        // This handles ALL paths into Rejected, not just Commit timeout.
+        if matches!(self.fsm_state, lib_consensus_core::fsm::ValidatorState::Rejected { .. }) {
+            self.advance_to_next_round();
+            self.snapshot_validator_set(self.current_round.height);
+            self.fsm_state = lib_consensus_core::fsm::ValidatorState::Idle;
+            let (next, actions) = lib_consensus_core::fsm::transition(
+                self.fsm_state.clone(),
+                lib_consensus_core::fsm::events::Event::SelectedAsProposer {
+                    height: self.current_round.height,
+                    round: self.current_round.round,
+                },
+            );
+            self.enter_fsm_state(next).await;
+            for action in actions {
+                self.dispatch_action(action).await;
+            }
+        }
+
         //
         // Special handling for Commit timeout: sync height + advance round.
         // The FSM transitions Committed.Timeout → Rejected → (runtime resets
