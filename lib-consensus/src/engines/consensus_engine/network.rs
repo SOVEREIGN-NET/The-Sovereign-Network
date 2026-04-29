@@ -102,7 +102,21 @@ impl ConsensusEngine {
                 self.dispatch_action(action).await;
             }
 
-            // Now in Idle — enter propose step which will emit SelectedAsProposer
+            // Now in Idle — transition FSM to Proposing, then enter propose step
+            {
+                let (next, actions) = lib_consensus_core::fsm::transition(
+                    self.fsm_state.clone(),
+                    lib_consensus_core::fsm::events::Event::SelectedAsProposer {
+                        height: self.current_round.height,
+                        round: self.current_round.round,
+                    },
+                );
+                self.enter_fsm_state(next).await;
+                for action in actions {
+                    self.dispatch_action(action).await;
+                }
+            }
+            // enter_propose_step selects the proposer and creates proposal if we're it
             if let Err(e) = self.enter_propose_step().await {
                 tracing::warn!("Failed to enter initial propose step: {}", e);
             }
@@ -193,7 +207,20 @@ impl ConsensusEngine {
                                 }
                             }
 
-                            // Now in Idle — enter propose step
+                            // Now in Idle → Proposing via FSM
+                            {
+                                let (next, actions) = lib_consensus_core::fsm::transition(
+                                    self.fsm_state.clone(),
+                                    lib_consensus_core::fsm::events::Event::SelectedAsProposer {
+                                        height: self.current_round.height,
+                                        round: self.current_round.round,
+                                    },
+                                );
+                                self.enter_fsm_state(next).await;
+                                for action in actions {
+                                    self.dispatch_action(action).await;
+                                }
+                            }
                             if let Err(e) = self.enter_propose_step().await {
                                 tracing::warn!("Failed to enter propose step on BFT transition: {}", e);
                             }
