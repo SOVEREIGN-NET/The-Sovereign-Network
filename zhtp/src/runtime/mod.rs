@@ -2442,6 +2442,14 @@ impl RuntimeOrchestrator {
                         info!("💾 Genesis block (height 0) persisted to SledStore");
                     }
 
+                    // Seed bootstrap validators into the validator registry so
+                    // consensus can find them. Genesis allocations carry identities
+                    // and wallets but NOT validator registrations.
+                    seed_validators_from_bootstrap_config(
+                        &mut bc,
+                        &self.config.network_config.bootstrap_validators,
+                    );
+
                     (bc, false)
                 } else {
                     // ─────────────────────────────────────────────────────────────
