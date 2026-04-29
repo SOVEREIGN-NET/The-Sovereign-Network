@@ -2026,15 +2026,27 @@ impl ConsensusEngine {
             self.fsm_state.kind(),
         );
 
-        // CONS-305a: route the timeout through the FSM. The FSM
-        // computes the next state and any actions; the runtime
-        // dispatches the actions and does the per-state-entry work
-        // (e.g. casting the next-phase vote) via the existing
-        // `enter_*_step` helpers below.  CONS-305f will fold those
-        // helpers into the action handlers and delete this dual path.
+        // CONS-305: Route the timeout through the FSM with walk-through semantics.
+        // The FSM's threshold-gated transitions (Precommitting stays on Timeout)
+        // don't match the Sovereign engine's walk-through model where each phase
+        // advances on timeout. We emit VoteFailed when a phase times out without
+        // reaching threshold, causing the FSM to advance to the next phase or Rejected.
         let prior_step = self.current_round.step.clone();
         let prior_fsm = self.fsm_state.clone();
-        let (next_fsm, actions) = transition(prior_fsm, Event::Timeout);
+
+        // Choose the right event: if we're in an active phase that timed out
+        // without reaching threshold, emit VoteFailed to advance the FSM.
+        let event = match &prior_fsm {
+            lib_consensus_core::fsm::ValidatorState::Prevoting => {
+                Event::VoteFailed(lib_consensus_core::fsm::state::RejectionReason::InsufficientPrevotes)
+            }
+            lib_consensus_core::fsm::ValidatorState::Precommitting => {
+                Event::VoteFailed(lib_consensus_core::fsm::state::RejectionReason::InsufficientPrecommits)
+            }
+            _ => Event::Timeout,
+        };
+
+        let (next_fsm, actions) = transition(prior_fsm, event);
         self.enter_fsm_state(next_fsm).await;
         for action in actions {
             self.dispatch_action(action).await;
