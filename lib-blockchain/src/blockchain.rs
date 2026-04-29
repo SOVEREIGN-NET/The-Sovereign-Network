@@ -5,7 +5,7 @@
 
 use crate::block::Block;
 use crate::contracts::treasury_kernel::TreasuryKernel;
-use crate::integration::consensus_integration::{BlockchainConsensusCoordinator, ConsensusStatus};
+use crate::integration::consensus_integration::ConsensusStatus;
 use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use crate::integration::economic_integration::{EconomicTransactionProcessor, TreasuryStats};
 use crate::integration::storage_integration::{
@@ -197,10 +197,11 @@ pub struct Blockchain {
     /// Economic transaction processor for lib-economy integration
     #[serde(skip)]
     pub economic_processor: Option<EconomicTransactionProcessor>,
-    /// Consensus coordinator for lib-consensus integration
-    #[serde(skip)]
-    pub consensus_coordinator:
-        Option<std::sync::Arc<tokio::sync::RwLock<BlockchainConsensusCoordinator>>>,
+    // CONS-505: `consensus_coordinator: Option<Arc<RwLock<
+    // BlockchainConsensusCoordinator>>>` was deleted along with the
+    // parallel orchestrator. The single consensus driver is now
+    // `lib_consensus_runtime::ConsensusRuntime`; finalization goes
+    // through `BlockFinalizationSink` (CONS-402 / CONS-504).
     /// Storage manager for persistent data
     #[serde(skip)]
     pub storage_manager: Option<std::sync::Arc<tokio::sync::RwLock<BlockchainStorageManager>>>,
@@ -317,6 +318,26 @@ pub struct Blockchain {
     /// On-chain employment contract registry — populated by CreateEmploymentContract txs.
     #[serde(default)]
     pub employment_registry: crate::contracts::employment::EmploymentRegistry,
+
+    // =========================================================================
+    // Observer Admission Registry (observer-admission-3)
+    // =========================================================================
+    /// Observer admission registry snapshot used for in-process reads (e.g.
+    /// API handlers that load a `Blockchain` from a snapshot).
+    ///
+    /// **The sled-backed store is the canonical source of truth.** The executor
+    /// does not populate this field during block application; it writes directly
+    /// to sled via `put_observer_record`.  This field is populated only when a
+    /// `Blockchain` is deserialized from a persisted snapshot that included
+    /// observer records.
+    ///
+    /// Do not use this field for eligibility checks during execution — query the
+    /// store instead.
+    #[serde(default)]
+    pub observer_registry: HashMap<String, lib_types::ObserverAdmissionRecord>,
+    /// Observer node DID → block height at which the record was first committed.
+    #[serde(default)]
+    pub observer_blocks: HashMap<String, u64>,
     // =========================================================================
     // DAO Treasury Execution (dao-2)
     // =========================================================================
@@ -1923,122 +1944,50 @@ impl Blockchain {
     ///   - If getting config fails: returns error without fallback (this indicates a consensus layer problem)
     /// - If consensus coordinator is not available: uses `self.difficulty_config` parameters directly
     fn adjust_difficulty(&mut self) -> Result<()> {
-        // Get adjustment parameters and calculate difficulty in a single lock acquisition
-        // to avoid race conditions between reading config and calculating adjustment
-        if let Some(coordinator) = &self.consensus_coordinator {
-            // Use a single tokio block_in_place to call async methods from sync context
-            // Acquire the coordinator read lock once to avoid race conditions and redundant locking
-            let result = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    let coord = coordinator.read().await;
-                    let adjustment_interval = coord.get_difficulty_adjustment_interval().await;
-                    let config = coord.get_difficulty_config().await;
+        // CONS-505: the coordinator-driven path was deleted. Difficulty
+        // adjustment now reads `self.difficulty_config` directly. The
+        // BFT-finalized path means difficulty is operator-controlled
+        // through governance updates (CONS-106) rather than computed
+        // by a parallel orchestrator.
+        let adjustment_interval = self.difficulty_config.adjustment_interval;
+        let target_timespan = self.difficulty_config.target_timespan;
+        let max_increase = self.difficulty_config.max_difficulty_increase_factor;
+        let max_decrease = self.difficulty_config.max_difficulty_decrease_factor;
 
-                    // Check if we should adjust at this height
-                    if self.height % adjustment_interval != 0 {
-                        return Ok::<Option<(u32, lib_consensus::difficulty::DifficultyConfig)>, anyhow::Error>(None);
-                    }
-                    if self.height < adjustment_interval {
-                        return Ok(None);
-                    }
-
-                    let current_block = &self.blocks[self.height as usize];
-                    let interval_start = &self.blocks[(self.height - adjustment_interval) as usize];
-                    let interval_start_time = interval_start.timestamp();
-                    let interval_end_time = current_block.timestamp();
-
-                    // Calculate new difficulty
-                    match coord.calculate_difficulty_adjustment(
-                        self.height,
-                        self.difficulty.bits(),
-                        interval_start_time,
-                        interval_end_time,
-                    ).await {
-                        Ok(Some(new_bits)) => Ok(Some((new_bits, config))),
-                        Ok(None) => Ok(None),
-                        Err(e) => {
-                            tracing::warn!("Difficulty adjustment via coordinator failed: {}, using fallback with config", e);
-                            // Fallback to config-aware calculation
-                            let new_bits = self.calculate_difficulty_with_config(
-                                interval_start_time,
-                                interval_end_time,
-                                config.target_timespan,
-                                config.max_adjustment_factor,
-                                config.max_adjustment_factor,
-                            );
-                            Ok(Some((new_bits, config)))
-                        }
-                    }
-                })
-            });
-
-            match result {
-                Ok(Some((new_bits, config))) => {
-                    let old_difficulty = self.difficulty.bits();
-                    self.difficulty = Difficulty::from_bits(new_bits);
-                    tracing::info!(
-                        "Difficulty adjusted from {} to {} at height {} \
-                         (config: target_timespan={}, adjustment_interval={}, max_adjustment={}x)",
-                        old_difficulty,
-                        new_bits,
-                        self.height,
-                        config.target_timespan,
-                        config.adjustment_interval,
-                        config.max_adjustment_factor,
-                    );
-                }
-                Ok(None) => {} // No adjustment needed
-                Err(e) => {
-                    tracing::error!(
-                        "Difficulty adjustment via coordinator failed: {}. \
-                         This indicates a consensus layer problem requiring attention.",
-                        e
-                    );
-                    return Err(e);
-                }
-            }
-        } else {
-            // Use self.difficulty_config instead of hardcoded constants
-            let adjustment_interval = self.difficulty_config.adjustment_interval;
-            let target_timespan = self.difficulty_config.target_timespan;
-            let max_increase = self.difficulty_config.max_difficulty_increase_factor;
-            let max_decrease = self.difficulty_config.max_difficulty_decrease_factor;
-
-            // Check if we should adjust at this height
-            if self.height % adjustment_interval != 0 {
-                return Ok(());
-            }
-            if self.height < adjustment_interval {
-                return Ok(());
-            }
-
-            let current_block = &self.blocks[self.height as usize];
-            let interval_start = &self.blocks[(self.height - adjustment_interval) as usize];
-            let interval_start_time = interval_start.timestamp();
-            let interval_end_time = current_block.timestamp();
-
-            let new_difficulty_bits = self.calculate_difficulty_with_config(
-                interval_start_time,
-                interval_end_time,
-                target_timespan,
-                max_increase,
-                max_decrease,
-            );
-            let old_difficulty = self.difficulty.bits();
-            self.difficulty = Difficulty::from_bits(new_difficulty_bits);
-
-            tracing::info!(
-                "Difficulty adjusted from {} to {} at height {} \
-                 (config: target_timespan={}, adjustment_interval={}, max_increase={}x, max_decrease={}x)",
-                old_difficulty,
-                new_difficulty_bits,
-                self.height,
-                target_timespan,
-                adjustment_interval,
-                max_increase,
-                max_decrease,
-            );
+        // Check if we should adjust at this height
+        if self.height % adjustment_interval != 0 {
+            return Ok(());
         }
+        if self.height < adjustment_interval {
+            return Ok(());
+        }
+
+        let current_block = &self.blocks[self.height as usize];
+        let interval_start = &self.blocks[(self.height - adjustment_interval) as usize];
+        let interval_start_time = interval_start.timestamp();
+        let interval_end_time = current_block.timestamp();
+
+        let new_difficulty_bits = self.calculate_difficulty_with_config(
+            interval_start_time,
+            interval_end_time,
+            target_timespan,
+            max_increase,
+            max_decrease,
+        );
+        let old_difficulty = self.difficulty.bits();
+        self.difficulty = Difficulty::from_bits(new_difficulty_bits);
+
+        tracing::info!(
+            "Difficulty adjusted from {} to {} at height {} \
+             (config: target_timespan={}, adjustment_interval={}, max_increase={}x, max_decrease={}x)",
+            old_difficulty,
+            new_difficulty_bits,
+            self.height,
+            target_timespan,
+            adjustment_interval,
+            max_increase,
+            max_decrease,
+        );
 
         Ok(())
     }
@@ -2999,87 +2948,15 @@ impl Blockchain {
         }
     }
 
-    /// Initialize consensus coordinator if not already done
-    pub async fn initialize_consensus_coordinator(
-        &mut self,
-        mempool: std::sync::Arc<tokio::sync::RwLock<crate::mempool::Mempool>>,
-        consensus_type: lib_consensus::ConsensusType,
-    ) -> Result<()> {
-        if self.consensus_coordinator.is_none() {
-            let blockchain_arc = std::sync::Arc::new(tokio::sync::RwLock::new(self.clone()));
-            let coordinator =
-                crate::integration::consensus_integration::initialize_consensus_integration(
-                    blockchain_arc,
-                    mempool,
-                    consensus_type,
-                )
-                .await?;
-
-            self.consensus_coordinator =
-                Some(std::sync::Arc::new(tokio::sync::RwLock::new(coordinator)));
-            info!(" Consensus coordinator initialized for blockchain");
-        }
-        Ok(())
-    }
-
-    /// Get consensus coordinator reference
-    pub fn get_consensus_coordinator(
-        &self,
-    ) -> Option<&std::sync::Arc<tokio::sync::RwLock<BlockchainConsensusCoordinator>>> {
-        self.consensus_coordinator.as_ref()
-    }
-
-    /// Start consensus coordinator
-    pub async fn start_consensus(&mut self) -> Result<()> {
-        if let Some(ref coordinator_arc) = self.consensus_coordinator {
-            let mut coordinator = coordinator_arc.write().await;
-            coordinator.start_consensus_coordinator().await?;
-            info!("Consensus coordinator started for blockchain");
-        } else {
-            return Err(anyhow::anyhow!("Consensus coordinator not initialized"));
-        }
-        Ok(())
-    }
-
-    /// Register as validator in consensus
-    pub async fn register_as_validator(
-        &mut self,
-        identity: lib_identity::IdentityId,
-        stake_amount: u64,
-        storage_capacity: u64,
-        consensus_keypair: &lib_crypto::KeyPair,
-        commission_rate: u8,
-    ) -> Result<()> {
-        if let Some(ref coordinator_arc) = self.consensus_coordinator {
-            let mut coordinator = coordinator_arc.write().await;
-            coordinator
-                .register_as_validator(
-                    identity,
-                    stake_amount,
-                    storage_capacity,
-                    consensus_keypair,
-                    consensus_keypair,
-                    consensus_keypair,
-                    commission_rate,
-                )
-                .await?;
-            info!("Registered as validator with consensus coordinator");
-        } else {
-            return Err(anyhow::anyhow!("Consensus coordinator not initialized"));
-        }
-        Ok(())
-    }
-
-    /// Get consensus status
-    pub async fn get_consensus_status(&self) -> Result<Option<ConsensusStatus>> {
-        if let Some(ref coordinator_arc) = self.consensus_coordinator {
-            let coordinator = coordinator_arc.read().await;
-            let status = coordinator.get_consensus_status().await?;
-            Ok(Some(status))
-        } else {
-            Ok(None)
-        }
-    }
+    // CONS-505: `initialize_consensus_coordinator`,
+    // `get_consensus_coordinator`, `start_consensus`,
+    // `register_as_validator`, and `get_consensus_status` were
+    // deleted along with the `BlockchainConsensusCoordinator` parallel
+    // orchestrator. Consensus is now driven by
+    // `lib_consensus_runtime::ConsensusRuntime` (CONS-502); validator
+    // registration goes through the runtime's `ValidatorSetUpdate`
+    // channel (CONS-305) and consensus status is observed via the
+    // runtime's tracing layer.
 
     // ============================================================================
     // WELFARE SERVICE REGISTRY METHODS
@@ -4051,28 +3928,13 @@ impl Blockchain {
             return Ok(false);
         }
 
-        // If consensus coordinator is available, perform additional consensus verification
-        if let Some(ref coordinator_arc) = self.consensus_coordinator {
-            let coordinator = coordinator_arc.read().await;
-            let status = coordinator.get_consensus_status().await?;
-
-            // Verify block height matches consensus expectations
-            if block.height() != status.current_height {
-                warn!(
-                    "Block height mismatch: block={}, consensus={}",
-                    block.height(),
-                    status.current_height
-                );
-                return Ok(false);
-            }
-
-            // Additional consensus-specific validations would go here
-            info!(
-                "Block passed consensus verification at height {}",
-                block.height()
-            );
-        }
-
+        // CONS-505: the coordinator-side consensus-status height check
+        // was deleted along with `BlockchainConsensusCoordinator`. The
+        // single consensus driver (`lib_consensus_runtime::
+        // ConsensusRuntime`) gates BFT-finalized writes through
+        // `BlockFinalizationSink` (CONS-402 / CONS-504) — by the time
+        // a block reaches this verifier its height is already
+        // consistent with the runtime's view.
         Ok(true)
     }
 
@@ -4478,7 +4340,7 @@ impl Blockchain {
     pub async fn evaluate_and_merge_chain(
         &mut self,
         data: Vec<u8>,
-    ) -> Result<lib_consensus::ChainMergeResult> {
+    ) -> Result<crate::ChainMergeResult> {
         if !self.finalized_blocks.is_empty() {
             return Err(anyhow::anyhow!(
                 "Post-commit reorg forbidden: local chain contains finalized blocks"
@@ -4496,7 +4358,7 @@ impl Blockchain {
         if self.blocks.is_empty() || self.height == 0 {
             if import.blocks.is_empty() {
                 info!("Both local and imported chains are empty - nothing to merge");
-                return Ok(lib_consensus::ChainMergeResult::LocalKept);
+                return Ok(crate::ChainMergeResult::LocalKept);
             }
             let imported_height = import.blocks.len() as u64 - 1;
             info!("Local chain is empty - directly adopting imported chain (height={}, identities={}, validators={}, oracle_prices={})",
@@ -4542,7 +4404,7 @@ impl Blockchain {
             }
 
             info!("Successfully adopted imported chain during bootstrap");
-            return Ok(lib_consensus::ChainMergeResult::ImportedAdopted);
+            return Ok(crate::ChainMergeResult::ImportedAdopted);
         }
 
         // Verify all blocks in sequence
@@ -4590,10 +4452,10 @@ impl Blockchain {
 
         // Use consensus rules to decide which chain to adopt
         let decision =
-            lib_consensus::ChainEvaluator::evaluate_chains(&local_summary, &imported_summary);
+            crate::ChainEvaluator::evaluate_chains(&local_summary, &imported_summary);
 
         match decision {
-            lib_consensus::ChainDecision::KeepLocal => {
+            crate::ChainDecision::KeepLocal => {
                 info!(" Local chain is better - keeping current state");
                 info!(
                     "   Local: height={}, work={}, identities={}",
@@ -4605,9 +4467,9 @@ impl Blockchain {
                     imported_summary.total_work,
                     imported_summary.total_identities
                 );
-                Ok(lib_consensus::ChainMergeResult::LocalKept)
+                Ok(crate::ChainMergeResult::LocalKept)
             }
-            lib_consensus::ChainDecision::MergeContentOnly => {
+            crate::ChainDecision::MergeContentOnly => {
                 info!(" Local chain is longer - merging unique content from shorter chain");
                 info!(
                     "   Local: height={}, work={}, identities={}",
@@ -4624,18 +4486,18 @@ impl Blockchain {
                 match self.merge_unique_content(&import) {
                     Ok(merged_items) => {
                         info!(" Successfully merged unique content: {}", merged_items);
-                        Ok(lib_consensus::ChainMergeResult::ContentMerged)
+                        Ok(crate::ChainMergeResult::ContentMerged)
                     }
                     Err(e) => {
                         warn!("Failed to merge content: {} - keeping local only", e);
-                        Ok(lib_consensus::ChainMergeResult::Failed(format!(
+                        Ok(crate::ChainMergeResult::Failed(format!(
                             "Content merge error: {}",
                             e
                         )))
                     }
                 }
             }
-            lib_consensus::ChainDecision::AdoptImported => {
+            crate::ChainDecision::AdoptImported => {
                 info!(" Imported chain is better - performing intelligent merge");
                 info!(
                     "   Local: height={}, work={}, identities={}",
@@ -4673,7 +4535,7 @@ impl Blockchain {
                         Ok(merge_report) => {
                             info!(" Successfully merged chains with genesis consolidation");
                             info!("{}", merge_report);
-                            Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
+                            Ok(crate::ChainMergeResult::ImportedAdopted)
                         }
                         Err(e) => {
                             warn!(
@@ -4698,7 +4560,7 @@ impl Blockchain {
                                 self.oracle_state = oracle_state;
                             }
                             self.rebuild_dao_registry_index();
-                            Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
+                            Ok(crate::ChainMergeResult::ImportedAdopted)
                         }
                     }
                 } else {
@@ -4738,10 +4600,10 @@ impl Blockchain {
                     info!("   Validators: {}", self.validator_registry.len());
                     info!("   UTXOs: {}", self.utxo_set.len());
 
-                    Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
+                    Ok(crate::ChainMergeResult::ImportedAdopted)
                 }
             }
-            lib_consensus::ChainDecision::Merge => {
+            crate::ChainDecision::Merge => {
                 info!(" Merging compatible chains");
                 info!(
                     "   Local: height={}, work={}, identities={}, contracts={}",
@@ -4761,18 +4623,18 @@ impl Blockchain {
                 match self.merge_chain_content(&import) {
                     Ok(merged_items) => {
                         info!(" Successfully merged chains: {}", merged_items);
-                        Ok(lib_consensus::ChainMergeResult::Merged)
+                        Ok(crate::ChainMergeResult::Merged)
                     }
                     Err(e) => {
                         warn!("Failed to merge chains: {} - keeping local", e);
-                        Ok(lib_consensus::ChainMergeResult::Failed(format!(
+                        Ok(crate::ChainMergeResult::Failed(format!(
                             "Merge error: {}",
                             e
                         )))
                     }
                 }
             }
-            lib_consensus::ChainDecision::AdoptLocal => {
+            crate::ChainDecision::AdoptLocal => {
                 info!("🏆 Local chain is stronger - using as merge base");
                 info!(
                     "   Local: height={}, validators={}, identities={}",
@@ -4793,21 +4655,21 @@ impl Blockchain {
                     Ok(merge_report) => {
                         info!(" Successfully merged imported content into local chain");
                         info!("{}", merge_report);
-                        Ok(lib_consensus::ChainMergeResult::LocalKept)
+                        Ok(crate::ChainMergeResult::LocalKept)
                     }
                     Err(e) => {
                         warn!(
                             " Failed to merge imported content: {} - keeping local only",
                             e
                         );
-                        Ok(lib_consensus::ChainMergeResult::Failed(format!(
+                        Ok(crate::ChainMergeResult::Failed(format!(
                             "Import merge error: {}",
                             e
                         )))
                     }
                 }
             }
-            lib_consensus::ChainDecision::Reject => {
+            crate::ChainDecision::Reject => {
                 warn!("🚫 Networks are incompatible - merge rejected for safety");
                 warn!(
                     "   Local: height={}, validators={}, age={}d",
@@ -4825,11 +4687,11 @@ impl Blockchain {
                 );
                 warn!("   Networks differ too much in size or age to merge safely");
 
-                Ok(lib_consensus::ChainMergeResult::Failed(
+                Ok(crate::ChainMergeResult::Failed(
                     "Networks incompatible - safety threshold exceeded".to_string(),
                 ))
             }
-            lib_consensus::ChainDecision::Conflict => {
+            crate::ChainDecision::Conflict => {
                 warn!(" Chain conflict detected - different genesis blocks");
                 warn!(
                     "   Local genesis: {}",
@@ -4849,7 +4711,7 @@ impl Blockchain {
                 );
                 warn!("   These chains are from different networks and cannot be merged");
 
-                Ok(lib_consensus::ChainMergeResult::Failed(
+                Ok(crate::ChainMergeResult::Failed(
                     "Genesis hash mismatch - chains from different networks".to_string(),
                 ))
             }
@@ -4857,7 +4719,7 @@ impl Blockchain {
     }
 
     /// Create chain summary for local blockchain
-    async fn create_local_chain_summary_async(&self) -> lib_consensus::ChainSummary {
+    async fn create_local_chain_summary_async(&self) -> crate::ChainSummary {
         // Use the data helix root as the genesis content commitment.
         let genesis_hash = self
             .blocks
@@ -4869,40 +4731,16 @@ impl Blockchain {
 
         let latest_timestamp = self.blocks.last().map(|b| b.header.timestamp).unwrap_or(0);
 
-        // Get consensus data if coordinator is available
-        let (validator_count, total_validator_stake, validator_set_hash) =
-            if let Some(ref coordinator_arc) = self.consensus_coordinator {
-                let coordinator = coordinator_arc.read().await;
-                match coordinator.get_consensus_status().await {
-                    Ok(status) => {
-                        // Get validator stats for stake information
-                        let validator_infos =
-                            coordinator.list_all_validators().await.unwrap_or_default();
-                        let total_stake: u128 = validator_infos
-                            .iter()
-                            .map(|v| v.stake_amount as u128)
-                            .fold(0u128, |acc, x| acc.saturating_add(x));
-
-                        // Calculate validator set hash
-                        let validator_ids: Vec<String> = validator_infos
-                            .iter()
-                            .map(|v| v.identity.to_string())
-                            .collect();
-                        let validator_hash = if !validator_ids.is_empty() {
-                            hex::encode(lib_crypto::hash_blake3(
-                                format!("{:?}", validator_ids).as_bytes(),
-                            ))
-                        } else {
-                            String::new()
-                        };
-
-                        (status.active_validators as u64, total_stake, validator_hash)
-                    }
-                    Err(_) => (0, 0, String::new()),
-                }
-            } else {
-                (0, 0, String::new())
-            };
+        // CONS-505: validator stats previously came from
+        // `BlockchainConsensusCoordinator::list_all_validators()`.
+        // After the coordinator deletion, validator-set observability
+        // is the runtime's responsibility — `lib_consensus_runtime::
+        // ConsensusRuntime` exposes the live set via its observability
+        // hooks. This summary returns zeros until that wiring is made
+        // available to `Blockchain` (CONS-507 follow-up); callers that
+        // need real numbers should query the runtime directly.
+        let (validator_count, total_validator_stake, validator_set_hash): (u64, u128, String) =
+            (0, 0, String::new());
 
         // Estimate TPS based on recent blocks
         let expected_tps = if self.blocks.len() >= 10 {
@@ -4938,7 +4776,7 @@ impl Blockchain {
             .filter(|id| id.identity_type.contains("bridge") || id.identity_type.contains("Bridge"))
             .count() as u64;
 
-        lib_consensus::ChainSummary {
+        crate::ChainSummary {
             height: self.get_height(),
             total_work: self.calculate_total_work(),
             total_transactions: self
@@ -5593,7 +5431,7 @@ impl Blockchain {
         utxo_set: &HashMap<Hash, TransactionOutput>,
         token_contracts: &HashMap<[u8; 32], crate::contracts::TokenContract>,
         web4_contracts: &HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
-    ) -> lib_consensus::ChainSummary {
+    ) -> crate::ChainSummary {
         // Use the data helix root as the genesis content commitment.
         let genesis_hash = blocks
             .first()
@@ -5671,7 +5509,7 @@ impl Blockchain {
             String::new()
         };
 
-        lib_consensus::ChainSummary {
+        crate::ChainSummary {
             height: blocks.len().saturating_sub(1) as u64,
             total_work: self.calculate_imported_total_work(blocks),
             total_transactions: blocks
@@ -6546,8 +6384,9 @@ impl Default for Blockchain {
     fn default() -> Self {
         let mut blockchain = Self::new().expect("Failed to create default blockchain");
         blockchain.ensure_economic_processor();
-        // Note: Consensus coordinator requires async initialization and external dependencies
-        // so it's not initialized in Default. Call initialize_consensus_coordinator() separately.
+        // CONS-505: the consensus coordinator was deleted; nothing to
+        // initialize here. Drive consensus via
+        // `lib_consensus_runtime::ConsensusRuntime` instead.
         blockchain
     }
 }

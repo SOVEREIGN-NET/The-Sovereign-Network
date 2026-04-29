@@ -249,6 +249,9 @@ pub mod meta {
 
     /// Key for UTXO Merkle tree: current root hash ([u8; 32]).
     pub const UTXO_MERKLE_ROOT: &[u8] = b"utxo_merkle_root";
+
+    /// Key for canonical observer admission policy (single global record).
+    pub const OBSERVER_POLICY: &[u8] = b"observer_policy";
 }
 
 // =============================================================================
@@ -277,6 +280,18 @@ pub fn dao_stake_key(sector_dao_key_id: &[u8; 32], staker: &[u8; 32]) -> [u8; 64
     key[..32].copy_from_slice(sector_dao_key_id);
     key[32..].copy_from_slice(staker);
     key
+}
+
+// =============================================================================
+// OBSERVER ADMISSION KEYS
+// =============================================================================
+
+/// Key for the `observer_registry` sled tree: did_hash (32 bytes) → ObserverAdmissionRecord.
+///
+/// `did_hash` is `blake3(observer_node_did_string)`.  Callers must hash first.
+#[inline]
+pub fn observer_record_key(did_hash: &[u8; 32]) -> &[u8; 32] {
+    did_hash
 }
 
 // =============================================================================

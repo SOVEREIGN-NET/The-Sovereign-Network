@@ -50,34 +50,9 @@ pub use sled_store::SledStore;
 
 // Import ALL canonical types from lib-types
 // These are the authoritative definitions for consensus-critical types
-pub use lib_types::primitives::{Address, Amount, BlockHash, BlockHeight, Bps, TokenId, TxHash};
-
-// =============================================================================
-// STORAGE-SPECIFIC TYPES
-// =============================================================================
-
-/// Reference to a specific output within a transaction
-///
-/// This is the canonical way to identify a UTXO. Never use tx hash alone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct OutPoint {
-    /// Transaction containing this output
-    pub tx: TxHash,
-    /// Index of the output within the transaction (0-based)
-    pub index: u32,
-}
-
-impl OutPoint {
-    pub fn new(tx: TxHash, index: u32) -> Self {
-        Self { tx, index }
-    }
-}
-
-impl fmt::Display for OutPoint {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.tx, self.index)
-    }
-}
+pub use lib_types::primitives::{
+    Address, Amount, BlockHash, BlockHeight, Bps, OutPoint, TokenId, TxHash, Utxo, UtxoMerkleProof,
+};
 
 // =============================================================================
 // EXTENSION TRAITS FOR CANONICAL TYPES
@@ -145,39 +120,8 @@ impl TokenIdExt for TokenId {
         self.0.to_vec()
     }
 }
-// UTXO TYPE
+// UTXO TYPE (canonical definitions live in lib_types::primitives; re-exported above)
 // =============================================================================
-
-/// Unspent Transaction Output
-///
-/// Represents spendable value at an OutPoint.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Utxo {
-    /// Amount in smallest unit (satoshi-equivalent)
-    pub amount: u64,
-    /// Owner's address (who can spend this)
-    pub owner: Address,
-    /// Token type (NATIVE for ZHTP, or custom token ID)
-    pub token: TokenId,
-    /// Block height when this UTXO was created
-    pub created_at_height: u64,
-    /// Optional lock script or conditions
-    pub script: Option<Vec<u8>>,
-    /// Poseidon Merkle leaf commitment (`[u8; 32]`).
-    /// When present, the node tracks this UTXO in the persistent Merkle tree.
-    pub merkle_leaf: Option<[u8; 32]>,
-}
-
-/// Merkle inclusion proof for a UTXO in the persistent Poseidon tree.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UtxoMerkleProof {
-    /// Leaf index of the UTXO commitment in the tree.
-    pub leaf_index: u64,
-    /// Sibling hashes from leaf to root.
-    pub siblings: Vec<[u8; 32]>,
-    /// Current Merkle root.
-    pub root: [u8; 32],
-}
 
 /// Consensus snapshot for token subsystem state.
 ///
@@ -224,23 +168,6 @@ pub struct DaoStakeRecord {
     pub staked_at_height: u64,
     /// Absolute block height when the lock expires (staked_at_height + lock_blocks)
     pub locked_until: u64,
-}
-
-impl Utxo {
-    pub fn new(amount: u64, owner: Address, token: TokenId, created_at_height: u64) -> Self {
-        Self {
-            amount,
-            owner,
-            token,
-            created_at_height,
-            script: None,
-            merkle_leaf: None,
-        }
-    }
-
-    pub fn native(amount: u64, owner: Address, created_at_height: u64) -> Self {
-        Self::new(amount, owner, TokenId::NATIVE, created_at_height)
-    }
 }
 
 // =============================================================================
@@ -1549,5 +1476,91 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         _sector_dao_key_id: &[u8; 32],
     ) -> StorageResult<Vec<DaoStakeRecord>> {
         Ok(vec![])
+    }
+
+    // =========================================================================
+    // Observer Admission Operations (default no-ops for non-sled backends)
+    // =========================================================================
+
+    /// Retrieve an observer admission record by node DID hash.
+    ///
+    /// `did_hash` is `blake3(observer_node_did_string)`.
+    fn get_observer_record(
+        &self,
+        _did_hash: &[u8; 32],
+    ) -> StorageResult<Option<lib_types::ObserverAdmissionRecord>> {
+        Ok(None)
+    }
+
+    /// Persist (upsert) an observer admission record within the current block transaction.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn put_observer_record(
+        &self,
+        _did_hash: &[u8; 32],
+        _record: &lib_types::ObserverAdmissionRecord,
+    ) -> StorageResult<()> {
+        Ok(())
+    }
+
+    /// Delete an observer admission record within the current block transaction.
+    ///
+    /// Used when a record is superseded (currently unused, reserved for future purge).
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn delete_observer_record(&self, _did_hash: &[u8; 32]) -> StorageResult<()> {
+        Ok(())
+    }
+
+    /// Iterate every observer admission record currently in the registry.
+    ///
+    /// Used by read endpoints (admission-6) and policy/quota evaluation (admission-4)
+    /// that need to enumerate the canonical set of admitted observers.
+    fn iter_observer_records(&self) -> StorageResult<Vec<lib_types::ObserverAdmissionRecord>> {
+        Ok(vec![])
+    }
+
+    /// Iterate every observer admission record sponsored by the given user DID hash.
+    ///
+    /// `sponsor_did_hash` is `blake3(sponsoring_user_did_string)`. Implementations
+    /// MAY use a secondary index; the default implementation filters via
+    /// `iter_observer_records`.
+    fn iter_observer_records_for_sponsor(
+        &self,
+        sponsor_did_hash: &[u8; 32],
+    ) -> StorageResult<Vec<lib_types::ObserverAdmissionRecord>> {
+        let all = self.iter_observer_records()?;
+        Ok(all
+            .into_iter()
+            .filter(|r| {
+                let h = crate::storage::did_to_hash(&r.sponsor.sponsoring_user_did);
+                &h == sponsor_did_hash
+            })
+            .collect())
+    }
+
+    /// Retrieve the canonical observer admission policy.
+    ///
+    /// Returns `None` if no policy has been seeded yet (callers should treat
+    /// this as "genesis not yet bootstrapped" and fall back to
+    /// `crate::observer::default_policy()`).
+    fn get_observer_policy(
+        &self,
+    ) -> StorageResult<Option<lib_types::ObserverAdmissionPolicy>> {
+        Ok(None)
+    }
+
+    /// Persist the canonical observer admission policy.
+    ///
+    /// This is a metadata write — like `save_oracle_state`, it does not
+    /// require an active block transaction. Governance/genesis bootstrap
+    /// calls it directly.
+    fn save_observer_policy(
+        &self,
+        _policy: &lib_types::ObserverAdmissionPolicy,
+    ) -> StorageResult<()> {
+        Ok(())
     }
 }

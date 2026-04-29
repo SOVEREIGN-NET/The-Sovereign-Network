@@ -125,24 +125,22 @@ pub fn test_proposal(
         block_data,
         timestamp,
         signature: test_signature(timestamp),
-        consensus_proof: ConsensusProof {
-            consensus_type: ConsensusType::ByzantineFaultTolerance,
-            stake_proof: Some(
-                StakeProof::new(
-                    proposer.clone(),
-                    2_000 * 1_000_000,
-                    Hash::from_bytes(&hash_blake3(
-                        format!("stake-{}-{}", proposer, timestamp).as_bytes(),
-                    )),
-                    height.saturating_sub(1),
-                    10_000,
-                )
-                .expect("valid stake proof"),
-            ),
-            storage_proof: None,
-            work_proof: None,
-            zk_did_proof: None,
-            timestamp,
+        consensus_proof: {
+            // CONS-201 Scope B: proof bytes are opaque; build via the
+            // `ConsensusProofExt` builder.
+            use lib_consensus::types::ConsensusProofExt;
+            let stake_proof = StakeProof::new(
+                proposer.clone(),
+                2_000 * 1_000_000,
+                Hash::from_bytes(&hash_blake3(
+                    format!("stake-{}-{}", proposer, timestamp).as_bytes(),
+                )),
+                height.saturating_sub(1),
+                10_000,
+            )
+            .expect("valid stake proof");
+            ConsensusProof::empty(ConsensusType::ByzantineFaultTolerance, timestamp)
+                .with_stake_proof(&stake_proof)
         },
     }
 }

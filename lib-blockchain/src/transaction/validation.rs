@@ -47,6 +47,31 @@ pub enum ValidationError {
     ThresholdNotMet,
     /// Stake is still locked - cannot unstake yet.
     StakeStillLocked { locked_until: u64, remaining: u64 },
+    // =========================================================================
+    // Observer Admission Errors (observer-admission-3)
+    // =========================================================================
+    /// An observer with this node DID is already registered.
+    ObserverAlreadyRegistered,
+    /// No observer admission record exists for the given node DID.
+    ObserverNotFound,
+    /// The requested observer lifecycle transition is not permitted from the
+    /// current status (e.g. reauthorize while Active, or suspend while Revoked).
+    InvalidObserverLifecycleTransition,
+    /// The sponsor DID in the transaction does not match the binding recorded
+    /// in the canonical registry (or is empty on a new registration).
+    InvalidSponsorBinding,
+    /// The sponsor's proof level is below the policy minimum.
+    SponsorProofLevelTooLow,
+    /// The sponsor has already used all observer slots for their proof level.
+    SponsorQuotaExhausted,
+    /// The sponsor is anonymous (empty DID or proof level None) and cannot
+    /// sponsor observers under any policy.
+    AnonymousSponsorRejected,
+    /// The observer record's expiry has passed.
+    ObserverExpired,
+    /// The observer record exists but is not currently authorized
+    /// (e.g. Pending, Suspended, Revoked, or fails policy network/proof check).
+    ObserverNotAuthorized,
 }
 
 impl std::fmt::Display for ValidationError {
@@ -82,6 +107,33 @@ impl std::fmt::Display for ValidationError {
             ValidationError::StakeStillLocked { locked_until, remaining } => {
                 write!(f, "Stake still locked until block {} ({} blocks remaining)", locked_until, remaining)
             }
+            ValidationError::ObserverAlreadyRegistered => {
+                write!(f, "An observer with this node DID is already registered")
+            }
+            ValidationError::ObserverNotFound => {
+                write!(f, "No observer admission record found for the given node DID")
+            }
+            ValidationError::InvalidObserverLifecycleTransition => {
+                write!(f, "Invalid observer lifecycle transition from current status")
+            }
+            ValidationError::InvalidSponsorBinding => {
+                write!(f, "Sponsor DID does not match the canonical sponsor binding")
+            }
+            ValidationError::SponsorProofLevelTooLow => {
+                write!(f, "Sponsor proof level is below the policy minimum")
+            }
+            ValidationError::SponsorQuotaExhausted => {
+                write!(f, "Sponsor has reached the observer quota for their proof level")
+            }
+            ValidationError::AnonymousSponsorRejected => {
+                write!(f, "Anonymous sponsors cannot register observers")
+            }
+            ValidationError::ObserverExpired => {
+                write!(f, "Observer admission record has expired")
+            }
+            ValidationError::ObserverNotAuthorized => {
+                write!(f, "Observer is not currently authorized by canonical admission state")
+            }
         }
     }
 }
@@ -104,6 +156,55 @@ pub struct StatefulTransactionValidator<'a> {
     blockchain: Option<&'a crate::blockchain::Blockchain>,
 }
 
+// =========================================================================
+// Observer Admission helpers (observer-admission-3)
+// Free functions so they are reachable from both TransactionValidator and
+// StatefulTransactionValidator impl blocks.
+// =========================================================================
+
+/// Validates that an observer transaction carries its typed payload and has
+/// no UTXO inputs or outputs.  Reused in both stateless validation functions.
+fn validate_observer_tx_structure(tx: &Transaction) -> ValidationResult {
+    use crate::types::transaction_type::TransactionType;
+    let has_payload = match tx.transaction_type {
+        TransactionType::RegisterObserver => tx.register_observer_data().is_some(),
+        TransactionType::UpdateObserverMetadata => {
+            tx.update_observer_metadata_data().is_some()
+        }
+        TransactionType::SuspendObserver => tx.suspend_observer_data().is_some(),
+        TransactionType::RevokeObserver => tx.revoke_observer_data().is_some(),
+        TransactionType::ReauthorizeObserver => tx.reauthorize_observer_data().is_some(),
+        _ => return Ok(()),
+    };
+    if !has_payload {
+        return Err(ValidationError::MissingRequiredData);
+    }
+    if !tx.inputs.is_empty() || !tx.outputs.is_empty() {
+        return Err(ValidationError::InvalidInputs);
+    }
+    Ok(())
+}
+
+/// Derives the signer DID from `tx.signature.public_key.key_id` and returns
+/// `Err(InvalidSponsorBinding)` if it does not match `expected_did`.
+fn check_observer_signer(
+    tx: &Transaction,
+    expected_did: &str,
+    log_tag: &str,
+) -> Result<(), ValidationError> {
+    let signer_did = format!("did:zhtp:{}", hex::encode(tx.signature.public_key.key_id));
+    if signer_did != expected_did {
+        tracing::warn!(
+            "[{}] actor_did mismatch: payload={} signer={}",
+            log_tag,
+            expected_did,
+            signer_did,
+        );
+        return Err(ValidationError::InvalidSponsorBinding);
+    }
+    Ok(())
+}
+
 impl TransactionValidator {
     /// Create a new transaction validator
     pub fn new() -> Self {
@@ -122,8 +223,23 @@ impl TransactionValidator {
     /// Phase 2: TokenTransfer must have fee == 0 even when the caller passes
     /// is_system_transaction=false (to force signature validation). This ensures
     /// the mempool and BlockExecutor have consistent fee rules.
+    ///
+    /// Observer admission transactions (observer-admission-4) are treated as
+    /// non-system for signature/identity validation but pay their economic cost
+    /// via an explicit `OBSERVER_REGISTRATION_FEE` SOV debit in the executor,
+    /// not via `transaction.fee`. They MUST therefore carry `fee == 0` and are
+    /// fee-exempt at the stateless layer.
     fn compute_economics_is_system(transaction: &Transaction, is_system_transaction: bool) -> bool {
-        is_system_transaction || transaction.transaction_type == TransactionType::TokenTransfer
+        is_system_transaction
+            || matches!(
+                transaction.transaction_type,
+                TransactionType::TokenTransfer
+                    | TransactionType::RegisterObserver
+                    | TransactionType::UpdateObserverMetadata
+                    | TransactionType::SuspendObserver
+                    | TransactionType::RevokeObserver
+                    | TransactionType::ReauthorizeObserver
+            )
     }
 
     fn validate_canonical_bonding_curve_memo(
@@ -175,9 +291,18 @@ impl TransactionValidator {
         // Check if this is a system transaction (empty inputs = coinbase-style)
         let mut is_system_transaction = transaction.inputs.is_empty();
         // Typed token operations must pay fees even with empty inputs.
+        // Observer admission transactions (observer-admission-4) carry no
+        // inputs/outputs by design but MUST be authenticated and identity-bound;
+        // mark them non-system so signature + identity validation runs.
         if matches!(
             transaction.transaction_type,
-            TransactionType::TokenTransfer | TransactionType::TokenCreation
+            TransactionType::TokenTransfer
+                | TransactionType::TokenCreation
+                | TransactionType::RegisterObserver
+                | TransactionType::UpdateObserverMetadata
+                | TransactionType::SuspendObserver
+                | TransactionType::RevokeObserver
+                | TransactionType::ReauthorizeObserver
         ) {
             is_system_transaction = false;
         }
@@ -406,6 +531,18 @@ impl TransactionValidator {
             TransactionType::DaoUnstake => {
                 // Full validation deferred to stateful validator (lock check, record existence, etc.)
             }
+
+            // =================================================================
+            // Observer Admission (observer-admission-3)
+            // =================================================================
+            TransactionType::RegisterObserver
+            | TransactionType::UpdateObserverMetadata
+            | TransactionType::SuspendObserver
+            | TransactionType::RevokeObserver
+            | TransactionType::ReauthorizeObserver => {
+                validate_observer_tx_structure(transaction)?;
+            }
+
             TransactionType::DomainRegistration => {
                 if !transaction
                     .memo
@@ -691,6 +828,18 @@ impl TransactionValidator {
             TransactionType::DaoUnstake => {
                 // Full validation deferred to stateful validator (lock check, record existence, etc.)
             }
+
+            // =================================================================
+            // Observer Admission (observer-admission-3)
+            // =================================================================
+            TransactionType::RegisterObserver
+            | TransactionType::UpdateObserverMetadata
+            | TransactionType::SuspendObserver
+            | TransactionType::RevokeObserver
+            | TransactionType::ReauthorizeObserver => {
+                validate_observer_tx_structure(transaction)?;
+            }
+
             TransactionType::DomainRegistration => {
                 if !transaction
                     .memo
@@ -1586,10 +1735,18 @@ impl<'a> StatefulTransactionValidator<'a> {
         tracing::debug!("[BREADCRUMB] is_token_contract_execution = {}", is_token);
 
         let mut is_system_transaction = transaction.inputs.is_empty() && !is_token;
-        // TokenTransfer must pay fees even with empty inputs
+        // TokenTransfer must pay fees even with empty inputs.
+        // Observer admission transactions (observer-admission-4) require
+        // signature + identity validation despite having no inputs.
         if matches!(
             transaction.transaction_type,
-            TransactionType::TokenTransfer | TransactionType::TokenCreation
+            TransactionType::TokenTransfer
+                | TransactionType::TokenCreation
+                | TransactionType::RegisterObserver
+                | TransactionType::UpdateObserverMetadata
+                | TransactionType::SuspendObserver
+                | TransactionType::RevokeObserver
+                | TransactionType::ReauthorizeObserver
         ) {
             is_system_transaction = false;
         }
@@ -1905,14 +2062,46 @@ impl<'a> StatefulTransactionValidator<'a> {
             TransactionType::DaoUnstake => {
                 self.validate_dao_unstake(transaction)?;
             }
+
+            // =================================================================
+            // Observer Admission (observer-admission-3)
+            // For each observer type, verify that the signing key matches the
+            // expected actor DID in the payload.  This prevents a malicious
+            // party from submitting observer lifecycle operations under a DID
+            // they do not control.
+            // =================================================================
+            TransactionType::RegisterObserver => {
+                let data = transaction
+                    .register_observer_data()
+                    .ok_or(ValidationError::MissingRequiredData)?;
+                check_observer_signer(transaction, &data.sponsor_user_did, "REGISTER_OBSERVER")?;
+            }
+            TransactionType::UpdateObserverMetadata => {
+                let data = transaction
+                    .update_observer_metadata_data()
+                    .ok_or(ValidationError::MissingRequiredData)?;
+                check_observer_signer(transaction, &data.actor_did, "UPDATE_OBSERVER_META")?;
+            }
+            TransactionType::SuspendObserver => {
+                let data = transaction
+                    .suspend_observer_data()
+                    .ok_or(ValidationError::MissingRequiredData)?;
+                check_observer_signer(transaction, &data.actor_did, "SUSPEND_OBSERVER")?;
+            }
+            TransactionType::RevokeObserver => {
+                let data = transaction
+                    .revoke_observer_data()
+                    .ok_or(ValidationError::MissingRequiredData)?;
+                check_observer_signer(transaction, &data.actor_did, "REVOKE_OBSERVER")?;
+            }
+            TransactionType::ReauthorizeObserver => {
+                let data = transaction
+                    .reauthorize_observer_data()
+                    .ok_or(ValidationError::MissingRequiredData)?;
+                check_observer_signer(transaction, &data.sponsor_user_did, "REAUTHORIZE_OBSERVER")?;
+            }
+
             TransactionType::DomainRegistration => {
-                if !transaction
-                    .memo
-                    .starts_with(crate::transaction::DOMAIN_REGISTRATION_PREFIX)
-                {
-                    return Err(ValidationError::InvalidMemo);
-                }
-                // Authorization: the owner_did in the payload must match the signer's key_id.
                 // This prevents a malicious actor from claiming ownership of a domain under a
                 // DID they don't control.
                 let payload =
@@ -2019,6 +2208,9 @@ impl<'a> StatefulTransactionValidator<'a> {
             && transaction.transaction_type != TransactionType::DaoUnstake
             && transaction.transaction_type != TransactionType::DomainRegistration // owner_did↔signer binding enforced above
             && transaction.transaction_type != TransactionType::DomainUpdate // owner_did↔signer binding enforced above
+            // All observer admission lifecycle types (Register/Update/Suspend/Revoke/Reauthorize)
+            // require the actor/sponsor to be a registered identity (Sybil resistance);
+            // signer↔DID binding is separately enforced by `check_observer_signer` above.
             && !is_token_contract_execution(transaction)
         {
             tracing::debug!("[BREADCRUMB] validate_sender_identity_exists CALL");
@@ -3232,6 +3424,18 @@ pub mod utils {
                     && transaction.inputs.is_empty()
                     && transaction.outputs.is_empty()
             }
+
+            // =================================================================
+            // Observer Admission (observer-admission-3)
+            // =================================================================
+            TransactionType::RegisterObserver
+            | TransactionType::UpdateObserverMetadata
+            | TransactionType::SuspendObserver
+            | TransactionType::RevokeObserver
+            | TransactionType::ReauthorizeObserver => {
+                validate_observer_tx_structure(transaction).is_ok()
+            }
+
             TransactionType::DomainRegistration => {
                 transaction
                     .memo

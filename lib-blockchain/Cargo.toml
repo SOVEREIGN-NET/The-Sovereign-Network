@@ -46,6 +46,10 @@ lib-proofs = { path = "../lib-proofs" }
 lib-identity = { path = "../lib-identity" }
 lib-storage = { path = "../lib-storage" }
 lib-consensus = { path = "../lib-consensus" }
+# Port traits for the in-flight rewrite — CONS-103 wires
+# `lib_consensus_core::ports::ValidatorRewardInput` here so the integration
+# coordinator builds the slice the new lib-economy calculator expects.
+lib-consensus-core = { path = "../lib-consensus-core" }
 lib-economy = { path = "../lib-economy" }
 
 [features]

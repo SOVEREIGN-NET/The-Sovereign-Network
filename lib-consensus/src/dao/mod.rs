@@ -1,11 +1,9 @@
-//! DAO governance system for ZHTP
+//! Back-compat shim: DAO module relocated to `lib_governance::dao` per
+//! CONS-106 / AD-003. This module re-exports the new home so existing
+//! `lib_consensus::dao::*` and `lib_consensus::Dao*` paths keep working
+//! during the rewrite. Will be deleted in CONS-508 along with the rest of
+//! lib-consensus.
 
-pub mod dao_engine;
-pub mod dao_types;
-pub mod proposals;
-pub mod treasury;
-pub mod voting;
-
-// Re-export all DAO types
-pub use dao_engine::DaoEngine;
-pub use proposals::*;
+pub use lib_governance::dao::*;
+pub use lib_governance::dao::dao_engine;
+pub use lib_governance::dao::dao_types;
