@@ -69,6 +69,9 @@ pub struct MeshMessageHandler {
     /// being passed to the consensus engine. Takes priority over consensus_message_sender.
     pub raw_validator_message_sender:
         Option<tokio::sync::mpsc::Sender<lib_consensus::validators::ValidatorMessage>>,
+    /// Buffer for validator messages received before middleware is wired.
+    /// Flushed to raw_validator_message_sender when set_raw_validator_message_sender is called.
+    validator_message_buffer: Arc<std::sync::Mutex<Vec<lib_consensus::validators::ValidatorMessage>>>,
     /// Store-and-forward queue for identity envelopes
     pub identity_store_forward:
         Option<Arc<RwLock<crate::identity_store_forward::IdentityStoreForward>>>,
@@ -110,6 +113,7 @@ impl MeshMessageHandler {
             ),
             consensus_message_sender: None,
             raw_validator_message_sender: None,
+            validator_message_buffer: Arc::new(std::sync::Mutex::new(Vec::new())),
             identity_store_forward: None,
             oracle_attestation_sender: None,
         }
@@ -182,6 +186,19 @@ impl MeshMessageHandler {
         &mut self,
         sender: tokio::sync::mpsc::Sender<lib_consensus::validators::ValidatorMessage>,
     ) {
+        // Flush any messages that arrived before the middleware was wired
+        let buffered = std::mem::take(&mut *self.validator_message_buffer.lock().unwrap());
+        if !buffered.is_empty() {
+            info!(
+                "🔗 Flushing {} buffered validator message(s) to middleware",
+                buffered.len()
+            );
+            for msg in buffered {
+                if let Err(e) = sender.try_send(msg) {
+                    warn!("Failed to flush buffered validator message: {}", e);
+                }
+            }
+        }
         self.raw_validator_message_sender = Some(sender);
         info!("🔗 Raw validator message sender wired to mesh message handler");
     }
@@ -842,10 +859,25 @@ impl MeshMessageHandler {
                         }
                     }
                 } else {
-                    warn!(
-                        "Dropping ValidatorMessage from peer {:?}: no ValidatorProtocol middleware wired (signature verification required)",
-                        hex::encode(&sender.key_id[0..8.min(sender.key_id.len())])
-                    );
+                    // Buffer messages until middleware is wired — prevents
+                    // race where peers send proposals before consensus starts.
+                    const MAX_BUFFER: usize = 64;
+                    let mut buf = self.validator_message_buffer.lock().unwrap();
+                    if buf.len() < MAX_BUFFER {
+                        info!(
+                            "Buffering ValidatorMessage from peer {:?} (middleware not yet wired, buffer={}/{})",
+                            hex::encode(&sender.key_id[0..8.min(sender.key_id.len())]),
+                            buf.len() + 1,
+                            MAX_BUFFER,
+                        );
+                        buf.push(msg);
+                    } else {
+                        warn!(
+                            "Dropping ValidatorMessage from peer {:?}: buffer full ({}) and middleware not wired",
+                            hex::encode(&sender.key_id[0..8.min(sender.key_id.len())]),
+                            MAX_BUFFER,
+                        );
+                    }
                 }
             }
             ZhtpMeshMessage::OracleAttestation { payload } => {
