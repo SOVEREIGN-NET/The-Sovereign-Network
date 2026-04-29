@@ -673,10 +673,10 @@ impl ConsensusEngine {
             validator_identity: None,
             validator_manager,
             current_round,
-            // Engine starts at step=Propose (see initial ConsensusRound
-            // above) — keep the FSM mirror aligned. The consensus loop
-            // promotes to other states via `enter_fsm_state()`.
-            fsm_state: lib_consensus_core::fsm::ValidatorState::Proposing,
+            // Engine starts in Bootstrapping — waits for quorum connectivity
+            // before entering active consensus. BootstrapComplete event
+            // transitions to Idle, then SelectedAsProposer to Proposing.
+            fsm_state: lib_consensus_core::fsm::ValidatorState::Bootstrapping,
             config,
             pending_proposals: VecDeque::new(),
             vote_pool: HashMap::new(), // Composite key prevents equivocation

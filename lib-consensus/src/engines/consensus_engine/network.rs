@@ -77,22 +77,35 @@ impl ConsensusEngine {
         let mut last_bft_mode = self.is_bft_mode_active();
         let validator_count = self.get_validator_count();
 
+        // CONS-305: Start in Bootstrapping state — do NOT propose immediately.
+        // Wait for quorum connectivity before entering active consensus.
+        tracing::info!(
+            "🔄 Starting consensus loop in BOOTSTRAPPING state ({} validators detected) at height {}",
+            validator_count,
+            self.current_round.height,
+        );
+
+        // If BFT mode is already active (enough validators), immediately
+        // transition Bootstrapping → Idle → Proposing via FSM events.
         if last_bft_mode {
             tracing::info!(
-                "🛡️ Starting consensus loop in BFT MODE ({} validators) at height {} round {} step {:?}",
+                "🛡️ Quorum available at startup ({} validators) — transitioning to active consensus",
                 validator_count,
-                self.current_round.height,
-                self.current_round.round,
-                self.current_round.step
             );
-            // Kick off the initial propose step: select proposer and create proposal if we're it.
-            // This must happen before the select! loop so current_round.proposer is set before
-            // any incoming proposals are processed by on_proposal().
+            // FSM: Bootstrapping + BootstrapComplete → Idle
+            let (next, actions) = lib_consensus_core::fsm::transition(
+                self.fsm_state.clone(),
+                lib_consensus_core::fsm::events::Event::BootstrapComplete,
+            );
+            self.enter_fsm_state(next).await;
+            for action in actions {
+                self.dispatch_action(action).await;
+            }
+
+            // Now in Idle — enter propose step which will emit SelectedAsProposer
             if let Err(e) = self.enter_propose_step().await {
                 tracing::warn!("Failed to enter initial propose step: {}", e);
             }
-            // Re-arm timer: enter_propose_step doesn't change step, so token stays valid.
-            // Re-arm anyway to get a fresh deadline from the current state.
             timer_token = TimerToken::new(
                 self.current_round.height,
                 self.current_round.round,
@@ -105,7 +118,7 @@ impl ConsensusEngine {
             ));
         } else {
             tracing::info!(
-                "⛏️ Starting consensus loop in BOOTSTRAP MODE ({} validators, need ≥{} for BFT) at height {}",
+                "⛏️ Waiting for quorum ({} validators, need ≥{} for BFT) at height {}",
                 validator_count,
                 crate::types::MIN_BFT_VALIDATORS,
                 self.current_round.height
@@ -143,9 +156,9 @@ impl ConsensusEngine {
                             .as_secs();
 
                         if current_bft_mode {
-                            // Transitioning TO BFT mode
+                            // CONS-305: Transitioning TO BFT mode via FSM
                             tracing::info!(
-                                "🔄 MODE TRANSITION: Bootstrap → BFT ({} validators now active)",
+                                "🔄 MODE TRANSITION: Bootstrapping → BFT ({} validators now active)",
                                 validator_count
                             );
                             // Re-sync height with blockchain to ensure continuity
@@ -160,8 +173,20 @@ impl ConsensusEngine {
                                 height: self.current_round.height,
                                 timestamp,
                             });
-                            // Kick off the propose step: select proposer and create/broadcast
-                            // proposal if this node is the designated proposer.
+
+                            // FSM: Bootstrapping + BootstrapComplete → Idle
+                            if matches!(self.fsm_state, lib_consensus_core::fsm::ValidatorState::Bootstrapping) {
+                                let (next, actions) = lib_consensus_core::fsm::transition(
+                                    self.fsm_state.clone(),
+                                    lib_consensus_core::fsm::events::Event::BootstrapComplete,
+                                );
+                                self.enter_fsm_state(next).await;
+                                for action in actions {
+                                    self.dispatch_action(action).await;
+                                }
+                            }
+
+                            // Now in Idle — enter propose step
                             if let Err(e) = self.enter_propose_step().await {
                                 tracing::warn!("Failed to enter propose step on BFT transition: {}", e);
                             }
@@ -253,7 +278,22 @@ impl ConsensusEngine {
                 maybe_msg = message_rx.recv() => {
                     match maybe_msg {
                         Some(msg) => {
-                            self.on_message(msg).await?;
+                            // CONS-305: In Bootstrapping/CatchingUp states, don't process
+                            // proposals through old handlers — the FSM will ignore them.
+                            // This prevents the race where all nodes propose simultaneously.
+                            if matches!(
+                                self.fsm_state,
+                                lib_consensus_core::fsm::ValidatorState::Bootstrapping
+                                    | lib_consensus_core::fsm::ValidatorState::CatchingUp { .. }
+                            ) {
+                                tracing::debug!(
+                                    "Ignoring network message in {:?} state",
+                                    self.fsm_state
+                                );
+                                // Still need to re-arm timer and check height
+                            } else {
+                                self.on_message(msg).await?;
+                            }
 
                             // If height advanced, record the time so the
                             // bootstrap catch-up timer resets correctly.

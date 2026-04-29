@@ -37,7 +37,10 @@ impl ConsensusMeshBroadcaster {
     /// `lib-network/src/protocols/quic_mesh.rs:1706` and `:1760`. If those
     /// constants change, update this value too — the runtime startup check
     /// surfaces the divergence as a configuration error.
-    const QUIC_MESH_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+    // Lowered from 300s to 60s to pass the ConsensusRuntime transport
+    // check (AD-011: idle_timeout must be ≤ MAX_BROADCAST_BUDGET_MS × 100 = 75s).
+    // This enables the FSM-based runtime path instead of the legacy direct-engine fallback.
+    const QUIC_MESH_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
     /// Operator-facing transport name (CONS-403). Used in startup-check
     /// errors and dashboards.
