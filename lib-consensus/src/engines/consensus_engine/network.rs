@@ -146,6 +146,13 @@ impl ConsensusEngine {
             tokio::select! {
                 // Timer fired: only process if token matches current state
                 _ = &mut timer_fut => {
+                    tracing::info!(
+                        "⏱️ ROUND TIMER FIRED at height {} round {} step {:?} (fsm={:?})",
+                        self.current_round.height,
+                        self.current_round.round,
+                        self.current_round.step,
+                        self.fsm_state.kind(),
+                    );
                     // Check for mode transitions (Bootstrap <-> BFT)
                     let current_bft_mode = self.is_bft_mode_active();
                     if current_bft_mode != last_bft_mode {

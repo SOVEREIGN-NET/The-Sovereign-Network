@@ -152,6 +152,18 @@ pub fn is_eligible_sync_source(
     if matches_operator_allowlist(peer_address, peer_did, trusted_sync_sources) {
         return SyncSourceEligibility::Eligible(EligibilityReason::OperatorTrusted);
     }
+
+    // On a fresh genesis (no blocks beyond genesis), no observer records exist.
+    // Skip admission check — all authenticated peers are eligible.
+    // Once blocks start being produced, the admission system takes over.
+    if let Ok(None) = store.get_block_by_height(1) {
+        tracing::debug!(
+            "No block at height 1 (fresh genesis) — skipping observer admission for {}",
+            peer_address
+        );
+        return SyncSourceEligibility::Eligible(EligibilityReason::OperatorTrusted);
+    }
+
     evaluate_observer_admission_for_sync(store, peer_did, expected_network, now)
 }
 
