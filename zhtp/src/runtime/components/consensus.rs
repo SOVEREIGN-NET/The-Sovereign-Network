@@ -1551,6 +1551,9 @@ pub struct ConsensusComponent {
     /// Mock SOV/USD price for oracle attestations (testnet/bootstrap).
     /// `None` means attempt real exchange price feeds.
     oracle_mock_sov_usd_price: Option<u64>,
+    /// Sender for injecting FSM events into the consensus loop (e.g., HaltScheduled).
+    /// Set when the ConsensusRuntime is created; None for legacy engine path.
+    halt_event_tx: Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<lib_consensus_core::fsm::Event>>>>,
 }
 
 // Manual Debug implementation because ConsensusEngine doesn't derive Debug
@@ -1667,7 +1670,29 @@ impl ConsensusComponent {
             local_validator_keypair: Arc::new(RwLock::new(None)),
             node_role: Arc::new(node_role),
             oracle_mock_sov_usd_price,
+            halt_event_tx: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Send a HaltScheduled event to the consensus engine.
+    /// Only works when ConsensusRuntime path is active (not legacy).
+    pub async fn halt_consensus(
+        &self,
+        reason: lib_consensus_core::fsm::state::HaltReason,
+        height: u64,
+    ) -> Result<()> {
+        let guard = self.halt_event_tx.read().await;
+        let tx = guard.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("Consensus halt sender not available (legacy engine path?)")
+        })?;
+        tx.send(lib_consensus_core::fsm::events::Event::HaltScheduled {
+            reason,
+            triggered_at_height: height,
+            resume_condition: lib_consensus_core::fsm::events::ResumeConditionEvent::ManualRestart,
+        })
+        .map_err(|e| anyhow::anyhow!("Failed to send halt event: {}", e))?;
+        info!("🛑 HaltScheduled event sent to consensus engine at height {}", height);
+        Ok(())
     }
 
     #[deprecated = "Use new_with_bootstrap_validators(environment, node_role, min_stake, validators) instead"]
@@ -2425,6 +2450,8 @@ impl Component for ConsensusComponent {
                 let runtime =
                     lib_consensus_runtime::ConsensusRuntime::from_arc(consensus_engine, transport_info)
                         .expect("transport already validated by check_transport");
+                // Capture halt event sender before run() consumes the runtime
+                *self.halt_event_tx.write().await = Some(runtime.event_sender());
                 tokio::spawn(async move {
                     match runtime.run().await {
                         Ok(()) => info!("Consensus loop exited normally (runtime path)"),

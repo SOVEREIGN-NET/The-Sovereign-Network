@@ -52,6 +52,7 @@ pub fn action_to_operation(action: &NodeAction) -> NodeOperation {
         NodeAction::Status => NodeOperation::Status,
         NodeAction::Restart => NodeOperation::Restart,
         NodeAction::SetupUi => NodeOperation::Status, // handled separately
+        NodeAction::HaltConsensus { .. } => NodeOperation::Status, // handled separately
     }
 }
 
@@ -104,6 +105,28 @@ async fn handle_node_command_impl(
     // Handle setup-ui separately (it starts its own HTTP server)
     if matches!(args.action, NodeAction::SetupUi) {
         return crate::commands::setup_ui::run_setup_ui(cli, output).await;
+    }
+
+    // Handle halt-consensus via QUIC API call
+    if let NodeAction::HaltConsensus { ref reason } = args.action {
+        output.info(&format!("Requesting consensus halt (reason: {})...", reason))?;
+
+        let server = &cli.server;
+        let mut client = crate::commands::web4_utils::connect_default(server).await?;
+        let body = serde_json::json!({ "reason": reason });
+
+        let response = client.post_json("/api/v1/node/halt-consensus", &body).await
+            .map_err(|e| CliError::ApiCallFailed {
+                endpoint: "/api/v1/node/halt-consensus".to_string(),
+                status: 0,
+                reason: e.to_string(),
+            })?;
+
+        let result: serde_json::Value = serde_json::from_slice(&response.body)
+            .unwrap_or_else(|_| serde_json::json!({"raw": String::from_utf8_lossy(&response.body).to_string()}));
+
+        output.info(&format!("{}", serde_json::to_string_pretty(&result).unwrap_or_default()))?;
+        return Ok(());
     }
 
     let op = action_to_operation(&args.action);
@@ -234,6 +257,10 @@ async fn handle_node_command_impl(
         NodeAction::SetupUi => {
             // Already handled above, unreachable
             unreachable!("SetupUi handled before match")
+        }
+        NodeAction::HaltConsensus { .. } => {
+            // Already handled above, unreachable
+            unreachable!("HaltConsensus handled before match")
         }
     }
 }
