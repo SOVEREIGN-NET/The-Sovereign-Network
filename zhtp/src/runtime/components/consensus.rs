@@ -324,6 +324,7 @@ fn validator_message_height(msg: &ValidatorMessage) -> u64 {
         ValidatorMessage::Propose(m) => m.proposal.height,
         ValidatorMessage::Vote(m) => m.vote.height,
         ValidatorMessage::Heartbeat(m) => m.height,
+        ValidatorMessage::Halt(m) => m.height,
     }
 }
 
@@ -1686,12 +1687,40 @@ impl ConsensusComponent {
             anyhow::anyhow!("Consensus halt sender not available (legacy engine path?)")
         })?;
         tx.send(lib_consensus_core::fsm::events::Event::HaltScheduled {
-            reason,
+            reason: reason.clone(),
             triggered_at_height: height,
             resume_condition: lib_consensus_core::fsm::events::ResumeConditionEvent::ManualRestart,
         })
         .map_err(|e| anyhow::anyhow!("Failed to send halt event: {}", e))?;
-        info!("🛑 HaltScheduled event sent to consensus engine at height {}", height);
+        info!("🛑 HaltScheduled event sent to LOCAL consensus engine at height {}", height);
+
+        // Broadcast halt to all validators via mesh so the entire network halts
+        let halt_msg = lib_consensus_core::types::ValidatorMessage::Halt(
+            lib_consensus_core::types::HaltMessage {
+                reason: format!("{:?}", reason),
+                height,
+                initiated_by: String::new(), // filled by caller
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            },
+        );
+
+        if let Ok(mesh_router) = crate::runtime::mesh_router_provider::get_global_mesh_router().await {
+            let quic_guard = mesh_router.quic_protocol.read().await;
+            if let Some(quic) = quic_guard.as_ref() {
+                let peer_ids = quic.connected_peer_ids();
+                let mut sent = 0;
+                for peer_id in &peer_ids {
+                    if quic.send_to_peer(peer_id, lib_network::types::mesh_message::ZhtpMeshMessage::ValidatorMessage(halt_msg.clone())).await.is_ok() {
+                        sent += 1;
+                    }
+                }
+                info!("🛑 Halt broadcast to {}/{} mesh peers", sent, peer_ids.len());
+            }
+        }
+
         Ok(())
     }
 

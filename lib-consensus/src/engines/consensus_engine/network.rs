@@ -687,6 +687,27 @@ impl ConsensusEngine {
                 }
                 // Heartbeats never affect consensus state
             }
+            ValidatorMessage::Halt(halt_msg) => {
+                tracing::warn!(
+                    "🛑 Received HALT command from network: reason={}, height={}, initiated_by={}",
+                    halt_msg.reason,
+                    halt_msg.height,
+                    halt_msg.initiated_by,
+                );
+                // Inject HaltScheduled into the FSM
+                let (next, actions) = lib_consensus_core::fsm::transition(
+                    self.fsm_state.clone(),
+                    lib_consensus_core::fsm::events::Event::HaltScheduled {
+                        reason: lib_consensus_core::fsm::state::HaltReason::UpgradeScheduled,
+                        triggered_at_height: self.current_round.height,
+                        resume_condition: lib_consensus_core::fsm::events::ResumeConditionEvent::ManualRestart,
+                    },
+                );
+                self.enter_fsm_state(next).await;
+                for action in actions {
+                    self.dispatch_action(action).await;
+                }
+            }
         }
         Ok(())
     }
