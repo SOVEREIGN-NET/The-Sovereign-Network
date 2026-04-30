@@ -157,16 +157,19 @@ impl ConsensusEngine {
                 }
             }
 
+            // If halted, don't spin the timer — sleep longer and log sparingly
+            if matches!(self.fsm_state, lib_consensus_core::fsm::ValidatorState::Halting { .. }) {
+                tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+                tracing::info!(
+                    "🛑 HALTED — consensus stopped at height {} (waiting for manual restart)",
+                    self.current_round.height,
+                );
+                continue;
+            }
+
             tokio::select! {
                 // Timer fired: only process if token matches current state
                 _ = &mut timer_fut => {
-                    tracing::info!(
-                        "⏱️ ROUND TIMER FIRED at height {} round {} step {:?} (fsm={:?})",
-                        self.current_round.height,
-                        self.current_round.round,
-                        self.current_round.step,
-                        self.fsm_state.kind(),
-                    );
                     // Check for mode transitions (Bootstrap <-> BFT)
                     let current_bft_mode = self.is_bft_mode_active();
                     if current_bft_mode != last_bft_mode {
