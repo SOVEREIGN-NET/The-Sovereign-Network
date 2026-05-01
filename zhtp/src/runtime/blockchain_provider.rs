@@ -347,7 +347,11 @@ fn spawn_projection_listener(mut rx: tokio::sync::broadcast::Receiver<Blockchain
                     _ => {}
                 },
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    warn!("Projection listener lagged, skipped {} events", n);
+                    error!(
+                        "Projection listener lagged, skipped {} events — \
+                         identity/wallet projections may be inconsistent until next restart",
+                        n
+                    );
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                     info!("Blockchain event channel closed, projection listener exiting");

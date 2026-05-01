@@ -593,16 +593,21 @@ impl DaoHandler {
         }
     }
 
-    /// Get the DAO registry, rebuilding from chain only when the height has advanced.
-    /// Cached in a module-level static to avoid O(blocks × txs) replay on every request.
-    async fn get_dao_registry(blockchain: &lib_blockchain::Blockchain) -> Result<DAORegistry> {
+    /// Get the DAO registry, rebuilding from chain only when state has changed.
+    /// Synchronous cache (std::sync::RwLock) — safe to call while holding blockchain lock.
+    /// Keyed on (height, block_count) to handle reorgs at the same height.
+    fn get_dao_registry(blockchain: &lib_blockchain::Blockchain) -> Result<DAORegistry> {
         let current_height = blockchain.get_height();
+        let current_block_count = blockchain.query_block_count();
 
         // Fast path: check if cache is valid
         {
-            let cache = DAO_REGISTRY_CACHE.read().await;
+            let cache = DAO_REGISTRY_CACHE.read()
+                .expect("DAO registry cache lock poisoned");
             if let Some(ref cached) = *cache {
-                if cached.built_at_height == current_height {
+                if cached.built_at_height == current_height
+                    && cached.built_at_block_count == current_block_count
+                {
                     return Ok(cached.registry.clone());
                 }
             }
@@ -616,10 +621,12 @@ impl DaoHandler {
             }
         }
 
-        let mut cache = DAO_REGISTRY_CACHE.write().await;
+        let mut cache = DAO_REGISTRY_CACHE.write()
+            .expect("DAO registry cache lock poisoned");
         *cache = Some(CachedDaoRegistry {
             registry: registry.clone(),
             built_at_height: current_height,
+            built_at_block_count: current_block_count,
         });
 
         Ok(registry)
@@ -1520,8 +1527,24 @@ impl DaoHandler {
             ));
         }
 
-        // Write lock only for mempool submission
+        // Write lock for mempool submission — re-check duplicate vote atomically
         let mut blockchain = blockchain_arc.write().await;
+        let already_voted = blockchain
+            .get_dao_votes_for_proposal(&proposal_id)
+            .iter()
+            .any(|v| v.voter == voter_identity.did)
+            || blockchain.pending_transactions.iter().any(|tx| {
+                tx.transaction_type == lib_blockchain::TransactionType::DaoVote
+                    && tx.dao_vote_data()
+                        .map(|v| v.proposal_id == proposal_id && v.voter == voter_identity.did)
+                        .unwrap_or(false)
+            });
+        if already_voted {
+            return Ok(create_error_response(
+                ZhtpStatus::Conflict,
+                "User has already voted on this proposal".to_string(),
+            ));
+        }
         blockchain
             .add_pending_transaction(vote_tx)
             .map_err(|e| anyhow::anyhow!("Failed to submit vote transaction: {}", e))?;
@@ -2577,7 +2600,7 @@ impl DaoHandler {
                 "Only the token creator can register DAO metadata".to_string(),
             ));
         }
-        let existing_registry = Self::get_dao_registry(&blockchain).await?;
+        let existing_registry = Self::get_dao_registry(&blockchain)?;
         if existing_registry.get_dao_by_id(dao_id).is_ok() {
             return Ok(create_error_response(
                 ZhtpStatus::Conflict,
@@ -2741,7 +2764,7 @@ impl DaoHandler {
     async fn handle_list_registered_daos(&self) -> Result<ZhtpResponse> {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
-        let registry = Self::get_dao_registry(&blockchain).await?;
+        let registry = Self::get_dao_registry(&blockchain)?;
         let entries = registry
             .list_daos_with_ids()
             .map_err(|e| anyhow::anyhow!("Failed to list DAO registry entries: {}", e))?;
@@ -2763,7 +2786,7 @@ impl DaoHandler {
         let dao_id = Self::parse_hex_32(dao_id_hex, "dao_id")?;
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
-        let registry = Self::get_dao_registry(&blockchain).await?;
+        let registry = Self::get_dao_registry(&blockchain)?;
         let entry = registry
             .get_dao_by_id(dao_id)
             .map_err(|_| anyhow::anyhow!("DAO not found"))?;
@@ -2820,14 +2843,15 @@ static PENDING_PROPOSALS: Lazy<tokio::sync::RwLock<HashMap<[u8; 32], PendingProp
     Lazy::new(|| tokio::sync::RwLock::new(HashMap::new()));
 
 /// Cached DAO registry to avoid O(blocks × txs) replay on every request.
-/// Invalidated when chain height advances past the cached height.
+/// Invalidated when chain height or block count changes (handles reorgs).
 struct CachedDaoRegistry {
     registry: DAORegistry,
     built_at_height: u64,
+    built_at_block_count: usize,
 }
 
-static DAO_REGISTRY_CACHE: Lazy<tokio::sync::RwLock<Option<CachedDaoRegistry>>> =
-    Lazy::new(|| tokio::sync::RwLock::new(None));
+static DAO_REGISTRY_CACHE: Lazy<std::sync::RwLock<Option<CachedDaoRegistry>>> =
+    Lazy::new(|| std::sync::RwLock::new(None));
 
 /// Request body for `POST /api/v1/dao/proposal/payload`.
 #[derive(Debug, Deserialize)]

@@ -4,7 +4,6 @@
 //! Events are published through a broadcast channel, allowing subscribers to process
 //! them asynchronously without blocking the blockchain write path.
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::broadcast;
