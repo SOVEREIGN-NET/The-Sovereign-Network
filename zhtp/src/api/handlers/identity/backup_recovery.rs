@@ -10,7 +10,7 @@
 //! - POST /api/v1/identity/seed/verify - Verify seed phrase is correct (Issue #115)
 
 use base64::{engine::general_purpose, Engine as _};
-use lib_blockchain;
+use lib_blockchain::{self, BlockchainQuery};
 use lib_storage;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -520,7 +520,7 @@ async fn auto_create_identity_from_seed(
         .await
         {
             // Only submit if not already in the on-chain identity_registry.
-            if !blockchain.identity_registry.contains_key(&did) {
+            if !blockchain.query_identity_exists(&did) {
                 let identity_data = lib_blockchain::transaction::IdentityTransactionData {
                     did: did.clone(),
                     display_name: "Recovered Identity".to_string(),
@@ -1781,7 +1781,7 @@ pub async fn handle_migrate_identity(
                     key_id: wallet_id_bytes,
                 };
 
-                if let Some(existing) = blockchain.wallet_registry.get(wallet_id_str).cloned() {
+                if let Some(existing) = blockchain.query_wallet(wallet_id_str).cloned() {
                     let wallet_type = existing.wallet_type.clone();
                     let old_public_key = existing.public_key.clone();
                     let old_pk_is_short = old_public_key.len() < MIN_DILITHIUM_PK_LEN;

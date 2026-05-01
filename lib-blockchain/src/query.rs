@@ -33,6 +33,9 @@ pub trait BlockchainQuery {
     /// Get the most recent block.
     fn query_latest_block(&self) -> Option<&Block>;
 
+    /// Get all blocks as a slice (for iteration/search).
+    fn query_blocks(&self) -> &[Block];
+
     /// Get pending (unconfirmed) transactions.
     fn query_pending_transactions(&self) -> Vec<Transaction>;
 

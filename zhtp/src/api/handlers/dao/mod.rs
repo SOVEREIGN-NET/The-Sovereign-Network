@@ -15,6 +15,7 @@ use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 
 // Import actual DAO system components
+use lib_blockchain::BlockchainQuery;
 use lib_blockchain::contracts::{derive_dao_id, DAOEntry, DAORegistry, TokenContract};
 use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use lib_blockchain::transaction::{
@@ -2344,7 +2345,7 @@ impl DaoHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
-        let validator_count = blockchain.validator_registry.len();
+        let validator_count = blockchain.query_validator_count();
         let threshold = (validator_count * 8 + 9) / 10; // ceil(80%)
 
         create_json_response(json!({

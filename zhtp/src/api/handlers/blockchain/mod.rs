@@ -22,7 +22,7 @@ use lib_blockchain::transaction::{
 use lib_blockchain::storage::UtxoMerkleProof;
 use lib_blockchain::types::Hash;
 use lib_blockchain::types::{transaction_type::TransactionType, ContractType};
-use lib_blockchain::{Blockchain, storage::{OutPoint, TxHash}};
+use lib_blockchain::{Blockchain, BlockchainQuery, storage::{OutPoint, TxHash}};
 use crate::config::Environment;
 
 // Access control imports
@@ -955,7 +955,7 @@ impl BlockchainHandler {
                 .iter()
                 .map(|block| block.transactions.len() as u64)
                 .sum(),
-            pending_transactions: blockchain.pending_transactions.len(),
+            pending_transactions: blockchain.query_pending_count(),
             network_hash_rate: {
                 // Calculate network hash rate from difficulty and work
                 let work = blockchain.difficulty.work();
@@ -995,7 +995,7 @@ impl BlockchainHandler {
             status: "active".to_string(),
             chain_id: self.chain_id(),
             network: self.environment.to_string().to_ascii_lowercase(),
-            height: blockchain.height,
+            height: blockchain.query_height(),
             head_hash: blockchain
                 .blocks
                 .last()
@@ -1006,8 +1006,8 @@ impl BlockchainHandler {
                 .first()
                 .map(|b| hex::encode(b.header.data_helix_root))
                 .unwrap_or_else(|| "none".to_string()),
-            validator_count: blockchain.validator_registry.len(),
-            identity_count: blockchain.identity_registry.len(),
+            validator_count: blockchain.query_validator_count(),
+            identity_count: blockchain.query_identity_count(),
         };
 
         Ok(ZhtpResponse::json(&response_data, None)?)
@@ -1058,7 +1058,7 @@ impl BlockchainHandler {
 
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
-        let total = blockchain.blocks.len();
+        let total = blockchain.query_block_count();
 
         let total_pages = if total == 0 {
             0
@@ -1113,7 +1113,7 @@ impl BlockchainHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
-        let total: usize = blockchain.blocks.iter().map(|b| b.transactions.len()).sum();
+        let total: usize = blockchain.query_blocks().iter().map(|b| b.transactions.len()).sum();
         let total_pages = if total == 0 {
             0
         } else {
@@ -1124,7 +1124,7 @@ impl BlockchainHandler {
         let mut skipped = 0usize;
         let mut transactions = Vec::new();
 
-        for block in blockchain.blocks.iter().rev() {
+        for block in blockchain.query_blocks().iter().rev() {
             for tx in block.transactions.iter().rev() {
                 if skipped < offset {
                     skipped += 1;
@@ -1173,16 +1173,16 @@ impl BlockchainHandler {
             .last()
             .map(|b| b.header.height)
             .unwrap_or(0);
-        let latest_block_time = blockchain.blocks.last().map(|b| b.header.timestamp);
+        let latest_block_time = blockchain.query_latest_block().map(|b| b.header.timestamp);
 
-        let avg_block_time_secs = if blockchain.blocks.len() >= 2 {
+        let avg_block_time_secs = if blockchain.query_block_count() >= 2 {
             let mut total_delta = 0u64;
-            for window in blockchain.blocks.windows(2) {
+            for window in blockchain.query_blocks().windows(2) {
                 let a = window[0].header.timestamp;
                 let b = window[1].header.timestamp;
                 total_delta = total_delta.saturating_add(b.saturating_sub(a));
             }
-            Some(total_delta / (blockchain.blocks.len() as u64 - 1))
+            Some(total_delta / (blockchain.query_block_count() as u64 - 1))
         } else {
             None
         };
@@ -1281,7 +1281,7 @@ impl BlockchainHandler {
                 }));
             }
 
-            for block in blockchain.blocks.iter().rev() {
+            for block in blockchain.query_blocks().iter().rev() {
                 if let Some(tx) = block.transactions.iter().find(|tx| tx.hash() == tx_hash) {
                     let confirmations = latest_height.saturating_sub(block.header.height) + 1;
                     return Some(serde_json::json!({
@@ -1312,7 +1312,7 @@ impl BlockchainHandler {
         };
 
         let resolve_wallet = |wallet_id: &str| -> Option<serde_json::Value> {
-            let wallet = blockchain.wallet_registry.get(wallet_id)?;
+            let wallet = blockchain.query_wallet(wallet_id)?;
             Some(serde_json::json!({
                 "wallet_id": wallet_id,
                 "wallet_name": wallet.wallet_name,
@@ -1345,7 +1345,7 @@ impl BlockchainHandler {
                     }
                 }
                 "did" => {
-                    if let Some(identity) = blockchain.identity_registry.get(&value.to_string()) {
+                    if let Some(identity) = blockchain.query_identity(&value.to_string()) {
                         let identity_mgr = self.identity_manager.read().await;
                         let view = identity_mgr.get_identity_view_by_did(&principal, &identity.did);
                         let (controlled_nodes, owned_wallets) = match view {
@@ -1542,7 +1542,7 @@ impl BlockchainHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
         // Get current blockchain height for validation
-        let current_height = blockchain.blocks.len();
+        let current_height = blockchain.query_block_count();
 
         // Validate transaction isn't too old (should reference recent blocks)
         if current_height == 0 {
@@ -1979,7 +1979,7 @@ impl BlockchainHandler {
         }
 
         // Search through all blocks for the transaction
-        for (_block_index, block) in blockchain.blocks.iter().enumerate() {
+        for (_block_index, block) in blockchain.query_blocks().iter().enumerate() {
             if let Some(confirmed_tx) = block.transactions.iter().find(|tx| tx.hash() == tx_hash) {
                 let transaction_info = Self::tx_to_info(confirmed_tx);
 
@@ -2288,7 +2288,7 @@ impl BlockchainHandler {
         }
 
         // Fallback: Search through all blocks for the transaction (for backward compatibility)
-        for (_block_index, block) in blockchain.blocks.iter().enumerate() {
+        for (_block_index, block) in blockchain.query_blocks().iter().enumerate() {
             if let Some((tx_index, confirmed_tx)) = block
                 .transactions
                 .iter()
@@ -2690,7 +2690,7 @@ impl BlockchainHandler {
         let response_data = ImportResponse {
             status: "success".to_string(),
             message: "Blockchain imported successfully".to_string(),
-            block_height: blockchain.blocks.len(),
+            block_height: blockchain.query_block_count(),
         };
 
         let json_response = serde_json::to_vec(&response_data)?;
@@ -2728,11 +2728,11 @@ impl BlockchainHandler {
 
         let tip_info = ChainTipInfo {
             chain_id,
-            height: blockchain.height,
+            height: blockchain.query_height(),
             head_hash,
             total_work: blockchain.total_work.to_string(),
-            validator_count: blockchain.validator_registry.len(),
-            identity_count: blockchain.identity_registry.len(),
+            validator_count: blockchain.query_validator_count(),
+            identity_count: blockchain.query_identity_count(),
             genesis_hash,
         };
 
@@ -2824,17 +2824,17 @@ impl BlockchainHandler {
             .map_err(|e| anyhow::anyhow!("Failed to get blockchain: {}", e))?;
         let blockchain = blockchain_arc.read().await;
 
-        if start as usize >= blockchain.blocks.len() {
+        if start as usize >= blockchain.query_block_count() {
             return Ok(Err(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
                 format!(
                     "Start block {} beyond chain height {}",
-                    start, blockchain.height
+                    start, blockchain.query_height()
                 ),
             )));
         }
 
-        let actual_end = std::cmp::min(end as usize, blockchain.blocks.len() - 1);
+        let actual_end = std::cmp::min(end as usize, blockchain.query_block_count() - 1);
         let blocks = blockchain.blocks[start as usize..=actual_end].to_vec();
         Ok(Ok((actual_end as u64, blocks)))
     }
@@ -2991,7 +2991,7 @@ impl BlockchainHandler {
 
         // Calculate statistics
         let current_height = blockchain.get_height();
-        let headers_count = blockchain.blocks.len();
+        let headers_count = blockchain.query_block_count();
 
         // Estimate storage: ~200 bytes per header
         let storage_bytes = headers_count * 200;
@@ -3060,7 +3060,7 @@ impl BlockchainHandler {
         let blockchain = blockchain_arc.read().await;
 
         // Query identity from registry
-        if let Some(identity) = blockchain.identity_registry.get(&did.to_string()) {
+        if let Some(identity) = blockchain.query_identity(&did.to_string()) {
             let response_data = match view {
                 Some(lib_identity::types::IdentityView::Public(_)) => {
                     serde_json::json!({

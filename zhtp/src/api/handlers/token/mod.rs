@@ -18,7 +18,7 @@ use lib_protocols::zhtp::ZhtpRequestHandler;
 use lib_blockchain::contracts::utils::generate_custom_token_id;
 use lib_blockchain::transaction::{TokenCreationPayloadV1, Transaction};
 use lib_blockchain::types::transaction_type::TransactionType;
-use lib_blockchain::Blockchain;
+use lib_blockchain::{Blockchain, BlockchainQuery};
 use lib_crypto::types::keys::PublicKey;
 
 /// Helper function to create JSON responses
@@ -360,12 +360,12 @@ impl TokenHandler {
         // Recipient validation: log findings but don't reject — the token contract
         // will handle balance for any valid key_id.
         let blockchain = self.blockchain.read().await;
-        let in_wallet = blockchain.wallet_registry.contains_key(&recipient_hex);
+        let in_wallet = blockchain.query_wallet_exists(&recipient_hex);
         let in_identity = if is_sov {
             false
         } else {
             let did_key = format!("did:zhtp:{}", recipient_hex);
-            blockchain.identity_registry.contains_key(&did_key)
+            blockchain.query_identity_exists(&did_key)
         };
         drop(blockchain);
 
@@ -676,7 +676,7 @@ impl TokenHandler {
         use lib_blockchain::contracts::utils::generate_lib_token_id;
 
         let blockchain = self.blockchain.read().await;
-        let target_key_id = if let Some(wallet) = blockchain.wallet_registry.get(address) {
+        let target_key_id = if let Some(wallet) = blockchain.query_wallet(address) {
             let wallet_pk = PublicKey::new(
                 wallet.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
             );
@@ -857,7 +857,7 @@ impl TokenHandler {
 
         // If this is already a wallet_id, accept it.
         let wallet_id_hex = hex::encode(&bytes);
-        if blockchain.wallet_registry.contains_key(&wallet_id_hex) {
+        if blockchain.query_wallet_exists(&wallet_id_hex) {
             let mut arr = [0u8; 32];
             arr.copy_from_slice(&bytes);
             return Some(arr);

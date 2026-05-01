@@ -14,7 +14,7 @@ use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 
 // Import actual wallet system components
-use lib_blockchain::Blockchain;
+use lib_blockchain::{Blockchain, BlockchainQuery};
 use lib_crypto::Hash;
 use lib_economy::wallets::{
     multi_wallet::{MultiWalletManager, WalletType},
@@ -522,7 +522,7 @@ impl WalletHandler {
                 // Prefer SOV token contract balance (live balance) for this wallet.
                 let blockchain = self.blockchain.read().await;
                 let wallet_id_hex = hex::encode(summary.id.0);
-                if let Some(wallet_data) = blockchain.wallet_registry.get(&wallet_id_hex) {
+                if let Some(wallet_data) = blockchain.query_wallet(&wallet_id_hex) {
                     if let Some(token) = blockchain
                         .token_contracts
                         .get(&lib_blockchain::contracts::utils::generate_lib_token_id())
@@ -1633,7 +1633,7 @@ impl WalletHandler {
             // If the owner identity is not in the identity_registry, register it
             // via a system transaction so it persists in blocks on all nodes.
             let did = format!("did:zhtp:{}", owner_hex);
-            if !blockchain.identity_registry.contains_key(&did) {
+            if !blockchain.query_identity_exists(&did) {
                 let identity_data = lib_blockchain::transaction::IdentityTransactionData {
                     did: did.clone(),
                     display_name: String::new(),
@@ -1742,7 +1742,7 @@ impl WalletHandler {
         let tx_hash = {
             let mut blockchain = blockchain_arc.write().await;
 
-            if !blockchain.wallet_registry.contains_key(&wallet_id_hex) {
+            if !blockchain.query_wallet_exists(&wallet_id_hex) {
                 return Ok(create_error_response(
                     ZhtpStatus::NotFound,
                     format!("Wallet {} not found in registry", &wallet_id_hex[..16]),

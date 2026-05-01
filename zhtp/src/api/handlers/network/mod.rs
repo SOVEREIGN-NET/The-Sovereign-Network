@@ -15,6 +15,7 @@ use uuid;
 use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 
+use lib_blockchain::BlockchainQuery;
 use crate::runtime::RuntimeOrchestrator;
 
 // Constants
@@ -901,7 +902,7 @@ impl NetworkHandler {
             .unwrap_or_else(|| "not_initialized".to_string());
 
         // Check if identity is registered on-chain
-        let identity_registered = blockchain.identity_registry.contains_key(&node_did);
+        let identity_registered = blockchain.query_identity_exists(&node_did);
 
         // Wallet balance (if registered)
         let (wallet_id, sov_balance) = if identity_registered {
@@ -945,11 +946,11 @@ impl NetworkHandler {
             (None, 0)
         };
 
-        let validator_count = blockchain.validator_registry.len();
-        let identity_count = blockchain.identity_registry.len();
-        let chain_height = blockchain.height;
-        let blocks_count = blockchain.blocks.len();
-        let pending_count = blockchain.pending_transactions.len();
+        let validator_count = blockchain.query_validator_count();
+        let identity_count = blockchain.query_identity_count();
+        let chain_height = blockchain.query_height();
+        let blocks_count = blockchain.query_block_count();
+        let pending_count = blockchain.query_pending_count();
 
         // Determine detailed node state
         let state = if node_did == "not_initialized" {
@@ -965,7 +966,7 @@ impl NetworkHandler {
         };
 
         // Sync telemetry: estimate target height from validator activity
-        let last_block_time = blockchain.blocks.last()
+        let last_block_time = blockchain.query_latest_block()
             .map(|b| b.header.timestamp)
             .unwrap_or(0);
         let now = std::time::SystemTime::now()
@@ -1182,7 +1183,7 @@ impl NetworkHandler {
 
         let response = serde_json::json!({
             "network_id": environment.to_string().to_ascii_lowercase(),
-            "chain_height": blockchain.height,
+            "chain_height": blockchain.query_height(),
             "timestamp": std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()

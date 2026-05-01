@@ -26,6 +26,10 @@ impl BlockchainQuery for Blockchain {
         self.latest_block()
     }
 
+    fn query_blocks(&self) -> &[Block] {
+        &self.blocks
+    }
+
     fn query_pending_transactions(&self) -> Vec<Transaction> {
         self.pending_transactions.clone()
     }
