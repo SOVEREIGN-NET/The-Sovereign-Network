@@ -407,6 +407,15 @@ pub fn get_global_blockchain_provider() -> Option<&'static BlockchainProvider> {
 pub async fn set_global_blockchain(blockchain: Arc<RwLock<Blockchain>>) -> Result<()> {
     let provider = initialize_global_blockchain_provider();
     attach_projection_listener(&blockchain).await?;
+
+    // Start IPC server for out-of-process services (Phase 4)
+    let socket_path = crate::node_data_dir().join("blockchain.sock");
+    if let Err(e) = lib_blockchain::ipc::server::start_ipc_server(&socket_path, blockchain.clone()).await {
+        warn!("Failed to start blockchain IPC server: {} (services will use in-process path)", e);
+    } else {
+        info!("Blockchain IPC server started at {}", socket_path.display());
+    }
+
     provider.set_blockchain(blockchain).await
 }
 
