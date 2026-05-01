@@ -1306,9 +1306,7 @@ impl Blockchain {
             timestamp: block.header.timestamp,
             transaction_count: block.transactions.len() as u64,
         };
-        if let Err(e) = self.event_publisher.publish(event).await {
-            warn!("Failed to publish BlockAdded event: {}", e);
-        }
+        self.event_publisher.publish(event);
 
         Ok(())
     }
@@ -1471,9 +1469,7 @@ impl Blockchain {
             timestamp: block.header.timestamp,
             transaction_count: block.transactions.len() as u64,
         };
-        if let Err(e) = self.event_publisher.publish(event).await {
-            warn!("Failed to publish BlockAdded event: {}", e);
-        }
+        self.event_publisher.publish(event);
 
         Ok(())
     }
@@ -5685,10 +5681,7 @@ impl Blockchain {
                         height: block_height,
                         block_hash: block_hash_array,
                     };
-                    if let Err(e) = self.event_publisher.publish(event).await {
-                        warn!("Failed to publish BlockFinalized event: {}", e);
-                        // Don't fail finalization for event publishing errors
-                    }
+                    self.event_publisher.publish(event);
                 } else {
                     warn!(
                         "Unexpected block hash size {} bytes for finalization event at height {}",
