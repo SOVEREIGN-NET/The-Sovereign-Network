@@ -40,6 +40,8 @@ pub mod sync;
 pub mod transaction;
 pub mod types;
 pub mod utils;
+pub mod query;
+mod query_impl;
 pub mod validation;
 
 // Smart contracts submodule (feature-gated)
@@ -99,6 +101,7 @@ pub use blockchain::{
     Blockchain, BlockchainBroadcastMessage, BlockchainImport, ConsensusCheckpoint,
     EconomicsTransaction, ValidatorInfo, GatewayInfo, ADMISSION_SOURCE_BOOTSTRAP_GENESIS,
 };
+pub use query::BlockchainQuery;
 #[cfg(feature = "contracts")]
 pub use contracts::AmmPool;
 
