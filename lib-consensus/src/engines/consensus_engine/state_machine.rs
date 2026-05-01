@@ -2145,6 +2145,13 @@ impl ConsensusEngine {
     /// All nodes must call this so `current_round.proposer` is set before any
     /// incoming proposals are processed by `on_proposal()`.
     pub(super) async fn enter_propose_step(&mut self) -> ConsensusResult<()> {
+        // Idempotency: if proposer already selected for this (height, round), skip.
+        // Prevents duplicate proposals when called from multiple paths
+        // (FSM phase-entry hook, Action::CreateProposal, direct call).
+        if self.current_round.proposer.is_some() && self.current_round.step == ConsensusStep::Propose {
+            return Ok(());
+        }
+
         // Set the step to Propose so timers and token matching work correctly.
         self.current_round.step = ConsensusStep::Propose;
 

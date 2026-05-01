@@ -864,7 +864,7 @@ impl MeshMessageHandler {
                     const MAX_BUFFER: usize = 64;
                     let mut buf = self.validator_message_buffer.lock().unwrap();
                     if buf.len() < MAX_BUFFER {
-                        info!(
+                        debug!(
                             "Buffering ValidatorMessage from peer {:?} (middleware not yet wired, buffer={}/{})",
                             hex::encode(&sender.key_id[0..8.min(sender.key_id.len())]),
                             buf.len() + 1,

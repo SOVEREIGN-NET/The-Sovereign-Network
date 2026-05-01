@@ -1704,7 +1704,7 @@ impl QuicMeshProtocol {
         transport_config.max_concurrent_uni_streams(100u32.into());
         // Issue #907: Raised from 30s to 300s to prevent premature peer disconnection
         transport_config.max_idle_timeout(Some(
-            std::time::Duration::from_secs(300).try_into().unwrap(),
+            std::time::Duration::from_secs(60).try_into().unwrap(),
         ));
 
         server_config.transport_config(Arc::new(transport_config));
@@ -1758,7 +1758,7 @@ impl QuicMeshProtocol {
         let mut transport_config = quinn::TransportConfig::default();
         // Issue #907: Raised from 30s to 300s to prevent premature peer disconnection
         transport_config.max_idle_timeout(Some(
-            std::time::Duration::from_secs(300).try_into().unwrap(),
+            std::time::Duration::from_secs(60).try_into().unwrap(),
         ));
         // Issue #907: Keepalive pings keep NAT mapping alive and prevent idle timeout
         // Only on client/outbound side (server doesn't initiate keepalive)
