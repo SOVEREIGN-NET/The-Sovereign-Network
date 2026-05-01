@@ -148,17 +148,20 @@ impl ValidatorHandler {
             .iter()
             .skip(start_idx)
             .take(end_idx - start_idx)
-            .map(|(id, validator)| ValidatorInfo {
-                identity_hash: id.clone(), // Use the ID directly as it's the hex string
+            .map(|(id, validator)| {
+                let endpoint = crate::runtime::validator_ip::get_resolved_address(id)
+                    .unwrap_or_else(|| validator.network_address.clone());
+                ValidatorInfo {
+                identity_hash: id.clone(),
                 stake: validator.stake,
                 storage_provided: validator.storage_provided,
-                commission_rate: validator.commission_rate as u16, // Convert u8 to u16
-                endpoints: vec![validator.network_address.clone()], // Convert String to Vec<String>
+                commission_rate: validator.commission_rate as u16,
+                endpoints: vec![endpoint],
                 consensus_key: hex::encode(&validator.consensus_key),
                 registered_at: validator.registered_at,
-                updated_at: validator.last_activity, // Use last_activity instead of updated_at
+                updated_at: validator.last_activity,
                 status: format!("{:?}", validator.status),
-            })
+            }})
             .collect();
 
         let response = ValidatorListResponse {
@@ -207,12 +210,15 @@ impl ValidatorHandler {
         // Get validator from blockchain
         match blockchain_guard.get_validator(&hex::encode(&identity_hash.0)) {
             Some(validator) => {
+                let did_hex = hex::encode(&identity_hash.0);
+                let endpoint = crate::runtime::validator_ip::get_resolved_address(&did_hex)
+                    .unwrap_or_else(|| validator.network_address.clone());
                 let validator_response = ValidatorResponse {
                     id: validator.identity_id.clone(),
-                    identity_hash: hex::encode(&identity_hash.0),
+                    identity_hash: did_hex,
                     stake: validator.stake,
-                    commission_rate: validator.commission_rate as u16, // Convert u8 to u16
-                    endpoints: vec![validator.network_address.clone()], // Convert String to Vec<String>
+                    commission_rate: validator.commission_rate as u16,
+                    endpoints: vec![endpoint],
                     registered_at: validator.registered_at,
                     updated_at: validator.last_activity, // Use last_activity instead of updated_at
                     status: format!("{:?}", validator.status),

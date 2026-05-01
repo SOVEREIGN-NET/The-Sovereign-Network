@@ -1124,18 +1124,20 @@ impl NetworkHandler {
             ("91.98.113.188",  "611bd1197ee799c17ac46f3f27df45ec4580d924f0dc3597ba79bcad3d0fa970"), // gateway
         ].into_iter().collect();
 
-        // Build validator entries from on-chain registry
+        // Build validator entries from on-chain registry, with IP overlay
+        let ip_overlay = crate::runtime::validator_ip::get_all_resolved_addresses();
         let validators: Vec<serde_json::Value> = blockchain
             .validator_registry
-            .values()
-            .filter(|v| v.status == "active")
-            .map(|v| {
-                let ip = v.network_address.split(':').next().unwrap_or("");
+            .iter()
+            .filter(|(_, v)| v.status == "active")
+            .map(|(did, v)| {
+                let endpoint = ip_overlay.get(did).unwrap_or(&v.network_address);
+                let ip = endpoint.split(':').next().unwrap_or("");
                 let spki_pin = known_spki_pins.get(ip).unwrap_or(&"").to_string();
                 serde_json::json!({
                     "did": v.identity_id,
                     "role": "validator",
-                    "endpoint": v.network_address,
+                    "endpoint": endpoint,
                     "ip": ip,
                     "quic_port": 9334,
                     "mesh_port": 9333,
