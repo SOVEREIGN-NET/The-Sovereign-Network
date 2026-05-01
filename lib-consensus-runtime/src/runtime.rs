@@ -184,6 +184,13 @@ impl ConsensusRuntime {
         })
     }
 
+    /// Get a sender for injecting FSM events (e.g., HaltScheduled) from
+    /// outside the consensus loop. Must be called before `run()` which
+    /// consumes `self`.
+    pub fn event_sender(&self) -> mpsc::UnboundedSender<Event> {
+        self.runtime_event_tx_for_watchdog.clone()
+    }
+
     /// Convenience builder for callers that already hold a
     /// `Arc<dyn TransportInfo>`. The Arc is only used to read at startup.
     pub fn from_arc(

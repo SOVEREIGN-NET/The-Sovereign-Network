@@ -266,6 +266,12 @@ pub enum NodeAction {
     Restart,
     /// Open the node setup web UI (localhost browser dashboard)
     SetupUi,
+    /// Halt consensus for coordinated upgrade (Council only)
+    HaltConsensus {
+        /// Halt reason: "upgrade", "emergency", or custom
+        #[arg(short, long, default_value = "upgrade")]
+        reason: String,
+    },
 }
 
 /// Wallet operation commands

@@ -816,6 +816,11 @@ impl RuntimeOrchestrator {
     // RuntimeOrchestrator does not own a SledStore field.
 
     /// Register a component with the orchestrator
+    /// Get a component by ID for downcasting (e.g., to call halt_consensus on ConsensusComponent).
+    pub async fn get_component(&self, id: &ComponentId) -> Option<Arc<dyn Component>> {
+        self.components.read().await.get(id).cloned()
+    }
+
     pub async fn register_component(&self, component: Arc<dyn Component>) -> Result<()> {
         let id = component.id();
         info!("Registering component: {}", id);
@@ -2441,6 +2446,14 @@ impl RuntimeOrchestrator {
                         })?;
                         info!("💾 Genesis block (height 0) persisted to SledStore");
                     }
+
+                    // Seed bootstrap validators into the validator registry so
+                    // consensus can find them. Genesis allocations carry identities
+                    // and wallets but NOT validator registrations.
+                    seed_validators_from_bootstrap_config(
+                        &mut bc,
+                        &self.config.network_config.bootstrap_validators,
+                    );
 
                     (bc, false)
                 } else {

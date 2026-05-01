@@ -437,6 +437,10 @@ impl ValidatorProtocol {
             ValidatorMessage::Propose(msg) => self.handle_propose_message(msg).await,
             ValidatorMessage::Vote(msg) => self.handle_vote_message(msg).await,
             ValidatorMessage::Heartbeat(msg) => self.handle_heartbeat_message(msg).await,
+            ValidatorMessage::Halt(msg) => {
+                info!("🛑 Received halt command: reason={}, height={}", msg.reason, msg.height);
+                self.forward_to_consensus(ValidatorMessage::Halt(msg)).await
+            }
         }
     }
 
@@ -603,6 +607,12 @@ impl ValidatorProtocol {
                     &bytes,
                 )
                 .await
+            }
+            ValidatorMessage::Halt(_) => {
+                // Halt messages don't need signature verification — they propagate
+                // a council-initiated command. The receiving node decides locally
+                // whether to honor it.
+                Ok(())
             }
         }
     }
@@ -816,6 +826,7 @@ impl ValidatorProtocol {
             ValidatorMessage::Propose(msg) => msg.message_id.clone(),
             ValidatorMessage::Vote(msg) => msg.message_id.clone(),
             ValidatorMessage::Heartbeat(msg) => msg.message_id.clone(),
+            ValidatorMessage::Halt(_) => self.generate_message_id(),
         }
     }
 

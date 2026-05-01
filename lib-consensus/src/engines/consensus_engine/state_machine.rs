@@ -2026,104 +2026,112 @@ impl ConsensusEngine {
             self.fsm_state.kind(),
         );
 
-        // CONS-305a: route the timeout through the FSM. The FSM
-        // computes the next state and any actions; the runtime
-        // dispatches the actions and does the per-state-entry work
-        // (e.g. casting the next-phase vote) via the existing
-        // `enter_*_step` helpers below.  CONS-305f will fold those
-        // helpers into the action handlers and delete this dual path.
+        // CONS-305: Route the timeout through the FSM with walk-through semantics.
+        // The FSM's threshold-gated transitions (Precommitting stays on Timeout)
+        // don't match the Sovereign engine's walk-through model where each phase
+        // advances on timeout. We emit VoteFailed when a phase times out without
+        // reaching threshold, causing the FSM to advance to the next phase or Rejected.
         let prior_step = self.current_round.step.clone();
         let prior_fsm = self.fsm_state.clone();
-        let (next_fsm, actions) = transition(prior_fsm, Event::Timeout);
+
+        // Choose the right event: if we're in an active phase that timed out
+        // without reaching threshold, emit VoteFailed to advance the FSM.
+        let event = match &prior_fsm {
+            lib_consensus_core::fsm::ValidatorState::Prevoting => {
+                Event::VoteFailed(lib_consensus_core::fsm::state::RejectionReason::InsufficientPrevotes)
+            }
+            lib_consensus_core::fsm::ValidatorState::Precommitting => {
+                Event::VoteFailed(lib_consensus_core::fsm::state::RejectionReason::InsufficientPrecommits)
+            }
+            _ => Event::Timeout,
+        };
+
+        let (next_fsm, actions) = transition(prior_fsm, event);
         self.enter_fsm_state(next_fsm).await;
         for action in actions {
             self.dispatch_action(action).await;
         }
 
-        // Engine state-entry hooks. These will move into per-Action
-        // handlers in CONS-305f. Until then they keep the engine's
-        // existing semantics intact (cast next-phase vote, broadcast,
-        // advance round on Commit timeout).
-        match prior_step {
-            ConsensusStep::Propose => {
-                self.enter_prevote_step().await?;
+        // CONS-305: If the FSM landed in Rejected (from VoteFailed or Timeout),
+        // the runtime must reset to Idle → Proposing for the next round.
+        // This handles ALL paths into Rejected, not just Commit timeout.
+        if matches!(self.fsm_state, lib_consensus_core::fsm::ValidatorState::Rejected { .. }) {
+            self.advance_to_next_round();
+            self.snapshot_validator_set(self.current_round.height);
+            self.fsm_state = lib_consensus_core::fsm::ValidatorState::Idle;
+            let (next, actions) = lib_consensus_core::fsm::transition(
+                self.fsm_state.clone(),
+                lib_consensus_core::fsm::events::Event::SelectedAsProposer {
+                    height: self.current_round.height,
+                    round: self.current_round.round,
+                },
+            );
+            self.enter_fsm_state(next).await;
+            for action in actions {
+                self.dispatch_action(action).await;
             }
-            ConsensusStep::PreVote => {
-                self.enter_precommit_step().await?;
-            }
-            ConsensusStep::PreCommit => {
-                self.enter_commit_step().await?;
-                // CONS-305f: maybe_finalize was previously called from
-                // inside enter_commit_step. Moved here so dispatch_action
-                // can call enter_commit_step without recursing through
-                // maybe_finalize → transition() → dispatch_action.
-                let target = self
-                    .current_round
-                    .valid_proposal
-                    .clone()
-                    .or(self.current_round.locked_proposal.clone());
-                if let Some(proposal_id) = target {
-                    self.maybe_finalize(
-                        self.current_round.height,
-                        self.current_round.round,
-                        &proposal_id,
-                    )
-                    .await?;
-                }
-            }
-            ConsensusStep::Commit => {
-                // Sync height with blockchain before advancing. This prevents the consensus
-                // round counter from drifting far ahead of the actual blockchain height when
-                // no blocks are being committed (no quorum reached).
-                //
-                // sync_height_with_blockchain() sets current_round.height = blockchain_height + 1.
-                // We then reset round state at that correct height without adding +1 again.
-                let height_before_sync = self.current_round.height;
-                if let Err(e) = self.sync_height_with_blockchain().await {
-                    tracing::warn!(
-                        "Commit timeout: failed to sync blockchain height ({}), using height+1 fallback",
-                        e
-                    );
-                    // Fallback: advance normally if we can't read the blockchain
-                    self.advance_to_next_round();
-                    self.snapshot_validator_set(self.current_round.height);
+        }
+
+        //
+        // Special handling for Commit timeout: sync height + advance round.
+        // The FSM transitions Committed.Timeout → Rejected → (runtime resets
+        // to Idle). We need to sync blockchain height and reset round state.
+        if prior_step == ConsensusStep::Commit {
+            let height_before_sync = self.current_round.height;
+            if let Err(e) = self.sync_height_with_blockchain().await {
+                tracing::warn!(
+                    "Commit timeout: failed to sync blockchain height ({}), using height+1 fallback",
+                    e
+                );
+                self.advance_to_next_round();
+                self.snapshot_validator_set(self.current_round.height);
+            } else {
+                let height_after_sync = self.current_round.height;
+                let next_round = if height_after_sync == height_before_sync {
+                    self.current_round.round + 1
                 } else {
-                    let height_after_sync = self.current_round.height;
-                    // If the blockchain height didn't advance (no commit), increment the round
-                    // instead of resetting to 0.  Reusing round 0 with the same validators
-                    // causes spurious equivocation: the old vote-pool entries for (H, R=0)
-                    // still contain votes for the previous proposal, and any new vote for a
-                    // freshly-proposed block at the same (H, R=0) triggers equivocation
-                    // detection → vote rejected → consensus never commits.
-                    let next_round = if height_after_sync == height_before_sync {
-                        self.current_round.round + 1
-                    } else {
-                        0 // Height advanced: fresh start at round 0
-                    };
-                    self.current_round.round = next_round;
-                    self.current_round.step = ConsensusStep::Propose;
-                    self.current_round.start_time = self.current_round.height;
-                    self.current_round.proposer = None;
-                    self.current_round.proposals.clear();
-                    self.current_round.votes.clear();
-                    self.current_round.timed_out = false;
-                    self.current_round.locked_proposal = None;
-                    self.current_round.valid_proposal = None;
-                    // Snapshot the validator set at the new height so that vote validation
-                    // can find the correct validator membership for this height.
-                    self.snapshot_validator_set(self.current_round.height);
-                }
-                // Start the propose step for the synced/advanced height.
-                if let Err(e) = self.enter_propose_step().await {
-                    tracing::warn!(
-                        "Failed to enter propose step at height {} round {}: {}",
-                        self.current_round.height,
-                        self.current_round.round,
-                        e
-                    );
-                }
+                    0
+                };
+                self.current_round.round = next_round;
+                self.current_round.proposer = None;
+                self.current_round.proposals.clear();
+                self.current_round.votes.clear();
+                self.current_round.timed_out = false;
+                self.current_round.locked_proposal = None;
+                self.current_round.valid_proposal = None;
+                self.snapshot_validator_set(self.current_round.height);
             }
-            ConsensusStep::NewRound => {}
+
+            // Reset FSM: Rejected/Committed → Idle → Proposing
+            self.fsm_state = lib_consensus_core::fsm::ValidatorState::Idle;
+            let (next, actions) = lib_consensus_core::fsm::transition(
+                self.fsm_state.clone(),
+                lib_consensus_core::fsm::events::Event::SelectedAsProposer {
+                    height: self.current_round.height,
+                    round: self.current_round.round,
+                },
+            );
+            self.enter_fsm_state(next).await;
+            for action in actions {
+                self.dispatch_action(action).await;
+            }
+        }
+
+        // For PreCommit timeout, also try to finalize if we have a valid proposal
+        if prior_step == ConsensusStep::PreCommit {
+            let target = self
+                .current_round
+                .valid_proposal
+                .clone()
+                .or(self.current_round.locked_proposal.clone());
+            if let Some(proposal_id) = target {
+                self.maybe_finalize(
+                    self.current_round.height,
+                    self.current_round.round,
+                    &proposal_id,
+                )
+                .await?;
+            }
         }
 
         Ok(())
@@ -2137,6 +2145,16 @@ impl ConsensusEngine {
     /// All nodes must call this so `current_round.proposer` is set before any
     /// incoming proposals are processed by `on_proposal()`.
     pub(super) async fn enter_propose_step(&mut self) -> ConsensusResult<()> {
+        // Idempotency: if proposer already selected for this (height, round), skip.
+        // Prevents duplicate proposals when called from multiple paths
+        // (FSM phase-entry hook, Action::CreateProposal, direct call).
+        if self.current_round.proposer.is_some() && self.current_round.step == ConsensusStep::Propose {
+            return Ok(());
+        }
+
+        // Set the step to Propose so timers and token matching work correctly.
+        self.current_round.step = ConsensusStep::Propose;
+
         // Select proposer from the frozen snapshot for this height.
         let proposer_id = self
             .compute_proposer_for_round(self.current_round.height, self.current_round.round);

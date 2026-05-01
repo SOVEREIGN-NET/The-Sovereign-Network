@@ -370,6 +370,7 @@ impl ZhtpRequestHandler for NetworkHandler {
             // Gas pricing endpoint (Issue #10)
             (ZhtpMethod::Get, "/api/v1/node/status") => self.handle_node_status(request).await,
             (ZhtpMethod::Post, "/api/v1/node/shutdown") => self.handle_node_shutdown(request).await,
+            (ZhtpMethod::Post, "/api/v1/node/halt-consensus") => self.handle_halt_consensus(request).await,
             (ZhtpMethod::Post, "/api/v1/node/force-sync") => self.handle_node_force_sync(request).await,
             (ZhtpMethod::Get, "/api/v1/network/gas") => self.handle_get_gas_info(request).await,
             (ZhtpMethod::Get, "/api/v1/network/ping") => self.handle_ping(request).await,
@@ -1013,6 +1014,64 @@ impl NetworkHandler {
             unsafe { libc::kill(libc::getpid(), libc::SIGTERM); }
         });
         Ok(ZhtpResponse::json(&response, None)?)
+    }
+
+    /// POST /api/v1/node/halt-consensus — coordinated consensus halt (Council only)
+    async fn handle_halt_consensus(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        // Council-only gate
+        let principal = crate::api::principal::extract_principal_from_request(&request);
+        if principal.role != lib_access_control::Role::Council {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::Forbidden,
+                "Consensus halt requires Council role".to_string(),
+            ));
+        }
+
+        // Parse optional reason from body
+        let reason_str = serde_json::from_slice::<serde_json::Value>(&request.body)
+            .ok()
+            .and_then(|v| v.get("reason").and_then(|r| r.as_str().map(String::from)))
+            .unwrap_or_else(|| "operator-halt".to_string());
+
+        let halt_reason = match reason_str.as_str() {
+            "upgrade" => lib_consensus_core::fsm::state::HaltReason::UpgradeScheduled,
+            "emergency" => lib_consensus_core::fsm::state::HaltReason::EmergencyHalt,
+            _ => lib_consensus_core::fsm::state::HaltReason::ConsensusFailure,
+        };
+
+        // Get current height
+        let height = match crate::runtime::blockchain_provider::get_global_blockchain().await {
+            Ok(bc) => bc.read().await.height,
+            Err(_) => 0,
+        };
+
+        // Send halt event to consensus
+        if let Some(component) = self.runtime.get_component(&crate::runtime::ComponentId::Consensus).await {
+            if let Some(consensus) = component.as_any().downcast_ref::<crate::runtime::components::consensus::ConsensusComponent>() {
+                match consensus.halt_consensus(halt_reason, height).await {
+                    Ok(()) => {
+                        let response = serde_json::json!({
+                            "success": true,
+                            "message": format!("Consensus halt scheduled at height {}", height),
+                            "reason": reason_str,
+                            "height": height,
+                        });
+                        return Ok(ZhtpResponse::json(&response, None)?);
+                    }
+                    Err(e) => {
+                        return Ok(ZhtpResponse::error(
+                            ZhtpStatus::InternalServerError,
+                            format!("Failed to halt consensus: {}", e),
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(ZhtpResponse::error(
+            ZhtpStatus::InternalServerError,
+            "Consensus component not available".to_string(),
+        ))
     }
 
     /// POST /api/v1/node/force-sync — trigger immediate catch-up sync from peers

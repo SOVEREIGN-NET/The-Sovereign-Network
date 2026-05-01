@@ -37,7 +37,10 @@ impl ConsensusMeshBroadcaster {
     /// `lib-network/src/protocols/quic_mesh.rs:1706` and `:1760`. If those
     /// constants change, update this value too — the runtime startup check
     /// surfaces the divergence as a configuration error.
-    const QUIC_MESH_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+    // Lowered from 300s to 60s to pass the ConsensusRuntime transport
+    // check (AD-011: idle_timeout must be ≤ MAX_BROADCAST_BUDGET_MS × 100 = 75s).
+    // This enables the FSM-based runtime path instead of the legacy direct-engine fallback.
+    const QUIC_MESH_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
     /// Operator-facing transport name (CONS-403). Used in startup-check
     /// errors and dashboards.
@@ -321,6 +324,7 @@ fn validator_message_height(msg: &ValidatorMessage) -> u64 {
         ValidatorMessage::Propose(m) => m.proposal.height,
         ValidatorMessage::Vote(m) => m.vote.height,
         ValidatorMessage::Heartbeat(m) => m.height,
+        ValidatorMessage::Halt(m) => m.height,
     }
 }
 
@@ -1548,6 +1552,9 @@ pub struct ConsensusComponent {
     /// Mock SOV/USD price for oracle attestations (testnet/bootstrap).
     /// `None` means attempt real exchange price feeds.
     oracle_mock_sov_usd_price: Option<u64>,
+    /// Sender for injecting FSM events into the consensus loop (e.g., HaltScheduled).
+    /// Set when the ConsensusRuntime is created; None for legacy engine path.
+    halt_event_tx: Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<lib_consensus_core::fsm::Event>>>>,
 }
 
 // Manual Debug implementation because ConsensusEngine doesn't derive Debug
@@ -1664,7 +1671,57 @@ impl ConsensusComponent {
             local_validator_keypair: Arc::new(RwLock::new(None)),
             node_role: Arc::new(node_role),
             oracle_mock_sov_usd_price,
+            halt_event_tx: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Send a HaltScheduled event to the consensus engine.
+    /// Only works when ConsensusRuntime path is active (not legacy).
+    pub async fn halt_consensus(
+        &self,
+        reason: lib_consensus_core::fsm::state::HaltReason,
+        height: u64,
+    ) -> Result<()> {
+        let guard = self.halt_event_tx.read().await;
+        let tx = guard.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("Consensus halt sender not available (legacy engine path?)")
+        })?;
+        tx.send(lib_consensus_core::fsm::events::Event::HaltScheduled {
+            reason: reason.clone(),
+            triggered_at_height: height,
+            resume_condition: lib_consensus_core::fsm::events::ResumeConditionEvent::ManualRestart,
+        })
+        .map_err(|e| anyhow::anyhow!("Failed to send halt event: {}", e))?;
+        info!("🛑 HaltScheduled event sent to LOCAL consensus engine at height {}", height);
+
+        // Broadcast halt to all validators via mesh so the entire network halts
+        let halt_msg = lib_consensus_core::types::ValidatorMessage::Halt(
+            lib_consensus_core::types::HaltMessage {
+                reason: format!("{:?}", reason),
+                height,
+                initiated_by: String::new(), // filled by caller
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            },
+        );
+
+        if let Ok(mesh_router) = crate::runtime::mesh_router_provider::get_global_mesh_router().await {
+            let quic_guard = mesh_router.quic_protocol.read().await;
+            if let Some(quic) = quic_guard.as_ref() {
+                let peer_ids = quic.connected_peer_ids();
+                let mut sent = 0;
+                for peer_id in &peer_ids {
+                    if quic.send_to_peer(peer_id, lib_network::types::mesh_message::ZhtpMeshMessage::ValidatorMessage(halt_msg.clone())).await.is_ok() {
+                        sent += 1;
+                    }
+                }
+                info!("🛑 Halt broadcast to {}/{} mesh peers", sent, peer_ids.len());
+            }
+        }
+
+        Ok(())
     }
 
     #[deprecated = "Use new_with_bootstrap_validators(environment, node_role, min_stake, validators) instead"]
@@ -2422,6 +2479,8 @@ impl Component for ConsensusComponent {
                 let runtime =
                     lib_consensus_runtime::ConsensusRuntime::from_arc(consensus_engine, transport_info)
                         .expect("transport already validated by check_transport");
+                // Capture halt event sender before run() consumes the runtime
+                *self.halt_event_tx.write().await = Some(runtime.event_sender());
                 tokio::spawn(async move {
                     match runtime.run().await {
                         Ok(()) => info!("Consensus loop exited normally (runtime path)"),

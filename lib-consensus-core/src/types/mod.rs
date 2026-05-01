@@ -19,8 +19,8 @@ pub mod proposal;
 pub mod round;
 
 pub use messages::{
-    ConsensusStateView, HeartbeatMessage, Justification, NetworkSummary, ProposeMessage,
-    ValidatorMessage, VoteMessage,
+    ConsensusStateView, HaltMessage, HeartbeatMessage, Justification, NetworkSummary,
+    ProposeMessage, ValidatorMessage, VoteMessage,
 };
 pub use proposal::{ConsensusProof, ConsensusProposal, ConsensusVote};
 pub use round::ConsensusRound;

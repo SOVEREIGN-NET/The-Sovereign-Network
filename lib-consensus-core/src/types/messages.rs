@@ -37,6 +37,22 @@ pub enum ValidatorMessage {
     Vote(VoteMessage),
     /// Validator heartbeat for liveness tracking.
     Heartbeat(HeartbeatMessage),
+    /// Coordinated halt command — propagated from council to all validators.
+    Halt(HaltMessage),
+}
+
+/// Coordinated halt message. When a validator receives this from a
+/// council-authorized peer, it injects HaltScheduled into its FSM.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HaltMessage {
+    /// Why the halt was requested
+    pub reason: String,
+    /// Height at which halt was triggered
+    pub height: u64,
+    /// DID of the council member who initiated the halt
+    pub initiated_by: String,
+    /// Timestamp
+    pub timestamp: u64,
 }
 
 /// Proposal envelope. Carries the `ConsensusProposal` payload plus a
