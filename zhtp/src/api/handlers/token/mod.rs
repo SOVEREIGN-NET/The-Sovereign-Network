@@ -691,7 +691,7 @@ impl TokenHandler {
             "token/balances: address={}, target_key_id={}, token_count={}",
             address,
             hex::encode(&target_key_id),
-            blockchain.token_contracts.len()
+            blockchain.query_token_count()
         );
 
         let native_token_id = generate_lib_token_id();
@@ -699,7 +699,7 @@ impl TokenHandler {
         let mut balances = Vec::new();
 
         // Collect balances from all token contracts
-        for (token_id, token) in &blockchain.token_contracts {
+        for (token_id, token) in blockchain.query_all_token_contracts() {
             let balance = if *token_id == native_token_id {
                 if let Some(wallet_id) = sov_wallet_id {
                     let wallet_key = PublicKey {
@@ -865,11 +865,11 @@ impl TokenHandler {
 
         // Otherwise treat it as identity_id and try to find the Primary wallet.
         let identity_hash = lib_blockchain::Hash::from_slice(&bytes);
-        let primary_wallet = blockchain.wallet_registry.values().find(|wallet| {
+        let primary_wallet = blockchain.query_all_wallets().into_iter().find(|(_, wallet)| {
             wallet.owner_identity_id.as_ref() == Some(&identity_hash)
                 && wallet.wallet_type == "Primary"
         })?;
-        Some(primary_wallet.wallet_id.as_array())
+        Some(primary_wallet.1.wallet_id.as_array())
     }
 
     fn decode_signed_tx_raw(&self, signed_tx: &str) -> Result<Transaction> {

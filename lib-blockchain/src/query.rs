@@ -99,6 +99,27 @@ pub trait BlockchainQuery {
 
     /// Get transaction fee config.
     fn query_tx_fee_config(&self) -> &crate::transaction::TxFeeConfig;
+
+    /// Get all wallets as (wallet_id, data) pairs.
+    fn query_all_wallets(&self) -> Vec<(&String, &WalletTransactionData)>;
+
+    /// Get all active validators as (did, info) pairs.
+    fn query_all_validators(&self) -> Vec<(&String, &crate::blockchain::ValidatorInfo)>;
+
+    /// Number of token contracts.
+    fn query_token_count(&self) -> usize;
+
+    /// Get all token contracts as (token_id, contract) pairs.
+    fn query_all_token_contracts(&self) -> Vec<(&[u8; 32], &crate::contracts::TokenContract)>;
+
+    /// Get current governance phase.
+    fn query_governance_phase(&self) -> crate::dao::GovernancePhase;
+
+    /// Get council members list.
+    fn query_council_members(&self) -> &[crate::dao::CouncilMember];
+
+    /// Get a range of blocks [start..=end].
+    fn query_block_range(&self, start: u64, end: u64) -> Vec<Block>;
 }
 
 /// Write interface for blockchain state — single entry point for mutations.

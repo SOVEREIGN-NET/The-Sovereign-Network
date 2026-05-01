@@ -295,7 +295,7 @@ impl WalletHandler {
         if wallet_summaries.is_empty() {
             // Fallback: surface wallets from the on-chain registry that belong to this identity.
             let blockchain = self.blockchain.read().await;
-            for (wallet_id_hex, wallet_data) in &blockchain.wallet_registry {
+            for (wallet_id_hex, wallet_data) in blockchain.query_all_wallets() {
                 let owned = wallet_data
                     .owner_identity_id
                     .map(|owner| owner.as_bytes() == identity_id_bytes.as_slice())
@@ -307,7 +307,7 @@ impl WalletHandler {
                     .ok()
                     .filter(|b| b.len() == 32)
                     .and_then(|bytes| {
-                        blockchain.token_contracts.get(&sov_token_id).and_then(|token| {
+                        blockchain.query_token_contract(&sov_token_id).and_then(|token| {
                             let mut key_id = [0u8; 32];
                             key_id.copy_from_slice(&bytes);
                             let wallet_key =
@@ -1304,7 +1304,7 @@ impl WalletHandler {
 
         // Include any wallet registry entries linked to this identity that may
         // not be present in the in-memory identity wallet manager.
-        for (wallet_id_hex, wallet_data) in &blockchain.wallet_registry {
+        for (wallet_id_hex, wallet_data) in blockchain.query_all_wallets() {
             if wallet_data
                 .owner_identity_id
                 .as_ref()
@@ -1330,7 +1330,7 @@ impl WalletHandler {
         let mut tx_by_hash: HashMap<String, TransactionRecord> = HashMap::new();
 
         // Search through all blocks for transactions
-        for block in &blockchain.blocks {
+        for block in blockchain.query_blocks() {
             for tx in &block.transactions {
                 if Self::tx_involves_identity(
                     tx,
@@ -1355,7 +1355,8 @@ impl WalletHandler {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        for tx in &blockchain.pending_transactions {
+        let pending = blockchain.query_pending_transactions();
+        for tx in &pending {
             if Self::tx_involves_identity(
                 tx,
                 &tracked_key_ids,
@@ -1667,7 +1668,9 @@ impl WalletHandler {
                 if let Err(e) = blockchain.add_system_transaction(identity_tx) {
                     tracing::warn!("Failed to submit identity tx: {}", e);
                 }
-                // Also insert in-memory so the handshake works immediately
+                // DECOUPLE-TODO: This direct insert is needed for immediate QUIC handshake
+                // validation. Once identity lookup goes through a projection cache (not
+                // the blockchain struct), this can be removed.
                 blockchain.identity_registry.insert(did.clone(), identity_data);
                 let current_height = blockchain.get_height();
                 blockchain.identity_blocks.insert(did.clone(), current_height);

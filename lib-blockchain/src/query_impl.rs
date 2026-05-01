@@ -129,6 +129,39 @@ impl BlockchainQuery for Blockchain {
     fn query_tx_fee_config(&self) -> &crate::transaction::TxFeeConfig {
         self.get_tx_fee_config()
     }
+
+    fn query_all_wallets(&self) -> Vec<(&String, &WalletTransactionData)> {
+        self.wallet_registry.iter().collect()
+    }
+
+    fn query_all_validators(&self) -> Vec<(&String, &crate::blockchain::ValidatorInfo)> {
+        self.validator_registry.iter().collect()
+    }
+
+    fn query_token_count(&self) -> usize {
+        self.token_contracts.len()
+    }
+
+    fn query_all_token_contracts(&self) -> Vec<(&[u8; 32], &crate::contracts::TokenContract)> {
+        self.token_contracts.iter().collect()
+    }
+
+    fn query_governance_phase(&self) -> crate::dao::GovernancePhase {
+        self.governance_phase.clone()
+    }
+
+    fn query_council_members(&self) -> &[crate::dao::CouncilMember] {
+        &self.council_members
+    }
+
+    fn query_block_range(&self, start: u64, end: u64) -> Vec<Block> {
+        let start = start as usize;
+        let end = (end as usize).min(self.blocks.len().saturating_sub(1));
+        if start >= self.blocks.len() || start > end {
+            return Vec::new();
+        }
+        self.blocks[start..=end].to_vec()
+    }
 }
 
 impl crate::query::BlockchainMutate for Blockchain {

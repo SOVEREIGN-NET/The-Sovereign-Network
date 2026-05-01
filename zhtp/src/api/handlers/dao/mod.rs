@@ -610,7 +610,7 @@ impl DaoHandler {
 
         // Slow path: rebuild and cache
         let mut registry = DAORegistry::new();
-        for block in &blockchain.blocks {
+        for block in blockchain.query_blocks() {
             for tx in &block.transactions {
                 Self::apply_registry_registration_from_tx(&mut registry, tx, block.header.height);
             }
@@ -1420,7 +1420,7 @@ impl DaoHandler {
             }
 
             // Phase 0 gate: only Bootstrap Council members may vote
-            if blockchain.governance_phase == lib_blockchain::dao::GovernancePhase::Bootstrap
+            if blockchain.query_governance_phase() == lib_blockchain::dao::GovernancePhase::Bootstrap
                 && !blockchain.is_council_member(&voter_identity.did)
             {
                 return Ok(create_error_response(
@@ -1442,7 +1442,8 @@ impl DaoHandler {
                 .get_dao_votes_for_proposal(&proposal_id)
                 .iter()
                 .any(|v| v.voter == voter_identity.did);
-            let already_voted_pending = blockchain.pending_transactions.iter().any(|tx| {
+            let pending_txs = blockchain.query_pending_transactions();
+            let already_voted_pending = pending_txs.iter().any(|tx| {
                 tx.transaction_type == lib_blockchain::TransactionType::DaoVote
                     && tx
                         .dao_vote_data()
@@ -2037,7 +2038,7 @@ impl DaoHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
-        let phase_str = match blockchain.governance_phase {
+        let phase_str = match blockchain.query_governance_phase() {
             lib_blockchain::dao::GovernancePhase::Bootstrap => "bootstrap",
             lib_blockchain::dao::GovernancePhase::Hybrid => "hybrid",
             lib_blockchain::dao::GovernancePhase::FullDao => "full_dao",
@@ -2099,7 +2100,7 @@ impl DaoHandler {
         let current_height = blockchain.height;
 
         // First bootstrap: accept without signatures
-        if blockchain.council_members.is_empty() {
+        if blockchain.query_council_members().is_empty() {
             blockchain
                 .council_members
                 .push(lib_blockchain::dao::CouncilMember {
@@ -2142,7 +2143,7 @@ impl DaoHandler {
                 stake_amount: req.stake_amount,
                 joined_at_height: current_height,
             });
-        let new_size = blockchain.council_members.len();
+        let new_size = blockchain.query_council_members().len();
 
         create_json_response(json!({
             "status": "success",

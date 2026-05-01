@@ -319,10 +319,12 @@ impl Web4Handler {
         // Ensure SOV token contract exists (auto-migration for older blockchain data)
         {
             let mut blockchain = self.blockchain.write().await;
+            // DECOUPLE-TODO: Token contract initialization should happen at genesis,
+            // not lazily during domain registration
             if !blockchain.token_contracts.contains_key(&sov_token_id) {
                 let sov_token = lib_blockchain::contracts::TokenContract::new_sov_native();
                 blockchain.token_contracts.insert(sov_token_id, sov_token);
-                info!("🪙 SOV token contract auto-initialized during domain registration");
+                info!("SOV token contract auto-initialized during domain registration");
             }
         }
 
@@ -548,6 +550,7 @@ impl Web4Handler {
                 .get(&simple_request.domain)
                 .map(|r| (r.registered_at, r.version.saturating_add(1)))
                 .unwrap_or((now, 1));
+            // DECOUPLE-TODO: Submit DomainRegistration transaction instead of direct insert
             blockchain.domain_registry.insert(
                 simple_request.domain.clone(),
                 lib_blockchain::transaction::OnChainDomainRecord {
@@ -810,6 +813,7 @@ impl Web4Handler {
                 .get(&request.domain)
                 .map(|r| (r.registered_at, r.version.saturating_add(1)))
                 .unwrap_or((now, 1));
+            // DECOUPLE-TODO: Submit DomainRegistration transaction instead of direct insert
             blockchain.domain_registry.insert(
                 request.domain.clone(),
                 lib_blockchain::transaction::OnChainDomainRecord {
@@ -2182,6 +2186,7 @@ mod tests {
 
         // Set wallet public key deterministically for fee tx signer check.
         let owner_wallet_pk = owner_identity.public_key.dilithium_pk.clone();
+        // DECOUPLE-TODO: Submit WalletRegistration transaction instead of direct insert
         blockchain.wallet_registry.insert(
             hex::encode(owner_wallet_id),
             wallet_data(
@@ -2191,6 +2196,7 @@ mod tests {
                 owner_wallet_pk.to_vec(),
             ),
         );
+        // DECOUPLE-TODO: Submit WalletRegistration transaction instead of direct insert
         blockchain.wallet_registry.insert(
             hex::encode(treasury_wallet_id),
             wallet_data(treasury_wallet_id, "Treasury", None, vec![8u8; 32]),

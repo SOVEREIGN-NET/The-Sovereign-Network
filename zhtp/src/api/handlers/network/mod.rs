@@ -911,13 +911,13 @@ impl NetworkHandler {
                 Ok(owner_bytes) => {
                     let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
 
-                    let wallet = blockchain.wallet_registry.values().find(|w| {
+                    let wallet = blockchain.query_all_wallets().into_iter().find(|(_, w)| {
                         w.owner_identity_id
                             .as_ref()
                             .map(|id| id.as_bytes() == owner_bytes.as_slice())
                             .unwrap_or(false)
                             && w.wallet_type == "Primary"
-                    });
+                    }).map(|(_, w)| w);
 
                     if let Some(w) = wallet {
                         let wallet_id_hex = hex::encode(w.wallet_id.as_bytes());

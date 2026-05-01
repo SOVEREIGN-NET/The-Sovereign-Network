@@ -2504,7 +2504,7 @@ impl BlockchainHandler {
 
         let block_height = blockchain.contract_blocks.get(&contract_id).copied();
         let (contract_kind, state_json) =
-            if let Some(token) = blockchain.token_contracts.get(&contract_id) {
+            if let Some(token) = blockchain.query_token_contract(&contract_id) {
                 let raw_state = blockchain
                     .get_contract_state(&contract_id)
                     .map(hex::encode)
@@ -2572,7 +2572,7 @@ impl BlockchainHandler {
 
         let block_height = blockchain.contract_blocks.get(&contract_id).copied();
         let (contract_kind, metadata) =
-            if let Some(token) = blockchain.token_contracts.get(&contract_id) {
+            if let Some(token) = blockchain.query_token_contract(&contract_id) {
                 (
                     "token".to_string(),
                     serde_json::json!({
@@ -2835,7 +2835,7 @@ impl BlockchainHandler {
         }
 
         let actual_end = std::cmp::min(end as usize, blockchain.query_block_count() - 1);
-        let blocks = blockchain.blocks[start as usize..=actual_end].to_vec();
+        let blocks = blockchain.query_block_range(start, actual_end as u64);
         Ok(Ok((actual_end as u64, blocks)))
     }
 
