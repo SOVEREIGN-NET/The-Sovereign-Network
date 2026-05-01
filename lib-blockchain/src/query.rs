@@ -87,6 +87,16 @@ pub trait BlockchainQuery {
     /// Get DAO treasury balance.
     fn query_dao_treasury_balance(&self) -> Option<u128>;
 
+    /// Get token balance for an address. Reads from sled (authoritative) with
+    /// in-memory fallback. Returns 0 if token or address not found.
+    fn query_token_balance(&self, token_id: &[u8; 32], key_id: &[u8; 32]) -> u128;
+
+    /// Get a token contract by ID (from sled or in-memory).
+    fn query_token_contract(
+        &self,
+        token_id: &[u8; 32],
+    ) -> Option<crate::contracts::TokenContract>;
+
     /// Get transaction fee config.
     fn query_tx_fee_config(&self) -> &crate::transaction::TxFeeConfig;
 }
