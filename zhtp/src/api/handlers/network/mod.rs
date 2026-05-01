@@ -15,6 +15,7 @@ use uuid;
 use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 
+use lib_blockchain::BlockchainQuery;
 use crate::runtime::RuntimeOrchestrator;
 
 // Constants
@@ -901,7 +902,7 @@ impl NetworkHandler {
             .unwrap_or_else(|| "not_initialized".to_string());
 
         // Check if identity is registered on-chain
-        let identity_registered = blockchain.identity_registry.contains_key(&node_did);
+        let identity_registered = blockchain.query_identity_exists(&node_did);
 
         // Wallet balance (if registered)
         let (wallet_id, sov_balance) = if identity_registered {
@@ -910,13 +911,13 @@ impl NetworkHandler {
                 Ok(owner_bytes) => {
                     let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
 
-                    let wallet = blockchain.wallet_registry.values().find(|w| {
+                    let wallet = blockchain.query_all_wallets().into_iter().find(|(_, w)| {
                         w.owner_identity_id
                             .as_ref()
                             .map(|id| id.as_bytes() == owner_bytes.as_slice())
                             .unwrap_or(false)
                             && w.wallet_type == "Primary"
-                    });
+                    }).map(|(_, w)| w);
 
                     if let Some(w) = wallet {
                         let wallet_id_hex = hex::encode(w.wallet_id.as_bytes());
@@ -945,11 +946,11 @@ impl NetworkHandler {
             (None, 0)
         };
 
-        let validator_count = blockchain.validator_registry.len();
-        let identity_count = blockchain.identity_registry.len();
-        let chain_height = blockchain.height;
-        let blocks_count = blockchain.blocks.len();
-        let pending_count = blockchain.pending_transactions.len();
+        let validator_count = blockchain.query_validator_count();
+        let identity_count = blockchain.query_identity_count();
+        let chain_height = blockchain.query_height();
+        let blocks_count = blockchain.query_block_count();
+        let pending_count = blockchain.query_pending_count();
 
         // Determine detailed node state
         let state = if node_did == "not_initialized" {
@@ -965,7 +966,7 @@ impl NetworkHandler {
         };
 
         // Sync telemetry: estimate target height from validator activity
-        let last_block_time = blockchain.blocks.last()
+        let last_block_time = blockchain.query_latest_block()
             .map(|b| b.header.timestamp)
             .unwrap_or(0);
         let now = std::time::SystemTime::now()
@@ -1124,18 +1125,20 @@ impl NetworkHandler {
             ("91.98.113.188",  "611bd1197ee799c17ac46f3f27df45ec4580d924f0dc3597ba79bcad3d0fa970"), // gateway
         ].into_iter().collect();
 
-        // Build validator entries from on-chain registry
+        // Build validator entries from on-chain registry, with IP overlay
+        let ip_overlay = crate::runtime::validator_ip::get_all_resolved_addresses();
         let validators: Vec<serde_json::Value> = blockchain
             .validator_registry
-            .values()
-            .filter(|v| v.status == "active")
-            .map(|v| {
-                let ip = v.network_address.split(':').next().unwrap_or("");
+            .iter()
+            .filter(|(_, v)| v.status == "active")
+            .map(|(did, v)| {
+                let endpoint = ip_overlay.get(did).unwrap_or(&v.network_address);
+                let ip = endpoint.split(':').next().unwrap_or("");
                 let spki_pin = known_spki_pins.get(ip).unwrap_or(&"").to_string();
                 serde_json::json!({
                     "did": v.identity_id,
                     "role": "validator",
-                    "endpoint": v.network_address,
+                    "endpoint": endpoint,
                     "ip": ip,
                     "quic_port": 9334,
                     "mesh_port": 9333,
@@ -1180,7 +1183,7 @@ impl NetworkHandler {
 
         let response = serde_json::json!({
             "network_id": environment.to_string().to_ascii_lowercase(),
-            "chain_height": blockchain.height,
+            "chain_height": blockchain.query_height(),
             "timestamp": std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()

@@ -2246,12 +2246,14 @@ impl Component for ConsensusComponent {
                         lib_crypto::Hash(h)
                     };
 
-                    let endpoints = if v.network_address.is_empty() {
+                    let resolved_addr = crate::runtime::validator_ip::get_resolved_address(&v.identity_id)
+                        .unwrap_or_else(|| v.network_address.clone());
+                    let endpoints = if resolved_addr.is_empty() {
                         vec![]
                     } else {
                         vec![ValidatorEndpoint {
                             protocol: "quic".to_string(),
-                            address: v.network_address.clone(),
+                            address: resolved_addr,
                             priority: 10,
                         }]
                     };

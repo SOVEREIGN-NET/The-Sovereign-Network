@@ -10,7 +10,7 @@
 //! - POST /api/v1/identity/seed/verify - Verify seed phrase is correct (Issue #115)
 
 use base64::{engine::general_purpose, Engine as _};
-use lib_blockchain;
+use lib_blockchain::{self, BlockchainQuery};
 use lib_storage;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -520,7 +520,7 @@ async fn auto_create_identity_from_seed(
         .await
         {
             // Only submit if not already in the on-chain identity_registry.
-            if !blockchain.identity_registry.contains_key(&did) {
+            if !blockchain.query_identity_exists(&did) {
                 let identity_data = lib_blockchain::transaction::IdentityTransactionData {
                     did: did.clone(),
                     display_name: "Recovered Identity".to_string(),
@@ -548,7 +548,8 @@ async fn auto_create_identity_from_seed(
                 if let Err(e) = blockchain.add_system_transaction(reg_tx) {
                     tracing::warn!("Recovery: failed to queue identity registration tx: {}", e);
                 } else {
-                    blockchain.identity_registry.insert(did.clone(), identity_data);
+                    // Identity will be added to registry when the block containing
+                    // this transaction is committed and processed by the executor.
                     tracing::info!(
                         "Recovery: queued IdentityRegistration for {}",
                         hex::encode(&identity_id.0[..8])
@@ -1493,10 +1494,10 @@ pub async fn handle_migrate_identity(
                 let old_identity_id_chain =
                     lib_blockchain::Hash::from_slice(old_identity.id.as_bytes());
                 let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
-                let token_opt = blockchain.token_contracts.get(&sov_token_id);
+                let token_opt = blockchain.query_token_contract(&sov_token_id);
                 _has_token_contract = token_opt.is_some();
 
-                for (wallet_id_str, wallet_data) in blockchain.wallet_registry.iter() {
+                for (wallet_id_str, wallet_data) in blockchain.query_all_wallets() {
                     if wallet_data.owner_identity_id == Some(old_identity_id_chain.clone()) {
                         registry_owned_count += 1;
                         wallet_ids_all.insert(wallet_id_str.clone());
@@ -1510,7 +1511,7 @@ pub async fn handle_migrate_identity(
                                 Some(short_key_min_len.map(|v| v.min(key_len)).unwrap_or(key_len));
                             short_key_max_len =
                                 Some(short_key_max_len.map(|v| v.max(key_len)).unwrap_or(key_len));
-                        } else if let Some(token) = token_opt {
+                        } else if let Some(ref token) = token_opt {
                             let old_pk_bytes: [u8; 2592] = wallet_data.public_key.as_slice().try_into()
                                 .unwrap_or([0u8; 2592]);
                             let new_pk_bytes: [u8; 2592] = new_public_key_bytes.as_slice().try_into()
@@ -1728,7 +1729,7 @@ pub async fn handle_migrate_identity(
                 .iter()
                 .map(|(wid, _, _)| hex::encode(wid.0))
                 .collect();
-            for (wallet_id_str, wallet_data) in blockchain.wallet_registry.iter() {
+            for (wallet_id_str, wallet_data) in blockchain.query_all_wallets() {
                 if wallet_data.owner_identity_id == Some(old_identity_id_chain.clone()) {
                     wallet_ids_all.insert(wallet_id_str.clone());
                 }
@@ -1781,7 +1782,7 @@ pub async fn handle_migrate_identity(
                     key_id: wallet_id_bytes,
                 };
 
-                if let Some(existing) = blockchain.wallet_registry.get(wallet_id_str).cloned() {
+                if let Some(existing) = blockchain.query_wallet(wallet_id_str).cloned() {
                     let wallet_type = existing.wallet_type.clone();
                     let old_public_key = existing.public_key.clone();
                     let old_pk_is_short = old_public_key.len() < MIN_DILITHIUM_PK_LEN;
@@ -1789,7 +1790,7 @@ pub async fn handle_migrate_identity(
                     // Build TokenMint txs for balance fixes
                     if old_pk_is_short {
                         if existing.initial_balance > 0 {
-                            let token_opt = blockchain.token_contracts.get(&sov_token_id);
+                            let token_opt = blockchain.query_token_contract(&sov_token_id);
                             let current_balance =
                                 token_opt.map(|t| t.balance_of(&wallet_addr)).unwrap_or(0);
                             if current_balance < existing.initial_balance as u128 {
@@ -1823,7 +1824,7 @@ pub async fn handle_migrate_identity(
                             }
                         }
                     } else {
-                        if let Some(token) = blockchain.token_contracts.get(&sov_token_id) {
+                        if let Some(token) = blockchain.query_token_contract(&sov_token_id) {
                             let old_pk_bytes: [u8; 2592] = old_public_key.as_slice().try_into()
                                 .unwrap_or([0u8; 2592]);
                             let old_pk = lib_crypto::PublicKey::new(old_pk_bytes);
@@ -2558,6 +2559,7 @@ mod tests {
         let mut rewards_key_arr = validator_kp.public_key.dilithium_pk;
         rewards_key_arr.iter_mut().for_each(|b| *b = b.wrapping_add(1)); // distinct from others
         let rewards_key = rewards_key_arr.to_vec();
+        // DECOUPLE-TODO: Submit ValidatorRegistration transaction instead of direct insert
         bc.validator_registry.insert(
             validator_did.clone(),
             lib_blockchain::ValidatorInfo {
@@ -2590,6 +2592,7 @@ mod tests {
             let seed_commitment = lib_blockchain::types::hash::blake3_hash(
                 format!("seed_commitment:{}", wallet_id_hex).as_bytes(),
             );
+            // DECOUPLE-TODO: Submit WalletRegistration transaction instead of direct insert
             bc.wallet_registry.insert(
                 wallet_id_hex,
                 lib_blockchain::transaction::WalletTransactionData {

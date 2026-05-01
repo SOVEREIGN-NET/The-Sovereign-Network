@@ -15,6 +15,7 @@ use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 
 // Import actual DAO system components
+use lib_blockchain::BlockchainQuery;
 use lib_blockchain::contracts::{derive_dao_id, DAOEntry, DAORegistry, TokenContract};
 use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use lib_blockchain::transaction::{
@@ -592,20 +593,42 @@ impl DaoHandler {
         }
     }
 
-    /// Rebuild the DAO registry by replaying all DaoExecution transactions from the chain.
-    ///
-    /// **Performance note**: This is O(blocks × txs_per_block) and is called on every
-    /// registry query (list, get, register). As the chain grows this will become slow.
-    /// A future improvement should maintain the registry in a cached, incrementally-updated
-    /// in-memory structure (e.g. an `Arc<RwLock<DAORegistry>>`) rather than rebuilding from
-    /// scratch on each request.
-    fn rebuild_dao_registry(blockchain: &lib_blockchain::Blockchain) -> Result<DAORegistry> {
+    /// Get the DAO registry, rebuilding from chain only when state has changed.
+    /// Synchronous cache (std::sync::RwLock) — safe to call while holding blockchain lock.
+    /// Keyed on (height, block_count) to handle reorgs at the same height.
+    fn get_dao_registry(blockchain: &lib_blockchain::Blockchain) -> Result<DAORegistry> {
+        let current_height = blockchain.get_height();
+        let current_block_count = blockchain.query_block_count();
+
+        // Fast path: check if cache is valid
+        {
+            let cache = DAO_REGISTRY_CACHE.read()
+                .expect("DAO registry cache lock poisoned");
+            if let Some(ref cached) = *cache {
+                if cached.built_at_height == current_height
+                    && cached.built_at_block_count == current_block_count
+                {
+                    return Ok(cached.registry.clone());
+                }
+            }
+        }
+
+        // Slow path: rebuild and cache
         let mut registry = DAORegistry::new();
-        for block in &blockchain.blocks {
+        for block in blockchain.query_blocks() {
             for tx in &block.transactions {
                 Self::apply_registry_registration_from_tx(&mut registry, tx, block.header.height);
             }
         }
+
+        let mut cache = DAO_REGISTRY_CACHE.write()
+            .expect("DAO registry cache lock poisoned");
+        *cache = Some(CachedDaoRegistry {
+            registry: registry.clone(),
+            built_at_height: current_height,
+            built_at_block_count: current_block_count,
+        });
+
         Ok(registry)
     }
 
@@ -902,18 +925,24 @@ impl DaoHandler {
             .map_err(|e| anyhow::anyhow!("System time error: {}", e))?
             .as_secs();
         let blockchain_arc = self.get_blockchain().await?;
-        let mut blockchain = blockchain_arc.write().await;
-        let current_height = blockchain.get_height();
+
+        // Read state under read lock, then drop it before building the tx
+        let (current_height, execution_params) = {
+            let blockchain = blockchain_arc.read().await;
+            let height = blockchain.get_height();
+            let params = match Self::build_oracle_execution_params(
+                proposal_type_raw,
+                &request_data,
+                &blockchain,
+            ) {
+                Ok(v) => v,
+                Err(e) => return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string())),
+            };
+            (height, params)
+        };
+
         let proposal_type_storage =
             Self::proposal_type_storage_string(proposal_type_raw, &proposal_type);
-        let execution_params = match Self::build_oracle_execution_params(
-            proposal_type_raw,
-            &request_data,
-            &blockchain,
-        ) {
-            Ok(v) => v,
-            Err(e) => return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string())),
-        };
 
         let proposal_id = BcHash::from_slice(&lib_crypto::hash_blake3(
             &[
@@ -972,9 +1001,12 @@ impl DaoHandler {
             ));
         }
 
+        // Write lock only for mempool submission
+        let mut blockchain = blockchain_arc.write().await;
         blockchain
             .add_pending_transaction(proposal_tx)
             .map_err(|e| anyhow::anyhow!("Failed to submit proposal transaction: {}", e))?;
+        drop(blockchain);
 
         let response = json!({
             "status": "success",
@@ -1021,8 +1053,12 @@ impl DaoHandler {
             .map_err(|e| anyhow::anyhow!("System time error: {}", e))?
             .as_secs();
         let blockchain_arc = self.get_blockchain().await?;
-        let mut blockchain = blockchain_arc.write().await;
-        let height = blockchain.get_height();
+
+        let height = {
+            let blockchain = blockchain_arc.read().await;
+            blockchain.get_height()
+        };
+
         let proposal_id = Self::proposal_id_from_parts(&[
             execution_type.as_bytes(),
             user_did.as_bytes(),
@@ -1070,9 +1106,11 @@ impl DaoHandler {
             ));
         }
 
+        let mut blockchain = blockchain_arc.write().await;
         blockchain.add_pending_transaction(tx).map_err(|e| {
             anyhow::anyhow!("Failed to submit delegate execution transaction: {}", e)
         })?;
+        drop(blockchain);
 
         create_json_response(json!({
             "status": "success",
@@ -1377,50 +1415,68 @@ impl DaoHandler {
             .as_secs();
 
         let blockchain_arc = self.get_blockchain().await?;
-        let mut blockchain = blockchain_arc.write().await;
-        if blockchain.get_dao_proposal(&proposal_id).is_none() {
-            return Ok(create_error_response(
-                ZhtpStatus::NotFound,
-                "Proposal not found".to_string(),
-            ));
-        }
 
-        // Phase 0 gate: only Bootstrap Council members may vote
-        if blockchain.governance_phase == lib_blockchain::dao::GovernancePhase::Bootstrap
-            && !blockchain.is_council_member(&voter_identity.did)
-        {
-            return Ok(create_error_response(
-                ZhtpStatus::Unauthorized,
-                "Phase 0: voting restricted to Bootstrap Council".to_string(),
-            ));
-        }
-
-        let vote_choice_str = match vote_choice {
-            DaoVoteChoice::Yes => "Yes".to_string(),
-            DaoVoteChoice::No => "No".to_string(),
-            DaoVoteChoice::Abstain => "Abstain".to_string(),
-            DaoVoteChoice::Delegate(delegate) => {
-                format!("Delegate({})", hex::encode(delegate.as_bytes()))
+        // Read state under read lock, then drop before building tx
+        let (voting_power, vote_choice_str) = {
+            let blockchain = blockchain_arc.read().await;
+            if blockchain.get_dao_proposal(&proposal_id).is_none() {
+                return Ok(create_error_response(
+                    ZhtpStatus::NotFound,
+                    "Proposal not found".to_string(),
+                ));
             }
-        };
 
-        let already_voted_confirmed = blockchain
-            .get_dao_votes_for_proposal(&proposal_id)
-            .iter()
-            .any(|v| v.voter == voter_identity.did);
-        let already_voted_pending = blockchain.pending_transactions.iter().any(|tx| {
-            tx.transaction_type == lib_blockchain::TransactionType::DaoVote
-                && tx
-                    .dao_vote_data()
-                    .map(|v| v.proposal_id == proposal_id && v.voter == voter_identity.did)
-                    .unwrap_or(false)
-        });
-        if already_voted_confirmed || already_voted_pending {
-            return Ok(create_error_response(
-                ZhtpStatus::Conflict,
-                "User has already voted on this proposal".to_string(),
-            ));
-        }
+            // Phase 0 gate: only Bootstrap Council members may vote
+            if blockchain.query_governance_phase() == lib_blockchain::dao::GovernancePhase::Bootstrap
+                && !blockchain.is_council_member(&voter_identity.did)
+            {
+                return Ok(create_error_response(
+                    ZhtpStatus::Unauthorized,
+                    "Phase 0: voting restricted to Bootstrap Council".to_string(),
+                ));
+            }
+
+            let vote_choice_str = match vote_choice {
+                DaoVoteChoice::Yes => "Yes".to_string(),
+                DaoVoteChoice::No => "No".to_string(),
+                DaoVoteChoice::Abstain => "Abstain".to_string(),
+                DaoVoteChoice::Delegate(delegate) => {
+                    format!("Delegate({})", hex::encode(delegate.as_bytes()))
+                }
+            };
+
+            let already_voted_confirmed = blockchain
+                .get_dao_votes_for_proposal(&proposal_id)
+                .iter()
+                .any(|v| v.voter == voter_identity.did);
+            let pending_txs = blockchain.query_pending_transactions();
+            let already_voted_pending = pending_txs.iter().any(|tx| {
+                tx.transaction_type == lib_blockchain::TransactionType::DaoVote
+                    && tx
+                        .dao_vote_data()
+                        .map(|v| v.proposal_id == proposal_id && v.voter == voter_identity.did)
+                        .unwrap_or(false)
+            });
+            if already_voted_confirmed || already_voted_pending {
+                return Ok(create_error_response(
+                    ZhtpStatus::Conflict,
+                    "User has already voted on this proposal".to_string(),
+                ));
+            }
+
+            let voting_power = {
+                let raw = blockchain.calculate_user_voting_power(&authenticated_identity_id);
+                match blockchain.voting_power_mode {
+                    lib_blockchain::dao::VotingPowerMode::Identity => 1,
+                    lib_blockchain::dao::VotingPowerMode::Linear => raw.max(1),
+                    lib_blockchain::dao::VotingPowerMode::Quadratic => {
+                        ((raw as f64).sqrt() as u64).max(1)
+                    }
+                }
+            };
+
+            (voting_power, vote_choice_str)
+        };
 
         let vote_id = BcHash::from_slice(&lib_crypto::hash_blake3(
             &[
@@ -1437,16 +1493,7 @@ impl DaoHandler {
             proposal_id,
             voter: voter_identity.did.clone(),
             vote_choice: vote_choice_str,
-            voting_power: {
-                let raw = blockchain.calculate_user_voting_power(&authenticated_identity_id);
-                match blockchain.voting_power_mode {
-                    lib_blockchain::dao::VotingPowerMode::Identity => 1,
-                    lib_blockchain::dao::VotingPowerMode::Linear => raw.max(1),
-                    lib_blockchain::dao::VotingPowerMode::Quadratic => {
-                        ((raw as f64).sqrt() as u64).max(1)
-                    }
-                }
-            },
+            voting_power,
             justification: request_data.justification.clone(),
             timestamp: now,
         };
@@ -1480,6 +1527,24 @@ impl DaoHandler {
             ));
         }
 
+        // Write lock for mempool submission — re-check duplicate vote atomically
+        let mut blockchain = blockchain_arc.write().await;
+        let already_voted = blockchain
+            .get_dao_votes_for_proposal(&proposal_id)
+            .iter()
+            .any(|v| v.voter == voter_identity.did)
+            || blockchain.pending_transactions.iter().any(|tx| {
+                tx.transaction_type == lib_blockchain::TransactionType::DaoVote
+                    && tx.dao_vote_data()
+                        .map(|v| v.proposal_id == proposal_id && v.voter == voter_identity.did)
+                        .unwrap_or(false)
+            });
+        if already_voted {
+            return Ok(create_error_response(
+                ZhtpStatus::Conflict,
+                "User has already voted on this proposal".to_string(),
+            ));
+        }
         blockchain
             .add_pending_transaction(vote_tx)
             .map_err(|e| anyhow::anyhow!("Failed to submit vote transaction: {}", e))?;
@@ -1996,7 +2061,7 @@ impl DaoHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
-        let phase_str = match blockchain.governance_phase {
+        let phase_str = match blockchain.query_governance_phase() {
             lib_blockchain::dao::GovernancePhase::Bootstrap => "bootstrap",
             lib_blockchain::dao::GovernancePhase::Hybrid => "hybrid",
             lib_blockchain::dao::GovernancePhase::FullDao => "full_dao",
@@ -2058,7 +2123,7 @@ impl DaoHandler {
         let current_height = blockchain.height;
 
         // First bootstrap: accept without signatures
-        if blockchain.council_members.is_empty() {
+        if blockchain.query_council_members().is_empty() {
             blockchain
                 .council_members
                 .push(lib_blockchain::dao::CouncilMember {
@@ -2101,7 +2166,7 @@ impl DaoHandler {
                 stake_amount: req.stake_amount,
                 joined_at_height: current_height,
             });
-        let new_size = blockchain.council_members.len();
+        let new_size = blockchain.query_council_members().len();
 
         create_json_response(json!({
             "status": "success",
@@ -2304,7 +2369,7 @@ impl DaoHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
-        let validator_count = blockchain.validator_registry.len();
+        let validator_count = blockchain.query_validator_count();
         let threshold = (validator_count * 8 + 9) / 10; // ceil(80%)
 
         create_json_response(json!({
@@ -2535,7 +2600,7 @@ impl DaoHandler {
                 "Only the token creator can register DAO metadata".to_string(),
             ));
         }
-        let existing_registry = Self::rebuild_dao_registry(&blockchain)?;
+        let existing_registry = Self::get_dao_registry(&blockchain)?;
         if existing_registry.get_dao_by_id(dao_id).is_ok() {
             return Ok(create_error_response(
                 ZhtpStatus::Conflict,
@@ -2699,7 +2764,7 @@ impl DaoHandler {
     async fn handle_list_registered_daos(&self) -> Result<ZhtpResponse> {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
-        let registry = Self::rebuild_dao_registry(&blockchain)?;
+        let registry = Self::get_dao_registry(&blockchain)?;
         let entries = registry
             .list_daos_with_ids()
             .map_err(|e| anyhow::anyhow!("Failed to list DAO registry entries: {}", e))?;
@@ -2721,7 +2786,7 @@ impl DaoHandler {
         let dao_id = Self::parse_hex_32(dao_id_hex, "dao_id")?;
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
-        let registry = Self::rebuild_dao_registry(&blockchain)?;
+        let registry = Self::get_dao_registry(&blockchain)?;
         let entry = registry
             .get_dao_by_id(dao_id)
             .map_err(|_| anyhow::anyhow!("DAO not found"))?;
@@ -2776,6 +2841,17 @@ pub struct PendingProposal {
 /// an in-process `RwLock<HashMap>` is sufficient for the scaffolding.
 static PENDING_PROPOSALS: Lazy<tokio::sync::RwLock<HashMap<[u8; 32], PendingProposal>>> =
     Lazy::new(|| tokio::sync::RwLock::new(HashMap::new()));
+
+/// Cached DAO registry to avoid O(blocks × txs) replay on every request.
+/// Invalidated when chain height or block count changes (handles reorgs).
+struct CachedDaoRegistry {
+    registry: DAORegistry,
+    built_at_height: u64,
+    built_at_block_count: usize,
+}
+
+static DAO_REGISTRY_CACHE: Lazy<std::sync::RwLock<Option<CachedDaoRegistry>>> =
+    Lazy::new(|| std::sync::RwLock::new(None));
 
 /// Request body for `POST /api/v1/dao/proposal/payload`.
 #[derive(Debug, Deserialize)]

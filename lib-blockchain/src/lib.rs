@@ -20,6 +20,7 @@ pub mod difficulty;
 pub mod edge_node_state;
 pub mod events;
 pub mod exchange;
+pub mod ipc;
 pub mod execution;
 pub mod fees;
 mod fork_recovery; // gutted in Issue #936; kept as private to avoid orphan module errors
@@ -40,6 +41,8 @@ pub mod sync;
 pub mod transaction;
 pub mod types;
 pub mod utils;
+pub mod query;
+mod query_impl;
 pub mod validation;
 
 // Smart contracts submodule (feature-gated)
@@ -99,6 +102,7 @@ pub use blockchain::{
     Blockchain, BlockchainBroadcastMessage, BlockchainImport, ConsensusCheckpoint,
     EconomicsTransaction, ValidatorInfo, GatewayInfo, ADMISSION_SOURCE_BOOTSTRAP_GENESIS,
 };
+pub use query::{BlockchainQuery, BlockchainMutate};
 #[cfg(feature = "contracts")]
 pub use contracts::AmmPool;
 

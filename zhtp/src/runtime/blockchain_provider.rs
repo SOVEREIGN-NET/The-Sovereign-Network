@@ -1,7 +1,6 @@
 use anyhow::Result;
-use async_trait::async_trait;
 use base64::Engine;
-use lib_blockchain::events::{BlockchainEvent, BlockchainEventListener};
+use lib_blockchain::events::BlockchainEvent;
 use lib_blockchain::{Block, Blockchain, Hash, IdentityTransactionData, Transaction};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -116,9 +115,6 @@ pub struct PendingWalletProjection {
     pub wallet_record: Option<serde_json::Value>,
     pub wallet_private_record: Option<Vec<u8>>,
 }
-
-#[derive(Default)]
-struct IdentityProjectionListener;
 
 fn listener_attachments() -> &'static Mutex<HashSet<usize>> {
     BLOCKCHAIN_LISTENER_ATTACHMENTS.get_or_init(|| Mutex::new(HashSet::new()))
@@ -315,35 +311,55 @@ async fn handle_wallet_registered(
     Ok(())
 }
 
-#[async_trait]
-impl BlockchainEventListener for IdentityProjectionListener {
-    async fn on_event(&mut self, event: BlockchainEvent) -> Result<()> {
-        match event {
-            BlockchainEvent::IdentityRegistered {
-                tx_hash,
-                identity_data,
-                ..
-            } => {
-                if let Err(e) = handle_identity_registered(tx_hash, identity_data).await {
-                    warn!(
-                        "Failed to rebuild identity projection from committed event: {}",
-                        e
+/// Spawn the projection listener as an independent tokio task that reads
+/// from the broadcast channel. This runs outside the blockchain write lock.
+fn spawn_projection_listener(mut rx: tokio::sync::broadcast::Receiver<BlockchainEvent>) {
+    tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(event) => match event {
+                    BlockchainEvent::IdentityRegistered {
+                        tx_hash,
+                        identity_data,
+                        ..
+                    } => {
+                        if let Err(e) =
+                            handle_identity_registered(tx_hash, identity_data).await
+                        {
+                            warn!(
+                                "Failed to rebuild identity projection from committed event: {}",
+                                e
+                            );
+                        }
+                    }
+                    BlockchainEvent::WalletRegistered {
+                        tx_hash,
+                        wallet_data,
+                        ..
+                    } => {
+                        if let Err(e) = handle_wallet_registered(tx_hash, wallet_data).await {
+                            warn!(
+                                "Failed to rebuild wallet index from committed event: {}",
+                                e
+                            );
+                        }
+                    }
+                    _ => {}
+                },
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    error!(
+                        "Projection listener lagged, skipped {} events — \
+                         identity/wallet projections may be inconsistent until next restart",
+                        n
                     );
                 }
-            }
-            BlockchainEvent::WalletRegistered {
-                tx_hash,
-                wallet_data,
-                ..
-            } => {
-                if let Err(e) = handle_wallet_registered(tx_hash, wallet_data).await {
-                    warn!("Failed to rebuild wallet index from committed event: {}", e);
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    info!("Blockchain event channel closed, projection listener exiting");
+                    break;
                 }
             }
-            _ => {}
         }
-        Ok(())
-    }
+    });
 }
 
 async fn attach_projection_listener(blockchain: &Arc<RwLock<Blockchain>>) -> Result<()> {
@@ -357,13 +373,11 @@ async fn attach_projection_listener(blockchain: &Arc<RwLock<Blockchain>>) -> Res
         }
     }
 
-    let publisher = {
+    let rx = {
         let blockchain = blockchain.read().await;
-        blockchain.event_publisher.clone()
+        blockchain.event_publisher.subscribe()
     };
-    publisher
-        .subscribe(Box::new(IdentityProjectionListener))
-        .await?;
+    spawn_projection_listener(rx);
     Ok(())
 }
 
@@ -397,6 +411,15 @@ pub fn get_global_blockchain_provider() -> Option<&'static BlockchainProvider> {
 pub async fn set_global_blockchain(blockchain: Arc<RwLock<Blockchain>>) -> Result<()> {
     let provider = initialize_global_blockchain_provider();
     attach_projection_listener(&blockchain).await?;
+
+    // Start IPC server for out-of-process services (Phase 4)
+    let socket_path = crate::node_data_dir().join("blockchain.sock");
+    if let Err(e) = lib_blockchain::ipc::server::start_ipc_server(&socket_path, blockchain.clone()).await {
+        warn!("Failed to start blockchain IPC server: {} (services will use in-process path)", e);
+    } else {
+        info!("Blockchain IPC server started at {}", socket_path.display());
+    }
+
     provider.set_blockchain(blockchain).await
 }
 
