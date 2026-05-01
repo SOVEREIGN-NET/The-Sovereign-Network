@@ -16,14 +16,7 @@ fn create_unique_identity() -> IdentityId { common::consensus_fixtures::unique_i
 fn current_timestamp() -> u64 { common::consensus_fixtures::current_timestamp() }
 fn create_test_signature(timestamp: u64) -> PostQuantumSignature { common::consensus_fixtures::test_signature(timestamp) }
 
-/// Helper to create a placeholder network summary for testing
-fn create_test_network_summary(active_count: u32) -> NetworkSummary {
-    NetworkSummary {
-        active_validators: active_count,
-        health_score: 0.95,
-        block_rate: 0.1,
-    }
-}
+fn create_test_network_summary(active_count: u32) -> NetworkSummary { common::consensus_fixtures::network_summary(active_count) }
 
 /// Helper to create a HeartbeatMessage for testing
 fn create_test_heartbeat(

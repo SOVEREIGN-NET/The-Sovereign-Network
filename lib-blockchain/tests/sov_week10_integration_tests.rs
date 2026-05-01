@@ -10,6 +10,8 @@
 //!
 //! Total: 14 integration tests across 5 categories
 
+mod common;
+
 #[cfg(test)]
 mod sov_week10_integration_tests {
     use lib_blockchain::transaction::TransactionPayload;
@@ -25,51 +27,12 @@ mod sov_week10_integration_tests {
     // TEST UTILITIES AND FIXTURES
     // ========================================================================
 
-    /// Generate a deterministic but varied test public key from an index
-    ///
-    /// Instead of repeating a single byte (e.g., [42, 42, 42, ...]), this creates
-    /// a more realistic key by using the index as a seed and applying a simple
-    /// deterministic hash-like transformation to create varied byte patterns.
     fn create_test_public_key(index: u32) -> PublicKey {
-        // Use 7 as multiplier to create varied patterns across all byte positions.
-        // The wrapping multiplication ensures different indices produce distinct
-        // key patterns even when index values are similar.
-        const KEY_PATTERN_MULTIPLIER: u8 = 7;
-        let mut key_bytes = vec![0u8; 32];
-        let index_bytes = index.to_le_bytes();
-
-        // Fill key with a deterministic but varied pattern based on index
-        for i in 0..32 {
-            key_bytes[i] =
-                (index_bytes[i % 4].wrapping_add(i as u8)).wrapping_mul(KEY_PATTERN_MULTIPLIER);
-        }
-
-        PublicKey::new([42u8; 2592])
+        super::common::crypto_fixtures::seeded_public_key(index as u8)
     }
 
-    /// Create a test transaction with specified type and fee
     fn create_test_transaction(tx_type: TransactionType, fee: u64, index: u32) -> Transaction {
-        Transaction {
-            version: 1,
-            chain_id: 1,
-            transaction_type: tx_type,
-            inputs: vec![],
-            outputs: vec![TransactionOutput {
-                commitment: Hash::default(),
-                note: Hash::default(),
-                recipient: create_test_public_key(index),
-                            merkle_leaf: Hash::default(),
-}],
-            fee,
-            signature: Signature {
-                signature: format!("sig_{}", index).as_bytes().to_vec(),
-                public_key: create_test_public_key(index),
-                algorithm: SignatureAlgorithm::DEFAULT,
-                timestamp: 0,
-            },
-            memo: format!("test_tx_{}", index).as_bytes().to_vec(),
-            payload: TransactionPayload::None,
-        }
+        super::common::block_builders::test_transaction_at(tx_type, fee, index)
     }
 
     /// Create a block with specified number of transactions and fee distribution

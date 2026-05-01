@@ -5,6 +5,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use lib_consensus::validators::validator_protocol::NetworkSummary;
 use lib_consensus::{ConsensusConfig, ConsensusProof, ConsensusProposal, ConsensusType, ConsensusVote, StakeProof, VoteType};
 use lib_crypto::{hash_blake3, Hash, PostQuantumSignature, PublicKey, SignatureAlgorithm};
 use lib_identity::IdentityId;
@@ -165,5 +166,41 @@ pub fn test_vote(
         round,
         timestamp,
         signature: test_signature(timestamp),
+    }
+}
+
+/// A 32-byte non-zero key — use where the code under test rejects all-zero keys.
+pub fn non_zero_key() -> Vec<u8> {
+    vec![1u8; 32]
+}
+
+/// A 32-byte zero key — use where the code under test should reject it.
+pub fn zero_key() -> Vec<u8> {
+    vec![0u8; 32]
+}
+
+/// A `PostQuantumSignature` whose first byte encodes `nonce`.
+/// Distinct from `test_signature` which uses timestamp-based byte spreading.
+pub fn nonce_signature(nonce: u64) -> PostQuantumSignature {
+    let mut sig_bytes = vec![1u8; 64];
+    sig_bytes[0] = (nonce % 256) as u8;
+    PostQuantumSignature {
+        signature: sig_bytes,
+        public_key: PublicKey {
+            dilithium_pk: [1u8; 2592],
+            kyber_pk: [1u8; 1568],
+            key_id: [1u8; 32],
+        },
+        algorithm: SignatureAlgorithm::DEFAULT,
+        timestamp: nonce,
+    }
+}
+
+/// A minimal `NetworkSummary` with the given active validator count.
+pub fn network_summary(active_validators: u32) -> NetworkSummary {
+    NetworkSummary {
+        active_validators,
+        health_score: 0.95,
+        block_rate: 0.1,
     }
 }

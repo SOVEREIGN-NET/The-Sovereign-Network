@@ -8,10 +8,9 @@
 
 use anyhow::Result;
 use lib_identity::types::NodeId;
-use lib_storage::{
-    EconomicManagerConfig, ErasureConfig, StorageConfig, StorageTier, UnifiedStorageConfig,
-    UnifiedStorageSystem,
-};
+use lib_storage::{UnifiedStorageConfig, UnifiedStorageSystem};
+
+mod common;
 
 /// Test that same DID+device produces same NodeId across 10+ restarts
 #[tokio::test]
@@ -227,33 +226,6 @@ async fn test_dht_locate_with_stable_nodeid() -> Result<()> {
     Ok(())
 }
 
-/// Helper function to create test storage configuration
 fn create_test_config(node_id: NodeId, port: u16) -> UnifiedStorageConfig {
-    UnifiedStorageConfig {
-        node_id,
-        addresses: vec![format!("127.0.0.1:{}", port)],
-        economic_config: EconomicManagerConfig {
-            default_duration_days: 30,
-            base_price_per_gb_day: 1000,
-            enable_escrow: true,
-            escrow_release_threshold: 0.8,
-            max_contract_duration: 365,
-            min_contract_value: 100,
-            quality_monitoring_interval: 3600,
-            penalty_enforcement_enabled: true,
-            reward_distribution_enabled: true,
-            market_pricing_enabled: false,
-        },
-        storage_config: StorageConfig {
-            max_storage_size: 1_000_000,
-            default_tier: StorageTier::Warm,
-            enable_compression: false,
-            enable_encryption: false,
-            dht_persist_path: None,
-        },
-        erasure_config: ErasureConfig {
-            data_shards: 3,
-            parity_shards: 2,
-        },
-    }
+    common::storage_fixtures::test_config(node_id, port)
 }

@@ -4,8 +4,10 @@
 //! do not each need their own copy of the same BlockHeader boilerplate.
 
 use lib_blockchain::block::{Block, BlockHeader};
-use lib_blockchain::transaction::Transaction;
-use lib_blockchain::types::Hash;
+use lib_blockchain::integration::zk_integration::ZkTransactionProof;
+use lib_blockchain::transaction::{Transaction, TransactionInput, TransactionOutput, TransactionPayload};
+use lib_blockchain::types::{transaction_type::TransactionType, Hash};
+use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
 /// A canonical genesis block (height 0) with a recognisable first byte (0x01).
 pub fn genesis_block() -> Block {
@@ -71,4 +73,48 @@ pub fn child_block(parent: &Block, txs: Vec<Transaction>) -> Block {
         block_hash: Hash::default(),
     };
     Block::new(header, txs)
+}
+
+/// A minimal `TransactionInput` with all-default fields.
+pub fn test_input() -> TransactionInput {
+    TransactionInput::new(
+        Hash::default(),
+        0,
+        Hash::default(),
+        ZkTransactionProof::default(),
+    )
+}
+
+/// A minimal `TransactionOutput` with a seeded recipient key.
+pub fn test_output() -> TransactionOutput {
+    TransactionOutput::new(
+        Hash::default(),
+        Hash::default(),
+        super::crypto_fixtures::seeded_public_key(1),
+    )
+}
+
+/// A `Transaction` of the given type and fee, seeded by `index`.
+pub fn test_transaction_at(tx_type: TransactionType, fee: u64, index: u32) -> Transaction {
+    Transaction {
+        version: 1,
+        chain_id: 1,
+        transaction_type: tx_type,
+        inputs: vec![],
+        outputs: vec![TransactionOutput {
+            commitment: Hash::default(),
+            note: Hash::default(),
+            recipient: super::crypto_fixtures::seeded_public_key(index as u8),
+            merkle_leaf: Hash::default(),
+        }],
+        fee,
+        signature: Signature {
+            signature: format!("sig_{}", index).as_bytes().to_vec(),
+            public_key: super::crypto_fixtures::seeded_public_key(index as u8),
+            algorithm: SignatureAlgorithm::DEFAULT,
+            timestamp: 0,
+        },
+        memo: format!("test_tx_{}", index).as_bytes().to_vec(),
+        payload: TransactionPayload::None,
+    }
 }
