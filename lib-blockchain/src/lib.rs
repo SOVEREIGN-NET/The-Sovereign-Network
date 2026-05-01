@@ -101,7 +101,7 @@ pub use blockchain::{
     Blockchain, BlockchainBroadcastMessage, BlockchainImport, ConsensusCheckpoint,
     EconomicsTransaction, ValidatorInfo, GatewayInfo, ADMISSION_SOURCE_BOOTSTRAP_GENESIS,
 };
-pub use query::BlockchainQuery;
+pub use query::{BlockchainQuery, BlockchainMutate};
 #[cfg(feature = "contracts")]
 pub use contracts::AmmPool;
 

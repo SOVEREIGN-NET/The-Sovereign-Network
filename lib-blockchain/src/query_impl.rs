@@ -130,3 +130,13 @@ impl BlockchainQuery for Blockchain {
         self.get_tx_fee_config()
     }
 }
+
+impl crate::query::BlockchainMutate for Blockchain {
+    fn submit_transaction(&mut self, tx: Transaction) -> anyhow::Result<()> {
+        self.add_pending_transaction(tx)
+    }
+
+    fn submit_system_transaction(&mut self, tx: Transaction) -> anyhow::Result<()> {
+        self.add_system_transaction(tx)
+    }
+}

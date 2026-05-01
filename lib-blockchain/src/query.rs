@@ -100,3 +100,26 @@ pub trait BlockchainQuery {
     /// Get transaction fee config.
     fn query_tx_fee_config(&self) -> &crate::transaction::TxFeeConfig;
 }
+
+/// Write interface for blockchain state — single entry point for mutations.
+///
+/// All state changes go through signed transactions submitted to the mempool.
+/// No direct field mutation (`.insert()`, `.push()`) is allowed through this trait.
+///
+/// **Migration status** (Phase 3 of #2439):
+/// - `add_pending_transaction()`: validated path — used by API handlers
+/// - `add_system_transaction()`: bypass path — used by POUW minter, genesis bootstrap
+///   TODO: Replace with `add_pending_transaction()` + system signature verification
+/// - Direct registry inserts: backup_recovery, web4 domains, genesis funding
+///   TODO: Create proper transaction types (DomainRegistration, ValidatorUpdate)
+pub trait BlockchainMutate {
+    /// Submit a signed transaction to the mempool for inclusion in the next block.
+    /// Returns an error if validation fails (bad signature, invalid nonce, etc).
+    fn submit_transaction(&mut self, tx: Transaction) -> anyhow::Result<()>;
+
+    /// Submit a system-originated transaction (bypass signature validation).
+    /// Used for POUW minting and genesis bootstrap only.
+    ///
+    /// **Deprecated**: Prefer `submit_transaction()` with proper system authority signing.
+    fn submit_system_transaction(&mut self, tx: Transaction) -> anyhow::Result<()>;
+}
