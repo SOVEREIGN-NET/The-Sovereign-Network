@@ -193,9 +193,9 @@ impl Default for ConsensusConfig {
             max_validators: 21,
             block_time: 10, // 10 seconds
             epoch_length_blocks: 100,
-            propose_timeout: 3000,   // 3 seconds
-            prevote_timeout: 1000,   // 1 second
-            precommit_timeout: 1000, // 1 second
+            propose_timeout: 5000,   // 5 seconds — allow cross-continent proposal delivery
+            prevote_timeout: 3000,   // 3 seconds — votes need time to propagate
+            precommit_timeout: 3000, // 3 seconds — precommits need time to propagate
             max_transactions_per_block: 1000,
             max_difficulty: 0x00000000FFFFFFFF,
             target_difficulty: 0x00000FFF,
