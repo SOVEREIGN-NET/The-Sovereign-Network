@@ -1352,15 +1352,25 @@ impl ConsensusEngine {
         // referenced if our round eventually catches up; do not
         // touch `current_round`.
         if proposal.round > self.current_round.round {
-            tracing::debug!(
-                "Future-round proposal H={} R={} (local R={}) tracked for catch-up; \
-                 not advancing local round on a single proposer's claim",
-                proposal.height,
-                proposal.round,
+            // Advance to the proposal's round to re-synchronize with the network.
+            // Without this, nodes at different rounds never converge because each
+            // rejects the others' proposals as "future round".
+            tracing::info!(
+                "Advancing from round {} to {} to match proposal from {}",
                 self.current_round.round,
+                proposal.round,
+                proposal.proposer,
             );
-            self.pending_proposals.push_back(proposal);
-            return Ok(());
+            self.current_round.round = proposal.round;
+            self.current_round.step = ConsensusStep::Propose;
+            self.current_round.proposer = None;
+            self.current_round.proposals.clear();
+            self.current_round.votes.clear();
+            self.current_round.timed_out = false;
+            self.current_round.locked_proposal = None;
+            self.current_round.valid_proposal = None;
+
+            // Fall through to process this proposal normally at the new round
         }
 
         if !self.current_round.proposals.is_empty() {
