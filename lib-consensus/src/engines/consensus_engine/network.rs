@@ -73,24 +73,17 @@ impl ConsensusEngine {
         // Ensure validator membership snapshot is initialized for the current height
         self.snapshot_validator_set(self.current_round.height);
 
-        // Track BFT mode for transition logging
-        let mut last_bft_mode = self.is_bft_mode_active();
+        // Track BFT mode for transition logging.
+        // Start as false to force the transition block to run on the first tick
+        // when validators are already seeded — otherwise the node stays in
+        // Bootstrapping forever because current_bft_mode == last_bft_mode.
+        let mut last_bft_mode = false;
         let validator_count = self.get_validator_count();
 
         // CONS-305: Start in Bootstrapping state — do NOT propose immediately.
         // Wait for quorum connectivity before entering active consensus.
         tracing::info!(
             "🔄 Starting consensus loop in BOOTSTRAPPING state ({} validators detected) at height {}",
-            validator_count,
-            self.current_round.height,
-        );
-
-        // Stay in Bootstrapping until caught up to the chain tip.
-        // The loop below checks catch-up status and transitions to active
-        // consensus only when local height is near the network tip.
-        tracing::info!(
-            "⛏️ Bootstrapping: {} validators detected, local height {}. \
-             Waiting for catch-up sync before entering active consensus.",
             validator_count,
             self.current_round.height,
         );

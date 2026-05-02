@@ -55,15 +55,24 @@ impl ConsensusMeshBroadcaster {
         validator_ids: &[IdentityId],
         target_height: u64,
     ) -> HashSet<Vec<u8>> {
-        let targets: HashSet<Vec<u8>> = validator_ids
-            .iter()
-            .map(|id| id.as_bytes().to_vec())
-            .collect();
+        // Broadcast to ALL connected mesh peers. The consensus engine provides
+        // IdentityId (32-byte DID hash) but the mesh indexes by NodeId (derived
+        // from DID + device + network_genesis). Rather than maintaining a mapping,
+        // send to every connected peer — in a small validator set this is correct
+        // and avoids the identity→node ID resolution problem.
+        let quic_guard = self.mesh_router.quic_protocol.read().await;
+        let targets: HashSet<Vec<u8>> = if let Some(ref qp) = *quic_guard {
+            qp.connected_peer_ids().into_iter().collect()
+        } else {
+            HashSet::new()
+        };
+        drop(quic_guard);
 
         tracing::debug!(
-            "Consensus broadcast target set for height {} resolved to {} candidate peer node IDs",
+            "Consensus broadcast for height {}: {} connected mesh peers (engine requested {} validator_ids)",
             target_height,
-            targets.len()
+            targets.len(),
+            validator_ids.len()
         );
 
         targets

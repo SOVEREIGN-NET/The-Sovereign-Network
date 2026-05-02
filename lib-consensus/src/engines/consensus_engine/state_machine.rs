@@ -2054,9 +2054,17 @@ impl ConsensusEngine {
 
         // CONS-305: If the FSM landed in Rejected (from VoteFailed or Timeout),
         // the runtime must reset to Idle → Proposing for the next round.
-        // This handles ALL paths into Rejected, not just Commit timeout.
+        // CRITICAL: On rejection, stay at the SAME height with round+1.
+        // Only advance height after a block is committed.
         if matches!(self.fsm_state, lib_consensus_core::fsm::ValidatorState::Rejected { .. }) {
-            self.advance_to_next_round();
+            self.current_round.round += 1;
+            self.current_round.step = ConsensusStep::Propose;
+            self.current_round.proposer = None;
+            self.current_round.proposals.clear();
+            self.current_round.votes.clear();
+            self.current_round.timed_out = false;
+            self.current_round.locked_proposal = None;
+            self.current_round.valid_proposal = None;
             self.snapshot_validator_set(self.current_round.height);
             self.fsm_state = lib_consensus_core::fsm::ValidatorState::Idle;
             let (next, actions) = lib_consensus_core::fsm::transition(
