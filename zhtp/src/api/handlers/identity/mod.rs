@@ -1710,7 +1710,8 @@ impl IdentityHandler {
             Hash::default(),
             0,
             0,
-        );
+        )
+        .with_kyber_public_key(kyber_public_key.clone().unwrap_or_default());
 
         use lib_blockchain::transaction::TransactionOutput;
 

@@ -898,6 +898,14 @@ impl ZhtpRequestHandler for TokenHandler {
     ) -> lib_protocols::zhtp::ZhtpResult<ZhtpResponse> {
         info!("Token handler: {} {}", request.method, request.uri);
 
+        // Access zone gate: password sessions cannot access token/balance endpoints
+        if crate::session_manager::is_request_password_session(&request).await {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Token access requires key authentication (mobile app or seed phrase recovery)".to_string(),
+            ));
+        }
+
         let response = match (request.method.clone(), request.uri.as_str()) {
             // POST /api/v1/token/create
             (ZhtpMethod::Post, "/api/v1/token/create") => self.handle_create_token(request).await,

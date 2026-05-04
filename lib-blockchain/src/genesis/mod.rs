@@ -572,6 +572,7 @@ impl GenesisConfig {
                     dao_fee: 0,
                     controlled_nodes: vec![],
                     owned_wallets: vec![],
+                    kyber_public_key: vec![],
                 },
             );
             bc.identity_blocks.insert(id.did.clone(), 0u64);
@@ -626,6 +627,91 @@ impl GenesisConfig {
                         entry.wallet_id, e
                     );
                 }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Re-apply genesis state (identities, wallets, validators, council) to an existing
+    /// blockchain during catch-up sync. Called when a synced node receives block 0 but
+    /// the identity/wallet registries are empty because genesis state is populated via
+    /// direct inserts in build_block0(), not via transactions.
+    pub fn apply_genesis_state(&self, bc: &mut crate::Blockchain) -> Result<()> {
+        {
+            let alloc = &self.allocations;
+            // identities
+            for id in &alloc.identities {
+                let pk_bytes = hex::decode(&id.public_key).unwrap_or_default();
+                if !bc.identity_registry.contains_key(&id.did) {
+                    bc.identity_registry.insert(
+                        id.did.clone(),
+                        crate::transaction::IdentityTransactionData {
+                            did: id.did.clone(),
+                            display_name: id.display_name.clone(),
+                            public_key: pk_bytes,
+                            ownership_proof: vec![],
+                            identity_type: id.identity_type.clone(),
+                            did_document_hash: crate::types::Hash::default(),
+                            created_at: id.created_at,
+                            registration_fee: 0,
+                            dao_fee: 0,
+                            controlled_nodes: vec![],
+                            owned_wallets: vec![],
+                            kyber_public_key: vec![],
+                        },
+                    );
+                    bc.identity_blocks.insert(id.did.clone(), 0u64);
+                }
+            }
+            // wallets
+            for w in &alloc.wallets {
+                let wallet_id_bytes = hex::decode(&w.wallet_id).unwrap_or_default();
+                let wallet_key = w.wallet_id.clone();
+                if !bc.wallet_registry.contains_key(&wallet_key) {
+                    let pk_bytes = hex::decode(&w.public_key).unwrap_or_default();
+                    let owner_id = w.owner_identity_id.as_ref().map(|oid| {
+                        let hex_part = oid.strip_prefix("did:zhtp:").unwrap_or(oid);
+                        let bytes = hex::decode(hex_part).unwrap_or_default();
+                        let mut h = [0u8; 32];
+                        let len = bytes.len().min(32);
+                        h[..len].copy_from_slice(&bytes[..len]);
+                        crate::types::Hash::from_slice(&h)
+                    });
+                    let mut wid = [0u8; 32];
+                    let len = wallet_id_bytes.len().min(32);
+                    wid[..len].copy_from_slice(&wallet_id_bytes[..len]);
+                    bc.wallet_registry.insert(
+                        wallet_key.clone(),
+                        crate::transaction::WalletTransactionData {
+                            wallet_id: crate::types::Hash::from_slice(&wid),
+                            wallet_type: w.wallet_type.clone(),
+                            wallet_name: String::new(),
+                            alias: None,
+                            public_key: pk_bytes,
+                            owner_identity_id: owner_id,
+                            seed_commitment: crate::types::Hash::default(),
+                            created_at: w.created_at,
+                            registration_fee: 0,
+                            capabilities: 0,
+                            initial_balance: 0,
+                        },
+                    );
+                    bc.wallet_blocks.insert(wallet_key, 0u64);
+                }
+            }
+        }
+
+        // council
+        if bc.council_members.is_empty() {
+            bc.council_threshold = self.bootstrap_council.threshold;
+            for member in &self.bootstrap_council.members {
+                bc.council_members.push(crate::dao::CouncilMember {
+                    identity_id: member.did.clone(),
+                    wallet_id: member.wallet.clone(),
+                    stake_amount: 0,
+                    joined_at_height: 0,
+                });
             }
         }
 

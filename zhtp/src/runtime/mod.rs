@@ -2741,6 +2741,7 @@ impl RuntimeOrchestrator {
                             .keys()
                             .map(|id| hex::encode(&id.0))
                             .collect(),
+                        kyber_public_key: vec![],
                     };
 
                     // Register identity on blockchain
@@ -2921,6 +2922,7 @@ impl RuntimeOrchestrator {
                                         .keys()
                                         .map(|id| hex::encode(&id.0))
                                         .collect(),
+                                    kyber_public_key: vec![],
                                 };
 
                             match blockchain_ref.register_identity(identity_data) {

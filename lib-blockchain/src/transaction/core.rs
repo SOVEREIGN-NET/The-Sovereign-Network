@@ -531,6 +531,10 @@ pub struct IdentityTransactionData {
     pub controlled_nodes: Vec<String>,
     /// Wallet IDs owned by this identity
     pub owned_wallets: Vec<String>,
+    /// Kyber1024 public key for post-quantum key encapsulation (messaging, encryption).
+    /// 1568 bytes when present. Empty for identities registered before this field was added.
+    #[serde(default)]
+    pub kyber_public_key: Vec<u8>,
 }
 
 /// Wallet registration transaction data (processed by lib-identity package)
@@ -774,6 +778,7 @@ impl Transaction {
             dao_fee: 0,
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
+                    kyber_public_key: Vec::new(),
         };
 
         Transaction {
@@ -2037,7 +2042,14 @@ impl IdentityTransactionData {
             dao_fee,
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
+            kyber_public_key: Vec::new(),
         }
+    }
+
+    /// Set the Kyber1024 public key for post-quantum key encapsulation.
+    pub fn with_kyber_public_key(mut self, kyber_pk: Vec<u8>) -> Self {
+        self.kyber_public_key = kyber_pk;
+        self
     }
 
     /// Create identity transaction data with node and wallet associations
@@ -2068,6 +2080,7 @@ impl IdentityTransactionData {
             dao_fee,
             controlled_nodes,
             owned_wallets,
+            kyber_public_key: Vec::new(),
         }
     }
 

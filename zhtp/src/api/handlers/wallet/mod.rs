@@ -77,6 +77,14 @@ impl ZhtpRequestHandler for WalletHandler {
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         tracing::info!("Wallet handler: {} {}", request.method, request.uri);
 
+        // Access zone gate: password sessions cannot access wallet endpoints
+        if crate::session_manager::is_request_password_session(&request).await {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Wallet access requires key authentication (mobile app or seed phrase recovery)".to_string(),
+            ));
+        }
+
         let response = match (request.method, request.uri.as_str()) {
             // GET /api/v1/wallet/list/{identity_id}
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/wallet/list/") => {
@@ -1649,6 +1657,7 @@ impl WalletHandler {
                     dao_fee: 0,
                     controlled_nodes: vec![],
                     owned_wallets: vec![],
+                    kyber_public_key: vec![],
                 };
 
                 // Create IdentityRegistration system transaction for block persistence
