@@ -1325,6 +1325,25 @@ impl Blockchain {
     /// Finish block processing after state mutations are complete.
     /// This handles post-processing steps that happen regardless of which path was used.
     async fn finish_block_processing(&mut self, block: Block) -> Result<()> {
+        // Genesis state restoration: when applying block 0 during catch-up sync,
+        // the genesis identities/wallets/validators are populated via direct inserts
+        // in build_block0(), not via transactions. Re-apply genesis state so synced
+        // nodes have the full registries.
+        if block.header.height == 0 && self.identity_registry.is_empty() {
+            if let Ok(cfg) = crate::genesis::GenesisConfig::from_embedded() {
+                let applied = cfg.apply_genesis_state(self);
+                info!(
+                    "Genesis state restored during sync: {} identities, {} wallets, {} validators",
+                    self.identity_registry.len(),
+                    self.wallet_registry.len(),
+                    self.validator_registry.len(),
+                );
+                if let Err(e) = applied {
+                    warn!("Genesis state restoration incomplete: {}", e);
+                }
+            }
+        }
+
         // Remove processed transactions from pending pool
         self.remove_pending_transactions(&block.transactions);
 

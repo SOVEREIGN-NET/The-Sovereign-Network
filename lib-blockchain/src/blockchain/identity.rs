@@ -529,6 +529,7 @@ impl Blockchain {
             dao_fee: 0,
             controlled_nodes: Vec::new(),
             owned_wallets: vec![wallet_id.to_string()],
+            kyber_public_key: Vec::new(),
         };
 
         let registration_tx = Transaction::new_identity_registration(

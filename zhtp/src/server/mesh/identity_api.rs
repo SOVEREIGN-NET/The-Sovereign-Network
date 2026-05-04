@@ -1561,6 +1561,7 @@ async fn record_identity_on_blockchain(identity_result: &serde_json::Value) -> R
         dao_fee: 50,
         controlled_nodes: Vec::new(),
         owned_wallets: Vec::new(),
+        kyber_public_key: vec![],
     };
 
     let identity_tx_hash = blockchain_guard.register_identity(identity_data)?;

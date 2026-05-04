@@ -70,6 +70,7 @@ impl Blockchain {
             dao_fee: 0,
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
+                    kyber_public_key: Vec::new(),
         };
 
         let registration_tx = Transaction::new_identity_registration(
@@ -155,6 +156,7 @@ impl Blockchain {
             dao_fee: 0,
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
+                    kyber_public_key: Vec::new(),
         };
 
         let update_tx = Transaction::new_identity_update(
