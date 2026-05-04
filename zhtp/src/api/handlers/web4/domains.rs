@@ -543,24 +543,45 @@ impl Web4Handler {
                         .collect()
                 })
                 .unwrap_or_default();
-            let payload = lib_blockchain::transaction::DomainRegistrationPayload {
-                domain: simple_request.domain.clone(),
-                owner_did: owner_did.clone(),
-                manifest_cid: String::new(),
-                build_hash: String::new(),
-                title,
-                description,
-                category: "general".to_string(),
-                tags,
-                duration_days: 365,
-                fee_tx_hash: fee_tx_hash_hex.clone(),
+            // Check if domain already exists to choose registration vs update
+            let is_update = {
+                let blockchain = self.blockchain.read().await;
+                blockchain.domain_registry.contains_key(&simple_request.domain)
             };
-            let memo = payload.encode_memo()
-                .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?;
+
+            let (tx_type, memo) = if is_update {
+                let payload = lib_blockchain::transaction::DomainUpdatePayload {
+                    domain: simple_request.domain.clone(),
+                    owner_did: owner_did.clone(),
+                    new_manifest_cid: String::new(),
+                    expected_previous_manifest_cid: String::new(),
+                    build_hash: String::new(),
+                    message: Some(format!("{}: {}", title, description)),
+                    fee_tx_hash: fee_tx_hash_hex.clone(),
+                };
+                (lib_blockchain::TransactionType::DomainUpdate, payload.encode_memo()
+                    .map_err(|e| anyhow::anyhow!("Failed to encode domain update: {}", e))?)
+            } else {
+                let payload = lib_blockchain::transaction::DomainRegistrationPayload {
+                    domain: simple_request.domain.clone(),
+                    owner_did: owner_did.clone(),
+                    manifest_cid: String::new(),
+                    build_hash: String::new(),
+                    title,
+                    description,
+                    category: "general".to_string(),
+                    tags,
+                    duration_days: 365,
+                    fee_tx_hash: fee_tx_hash_hex.clone(),
+                };
+                (lib_blockchain::TransactionType::DomainRegistration, payload.encode_memo()
+                    .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?)
+            };
+
             let domain_tx = lib_blockchain::Transaction {
                 version: 8,
                 chain_id: 0x03,
-                transaction_type: lib_blockchain::TransactionType::DomainRegistration,
+                transaction_type: tx_type,
                 inputs: Vec::new(),
                 outputs: Vec::new(),
                 fee: 0,
@@ -579,7 +600,7 @@ impl Web4Handler {
             };
             let mut blockchain = self.blockchain.write().await;
             if let Err(e) = blockchain.add_system_transaction(domain_tx) {
-                warn!("Failed to submit domain registration tx: {}", e);
+                warn!("Failed to submit domain {} tx: {}", if is_update { "update" } else { "registration" }, e);
             }
         }
 
@@ -810,36 +831,55 @@ impl Web4Handler {
             request.domain, request.deploy_manifest_cid
         );
 
-        // Upsert into blockchain.domain_registry so the catalog reflects this immediately
-        // and the record persists across restarts via BlockchainStorageV9.
-        // Preserve registered_at and increment version on re-registration so clients
-        // can detect updates without treating them as new entries.
+        // Submit domain registration/update transaction. Uses DomainUpdate for
+        // existing domains to preserve version incrementing in block processor.
         {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            let payload = lib_blockchain::transaction::DomainRegistrationPayload {
-                domain: request.domain.clone(),
-                owner_did: owner_did.clone(),
-                manifest_cid: request.deploy_manifest_cid.clone(),
-                build_hash: hex::encode(manifest.root_hash),
-                title: request.domain.clone(),
-                description: format!(
-                    "Domain registered via DeployManifest {}",
-                    request.deploy_manifest_cid
-                ),
-                category: "website".to_string(),
-                tags: vec!["web4".to_string(), "manifest".to_string()],
-                duration_days: 365,
-                fee_tx_hash: fee_tx_hash_hex.clone(),
+
+            let is_update = {
+                let blockchain = self.blockchain.read().await;
+                blockchain.domain_registry.contains_key(&request.domain)
             };
-            let memo = payload.encode_memo()
-                .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?;
+
+            let (tx_type, memo) = if is_update {
+                let payload = lib_blockchain::transaction::DomainUpdatePayload {
+                    domain: request.domain.clone(),
+                    owner_did: owner_did.clone(),
+                    new_manifest_cid: request.deploy_manifest_cid.clone(),
+                    expected_previous_manifest_cid: String::new(),
+                    build_hash: hex::encode(manifest.root_hash),
+                    message: Some(format!("DeployManifest {}", request.deploy_manifest_cid)),
+                    fee_tx_hash: fee_tx_hash_hex.clone(),
+                };
+                (lib_blockchain::TransactionType::DomainUpdate, payload.encode_memo()
+                    .map_err(|e| anyhow::anyhow!("Failed to encode domain update: {}", e))?)
+            } else {
+                let payload = lib_blockchain::transaction::DomainRegistrationPayload {
+                    domain: request.domain.clone(),
+                    owner_did: owner_did.clone(),
+                    manifest_cid: request.deploy_manifest_cid.clone(),
+                    build_hash: hex::encode(manifest.root_hash),
+                    title: request.domain.clone(),
+                    description: format!(
+                        "Domain registered via DeployManifest {}",
+                        request.deploy_manifest_cid
+                    ),
+                    category: "website".to_string(),
+                    tags: vec!["web4".to_string(), "manifest".to_string()],
+                    duration_days: 365,
+                    fee_tx_hash: fee_tx_hash_hex.clone(),
+                };
+                (lib_blockchain::TransactionType::DomainRegistration, payload.encode_memo()
+                    .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?)
+            };
+
             let domain_tx = lib_blockchain::Transaction {
                 version: 8,
                 chain_id: 0x03,
-                transaction_type: lib_blockchain::TransactionType::DomainRegistration,
+                transaction_type: tx_type,
                 inputs: Vec::new(),
                 outputs: Vec::new(),
                 fee: 0,
@@ -858,7 +898,7 @@ impl Web4Handler {
             };
             let mut blockchain = self.blockchain.write().await;
             if let Err(e) = blockchain.add_system_transaction(domain_tx) {
-                warn!("Failed to submit domain registration tx: {}", e);
+                warn!("Failed to submit domain {} tx: {}", if is_update { "update" } else { "registration" }, e);
             }
         }
 
