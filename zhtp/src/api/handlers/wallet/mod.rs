@@ -1671,8 +1671,9 @@ impl WalletHandler {
                 // Cache warmup: identity must be visible immediately for QUIC handshake
                 // validation. The system transaction above ensures it persists in blocks,
                 // but won't be committed until the next block. This in-memory insert
-                // bridges the gap. Safe because: (1) tx is already in mempool, (2) block
-                // commit will overwrite with the same data.
+                // bridges the gap until block commit. Note: identity_blocks height will
+                // be the current chain height (not the future block height where the tx
+                // lands), but this is acceptable for the handshake check.
                 blockchain.identity_registry.insert(did.clone(), identity_data);
                 let current_height = blockchain.get_height();
                 blockchain.identity_blocks.insert(did.clone(), current_height);
