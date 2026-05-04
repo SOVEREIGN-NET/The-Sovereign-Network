@@ -5,6 +5,7 @@ use crate::web4_manifest::{
 };
 use anyhow::anyhow;
 use base64::{engine::general_purpose, Engine as _};
+use lib_blockchain::BlockchainQuery;
 use lib_identity::{types::IdentityView, ZhtpIdentity};
 use lib_access_control::{SecurityPrincipal, Role};
 use lib_types::NodeType;
@@ -316,15 +317,13 @@ impl Web4Handler {
         // Get SOV token contract and check balance
         let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
 
-        // Ensure SOV token contract exists (auto-migration for older blockchain data)
+        // Verify SOV token contract exists (initialized at genesis)
         {
-            let mut blockchain = self.blockchain.write().await;
-            // DECOUPLE-TODO: Token contract initialization should happen at genesis,
-            // not lazily during domain registration
-            if !blockchain.token_contracts.contains_key(&sov_token_id) {
-                let sov_token = lib_blockchain::contracts::TokenContract::new_sov_native();
-                blockchain.token_contracts.insert(sov_token_id, sov_token);
-                info!("SOV token contract auto-initialized during domain registration");
+            let blockchain = self.blockchain.read().await;
+            if blockchain.query_token_contract(&sov_token_id).is_none() {
+                return Err(anyhow::anyhow!(
+                    "SOV token contract not found — genesis may not have initialized correctly"
+                ));
             }
         }
 
@@ -544,31 +543,44 @@ impl Web4Handler {
                         .collect()
                 })
                 .unwrap_or_default();
-            let mut blockchain = self.blockchain.write().await;
-            let (registered_at, version) = blockchain
-                .domain_registry
-                .get(&simple_request.domain)
-                .map(|r| (r.registered_at, r.version.saturating_add(1)))
-                .unwrap_or((now, 1));
-            // DECOUPLE-TODO: Submit DomainRegistration transaction instead of direct insert
-            blockchain.domain_registry.insert(
-                simple_request.domain.clone(),
-                lib_blockchain::transaction::OnChainDomainRecord {
-                    domain: simple_request.domain.clone(),
-                    owner_did: owner_did.clone(),
-                    manifest_cid: String::new(),
-                    build_hash: String::new(),
-                    title,
-                    description,
-                    category: "general".to_string(),
-                    tags,
-                    registered_at,
-                    expires_at: now + 365 * 86_400,
-                    version,
-                    updated_at: now,
-                    fee_tx_hash: fee_tx_hash_hex.clone(),
+            let payload = lib_blockchain::transaction::DomainRegistrationPayload {
+                domain: simple_request.domain.clone(),
+                owner_did: owner_did.clone(),
+                manifest_cid: String::new(),
+                build_hash: String::new(),
+                title,
+                description,
+                category: "general".to_string(),
+                tags,
+                duration_days: 365,
+                fee_tx_hash: fee_tx_hash_hex.clone(),
+            };
+            let memo = payload.encode_memo()
+                .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?;
+            let domain_tx = lib_blockchain::Transaction {
+                version: 8,
+                chain_id: 0x03,
+                transaction_type: lib_blockchain::TransactionType::DomainRegistration,
+                inputs: Vec::new(),
+                outputs: Vec::new(),
+                fee: 0,
+                signature: lib_blockchain::integration::crypto_integration::Signature {
+                    signature: Vec::new(),
+                    public_key: lib_blockchain::integration::crypto_integration::PublicKey {
+                        dilithium_pk: [0u8; 2592],
+                        kyber_pk: [0u8; 1568],
+                        key_id: [0u8; 32],
+                    },
+                    algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
+                    timestamp: now,
                 },
-            );
+                memo,
+                payload: lib_blockchain::transaction::TransactionPayload::None,
+            };
+            let mut blockchain = self.blockchain.write().await;
+            if let Err(e) = blockchain.add_system_transaction(domain_tx) {
+                warn!("Failed to submit domain registration tx: {}", e);
+            }
         }
 
         // Get the ACTUAL content mappings from domain registry (with correct DHT hashes)
@@ -807,34 +819,47 @@ impl Web4Handler {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            let mut blockchain = self.blockchain.write().await;
-            let (registered_at, version) = blockchain
-                .domain_registry
-                .get(&request.domain)
-                .map(|r| (r.registered_at, r.version.saturating_add(1)))
-                .unwrap_or((now, 1));
-            // DECOUPLE-TODO: Submit DomainRegistration transaction instead of direct insert
-            blockchain.domain_registry.insert(
-                request.domain.clone(),
-                lib_blockchain::transaction::OnChainDomainRecord {
-                    domain: request.domain.clone(),
-                    owner_did: owner_did.clone(),
-                    manifest_cid: request.deploy_manifest_cid.clone(),
-                    build_hash: hex::encode(manifest.root_hash),
-                    title: request.domain.clone(),
-                    description: format!(
-                        "Domain registered via DeployManifest {}",
-                        request.deploy_manifest_cid
-                    ),
-                    category: "website".to_string(),
-                    tags: vec!["web4".to_string(), "manifest".to_string()],
-                    registered_at,
-                    expires_at: now + 365 * 86_400,
-                    version,
-                    updated_at: now,
-                    fee_tx_hash: fee_tx_hash_hex.clone(),
+            let payload = lib_blockchain::transaction::DomainRegistrationPayload {
+                domain: request.domain.clone(),
+                owner_did: owner_did.clone(),
+                manifest_cid: request.deploy_manifest_cid.clone(),
+                build_hash: hex::encode(manifest.root_hash),
+                title: request.domain.clone(),
+                description: format!(
+                    "Domain registered via DeployManifest {}",
+                    request.deploy_manifest_cid
+                ),
+                category: "website".to_string(),
+                tags: vec!["web4".to_string(), "manifest".to_string()],
+                duration_days: 365,
+                fee_tx_hash: fee_tx_hash_hex.clone(),
+            };
+            let memo = payload.encode_memo()
+                .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?;
+            let domain_tx = lib_blockchain::Transaction {
+                version: 8,
+                chain_id: 0x03,
+                transaction_type: lib_blockchain::TransactionType::DomainRegistration,
+                inputs: Vec::new(),
+                outputs: Vec::new(),
+                fee: 0,
+                signature: lib_blockchain::integration::crypto_integration::Signature {
+                    signature: Vec::new(),
+                    public_key: lib_blockchain::integration::crypto_integration::PublicKey {
+                        dilithium_pk: [0u8; 2592],
+                        kyber_pk: [0u8; 1568],
+                        key_id: [0u8; 32],
+                    },
+                    algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
+                    timestamp: now,
                 },
-            );
+                memo,
+                payload: lib_blockchain::transaction::TransactionPayload::None,
+            };
+            let mut blockchain = self.blockchain.write().await;
+            if let Err(e) = blockchain.add_system_transaction(domain_tx) {
+                warn!("Failed to submit domain registration tx: {}", e);
+            }
         }
 
         let response = serde_json::json!({
@@ -2186,7 +2211,7 @@ mod tests {
 
         // Set wallet public key deterministically for fee tx signer check.
         let owner_wallet_pk = owner_identity.public_key.dilithium_pk.clone();
-        // DECOUPLE-TODO: Submit WalletRegistration transaction instead of direct insert
+        // Test scaffold: direct insert for test setup (not production code)
         blockchain.wallet_registry.insert(
             hex::encode(owner_wallet_id),
             wallet_data(
@@ -2196,7 +2221,7 @@ mod tests {
                 owner_wallet_pk.to_vec(),
             ),
         );
-        // DECOUPLE-TODO: Submit WalletRegistration transaction instead of direct insert
+        // Test scaffold: direct insert for test setup (not production code)
         blockchain.wallet_registry.insert(
             hex::encode(treasury_wallet_id),
             wallet_data(treasury_wallet_id, "Treasury", None, vec![8u8; 32]),

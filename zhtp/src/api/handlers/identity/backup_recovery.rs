@@ -2559,7 +2559,7 @@ mod tests {
         let mut rewards_key_arr = validator_kp.public_key.dilithium_pk;
         rewards_key_arr.iter_mut().for_each(|b| *b = b.wrapping_add(1)); // distinct from others
         let rewards_key = rewards_key_arr.to_vec();
-        // DECOUPLE-TODO: Submit ValidatorRegistration transaction instead of direct insert
+        // Test scaffold: direct insert for test setup (not production code)
         bc.validator_registry.insert(
             validator_did.clone(),
             lib_blockchain::ValidatorInfo {
@@ -2592,7 +2592,7 @@ mod tests {
             let seed_commitment = lib_blockchain::types::hash::blake3_hash(
                 format!("seed_commitment:{}", wallet_id_hex).as_bytes(),
             );
-            // DECOUPLE-TODO: Submit WalletRegistration transaction instead of direct insert
+            // Test scaffold: direct insert for test setup (not production code)
             bc.wallet_registry.insert(
                 wallet_id_hex,
                 lib_blockchain::transaction::WalletTransactionData {

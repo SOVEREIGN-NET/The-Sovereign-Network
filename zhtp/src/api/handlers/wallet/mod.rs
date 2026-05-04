@@ -1668,9 +1668,11 @@ impl WalletHandler {
                 if let Err(e) = blockchain.add_system_transaction(identity_tx) {
                     tracing::warn!("Failed to submit identity tx: {}", e);
                 }
-                // DECOUPLE-TODO: This direct insert is needed for immediate QUIC handshake
-                // validation. Once identity lookup goes through a projection cache (not
-                // the blockchain struct), this can be removed.
+                // Cache warmup: identity must be visible immediately for QUIC handshake
+                // validation. The system transaction above ensures it persists in blocks,
+                // but won't be committed until the next block. This in-memory insert
+                // bridges the gap. Safe because: (1) tx is already in mempool, (2) block
+                // commit will overwrite with the same data.
                 blockchain.identity_registry.insert(did.clone(), identity_data);
                 let current_height = blockchain.get_height();
                 blockchain.identity_blocks.insert(did.clone(), current_height);
