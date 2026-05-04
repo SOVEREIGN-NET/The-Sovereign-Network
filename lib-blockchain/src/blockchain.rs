@@ -29,6 +29,7 @@ use tracing::{debug, error, info, warn};
 mod test_utils;
 #[cfg(test)]
 mod tests;
+mod credentials;
 mod dao;
 mod contracts;
 mod identity;
@@ -338,6 +339,15 @@ pub struct Blockchain {
     /// Observer node DID → block height at which the record was first committed.
     #[serde(default)]
     pub observer_blocks: HashMap<String, u64>,
+    // =========================================================================
+    // User Credentials (username + password for public-zone access)
+    // =========================================================================
+    /// User credentials registry: username → credential record.
+    #[serde(default)]
+    pub credential_registry: HashMap<String, crate::transaction::UserCredential>,
+    /// Reverse index: DID → username (one credential per DID).
+    #[serde(default)]
+    pub did_to_username: HashMap<String, String>,
     // =========================================================================
     // DAO Treasury Execution (dao-2)
     // =========================================================================
@@ -1206,6 +1216,7 @@ impl Blockchain {
         self.process_entity_registry_transactions(&block)?;
         self.process_employment_contract_transactions(&block)?;
         self.process_domain_transactions(&block);
+        self.process_credential_transactions(&block);
         self.process_nft_transactions(&block);
         self.process_contract_transactions(&block)?;
         self.process_token_transactions(&block)?;

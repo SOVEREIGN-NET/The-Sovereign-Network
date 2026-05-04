@@ -2807,4 +2807,7 @@ pub enum TransactionPayload {
     SuspendObserver(SuspendObserverData),
     RevokeObserver(RevokeObserverData),
     ReauthorizeObserver(ReauthorizeObserverData),
+    // User credentials (username + password for public zone access)
+    RegisterCredential(crate::transaction::credentials::RegisterCredentialData),
+    UpdateCredentialPassword(crate::transaction::credentials::UpdateCredentialPasswordData),
 }

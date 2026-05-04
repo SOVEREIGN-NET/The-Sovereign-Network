@@ -8,6 +8,7 @@ pub mod contract_deployment;
 pub mod contract_execution;
 pub mod core;
 pub mod creation;
+pub mod credentials;
 pub mod domain;
 pub mod fee;
 pub mod hashing;
@@ -17,6 +18,9 @@ pub mod threshold_approval;
 pub mod token_creation;
 pub mod validation;
 
+pub use credentials::{
+    RegisterCredentialData, UpdateCredentialPasswordData, UserCredential,
+};
 pub use domain::{
     DomainRegistrationPayload, DomainUpdatePayload, OnChainDomainRecord,
     DOMAIN_REGISTRATION_PREFIX, DOMAIN_UPDATE_PREFIX,

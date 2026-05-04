@@ -102,6 +102,8 @@ impl Blockchain {
             nft_collections: HashMap::new(),
             observer_registry: HashMap::new(),
             observer_blocks: HashMap::new(),
+            credential_registry: HashMap::new(),
+            did_to_username: HashMap::new(),
         }
     }
 
