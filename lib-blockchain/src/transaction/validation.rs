@@ -539,7 +539,9 @@ impl TransactionValidator {
             | TransactionType::UpdateObserverMetadata
             | TransactionType::SuspendObserver
             | TransactionType::RevokeObserver
-            | TransactionType::ReauthorizeObserver => {
+            | TransactionType::ReauthorizeObserver
+            | TransactionType::RegisterCredential
+            | TransactionType::UpdateCredentialPassword => {
                 validate_observer_tx_structure(transaction)?;
             }
 
@@ -836,7 +838,9 @@ impl TransactionValidator {
             | TransactionType::UpdateObserverMetadata
             | TransactionType::SuspendObserver
             | TransactionType::RevokeObserver
-            | TransactionType::ReauthorizeObserver => {
+            | TransactionType::ReauthorizeObserver
+            | TransactionType::RegisterCredential
+            | TransactionType::UpdateCredentialPassword => {
                 validate_observer_tx_structure(transaction)?;
             }
 
@@ -2180,6 +2184,16 @@ impl<'a> StatefulTransactionValidator<'a> {
                     return Err(ValidationError::MissingRequiredData);
                 }
             }
+            TransactionType::RegisterCredential => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::RegisterCredential(_)) {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
+            TransactionType::UpdateCredentialPassword => {
+                if !matches!(transaction.payload, crate::transaction::TransactionPayload::UpdateCredentialPassword(_)) {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+            }
         }
 
         //  CRITICAL FIX: Verify sender identity exists on blockchain
@@ -3432,7 +3446,9 @@ pub mod utils {
             | TransactionType::UpdateObserverMetadata
             | TransactionType::SuspendObserver
             | TransactionType::RevokeObserver
-            | TransactionType::ReauthorizeObserver => {
+            | TransactionType::ReauthorizeObserver
+            | TransactionType::RegisterCredential
+            | TransactionType::UpdateCredentialPassword => {
                 validate_observer_tx_structure(transaction).is_ok()
             }
 

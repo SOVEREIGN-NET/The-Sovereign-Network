@@ -7,6 +7,7 @@ pub mod blockchain;
 pub mod bonding_curve;
 pub mod cbe;
 pub mod constants;
+pub mod credentials;
 pub mod crypto;
 pub mod dao;
 pub mod dht;

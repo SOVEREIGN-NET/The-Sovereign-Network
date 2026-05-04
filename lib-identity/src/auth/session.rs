@@ -7,6 +7,18 @@ use anyhow::Result;
 use lib_crypto::hash_blake3;
 use rand::RngCore;
 
+/// How the session was authenticated — determines access zone.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum AuthMethod {
+    /// Authenticated via cryptographic key (mobile delegation, QUIC handshake).
+    /// Full access: wallets, balances, transactions, signing.
+    #[default]
+    Key,
+    /// Authenticated via username + password.
+    /// Public zone only: proposals, domains, chain stats, own display name.
+    Password,
+}
+
 /// Session token for authenticated users
 #[derive(Debug, Clone)]
 pub struct SessionToken {
@@ -17,6 +29,8 @@ pub struct SessionToken {
     pub last_used: u64,
     pub bound_ip: Option<String>,
     pub bound_user_agent: Option<String>,
+    /// Authentication method — determines what the session can access.
+    pub auth_method: AuthMethod,
 }
 
 impl SessionToken {
@@ -75,6 +89,7 @@ impl SessionToken {
             last_used: now,
             bound_ip: client_ip,
             bound_user_agent: user_agent,
+            auth_method: AuthMethod::default(),
         })
     }
 

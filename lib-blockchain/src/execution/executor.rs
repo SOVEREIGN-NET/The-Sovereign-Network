@@ -1043,7 +1043,10 @@ impl BlockExecutor {
             | TransactionType::NftCreateCollection
             | TransactionType::NftMint
             | TransactionType::NftTransfer
-            | TransactionType::NftBurn => {
+            | TransactionType::NftBurn
+            // Credential registration/update - state applied by process_credential_transactions
+            | TransactionType::RegisterCredential
+            | TransactionType::UpdateCredentialPassword => {
                 // Fall through to the general validation flow below without
                 // treating oracle attestations as automatically valid.
             }

@@ -88,6 +88,31 @@ impl SessionManager {
         Ok(token_string)
     }
 
+    /// Create a password-authenticated session (public zone only).
+    pub async fn create_password_session(
+        &self,
+        identity_id: IdentityId,
+        client_ip: &str,
+        user_agent: &str,
+    ) -> Result<String> {
+        let token = self.create_session(identity_id, client_ip, user_agent).await?;
+        // Mark as password session
+        let mut sessions = self.sessions.write().await;
+        if let Some(session) = sessions.get_mut(&token) {
+            session.auth_method = lib_identity::auth::session::AuthMethod::Password;
+        }
+        Ok(token)
+    }
+
+    /// Check if a session was created via password (public zone only).
+    pub async fn is_password_session(&self, token: &str) -> bool {
+        let sessions = self.sessions.read().await;
+        sessions
+            .get(token)
+            .map(|s| s.auth_method == lib_identity::auth::session::AuthMethod::Password)
+            .unwrap_or(false)
+    }
+
     /// Validate and get session token with IP/UA binding check (P0-6)
     pub async fn validate_session(
         &self,

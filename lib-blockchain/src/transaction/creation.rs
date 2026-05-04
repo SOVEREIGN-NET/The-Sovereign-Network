@@ -804,8 +804,10 @@ pub mod utils {
             | TransactionType::UpdateObserverMetadata
             | TransactionType::SuspendObserver
             | TransactionType::RevokeObserver
-            | TransactionType::ReauthorizeObserver => {
-                // Threshold-approval, staking, domain, and legacy CBE transactions - no inputs/outputs
+            | TransactionType::ReauthorizeObserver
+            | TransactionType::RegisterCredential
+            | TransactionType::UpdateCredentialPassword => {
+                // Threshold-approval, staking, domain, credential, and legacy CBE transactions - no inputs/outputs
                 if !inputs.is_empty() {
                     return Err(TransactionCreateError::InvalidInputs);
                 }

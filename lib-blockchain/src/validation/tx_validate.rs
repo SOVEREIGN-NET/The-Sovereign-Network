@@ -56,6 +56,8 @@ const PHASE2_ALLOWED_TYPES: &[TransactionType] = &[
     TransactionType::ContractExecution,
     TransactionType::TokenCreation,
     TransactionType::OracleAttestation,
+    TransactionType::RegisterCredential,
+    TransactionType::UpdateCredentialPassword,
 ];
 
 /// Check if transaction type is allowed in Phase 2

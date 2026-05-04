@@ -218,6 +218,12 @@ pub enum TransactionType {
     /// Valid transition: Suspended → Active.
     /// Only the original sponsor user DID may reauthorize.
     ReauthorizeObserver = 59,
+
+    /// Register username + password credentials for public-zone access.
+    /// Username is immutable after registration. Password hash stored on-chain.
+    RegisterCredential = 60,
+    /// Update password for an existing credential (requires DID ownership proof).
+    UpdateCredentialPassword = 61,
 }
 
 impl TransactionType {
@@ -406,6 +412,12 @@ impl TransactionType {
             TransactionType::ReauthorizeObserver => {
                 "Reauthorize a Suspended observer (Suspended → Active)"
             }
+            TransactionType::RegisterCredential => {
+                "Register username + password credentials"
+            }
+            TransactionType::UpdateCredentialPassword => {
+                "Update password for existing credentials"
+            }
         }
     }
 
@@ -472,6 +484,8 @@ impl TransactionType {
             TransactionType::SuspendObserver => "suspend_observer",
             TransactionType::RevokeObserver => "revoke_observer",
             TransactionType::ReauthorizeObserver => "reauthorize_observer",
+            TransactionType::RegisterCredential => "register_credential",
+            TransactionType::UpdateCredentialPassword => "update_credential_password",
         }
     }
 
@@ -538,6 +552,8 @@ impl TransactionType {
             "suspend_observer" => Some(TransactionType::SuspendObserver),
             "revoke_observer" => Some(TransactionType::RevokeObserver),
             "reauthorize_observer" => Some(TransactionType::ReauthorizeObserver),
+            "register_credential" => Some(TransactionType::RegisterCredential),
+            "update_credential_password" => Some(TransactionType::UpdateCredentialPassword),
             _ => None,
         }
     }
