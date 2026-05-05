@@ -2095,3 +2095,525 @@ pub extern "C" fn zhtp_client_build_remove_liquidity(
         Err(_) => std::ptr::null_mut(),
     }
 }
+
+// =============================================================================
+// Post-quantum messaging C FFI
+// =============================================================================
+//
+// Mirrors the existing IdentityHandle + ByteBuffer pattern. Sessions are
+// passed across the boundary as opaque pointers; envelopes flow as
+// bincode-serialized byte buffers (the same wire shape produced by
+// `messaging::encode_envelope` minus the hex layer).
+//
+// Conventions:
+//   - Functions returning `*mut MessagingSessionHandle` hand ownership to
+//     the caller; release with `zhtp_msg_session_free`.
+//   - Functions returning `ByteBuffer` allocate; release with
+//     `zhtp_client_buffer_free`.
+//   - Functions returning `*mut c_char` allocate a NUL-terminated string;
+//     release with `zhtp_client_string_free`.
+//   - Out-pointer parameters (e.g. `kyber_ct_out`) must be non-null and
+//     are written to only on success. On error the function returns null
+//     / a sentinel and leaves the out-pointer untouched.
+//   - All `*const c_char` inputs must be valid UTF-8 NUL-terminated strings.
+
+use crate::messaging as msg_mod;
+
+/// Opaque handle to a `MessagingSession`.
+pub struct MessagingSessionHandle {
+    inner: msg_mod::MessagingSession,
+}
+
+/// Map a `ContentType` enum to a stable u8 tag for FFI callers. Order
+/// matches the Rust enum declaration; do not reorder.
+fn content_type_tag(ct: &msg_mod::ContentType) -> u8 {
+    match ct {
+        msg_mod::ContentType::Text => 0,
+        msg_mod::ContentType::Image => 1,
+        msg_mod::ContentType::File => 2,
+        msg_mod::ContentType::Voice => 3,
+        msg_mod::ContentType::KeyExchange => 4,
+        msg_mod::ContentType::KeyRatchet => 5,
+        msg_mod::ContentType::ReadReceipt => 6,
+        msg_mod::ContentType::GroupInvite => 7,
+    }
+}
+
+fn content_type_from_tag(tag: u8) -> Option<msg_mod::ContentType> {
+    Some(match tag {
+        0 => msg_mod::ContentType::Text,
+        1 => msg_mod::ContentType::Image,
+        2 => msg_mod::ContentType::File,
+        3 => msg_mod::ContentType::Voice,
+        4 => msg_mod::ContentType::KeyExchange,
+        5 => msg_mod::ContentType::KeyRatchet,
+        6 => msg_mod::ContentType::ReadReceipt,
+        7 => msg_mod::ContentType::GroupInvite,
+        _ => return None,
+    })
+}
+
+/// Borrow a slice from a (data, len) pair safely. Returns an empty slice
+/// when data is null or len is zero — the messaging functions all reject
+/// short keys, so the empty-slice fallback flows naturally into the same
+/// error path as a malformed key.
+unsafe fn borrow_slice<'a>(data: *const u8, len: usize) -> &'a [u8] {
+    if data.is_null() || len == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(data, len)
+    }
+}
+
+/// Box a `Vec<u8>` into the canonical `ByteBuffer` shape.
+fn vec_to_buffer(mut v: Vec<u8>) -> ByteBuffer {
+    let buf = ByteBuffer {
+        data: v.as_mut_ptr(),
+        len: v.len(),
+    };
+    std::mem::forget(v);
+    buf
+}
+
+fn empty_buffer() -> ByteBuffer {
+    ByteBuffer {
+        data: std::ptr::null_mut(),
+        len: 0,
+    }
+}
+
+unsafe fn cstr_to_str<'a>(p: *const std::ffi::c_char) -> Option<&'a str> {
+    if p.is_null() {
+        return None;
+    }
+    std::ffi::CStr::from_ptr(p).to_str().ok()
+}
+
+fn string_to_cstr(s: String) -> *mut std::ffi::c_char {
+    match std::ffi::CString::new(s) {
+        Ok(c) => c.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+// ── Session lifecycle ───────────────────────────────────────────────
+
+/// Initiate a new session. Encapsulates against `remote_kyber_pk` to
+/// produce the shared secret that seeds the chain key. The Kyber
+/// ciphertext is written into `kyber_ct_out` and must be sent to the
+/// recipient as a `KeyExchange` envelope. Returns the session handle on
+/// success, null on error.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_session_initiate(
+    local_did: *const std::ffi::c_char,
+    remote_did: *const std::ffi::c_char,
+    remote_kyber_pk: *const u8,
+    remote_kyber_pk_len: usize,
+    kyber_ct_out: *mut ByteBuffer,
+) -> *mut MessagingSessionHandle {
+    if kyber_ct_out.is_null() {
+        return std::ptr::null_mut();
+    }
+    let local = match unsafe { cstr_to_str(local_did) } {
+        Some(s) => s,
+        None => return std::ptr::null_mut(),
+    };
+    let remote = match unsafe { cstr_to_str(remote_did) } {
+        Some(s) => s,
+        None => return std::ptr::null_mut(),
+    };
+    let pk = unsafe { borrow_slice(remote_kyber_pk, remote_kyber_pk_len) };
+
+    match msg_mod::initiate_session(local, remote, pk) {
+        Ok((ct, session)) => {
+            unsafe { *kyber_ct_out = vec_to_buffer(ct) };
+            Box::into_raw(Box::new(MessagingSessionHandle { inner: session }))
+        }
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Accept an incoming session: decapsulate the peer's Kyber ciphertext
+/// with our secret key. Returns the session handle, or null on error.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_session_accept(
+    local_did: *const std::ffi::c_char,
+    remote_did: *const std::ffi::c_char,
+    kyber_ciphertext: *const u8,
+    kyber_ciphertext_len: usize,
+    local_kyber_sk: *const u8,
+    local_kyber_sk_len: usize,
+) -> *mut MessagingSessionHandle {
+    let local = match unsafe { cstr_to_str(local_did) } {
+        Some(s) => s,
+        None => return std::ptr::null_mut(),
+    };
+    let remote = match unsafe { cstr_to_str(remote_did) } {
+        Some(s) => s,
+        None => return std::ptr::null_mut(),
+    };
+    let ct = unsafe { borrow_slice(kyber_ciphertext, kyber_ciphertext_len) };
+    let sk = unsafe { borrow_slice(local_kyber_sk, local_kyber_sk_len) };
+
+    match msg_mod::accept_session(local, remote, ct, sk) {
+        Ok(session) => Box::into_raw(Box::new(MessagingSessionHandle { inner: session })),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Re-key an existing session for post-compromise security. Writes the
+/// new Kyber ciphertext to `kyber_ct_out`; returns 0 on success, -1 on
+/// error.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_session_rekey(
+    handle: *mut MessagingSessionHandle,
+    remote_kyber_pk: *const u8,
+    remote_kyber_pk_len: usize,
+    kyber_ct_out: *mut ByteBuffer,
+) -> i32 {
+    if handle.is_null() || kyber_ct_out.is_null() {
+        return -1;
+    }
+    let session = unsafe { &mut (*handle).inner };
+    let pk = unsafe { borrow_slice(remote_kyber_pk, remote_kyber_pk_len) };
+    match msg_mod::rekey_session(session, pk) {
+        Ok(ct) => {
+            unsafe { *kyber_ct_out = vec_to_buffer(ct) };
+            0
+        }
+        Err(_) => -1,
+    }
+}
+
+/// Accept a peer's re-key. Returns 0 on success, -1 on error.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_session_accept_rekey(
+    handle: *mut MessagingSessionHandle,
+    kyber_ciphertext: *const u8,
+    kyber_ciphertext_len: usize,
+    local_kyber_sk: *const u8,
+    local_kyber_sk_len: usize,
+) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let session = unsafe { &mut (*handle).inner };
+    let ct = unsafe { borrow_slice(kyber_ciphertext, kyber_ciphertext_len) };
+    let sk = unsafe { borrow_slice(local_kyber_sk, local_kyber_sk_len) };
+    match msg_mod::accept_rekey(session, ct, sk) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+/// Free a session handle. Safe to call with null.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_session_free(handle: *mut MessagingSessionHandle) {
+    if !handle.is_null() {
+        unsafe { drop(Box::from_raw(handle)) };
+    }
+}
+
+// ── Session field accessors ─────────────────────────────────────────
+
+/// Returns the 32-byte chain key. The caller may persist this as the
+/// only sensitive piece of session state; all other fields can be
+/// derived or are public.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_session_chain_key(
+    handle: *const MessagingSessionHandle,
+) -> ByteBuffer {
+    if handle.is_null() {
+        return empty_buffer();
+    }
+    let session = unsafe { &(*handle).inner };
+    vec_to_buffer(session.chain_key.to_vec())
+}
+
+#[no_mangle]
+pub extern "C" fn zhtp_msg_session_counter(
+    handle: *const MessagingSessionHandle,
+) -> u64 {
+    if handle.is_null() {
+        return 0;
+    }
+    unsafe { (*handle).inner.counter }
+}
+
+#[no_mangle]
+pub extern "C" fn zhtp_msg_session_epoch(
+    handle: *const MessagingSessionHandle,
+) -> u32 {
+    if handle.is_null() {
+        return 0;
+    }
+    unsafe { (*handle).inner.epoch }
+}
+
+#[no_mangle]
+pub extern "C" fn zhtp_msg_session_local_did(
+    handle: *const MessagingSessionHandle,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() {
+        return std::ptr::null_mut();
+    }
+    let session = unsafe { &(*handle).inner };
+    string_to_cstr(session.local_did.clone())
+}
+
+#[no_mangle]
+pub extern "C" fn zhtp_msg_session_remote_did(
+    handle: *const MessagingSessionHandle,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() {
+        return std::ptr::null_mut();
+    }
+    let session = unsafe { &(*handle).inner };
+    string_to_cstr(session.remote_did.clone())
+}
+
+/// Bincode-serialise the entire session for at-rest storage. The output
+/// is opaque — pass back to `zhtp_msg_session_deserialize` as-is. Empty
+/// buffer on error.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_session_serialize(
+    handle: *const MessagingSessionHandle,
+) -> ByteBuffer {
+    if handle.is_null() {
+        return empty_buffer();
+    }
+    let session = unsafe { &(*handle).inner };
+    match bincode::serialize(session) {
+        Ok(bytes) => vec_to_buffer(bytes),
+        Err(_) => empty_buffer(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn zhtp_msg_session_deserialize(
+    bytes: *const u8,
+    len: usize,
+) -> *mut MessagingSessionHandle {
+    let buf = unsafe { borrow_slice(bytes, len) };
+    match bincode::deserialize::<msg_mod::MessagingSession>(buf) {
+        Ok(session) => Box::into_raw(Box::new(MessagingSessionHandle { inner: session })),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+// ── Sealing ─────────────────────────────────────────────────────────
+
+/// Seal a UTF-8 text message into an unsigned envelope. Returns
+/// bincode-encoded envelope bytes; empty buffer on error. Advances the
+/// session ratchet.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_seal_text(
+    handle: *mut MessagingSessionHandle,
+    text: *const std::ffi::c_char,
+) -> ByteBuffer {
+    if handle.is_null() {
+        return empty_buffer();
+    }
+    let s = match unsafe { cstr_to_str(text) } {
+        Some(s) => s,
+        None => return empty_buffer(),
+    };
+    let session = unsafe { &mut (*handle).inner };
+    match msg_mod::seal_text_message(session, s) {
+        Ok(env) => match bincode::serialize(&env) {
+            Ok(b) => vec_to_buffer(b),
+            Err(_) => empty_buffer(),
+        },
+        Err(_) => empty_buffer(),
+    }
+}
+
+/// Seal a binary payload (Image / File / Voice / etc.) — the
+/// `content_type` tag selects the variant. KeyExchange / KeyRatchet
+/// must use their dedicated helpers; passing them here returns empty.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_seal_binary(
+    handle: *mut MessagingSessionHandle,
+    content_type: u8,
+    data: *const u8,
+    data_len: usize,
+) -> ByteBuffer {
+    if handle.is_null() {
+        return empty_buffer();
+    }
+    let ct = match content_type_from_tag(content_type) {
+        Some(c) => c,
+        None => return empty_buffer(),
+    };
+    let bytes = unsafe { borrow_slice(data, data_len) };
+    let session = unsafe { &mut (*handle).inner };
+    match msg_mod::seal_binary_message(session, ct, bytes.to_vec()) {
+        Ok(env) => match bincode::serialize(&env) {
+            Ok(b) => vec_to_buffer(b),
+            Err(_) => empty_buffer(),
+        },
+        Err(_) => empty_buffer(),
+    }
+}
+
+/// Seal a KeyExchange envelope. Used right after `zhtp_msg_session_initiate`
+/// to deliver the Kyber ciphertext to the recipient.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_seal_key_exchange(
+    sender_did: *const std::ffi::c_char,
+    recipient_did: *const std::ffi::c_char,
+    kyber_ciphertext: *const u8,
+    kyber_ciphertext_len: usize,
+) -> ByteBuffer {
+    let sender = match unsafe { cstr_to_str(sender_did) } {
+        Some(s) => s,
+        None => return empty_buffer(),
+    };
+    let recipient = match unsafe { cstr_to_str(recipient_did) } {
+        Some(s) => s,
+        None => return empty_buffer(),
+    };
+    let ct = unsafe { borrow_slice(kyber_ciphertext, kyber_ciphertext_len) };
+    match msg_mod::seal_key_exchange(sender, recipient, ct.to_vec()) {
+        Ok(env) => match bincode::serialize(&env) {
+            Ok(b) => vec_to_buffer(b),
+            Err(_) => empty_buffer(),
+        },
+        Err(_) => empty_buffer(),
+    }
+}
+
+// ── Opening ─────────────────────────────────────────────────────────
+
+/// Decrypt a sealed envelope. `chain_key` must point to the 32-byte
+/// chain key for the relevant session; `envelope_bytes` is bincode bytes
+/// (the same shape `zhtp_msg_seal_*` produces). Returns plaintext bytes.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_envelope_open(
+    envelope_bytes: *const u8,
+    envelope_len: usize,
+    chain_key: *const u8,
+    chain_key_len: usize,
+) -> ByteBuffer {
+    if chain_key_len != 32 {
+        return empty_buffer();
+    }
+    let env_bytes = unsafe { borrow_slice(envelope_bytes, envelope_len) };
+    let envelope: msg_mod::MessageEnvelope = match bincode::deserialize(env_bytes) {
+        Ok(e) => e,
+        Err(_) => return empty_buffer(),
+    };
+    let key_slice = unsafe { borrow_slice(chain_key, chain_key_len) };
+    let mut key_arr = [0u8; 32];
+    key_arr.copy_from_slice(key_slice);
+    match msg_mod::open_envelope(&envelope, &key_arr) {
+        Ok(body) => vec_to_buffer(body),
+        Err(_) => empty_buffer(),
+    }
+}
+
+// ── Signing ─────────────────────────────────────────────────────────
+
+/// Sign an envelope with a Dilithium5 secret key. Returns bincode bytes
+/// of the signed envelope.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_envelope_sign(
+    envelope_bytes: *const u8,
+    envelope_len: usize,
+    dilithium_sk: *const u8,
+    dilithium_sk_len: usize,
+) -> ByteBuffer {
+    let env_bytes = unsafe { borrow_slice(envelope_bytes, envelope_len) };
+    let envelope: msg_mod::MessageEnvelope = match bincode::deserialize(env_bytes) {
+        Ok(e) => e,
+        Err(_) => return empty_buffer(),
+    };
+    let sk = unsafe { borrow_slice(dilithium_sk, dilithium_sk_len) };
+    match msg_mod::sign_envelope(envelope, sk) {
+        Ok(signed) => match bincode::serialize(&signed) {
+            Ok(b) => vec_to_buffer(b),
+            Err(_) => empty_buffer(),
+        },
+        Err(_) => empty_buffer(),
+    }
+}
+
+/// Verify an envelope's Dilithium5 signature. Returns 1 if valid, 0 if
+/// not, -1 on error (bad bytes, etc.).
+#[no_mangle]
+pub extern "C" fn zhtp_msg_envelope_verify(
+    envelope_bytes: *const u8,
+    envelope_len: usize,
+    dilithium_pk: *const u8,
+    dilithium_pk_len: usize,
+) -> i32 {
+    let env_bytes = unsafe { borrow_slice(envelope_bytes, envelope_len) };
+    let envelope: msg_mod::MessageEnvelope = match bincode::deserialize(env_bytes) {
+        Ok(e) => e,
+        Err(_) => return -1,
+    };
+    let pk = unsafe { borrow_slice(dilithium_pk, dilithium_pk_len) };
+    match msg_mod::verify_envelope(&envelope, pk) {
+        Ok(true) => 1,
+        Ok(false) => 0,
+        Err(_) => -1,
+    }
+}
+
+// ── Wire format ─────────────────────────────────────────────────────
+
+/// Hex-encode an envelope for the `/msg/send` body.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_envelope_to_hex(
+    envelope_bytes: *const u8,
+    envelope_len: usize,
+) -> *mut std::ffi::c_char {
+    let env_bytes = unsafe { borrow_slice(envelope_bytes, envelope_len) };
+    string_to_cstr(hex::encode(env_bytes))
+}
+
+/// Hex-decode a wire envelope back to bincode bytes.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_envelope_from_hex(
+    hex_str: *const std::ffi::c_char,
+) -> ByteBuffer {
+    let s = match unsafe { cstr_to_str(hex_str) } {
+        Some(s) => s,
+        None => return empty_buffer(),
+    };
+    match hex::decode(s) {
+        Ok(b) => vec_to_buffer(b),
+        Err(_) => empty_buffer(),
+    }
+}
+
+// ── Inspection ──────────────────────────────────────────────────────
+
+/// JSON view of an envelope for the host to render / debug-log. Numeric
+/// content_type is replaced with a u8 tag that matches `content_type_tag`
+/// — same encoding used in `zhtp_msg_seal_binary` — so callers can map
+/// it back to their own content-type enum without parsing the Rust enum
+/// name strings.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_envelope_to_json(
+    envelope_bytes: *const u8,
+    envelope_len: usize,
+) -> *mut std::ffi::c_char {
+    let env_bytes = unsafe { borrow_slice(envelope_bytes, envelope_len) };
+    let envelope: msg_mod::MessageEnvelope = match bincode::deserialize(env_bytes) {
+        Ok(e) => e,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let view = serde_json::json!({
+        "version": envelope.version,
+        "sender_did": envelope.sender_did,
+        "recipient_did": envelope.recipient_did,
+        "timestamp": envelope.timestamp,
+        "epoch": envelope.epoch,
+        "sequence": envelope.sequence,
+        "content_type": content_type_tag(&envelope.content_type),
+        "ciphertext_len": envelope.ciphertext.len(),
+        "signature_len": envelope.signature.len(),
+    });
+    string_to_cstr(view.to_string())
+}
