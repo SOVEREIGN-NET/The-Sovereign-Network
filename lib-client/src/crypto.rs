@@ -305,6 +305,59 @@ pub fn random_nonce() -> [u8; 32] {
     nonce
 }
 
+/// ChaCha20-Poly1305 authenticated encryption
+pub struct ChaCha20Poly1305Cipher;
+
+impl ChaCha20Poly1305Cipher {
+    /// Encrypt with associated data and explicit nonce.
+    pub fn encrypt(
+        plaintext: &[u8],
+        key: &[u8; 32],
+        nonce: &[u8; 12],
+        associated_data: &[u8],
+    ) -> Result<Vec<u8>> {
+        use chacha20poly1305::{
+            aead::{Aead, KeyInit, Payload},
+            ChaCha20Poly1305 as Cipher, Key, Nonce,
+        };
+        let cipher = Cipher::new(Key::from_slice(key));
+        let nonce = Nonce::from_slice(nonce);
+        cipher
+            .encrypt(
+                nonce,
+                Payload {
+                    msg: plaintext,
+                    aad: associated_data,
+                },
+            )
+            .map_err(|_| ClientError::CryptoError("ChaCha20Poly1305 encryption failed".into()))
+    }
+
+    /// Decrypt with associated data and explicit nonce.
+    pub fn decrypt(
+        ciphertext: &[u8],
+        key: &[u8; 32],
+        nonce: &[u8; 12],
+        associated_data: &[u8],
+    ) -> Result<Vec<u8>> {
+        use chacha20poly1305::{
+            aead::{Aead, KeyInit, Payload},
+            ChaCha20Poly1305 as Cipher, Key, Nonce,
+        };
+        let cipher = Cipher::new(Key::from_slice(key));
+        let nonce = Nonce::from_slice(nonce);
+        cipher
+            .decrypt(
+                nonce,
+                Payload {
+                    msg: ciphertext,
+                    aad: associated_data,
+                },
+            )
+            .map_err(|_| ClientError::CryptoError("ChaCha20Poly1305 decryption failed".into()))
+    }
+}
+
 /// Derive bytes from a seed using Blake3 KDF
 pub fn derive_bytes(seed: &[u8], context: &[u8]) -> Vec<u8> {
     let context_str = std::str::from_utf8(context).unwrap_or("derive");
