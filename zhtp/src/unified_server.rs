@@ -993,6 +993,65 @@ impl ZhtpUnifiedServer {
         // Register DHT handler on ZHTP (already registered on mesh_router for pure UDP)
         zhtp_router.register_handler("/api/v1/dht".to_string(), dht_handler);
 
+        // Post-quantum encrypted messaging
+        {
+            let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+                .await
+                .unwrap_or_else(|_| {
+                    // Fallback: create a placeholder — will be replaced when blockchain is ready
+                    Arc::new(tokio::sync::RwLock::new(lib_blockchain::Blockchain::default()))
+                });
+            let deposits = Arc::new(crate::messaging::deposit::DepositStore::new());
+            let presence = Arc::new(crate::messaging::presence::PresenceTracker::new());
+
+            // Spawn deposit cleanup task (every 5 minutes)
+            let deposits_cleanup = deposits.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300));
+                loop {
+                    interval.tick().await;
+                    let expired = deposits_cleanup.cleanup_expired().await;
+                    if expired > 0 {
+                        tracing::info!("Cleaned up {} expired message deposits", expired);
+                    }
+                }
+            });
+
+            // Wire mesh relay receiver — incoming relayed messages get deposited
+            let deposits_relay = deposits.clone();
+            let (relay_tx, mut relay_rx) = tokio::sync::mpsc::channel::<(String, Vec<u8>)>(256);
+            tokio::spawn(async move {
+                while let Some((recipient_did, envelope)) = relay_rx.recv().await {
+                    let sender = "mesh_relay".to_string();
+                    if let Err(e) = deposits_relay
+                        .deposit(&sender, &recipient_did, vec![envelope])
+                        .await
+                    {
+                        tracing::warn!("Failed to deposit relayed message: {}", e);
+                    }
+                }
+            });
+
+            // Wire relay sender to mesh message handler
+            if let Ok(mesh_router) = crate::runtime::mesh_router_provider::get_global_mesh_router().await {
+                if let Some(qp) = mesh_router.quic_protocol.read().await.as_ref() {
+                    if let Some(handler) = qp.message_handler.as_ref() {
+                        handler.write().await.set_message_relay_sender(relay_tx);
+                    }
+                }
+            }
+
+            let msg_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+                crate::messaging::handler::MessagingHandler::new(
+                    blockchain_arc,
+                    deposits,
+                    presence,
+                ),
+            );
+            zhtp_router.register_handler("/api/v1/msg".to_string(), msg_handler);
+            tracing::info!("Post-quantum messaging handler registered");
+        }
+
         // PoUW validator (created early so it can be shared with Web4 handlers)
         // Derive node key/id from identity manager; never use shared placeholder material.
         let (pouw_node_key, pouw_node_id) = {

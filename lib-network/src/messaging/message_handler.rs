@@ -79,6 +79,8 @@ pub struct MeshMessageHandler {
     /// When set, received OracleAttestation gossip payloads are forwarded here for
     /// deserialization and processing by the oracle runtime component.
     pub oracle_attestation_sender: Option<OracleAttestationSender>,
+    /// Message relay sender — encrypted messaging envelopes forwarded to the messaging layer.
+    pub message_relay_sender: Option<tokio::sync::mpsc::Sender<(String, Vec<u8>)>>,
 }
 
 /// DHT rate limit configuration
@@ -116,7 +118,14 @@ impl MeshMessageHandler {
             validator_message_buffer: Arc::new(std::sync::Mutex::new(Vec::new())),
             identity_store_forward: None,
             oracle_attestation_sender: None,
+            message_relay_sender: None,
         }
+    }
+
+    /// Wire the message relay sender for encrypted messaging.
+    pub fn set_message_relay_sender(&mut self, sender: tokio::sync::mpsc::Sender<(String, Vec<u8>)>) {
+        self.message_relay_sender = Some(sender);
+        info!("🔗 Message relay sender wired to mesh message handler");
     }
 
     /// Wire the oracle attestation sender.
@@ -893,6 +902,21 @@ impl MeshMessageHandler {
                     debug!(
                         "Received OracleAttestation ({} bytes) but oracle sender not wired — ignoring",
                         payload.len()
+                    );
+                }
+            }
+            ZhtpMeshMessage::MessageRelay { recipient_did, envelope } => {
+                if let Some(ref tx) = self.message_relay_sender {
+                    if let Err(e) = tx.try_send((recipient_did.clone(), envelope)) {
+                        warn!(
+                            "MessageRelay dropped for {} (inbox full or closed)",
+                            &recipient_did[..16.min(recipient_did.len())]
+                        );
+                    }
+                } else {
+                    debug!(
+                        "Received MessageRelay for {} but relay sender not wired",
+                        &recipient_did[..16.min(recipient_did.len())]
                     );
                 }
             }

@@ -71,6 +71,8 @@ pub enum MessageType {
     OracleAttestation = 32,
     /// Relay-routed message envelope for true multi-hop forwarding.
     RoutedMessage = 33,
+    /// Encrypted message relay for PQ messaging.
+    MessageRelay = 34,
 }
 
 /// Message envelope for multi-hop routing
@@ -706,6 +708,13 @@ pub enum ZhtpMeshMessage {
         route_history: Vec<PublicKey>,
         payload: Vec<u8>,
     },
+
+    /// Encrypted message relay for PQ messaging.
+    /// Sent to all mesh peers — the peer hosting the recipient DID delivers it.
+    MessageRelay {
+        recipient_did: String,
+        envelope: Vec<u8>,
+    },
 }
 
 /// Acknowledgement for store-and-forward message delivery
@@ -1019,6 +1028,13 @@ impl ZhtpMeshMessage {
             } => (
                 MessageType::RoutedMessage,
                 bincode::serialize(&(destination, ttl, hop_count, route_history, payload))?,
+            ),
+            Self::MessageRelay {
+                recipient_did,
+                envelope,
+            } => (
+                MessageType::MessageRelay,
+                bincode::serialize(&(recipient_did, envelope))?,
             ),
         };
         Ok((msg_type, payload))
@@ -1340,6 +1356,14 @@ impl ZhtpMeshMessage {
                     hop_count,
                     route_history,
                     payload,
+                }
+            }
+            MessageType::MessageRelay => {
+                let (recipient_did, envelope): (String, Vec<u8>) =
+                    bincode::deserialize(payload)?;
+                Self::MessageRelay {
+                    recipient_did,
+                    envelope,
                 }
             }
         };
