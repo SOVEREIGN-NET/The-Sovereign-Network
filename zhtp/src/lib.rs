@@ -31,6 +31,7 @@ pub fn node_data_dir() -> PathBuf {
 
 pub mod config;
 pub mod integration;
+pub mod messaging;
 pub mod monitoring;
 pub mod pouw;
 pub mod rewards;
