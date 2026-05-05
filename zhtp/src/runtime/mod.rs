@@ -1151,27 +1151,34 @@ impl RuntimeOrchestrator {
             };
 
         if blockchain_has_data {
-            // Blockchain already loaded with data - don't create genesis
-            info!("✓ Using existing blockchain data - skipping genesis creation");
+            // Sled has blocks — replay them to rebuild all in-memory state.
+            // This is the single source of truth: block history defines ALL derived state.
+            info!("✓ Sled has existing chain data — replaying blocks to rebuild state");
 
-            // Restore genesis state if registries are under-populated.
-            // Sled persists blocks but NOT the in-memory identity/wallet/validator registries.
-            // These are populated from genesis config or from block transaction processing.
-            // After a restart with existing sled data, the registries may be empty or minimal.
             {
                 let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
                     .await
                     .map_err(|e| anyhow::anyhow!("Failed to get global blockchain: {}", e))?;
-                let mut blockchain = blockchain_arc.write().await;
-                if let Ok(cfg) = lib_blockchain::genesis::GenesisConfig::from_embedded() {
-                    let expected_identities = cfg.allocations.identities.len();
-                    if blockchain.identity_registry.len() < expected_identities {
-                        let _ = cfg.apply_genesis_state(&mut blockchain);
+                let store = {
+                    let bc = blockchain_arc.read().await;
+                    bc.store.clone()
+                };
+                if let Some(store) = store {
+                    if let Some(replayed) = lib_blockchain::Blockchain::replay_from_store(store)? {
+                        let mut bc = blockchain_arc.write().await;
+                        // Preserve the store and executor from replayed blockchain
+                        let store = replayed.store.clone();
+                        let executor = replayed.executor.clone();
+                        *bc = replayed;
+                        bc.store = store;
+                        bc.executor = executor;
                         info!(
-                            "Genesis state restored: {} identities, {} wallets (expected {} from genesis)",
-                            blockchain.identity_registry.len(),
-                            blockchain.wallet_registry.len(),
-                            expected_identities,
+                            "Block replay complete: height={}, identities={}, validators={}, domains={}, credentials={}",
+                            bc.height,
+                            bc.identity_registry.len(),
+                            bc.validator_registry.len(),
+                            bc.domain_registry.len(),
+                            bc.credential_registry.len(),
                         );
                     }
                 }
