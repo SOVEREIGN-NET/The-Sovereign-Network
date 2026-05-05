@@ -51,6 +51,7 @@ pub mod error;
 pub mod handshake;
 pub mod nft_tx;
 pub mod identity;
+pub mod messaging;
 pub mod request;
 pub mod session;
 pub mod token_tx;
