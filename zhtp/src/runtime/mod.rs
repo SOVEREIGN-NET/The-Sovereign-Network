@@ -1154,6 +1154,29 @@ impl RuntimeOrchestrator {
             // Blockchain already loaded with data - don't create genesis
             info!("✓ Using existing blockchain data - skipping genesis creation");
 
+            // Restore genesis state if registries are under-populated.
+            // Sled persists blocks but NOT the in-memory identity/wallet/validator registries.
+            // These are populated from genesis config or from block transaction processing.
+            // After a restart with existing sled data, the registries may be empty or minimal.
+            {
+                let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to get global blockchain: {}", e))?;
+                let mut blockchain = blockchain_arc.write().await;
+                if let Ok(cfg) = lib_blockchain::genesis::GenesisConfig::from_embedded() {
+                    let expected_identities = cfg.allocations.identities.len();
+                    if blockchain.identity_registry.len() < expected_identities {
+                        let _ = cfg.apply_genesis_state(&mut blockchain);
+                        info!(
+                            "Genesis state restored: {} identities, {} wallets (expected {} from genesis)",
+                            blockchain.identity_registry.len(),
+                            blockchain.wallet_registry.len(),
+                            expected_identities,
+                        );
+                    }
+                }
+            }
+
             // CRITICAL: Ensure SOV token contract is always initialized
             // This handles upgrades from older blockchain data that didn't have the SOV token
             {
