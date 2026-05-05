@@ -1172,6 +1172,11 @@ impl RuntimeOrchestrator {
                         *bc = replayed;
                         bc.store = store;
                         bc.executor = executor;
+                        // Seed validators from bootstrap config (not stored in blocks)
+                        seed_validators_from_bootstrap_config(
+                            &mut bc,
+                            &self.config.network_config.bootstrap_validators,
+                        );
                         info!(
                             "Block replay complete: height={}, identities={}, validators={}, domains={}, credentials={}",
                             bc.height,
