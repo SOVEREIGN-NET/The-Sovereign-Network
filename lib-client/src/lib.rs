@@ -2629,7 +2629,7 @@ pub extern "C" fn zhtp_msg_envelope_to_json(
 /// Seal a text message, sign it with the identity's Dilithium key, and
 /// return the hex-encoded envelope ready for `/msg/send`.
 /// Caller frees the returned string with `zhtp_client_string_free`.
-/// Returns null on error.
+/// Returns null on error. Session ratchet only advances on full success.
 #[no_mangle]
 pub extern "C" fn zhtp_msg_seal_text_signed(
     handle: *mut MessagingSessionHandle,
@@ -2646,7 +2646,9 @@ pub extern "C" fn zhtp_msg_seal_text_signed(
     let session = unsafe { &mut (*handle).inner };
     let id = unsafe { &(*identity).inner };
 
-    let envelope = match msg_mod::seal_text_message(session, s) {
+    // Clone session so ratchet only advances on full success
+    let mut session_copy = session.clone();
+    let envelope = match msg_mod::seal_text_message(&mut session_copy, s) {
         Ok(e) => e,
         Err(_) => return std::ptr::null_mut(),
     };
@@ -2655,15 +2657,19 @@ pub extern "C" fn zhtp_msg_seal_text_signed(
         Err(_) => return std::ptr::null_mut(),
     };
     match msg_mod::encode_envelope(&signed) {
-        Ok(hex) => string_to_cstr(hex),
+        Ok(hex) => {
+            *session = session_copy; // commit ratchet advance
+            string_to_cstr(hex)
+        }
         Err(_) => std::ptr::null_mut(),
     }
 }
 
 /// Seal a binary message (Image/File/Voice), sign it, and return hex.
-/// `content_type_tag`: 0=Text, 1=Image, 2=File, 3=Voice, 4=KeyExchange,
-/// 5=KeyRatchet, 6=ReadReceipt, 7=GroupInvite.
+/// Only accepts content types 1=Image, 2=File, 3=Voice. Use dedicated
+/// helpers for KeyExchange/KeyRatchet/ReadReceipt/GroupInvite.
 /// Caller frees the returned string with `zhtp_client_string_free`.
+/// Session ratchet only advances on full success.
 #[no_mangle]
 pub extern "C" fn zhtp_msg_seal_binary_signed(
     handle: *mut MessagingSessionHandle,
@@ -2675,6 +2681,10 @@ pub extern "C" fn zhtp_msg_seal_binary_signed(
     if handle.is_null() || identity.is_null() {
         return std::ptr::null_mut();
     }
+    // Only allow binary content types (Image=1, File=2, Voice=3)
+    if content_type_tag < 1 || content_type_tag > 3 {
+        return std::ptr::null_mut();
+    }
     let ct = match content_type_from_tag(content_type_tag) {
         Some(ct) => ct,
         None => return std::ptr::null_mut(),
@@ -2683,7 +2693,8 @@ pub extern "C" fn zhtp_msg_seal_binary_signed(
     let session = unsafe { &mut (*handle).inner };
     let id = unsafe { &(*identity).inner };
 
-    let envelope = match msg_mod::seal_binary_message(session, ct, payload) {
+    let mut session_copy = session.clone();
+    let envelope = match msg_mod::seal_binary_message(&mut session_copy, ct, payload) {
         Ok(e) => e,
         Err(_) => return std::ptr::null_mut(),
     };
@@ -2692,7 +2703,10 @@ pub extern "C" fn zhtp_msg_seal_binary_signed(
         Err(_) => return std::ptr::null_mut(),
     };
     match msg_mod::encode_envelope(&signed) {
-        Ok(hex) => string_to_cstr(hex),
+        Ok(hex) => {
+            *session = session_copy;
+            string_to_cstr(hex)
+        }
         Err(_) => std::ptr::null_mut(),
     }
 }
@@ -2792,8 +2806,13 @@ pub extern "C" fn zhtp_msg_session_accept_rekey_with_identity(
 
 /// Verify an envelope's signature then decrypt it in one atomic call.
 /// Returns the plaintext body bytes. Returns empty buffer if the signature
-/// is invalid or decryption fails.
+/// is invalid, decryption fails, or inputs are malformed.
+///
+/// Also validates that `envelope.sender_did` matches the provided public key
+/// (DID = `did:zhtp:` + blake3(pk)), preventing sender spoofing.
+///
 /// `peer_dilithium_pk` is the sender's public key (not behind an identity handle).
+/// Must be exactly 2592 bytes (Dilithium5 public key size).
 #[no_mangle]
 pub extern "C" fn zhtp_msg_envelope_open_verified(
     envelope_bytes: *const u8,
@@ -2803,9 +2822,21 @@ pub extern "C" fn zhtp_msg_envelope_open_verified(
     peer_dilithium_pk: *const u8,
     peer_dilithium_pk_len: usize,
 ) -> ByteBuffer {
+    // Input validation — prevent panics across FFI
+    if envelope_bytes.is_null() || chain_key.is_null() || peer_dilithium_pk.is_null() {
+        return empty_buffer();
+    }
     if chain_key_len != 32 {
         return empty_buffer();
     }
+    if peer_dilithium_pk_len != crypto::Dilithium5::PUBLIC_KEY_SIZE {
+        return empty_buffer();
+    }
+    // Max envelope size: 10 MB (prevent DoS via large allocations)
+    if envelope_len > 10 * 1024 * 1024 {
+        return empty_buffer();
+    }
+
     let env_bytes = unsafe { borrow_slice(envelope_bytes, envelope_len) };
     let ck = unsafe { borrow_slice(chain_key, chain_key_len) };
     let pk = unsafe { borrow_slice(peer_dilithium_pk, peer_dilithium_pk_len) };
@@ -2815,10 +2846,19 @@ pub extern "C" fn zhtp_msg_envelope_open_verified(
         Err(_) => return empty_buffer(),
     };
 
-    // Verify signature first
+    // Verify sender DID matches the provided public key
+    let expected_did = format!(
+        "did:zhtp:{}",
+        hex::encode(crypto::Blake3::hash(pk))
+    );
+    if envelope.sender_did != expected_did {
+        return empty_buffer(); // sender spoofing — DID doesn't match key
+    }
+
+    // Verify Dilithium signature
     match msg_mod::verify_envelope(&envelope, pk) {
         Ok(true) => {}
-        _ => return empty_buffer(), // bad signature or error
+        _ => return empty_buffer(),
     }
 
     // Decrypt
