@@ -2869,3 +2869,95 @@ pub extern "C" fn zhtp_msg_envelope_open_verified(
         Err(_) => empty_buffer(),
     }
 }
+
+/// Decode a KeyExchange envelope and accept the session using the identity's
+/// Kyber secret key. Returns a new `MessagingSessionHandle`.
+///
+/// Returns null on: null inputs, bincode failure, wrong content_type
+/// (must be KeyExchange), DID mismatch (envelope.sender_did != remote_did
+/// or envelope.recipient_did != local_did), or Kyber decapsulation error.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_session_accept_envelope_with_identity(
+    local_did: *const std::ffi::c_char,
+    remote_did: *const std::ffi::c_char,
+    envelope_bytes: *const u8,
+    envelope_len: usize,
+    identity: *const IdentityHandle,
+) -> *mut MessagingSessionHandle {
+    if envelope_bytes.is_null() || identity.is_null() {
+        return std::ptr::null_mut();
+    }
+    let l_did = match unsafe { cstr_to_str(local_did) } {
+        Some(s) => s,
+        None => return std::ptr::null_mut(),
+    };
+    let r_did = match unsafe { cstr_to_str(remote_did) } {
+        Some(s) => s,
+        None => return std::ptr::null_mut(),
+    };
+    if envelope_len > 10 * 1024 * 1024 {
+        return std::ptr::null_mut();
+    }
+    let env_bytes = unsafe { borrow_slice(envelope_bytes, envelope_len) };
+    let id = unsafe { &(*identity).inner };
+
+    let envelope: msg_mod::MessageEnvelope = match bincode::deserialize(env_bytes) {
+        Ok(e) => e,
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    // Must be KeyExchange
+    if !matches!(envelope.content_type, msg_mod::ContentType::KeyExchange) {
+        return std::ptr::null_mut();
+    }
+
+    // DID mismatch check
+    if envelope.sender_did != r_did || envelope.recipient_did != l_did {
+        return std::ptr::null_mut();
+    }
+
+    // Decapsulate using identity's Kyber SK
+    match msg_mod::accept_session(l_did, r_did, &envelope.ciphertext, &id.kyber_secret_key) {
+        Ok(session) => Box::into_raw(Box::new(MessagingSessionHandle { inner: session })),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Decode a KeyRatchet envelope and accept the re-key using the identity's
+/// Kyber secret key.
+///
+/// Returns 0 on success, -1 on: null inputs, bincode failure, wrong
+/// content_type (must be KeyRatchet), or Kyber decapsulation error.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_session_accept_rekey_envelope_with_identity(
+    handle: *mut MessagingSessionHandle,
+    envelope_bytes: *const u8,
+    envelope_len: usize,
+    identity: *const IdentityHandle,
+) -> i32 {
+    if handle.is_null() || envelope_bytes.is_null() || identity.is_null() {
+        return -1;
+    }
+    if envelope_len > 10 * 1024 * 1024 {
+        return -1;
+    }
+    let env_bytes = unsafe { borrow_slice(envelope_bytes, envelope_len) };
+    let session = unsafe { &mut (*handle).inner };
+    let id = unsafe { &(*identity).inner };
+
+    let envelope: msg_mod::MessageEnvelope = match bincode::deserialize(env_bytes) {
+        Ok(e) => e,
+        Err(_) => return -1,
+    };
+
+    // Must be KeyRatchet
+    if !matches!(envelope.content_type, msg_mod::ContentType::KeyRatchet) {
+        return -1;
+    }
+
+    // Accept re-key
+    match msg_mod::accept_rekey(session, &envelope.ciphertext, &id.kyber_secret_key) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
