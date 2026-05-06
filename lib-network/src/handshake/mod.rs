@@ -118,7 +118,7 @@ pub use security::{
 // Re-export blockchain handshake types
 pub use blockchain::{
     BlockchainHandshakeContext, BlockchainHandshakeVerifier, BlockchainVerificationResult,
-    NetworkParticipationLevel,
+    NodeRole,
 };
 
 // Re-export PQC types and functions
