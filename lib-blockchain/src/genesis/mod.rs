@@ -34,7 +34,7 @@ use tracing::{info, warn};
 /// 3. Set this constant to that hash and commit.
 /// 4. Tag the commit `mainnet-genesis-v1`.
 pub const CANONICAL_GENESIS_HASH: &str =
-    "92dfbce21ccd43024b64f292cb899142ce1ab3cbd832a4bd69a968739d4e3f9b";
+    "0000000000000000000000000000000000000000000000000000000000000000";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // genesis.toml embedded in the binary
