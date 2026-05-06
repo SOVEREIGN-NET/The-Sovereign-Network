@@ -33,7 +33,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
+
+/// Capacity of the per-session event broadcast channel
+const SESSION_EVENT_CHANNEL_CAPACITY: usize = 64;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -59,6 +62,27 @@ pub const QR_SCHEME: &str = "zhtp://auth";
 
 /// Minimum Dilithium public-key size accepted (Dilithium5 = 1312 bytes)
 pub const MIN_DILITHIUM_PK_BYTES: usize = 1312;
+
+// ---------------------------------------------------------------------------
+// Phase 4 — Session event bus (WebSocket relay + push notifications)
+// ---------------------------------------------------------------------------
+
+/// Real-time event pushed to subscribed WebSocket clients and push notification hooks.
+/// Keyed by `session_id` so each subscriber only receives events for its own session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum SessionEvent {
+    /// Challenge has been issued and QR is ready to scan
+    ChallengeIssued { session_id: String, expires_at: u64 },
+    /// Mobile app scanned QR and signature was verified — session is now active
+    SessionApproved { session_id: String, identity_id: String },
+    /// Session access token expired
+    SessionExpired { session_id: String },
+    /// Session was explicitly revoked
+    SessionRevoked { session_id: String, reason: String },
+    /// Biometric gate passed — high-value operations now permitted
+    BiometricVerified { session_id: String },
+}
 
 // ---------------------------------------------------------------------------
 // Capability model
@@ -227,6 +251,10 @@ pub struct MobileDelegatedSession {
     pub device_id: Option<String>,
     /// Whether this session is still active
     pub revoked: bool,
+    /// Node DID this session is bound to (prevents cross-node token replay)
+    pub bound_node_did: Option<String>,
+    /// Biometric gate passed — required before high-value operations (Phase 4)
+    pub biometric_verified: bool,
 }
 
 impl MobileDelegatedSession {
@@ -371,6 +399,8 @@ pub enum AuditEventKind {
     DelegationIssued,
     DelegationRevoked,
     UnauthorizedCapabilityAccess,
+    PushTokenRegistered,
+    BiometricVerified,
 }
 
 /// Immutable audit log entry
@@ -476,12 +506,21 @@ pub struct MobileAuthStore {
     audit_log: Arc<RwLock<Vec<AuditLogEntry>>>,
     /// Challenge rate limiter
     pub rate_limiter: Arc<ChallengeRateLimiter>,
+    /// Phase 4 — per-session broadcast channel for internal event distribution
+    session_event_bus: Arc<RwLock<HashMap<String, broadcast::Sender<SessionEvent>>>>,
+    /// Phase 4 — per-session ordered event log for polling (session_id → vec of (seq, event))
+    session_event_log: Arc<RwLock<HashMap<String, Vec<(u64, SessionEvent)>>>>,
+    /// Phase 4 — push notification tokens indexed by identity_id
+    push_tokens: Arc<RwLock<HashMap<IdentityId, String>>>,
 }
 
 impl MobileAuthStore {
     pub fn new() -> Self {
         Self {
             rate_limiter: Arc::new(ChallengeRateLimiter::new()),
+            session_event_bus: Arc::new(RwLock::new(HashMap::new())),
+            session_event_log: Arc::new(RwLock::new(HashMap::new())),
+            push_tokens: Arc::new(RwLock::new(HashMap::new())),
             ..Default::default()
         }
     }
@@ -580,6 +619,8 @@ impl MobileAuthStore {
             challenge_session_id,
             device_id,
             revoked: false,
+            bound_node_did: None,
+            biometric_verified: false,
         };
 
         let mut sessions = self.sessions.write().await;
@@ -725,6 +766,115 @@ impl MobileAuthStore {
             .filter(|c| c.delegator_did == delegator_did && c.is_active())
             .cloned()
             .collect()
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 4 — Session event bus
+    // -----------------------------------------------------------------------
+
+    /// Subscribe to real-time events for a specific session.
+    /// Returns a broadcast receiver. If no channel exists yet it is created.
+    pub async fn subscribe_session(
+        &self,
+        session_id: &str,
+    ) -> broadcast::Receiver<SessionEvent> {
+        let mut bus = self.session_event_bus.write().await;
+        let tx = bus
+            .entry(session_id.to_string())
+            .or_insert_with(|| broadcast::channel(SESSION_EVENT_CHANNEL_CAPACITY).0);
+        tx.subscribe()
+    }
+
+    /// Publish a session event: appends to the poll log and notifies broadcast subscribers.
+    pub async fn publish_session_event(&self, session_id: &str, event: SessionEvent) {
+        // Append to the ordered poll log so polling clients can catch up
+        {
+            let mut log = self.session_event_log.write().await;
+            let entries = log.entry(session_id.to_string()).or_insert_with(Vec::new);
+            let seq = entries.len() as u64;
+            entries.push((seq, event.clone()));
+            // Keep log bounded — drop oldest when over 256 entries
+            if entries.len() > 256 {
+                entries.drain(0..128);
+            }
+        }
+        // Also fire internal broadcast channel (used by tests and future in-process listeners)
+        let bus = self.session_event_bus.read().await;
+        if let Some(tx) = bus.get(session_id) {
+            let _ = tx.send(event);
+        }
+    }
+
+    /// Return all events for `session_id` with sequence number >= `since`.
+    /// Clients poll this to get new events without a persistent connection.
+    pub async fn get_session_events_since(
+        &self,
+        session_id: &str,
+        since: u64,
+    ) -> Vec<(u64, SessionEvent)> {
+        let log = self.session_event_log.read().await;
+        match log.get(session_id) {
+            None => vec![],
+            Some(entries) => entries
+                .iter()
+                .filter(|(seq, _)| *seq >= since)
+                .cloned()
+                .collect(),
+        }
+    }
+
+    /// Remove the broadcast channel for a session (called after revoke/expiry cleanup).
+    pub async fn drop_session_channel(&self, session_id: &str) {
+        let mut bus = self.session_event_bus.write().await;
+        bus.remove(session_id);
+        drop(bus);
+        let mut log = self.session_event_log.write().await;
+        log.remove(session_id);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 4 — Push notification token registry
+    // -----------------------------------------------------------------------
+
+    /// Store or update the FCM/APNs push token for an identity.
+    pub async fn register_push_token(&self, identity_id: IdentityId, token: String) {
+        let mut tokens = self.push_tokens.write().await;
+        tokens.insert(identity_id, token);
+    }
+
+    /// Retrieve the push token for an identity (None if not registered).
+    pub async fn get_push_token(&self, identity_id: &IdentityId) -> Option<String> {
+        let tokens = self.push_tokens.read().await;
+        tokens.get(identity_id).cloned()
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 4 — Biometric gate
+    // -----------------------------------------------------------------------
+
+    /// Mark a session as biometric-verified after the mobile app confirms the gate.
+    /// `attestation_hex` is the Dilithium signature over the session access token bytes,
+    /// produced by the mobile app after a successful local biometric check.
+    pub async fn confirm_biometric(
+        &self,
+        access_token: &str,
+        attestation_hex: &str,
+    ) -> Result<()> {
+        // Decode attestation bytes — structural validation only here;
+        // the caller (HTTP handler) already verified the Dilithium signature.
+        let _ = hex::decode(attestation_hex)
+            .map_err(|_| anyhow!("Invalid attestation_hex: not valid hex"))?;
+
+        let mut sessions = self.sessions.write().await;
+        match sessions.get_mut(access_token) {
+            None => Err(anyhow!("Session not found")),
+            Some(s) if s.revoked => Err(anyhow!("Session revoked")),
+            Some(s) if !s.is_access_valid() => Err(anyhow!("Session expired")),
+            Some(s) => {
+                s.biometric_verified = true;
+                Ok(())
+            }
+        }
     }
 
     // -----------------------------------------------------------------------
