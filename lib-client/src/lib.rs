@@ -2961,3 +2961,47 @@ pub extern "C" fn zhtp_msg_session_accept_rekey_envelope_with_identity(
         Err(_) => -1,
     }
 }
+
+/// Build a signed JSON request body for `POST /api/v1/identity/update-kyber-key`.
+///
+/// Extracts DID, Kyber public key, and Dilithium secret key from the identity.
+/// Signs `UPDATE_KYBER_KEY:{did}:{kyber_pk_hex}:{timestamp}`.
+///
+/// Returns JSON string ready to POST. Caller frees with `zhtp_client_string_free`.
+/// Returns null if identity has no Kyber key or signing fails.
+#[no_mangle]
+pub extern "C" fn zhtp_identity_build_kyber_key_update(
+    identity: *const IdentityHandle,
+    timestamp: u64,
+) -> *mut std::ffi::c_char {
+    if identity.is_null() {
+        return std::ptr::null_mut();
+    }
+    let id = unsafe { &(*identity).inner };
+
+    let did = format!(
+        "did:zhtp:{}",
+        hex::encode(crypto::Blake3::hash(&id.public_key))
+    );
+
+    if id.kyber_public_key.is_empty() {
+        return std::ptr::null_mut();
+    }
+
+    let kyber_pk_hex = hex::encode(&id.kyber_public_key);
+    let message = format!("UPDATE_KYBER_KEY:{}:{}:{}", did, kyber_pk_hex, timestamp);
+
+    let signature = match crypto::Dilithium5::sign(message.as_bytes(), &id.private_key) {
+        Ok(sig) => sig,
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    let body = serde_json::json!({
+        "did": did,
+        "kyber_public_key_hex": kyber_pk_hex,
+        "timestamp": timestamp,
+        "signature_hex": hex::encode(&signature),
+    });
+
+    string_to_cstr(body.to_string())
+}
