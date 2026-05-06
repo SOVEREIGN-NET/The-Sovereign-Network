@@ -54,7 +54,8 @@ pub mod compat;
 
 // Types module - Core identity and node types
 pub use types::{
-    AccessLevel,     // ✓ FullCitizen, Visitor, Organization, Device, Restricted
+    AccessLevel,        // ✓ FullCitizen, Visitor, Organization, Device, Restricted
+    CitizenshipStatus, // ✓ Visitor, ProvisionalCitizen, VerifiedCitizen, TrustedCitizen
     AttestationType, // ✓ Attestation types
 
     // Credential types

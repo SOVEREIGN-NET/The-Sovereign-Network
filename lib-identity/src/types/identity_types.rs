@@ -22,6 +22,39 @@ pub enum IdentityType {
     Device,
 }
 
+/// Citizenship progression status — replaces the ambiguous PoP "tier" naming.
+///
+/// Variants map to the four stages of sovereign identity:
+/// Visitor → ProvisionalCitizen → VerifiedCitizen → TrustedCitizen.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CitizenshipStatus {
+    /// No citizenship — read-only observer access
+    Visitor,
+    /// Onboarding in progress — limited participation allowed
+    ProvisionalCitizen,
+    /// Identity verified — full DAO and UBI participation
+    VerifiedCitizen,
+    /// Established participant with vouching rights
+    TrustedCitizen,
+}
+
+impl Default for CitizenshipStatus {
+    fn default() -> Self {
+        CitizenshipStatus::Visitor
+    }
+}
+
+impl std::fmt::Display for CitizenshipStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CitizenshipStatus::Visitor => write!(f, "Visitor"),
+            CitizenshipStatus::ProvisionalCitizen => write!(f, "ProvisionalCitizen"),
+            CitizenshipStatus::VerifiedCitizen => write!(f, "VerifiedCitizen"),
+            CitizenshipStatus::TrustedCitizen => write!(f, "TrustedCitizen"),
+        }
+    }
+}
+
 /// Web4 access levels
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum AccessLevel {
