@@ -2617,3 +2617,255 @@ pub extern "C" fn zhtp_msg_envelope_to_json(
     });
     string_to_cstr(view.to_string())
 }
+
+// =============================================================================
+// Messaging FFI — Identity-bound convenience exports
+//
+// These wrap seal + sign + encode in a single call, keeping the Dilithium
+// secret key inside the IdentityHandle so it never crosses the FFI boundary
+// as raw bytes.
+// =============================================================================
+
+/// Seal a text message, sign it with the identity's Dilithium key, and
+/// return the hex-encoded envelope ready for `/msg/send`.
+/// Caller frees the returned string with `zhtp_client_string_free`.
+/// Returns null on error. Session ratchet only advances on full success.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_seal_text_signed(
+    handle: *mut MessagingSessionHandle,
+    text: *const std::ffi::c_char,
+    identity: *const IdentityHandle,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || identity.is_null() {
+        return std::ptr::null_mut();
+    }
+    let s = match unsafe { cstr_to_str(text) } {
+        Some(s) => s,
+        None => return std::ptr::null_mut(),
+    };
+    let session = unsafe { &mut (*handle).inner };
+    let id = unsafe { &(*identity).inner };
+
+    // Clone session so ratchet only advances on full success
+    let mut session_copy = session.clone();
+    let envelope = match msg_mod::seal_text_message(&mut session_copy, s) {
+        Ok(e) => e,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let signed = match msg_mod::sign_envelope(envelope, &id.private_key) {
+        Ok(e) => e,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match msg_mod::encode_envelope(&signed) {
+        Ok(hex) => {
+            *session = session_copy; // commit ratchet advance
+            string_to_cstr(hex)
+        }
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Seal a binary message (Image/File/Voice), sign it, and return hex.
+/// Only accepts content types 1=Image, 2=File, 3=Voice. Use dedicated
+/// helpers for KeyExchange/KeyRatchet/ReadReceipt/GroupInvite.
+/// Caller frees the returned string with `zhtp_client_string_free`.
+/// Session ratchet only advances on full success.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_seal_binary_signed(
+    handle: *mut MessagingSessionHandle,
+    content_type_tag: u8,
+    data: *const u8,
+    data_len: usize,
+    identity: *const IdentityHandle,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || identity.is_null() {
+        return std::ptr::null_mut();
+    }
+    // Only allow binary content types (Image=1, File=2, Voice=3)
+    if content_type_tag < 1 || content_type_tag > 3 {
+        return std::ptr::null_mut();
+    }
+    let ct = match content_type_from_tag(content_type_tag) {
+        Some(ct) => ct,
+        None => return std::ptr::null_mut(),
+    };
+    let payload = unsafe { borrow_slice(data, data_len) }.to_vec();
+    let session = unsafe { &mut (*handle).inner };
+    let id = unsafe { &(*identity).inner };
+
+    let mut session_copy = session.clone();
+    let envelope = match msg_mod::seal_binary_message(&mut session_copy, ct, payload) {
+        Ok(e) => e,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let signed = match msg_mod::sign_envelope(envelope, &id.private_key) {
+        Ok(e) => e,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match msg_mod::encode_envelope(&signed) {
+        Ok(hex) => {
+            *session = session_copy;
+            string_to_cstr(hex)
+        }
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Seal a KeyExchange envelope (for first-contact or KeyRatchet), sign it,
+/// and return hex. Used right after `zhtp_msg_session_initiate` to send the
+/// Kyber ciphertext to the recipient.
+/// Caller frees the returned string with `zhtp_client_string_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_seal_key_exchange_signed(
+    sender_did: *const std::ffi::c_char,
+    recipient_did: *const std::ffi::c_char,
+    kyber_ciphertext: *const u8,
+    kyber_ciphertext_len: usize,
+    identity: *const IdentityHandle,
+) -> *mut std::ffi::c_char {
+    if identity.is_null() {
+        return std::ptr::null_mut();
+    }
+    let s_did = match unsafe { cstr_to_str(sender_did) } {
+        Some(s) => s,
+        None => return std::ptr::null_mut(),
+    };
+    let r_did = match unsafe { cstr_to_str(recipient_did) } {
+        Some(s) => s,
+        None => return std::ptr::null_mut(),
+    };
+    let ct = unsafe { borrow_slice(kyber_ciphertext, kyber_ciphertext_len) }.to_vec();
+    let id = unsafe { &(*identity).inner };
+
+    let envelope = match msg_mod::seal_key_exchange(s_did, r_did, ct) {
+        Ok(e) => e,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let signed = match msg_mod::sign_envelope(envelope, &id.private_key) {
+        Ok(e) => e,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match msg_mod::encode_envelope(&signed) {
+        Ok(hex) => string_to_cstr(hex),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Accept a session using the identity's Kyber secret key.
+/// Returns a new `MessagingSessionHandle` (caller frees with `zhtp_msg_session_free`).
+/// Returns null on error.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_session_accept_with_identity(
+    local_did: *const std::ffi::c_char,
+    remote_did: *const std::ffi::c_char,
+    kyber_ciphertext: *const u8,
+    kyber_ciphertext_len: usize,
+    identity: *const IdentityHandle,
+) -> *mut MessagingSessionHandle {
+    if identity.is_null() {
+        return std::ptr::null_mut();
+    }
+    let l_did = match unsafe { cstr_to_str(local_did) } {
+        Some(s) => s,
+        None => return std::ptr::null_mut(),
+    };
+    let r_did = match unsafe { cstr_to_str(remote_did) } {
+        Some(s) => s,
+        None => return std::ptr::null_mut(),
+    };
+    let ct = unsafe { borrow_slice(kyber_ciphertext, kyber_ciphertext_len) };
+    let id = unsafe { &(*identity).inner };
+
+    match msg_mod::accept_session(l_did, r_did, ct, &id.kyber_secret_key) {
+        Ok(session) => Box::into_raw(Box::new(MessagingSessionHandle { inner: session })),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Accept a re-key using the identity's Kyber secret key.
+/// Returns 0 on success, -1 on error.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_session_accept_rekey_with_identity(
+    handle: *mut MessagingSessionHandle,
+    kyber_ciphertext: *const u8,
+    kyber_ciphertext_len: usize,
+    identity: *const IdentityHandle,
+) -> i32 {
+    if handle.is_null() || identity.is_null() {
+        return -1;
+    }
+    let session = unsafe { &mut (*handle).inner };
+    let ct = unsafe { borrow_slice(kyber_ciphertext, kyber_ciphertext_len) };
+    let id = unsafe { &(*identity).inner };
+
+    match msg_mod::accept_rekey(session, ct, &id.kyber_secret_key) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+/// Verify an envelope's signature then decrypt it in one atomic call.
+/// Returns the plaintext body bytes. Returns empty buffer if the signature
+/// is invalid, decryption fails, or inputs are malformed.
+///
+/// Also validates that `envelope.sender_did` matches the provided public key
+/// (DID = `did:zhtp:` + blake3(pk)), preventing sender spoofing.
+///
+/// `peer_dilithium_pk` is the sender's public key (not behind an identity handle).
+/// Must be exactly 2592 bytes (Dilithium5 public key size).
+#[no_mangle]
+pub extern "C" fn zhtp_msg_envelope_open_verified(
+    envelope_bytes: *const u8,
+    envelope_len: usize,
+    chain_key: *const u8,
+    chain_key_len: usize,
+    peer_dilithium_pk: *const u8,
+    peer_dilithium_pk_len: usize,
+) -> ByteBuffer {
+    // Input validation — prevent panics across FFI
+    if envelope_bytes.is_null() || chain_key.is_null() || peer_dilithium_pk.is_null() {
+        return empty_buffer();
+    }
+    if chain_key_len != 32 {
+        return empty_buffer();
+    }
+    if peer_dilithium_pk_len != crypto::Dilithium5::PUBLIC_KEY_SIZE {
+        return empty_buffer();
+    }
+    // Max envelope size: 10 MB (prevent DoS via large allocations)
+    if envelope_len > 10 * 1024 * 1024 {
+        return empty_buffer();
+    }
+
+    let env_bytes = unsafe { borrow_slice(envelope_bytes, envelope_len) };
+    let ck = unsafe { borrow_slice(chain_key, chain_key_len) };
+    let pk = unsafe { borrow_slice(peer_dilithium_pk, peer_dilithium_pk_len) };
+
+    let envelope: msg_mod::MessageEnvelope = match bincode::deserialize(env_bytes) {
+        Ok(e) => e,
+        Err(_) => return empty_buffer(),
+    };
+
+    // Verify sender DID matches the provided public key
+    let expected_did = format!(
+        "did:zhtp:{}",
+        hex::encode(crypto::Blake3::hash(pk))
+    );
+    if envelope.sender_did != expected_did {
+        return empty_buffer(); // sender spoofing — DID doesn't match key
+    }
+
+    // Verify Dilithium signature
+    match msg_mod::verify_envelope(&envelope, pk) {
+        Ok(true) => {}
+        _ => return empty_buffer(),
+    }
+
+    // Decrypt
+    let mut ck_arr = [0u8; 32];
+    ck_arr.copy_from_slice(ck);
+    match msg_mod::open_envelope(&envelope, &ck_arr) {
+        Ok(body) => vec_to_buffer(body),
+        Err(_) => empty_buffer(),
+    }
+}
