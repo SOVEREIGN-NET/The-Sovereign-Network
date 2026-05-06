@@ -88,6 +88,10 @@ pub struct RecoverIdentityResponse {
 pub struct IdentityInfo {
     pub identity_id: String,
     pub did: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
 }
 
 /// Response for backup status
@@ -429,12 +433,26 @@ pub async fn handle_recover_identity(
         migrate_wallets_for_identity(migration_identity_id, migration_dilithium_pk).await;
     });
 
+    // Look up display_name and username from on-chain state
+    let (display_name, username) = {
+        if let Ok(blockchain_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
+            let blockchain = blockchain_arc.read().await;
+            let dn = blockchain.identity_registry.get(&did).map(|id| id.display_name.clone());
+            let un = blockchain.did_to_username.get(&did).cloned();
+            (dn, un)
+        } else {
+            (None, None)
+        }
+    };
+
     // Build response
     let response = RecoverIdentityResponse {
         status: "success".to_string(),
         identity: IdentityInfo {
             identity_id: identity_id.to_string(),
             did,
+            display_name,
+            username,
         },
         session_token,
     };
@@ -477,7 +495,16 @@ async fn auto_create_identity_from_seed(
                 lib_pk.clone(),
                 lib_identity::types::IdentityType::Human,
                 "seed-recovery".to_string(),
-                Some("Recovered Identity".to_string()),
+                {
+                    // Preserve existing on-chain display_name if available
+                    let existing_name = if let Ok(bc_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
+                        let bc = bc_arc.read().await;
+                        bc.identity_registry.get(&did).map(|id| id.display_name.clone())
+                    } else {
+                        None
+                    };
+                    existing_name.or_else(|| Some(String::new()))
+                },
                 now_ts,
             );
 
@@ -523,7 +550,7 @@ async fn auto_create_identity_from_seed(
             if !blockchain.query_identity_exists(&did) {
                 let identity_data = lib_blockchain::transaction::IdentityTransactionData {
                     did: did.clone(),
-                    display_name: "Recovered Identity".to_string(),
+                    display_name: String::new(), // Populated by client; empty is better than "Recovered Identity"
                     public_key: dilithium_pk.to_vec(),
                     ownership_proof: vec![],
                     identity_type: "human".to_string(),
@@ -1092,6 +1119,8 @@ pub async fn handle_import_backup(
         identity: IdentityInfo {
             identity_id: identity_id.to_string(),
             did: identity.did.clone(),
+            display_name: identity.metadata.get("display_name").cloned(),
+            username: None,
         },
         session_token,
     };
