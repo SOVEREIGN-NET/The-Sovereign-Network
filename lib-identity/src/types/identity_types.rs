@@ -38,6 +38,28 @@ pub enum CitizenshipStatus {
     TrustedCitizen,
 }
 
+impl CitizenshipStatus {
+    /// DAO voting power granted to this citizenship tier.
+    pub fn voting_power(&self) -> u32 {
+        match self {
+            CitizenshipStatus::Visitor => 0,
+            CitizenshipStatus::ProvisionalCitizen => 1,
+            CitizenshipStatus::VerifiedCitizen => 10,
+            CitizenshipStatus::TrustedCitizen => 15,
+        }
+    }
+
+    /// Monthly UBI entitlement in SOV micro-units (1 SOV = 1_000_000 units).
+    pub fn monthly_ubi(&self) -> u64 {
+        match self {
+            CitizenshipStatus::Visitor => 0,
+            CitizenshipStatus::ProvisionalCitizen => 500 * 1_000_000,
+            CitizenshipStatus::VerifiedCitizen => 1_000 * 1_000_000,
+            CitizenshipStatus::TrustedCitizen => 1_500 * 1_000_000,
+        }
+    }
+}
+
 impl Default for CitizenshipStatus {
     fn default() -> Self {
         CitizenshipStatus::Visitor
@@ -85,6 +107,55 @@ impl std::fmt::Display for AccessLevel {
             AccessLevel::Device => write!(f, "Device"),
             AccessLevel::Restricted => write!(f, "Restricted"),
         }
+    }
+}
+
+/// DAO access contract held by an identity.
+///
+/// Separate from `AccessLevel` (Web4 service access) — this type governs
+/// what role an identity holds within a specific DAO. Auto-issued for
+/// VerifiedCitizen+; EmploymentAccess is granted by DAO admins.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum DaoAccessContract {
+    /// No DAO access contract
+    None,
+    /// Public participation access — auto-issued to VerifiedCitizen and above
+    PublicAccess {
+        /// Epoch-based timestamp of issuance
+        issued_at: u64,
+        /// Privacy-preserving public identity hash
+        verified_sid: Hash,
+    },
+    /// Employment-level access — issued by DAO admins for specific roles
+    EmploymentAccess {
+        /// DAO that issued this contract
+        dao_id: Hash,
+        /// Role identifier within the DAO
+        role: String,
+        /// Identity that signed the issuance
+        issued_by: Hash,
+        /// Epoch-based timestamp of issuance
+        issued_at: u64,
+        /// Optional expiry epoch (None = indefinite)
+        expires_at: Option<u64>,
+    },
+}
+
+impl DaoAccessContract {
+    /// Returns true if the contract grants any access (not None).
+    pub fn has_access(&self) -> bool {
+        !matches!(self, DaoAccessContract::None)
+    }
+
+    /// Returns true only for employment-level contracts.
+    pub fn is_employment(&self) -> bool {
+        matches!(self, DaoAccessContract::EmploymentAccess { .. })
+    }
+}
+
+impl Default for DaoAccessContract {
+    fn default() -> Self {
+        DaoAccessContract::None
     }
 }
 

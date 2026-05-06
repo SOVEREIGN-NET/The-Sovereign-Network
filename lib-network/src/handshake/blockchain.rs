@@ -221,48 +221,46 @@ impl BlockchainHandshakeContext {
     }
 }
 
-/// Peer tier classification based on stake and validation status
+/// Network participation level for UHP Tier 2 blockchain authentication.
 ///
-/// Determines trust level and capabilities granted to peers based on
-/// their blockchain participation and stake.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Replaces the ambiguous "peer tier" naming. Ordered Unverified < Staked < Validator
+/// so comparisons (`>=`) express minimum-privilege requirements cleanly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum NetworkParticipationLevel {
-    /// Verified validator with on-chain stake
-    Validator,
-
-    /// Node with stake but not actively validating
-    StakedNode,
-
-    /// Unverified peer (default for new connections)
-    Unverified,
+    /// No on-chain stake — relay-only, no routing privileges
+    Unverified = 0,
+    /// Staked node — trusted routing (minimum 500 SOV)
+    Staked = 1,
+    /// Active block producer — full consensus participation (minimum 10,000 SOV)
+    Validator = 2,
 }
 
 impl NetworkParticipationLevel {
-    /// Get minimum stake required for this tier
+    /// Minimum stake required to reach this level (SOV micro-units, 1 SOV = 1_000_000).
     pub fn min_stake(&self) -> u64 {
         match self {
-            NetworkParticipationLevel::Validator => 1_000 * 1_000_000, // 1000 SOV minimum for validators
-            NetworkParticipationLevel::StakedNode => 100 * 1_000_000,  // 100 SOV minimum for staked nodes
             NetworkParticipationLevel::Unverified => 0,
+            NetworkParticipationLevel::Staked => 500 * 1_000_000,
+            NetworkParticipationLevel::Validator => 10_000 * 1_000_000,
         }
     }
 
-    /// Check if this tier can participate in consensus
+    /// Whether this level can participate in block production and consensus.
     pub fn can_validate(&self) -> bool {
         matches!(self, NetworkParticipationLevel::Validator)
     }
 
-    /// Check if this tier has enhanced network privileges
+    /// Whether this level has enhanced routing privileges.
     pub fn has_enhanced_privileges(&self) -> bool {
-        matches!(self, NetworkParticipationLevel::Validator | NetworkParticipationLevel::StakedNode)
+        *self >= NetworkParticipationLevel::Staked
     }
 
-    /// Get trust score for this tier (0.0 - 1.0)
+    /// Trust score used for connection weighting (0.0–1.0).
     pub fn trust_score(&self) -> f64 {
         match self {
-            NetworkParticipationLevel::Validator => 1.0,
-            NetworkParticipationLevel::StakedNode => 0.7,
             NetworkParticipationLevel::Unverified => 0.3,
+            NetworkParticipationLevel::Staked => 0.7,
+            NetworkParticipationLevel::Validator => 1.0,
         }
     }
 }
@@ -608,8 +606,8 @@ impl BlockchainHandshakeVerifier {
                         // Determine tier based on stake amount
                         if stake >= NetworkParticipationLevel::Validator.min_stake() {
                             NetworkParticipationLevel::Validator
-                        } else if stake >= NetworkParticipationLevel::StakedNode.min_stake() {
-                            NetworkParticipationLevel::StakedNode
+                        } else if stake >= NetworkParticipationLevel::Staked.min_stake() {
+                            NetworkParticipationLevel::Staked
                         } else {
                             NetworkParticipationLevel::Unverified
                         }
@@ -700,16 +698,16 @@ mod tests {
 
     #[test]
     fn test_peer_tier_classification() {
-        assert_eq!(NetworkParticipationLevel::Validator.min_stake(), 1_000_000_000);
-        assert_eq!(NetworkParticipationLevel::StakedNode.min_stake(), 100_000_000);
+        assert_eq!(NetworkParticipationLevel::Validator.min_stake(), 10_000 * 1_000_000);
+        assert_eq!(NetworkParticipationLevel::Staked.min_stake(), 500 * 1_000_000);
         assert_eq!(NetworkParticipationLevel::Unverified.min_stake(), 0);
 
         assert!(NetworkParticipationLevel::Validator.can_validate());
-        assert!(!NetworkParticipationLevel::StakedNode.can_validate());
+        assert!(!NetworkParticipationLevel::Staked.can_validate());
         assert!(!NetworkParticipationLevel::Unverified.can_validate());
 
         assert!(NetworkParticipationLevel::Validator.has_enhanced_privileges());
-        assert!(NetworkParticipationLevel::StakedNode.has_enhanced_privileges());
+        assert!(NetworkParticipationLevel::Staked.has_enhanced_privileges());
         assert!(!NetworkParticipationLevel::Unverified.has_enhanced_privileges());
     }
 
@@ -828,7 +826,7 @@ mod tests {
         let mut verifier = BlockchainHandshakeVerifier::new(local_ctx);
 
         let node_id = Hash::from_bytes(&[4u8; 32]);
-        let node_stake = 500_000_000; // 500 SOV (above StakedNode threshold)
+        let node_stake = 500 * 1_000_000; // 500 SOV (meets Staked threshold exactly)
 
         verifier.add_validator_stake(node_id.clone(), node_stake, 1);
 
@@ -839,7 +837,7 @@ mod tests {
             .verify_peer(&peer_ctx, Some(&node_id), None)
             .unwrap();
         assert!(result.verified);
-        assert_eq!(result.peer_tier, NetworkParticipationLevel::StakedNode);
+        assert_eq!(result.peer_tier, NetworkParticipationLevel::Staked);
     }
 
     #[test]

@@ -54,9 +54,10 @@ pub mod compat;
 
 // Types module - Core identity and node types
 pub use types::{
-    AccessLevel,        // ✓ FullCitizen, Visitor, Organization, Device, Restricted
+    AccessLevel,       // ✓ FullCitizen, Visitor, Organization, Device, Restricted
     CitizenshipStatus, // ✓ Visitor, ProvisionalCitizen, VerifiedCitizen, TrustedCitizen
-    AttestationType, // ✓ Attestation types
+    DaoAccessContract, // ✓ None, PublicAccess, EmploymentAccess (DAO-scoped contracts)
+    AttestationType,   // ✓ Attestation types
 
     // Credential types
     CredentialType, // ✓ Credential type enumeration
