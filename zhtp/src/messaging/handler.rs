@@ -87,15 +87,18 @@ impl MessagingHandler {
 
         let blockchain = self.blockchain.read().await;
 
-        // Resolve recipient: @username or DID
+        // Resolve recipient: @username, full DID, or raw hex identity ID
         let recipient_did = if req.recipient.starts_with('@') {
             let username = &req.recipient[1..];
             match blockchain.did_to_username.iter().find(|(_, u)| u.as_str() == username) {
                 Some((did, _)) => did.clone(),
                 None => return Ok(error_resp(ZhtpStatus::NotFound, "Username not found")),
             }
-        } else {
+        } else if req.recipient.starts_with("did:zhtp:") {
             req.recipient.clone()
+        } else {
+            // Raw hex identity ID — add did:zhtp: prefix
+            format!("did:zhtp:{}", req.recipient)
         };
 
         // Get recipient's identity (including Kyber key)
