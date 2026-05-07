@@ -2,10 +2,12 @@
 //!
 //! Clean, minimal handler modules for ZHTP API
 
+pub mod bearer_auth;
 pub mod blockchain;
 pub mod bonding_curve;
 pub mod cbe;
 pub mod constants;
+pub mod credentials;
 pub mod crypto;
 pub mod dao;
 pub mod dht;
@@ -14,10 +16,12 @@ pub mod guardian;
 pub mod identity;
 pub mod marketplace;
 pub mod mesh;
+pub mod nft;
 pub mod mobile_auth;
 pub mod monitor;
 pub mod network;
 pub mod observer;
+pub mod observer_admission;
 pub mod oracle;
 pub mod pouw;
 pub mod protocol;
@@ -29,6 +33,7 @@ pub mod wallet_content;
 pub mod web4;
 pub mod zkp;
 
+pub use bearer_auth::BearerAuthMiddleware;
 pub use blockchain::BlockchainHandler;
 pub use cbe::CbeHandler;
 pub use crypto::CryptoHandler;

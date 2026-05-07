@@ -1,6 +1,8 @@
 use super::*;
-use crate::proofs::StorageCapacityAttestation;
 use lib_crypto::{hash_blake3, Hash, PostQuantumSignature};
+// CONS-104 / AD-003: storage attestation type stays in lib-storage; it was
+// already there pre-CONS-104 and only re-exported through lib-consensus.
+use lib_storage::proofs::StorageCapacityAttestation;
 
 impl ConsensusEngine {
     /// Create a new proposal
@@ -193,53 +195,33 @@ impl ConsensusEngine {
         // Deterministic: height-based logical timestamp, not wall-clock.
         let timestamp = self.current_round.height;
 
+        // CONS-201 Scope B: build via `ConsensusProof::empty` + the
+        // `ConsensusProofExt` builder helpers so the underlying opaque
+        // bytes are produced by a single bincode call per field.
+        use crate::types::ConsensusProofExt;
+        let proof = ConsensusProof::empty(consensus_type.clone(), timestamp);
         match consensus_type {
             ConsensusType::ProofOfStake => {
                 let stake_proof = self.create_stake_proof().await?;
-                Ok(ConsensusProof {
-                    consensus_type,
-                    stake_proof: Some(stake_proof),
-                    storage_proof: None,
-                    work_proof: None,
-                    zk_did_proof: None,
-                    timestamp,
-                })
+                Ok(proof.with_stake_proof(&stake_proof))
             }
             ConsensusType::ProofOfStorage => {
                 let storage_proof = self.create_storage_proof().await?;
-                Ok(ConsensusProof {
-                    consensus_type,
-                    stake_proof: None,
-                    storage_proof: Some(storage_proof),
-                    work_proof: None,
-                    zk_did_proof: None,
-                    timestamp,
-                })
+                Ok(proof.with_storage_proof(&storage_proof))
             }
             ConsensusType::ProofOfUsefulWork => {
                 let work_proof = self.create_work_proof().await?;
-                Ok(ConsensusProof {
-                    consensus_type,
-                    stake_proof: None,
-                    storage_proof: None,
-                    work_proof: Some(work_proof),
-                    zk_did_proof: None,
-                    timestamp,
-                })
+                Ok(proof.with_work_proof(&work_proof))
             }
             ConsensusType::ByzantineFaultTolerance => {
-                // BFT uses all proof types
+                // BFT uses all proof types.
                 let stake_proof = self.create_stake_proof().await?;
                 let storage_proof = self.create_storage_proof().await?;
                 let work_proof = self.create_work_proof().await?;
-                Ok(ConsensusProof {
-                    consensus_type,
-                    stake_proof: Some(stake_proof),
-                    storage_proof: Some(storage_proof),
-                    work_proof: Some(work_proof),
-                    zk_did_proof: None,
-                    timestamp,
-                })
+                Ok(proof
+                    .with_stake_proof(&stake_proof)
+                    .with_storage_proof(&storage_proof)
+                    .with_work_proof(&work_proof))
             }
         }
     }
@@ -308,7 +290,7 @@ impl ConsensusEngine {
         // This allows consensus to proceed on dev/testnet nodes that don't provide storage.
         // Production (Mainnet) deployments should always configure a real provider.
         let validator_hash = Hash::from_bytes(validator_id.as_bytes());
-        let unsigned = crate::proofs::StorageCapacityAttestation::new(
+        let unsigned = StorageCapacityAttestation::new(
             validator_hash,
             0,      // storage_capacity: none
             0,      // utilization: 0%

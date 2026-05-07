@@ -26,6 +26,8 @@ impl Blockchain {
             dao_registry_index: HashMap::new(),
             validator_registry: HashMap::new(),
             validator_blocks: HashMap::new(),
+            gateway_registry: HashMap::new(),
+            gateway_blocks: HashMap::new(),
             dao_treasury_wallet_id: None,
             welfare_services: HashMap::new(),
             welfare_service_blocks: HashMap::new(),
@@ -33,7 +35,7 @@ impl Blockchain {
             service_performance: HashMap::new(),
             outcome_reports: HashMap::new(),
             economic_processor: Some(EconomicTransactionProcessor::new()),
-            consensus_coordinator: None,
+            // CONS-505: consensus_coordinator field deleted.
             storage_manager: None,
             store: None,
             proof_aggregator: None,
@@ -97,6 +99,11 @@ impl Blockchain {
                 crate::contracts::economics::fee_router::DAO_HEALTHCARE_KEY_ID,
             ),
             domain_registry: HashMap::new(),
+            nft_collections: HashMap::new(),
+            observer_registry: HashMap::new(),
+            observer_blocks: HashMap::new(),
+            credential_registry: HashMap::new(),
+            did_to_username: HashMap::new(),
         }
     }
 
@@ -470,6 +477,9 @@ impl Blockchain {
                     // Replay domain registration/update transactions.
                     blockchain.process_domain_transactions(&block);
 
+                    // Replay gateway registration/update transactions.
+                    blockchain.process_gateway_transactions(&block);
+
                     // Replay employment contract creation so employment_registry is populated.
                     if let Err(e) = blockchain.process_employment_contract_transactions(&block) {
                         warn!(
@@ -658,6 +668,12 @@ impl Blockchain {
         // This is needed when loading from sled after a binary upgrade that added the
         // bonding curve, or when the original genesis didn't include it.
         blockchain.initialize_cbe_genesis();
+
+        // Initialize Treasury Kernel if not already present.
+        blockchain.init_treasury_kernel_if_missing();
+
+        // Welfare DAO tokens are initialized after kernel init in the component
+        // startup path (council_members not yet loaded at this point).
 
         info!(
             "📂 Loaded blockchain from SledStore: height={}, identities={}, wallets={}, tokens={}",

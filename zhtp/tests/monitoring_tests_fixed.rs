@@ -305,8 +305,6 @@ async fn test_monitoring_configuration() -> Result<()> {
             block_time_max: Duration::from_secs(20),
             transaction_timeout: Duration::from_secs(180),
         },
-        dashboard_enabled: false,
-        dashboard_port: 8082,
         log_level: "debug".to_string(),
         export_prometheus: false,
         prometheus_port: 9091,

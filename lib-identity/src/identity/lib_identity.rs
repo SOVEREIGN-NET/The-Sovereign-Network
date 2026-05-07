@@ -942,12 +942,21 @@ impl ZhtpIdentity {
         )
         .map_err(|e| anyhow!("Invalid public_key: {}", e))?;
 
-        let node_id: NodeId = serde_json::from_value(
-            raw.get("node_id")
-                .cloned()
-                .ok_or_else(|| anyhow!("Missing node_id"))?,
-        )
-        .map_err(|e| anyhow!("Invalid node_id: {}", e))?;
+        // Re-derive NodeId from DID + device name instead of reading from JSON.
+        // Phone-exported keystores may have stale network_genesis or creation_nonce
+        // that cause UHP handshake failures. Re-derivation ensures the NodeId matches
+        // the current network configuration.
+        let primary_device_for_node_id = raw
+            .get("primary_device")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default-device");
+        let node_id = crate::types::node_id::NodeId::from_did_device(&did, primary_device_for_node_id)
+            .unwrap_or_else(|_| {
+                // Fallback: read from JSON if re-derivation fails
+                serde_json::from_value(
+                    raw.get("node_id").cloned().unwrap_or_default()
+                ).unwrap_or_default()
+            });
 
         let device_node_ids: HashMap<String, NodeId> = serde_json::from_value(
             raw.get("device_node_ids")

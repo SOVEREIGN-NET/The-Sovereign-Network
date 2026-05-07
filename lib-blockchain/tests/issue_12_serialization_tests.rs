@@ -6,16 +6,13 @@
 use lib_blockchain::contracts::*;
 use lib_blockchain::integration::crypto_integration::PublicKey;
 
+mod common;
+
 // ============================================================================
 // TEST UTILITIES
 // ============================================================================
 
-/// Helper to create a test public key
-fn test_public_key(id: u8) -> PublicKey {
-    let mut dilithium_pk = [0u8; 2592];
-    dilithium_pk[0] = id;
-    PublicKey::new(dilithium_pk)
-}
+fn test_public_key(id: u8) -> PublicKey { common::crypto_fixtures::seeded_public_key(id) }
 
 // ============================================================================
 // TEST 1: TOKEN CONTRACT SERIALIZATION

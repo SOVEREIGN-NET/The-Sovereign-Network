@@ -8,18 +8,10 @@ use lib_blockchain::transaction::{Transaction, TransactionPayload, WalletTransac
 use lib_blockchain::types::{Hash, TransactionType};
 use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
-fn test_pubkey(id: u8) -> PublicKey {
-    PublicKey::new([0u8; 2592])
-}
+mod common;
 
-fn test_signature(pubkey: &PublicKey) -> Signature {
-    Signature {
-        signature: vec![0u8; 64],
-        public_key: pubkey.clone(),
-        algorithm: SignatureAlgorithm::DEFAULT,
-        timestamp: 1_700_000_000,
-    }
-}
+fn test_pubkey(_id: u8) -> PublicKey { common::crypto_fixtures::dummy_public_key() }
+fn test_signature(pubkey: &PublicKey) -> Signature { common::crypto_fixtures::signature_for(pubkey) }
 
 fn wallet_data(wallet_id: [u8; 32], owner_pubkey: &PublicKey, name: &str) -> WalletTransactionData {
     WalletTransactionData {

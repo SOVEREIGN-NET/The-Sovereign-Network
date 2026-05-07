@@ -1,7 +1,7 @@
 use crate::contracts::executor::{CallOrigin, ExecutionContext};
 use crate::integration::crypto_integration::PublicKey;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fmt;
 
 /// Errors for token contract operations
@@ -50,10 +50,10 @@ pub struct TokenContract {
     pub is_deflationary: bool,
     /// Amount burned per transfer (if deflationary)
     pub burn_rate: u128,
-    /// Account balances mapping
-    balances: HashMap<PublicKey, u128>,
-    /// Allowances for third-party transfers
-    allowances: HashMap<PublicKey, HashMap<PublicKey, u128>>,
+    /// Account balances mapping (BTreeMap for deterministic serialization order)
+    balances: BTreeMap<PublicKey, u128>,
+    /// Allowances for third-party transfers (BTreeMap for deterministic serialization order)
+    allowances: BTreeMap<PublicKey, BTreeMap<PublicKey, u128>>,
     /// Token creator
     pub creator: PublicKey,
     /// Kernel minting authority (for UBI distribution)
@@ -64,7 +64,7 @@ pub struct TokenContract {
     /// Locked balances per account (non-transferable until released)
     /// Used by Treasury Kernel for staking, vesting, escrow
     #[serde(default)]
-    locked_balances: HashMap<PublicKey, u128>,
+    locked_balances: BTreeMap<PublicKey, u128>,
     /// When true, only Treasury Kernel (kernel_mint_authority) can call
     /// mint(), burn(), and transfer(). Defaults to false for backward compat.
     #[serde(default)]
@@ -98,11 +98,11 @@ impl TokenContract {
             max_supply,
             is_deflationary,
             burn_rate,
-            balances: HashMap::new(),
-            allowances: HashMap::new(),
+            balances: BTreeMap::new(),
+            allowances: BTreeMap::new(),
             creator,
             kernel_mint_authority: None,
-            locked_balances: HashMap::new(),
+            locked_balances: BTreeMap::new(),
             kernel_only_mode: false,
             creator_did: None,
             fee_schedule_bps: None,
@@ -146,6 +146,34 @@ impl TokenContract {
             creator,
         );
         token.kernel_mint_authority = Some(kernel_authority);
+        token
+    }
+
+    /// Create a welfare DAO sector token (kernel-controlled).
+    ///
+    /// Welfare tokens are 1:1 SOV-backed service access vouchers.
+    /// Only the Treasury Kernel can mint (on SOV stake) and burn (on provider redemption).
+    /// Supply is elastic — always equals SOV locked in the sector reserve.
+    /// Non-tradeable by design (enforced at application layer, not token contract).
+    pub fn new_welfare_token(
+        name: String,
+        symbol: String,
+        kernel_authority: PublicKey,
+    ) -> Self {
+        let token_id = crate::contracts::utils::generate_custom_token_id(&name, &symbol);
+        let creator = PublicKey::new([0u8; 2592]);
+        let mut token = Self::new(
+            token_id,
+            name,
+            symbol,
+            18,                           // 18 decimals (matches SOV for 1:1 backing)
+            u128::MAX,                    // No fixed cap — elastic supply = SOV staked
+            false,
+            0,
+            creator,
+        );
+        token.kernel_mint_authority = Some(kernel_authority);
+        token.kernel_only_mode = true;
         token
     }
 
@@ -298,7 +326,7 @@ impl TokenContract {
         // Reduce allowance
         self.allowances
             .entry(owner.clone())
-            .or_insert_with(HashMap::new)
+            .or_insert_with(BTreeMap::new)
             .insert(spender.clone(), allowance - amount);
 
         // Perform transfer from owner to recipient
@@ -330,7 +358,7 @@ impl TokenContract {
     pub fn approve(&mut self, owner: &PublicKey, spender: &PublicKey, amount: u128) {
         self.allowances
             .entry(owner.clone())
-            .or_insert_with(HashMap::new)
+            .or_insert_with(BTreeMap::new)
             .insert(spender.clone(), amount);
     }
 
@@ -559,7 +587,7 @@ impl TokenContract {
     }
 
     /// Get all allowances for a given owner
-    pub fn get_owner_allowances(&self, owner: &PublicKey) -> Option<&HashMap<PublicKey, u128>> {
+    pub fn get_owner_allowances(&self, owner: &PublicKey) -> Option<&BTreeMap<PublicKey, u128>> {
         self.allowances.get(owner)
     }
 

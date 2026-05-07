@@ -85,6 +85,21 @@ impl LoRaWANMeshProtocol {
         Ok(())
     }
 
+    /// Stop LoRaWAN mesh discovery
+    pub async fn stop_mesh_discovery(&self) -> Result<()> {
+        info!("Stopping LoRaWAN mesh discovery...");
+
+        // In production, this would:
+        // 1. Leave LoRaWAN network
+        // 2. Power down radio module
+        // 3. Clear mesh routing tables
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        info!("LoRaWAN mesh discovery stopped");
+        Ok(())
+    }
+
     /// Initialize LoRaWAN radio module
     async fn initialize_radio(&self) -> Result<()> {
         info!(" Initializing LoRaWAN radio module...");

@@ -1410,9 +1410,8 @@ mod tests {
     async fn install_test_storage() -> Arc<RwLock<lib_storage::PersistentStorageSystem>> {
         let temp = tempfile::tempdir().unwrap();
         let config = crate::runtime::components::identity::create_default_storage_config().unwrap();
-        let storage = lib_storage::UnifiedStorageSystem::new_persistent(config, temp.path())
-            .await
-            .unwrap();
+        let storage =
+            lib_storage::UnifiedStorageSystem::new_persistent(config, temp.path()).unwrap();
         let storage = Arc::new(RwLock::new(storage));
         crate::runtime::storage_provider::set_global_storage(storage.clone())
             .await
@@ -1562,6 +1561,7 @@ async fn record_identity_on_blockchain(identity_result: &serde_json::Value) -> R
         dao_fee: 50,
         controlled_nodes: Vec::new(),
         owned_wallets: Vec::new(),
+        kyber_public_key: vec![],
     };
 
     let identity_tx_hash = blockchain_guard.register_identity(identity_data)?;

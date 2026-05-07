@@ -1,0 +1,31 @@
+[package]
+name = "lib-consensus-core"
+version = "0.1.0"
+edition = "2021"
+authors = ["Sovereign Network Team"]
+license = "MIT OR Apache-2.0"
+description = "Pure BFT consensus FSM. No IO. No domain leak."
+
+# AD-001 / AD-002 (docs/epics/consensus-rewrite-decisions.md):
+# This crate must NOT depend on lib-storage, lib-proofs, lib-blockchain,
+# lib-network, lib-mempool, lib-fees, lib-tokens, lib-economy, lib-governance,
+# lib-dht, or lib-dns. All side effects flow through ports/* traits implemented
+# by lib-consensus-runtime.
+[dependencies]
+lib-types     = { path = "../lib-types" }
+lib-crypto    = { path = "../lib-crypto" }
+lib-identity  = { path = "../lib-identity" }
+serde         = { version = "1.0", features = ["derive"] }
+thiserror     = "1.0"
+tracing       = "0.1"
+async-trait   = "0.1"
+
+[dev-dependencies]
+# tokio is allowed only for tests. Production code in src/ must not depend on
+# the tokio runtime — see AD-002.
+tokio         = { version = "1.0", features = ["rt", "macros", "sync", "time"] }
+
+[features]
+default      = []
+testing      = []
+dev-insecure = []

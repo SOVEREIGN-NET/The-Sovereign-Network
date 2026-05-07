@@ -13,17 +13,22 @@ extern crate lib_proofs;
 pub mod block;
 pub mod blockchain;
 pub mod byzantine_evidence;
+pub mod chain_evaluation;
 pub mod dao;
 pub mod dht_index;
+pub mod difficulty;
 pub mod edge_node_state;
 pub mod events;
 pub mod exchange;
+pub mod ipc;
 pub mod execution;
 pub mod fees;
 mod fork_recovery; // gutted in Issue #936; kept as private to avoid orphan module errors
 pub mod genesis;
 pub mod integration;
 pub mod mempool;
+pub mod mining;
+pub mod observer;
 pub mod onramp;
 pub mod oracle;
 pub mod pricing;
@@ -36,6 +41,8 @@ pub mod sync;
 pub mod transaction;
 pub mod types;
 pub mod utils;
+pub mod query;
+mod query_impl;
 pub mod validation;
 
 // Smart contracts submodule (feature-gated)
@@ -93,8 +100,9 @@ pub use block::{
 // Blockchain module
 pub use blockchain::{
     Blockchain, BlockchainBroadcastMessage, BlockchainImport, ConsensusCheckpoint,
-    EconomicsTransaction, ValidatorInfo, ADMISSION_SOURCE_BOOTSTRAP_GENESIS,
+    EconomicsTransaction, ValidatorInfo, GatewayInfo, ADMISSION_SOURCE_BOOTSTRAP_GENESIS,
 };
+pub use query::{BlockchainQuery, BlockchainMutate};
 #[cfg(feature = "contracts")]
 pub use contracts::AmmPool;
 
@@ -155,15 +163,20 @@ pub use integration::economic_integration::{
     EconomicTransactionProcessor, TreasuryStats,
 };
 
-// Re-export consensus integration
+// Re-export consensus integration helpers (post-CONS-505).
+// `BlockchainConsensusCoordinator`, `initialize_consensus_integration`,
+// and `initialize_consensus_integration_with_difficulty_config` were
+// deleted along with the parallel orchestrator. The single consensus
+// driver is `lib_consensus_runtime::ConsensusRuntime`.
 pub use integration::consensus_integration::{
-    create_dao_proposal_transaction, create_dao_vote_transaction, initialize_consensus_integration,
-    initialize_consensus_integration_with_difficulty_config, BlockchainConsensusCoordinator,
-    ConsensusStatus,
+    create_dao_proposal_transaction, create_dao_vote_transaction, ConsensusStatus,
 };
 
-// Re-export difficulty types from lib-consensus for convenience
-pub use lib_consensus::{DifficultyConfig, DifficultyError, DifficultyManager, DifficultyResult};
+// Re-export difficulty types (moved from lib-consensus per CONS-107 / AD-003)
+pub use difficulty::{DifficultyConfig, DifficultyError, DifficultyManager, DifficultyResult};
+
+// Re-export chain evaluation types (moved from lib-consensus per CONS-107 / AD-003)
+pub use chain_evaluation::{ChainDecision, ChainEvaluator, ChainMergeResult, ChainSummary};
 
 // Re-export storage types (Phase 1 storage layer)
 pub use storage::{

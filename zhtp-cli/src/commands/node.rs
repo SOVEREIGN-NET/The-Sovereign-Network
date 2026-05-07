@@ -11,6 +11,7 @@ use crate::argument_parsing::{NodeAction, NodeArgs, ZhtpCli};
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
 
+use lib_protocols::types::ZhtpStatus;
 use std::path::PathBuf;
 use zhtp::config::environment::Environment;
 use zhtp::runtime::did_startup::WalletStartupManager;
@@ -50,6 +51,8 @@ pub fn action_to_operation(action: &NodeAction) -> NodeOperation {
         NodeAction::Stop => NodeOperation::Stop,
         NodeAction::Status => NodeOperation::Status,
         NodeAction::Restart => NodeOperation::Restart,
+        NodeAction::SetupUi => NodeOperation::Status, // handled separately
+        NodeAction::HaltConsensus { .. } => NodeOperation::Status, // handled separately
     }
 }
 
@@ -99,6 +102,33 @@ async fn handle_node_command_impl(
     cli: &ZhtpCli,
     output: &dyn Output,
 ) -> CliResult<()> {
+    // Handle setup-ui separately (it starts its own HTTP server)
+    if matches!(args.action, NodeAction::SetupUi) {
+        return crate::commands::setup_ui::run_setup_ui(cli, output).await;
+    }
+
+    // Handle halt-consensus via QUIC API call
+    if let NodeAction::HaltConsensus { ref reason } = args.action {
+        output.info(&format!("Requesting consensus halt (reason: {})...", reason))?;
+
+        let server = &cli.server;
+        let mut client = crate::commands::web4_utils::connect_default(server).await?;
+        let body = serde_json::json!({ "reason": reason });
+
+        let response = client.post_json("/api/v1/node/halt-consensus", &body).await
+            .map_err(|e| CliError::ApiCallFailed {
+                endpoint: "/api/v1/node/halt-consensus".to_string(),
+                status: 0,
+                reason: e.to_string(),
+            })?;
+
+        let result: serde_json::Value = serde_json::from_slice(&response.body)
+            .unwrap_or_else(|_| serde_json::json!({"raw": String::from_utf8_lossy(&response.body).to_string()}));
+
+        output.info(&format!("{}", serde_json::to_string_pretty(&result).unwrap_or_default()))?;
+        return Ok(());
+    }
+
     let op = action_to_operation(&args.action);
     output.info(&format!("{}...", op.description()))?;
 
@@ -157,23 +187,64 @@ async fn handle_node_command_impl(
             output.header("Node Status")?;
             output.print(&format!("Connecting to: {}", cli.server))?;
 
-            // Actually connect to running node and get status
             match crate::commands::web4_utils::connect_default(&cli.server).await {
-                Ok(client) => match client.get("/api/v1/node/status").await {
-                    Ok(response) => {
-                        let status: serde_json::Value =
-                            lib_network::client::ZhtpClient::parse_json(&response)
-                                .unwrap_or_else(|_| serde_json::json!({"raw": response}));
-                        output.success("Node is running")?;
-                        output.print(&serde_json::to_string_pretty(&status).unwrap_or_default())?;
+                Ok(client) => {
+                    // Probe registered endpoints in priority order.
+                    // `/api/v1/protocol/health` is a dedicated health endpoint.
+                    let status_endpoints = [
+                        "/api/v1/protocol/health",
+                        "/api/v1/protocol/info",
+                        "/api/v1/blockchain/status",
+                    ];
+
+                    let mut last_non_ok: Option<(String, String)> = None;
+                    let mut last_error: Option<String> = None;
+
+                    for endpoint in status_endpoints {
+                        match client.get(endpoint).await {
+                            Ok(response) => {
+                                if response.status == ZhtpStatus::Ok {
+                                    let status: serde_json::Value =
+                                        lib_network::client::ZhtpClient::parse_json(&response)
+                                            .unwrap_or_else(
+                                                |_| serde_json::json!({"raw": response}),
+                                            );
+                                    output.success("Node is running")?;
+                                    output.print(&format!(
+                                        "Health endpoint: {}",
+                                        endpoint
+                                    ))?;
+                                    output.print(
+                                        &serde_json::to_string_pretty(&status).unwrap_or_default(),
+                                    )?;
+                                    return Ok(());
+                                }
+
+                                last_non_ok = Some((
+                                    endpoint.to_string(),
+                                    format!("{} ({})", response.status, response.status_message),
+                                ));
+                            }
+                            Err(e) => {
+                                last_error = Some(format!("{}: {}", endpoint, e));
+                            }
+                        }
                     }
-                    Err(e) => {
-                        output.warning(&format!("Failed to get status: {}", e))?;
+
+                    if let Some((endpoint, status)) = last_non_ok {
+                        output.warning(&format!(
+                            "Node responded, but health check failed at {}: {}",
+                            endpoint, status
+                        ))?;
+                    } else if let Some(err) = last_error {
+                        output.warning(&format!("Failed to get node status: {}", err))?;
+                    } else {
+                        output.warning("Failed to get node status from known endpoints")?;
                     }
-                },
+                }
                 Err(e) => {
                     output.warning(&format!("Cannot connect to node at {}: {}", cli.server, e))?;
-                    output.print("Is the node running? Start it with: zhtp node start")?;
+                    output.print("Is the node running? Start it with: zhtp-cli node start")?;
                 }
             }
             Ok(())
@@ -182,6 +253,14 @@ async fn handle_node_command_impl(
             output.warning("Restarting node...")?;
             output.print("Stop the current node and start it again.")?;
             Ok(())
+        }
+        NodeAction::SetupUi => {
+            // Already handled above, unreachable
+            unreachable!("SetupUi handled before match")
+        }
+        NodeAction::HaltConsensus { .. } => {
+            // Already handled above, unreachable
+            unreachable!("HaltConsensus handled before match")
         }
     }
 }
@@ -206,7 +285,9 @@ async fn start_node_impl(
     let cli_args = CliArgs {
         mesh_port: port_override,
         pure_mesh,
-        config: PathBuf::from(config_path.unwrap_or_else(|| "./config".to_string())),
+        config: PathBuf::from(
+            config_path.unwrap_or_else(|| "zhtp/configs/dev-node.toml".to_string()),
+        ),
         environment: network_env,
         log_level: if dev_mode {
             "debug".to_string()
@@ -217,6 +298,9 @@ async fn start_node_impl(
         emergency_restore_from_local: false,
         allow_emergency_restore_genesis_mismatch: false,
     };
+
+    // Ensure all zhtp internals resolve keystore/sled/runtime paths consistently.
+    zhtp::set_node_data_dir(cli_args.data_dir.clone());
 
     // Load configuration
     let mut node_config = load_configuration(&cli_args)

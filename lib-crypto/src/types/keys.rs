@@ -21,7 +21,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 /// - Memory barriers prevent reordering
 /// - Zeroization on drop for sensitive data protection
 #[repr(C)]
-#[derive(Debug, Clone, Hash)]
+#[derive(Debug, Clone)]
 pub struct PublicKey {
     /// CRYSTALS-Dilithium5 public key for post-quantum signatures (2592 bytes).
     pub dilithium_pk: [u8; 2592],
@@ -116,6 +116,96 @@ impl PartialEq for PublicKey {
 }
 
 impl Eq for PublicKey {}
+
+// Deterministic ordering for BTreeMap keys in consensus-critical state.
+// Orders by key_id first (fast), then full key bytes if key_ids collide.
+impl PartialOrd for PublicKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for PublicKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.key_id
+            .cmp(&other.key_id)
+            .then_with(|| self.dilithium_pk.cmp(&other.dilithium_pk))
+            .then_with(|| self.kyber_pk.cmp(&other.kyber_pk))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PublicKey;
+
+    fn make_public_key(key_id_byte: u8, dilithium_byte: u8, kyber_byte: u8) -> PublicKey {
+        let mut key_id = [0u8; 32];
+        key_id[0] = key_id_byte;
+
+        let mut dilithium_pk = [0u8; 2592];
+        dilithium_pk[0] = dilithium_byte;
+
+        let mut kyber_pk = [0u8; 1568];
+        kyber_pk[0] = kyber_byte;
+
+        PublicKey {
+            dilithium_pk,
+            kyber_pk,
+            key_id,
+        }
+    }
+
+    #[test]
+    fn public_key_ord_orders_by_key_id_first() {
+        let lower = make_public_key(1, 255, 255);
+        let higher = make_public_key(2, 0, 0);
+
+        assert!(lower < higher);
+        assert!(higher > lower);
+    }
+
+    #[test]
+    fn public_key_ord_uses_dilithium_as_tie_breaker() {
+        let lower = make_public_key(7, 1, 255);
+        let higher = make_public_key(7, 2, 0);
+
+        assert!(lower < higher);
+        assert!(higher > lower);
+    }
+
+    #[test]
+    fn public_key_ord_uses_kyber_as_final_tie_breaker() {
+        let lower = make_public_key(9, 3, 1);
+        let higher = make_public_key(9, 3, 2);
+
+        assert!(lower < higher);
+        assert!(higher > lower);
+    }
+
+    #[test]
+    fn public_key_ord_is_consistent_with_eq() {
+        let a = make_public_key(11, 22, 33);
+        let b = make_public_key(11, 22, 33);
+        let c = make_public_key(11, 22, 34);
+
+        assert_eq!(a, b);
+        assert_eq!(a.cmp(&b), std::cmp::Ordering::Equal);
+
+        assert_ne!(a, c);
+        assert_ne!(a.cmp(&c), std::cmp::Ordering::Equal);
+    }
+}
+// Manual Hash implementation to match manual PartialEq implementation
+impl std::hash::Hash for PublicKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Hash all fields used in PartialEq comparison
+        // Note: We use the raw bytes, not constant-time comparison
+        // (Hash doesn't need constant-time properties)
+        self.dilithium_pk.hash(state);
+        self.kyber_pk.hash(state);
+        self.key_id.hash(state);
+    }
+}
 
 // CRITICAL FIX C5: Zeroize sensitive data on drop
 impl Drop for PublicKey {

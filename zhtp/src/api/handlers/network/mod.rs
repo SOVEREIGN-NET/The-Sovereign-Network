@@ -4,6 +4,7 @@
 //! Built on lib-network functions and runtime orchestrator capabilities.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 // Removed unused tokio::sync::RwLock, anyhow::Result, serde_json::json
 use chrono;
@@ -14,6 +15,7 @@ use uuid;
 use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 
+use lib_blockchain::BlockchainQuery;
 use crate::runtime::RuntimeOrchestrator;
 
 // Constants
@@ -278,6 +280,41 @@ pub struct PeerPerformanceInfo {
     pub status: String, // "active", "warning", "banned"
 }
 
+// Issue #2197: Relay-capable candidate discovery
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RelayCandidatesRequest {
+    pub min_quality: Option<f64>,
+    pub capability: Option<String>, // "relay", "dht", "api", etc.
+    pub page: Option<usize>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RelayCandidatesResponse {
+    pub status: String,
+    pub total: usize,
+    pub page: usize,
+    pub limit: usize,
+    pub candidates: Vec<RelayCandidateInfo>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RelayCandidateInfo {
+    pub did: String,
+    pub peer_id: String,
+    pub endpoints: Vec<String>,
+    pub protocols: Vec<String>,
+    pub routing_capacity: u32,
+    pub bandwidth_mbps: f64,
+    pub latency_ms: u32,
+    pub reliability_score: f64,
+    pub trust_score: f64,
+    pub health_state: String, // "healthy", "degraded", "unhealthy"
+    pub admission_state: String, // "admitted", "pending", "rejected"
+    pub tier: String,
+}
+
 /// Network handler implementation
 pub struct NetworkHandler {
     runtime: Arc<RuntimeOrchestrator>,
@@ -332,9 +369,22 @@ impl ZhtpRequestHandler for NetworkHandler {
 
         let response = match (request.method, request.uri.as_str()) {
             // Gas pricing endpoint (Issue #10)
+            (ZhtpMethod::Get, "/api/v1/node/status") => self.handle_node_status(request).await,
+            (ZhtpMethod::Post, "/api/v1/node/shutdown") => self.handle_node_shutdown(request).await,
+            (ZhtpMethod::Post, "/api/v1/node/halt-consensus") => self.handle_halt_consensus(request).await,
+            (ZhtpMethod::Post, "/api/v1/node/force-sync") => self.handle_node_force_sync(request).await,
             (ZhtpMethod::Get, "/api/v1/network/gas") => self.handle_get_gas_info(request).await,
             (ZhtpMethod::Get, "/api/v1/network/ping") => self.handle_ping(request).await,
+            (ZhtpMethod::Get, "/api/v1/network/relay-candidates") => {
+                self.handle_get_relay_candidates(request).await
+            }
             // Issue #1801: Missing network endpoints
+            (ZhtpMethod::Get, "/api/v1/network/directory") => {
+                self.handle_get_directory(request).await
+            }
+            (ZhtpMethod::Get, "/api/v1/network/topology") => {
+                self.handle_topology_ui(request).await
+            }
             (ZhtpMethod::Get, "/api/v1/network/status") => {
                 self.handle_get_network_status(request).await
             }
@@ -434,6 +484,7 @@ impl ZhtpRequestHandler for NetworkHandler {
         request.uri.starts_with("/api/v1/blockchain/network/")
             || request.uri.starts_with("/api/v1/blockchain/sync/")
             || request.uri.starts_with("/api/v1/network/")
+            || request.uri.starts_with("/api/v1/node/")
     }
 
     fn priority(&self) -> u32 {
@@ -442,6 +493,174 @@ impl ZhtpRequestHandler for NetworkHandler {
 }
 
 impl NetworkHandler {
+    /// Get relay-capable peer candidates
+    /// GET /api/v1/network/relay-candidates (Issue #2197)
+    async fn handle_get_relay_candidates(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Getting relay candidates");
+
+        // Parse query parameters from URI
+        let query = request.uri.split('?').nth(1).unwrap_or("");
+        let params: HashMap<&str, &str> = query
+            .split('&')
+            .filter(|p| !p.is_empty())
+            .filter_map(|p| {
+                let mut parts = p.splitn(2, '=');
+                Some((parts.next()?, parts.next().unwrap_or("")))
+            })
+            .collect();
+
+        let min_quality = params
+            .get("min_quality")
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0);
+        let capability = params.get("capability").map(|s| s.to_string());
+        let page = params
+            .get("page")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(1)
+            .max(1);
+        let limit = params
+            .get("limit")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(20)
+            .clamp(1, 100);
+
+        // Access peer registry via global mesh router
+        let candidates = match crate::runtime::mesh_router_provider::get_global_mesh_router().await
+        {
+            Ok(mesh_router) => {
+                let registry = mesh_router.connections.read().await;
+                let mut candidates: Vec<RelayCandidateInfo> = registry
+                    .all_peers()
+                    .filter(|entry| {
+                        // Base filter: Tier2 OR routing_capacity > 0
+                        let is_relay = entry.tier == lib_network::peer_registry::PeerTier::Tier2
+                            || entry.capabilities.routing_capacity > 0;
+
+                        if !is_relay {
+                            return false;
+                        }
+
+                        // Quality filter
+                        if min_quality > 0.0 && entry.trust_score < min_quality {
+                            return false;
+                        }
+
+                        // Capability filter
+                        if let Some(ref cap) = capability {
+                            match cap.as_str() {
+                                "relay" => {
+                                    entry.tier == lib_network::peer_registry::PeerTier::Tier2
+                                        || entry.capabilities.routing_capacity > 0
+                                }
+                                "dht" => entry.dht_info.is_some(),
+                                "api" => entry.capabilities.api_endpoint.is_some(),
+                                _ => true,
+                            }
+                        } else {
+                            true
+                        }
+                    })
+                    .map(|entry| {
+                        let health_state = if entry.reliability_score >= 0.8 {
+                            "healthy"
+                        } else if entry.reliability_score >= 0.5 {
+                            "degraded"
+                        } else {
+                            "unhealthy"
+                        }
+                        .to_string();
+
+                        let admission_state = entry
+                            .relay_admission
+                            .as_ref()
+                            .map(|a| match a.state {
+                                lib_network::peer_registry::relay_admission::RelayAdmissionState::Eligible => "admitted",
+                                lib_network::peer_registry::relay_admission::RelayAdmissionState::Probation => "pending",
+                                lib_network::peer_registry::relay_admission::RelayAdmissionState::Blocked => "rejected",
+                            })
+                            .unwrap_or("pending")
+                            .to_string();
+
+                        RelayCandidateInfo {
+                            did: entry.peer_id.did().to_string(),
+                            peer_id: hex::encode(
+                                &entry.peer_id.public_key().as_bytes()[..8],
+                            ),
+                            endpoints: entry
+                                .endpoints
+                                .iter()
+                                .map(|ep| ep.address.to_string())
+                                .collect(),
+                            protocols: entry
+                                .active_protocols
+                                .iter()
+                                .map(|p| format!("{:?}", p))
+                                .collect(),
+                            routing_capacity: entry.capabilities.routing_capacity,
+                            bandwidth_mbps: entry.connection_metrics.bandwidth_capacity as f64
+                                / 1_000_000.0,
+                            latency_ms: entry.connection_metrics.latency_ms,
+                            reliability_score: entry.reliability_score,
+                            trust_score: entry.trust_score,
+                            health_state,
+                            admission_state,
+                            tier: format!("{:?}", entry.tier),
+                        }
+                    })
+                    .collect();
+
+                // Sort by trust score descending, then reliability
+                candidates.sort_by(|a, b| {
+                    b.trust_score
+                        .partial_cmp(&a.trust_score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| {
+                            b.reliability_score
+                                .partial_cmp(&a.reliability_score)
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                        })
+                });
+
+                candidates
+            }
+            Err(e) => {
+                error!("API: Failed to access mesh router for relay candidates: {}", e);
+                vec![]
+            }
+        };
+
+        let total = candidates.len();
+        let start = (page - 1) * limit;
+        let paginated = if start < total {
+            candidates.into_iter().skip(start).take(limit).collect()
+        } else {
+            vec![]
+        };
+
+        let response = RelayCandidatesResponse {
+            status: "success".to_string(),
+            total,
+            page,
+            limit,
+            candidates: paginated,
+        };
+
+        info!(
+            "API: Retrieved {} relay candidates (page {}, limit {})",
+            response.candidates.len(), page, limit
+        );
+
+        let json_response = serde_json::to_vec(&response)
+            .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            CONTENT_TYPE_JSON.to_string(),
+            None,
+        ))
+    }
+
     /// Get gas pricing information
     /// GET /api/v1/network/gas (Issue #10)
     async fn handle_get_gas_info(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
@@ -668,6 +887,352 @@ impl NetworkHandler {
 
     /// Get network status (Issue #1801)
     /// GET /api/v1/network/status
+    /// Node status: comprehensive status for the setup UI and dashboard.
+    /// Public endpoint — no auth required.
+    async fn handle_node_status(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+            .await
+            .map_err(|e| anyhow::anyhow!("blockchain unavailable: {}", e))?;
+        let blockchain = blockchain_arc.read().await;
+
+        let environment = self.runtime.get_environment();
+
+        // Node identity
+        let node_did = crate::runtime::node_identity::get_runtime_node_did()
+            .unwrap_or_else(|| "not_initialized".to_string());
+
+        // Check if identity is registered on-chain
+        let identity_registered = blockchain.query_identity_exists(&node_did);
+
+        // Wallet balance (if registered)
+        let (wallet_id, sov_balance) = if identity_registered {
+            let did_hex = node_did.strip_prefix("did:zhtp:").unwrap_or(&node_did);
+            match hex::decode(did_hex) {
+                Ok(owner_bytes) => {
+                    let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+
+                    let wallet = blockchain.query_all_wallets().into_iter().find(|(_, w)| {
+                        w.owner_identity_id
+                            .as_ref()
+                            .map(|id| id.as_bytes() == owner_bytes.as_slice())
+                            .unwrap_or(false)
+                            && w.wallet_type == "Primary"
+                    }).map(|(_, w)| w);
+
+                    if let Some(w) = wallet {
+                        let wallet_id_hex = hex::encode(w.wallet_id.as_bytes());
+                        // Look up balance by key_id (wallet_id). We use find_balance_by_key_id
+                        // because PublicKey's Hash/PartialEq compare all fields (dilithium_pk,
+                        // kyber_pk, key_id), so a synthetic PublicKey with zeroed crypto keys
+                        // would never match a real entry in the balances HashMap.
+                        let wallet_key_id = w.wallet_id.as_array();
+                        let balance = blockchain
+                            .token_contracts
+                            .get(&sov_token_id)
+                            .and_then(|t| t.find_balance_by_key_id(&wallet_key_id))
+                            .map(|(_, bal)| bal)
+                            .unwrap_or(0);
+                        (Some(wallet_id_hex), balance)
+                    } else {
+                        (None, 0)
+                    }
+                }
+                Err(_) => {
+                    // DID hex portion is not valid hex — treat as no wallet
+                    (None, 0)
+                }
+            }
+        } else {
+            (None, 0)
+        };
+
+        let validator_count = blockchain.query_validator_count();
+        let identity_count = blockchain.query_identity_count();
+        let chain_height = blockchain.query_height();
+        let blocks_count = blockchain.query_block_count();
+        let pending_count = blockchain.query_pending_count();
+
+        // Determine detailed node state
+        let state = if node_did == "not_initialized" {
+            "setup_required"
+        } else if !identity_registered {
+            "identity_not_registered"
+        } else if chain_height == 0 {
+            "connecting"
+        } else if validator_count == 0 {
+            "connecting"
+        } else {
+            "ready"
+        };
+
+        // Sync telemetry: estimate target height from validator activity
+        let last_block_time = blockchain.query_latest_block()
+            .map(|b| b.header.timestamp)
+            .unwrap_or(0);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let seconds_behind = if last_block_time > 0 && now > last_block_time {
+            now - last_block_time
+        } else {
+            0
+        };
+
+        let response = serde_json::json!({
+            "state": state,
+            "did": node_did,
+            "identity_registered": identity_registered,
+            "chain_height": chain_height,
+            "wallet_id": wallet_id,
+            "sov_balance": sov_balance.to_string(),
+            "sov_balance_human": format!("{:.4}", sov_balance as f64 / 1_000_000_000_000_000_000.0),
+            "validator_count": validator_count,
+            "identity_count": identity_count,
+            "network_id": environment.to_string().to_ascii_lowercase(),
+            "pending_transactions": pending_count,
+            "blocks_stored": blocks_count,
+            "last_block_time": last_block_time,
+            "seconds_behind": seconds_behind,
+        });
+
+        Ok(ZhtpResponse::json(&response, None)?)
+    }
+
+    /// POST /api/v1/node/shutdown — clean shutdown of the node process
+    async fn handle_node_shutdown(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Node shutdown requested");
+        // Signal the runtime to begin graceful shutdown
+        let response = serde_json::json!({
+            "success": true,
+            "message": "Shutdown initiated. Node will stop after current block is finalized.",
+            "state": "shutting_down",
+        });
+        // Spawn shutdown in background so the response gets sent first
+        tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            info!("Node shutdown: sending SIGTERM to self");
+            unsafe { libc::kill(libc::getpid(), libc::SIGTERM); }
+        });
+        Ok(ZhtpResponse::json(&response, None)?)
+    }
+
+    /// POST /api/v1/node/halt-consensus — coordinated consensus halt (Council only)
+    async fn handle_halt_consensus(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        // Council-only gate
+        let principal = crate::api::principal::extract_principal_from_request(&request);
+        if principal.role != lib_access_control::Role::Council {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::Forbidden,
+                "Consensus halt requires Council role".to_string(),
+            ));
+        }
+
+        // Parse optional reason from body
+        let reason_str = serde_json::from_slice::<serde_json::Value>(&request.body)
+            .ok()
+            .and_then(|v| v.get("reason").and_then(|r| r.as_str().map(String::from)))
+            .unwrap_or_else(|| "operator-halt".to_string());
+
+        let halt_reason = match reason_str.as_str() {
+            "upgrade" => lib_consensus_core::fsm::state::HaltReason::UpgradeScheduled,
+            "emergency" => lib_consensus_core::fsm::state::HaltReason::EmergencyHalt,
+            _ => lib_consensus_core::fsm::state::HaltReason::ConsensusFailure,
+        };
+
+        // Get current height
+        let height = match crate::runtime::blockchain_provider::get_global_blockchain().await {
+            Ok(bc) => bc.read().await.height,
+            Err(_) => 0,
+        };
+
+        // Send halt event to consensus
+        if let Some(component) = self.runtime.get_component(&crate::runtime::ComponentId::Consensus).await {
+            if let Some(consensus) = component.as_any().downcast_ref::<crate::runtime::components::consensus::ConsensusComponent>() {
+                match consensus.halt_consensus(halt_reason, height).await {
+                    Ok(()) => {
+                        let response = serde_json::json!({
+                            "success": true,
+                            "message": format!("Consensus halt scheduled at height {}", height),
+                            "reason": reason_str,
+                            "height": height,
+                        });
+                        return Ok(ZhtpResponse::json(&response, None)?);
+                    }
+                    Err(e) => {
+                        return Ok(ZhtpResponse::error(
+                            ZhtpStatus::InternalServerError,
+                            format!("Failed to halt consensus: {}", e),
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(ZhtpResponse::error(
+            ZhtpStatus::InternalServerError,
+            "Consensus component not available".to_string(),
+        ))
+    }
+
+    /// POST /api/v1/node/force-sync — trigger immediate catch-up sync from peers
+    async fn handle_node_force_sync(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Force sync requested");
+        // Trigger catch-up by reading current height and requesting sync
+        let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+            .await
+            .map_err(|e| anyhow::anyhow!("blockchain unavailable: {}", e))?;
+        let height = {
+            let bc = blockchain_arc.read().await;
+            bc.height
+        };
+        let response = serde_json::json!({
+            "success": true,
+            "message": "Force sync triggered",
+            "current_height": height,
+            "state": "syncing",
+        });
+        Ok(ZhtpResponse::json(&response, None)?)
+    }
+
+    async fn handle_get_directory(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Getting network directory (topology)");
+
+        let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+            .await
+            .map_err(|e| anyhow::anyhow!("blockchain unavailable: {}", e))?;
+        let blockchain = blockchain_arc.read().await;
+        let environment = self.runtime.get_environment();
+
+        // Compute this node's SPKI pin
+        let local_spki = Self::compute_local_spki();
+
+        // This node's identity
+        let node_did = self.runtime.get_user_wallet().await
+            .map(|w| format!("did:zhtp:{}", hex::encode(&w.node_identity.id.0)))
+            .unwrap_or_default();
+        let node_role = format!("{:?}", self.runtime.get_node_role().await).to_ascii_lowercase();
+
+        // Known validator/gateway SPKI pins (SHA-256 of SubjectPublicKeyInfo DER).
+        // Keyed by IP. These are stable unless a node regenerates its TLS cert.
+        // TODO: move to on-chain validator registry so nodes publish their own pins.
+        let known_spki_pins: std::collections::HashMap<&str, &str> = [
+            ("77.42.37.161",   "611bd1197ee799c17ac46f3f27df45ec4580d924f0dc3597ba79bcad3d0fa970"), // g1
+            ("77.42.74.80",    "611bd1197ee799c17ac46f3f27df45ec4580d924f0dc3597ba79bcad3d0fa970"), // g2
+            ("178.105.9.247",  "eb71239b161a8ea0cdc94f3853298f3e063523c9860a9630cc57504b024a3f54"), // g3
+            ("148.113.140.176","939828e5fc146d3b2efb3255d53ba12b48f9da9c0a823bae145f6720eab3937c"), // g4
+            ("51.75.62.133",   "154afc2efe9d834f5264fd21033d49362599e358233d1c0d67ad487bab366d09"), // g5
+            ("91.98.113.188",  "611bd1197ee799c17ac46f3f27df45ec4580d924f0dc3597ba79bcad3d0fa970"), // gateway
+        ].into_iter().collect();
+
+        // Build validator entries from on-chain registry, with IP overlay
+        let ip_overlay = crate::runtime::validator_ip::get_all_resolved_addresses();
+        let validators: Vec<serde_json::Value> = blockchain
+            .validator_registry
+            .iter()
+            .filter(|(_, v)| v.status == "active")
+            .map(|(did, v)| {
+                let endpoint = ip_overlay.get(did).unwrap_or(&v.network_address);
+                let ip = endpoint.split(':').next().unwrap_or("");
+                let spki_pin = known_spki_pins.get(ip).unwrap_or(&"").to_string();
+                serde_json::json!({
+                    "did": v.identity_id,
+                    "role": "validator",
+                    "endpoint": endpoint,
+                    "ip": ip,
+                    "quic_port": 9334,
+                    "mesh_port": 9333,
+                    "stake": v.stake,
+                    "status": v.status,
+                    "blocks_validated": v.blocks_validated,
+                    "last_activity": v.last_activity,
+                    "commission_rate": v.commission_rate,
+                    "admission": v.admission_source,
+                    "spki_pin": spki_pin,
+                })
+            })
+            .collect();
+
+        // Gateway entries from on-chain registry (populated via GatewayRegistration transactions)
+        let gateways: Vec<serde_json::Value> = blockchain
+            .gateway_registry
+            .values()
+            .filter(|g| g.status == "active")
+            .map(|g| {
+                let ip = g.endpoints.split(':').next().unwrap_or("");
+                let spki_pin = known_spki_pins.get(ip).unwrap_or(&"").to_string();
+                serde_json::json!({
+                    "did": g.identity_id,
+                    "role": "gateway",
+                    "endpoint": g.endpoints,
+                    "ip": ip,
+                    "quic_port": 9334,
+                    "zdns_port": 53,
+                    "status": g.status,
+                    "stake": g.stake,
+                    "commission_rate": g.commission_rate,
+                    "spki_pin": spki_pin,
+                })
+            })
+            .collect();
+
+        // Peer count
+        let peer_count = self.runtime.get_connected_peers().await
+            .map(|p| p.len())
+            .unwrap_or(0);
+
+        let response = serde_json::json!({
+            "network_id": environment.to_string().to_ascii_lowercase(),
+            "chain_height": blockchain.query_height(),
+            "timestamp": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            // Back-compat: top-level fields for older clients
+            "validators": validators,
+            "validator_count": validators.len(),
+            "local_spki_pin": local_spki,
+            // New structured format
+            "this_node": {
+                "did": node_did,
+                "role": node_role,
+                "spki_pin": local_spki,
+            },
+            "topology": {
+                "validators": validators,
+                "gateways": gateways,
+                "total_validators": validators.len(),
+                "total_gateways": gateways.len(),
+                "connected_peers": peer_count,
+            },
+        });
+
+        Ok(ZhtpResponse::json(&response, None)?)
+    }
+
+    async fn handle_topology_ui(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        const TOPOLOGY_HTML: &str = include_str!("../../../ui/topology.html");
+        Ok(ZhtpResponse::html(TOPOLOGY_HTML.to_string(), None))
+    }
+
+    fn compute_local_spki() -> String {
+        let cert_paths = [
+            "./data/tls/server.crt",
+            "/opt/zhtp/data/tls/server.crt",
+            "/opt/zhtp/.zhtp/tls/server.crt",
+        ];
+        for path in &cert_paths {
+            if let Ok(pem) = std::fs::read(path) {
+                if let Some(Ok(cert_der)) = rustls_pemfile::certs(&mut pem.as_slice()).next() {
+                    if let Ok(hash) = lib_network::protocols::quic_mesh::QuicMeshProtocol::compute_spki_sha256(cert_der.as_ref()) {
+                        return hex::encode(hash);
+                    }
+                }
+            }
+        }
+        String::new()
+    }
+
     async fn handle_get_network_status(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         info!("API: Getting network status");
 

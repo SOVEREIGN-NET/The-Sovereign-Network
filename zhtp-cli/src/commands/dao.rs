@@ -19,6 +19,40 @@ use lib_network::client::ZhtpClient;
 use serde_json::{json, Value};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+fn sector_to_dao_key_id(sector: &str) -> CliResult<[u8; 32]> {
+    use lib_blockchain::contracts::economics::fee_router::{
+        DAO_EDUCATION_KEY_ID, DAO_ENERGY_KEY_ID, DAO_FOOD_KEY_ID, DAO_HEALTHCARE_KEY_ID,
+        DAO_HOUSING_KEY_ID,
+    };
+    match sector.to_lowercase().as_str() {
+        "healthcare" | "health" | "heal" => Ok(DAO_HEALTHCARE_KEY_ID),
+        "education" | "edu" => Ok(DAO_EDUCATION_KEY_ID),
+        "energy" | "enrg" => Ok(DAO_ENERGY_KEY_ID),
+        "housing" | "home" => Ok(DAO_HOUSING_KEY_ID),
+        "food" => Ok(DAO_FOOD_KEY_ID),
+        _ => Err(CliError::ConfigError(format!(
+            "Unknown sector '{}'. Valid: healthcare, education, energy, housing, food",
+            sector
+        ))),
+    }
+}
+
+fn load_identity() -> CliResult<zhtp_client::Identity> {
+    let keystore = default_keystore_path()?;
+    let loaded = load_identity_from_keystore(&keystore)?;
+    Ok(zhtp_client::Identity {
+        did: loaded.identity.did.clone(),
+        public_key: loaded.identity.public_key.dilithium_pk.to_vec(),
+        private_key: loaded.keypair.private_key.dilithium_sk.to_vec(),
+        kyber_public_key: loaded.identity.public_key.kyber_pk.to_vec(),
+        kyber_secret_key: loaded.keypair.private_key.kyber_sk.to_vec(),
+        node_id: loaded.identity.node_id.as_bytes().to_vec(),
+        device_id: loaded.identity.primary_device.clone(),
+        recovery_entropy: loaded.keypair.private_key.master_seed.to_vec(),
+        created_at: loaded.identity.created_at,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DaoOperation {
     Info,
@@ -87,7 +121,9 @@ pub fn action_to_operation(action: &DaoAction) -> Option<DaoOperation> {
         | DaoAction::EntityRegistryInit { .. }
         | DaoAction::EntityRegistryStatus
         | DaoAction::RecordOnRampTrade { .. }
-        | DaoAction::TreasuryAllocation { .. } => None,
+        | DaoAction::TreasuryAllocation { .. }
+        | DaoAction::Stake { .. }
+        | DaoAction::Unstake { .. } => None,
     }
 }
 
@@ -567,6 +603,83 @@ async fn handle_dao_command_impl(
                     reason: format!("Failed to parse response: {e}"),
                 })?;
             output.header("Treasury Allocation Submitted")?;
+            output.print(&format_output(&result, &cli.format)?)?;
+            Ok(())
+        }
+        DaoAction::Stake {
+            sector,
+            amount,
+            lock_blocks,
+        } => {
+            let dao_key_id = sector_to_dao_key_id(&sector)?;
+            const SOV_SCALE: u128 = 1_000_000_000_000_000_000; // 10^18
+            let amount_atoms = amount
+                .checked_mul(SOV_SCALE)
+                .ok_or_else(|| CliError::ConfigError("SOV amount overflow".to_string()))?;
+
+            let identity = load_identity()?;
+            let signed_tx = zhtp_client::build_dao_stake_tx(
+                &identity,
+                dao_key_id,
+                amount_atoms,
+                0, // nonce — executor reads from sled
+                lock_blocks,
+                3, // chain_id = testnet
+            )
+            .map_err(CliError::ConfigError)?;
+
+            let payload = serde_json::json!({ "signed_tx": signed_tx });
+            let endpoint = "/api/v1/dao/stake";
+            output.info(&format!(
+                "Staking {} SOV into {} DAO (lock: {} blocks)...",
+                amount, sector, lock_blocks
+            ))?;
+            let response = client.post_json(endpoint, &payload).await.map_err(|e| {
+                CliError::ApiCallFailed {
+                    endpoint: endpoint.to_string(),
+                    status: 0,
+                    reason: e.to_string(),
+                }
+            })?;
+            let result: Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
+                    endpoint: endpoint.to_string(),
+                    status: 0,
+                    reason: format!("Failed to parse response: {e}"),
+                })?;
+            output.header("SOV Staked")?;
+            output.print(&format_output(&result, &cli.format)?)?;
+            Ok(())
+        }
+        DaoAction::Unstake { sector } => {
+            let dao_key_id = sector_to_dao_key_id(&sector)?;
+
+            let identity = load_identity()?;
+            let signed_tx = zhtp_client::build_dao_unstake_tx(
+                &identity,
+                dao_key_id,
+                0, // nonce — executor reads from sled
+                3, // chain_id = testnet
+            )
+            .map_err(CliError::ConfigError)?;
+
+            let payload = serde_json::json!({ "signed_tx": signed_tx });
+            let endpoint = "/api/v1/dao/unstake";
+            output.info(&format!("Unstaking SOV from {} DAO...", sector))?;
+            let response = client.post_json(endpoint, &payload).await.map_err(|e| {
+                CliError::ApiCallFailed {
+                    endpoint: endpoint.to_string(),
+                    status: 0,
+                    reason: e.to_string(),
+                }
+            })?;
+            let result: Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
+                    endpoint: endpoint.to_string(),
+                    status: 0,
+                    reason: format!("Failed to parse response: {e}"),
+                })?;
+            output.header("SOV Unstaked")?;
             output.print(&format_output(&result, &cli.format)?)?;
             Ok(())
         }

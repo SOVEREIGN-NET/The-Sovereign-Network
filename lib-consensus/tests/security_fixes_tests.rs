@@ -18,33 +18,12 @@ use lib_identity::IdentityId;
 use std::collections::HashMap;
 use std::time::SystemTime;
 
-fn create_test_identity(seed: &str) -> IdentityId {
-    Hash::from_bytes(&hash_blake3(seed.as_bytes()))
-}
+mod common;
 
-fn create_test_key() -> Vec<u8> {
-    vec![1u8; 32] // Non-zero key for testing
-}
-
-fn create_zero_key() -> Vec<u8> {
-    vec![0u8; 32] // Zero key (should be rejected)
-}
-
-fn create_test_signature(nonce: u64) -> PostQuantumSignature {
-    let mut sig_bytes = vec![1u8; 64];
-    sig_bytes[0] = (nonce % 256) as u8;
-
-    PostQuantumSignature {
-        signature: sig_bytes,
-        public_key: PublicKey {
-            dilithium_pk: [1u8; 2592],
-            kyber_pk: [1u8; 1568],
-            key_id: [1u8; 32],
-        },
-        algorithm: SignatureAlgorithm::DEFAULT,
-        timestamp: nonce,
-    }
-}
+fn create_test_identity(seed: &str) -> IdentityId { common::consensus_fixtures::named_identity(seed) }
+fn create_test_key() -> Vec<u8> { common::consensus_fixtures::non_zero_key() }
+fn create_zero_key() -> Vec<u8> { common::consensus_fixtures::zero_key() }
+fn create_test_signature(nonce: u64) -> PostQuantumSignature { common::consensus_fixtures::nonce_signature(nonce) }
 
 #[test]
 fn test_fix_10_systemtime_panic_handling() {

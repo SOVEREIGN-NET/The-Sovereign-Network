@@ -21,6 +21,8 @@ use lib_blockchain::transaction::{
 use lib_blockchain::types::{Hash, TransactionType};
 use lib_proofs::types::ZkProof;
 
+mod common;
+
 // =============================================================================
 // Test Helpers
 // =============================================================================
@@ -41,24 +43,9 @@ fn create_executor_with_fee_sink(
     BlockExecutor::from_config(store, config)
 }
 
-fn create_dummy_public_key() -> PublicKey {
-    PublicKey::new([0u8; 2592])
-}
-
-fn create_recipient_pk(seed: u8) -> PublicKey {
-    let mut key_data = [0u8; 2592];
-    key_data[0] = seed;
-    PublicKey::new(key_data)
-}
-
-fn create_dummy_signature() -> Signature {
-    Signature {
-        signature: vec![0u8; 64],
-        public_key: create_dummy_public_key(),
-        algorithm: SignatureAlgorithm::DEFAULT,
-        timestamp: 0,
-    }
-}
+fn create_dummy_public_key() -> PublicKey { common::crypto_fixtures::dummy_public_key() }
+fn create_recipient_pk(seed: u8) -> PublicKey { common::crypto_fixtures::seeded_public_key(seed) }
+fn create_dummy_signature() -> Signature { common::crypto_fixtures::dummy_signature() }
 
 fn create_dummy_zk_proof() -> ZkProof {
     ZkProof::default()
@@ -296,7 +283,8 @@ fn test_fee_sink_receives_collected_fees() {
 
     // Verify fees collected matches the transfer fee
     assert_eq!(
-        outcome.fees_collected, transfer_fee,
+        outcome.fees_collected,
+        transfer_fee as u128,
         "Fees collected should match transfer fee"
     );
 }
@@ -368,7 +356,7 @@ fn test_fee_sink_balance_increases_deterministically() {
 
     let outcome1 = executor.apply_block(&block1).unwrap();
     assert_eq!(
-        outcome1.fees_collected, fee1,
+        outcome1.fees_collected, fee1 as u128,
         "Block 1 fees should be {}",
         fee1
     );
@@ -386,13 +374,13 @@ fn test_fee_sink_balance_increases_deterministically() {
 
     let outcome2 = executor.apply_block(&block2).unwrap();
     assert_eq!(
-        outcome2.fees_collected, fee2,
+        outcome2.fees_collected, fee2 as u128,
         "Block 2 fees should be {}",
         fee2
     );
 
     // Verify the fees are tracked correctly per block
-    let total_fees = fee1 + fee2;
+    let total_fees = (fee1 + fee2) as u128;
     assert_eq!(
         outcome1.fees_collected + outcome2.fees_collected,
         total_fees,
@@ -547,7 +535,7 @@ fn test_executor_outcome_reports_fee_routing() {
 
     // Verify the outcome correctly reports fees
     assert_eq!(
-        outcome.fees_collected, expected_fee,
+        outcome.fees_collected, expected_fee as u128,
         "Outcome should report correct fees"
     );
     assert_eq!(outcome.height, 2, "Height should be 2");

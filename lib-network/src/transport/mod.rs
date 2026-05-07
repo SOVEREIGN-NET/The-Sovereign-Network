@@ -7,6 +7,7 @@ use crate::peer_registry::PeerEndpoint;
 use crate::protocols::bluetooth::classic::BluetoothClassicProtocol;
 use crate::protocols::lorawan::LoRaWANMeshProtocol;
 use crate::protocols::quic_mesh::QuicMeshProtocol;
+use crate::protocols::satellite::SatelliteMeshProtocol;
 use crate::protocols::wifi_direct::WiFiDirectMeshProtocol;
 use crate::protocols::NetworkProtocol;
 use crate::types::mesh_message::ZhtpMeshMessage;
@@ -34,6 +35,8 @@ pub struct TransportManager {
     bluetooth: Option<Arc<RwLock<BluetoothClassicProtocol>>>,
     wifi: Option<Arc<RwLock<WiFiDirectMeshProtocol>>>,
     lora: Option<Arc<RwLock<LoRaWANMeshProtocol>>>,
+    /// Satellite handler is stored as Arc<RwLock<SatelliteMeshProtocol>>
+    satellite: Option<Arc<RwLock<SatelliteMeshProtocol>>>,
     /// QUIC handler is stored directly as Arc (Issue #167)
     /// QuicMeshProtocol doesn't implement Clone, so we can't wrap it in RwLock.
     /// It's safe to store as Arc<QuicMeshProtocol> because it's shared globally (Issue #907).
@@ -53,6 +56,12 @@ impl TransportManager {
 
     pub fn with_lora(mut self, handler: Arc<RwLock<LoRaWANMeshProtocol>>) -> Self {
         self.lora = Some(handler);
+        self
+    }
+
+    /// Set satellite handler
+    pub fn with_satellite(mut self, handler: Arc<RwLock<SatelliteMeshProtocol>>) -> Self {
+        self.satellite = Some(handler);
         self
     }
 
@@ -143,9 +152,23 @@ impl TransportManager {
                 "Transport downgrade blocked for peer {}",
                 peer.to_compact_string()
             )),
-            NetworkProtocol::Satellite => Err(anyhow!(
-                "Satellite transport not handled by TransportManager"
-            )),
+            NetworkProtocol::Satellite => {
+                let handler = self
+                    .satellite
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("Satellite handler not available"))?;
+
+                let addr_str = match &endpoint.address {
+                    NodeAddress::Satellite { terminal_id, .. } => terminal_id.as_str(),
+                    _ => return Err(anyhow!("Invalid address type for Satellite protocol")),
+                };
+
+                handler
+                    .read()
+                    .await
+                    .send_mesh_message(addr_str, serialized)
+                    .await
+            }
         }
     }
 }

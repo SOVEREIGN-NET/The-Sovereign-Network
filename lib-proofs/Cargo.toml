@@ -18,6 +18,16 @@ log = "0.4"
 
 # Cryptographic dependencies (using lib-crypto package)
 lib-crypto = { path = "../lib-crypto" }
+# NOTE on dep direction (CONS-104 / AD-003): the consensus-mechanism proof
+# types (StakeProof, WorkProof, ProofOfUsefulWork) moved to
+# `lib-proofs/src/consensus/` use `lib_crypto::Hash` directly instead of
+# `lib_identity::IdentityId` because lib-identity already depends on lib-proofs
+# (would create a cycle). `IdentityId` is a transparent alias for
+# `lib_crypto::Hash` (see `lib-identity/src/types/identity_types.rs:8`), so
+# this is a name-only difference at the call site.
+
+# rand for nonce generation in consensus::work_proof::WorkProof::new (CONS-104).
+rand = "0.8"
 
 # CPU detection for parallel processing
 num_cpus = "1.16"

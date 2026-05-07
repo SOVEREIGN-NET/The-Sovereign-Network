@@ -65,6 +65,7 @@ pub fn action_to_endpoint(action: &NetworkAction) -> Option<NetworkEndpoint> {
         NetworkAction::Peers => Some(NetworkEndpoint::Peers),
         NetworkAction::Test => Some(NetworkEndpoint::Test),
         NetworkAction::Ping { .. } => None, // Handled separately
+        NetworkAction::RelayCandidates { .. } => None, // Handled separately
     }
 }
 
@@ -108,6 +109,14 @@ async fn handle_network_command_impl(
 
             // Imperative: QUIC operations
             ping_peer(&target, count, output).await
+        }
+        NetworkAction::RelayCandidates {
+            min_quality,
+            capability,
+            json,
+        } => {
+            let client = connect_default(&cli.server).await?;
+            fetch_relay_candidates(&client, min_quality, capability, json, output).await
         }
     }
 }
@@ -225,6 +234,150 @@ async fn ping_peer(target: &str, count: u32, output: &dyn Output) -> CliResult<(
             avg_rtt.as_secs_f64() * 1000.0,
             max_rtt.as_secs_f64() * 1000.0
         ))?;
+    }
+
+    Ok(())
+}
+
+/// Fetch relay candidates from the API and display them
+async fn fetch_relay_candidates(
+    client: &ZhtpClient,
+    min_quality: Option<f64>,
+    capability: Option<String>,
+    json_output: bool,
+    output: &dyn Output,
+) -> CliResult<()> {
+    let mut path = "/api/v1/network/relay-candidates".to_string();
+    let mut query = Vec::new();
+    if let Some(mq) = min_quality {
+        query.push(format!("min_quality={}", mq));
+    }
+    if let Some(cap) = capability {
+        query.push(format!("capability={}", cap));
+    }
+    if !query.is_empty() {
+        path.push('?');
+        path.push_str(&query.join("&"));
+    }
+
+    let response = client.get(&path).await.map_err(|e| CliError::ApiCallFailed {
+        endpoint: path.clone(),
+        status: 0,
+        reason: e.to_string(),
+    })?;
+
+    let result: serde_json::Value = ZhtpClient::parse_json(&response).map_err(|e| {
+        CliError::ApiCallFailed {
+            endpoint: path.clone(),
+            status: 0,
+            reason: format!("Failed to parse response: {}", e),
+        }
+    })?;
+
+    if json_output {
+        output.print(&serde_json::to_string_pretty(&result).unwrap_or_default())?;
+        return Ok(());
+    }
+
+    let candidates = result
+        .get("candidates")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    if candidates.is_empty() {
+        output.info("No relay candidates found.")?;
+        return Ok(());
+    }
+
+    let total = result.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+    let page = result.get("page").and_then(|v| v.as_u64()).unwrap_or(1);
+    let limit = result.get("limit").and_then(|v| v.as_u64()).unwrap_or(20);
+
+    output.header("Relay Candidates")?;
+    output.print(&format!(
+        "Showing {} of {} candidates (page {}, limit {})",
+        candidates.len(),
+        total,
+        page,
+        limit
+    ))?;
+    output.print("")?;
+
+    for (i, candidate) in candidates.iter().enumerate() {
+        let did = candidate.get("did").and_then(|v| v.as_str()).unwrap_or("N/A");
+        let peer_id = candidate.get("peer_id").and_then(|v| v.as_str()).unwrap_or("N/A");
+        let tier = candidate.get("tier").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let health = candidate
+            .get("health_state")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let admission = candidate
+            .get("admission_state")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let routing_capacity = candidate
+            .get("routing_capacity")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let bandwidth = candidate
+            .get("bandwidth_mbps")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let latency = candidate
+            .get("latency_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let trust = candidate
+            .get("trust_score")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let reliability = candidate
+            .get("reliability_score")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+
+        let endpoints = candidate
+            .get("endpoints")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default();
+
+        let protocols = candidate
+            .get("protocols")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default();
+
+        output.print(&format!(
+            "{}. {} ({})",
+            (page - 1) * limit + (i as u64) + 1,
+            &did[..did.len().min(32)],
+            peer_id
+        ))?;
+        output.print(&format!("   Tier: {} | Health: {} | Admission: {}", tier, health, admission))?;
+        output.print(&format!(
+            "   Capacity: {} routes | Bandwidth: {:.1} Mbps | Latency: {} ms",
+            routing_capacity, bandwidth, latency
+        ))?;
+        output.print(&format!("   Trust: {:.2} | Reliability: {:.2}", trust, reliability))?;
+        if !endpoints.is_empty() {
+            output.print(&format!("   Endpoints: {}", endpoints))?;
+        }
+        if !protocols.is_empty() {
+            output.print(&format!("   Protocols: {}", protocols))?;
+        }
+        output.print("")?;
     }
 
     Ok(())

@@ -13,13 +13,16 @@ pub mod fees;
 pub mod mempool;
 pub mod node_id;
 pub mod node_type;
+pub mod observer_admission;
 pub mod peer;
 pub mod primitives;
 pub mod storage;
 pub mod tokenomics;
 
 // Canonical consensus types (Phase 1)
-pub use primitives::{Address, Amount, BlockHash, BlockHeight, Bps, TokenId, TxHash};
+pub use primitives::{
+    Address, Amount, BlockHash, BlockHeight, Bps, OutPoint, TokenId, TxHash, Utxo, UtxoMerkleProof,
+};
 
 pub use bonding_curve::{
     BondingCurveAccountState, BondingCurveBand, BondingCurveBuyReceipt, BondingCurveBuyTx,
@@ -48,6 +51,12 @@ pub use errors::*;
 pub use fees::{FeeDeficit, FeeInput, FeeParams, SigScheme, TxKind};
 pub use node_id::NodeId;
 pub use node_type::NodeType;
+pub use observer_admission::{
+    ObserverAdmissionActionMeta, ObserverAdmissionChallengeRef, ObserverAdmissionPolicy,
+    ObserverAdmissionRecord, ObserverAdmissionStatus, ObserverNetworkBinding, ObserverNodeInfo,
+    ObserverProofLevel, ObserverRateLimitTier, ObserverSponsorBinding, ProofLevelQuota,
+    TrustedSyncSourceRef,
+};
 pub use peer::PeerId;
 pub use storage::ProtocolStorageStats;
 pub use tokenomics::{

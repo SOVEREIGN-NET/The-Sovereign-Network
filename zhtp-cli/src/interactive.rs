@@ -97,7 +97,6 @@ impl InteractiveShell {
         // Monitoring
         self.register_command("monitor", "Monitoring and alerting", "monitor <start|stop|status>", "Monitoring");
         self.register_command("alerts", "Show active alerts", "alerts", "Monitoring");
-        self.register_command("dashboard", "Open web dashboard", "dashboard", "Monitoring");
         self.register_command("stats", "Show detailed statistics", "stats [component]", "Monitoring");
     }
 
@@ -873,7 +872,6 @@ impl InteractiveShell {
         match args[0] {
             "status" => {
                 println!("Monitoring System");
-                println!("   Dashboard: http://localhost:8081");
                 println!("   Alerts: [Placeholder] active");
                 println!("   Metrics Collection: Active");
             }

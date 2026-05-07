@@ -690,9 +690,15 @@ impl QuicMeshProtocol {
 
         // === On-Chain Identity Registry Verification ===
         // Reject peers whose DID is not registered in the blockchain identity registry.
+        // Skip for bootstrap peers: they are operator-configured and trusted by definition.
+        let is_bootstrap = self.verifier.get_bootstrap_addrs().contains(&peer_addr);
         if let Some(ref verifier) = self.identity_registry_verifier {
-            let peer_did = &handshake_result.verified_peer.identity.did;
-            verify_peer_registration(verifier.as_ref(), &connection, peer_did).await?;
+            if !is_bootstrap {
+                let peer_did = &handshake_result.verified_peer.identity.did;
+                verify_peer_registration(verifier.as_ref(), &connection, peer_did).await?;
+            } else {
+                debug!(peer_addr = %peer_addr, "Skipping identity registry check for bootstrap peer");
+            }
         }
 
         // Create PeerConnection from verified handshake result
@@ -1007,6 +1013,15 @@ impl QuicMeshProtocol {
             // No live peers — try to restore connectivity to bootstrap peers.
             self.try_reconnect_to_bootstrap().await;
             return Ok(0);
+        }
+
+        // Also check for missing bootstrap peers even when we have some connections.
+        // Without this, partial connectivity (e.g. 3/5 validators) never self-heals.
+        {
+            let bootstrap_count = self.verifier.get_bootstrap_addrs().len();
+            if peers.len() < bootstrap_count {
+                self.try_reconnect_to_bootstrap().await;
+            }
         }
 
         let mut success = 0;
@@ -1689,7 +1704,7 @@ impl QuicMeshProtocol {
         transport_config.max_concurrent_uni_streams(100u32.into());
         // Issue #907: Raised from 30s to 300s to prevent premature peer disconnection
         transport_config.max_idle_timeout(Some(
-            std::time::Duration::from_secs(300).try_into().unwrap(),
+            std::time::Duration::from_secs(60).try_into().unwrap(),
         ));
 
         server_config.transport_config(Arc::new(transport_config));
@@ -1743,7 +1758,7 @@ impl QuicMeshProtocol {
         let mut transport_config = quinn::TransportConfig::default();
         // Issue #907: Raised from 30s to 300s to prevent premature peer disconnection
         transport_config.max_idle_timeout(Some(
-            std::time::Duration::from_secs(300).try_into().unwrap(),
+            std::time::Duration::from_secs(60).try_into().unwrap(),
         ));
         // Issue #907: Keepalive pings keep NAT mapping alive and prevent idle timeout
         // Only on client/outbound side (server doesn't initiate keepalive)

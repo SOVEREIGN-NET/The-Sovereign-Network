@@ -15,25 +15,11 @@ use lib_blockchain::Blockchain;
 use lib_crypto::types::keys::PublicKey;
 use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
-/// Create a test public key with a specific ID byte
-/// Uses PublicKey::new() to ensure consistent key_id computation
-fn create_test_pubkey(id: u8) -> PublicKey {
-    let mut dilithium_pk = [0u8; 2592];
-    dilithium_pk[0] = id;
-    PublicKey::new(dilithium_pk)
-}
+mod common;
 
-/// Create a test signature with the given public key
+fn create_test_pubkey(id: u8) -> PublicKey { common::crypto_fixtures::seeded_public_key(id) }
 fn create_test_signature(pubkey: &PublicKey) -> Signature {
-    Signature {
-        signature: vec![0u8; 64],
-        public_key: pubkey.clone(),
-        algorithm: SignatureAlgorithm::DEFAULT,
-        timestamp: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
-    }
+    Signature { signature: vec![0u8; 64], public_key: pubkey.clone(), algorithm: SignatureAlgorithm::DEFAULT, timestamp: 0 }
 }
 
 /// Create a minimal transfer transaction with specified fee

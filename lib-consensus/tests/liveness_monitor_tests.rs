@@ -9,25 +9,12 @@
 use lib_consensus::network::{HeartbeatTracker, LivenessMonitor};
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-// Counter for generating unique test IDs
-static TEST_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
+mod common;
 
-/// Helper to create a unique test IdentityId
-fn create_unique_identity() -> IdentityId {
-    let id = TEST_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
-    Hash::from_bytes(&hash_blake3(format!("test-validator-{}", id).as_bytes()))
-}
-
-/// Helper to get current unix timestamp
-fn current_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-}
+fn create_unique_identity() -> IdentityId { common::consensus_fixtures::unique_identity() }
+fn current_timestamp() -> u64 { common::consensus_fixtures::current_timestamp() }
 
 /// Test watch_timeouts integration with HeartbeatTracker
 #[test]

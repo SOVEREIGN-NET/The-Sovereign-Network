@@ -1,0 +1,119 @@
+name: PR Triage
+
+on:
+  # Opt-in gate: same as pr-quality-gates.yml. Triggers only when an
+  # operator adds the `review-agents` label or runs workflow_dispatch.
+  # Default PR turnaround stays fast.
+  pull_request:
+    types: [labeled, synchronize]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: pr-triage-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  triage:
+    name: triage
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'review-agents')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compute base ref for changed-file detection
+        id: base
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "base_sha=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
+            echo "base_ref=${{ github.event.pull_request.base.ref }}" >> "$GITHUB_OUTPUT"
+          else
+            # workflow_dispatch — no base; agents that need it should
+            # fall back to development.
+            echo "base_sha=" >> "$GITHUB_OUTPUT"
+            echo "base_ref=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run PR triage
+        id: triage
+        env:
+          PR_BASE_SHA: ${{ steps.base.outputs.base_sha }}
+          PR_BASE_REF: ${{ steps.base.outputs.base_ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: |
+          python .github/agents/pr_triage.py
+
+      - name: Upload triage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-triage-result
+          path: |
+            triage_result.md
+            triage_result.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Post or update sticky PR comment
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const marker = '<!-- pr-triage-sticky -->';
+            let body = '';
+            try {
+              body = fs.readFileSync('triage_result.md', 'utf8');
+            } catch (err) {
+              core.setFailed(`Could not read triage_result.md: ${err.message}`);
+              return;
+            }
+
+            const fullBody = `${marker}\n${body}`;
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body: fullBody,
+              });
+              core.info(`Updated existing triage comment ${existing.id}`);
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body: fullBody,
+              });
+              core.info('Created new triage comment');
+            }

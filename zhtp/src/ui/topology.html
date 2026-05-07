@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sovereign Network — Topology</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --bg: #0a0a0f;
+    --bg-card: #12121c;
+    --bg-card-hover: #1a1a2e;
+    --border: #1e1e35;
+    --border-glow: #2d2d55;
+    --text: #e0e0f0;
+    --text-dim: #6a6a8a;
+    --text-bright: #ffffff;
+    --validator: #00d4aa;
+    --validator-dim: #00d4aa33;
+    --gateway: #7b61ff;
+    --gateway-dim: #7b61ff33;
+    --accent: #ff6b6b;
+    --pulse: #00d4aa;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Space Grotesk', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      linear-gradient(90deg, var(--border) 1px, transparent 1px) 0 0 / 80px 80px,
+      linear-gradient(0deg, var(--border) 1px, transparent 1px) 0 0 / 80px 80px;
+    opacity: 0.15;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 40px 24px;
+  }
+
+  .header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 48px;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  .header h1 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: var(--text-bright);
+  }
+
+  .header h1 span { color: var(--validator); }
+
+  .header-meta {
+    display: flex;
+    gap: 24px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .header-meta .val {
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  .pulse-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--validator);
+    margin-right: 6px;
+    animation: pulse 2s ease-in-out infinite;
+    vertical-align: middle;
+  }
+
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 var(--validator-dim); }
+    50% { box-shadow: 0 0 0 8px transparent; }
+  }
+
+  .stats-bar {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin-bottom: 40px;
+  }
+
+  .stat-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    transition: border-color 0.3s;
+  }
+
+  .stat-card:hover { border-color: var(--border-glow); }
+
+  .stat-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .stat-value {
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--text-bright);
+    line-height: 1;
+  }
+
+  .stat-value.vc { color: var(--validator); }
+  .stat-value.gc { color: var(--gateway); }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+    margin-top: 8px;
+  }
+
+  .section-header h2 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--text-dim);
+  }
+
+  .section-header .line {
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-weight: 500;
+  }
+
+  .bv {
+    background: var(--validator-dim);
+    color: var(--validator);
+    border: 1px solid var(--validator);
+  }
+
+  .bg {
+    background: var(--gateway-dim);
+    color: var(--gateway);
+    border: 1px solid var(--gateway);
+  }
+
+  .node-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+    gap: 16px;
+    margin-bottom: 48px;
+  }
+
+  .node-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.3s ease;
+  }
+
+  .node-card:hover {
+    border-color: var(--border-glow);
+    background: var(--bg-card-hover);
+    transform: translateY(-2px);
+  }
+
+  .node-card.v { border-left: 3px solid var(--validator); }
+  .node-card.g { border-left: 3px solid var(--gateway); }
+
+  .ri {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  .node-card.v .ri { background: var(--validator); }
+  .node-card.g .ri { background: var(--gateway); }
+
+  .nr {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 8px;
+  }
+
+  .node-card.v .nr { color: var(--validator); }
+  .node-card.g .nr { color: var(--gateway); }
+
+  .nip {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text-bright);
+    margin-bottom: 4px;
+    letter-spacing: -0.3px;
+  }
+
+  .ndid {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 16px;
+    word-break: break-all;
+  }
+
+  .nd {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .di { display: flex; flex-direction: column; gap: 2px; }
+
+  .dl {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .dv {
+    font-size: 13px;
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 500;
+  }
+
+  .topology-canvas {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 32px;
+    margin-bottom: 48px;
+    position: relative;
+    min-height: 320px;
+  }
+
+  .topology-canvas svg { width: 100%; height: 300px; }
+
+  .topo-link {
+    stroke: var(--border-glow);
+    stroke-width: 1;
+    stroke-dasharray: 4 4;
+    opacity: 0.4;
+  }
+
+  .error-banner {
+    background: #1a0a0a;
+    border: 1px solid #4a1a1a;
+    border-radius: 10px;
+    padding: 16px 24px;
+    margin-bottom: 24px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--accent);
+  }
+
+  .footer {
+    text-align: center;
+    padding: 32px 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    border-top: 1px solid var(--border);
+  }
+
+  @media (max-width: 600px) {
+    .node-grid { grid-template-columns: 1fr; }
+    .header h1 { font-size: 20px; }
+    .stat-value { font-size: 24px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1><span>///</span> SOVEREIGN NETWORK</h1>
+    <div class="header-meta">
+      <div><span class="pulse-dot"></span><span class="val" id="network-id">-</span></div>
+      <div>HEIGHT <span class="val" id="chain-height">-</span></div>
+      <div id="last-update">-</div>
+    </div>
+  </div>
+
+  <div id="error-container"></div>
+
+  <div class="stats-bar">
+    <div class="stat-card">
+      <div class="stat-label">Validators</div>
+      <div class="stat-value vc" id="sv">-</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Gateways</div>
+      <div class="stat-value gc" id="sg">-</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Connected Peers</div>
+      <div class="stat-value" id="sp">-</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Block Height</div>
+      <div class="stat-value" id="sh">-</div>
+    </div>
+  </div>
+
+  <div class="section-header">
+    <h2>Network Map</h2>
+    <div class="line"></div>
+  </div>
+  <div class="topology-canvas">
+    <svg id="topo-svg"></svg>
+  </div>
+
+  <div class="section-header">
+    <h2>Validators</h2>
+    <div class="line"></div>
+    <div class="badge bv" id="vc">0</div>
+  </div>
+  <div class="node-grid" id="vg"></div>
+
+  <div class="section-header">
+    <h2>Gateways</h2>
+    <div class="line"></div>
+    <div class="badge bg" id="gc">0</div>
+  </div>
+  <div class="node-grid" id="gg"></div>
+
+  <div class="footer">The Sovereign Network</div>
+</div>
+
+<script>
+const MOCK = {
+  network_id: "testnet",
+  chain_height: 69690,
+  timestamp: Math.floor(Date.now() / 1000),
+  this_node: { did: "did:zhtp:local", role: "viewer", spki_pin: "" },
+  topology: {
+    validators: [
+      { did: "did:zhtp:59e07e17556e2955581443538839d576974e4f8a9af424c0a2cc7df79c995c9d", role: "validator", endpoint: "77.42.37.161:9334", ip: "77.42.37.161", quic_port: 9334, mesh_port: 9333, stake: 1000, status: "active", blocks_validated: 12450, last_activity: 69690, commission_rate: 5, admission: "offchain_genesis" },
+      { did: "did:zhtp:f37a307761b863130adb6129f16c269af4e395eb3d4b14b070a756bef282c07b", role: "validator", endpoint: "77.42.74.80:9334", ip: "77.42.74.80", quic_port: 9334, mesh_port: 9333, stake: 1000, status: "active", blocks_validated: 11200, last_activity: 69689, commission_rate: 5, admission: "offchain_genesis" },
+      { did: "did:zhtp:bf409db91ad276fa35e8af9c78a48facdfba99eb95fcbf01719310e91c558a9c", role: "validator", endpoint: "178.105.9.247:9334", ip: "178.105.9.247", quic_port: 9334, mesh_port: 9333, stake: 1000, status: "active", blocks_validated: 13100, last_activity: 69690, commission_rate: 5, admission: "offchain_genesis" },
+      { did: "did:zhtp:14225182b8140220c2adf3e61471ba5f0117f863408ee6b2b86cff4d0f679cef", role: "validator", endpoint: "148.113.140.176:9334", ip: "148.113.140.176", quic_port: 9334, mesh_port: 9333, stake: 1000, status: "active", blocks_validated: 5600, last_activity: 69688, commission_rate: 5, admission: "bootstrap_genesis" },
+      { did: "did:zhtp:3218b9025f1b7c678e115c094a73d3e077801f60501452babd43c7a32ecdf284", role: "validator", endpoint: "51.75.62.133:9334", ip: "51.75.62.133", quic_port: 9334, mesh_port: 9333, stake: 1000, status: "active", blocks_validated: 4200, last_activity: 69690, commission_rate: 5, admission: "bootstrap_genesis" },
+    ],
+    gateways: [
+      { did: "did:zhtp:33640b37d3ec9ee16ee80327941adf2d07a6fc3b8b2b13c055c7f2ac5571a622", role: "gateway", endpoint: "91.98.113.188:9333", ip: "91.98.113.188", quic_port: 9334, zdns_port: 53, status: "active", stake: 10000000000, commission_rate: 5 },
+    ],
+    total_validators: 5,
+    total_gateways: 1,
+    connected_peers: 4,
+  }
+};
+
+let D = null;
+
+async function load() {
+  try {
+    const r = await fetch('/api/v1/network/directory', { signal: AbortSignal.timeout(5000) });
+    if (r.ok) return await r.json();
+  } catch (_) {}
+  return MOCK;
+}
+
+function sdid(d) {
+  if (!d || d.length < 30) return d || '-';
+  return d.substring(0, 20) + '...' + d.substring(d.length - 8);
+}
+
+function fmts(s) {
+  if (s >= 1e9) return (s / 1e9).toFixed(0) + 'B';
+  if (s >= 1e6) return (s / 1e6).toFixed(0) + 'M';
+  if (s >= 1e3) return (s / 1e3).toFixed(0) + 'K';
+  return String(s);
+}
+
+function txt(id, val) { document.getElementById(id).textContent = val; }
+
+function mkcard(n, type) {
+  const c = document.createElement('div');
+  c.className = 'node-card ' + (type === 'validator' ? 'v' : 'g');
+
+  const dot = document.createElement('div');
+  dot.className = 'ri';
+  c.appendChild(dot);
+
+  const role = document.createElement('div');
+  role.className = 'nr';
+  role.textContent = type;
+  c.appendChild(role);
+
+  const ip = document.createElement('div');
+  ip.className = 'nip';
+  ip.textContent = n.ip || '-';
+  c.appendChild(ip);
+
+  const did = document.createElement('div');
+  did.className = 'ndid';
+  did.textContent = sdid(n.did);
+  c.appendChild(did);
+
+  const grid = document.createElement('div');
+  grid.className = 'nd';
+
+  function addDetail(label, value) {
+    const di = document.createElement('div');
+    di.className = 'di';
+    const dl = document.createElement('div');
+    dl.className = 'dl';
+    dl.textContent = label;
+    const dv = document.createElement('div');
+    dv.className = 'dv';
+    dv.textContent = value;
+    di.appendChild(dl);
+    di.appendChild(dv);
+    grid.appendChild(di);
+  }
+
+  if (type === 'validator') {
+    addDetail('QUIC', ':' + n.quic_port);
+    addDetail('Mesh', ':' + n.mesh_port);
+    addDetail('Status', n.status);
+    addDetail('Admission', (n.admission || '-').replace(/_/g, ' '));
+    addDetail('Blocks', (n.blocks_validated || 0).toLocaleString());
+    addDetail('Commission', n.commission_rate + '%');
+  } else {
+    addDetail('QUIC', ':' + n.quic_port);
+    addDetail('ZDNS', ':' + n.zdns_port);
+    addDetail('Status', n.status);
+    addDetail('Stake', fmts(n.stake) + ' SOV');
+    addDetail('Commission', n.commission_rate + '%');
+    addDetail('Endpoint', n.endpoint || '-');
+  }
+
+  c.appendChild(grid);
+  return c;
+}
+
+function drawSVG(data) {
+  const svg = document.getElementById('topo-svg');
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+  const vs = data.topology.validators || [];
+  const gs = data.topology.gateways || [];
+  if (vs.length === 0 && gs.length === 0) return;
+
+  const w = svg.clientWidth || 900;
+  const h = 300;
+  svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+
+  const ns = 'http://www.w3.org/2000/svg';
+  const cx = w / 2, cy = h / 2;
+  const rad = Math.min(w * 0.35, 200);
+  const pos = [];
+
+  vs.forEach(function(v, i) {
+    const a = Math.PI + (Math.PI * (i + 0.5)) / vs.length;
+    pos.push({ x: cx + rad * Math.cos(a), y: cy - 20 + rad * 0.55 * Math.sin(a), t: 'v', n: v, idx: i });
+  });
+
+  gs.forEach(function(g, i) {
+    pos.push({ x: cx + (i - (gs.length - 1) / 2) * 140, y: cy + 80, t: 'g', n: g, idx: i });
+  });
+
+  // Links between validators
+  for (var i = 0; i < vs.length; i++) {
+    for (var j = i + 1; j < vs.length; j++) {
+      var line = document.createElementNS(ns, 'line');
+      line.setAttribute('x1', pos[i].x);
+      line.setAttribute('y1', pos[i].y);
+      line.setAttribute('x2', pos[j].x);
+      line.setAttribute('y2', pos[j].y);
+      line.setAttribute('class', 'topo-link');
+      svg.appendChild(line);
+    }
+  }
+
+  // Links from gateways to validators
+  for (var gi = vs.length; gi < pos.length; gi++) {
+    for (var vi = 0; vi < vs.length; vi++) {
+      var ln = document.createElementNS(ns, 'line');
+      ln.setAttribute('x1', pos[gi].x);
+      ln.setAttribute('y1', pos[gi].y);
+      ln.setAttribute('x2', pos[vi].x);
+      ln.setAttribute('y2', pos[vi].y);
+      ln.setAttribute('class', 'topo-link');
+      ln.style.stroke = '#7b61ff33';
+      svg.appendChild(ln);
+    }
+  }
+
+  // Nodes
+  pos.forEach(function(p) {
+    var color = p.t === 'v' ? '#00d4aa' : '#7b61ff';
+    var r = p.t === 'v' ? 22 : 18;
+
+    var outer = document.createElementNS(ns, 'circle');
+    outer.setAttribute('cx', p.x);
+    outer.setAttribute('cy', p.y);
+    outer.setAttribute('r', r + 6);
+    outer.setAttribute('fill', color + '11');
+    svg.appendChild(outer);
+
+    var inner = document.createElementNS(ns, 'circle');
+    inner.setAttribute('cx', p.x);
+    inner.setAttribute('cy', p.y);
+    inner.setAttribute('r', r);
+    inner.setAttribute('fill', color + '22');
+    inner.setAttribute('stroke', color);
+    inner.setAttribute('stroke-width', '2');
+    svg.appendChild(inner);
+
+    var label = document.createElementNS(ns, 'text');
+    label.setAttribute('x', p.x);
+    label.setAttribute('y', p.y + 4);
+    label.setAttribute('text-anchor', 'middle');
+    label.setAttribute('fill', color);
+    label.setAttribute('font-family', 'JetBrains Mono');
+    label.setAttribute('font-size', '10');
+    label.setAttribute('font-weight', '700');
+    label.textContent = (p.t === 'v' ? 'V' : 'G') + (p.idx + 1);
+    svg.appendChild(label);
+
+    var iplabel = document.createElementNS(ns, 'text');
+    iplabel.setAttribute('x', p.x);
+    iplabel.setAttribute('y', p.y + r + 16);
+    iplabel.setAttribute('text-anchor', 'middle');
+    iplabel.setAttribute('fill', '#6a6a8a');
+    iplabel.setAttribute('font-family', 'JetBrains Mono');
+    iplabel.setAttribute('font-size', '9');
+    iplabel.textContent = p.n.ip;
+    svg.appendChild(iplabel);
+  });
+}
+
+function render(data) {
+  D = data;
+  var t = data.topology;
+  txt('network-id', data.network_id.toUpperCase());
+  txt('chain-height', data.chain_height.toLocaleString());
+  txt('sv', t.total_validators);
+  txt('sg', t.total_gateways);
+  txt('sp', t.connected_peers);
+  txt('sh', data.chain_height.toLocaleString());
+  txt('vc', t.total_validators);
+  txt('gc', t.total_gateways);
+  txt('last-update', new Date().toLocaleTimeString());
+
+  var vg = document.getElementById('vg');
+  while (vg.firstChild) vg.removeChild(vg.firstChild);
+  (t.validators || []).forEach(function(v) { vg.appendChild(mkcard(v, 'validator')); });
+
+  var gg = document.getElementById('gg');
+  while (gg.firstChild) gg.removeChild(gg.firstChild);
+  (t.gateways || []).forEach(function(g) { gg.appendChild(mkcard(g, 'gateway')); });
+
+  drawSVG(data);
+}
+
+async function refresh() {
+  try {
+    var data = await load();
+    var ec = document.getElementById('error-container');
+    while (ec.firstChild) ec.removeChild(ec.firstChild);
+    render(data);
+  } catch (e) {
+    var ec = document.getElementById('error-container');
+    var d = document.createElement('div');
+    d.className = 'error-banner';
+    d.textContent = 'Failed to fetch topology: ' + e.message;
+    while (ec.firstChild) ec.removeChild(ec.firstChild);
+    ec.appendChild(d);
+  }
+}
+
+refresh();
+setInterval(refresh, 10000);
+window.addEventListener('resize', function() { if (D) drawSVG(D); });
+</script>
+</body>
+</html>

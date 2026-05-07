@@ -173,6 +173,10 @@ impl ZhtpRequestHandler for IdentityHandler {
             (ZhtpMethod::Post, "/api/v1/identity/register") => {
                 self.handle_register_client_identity(request).await
             }
+            // Kyber key update — publish/rotate encryption key for messaging
+            (ZhtpMethod::Post, "/api/v1/identity/update-kyber-key") => {
+                self.handle_update_kyber_key(request).await
+            }
             _ => Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
                 "Identity endpoint not found".to_string(),
@@ -1134,10 +1138,44 @@ impl IdentityHandler {
         let principal = self.extract_principal(&request);
         let identity_manager = self.identity_manager.read().await;
 
+        // Enrich with on-chain display_name and username
+        let (chain_display_name, chain_username) = {
+            if let Ok(bc_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
+                let bc = bc_arc.read().await;
+                let dn = bc.identity_registry.get(&did).map(|id| id.display_name.clone());
+                let un = bc.did_to_username.get(&did).cloned();
+                (dn, un)
+            } else {
+                (None, None)
+            }
+        };
+
         match identity_manager.get_identity_view_by_did(&principal, &did) {
-            Some(view) => Ok(ZhtpResponse::json(&view, None)?),
+            Some(view) => {
+                let mut response = serde_json::to_value(&view)?;
+                if let Some(obj) = response.as_object_mut() {
+                    if let Some(ref name) = chain_display_name {
+                        if !name.is_empty() {
+                            obj.insert("display_name".to_string(), json!(name));
+                        }
+                    }
+                    if let Some(ref username) = chain_username {
+                        obj.insert("username".to_string(), json!(username));
+                    }
+                }
+                Ok(ZhtpResponse::json(&response, None)?)
+            }
             None => {
-                // Anti-enumeration: return indistinguishable not-found.
+                // Try chain-only lookup (identity exists on-chain but not in local manager)
+                if chain_display_name.is_some() {
+                    let response = json!({
+                        "status": "success",
+                        "did": did,
+                        "display_name": chain_display_name,
+                        "username": chain_username,
+                    });
+                    return Ok(ZhtpResponse::json(&response, None)?);
+                }
                 let response_body = json!({
                     "status": "not_found",
                     "did": did,
@@ -1454,6 +1492,168 @@ impl IdentityHandler {
     /// transmitted over the network.
     ///
     /// POST /api/v1/identity/register
+    /// POST /api/v1/identity/update-kyber-key
+    /// Publish or rotate the Kyber1024 encryption key for messaging KEM.
+    async fn handle_update_kyber_key(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        // Access zone gate: requires key-authenticated session
+        if crate::session_manager::is_request_password_session(&request).await {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::Forbidden,
+                "Key authentication required".to_string(),
+            ));
+        }
+
+        #[derive(Deserialize)]
+        struct UpdateKyberKeyRequest {
+            did: String,
+            kyber_public_key_hex: String,
+            timestamp: u64,
+            signature_hex: String,
+        }
+
+        let req: UpdateKyberKeyRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
+
+        // Validate Kyber key size (1568 bytes = 3136 hex chars)
+        let kyber_pk = hex::decode(&req.kyber_public_key_hex)
+            .map_err(|_| anyhow::anyhow!("Invalid hex in kyber_public_key_hex"))?;
+        if kyber_pk.len() != 1568 {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                format!("kyber_public_key must be 1568 bytes (got {})", kyber_pk.len()),
+            ));
+        }
+
+        // Validate DID format
+        if !req.did.starts_with("did:zhtp:") {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Invalid DID format".to_string(),
+            ));
+        }
+
+        // Validate timestamp freshness (5 min)
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now.abs_diff(req.timestamp) > 300 {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Timestamp expired".to_string(),
+            ));
+        }
+
+        // Verify DID exists on-chain and get the public key
+        let identity_pk = {
+            let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+                .await
+                .map_err(|e| anyhow::anyhow!("Blockchain unavailable: {}", e))?;
+            let blockchain = blockchain_arc.read().await;
+            match blockchain.identity_registry.get(&req.did) {
+                Some(id) => id.public_key.clone(),
+                None => {
+                    return Ok(ZhtpResponse::error(
+                        ZhtpStatus::NotFound,
+                        "DID not found".to_string(),
+                    ));
+                }
+            }
+        };
+
+        // Verify ownership: signature over "UPDATE_KYBER_KEY:{did}:{kyber_pk_hex}:{timestamp}"
+        let message = format!(
+            "UPDATE_KYBER_KEY:{}:{}:{}",
+            req.did, req.kyber_public_key_hex, req.timestamp
+        );
+        let sig_bytes = hex::decode(&req.signature_hex)
+            .map_err(|_| anyhow::anyhow!("Invalid hex in signature"))?;
+
+        if identity_pk.len() < 2592 {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Identity public key too short for Dilithium5".to_string(),
+            ));
+        }
+
+        match lib_crypto::verify_signature(message.as_bytes(), &sig_bytes, &identity_pk[..2592]) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::Unauthorized,
+                    "Signature verification failed".to_string(),
+                ));
+            }
+            Err(e) => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::Unauthorized,
+                    format!("Signature error: {}", e),
+                ));
+            }
+        }
+
+        // Submit IdentityUpdate transaction with the new Kyber key
+        {
+            let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+                .await
+                .map_err(|e| anyhow::anyhow!("Blockchain unavailable: {}", e))?;
+            let mut blockchain = blockchain_arc.write().await;
+
+            // Update in-memory immediately (cache warmup)
+            if let Some(id) = blockchain.identity_registry.get_mut(&req.did) {
+                id.kyber_public_key = kyber_pk.clone();
+            }
+
+            // Submit IdentityUpdate system transaction for block persistence
+            let mut identity_data = blockchain
+                .identity_registry
+                .get(&req.did)
+                .cloned()
+                .unwrap_or_else(|| lib_blockchain::transaction::IdentityTransactionData::new(
+                    req.did.clone(), String::new(), identity_pk.clone(),
+                    vec![], "human".to_string(),
+                    lib_blockchain::types::Hash::default(), 0, 0,
+                ));
+            identity_data.kyber_public_key = kyber_pk;
+
+            let update_tx = lib_blockchain::Transaction::new_identity_update(
+                identity_data,
+                vec![],
+                vec![],
+                0,
+                lib_blockchain::integration::crypto_integration::Signature {
+                    signature: Vec::new(),
+                    public_key: lib_blockchain::integration::crypto_integration::PublicKey {
+                        dilithium_pk: [0u8; 2592],
+                        kyber_pk: [0u8; 1568],
+                        key_id: [0u8; 32],
+                    },
+                    algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
+                    timestamp: now,
+                },
+                format!("kyber-key-update:{}", &req.did[..20.min(req.did.len())]).into_bytes(),
+            );
+            if let Err(e) = blockchain.add_system_transaction(update_tx) {
+                tracing::warn!("Failed to submit Kyber key update tx: {}", e);
+            }
+        }
+
+        tracing::info!(
+            "Kyber key updated for {}",
+            &req.did[..20.min(req.did.len())]
+        );
+
+        Ok(ZhtpResponse::success_with_content_type(
+            serde_json::to_vec(&json!({
+                "status": "success",
+                "did": req.did,
+                "message": "Kyber public key updated on-chain"
+            }))?,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
     async fn handle_register_client_identity(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         /// Request structure for client-side identity registration
         /// NOTE: DID and node_id are derived server-side from public_key for security.
@@ -1710,7 +1910,8 @@ impl IdentityHandler {
             Hash::default(),
             0,
             0,
-        );
+        )
+        .with_kyber_public_key(kyber_public_key.clone().unwrap_or_default());
 
         use lib_blockchain::transaction::TransactionOutput;
 

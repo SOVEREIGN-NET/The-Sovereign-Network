@@ -7,15 +7,16 @@ use lib_types::NodeType;
 /// Extract a `SecurityPrincipal` from an incoming `ZhtpRequest`.
 ///
 /// This is the canonical integration point used across all API handlers.
-/// In future phases it will inspect bearer tokens, delegation certificates,
-/// and UHP auth context. For now it uses simple headers to distinguish
-/// public, node, and session callers.
+/// Authenticated DIDs are checked against the on-chain council member list
+/// to assign `Role::Council` vs `Role::Citizen`. If the blockchain lock is
+/// contended, defaults to `Role::Citizen` (safe: never elevates on failure).
 pub fn extract_principal_from_request(request: &ZhtpRequest) -> SecurityPrincipal {
     // If the transport/session layer has already authenticated the caller
     // and set request.requester, use that DID directly.
     if let Some(ref identity_id) = request.requester {
         let did = format!("did:zhtp:{}", hex::encode(&identity_id.0));
-        return SecurityPrincipal::new(&did, Role::Citizen, NodeType::FullNode);
+        let role = resolve_role_for_did(&did);
+        return SecurityPrincipal::new(&did, role, NodeType::FullNode);
     }
 
     // Node-to-node calls may declare their node type.
@@ -40,4 +41,21 @@ pub fn extract_principal_from_request(request: &ZhtpRequest) -> SecurityPrincipa
 
     // Default: unauthenticated public caller.
     SecurityPrincipal::public()
+}
+
+/// Determine the role for an authenticated DID by checking on-chain state.
+///
+/// Council members get `Role::Council`, everyone else gets `Role::Citizen`.
+/// Uses non-blocking read — if the lock is contended, returns `Role::Citizen`
+/// (never elevates privileges on failure).
+fn resolve_role_for_did(did: &str) -> Role {
+    let provider = match crate::runtime::blockchain_provider::get_global_blockchain_provider() {
+        Some(p) => p,
+        None => return Role::Citizen,
+    };
+
+    match provider.is_council_member_sync(did) {
+        Some(true) => Role::Council,
+        _ => Role::Citizen, // Not council, not initialized, or lock contended
+    }
 }

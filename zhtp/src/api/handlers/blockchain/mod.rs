@@ -22,7 +22,7 @@ use lib_blockchain::transaction::{
 use lib_blockchain::storage::UtxoMerkleProof;
 use lib_blockchain::types::Hash;
 use lib_blockchain::types::{transaction_type::TransactionType, ContractType};
-use lib_blockchain::{Blockchain, storage::{OutPoint, TxHash}};
+use lib_blockchain::{Blockchain, BlockchainQuery, storage::{OutPoint, TxHash}};
 use crate::config::Environment;
 
 // Access control imports
@@ -242,12 +242,18 @@ impl ZhtpRequestHandler for BlockchainHandler {
                 self.handle_import_chain(request).await
             }
             // New incremental sync endpoints
+            (ZhtpMethod::Get, "/api/v1/blockchain/sync-capabilities") => {
+                self.handle_get_sync_capabilities(request).await
+            }
             (ZhtpMethod::Get, "/api/v1/blockchain/tip") => self.handle_get_chain_tip(request).await,
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/blockchain/quorum-proof/") => {
                 self.handle_get_quorum_proof(request).await
             }
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/blockchain/blocks/") => {
                 self.handle_get_block_range(request).await
+            }
+            (ZhtpMethod::Get, path) if path.starts_with("/api/v2/blockchain/blocks/") => {
+                self.handle_get_block_range_v2(request).await
             }
             // Edge node stats endpoint
             (ZhtpMethod::Get, "/api/v1/blockchain/edge-stats") => {
@@ -315,7 +321,8 @@ impl ZhtpRequestHandler for BlockchainHandler {
     }
 
     fn can_handle(&self, request: &ZhtpRequest) -> bool {
-        request.uri.starts_with("/api/v1/blockchain/") || request.uri.starts_with("/api/v1/chain/")
+        request.uri.starts_with("/api/v1/blockchain/")
+            || request.uri.starts_with("/api/v1/chain/")
     }
 
     fn priority(&self) -> u32 {
@@ -662,7 +669,7 @@ struct ContractSubmissionResponse {
 }
 
 fn estimate_signed_tx_size(raw_tx: &[u8]) -> usize {
-    match bincode::deserialize::<lib_blockchain::transaction::Transaction>(raw_tx) {
+    match lib_blockchain::transaction::decode_client_transaction(raw_tx) {
         Ok(mut tx) => {
             let sig_len = tx.signature.signature.len();
             let pk_len = tx.signature.public_key.dilithium_pk.len();
@@ -948,7 +955,7 @@ impl BlockchainHandler {
                 .iter()
                 .map(|block| block.transactions.len() as u64)
                 .sum(),
-            pending_transactions: blockchain.pending_transactions.len(),
+            pending_transactions: blockchain.query_pending_count(),
             network_hash_rate: {
                 // Calculate network hash rate from difficulty and work
                 let work = blockchain.difficulty.work();
@@ -988,7 +995,7 @@ impl BlockchainHandler {
             status: "active".to_string(),
             chain_id: self.chain_id(),
             network: self.environment.to_string().to_ascii_lowercase(),
-            height: blockchain.height,
+            height: blockchain.query_height(),
             head_hash: blockchain
                 .blocks
                 .last()
@@ -999,8 +1006,8 @@ impl BlockchainHandler {
                 .first()
                 .map(|b| hex::encode(b.header.data_helix_root))
                 .unwrap_or_else(|| "none".to_string()),
-            validator_count: blockchain.validator_registry.len(),
-            identity_count: blockchain.identity_registry.len(),
+            validator_count: blockchain.query_validator_count(),
+            identity_count: blockchain.query_identity_count(),
         };
 
         Ok(ZhtpResponse::json(&response_data, None)?)
@@ -1051,7 +1058,7 @@ impl BlockchainHandler {
 
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
-        let total = blockchain.blocks.len();
+        let total = blockchain.query_block_count();
 
         let total_pages = if total == 0 {
             0
@@ -1106,7 +1113,7 @@ impl BlockchainHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
-        let total: usize = blockchain.blocks.iter().map(|b| b.transactions.len()).sum();
+        let total: usize = blockchain.query_blocks().iter().map(|b| b.transactions.len()).sum();
         let total_pages = if total == 0 {
             0
         } else {
@@ -1117,7 +1124,7 @@ impl BlockchainHandler {
         let mut skipped = 0usize;
         let mut transactions = Vec::new();
 
-        for block in blockchain.blocks.iter().rev() {
+        for block in blockchain.query_blocks().iter().rev() {
             for tx in block.transactions.iter().rev() {
                 if skipped < offset {
                     skipped += 1;
@@ -1166,16 +1173,16 @@ impl BlockchainHandler {
             .last()
             .map(|b| b.header.height)
             .unwrap_or(0);
-        let latest_block_time = blockchain.blocks.last().map(|b| b.header.timestamp);
+        let latest_block_time = blockchain.query_latest_block().map(|b| b.header.timestamp);
 
-        let avg_block_time_secs = if blockchain.blocks.len() >= 2 {
+        let avg_block_time_secs = if blockchain.query_block_count() >= 2 {
             let mut total_delta = 0u64;
-            for window in blockchain.blocks.windows(2) {
+            for window in blockchain.query_blocks().windows(2) {
                 let a = window[0].header.timestamp;
                 let b = window[1].header.timestamp;
                 total_delta = total_delta.saturating_add(b.saturating_sub(a));
             }
-            Some(total_delta / (blockchain.blocks.len() as u64 - 1))
+            Some(total_delta / (blockchain.query_block_count() as u64 - 1))
         } else {
             None
         };
@@ -1274,7 +1281,7 @@ impl BlockchainHandler {
                 }));
             }
 
-            for block in blockchain.blocks.iter().rev() {
+            for block in blockchain.query_blocks().iter().rev() {
                 if let Some(tx) = block.transactions.iter().find(|tx| tx.hash() == tx_hash) {
                     let confirmations = latest_height.saturating_sub(block.header.height) + 1;
                     return Some(serde_json::json!({
@@ -1305,7 +1312,7 @@ impl BlockchainHandler {
         };
 
         let resolve_wallet = |wallet_id: &str| -> Option<serde_json::Value> {
-            let wallet = blockchain.wallet_registry.get(wallet_id)?;
+            let wallet = blockchain.query_wallet(wallet_id)?;
             Some(serde_json::json!({
                 "wallet_id": wallet_id,
                 "wallet_name": wallet.wallet_name,
@@ -1338,7 +1345,7 @@ impl BlockchainHandler {
                     }
                 }
                 "did" => {
-                    if let Some(identity) = blockchain.identity_registry.get(&value.to_string()) {
+                    if let Some(identity) = blockchain.query_identity(&value.to_string()) {
                         let identity_mgr = self.identity_manager.read().await;
                         let view = identity_mgr.get_identity_view_by_did(&principal, &identity.did);
                         let (controlled_nodes, owned_wallets) = match view {
@@ -1535,7 +1542,7 @@ impl BlockchainHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
         // Get current blockchain height for validation
-        let current_height = blockchain.blocks.len();
+        let current_height = blockchain.query_block_count();
 
         // Validate transaction isn't too old (should reference recent blocks)
         if current_height == 0 {
@@ -1717,11 +1724,23 @@ impl BlockchainHandler {
 
     /// Handle getting balance for an address
     async fn handle_get_balance(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let principal = self.extract_principal(&request);
+
         // Extract address from path: /api/v1/blockchain/balance/{address}
         let path_parts: Vec<&str> = request.uri.split('/').collect();
         let address_str = path_parts
             .get(4)
             .ok_or_else(|| anyhow::anyhow!("Address required"))?;
+
+        // Ownership check: caller can only read their own wallet balance
+        // unless they have Council role. The address is a wallet ID (hex hash).
+        let caller_hex = principal.did.strip_prefix("did:zhtp:").unwrap_or(&principal.did);
+        if principal.role == lib_access_control::Role::Public {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::Forbidden,
+                "Balance lookup requires authentication".to_string(),
+            ));
+        }
 
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
@@ -1960,7 +1979,7 @@ impl BlockchainHandler {
         }
 
         // Search through all blocks for the transaction
-        for (_block_index, block) in blockchain.blocks.iter().enumerate() {
+        for (_block_index, block) in blockchain.query_blocks().iter().enumerate() {
             if let Some(confirmed_tx) = block.transactions.iter().find(|tx| tx.hash() == tx_hash) {
                 let transaction_info = Self::tx_to_info(confirmed_tx);
 
@@ -2165,7 +2184,7 @@ impl BlockchainHandler {
                     Ok(tx) => tx,
                     Err(_) => {
                         // If JSON parsing fails, try bincode deserialization
-                        match bincode::deserialize::<lib_blockchain::transaction::Transaction>(
+                        match lib_blockchain::transaction::decode_client_transaction(
                             &tx_bytes,
                         ) {
                             Ok(tx) => tx,
@@ -2269,7 +2288,7 @@ impl BlockchainHandler {
         }
 
         // Fallback: Search through all blocks for the transaction (for backward compatibility)
-        for (_block_index, block) in blockchain.blocks.iter().enumerate() {
+        for (_block_index, block) in blockchain.query_blocks().iter().enumerate() {
             if let Some((tx_index, confirmed_tx)) = block
                 .transactions
                 .iter()
@@ -2485,7 +2504,7 @@ impl BlockchainHandler {
 
         let block_height = blockchain.contract_blocks.get(&contract_id).copied();
         let (contract_kind, state_json) =
-            if let Some(token) = blockchain.token_contracts.get(&contract_id) {
+            if let Some(token) = blockchain.query_token_contract(&contract_id) {
                 let raw_state = blockchain
                     .get_contract_state(&contract_id)
                     .map(hex::encode)
@@ -2553,7 +2572,7 @@ impl BlockchainHandler {
 
         let block_height = blockchain.contract_blocks.get(&contract_id).copied();
         let (contract_kind, metadata) =
-            if let Some(token) = blockchain.token_contracts.get(&contract_id) {
+            if let Some(token) = blockchain.query_token_contract(&contract_id) {
                 (
                     "token".to_string(),
                     serde_json::json!({
@@ -2601,7 +2620,11 @@ impl BlockchainHandler {
     }
 
     /// Export entire blockchain for sync
-    async fn handle_export_chain(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+    async fn handle_export_chain(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let principal = self.extract_principal(&request);
+        if principal.role != lib_access_control::Role::Council && principal.role != lib_access_control::Role::System {
+            return Ok(ZhtpResponse::error(ZhtpStatus::Forbidden, "Chain export requires Council role".to_string()));
+        }
         let blockchain_arc = self
             .get_blockchain()
             .await
@@ -2622,6 +2645,10 @@ impl BlockchainHandler {
 
     /// Import blockchain from another node
     async fn handle_import_chain(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let principal = self.extract_principal(&request);
+        if principal.role != lib_access_control::Role::Council && principal.role != lib_access_control::Role::System {
+            return Ok(ZhtpResponse::error(ZhtpStatus::Forbidden, "Chain import requires Council role".to_string()));
+        }
         // Validate that body is not empty
         if request.body.is_empty() {
             return Ok(ZhtpResponse::error(
@@ -2663,7 +2690,7 @@ impl BlockchainHandler {
         let response_data = ImportResponse {
             status: "success".to_string(),
             message: "Blockchain imported successfully".to_string(),
-            block_height: blockchain.blocks.len(),
+            block_height: blockchain.query_block_count(),
         };
 
         let json_response = serde_json::to_vec(&response_data)?;
@@ -2701,11 +2728,11 @@ impl BlockchainHandler {
 
         let tip_info = ChainTipInfo {
             chain_id,
-            height: blockchain.height,
+            height: blockchain.query_height(),
             head_hash,
             total_work: blockchain.total_work.to_string(),
-            validator_count: blockchain.validator_registry.len(),
-            identity_count: blockchain.identity_registry.len(),
+            validator_count: blockchain.query_validator_count(),
+            identity_count: blockchain.query_identity_count(),
             genesis_hash,
         };
 
@@ -2724,74 +2751,167 @@ impl BlockchainHandler {
         ))
     }
 
-    /// Get block range for incremental sync (e.g., /blocks/10/20 returns blocks 10-20)
-    async fn handle_get_block_range(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        // Parse start/end from URI: /api/v1/blockchain/blocks/{start}/{end}
-        let parts: Vec<&str> = request.uri.split('/').collect();
+    /// Get node sync wire capabilities for block page negotiation.
+    async fn handle_get_sync_capabilities(
+        &self,
+        _request: ZhtpRequest,
+    ) -> ZhtpResult<ZhtpResponse> {
+        let caps = crate::sync_wire::SyncCapabilities::local();
+        let json_response = serde_json::to_vec(&caps)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    fn parse_block_range_params(
+        uri: &str,
+        usage_hint: &str,
+    ) -> Result<(u64, u64), ZhtpResponse> {
+        let parts: Vec<&str> = uri.split('/').collect();
         if parts.len() < 7 {
-            return Ok(ZhtpResponse::error(
+            return Err(ZhtpResponse::error(
                 ZhtpStatus::BadRequest,
-                "Invalid block range format. Use: /api/v1/blockchain/blocks/{start}/{end}"
-                    .to_string(),
+                usage_hint.to_string(),
             ));
         }
 
-        let start: u64 = parts[5]
-            .parse()
-            .map_err(|_| anyhow::anyhow!("Invalid start block number"))?;
-        let end: u64 = parts[6]
-            .parse()
-            .map_err(|_| anyhow::anyhow!("Invalid end block number"))?;
+        let start: u64 = match parts[5].parse() {
+            Ok(v) => v,
+            Err(_) => {
+                return Err(ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    "Invalid start block number".to_string(),
+                ))
+            }
+        };
+        let end: u64 = match parts[6].parse() {
+            Ok(v) => v,
+            Err(_) => {
+                return Err(ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    "Invalid end block number".to_string(),
+                ))
+            }
+        };
 
         if end < start {
-            return Ok(ZhtpResponse::error(
+            return Err(ZhtpResponse::error(
                 ZhtpStatus::BadRequest,
                 "End block must be >= start block".to_string(),
             ));
         }
 
         if end - start > 1000 {
-            return Ok(ZhtpResponse::error(
+            return Err(ZhtpResponse::error(
                 ZhtpStatus::BadRequest,
                 "Block range too large (max 1000 blocks per request)".to_string(),
             ));
         }
 
+        Ok((start, end))
+    }
+
+    async fn load_block_range(
+        &self,
+        start: u64,
+        end: u64,
+    ) -> ZhtpResult<Result<(u64, Vec<lib_blockchain::Block>), ZhtpResponse>> {
         let blockchain_arc = self
             .get_blockchain()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to get blockchain: {}", e))?;
         let blockchain = blockchain_arc.read().await;
 
-        // Validate range is within chain
-        if start as usize >= blockchain.blocks.len() {
-            return Ok(ZhtpResponse::error(
+        if start as usize >= blockchain.query_block_count() {
+            return Ok(Err(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
                 format!(
                     "Start block {} beyond chain height {}",
-                    start, blockchain.height
+                    start, blockchain.query_height()
                 ),
-            ));
+            )));
         }
 
-        let actual_end = std::cmp::min(end as usize, blockchain.blocks.len() - 1);
-        let blocks_slice = &blockchain.blocks[start as usize..=actual_end];
+        let actual_end = std::cmp::min(end as usize, blockchain.query_block_count() - 1);
+        let blocks = blockchain.query_block_range(start, actual_end as u64);
+        Ok(Ok((actual_end as u64, blocks)))
+    }
+
+    /// Get block range for incremental sync (e.g., /blocks/10/20 returns blocks 10-20)
+    async fn handle_get_block_range(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let (start, end) = match Self::parse_block_range_params(
+            &request.uri,
+            "Invalid block range format. Use: /api/v1/blockchain/blocks/{start}/{end}",
+        ) {
+            Ok(v) => v,
+            Err(resp) => return Ok(resp),
+        };
+        let (actual_end, blocks) = match self.load_block_range(start, end).await? {
+            Ok(v) => v,
+            Err(resp) => return Ok(resp),
+        };
 
         // Serialize blocks
-        let serialized_blocks = bincode::serialize(blocks_slice)
+        let serialized_blocks = bincode::serialize(&blocks)
             .map_err(|e| anyhow::anyhow!("Failed to serialize blocks: {}", e))?;
 
         tracing::info!(
             " Serving blocks {}-{} ({} blocks, {} bytes)",
             start,
             actual_end,
-            blocks_slice.len(),
+            blocks.len(),
             serialized_blocks.len()
         );
 
         Ok(ZhtpResponse::success_with_content_type(
             serialized_blocks,
             "application/octet-stream".to_string(),
+            None,
+        ))
+    }
+
+    /// Get block range in v2 envelope format for negotiated sync.
+    async fn handle_get_block_range_v2(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let (start, end) = match Self::parse_block_range_params(
+            &request.uri,
+            "Invalid block range format. Use: /api/v2/blockchain/blocks/{start}/{end}",
+        ) {
+            Ok(v) => v,
+            Err(resp) => return Ok(resp),
+        };
+        let (actual_end, blocks) = match self.load_block_range(start, end).await? {
+            Ok(v) => v,
+            Err(resp) => return Ok(resp),
+        };
+
+        let payload = bincode::serialize(&blocks)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize block payload: {}", e))?;
+        let envelope = crate::sync_wire::BlockPageEnvelopeV2 {
+            wire_version: crate::sync_wire::BLOCK_PAGE_WIRE_V2_CBORENVELOPE.to_string(),
+            block_encoding: crate::sync_wire::BLOCK_PAGE_V2_ENCODING_BINCODE.to_string(),
+            tx_encoding: crate::sync_wire::BLOCK_PAGE_V2_TX_ENCODING_V8.to_string(),
+            start,
+            end: actual_end,
+            count: blocks.len(),
+            payload,
+        };
+        let mut encoded = Vec::new();
+        ciborium::ser::into_writer(&envelope, &mut encoded)
+            .map_err(|e| anyhow::anyhow!("Failed to encode v2 block envelope: {}", e))?;
+
+        tracing::info!(
+            " Serving v2 blocks {}-{} ({} blocks, {} bytes)",
+            start,
+            actual_end,
+            blocks.len(),
+            encoded.len()
+        );
+
+        Ok(ZhtpResponse::success_with_content_type(
+            encoded,
+            "application/cbor".to_string(),
             None,
         ))
     }
@@ -2871,7 +2991,7 @@ impl BlockchainHandler {
 
         // Calculate statistics
         let current_height = blockchain.get_height();
-        let headers_count = blockchain.blocks.len();
+        let headers_count = blockchain.query_block_count();
 
         // Estimate storage: ~200 bytes per header
         let storage_bytes = headers_count * 200;
@@ -2940,7 +3060,7 @@ impl BlockchainHandler {
         let blockchain = blockchain_arc.read().await;
 
         // Query identity from registry
-        if let Some(identity) = blockchain.identity_registry.get(&did.to_string()) {
+        if let Some(identity) = blockchain.query_identity(&did.to_string()) {
             let response_data = match view {
                 Some(lib_identity::types::IdentityView::Public(_)) => {
                     serde_json::json!({

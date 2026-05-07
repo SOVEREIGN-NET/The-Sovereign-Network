@@ -10,7 +10,7 @@
 //! - POST /api/v1/identity/seed/verify - Verify seed phrase is correct (Issue #115)
 
 use base64::{engine::general_purpose, Engine as _};
-use lib_blockchain;
+use lib_blockchain::{self, BlockchainQuery};
 use lib_storage;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -88,6 +88,10 @@ pub struct RecoverIdentityResponse {
 pub struct IdentityInfo {
     pub identity_id: String,
     pub did: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
 }
 
 /// Response for backup status
@@ -337,7 +341,7 @@ pub async fn handle_recover_identity(
     // For the 24-word BIP39 path we also keep the Dilithium pk so we can auto-create
     // the identity and wallet if they are not yet on-chain.
 
-    let (identity_id, opt_dilithium_pk) = if words.len() == 24 {
+    let (identity_id, opt_dilithium_pk, opt_root_secret) = if words.len() == 24 {
         // 24-word BIP39 standard - derive identity using lib-client's method:
         // 1. Extract 32-byte entropy from mnemonic (NOT BIP39 PBKDF2)
         // 2. Generate Dilithium keypair from entropy (deterministic)
@@ -367,7 +371,7 @@ pub async fn handle_recover_identity(
         let identity_id = lib_crypto::Hash::from_hex(id_hex)
             .map_err(|e| anyhow::anyhow!("Invalid identity hash: {}", e))?;
 
-        (identity_id, Some(rsk.public_key.clone()))
+        (identity_id, Some(rsk.public_key.clone()), Some(rs.0))
     } else {
         // 20-word custom format - use legacy Blake3 derivation
         let phrase_manager = recovery_phrase_manager.read().await;
@@ -376,7 +380,7 @@ pub async fn handle_recover_identity(
             .await
             .map_err(|e| anyhow::anyhow!("Identity recovery failed: {}", e))?;
         drop(phrase_manager);
-        (id, None::<Vec<u8>>)
+        (id, None::<Vec<u8>>, None::<[u8; 64]>)
     };
 
     // Look up identity — auto-create on-chain if this is a fresh device after seed entry.
@@ -394,7 +398,7 @@ pub async fn handle_recover_identity(
                 "Recovery: identity {} not found — auto-creating from seed",
                 hex::encode(&identity_id.0[..8])
             );
-            auto_create_identity_from_seed(&identity_manager, identity_id.clone(), dilithium_pk)
+            auto_create_identity_from_seed(&identity_manager, identity_id.clone(), dilithium_pk, opt_root_secret)
                 .await
                 .unwrap_or_else(|e| {
                     tracing::warn!("Recovery auto-create identity failed: {}", e);
@@ -429,12 +433,26 @@ pub async fn handle_recover_identity(
         migrate_wallets_for_identity(migration_identity_id, migration_dilithium_pk).await;
     });
 
+    // Look up display_name and username from on-chain state
+    let (display_name, username) = {
+        if let Ok(blockchain_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
+            let blockchain = blockchain_arc.read().await;
+            let dn = blockchain.identity_registry.get(&did).map(|id| id.display_name.clone());
+            let un = blockchain.did_to_username.get(&did).cloned();
+            (dn, un)
+        } else {
+            (None, None)
+        }
+    };
+
     // Build response
     let response = RecoverIdentityResponse {
         status: "success".to_string(),
         identity: IdentityInfo {
             identity_id: identity_id.to_string(),
             did,
+            display_name,
+            username,
         },
         session_token,
     };
@@ -453,6 +471,7 @@ async fn auto_create_identity_from_seed(
     identity_manager: &Arc<RwLock<IdentityManager>>,
     identity_id: lib_crypto::Hash,
     dilithium_pk: &[u8],
+    opt_root_secret: Option<[u8; 64]>,
 ) -> anyhow::Result<String> {
     let did = did_from_root_signing_public_key(dilithium_pk);
     let now_ts = std::time::SystemTime::now()
@@ -476,9 +495,45 @@ async fn auto_create_identity_from_seed(
                 lib_pk.clone(),
                 lib_identity::types::IdentityType::Human,
                 "seed-recovery".to_string(),
-                Some("Recovered Identity".to_string()),
+                {
+                    // Preserve existing on-chain display_name if available
+                    let existing_name = if let Ok(bc_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
+                        let bc = bc_arc.read().await;
+                        bc.identity_registry.get(&did).map(|id| id.display_name.clone())
+                    } else {
+                        None
+                    };
+                    existing_name.or_else(|| Some(String::new()))
+                },
                 now_ts,
             );
+
+            // If we have the root secret, set up HD wallet recovery so the user
+            // can see their actual wallets (not just a server-side fallback).
+            if let Some(root_secret) = opt_root_secret {
+                if let Some(identity) = mgr.get_identity_mut(&identity_id) {
+                    // Derive wallet master seed using the same XOF as new_unified
+                    let mut wallet_master_seed = [0u8; 64];
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(&root_secret);
+                    hasher.update(b"ZHTP_WALLET_SEED_V1");
+                    let mut reader = hasher.finalize_xof();
+                    reader.fill(&mut wallet_master_seed);
+
+                    identity.wallet_master_seed = wallet_master_seed;
+                    identity.wallet_manager =
+                        lib_identity::wallets::WalletManager::from_master_seed(
+                            identity_id.clone(),
+                            wallet_master_seed,
+                        );
+
+                    // Recover wallets that were derived from this master seed
+                    let _ = identity
+                        .wallet_manager
+                        .recover_hd_wallets(HD_RECOVERY_SCAN_DEPTH)
+                        .await;
+                }
+            }
         }
     }
 
@@ -492,10 +547,10 @@ async fn auto_create_identity_from_seed(
         .await
         {
             // Only submit if not already in the on-chain identity_registry.
-            if !blockchain.identity_registry.contains_key(&did) {
+            if !blockchain.query_identity_exists(&did) {
                 let identity_data = lib_blockchain::transaction::IdentityTransactionData {
                     did: did.clone(),
-                    display_name: "Recovered Identity".to_string(),
+                    display_name: String::new(), // Populated by client; empty is better than "Recovered Identity"
                     public_key: dilithium_pk.to_vec(),
                     ownership_proof: vec![],
                     identity_type: "human".to_string(),
@@ -505,6 +560,7 @@ async fn auto_create_identity_from_seed(
                     dao_fee: 0,
                     controlled_nodes: vec![],
                     owned_wallets: vec![],
+                    kyber_public_key: vec![],
                 };
                 let reg_tx = lib_blockchain::transaction::Transaction::new_identity_registration(
                     identity_data.clone(),
@@ -520,7 +576,8 @@ async fn auto_create_identity_from_seed(
                 if let Err(e) = blockchain.add_system_transaction(reg_tx) {
                     tracing::warn!("Recovery: failed to queue identity registration tx: {}", e);
                 } else {
-                    blockchain.identity_registry.insert(did.clone(), identity_data);
+                    // Identity will be added to registry when the block containing
+                    // this transaction is committed and processed by the executor.
                     tracing::info!(
                         "Recovery: queued IdentityRegistration for {}",
                         hex::encode(&identity_id.0[..8])
@@ -535,6 +592,9 @@ async fn auto_create_identity_from_seed(
 
 /// The default SOV welcome bonus minted when a wallet has no on-chain balance (5 000 SOV).
 const RECOVERY_SOV_WELCOME_BONUS: u128 = lib_types::sov::atoms(5_000);
+
+/// Number of HD derivation indices to scan during wallet recovery.
+const HD_RECOVERY_SCAN_DEPTH: u32 = 20;
 
 /// Migrate wallets belonging to `identity_id` that are registered on-chain but have
 /// no sled token balance. Submits a WalletRegistration transaction for each such
@@ -1059,6 +1119,8 @@ pub async fn handle_import_backup(
         identity: IdentityInfo {
             identity_id: identity_id.to_string(),
             did: identity.did.clone(),
+            display_name: identity.metadata.get("display_name").cloned(),
+            username: None,
         },
         session_token,
     };
@@ -1462,10 +1524,10 @@ pub async fn handle_migrate_identity(
                 let old_identity_id_chain =
                     lib_blockchain::Hash::from_slice(old_identity.id.as_bytes());
                 let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
-                let token_opt = blockchain.token_contracts.get(&sov_token_id);
+                let token_opt = blockchain.query_token_contract(&sov_token_id);
                 _has_token_contract = token_opt.is_some();
 
-                for (wallet_id_str, wallet_data) in blockchain.wallet_registry.iter() {
+                for (wallet_id_str, wallet_data) in blockchain.query_all_wallets() {
                     if wallet_data.owner_identity_id == Some(old_identity_id_chain.clone()) {
                         registry_owned_count += 1;
                         wallet_ids_all.insert(wallet_id_str.clone());
@@ -1479,7 +1541,7 @@ pub async fn handle_migrate_identity(
                                 Some(short_key_min_len.map(|v| v.min(key_len)).unwrap_or(key_len));
                             short_key_max_len =
                                 Some(short_key_max_len.map(|v| v.max(key_len)).unwrap_or(key_len));
-                        } else if let Some(token) = token_opt {
+                        } else if let Some(ref token) = token_opt {
                             let old_pk_bytes: [u8; 2592] = wallet_data.public_key.as_slice().try_into()
                                 .unwrap_or([0u8; 2592]);
                             let new_pk_bytes: [u8; 2592] = new_public_key_bytes.as_slice().try_into()
@@ -1697,7 +1759,7 @@ pub async fn handle_migrate_identity(
                 .iter()
                 .map(|(wid, _, _)| hex::encode(wid.0))
                 .collect();
-            for (wallet_id_str, wallet_data) in blockchain.wallet_registry.iter() {
+            for (wallet_id_str, wallet_data) in blockchain.query_all_wallets() {
                 if wallet_data.owner_identity_id == Some(old_identity_id_chain.clone()) {
                     wallet_ids_all.insert(wallet_id_str.clone());
                 }
@@ -1717,6 +1779,7 @@ pub async fn handle_migrate_identity(
                     dao_fee: 0,
                     controlled_nodes: vec![],
                     owned_wallets: wallet_ids_all.iter().cloned().collect(),
+                    kyber_public_key: vec![],
                 };
 
                 if let Err(e) = blockchain.register_identity(identity_tx) {
@@ -1750,7 +1813,7 @@ pub async fn handle_migrate_identity(
                     key_id: wallet_id_bytes,
                 };
 
-                if let Some(existing) = blockchain.wallet_registry.get(wallet_id_str).cloned() {
+                if let Some(existing) = blockchain.query_wallet(wallet_id_str).cloned() {
                     let wallet_type = existing.wallet_type.clone();
                     let old_public_key = existing.public_key.clone();
                     let old_pk_is_short = old_public_key.len() < MIN_DILITHIUM_PK_LEN;
@@ -1758,7 +1821,7 @@ pub async fn handle_migrate_identity(
                     // Build TokenMint txs for balance fixes
                     if old_pk_is_short {
                         if existing.initial_balance > 0 {
-                            let token_opt = blockchain.token_contracts.get(&sov_token_id);
+                            let token_opt = blockchain.query_token_contract(&sov_token_id);
                             let current_balance =
                                 token_opt.map(|t| t.balance_of(&wallet_addr)).unwrap_or(0);
                             if current_balance < existing.initial_balance as u128 {
@@ -1792,7 +1855,7 @@ pub async fn handle_migrate_identity(
                             }
                         }
                     } else {
-                        if let Some(token) = blockchain.token_contracts.get(&sov_token_id) {
+                        if let Some(token) = blockchain.query_token_contract(&sov_token_id) {
                             let old_pk_bytes: [u8; 2592] = old_public_key.as_slice().try_into()
                                 .unwrap_or([0u8; 2592]);
                             let old_pk = lib_crypto::PublicKey::new(old_pk_bytes);
@@ -2173,7 +2236,6 @@ mod tests {
             lib_storage::UnifiedStorageConfig::default(),
             path,
         )
-        .await
         .expect("persistent storage init");
         Arc::new(RwLock::new(system))
     }
@@ -2528,6 +2590,7 @@ mod tests {
         let mut rewards_key_arr = validator_kp.public_key.dilithium_pk;
         rewards_key_arr.iter_mut().for_each(|b| *b = b.wrapping_add(1)); // distinct from others
         let rewards_key = rewards_key_arr.to_vec();
+        // Test scaffold: direct insert for test setup (not production code)
         bc.validator_registry.insert(
             validator_did.clone(),
             lib_blockchain::ValidatorInfo {
@@ -2560,6 +2623,7 @@ mod tests {
             let seed_commitment = lib_blockchain::types::hash::blake3_hash(
                 format!("seed_commitment:{}", wallet_id_hex).as_bytes(),
             );
+            // Test scaffold: direct insert for test setup (not production code)
             bc.wallet_registry.insert(
                 wallet_id_hex,
                 lib_blockchain::transaction::WalletTransactionData {

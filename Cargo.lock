@@ -179,6 +179,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "architecture-invariants"
+version = "0.1.0"
+
+[[package]]
 name = "argon2"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2990,6 +2994,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "is-docker"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "928bae27f42bc99b60d9ac7334e3a21d10ad8f1835a4e12ec3ec0464765ed1b3"
+dependencies = [
+ "once_cell",
+]
+
+[[package]]
 name = "is-terminal"
 version = "0.4.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2998,6 +3011,16 @@ dependencies = [
  "hermit-abi 0.5.2",
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "is-wsl"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "173609498df190136aa7dea1a91db051746d339e18476eed5ca40521f02d7aa5"
+dependencies = [
+ "is-docker",
+ "once_cell",
 ]
 
 [[package]]
@@ -3361,6 +3384,7 @@ dependencies = [
  "indexmap 2.13.0",
  "lib-access-control",
  "lib-consensus",
+ "lib-consensus-core",
  "lib-crypto",
  "lib-economy",
  "lib-fees",
@@ -3438,7 +3462,10 @@ dependencies = [
  "dashmap",
  "hex",
  "indexmap 1.9.3",
+ "lib-consensus-core",
+ "lib-consensus-net",
  "lib-crypto",
+ "lib-governance",
  "lib-identity",
  "lib-proofs",
  "lib-storage",
@@ -3453,6 +3480,76 @@ dependencies = [
  "tokio-test",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "lib-consensus-core"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "lib-crypto",
+ "lib-identity",
+ "lib-types",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "lib-consensus-net"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bincode",
+ "lib-consensus-core",
+ "lib-crypto",
+ "lib-identity",
+ "lib-types",
+ "rand 0.8.5",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "lib-consensus-observer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "lib-consensus",
+ "lib-crypto",
+ "lib-identity",
+ "lib-types",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "lib-consensus-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bincode",
+ "lib-blockchain",
+ "lib-consensus",
+ "lib-consensus-core",
+ "lib-consensus-net",
+ "lib-crypto",
+ "lib-identity",
+ "lib-network",
+ "lib-types",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3488,6 +3585,7 @@ dependencies = [
  "chrono",
  "criterion",
  "hex",
+ "lib-consensus-core",
  "lib-crypto",
  "lib-identity",
  "lib-proofs",
@@ -3515,13 +3613,19 @@ dependencies = [
 name = "lib-governance"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bincode",
  "blake3",
  "lib-access-control",
+ "lib-consensus-core",
+ "lib-crypto",
+ "lib-identity",
  "lib-types",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3603,7 +3707,9 @@ dependencies = [
  "hmac",
  "hostname",
  "jni",
+ "lib-blockchain",
  "lib-consensus",
+ "lib-consensus-net",
  "lib-crypto",
  "lib-economy",
  "lib-identity",
@@ -3636,6 +3742,7 @@ dependencies = [
  "sha3",
  "sled",
  "socket2 0.5.10",
+ "stun",
  "subtle",
  "tempfile",
  "tokio",
@@ -3668,6 +3775,7 @@ dependencies = [
  "num_cpus",
  "plonky2",
  "plonky2_field",
+ "rand 0.8.5",
  "serde",
  "serde_json",
  "tokio",
@@ -3778,9 +3886,6 @@ name = "lib-utxo"
 version = "0.1.0"
 dependencies = [
  "lib-types",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -4034,6 +4139,15 @@ dependencies = [
 
 [[package]]
 name = "memoffset"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5de893c32cde5f383baa4c04c5d6dbdd735cfd4a794b0debdb2bb1b421da5ff4"
+dependencies = [
+ "autocfg",
+]
+
+[[package]]
+name = "memoffset"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
@@ -4214,6 +4328,8 @@ dependencies = [
  "bitflags 1.3.2",
  "cfg-if",
  "libc",
+ "memoffset 0.7.1",
+ "pin-utils",
 ]
 
 [[package]]
@@ -4226,7 +4342,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases",
  "libc",
- "memoffset",
+ "memoffset 0.9.1",
 ]
 
 [[package]]
@@ -4491,6 +4607,17 @@ name = "opaque-debug"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
+
+[[package]]
+name = "open"
+version = "5.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f3bab717c29a857abf75fcef718d441ec7cb2725f937343c734740a985d37fd"
+dependencies = [
+ "is-wsl",
+ "libc",
+ "pathdiff",
+]
 
 [[package]]
 name = "openssl"
@@ -6738,6 +6865,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
+name = "stun"
+version = "0.17.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e0fd33c04d4617df42c9c84c698511c59f59869629fb7a193067eec41bce347"
+dependencies = [
+ "base64 0.22.1",
+ "crc",
+ "lazy_static",
+ "md-5",
+ "rand 0.9.2",
+ "ring",
+ "subtle",
+ "thiserror 1.0.69",
+ "tokio",
+ "url",
+ "webrtc-util",
+]
+
+[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7233,6 +7379,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "blake3",
+ "dirs",
  "hex",
  "lib-blockchain",
  "lib-crypto",
@@ -8422,6 +8569,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "webrtc-util"
+version = "0.17.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b65c1e0143a43d40f69e1d8c2ffc8734e379b49c06d45892ea4104c388bf9ead"
+dependencies = [
+ "async-trait",
+ "bitflags 1.3.2",
+ "bytes",
+ "ipnet",
+ "lazy_static",
+ "log",
+ "nix 0.26.4",
+ "portable-atomic",
+ "rand 0.9.2",
+ "thiserror 1.0.69",
+ "tokio",
+ "winapi",
+]
+
+[[package]]
 name = "weedle2"
 version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9328,8 +9495,11 @@ dependencies = [
  "lib-blockchain",
  "lib-client",
  "lib-consensus",
+ "lib-consensus-core",
+ "lib-consensus-runtime",
  "lib-crypto",
  "lib-economy",
+ "lib-governance",
  "lib-identity",
  "lib-identity-core",
  "lib-network",
@@ -9337,6 +9507,7 @@ dependencies = [
  "lib-protocols",
  "lib-storage",
  "lib-types",
+ "libc",
  "local-ip-address 0.6.10",
  "lru 0.12.5",
  "lz4_flex",
@@ -9371,6 +9542,7 @@ dependencies = [
  "warp",
  "windows 0.51.1",
  "zeroize",
+ "zhtp-daemon",
 ]
 
 [[package]]
@@ -9379,6 +9551,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "atty",
+ "axum",
  "base64 0.22.1",
  "bincode",
  "chrono",
@@ -9396,7 +9569,9 @@ dependencies = [
  "lib-network",
  "lib-proofs",
  "lib-protocols",
+ "lib-types",
  "mime_guess",
+ "open",
  "regex",
  "rpassword",
  "self_update",
@@ -9404,6 +9579,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "sysinfo",
  "tar",
  "tempfile",
@@ -9428,6 +9604,7 @@ dependencies = [
  "anyhow",
  "axum",
  "base64 0.22.1",
+ "ciborium",
  "dirs",
  "hex",
  "lib-crypto",
@@ -9435,6 +9612,10 @@ dependencies = [
  "lib-network",
  "lib-protocols",
  "lib-types",
+ "quinn",
+ "rcgen 0.14.7",
+ "rustls",
+ "rustls-pemfile 2.2.0",
  "serde",
  "serde_json",
  "tokio",

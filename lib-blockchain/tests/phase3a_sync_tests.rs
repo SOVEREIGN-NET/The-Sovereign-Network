@@ -8,13 +8,15 @@
 use std::sync::Arc;
 use tempfile::TempDir;
 
-use lib_blockchain::block::{Block, BlockHeader};
 use lib_blockchain::execution::{BlockExecutor, ExecutorConfig};
-use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use lib_blockchain::storage::{Address, BlockchainStore, SledStore, TokenId};
 use lib_blockchain::sync::{ChainSync, SyncError};
 use lib_blockchain::transaction::{TokenTransferData, Transaction, TransactionPayload};
 use lib_blockchain::types::{Hash, TransactionType};
+
+mod common;
+use common::block_builders::{block_at_height, block_at_height_with_txs, genesis_block};
+use common::crypto_fixtures::{dummy_signature, dummy_public_key};
 
 // =============================================================================
 // Test Helpers
@@ -24,81 +26,10 @@ fn create_test_store(dir: &TempDir) -> Arc<dyn BlockchainStore> {
     Arc::new(SledStore::open(dir.path()).unwrap())
 }
 
-fn create_dummy_public_key() -> PublicKey {
-    PublicKey::new([0u8; 2592])
-}
-
-fn create_dummy_signature() -> Signature {
-    Signature {
-        signature: vec![0u8; 64],
-        public_key: create_dummy_public_key(),
-        algorithm: SignatureAlgorithm::DEFAULT,
-        timestamp: 0,
-    }
-}
-
-fn create_genesis_block() -> Block {
-    let mut hash_bytes = [0u8; 32];
-    hash_bytes[0] = 0x01;
-    let block_hash = Hash::new(hash_bytes);
-
-    let header = BlockHeader {
-        version: 1,
-        previous_hash: Hash::default().into(),
-        data_helix_root: Hash::default().into(),
-        state_root: Hash::default().into(),
-        timestamp: 1000,
-        verification_helix_root: [0u8; 32],
-        bft_quorum_root: [0u8; 32],
-
-        height: 0,
-        block_hash,
-
-
-
-    };
-    Block::new(header, vec![])
-}
-
-fn create_block_at_height(height: u64, prev_hash: Hash) -> Block {
-    let mut hash_bytes = [0u8; 32];
-    hash_bytes[0..8].copy_from_slice(&height.to_be_bytes());
-    let block_hash = Hash::new(hash_bytes);
-
-    let header = BlockHeader {
-        version: 1,
-        previous_hash: prev_hash.into(),
-        data_helix_root: Hash::default().into(),
-        state_root: Hash::default().into(),
-        timestamp: 1000 + height * 600,
-        height,
-        verification_helix_root: [0u8; 32],
-        bft_quorum_root: [0u8; 32],
-        block_hash,
-    };
-    Block::new(header, vec![])
-}
-
-/// Create a block with transactions
-fn create_block_with_txs(height: u64, prev_hash: Hash, txs: Vec<Transaction>) -> Block {
-    let mut hash_bytes = [0u8; 32];
-    hash_bytes[0..8].copy_from_slice(&height.to_be_bytes());
-    hash_bytes[8] = txs.len() as u8;
-    let block_hash = Hash::new(hash_bytes);
-
-    let header = BlockHeader {
-        version: 1,
-        previous_hash: prev_hash.into(),
-        data_helix_root: Hash::default().into(),
-        state_root: Hash::default().into(),
-        timestamp: 1000 + height * 600,
-        height,
-        verification_helix_root: [0u8; 32],
-        bft_quorum_root: [0u8; 32],
-        block_hash,
-    };
-    Block::new(header, txs)
-}
+fn create_genesis_block() -> lib_blockchain::block::Block { genesis_block() }
+fn create_block_at_height(height: u64, prev_hash: Hash) -> lib_blockchain::block::Block { block_at_height(height, prev_hash) }
+fn create_block_with_txs(height: u64, prev_hash: Hash, txs: Vec<Transaction>) -> lib_blockchain::block::Block { block_at_height_with_txs(height, prev_hash, txs) }
+fn create_dummy_signature() -> lib_blockchain::integration::crypto_integration::Signature { dummy_signature() }
 
 /// Create a token transfer transaction
 fn create_token_transfer_tx(

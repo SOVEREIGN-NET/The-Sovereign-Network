@@ -703,10 +703,8 @@ impl UnifiedDiscoveryService {
             );
         }
 
-        // Validate port is in valid range
-        if mesh_port > MAX_PORT {
-            warn!("Port {} exceeds maximum valid port {}", mesh_port, MAX_PORT);
-        }
+        // Note: Port range validation is implicit for u16 (0-65535)
+        // No need to check mesh_port > MAX_PORT as u16 cannot exceed 65535
 
         Self {
             node_id,

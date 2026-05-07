@@ -49,8 +49,9 @@ LOCAL_STORAGE_PATHS.md
 DEPLOY_TOKEN_SPEC.md
 .vscode/settings.json
 
-# Ansible deployment (local config)
-deploy/ansible/
+# Ansible deployment (local config — .env holds secrets, everything else is safe)
+deploy/ansible/.env
+deploy/ansible/*.retry
 
 # Local documentation files
 docs/06_Financial_Projections_Tokenomics_Models*.docx
@@ -86,6 +87,44 @@ deploy-prod-1.sh
 docs/plans/CONTRACT_DAO_PRODUCTION_READINESS_PLAN.md
 .gitnexus/kuzu
 
+# AI assistant artifacts — never commit
+.claude/
+.qwen/
+.codex/
+.cursor/
+.cursorrules
+.cursorignore
+.copilot/
+.github/copilot-instructions.md
+.gemini/
+.aider*
+.continue/
+.cline/
+.clinerules
+.windsurf/
+.windsurfrules
+.chatgpt/
+.anthropic/
+.sourcegraph/
+.tabnine/
+.zed/
+CLAUDE.md
+CLAUDE.local.md
+QWEN.md
+CODEX.md
+GEMINI.md
+CURSOR.md
+AGENTS.md
+.ai/
+.llm/
+
+# All markdown — root + .docs tree (kept locally, not committed).
+# docs/ IS tracked: epic specs, forensic reports, decision records belong in version control.
+# Pre-existing local-only docs were moved to .docs/.
+/*.md
+!README.md
+.docs/**/*.md
+
 # Sensitive / local-only file patterns (issue #1934)
 tmp/
 *.b64
@@ -95,11 +134,12 @@ keystore*
 *.pem
 .env
 .env.*
+!.env.example
 
 # Operational docs (local only — published to wiki)
-docs/node-hardening.md
-docs/security-assessment-g1.md
-docs/bonding-curve-gap-analysis.md
+.docs/node-hardening.md
+.docs/security-assessment-g1.md
+.docs/bonding-curve-gap-analysis.md
 
 # Operational / payroll artifacts
 payroll.md
