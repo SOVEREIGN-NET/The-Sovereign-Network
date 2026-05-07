@@ -272,7 +272,7 @@ impl ConsensusEngine {
         // latency. Without this, round advances from incoming proposals
         // invalidate in-flight votes — nodes never converge.
         // Window of 3 rounds: votes from (current - 3) to any future round accepted.
-        const ROUND_ACCEPTANCE_WINDOW: u32 = 3;
+        const ROUND_ACCEPTANCE_WINDOW: u32 = 200;
         if vote.round + ROUND_ACCEPTANCE_WINDOW < self.current_round.round {
             tracing::debug!(
                 "Vote rejected: stale round {} < our round {} (window {})",
