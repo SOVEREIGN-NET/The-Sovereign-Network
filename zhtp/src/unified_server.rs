@@ -1032,14 +1032,22 @@ impl ZhtpUnifiedServer {
                 }
             });
 
-            // Wire relay sender to mesh message handler
-            if let Ok(mesh_router) = crate::runtime::mesh_router_provider::get_global_mesh_router().await {
-                if let Some(qp) = mesh_router.quic_protocol.read().await.as_ref() {
-                    if let Some(handler) = qp.message_handler.as_ref() {
-                        handler.write().await.set_message_relay_sender(relay_tx);
+            // Wire relay sender to mesh message handler — retry until QUIC is ready
+            tokio::spawn(async move {
+                for attempt in 0..30 {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                    if let Ok(mesh_router) = crate::runtime::mesh_router_provider::get_global_mesh_router().await {
+                        if let Some(qp) = mesh_router.quic_protocol.read().await.as_ref() {
+                            if let Some(handler) = qp.message_handler.as_ref() {
+                                handler.write().await.set_message_relay_sender(relay_tx);
+                                tracing::info!("Message relay sender wired (attempt {})", attempt + 1);
+                                return;
+                            }
+                        }
                     }
                 }
-            }
+                tracing::warn!("Failed to wire message relay sender after 30 attempts");
+            });
 
             let msg_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
                 crate::messaging::handler::MessagingHandler::new(
