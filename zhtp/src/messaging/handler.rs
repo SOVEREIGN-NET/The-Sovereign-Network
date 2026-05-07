@@ -227,19 +227,46 @@ impl MessagingHandler {
     /// GET /api/v1/msg/receive
     /// Poll for pending messages (deposits from other users).
     async fn handle_receive(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
-        // Extract recipient DID from authenticated session
-        let recipient_did = request
+        // Extract recipient DID from authenticated session.
+        // The requester identity hash may differ from the DID (key_id = blake3(dil||kyber)
+        // vs DID = blake3(dil) only). Look up the canonical DID from the identity registry.
+        let requester_key_id = request
             .requester
             .as_ref()
-            .map(|id| format!("did:zhtp:{}", hex::encode(&id.0)))
+            .map(|id| hex::encode(&id.0))
             .unwrap_or_default();
 
-        if recipient_did.is_empty() {
+        if requester_key_id.is_empty() {
             return Ok(error_resp(
                 ZhtpStatus::Unauthorized,
                 "Authenticated DID required",
             ));
         }
+
+        // Try both DID derivations: key_id-based and registry lookup
+        let key_id_did = format!("did:zhtp:{}", requester_key_id);
+        let recipient_did = {
+            let blockchain = self.blockchain.read().await;
+            // First: check if key_id-based DID exists in registry
+            if blockchain.identity_registry.contains_key(&key_id_did) {
+                key_id_did.clone()
+            } else {
+                // Search registry for an identity whose key_id matches
+                blockchain
+                    .identity_registry
+                    .iter()
+                    .find(|(_, id)| {
+                        if id.public_key.len() >= 32 {
+                            let pk_hash = hex::encode(lib_crypto::hash_blake3(&id.public_key));
+                            pk_hash == requester_key_id
+                        } else {
+                            false
+                        }
+                    })
+                    .map(|(did, _)| did.clone())
+                    .unwrap_or(key_id_did)
+            }
+        };
 
         // Mark as online
         self.presence.set_online(&recipient_did).await;
