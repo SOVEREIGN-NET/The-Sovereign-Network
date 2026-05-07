@@ -1370,6 +1370,13 @@ impl ConsensusEngine {
             self.current_round.locked_proposal = None;
             self.current_round.valid_proposal = None;
 
+            // Reset FSM from Rejected → Proposing so ProposalAdmitted can
+            // transition to Prevoting. Without this, the FSM stays in Rejected
+            // and ignores all events — votes are never cast.
+            if matches!(self.fsm_state, lib_consensus_core::fsm::ValidatorState::Rejected { .. }) {
+                self.fsm_state = lib_consensus_core::fsm::ValidatorState::Proposing;
+            }
+
             // Fall through to process this proposal normally at the new round
         }
 
