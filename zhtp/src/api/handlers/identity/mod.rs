@@ -1138,10 +1138,44 @@ impl IdentityHandler {
         let principal = self.extract_principal(&request);
         let identity_manager = self.identity_manager.read().await;
 
+        // Enrich with on-chain display_name and username
+        let (chain_display_name, chain_username) = {
+            if let Ok(bc_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
+                let bc = bc_arc.read().await;
+                let dn = bc.identity_registry.get(&did).map(|id| id.display_name.clone());
+                let un = bc.did_to_username.get(&did).cloned();
+                (dn, un)
+            } else {
+                (None, None)
+            }
+        };
+
         match identity_manager.get_identity_view_by_did(&principal, &did) {
-            Some(view) => Ok(ZhtpResponse::json(&view, None)?),
+            Some(view) => {
+                let mut response = serde_json::to_value(&view)?;
+                if let Some(obj) = response.as_object_mut() {
+                    if let Some(ref name) = chain_display_name {
+                        if !name.is_empty() {
+                            obj.insert("display_name".to_string(), json!(name));
+                        }
+                    }
+                    if let Some(ref username) = chain_username {
+                        obj.insert("username".to_string(), json!(username));
+                    }
+                }
+                Ok(ZhtpResponse::json(&response, None)?)
+            }
             None => {
-                // Anti-enumeration: return indistinguishable not-found.
+                // Try chain-only lookup (identity exists on-chain but not in local manager)
+                if chain_display_name.is_some() {
+                    let response = json!({
+                        "status": "success",
+                        "did": did,
+                        "display_name": chain_display_name,
+                        "username": chain_username,
+                    });
+                    return Ok(ZhtpResponse::json(&response, None)?);
+                }
                 let response_body = json!({
                     "status": "not_found",
                     "did": did,
