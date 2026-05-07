@@ -69,7 +69,21 @@ impl DepositStore {
 
         let key = (sender_did.to_string(), recipient_did.to_string());
         let mut deposits = self.deposits.write().await;
-        deposits.insert(key, delivery);
+        // Append envelopes to existing deposit instead of overwriting
+        if let Some(existing) = deposits.get_mut(&key) {
+            if existing.envelopes.len() + count <= MAX_ENVELOPES_PER_PAIR {
+                existing.envelopes.extend(delivery.envelopes);
+                existing.expires_at = delivery.expires_at; // refresh TTL
+            } else {
+                return Err(format!(
+                    "Too many envelopes ({}, max {})",
+                    existing.envelopes.len() + count,
+                    MAX_ENVELOPES_PER_PAIR
+                ));
+            }
+        } else {
+            deposits.insert(key, delivery);
+        }
 
         info!(
             "Deposited {} envelopes from {} for {} (expires in {}h)",

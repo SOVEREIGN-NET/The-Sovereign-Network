@@ -1022,7 +1022,10 @@ impl ZhtpUnifiedServer {
             let (relay_tx, mut relay_rx) = tokio::sync::mpsc::channel::<(String, Vec<u8>)>(256);
             tokio::spawn(async move {
                 while let Some((recipient_did, envelope)) = relay_rx.recv().await {
-                    let sender = "mesh_relay".to_string();
+                    // Extract sender DID from the envelope if possible
+                    let sender = bincode::deserialize::<crate::messaging::envelope::MessageEnvelope>(&envelope)
+                        .map(|env| env.sender_did)
+                        .unwrap_or_else(|_| "mesh_relay".to_string());
                     if let Err(e) = deposits_relay
                         .deposit(&sender, &recipient_did, vec![envelope])
                         .await
