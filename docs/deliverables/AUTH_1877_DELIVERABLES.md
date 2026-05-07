@@ -92,7 +92,7 @@ Web App                    Node (QUIC/ZHTP)          Mobile App
 - All traffic on QUIC/ZHTP — no separate HTTP server; HTTP-to-QUIC bridge stays edge-case only
 - `GET /auth/session/events?session_id=X&since=N` — client polls every 1-2s, advances cursor with `next_since`
 - Per-session ordered event log, ring-buffered at 256 entries
-- Events: `challenge_issued`, `session_approved`, `session_expired`, `session_revoked`, `biometric_verified`
+- Events: `challenge_issued`, `session_approved`, `session_revoked`, `biometric_verified`
 
 ### Phase 4 — Push Notifications (PR #2499)
 - `POST /auth/mobile/push-token` — stores FCM/APNs token per identity (requires Bearer)
