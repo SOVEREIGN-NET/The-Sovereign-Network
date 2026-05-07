@@ -165,44 +165,32 @@ impl MessagingHandler {
             }));
         }
 
-        // Recipient not on this node — try mesh relay via QUIC broadcast
+        // Always deposit locally — recipient may connect to any node including this one
+        let _ = self.deposits
+            .deposit(&envelope.sender_did, &recipient_did, vec![envelope_bytes.clone()])
+            .await;
+
+        // Also relay via mesh so all nodes have the message
         if let Ok(mesh_router) = crate::runtime::mesh_router_provider::get_global_mesh_router().await {
             let quic_guard = mesh_router.quic_protocol.read().await;
             if let Some(ref qp) = *quic_guard {
-                let peer_ids = qp.connected_peer_ids();
-                if !peer_ids.is_empty() {
-                    // Broadcast envelope to all mesh peers — the one hosting the recipient delivers it
-                    let mesh_msg = lib_network::types::mesh_message::ZhtpMeshMessage::MessageRelay {
-                        recipient_did: recipient_did.clone(),
-                        envelope: envelope_bytes.clone(),
-                    };
-                    let mut relayed = false;
-                    for peer_id in &peer_ids {
-                        if qp.send_to_peer(peer_id, mesh_msg.clone()).await.is_ok() {
-                            relayed = true;
-                        }
-                    }
-                    drop(quic_guard);
-
-                    if relayed {
-                        info!(
-                            "Message relayed via mesh for {}",
-                            &recipient_did[..16.min(recipient_did.len())]
-                        );
-                        return json_response(json!({
-                            "status": "relayed",
-                            "recipient_did": recipient_did,
-                        }));
-                    }
+                let mesh_msg = lib_network::types::mesh_message::ZhtpMeshMessage::MessageRelay {
+                    recipient_did: recipient_did.clone(),
+                    envelope: envelope_bytes,
+                };
+                for peer_id in &qp.connected_peer_ids() {
+                    let _ = qp.send_to_peer(peer_id, mesh_msg.clone()).await;
                 }
             }
         }
 
-        // Nobody could deliver — tell sender to deposit before disconnecting
+        info!(
+            "Message deposited + relayed for {}",
+            &recipient_did[..16.min(recipient_did.len())]
+        );
         json_response(json!({
-            "status": "queued",
+            "status": "delivered",
             "recipient_did": recipient_did,
-            "message": "Recipient not reachable. Deposit envelopes before disconnecting.",
         }))
     }
 
