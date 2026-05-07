@@ -84,9 +84,9 @@ Web App                    Node (QUIC/ZHTP)          Mobile App
 - Public endpoints unaffected
 
 ### Channel Binding + Cert Pinning (PR #2285)
-- `bound_node_did` on every session — cross-node replay protection
-- IP + User-Agent + node DID checked on every token validation
-- Session cannot be transferred to a different node or client
+- Current session validation binds tokens to client context via IP + User-Agent checks
+- `bound_node_did` is not currently populated/enforced on every session during access-token validation
+- Sessions are intended to stay client-bound; cross-node replay protection is not yet guaranteed by node-DID checks
 
 ### Phase 4 — Session Event Relay (PR #2499)
 - All traffic on QUIC/ZHTP — no separate HTTP server; HTTP-to-QUIC bridge stays edge-case only
