@@ -702,6 +702,33 @@ impl GenesisConfig {
             }
         }
 
+        // Register usernames for identities with display_names.
+        // Populates did_to_username so @username messaging lookups work.
+        for id in &self.allocations.identities {
+            if !id.display_name.is_empty()
+                && !bc.did_to_username.contains_key(&id.did)
+            {
+                let username = id.display_name.to_lowercase()
+                    .chars()
+                    .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_')
+                    .collect::<String>();
+                if username.len() >= 3 && !bc.credential_registry.contains_key(&username) {
+                    bc.did_to_username.insert(id.did.clone(), username.clone());
+                    bc.credential_registry.insert(
+                        username.clone(),
+                        crate::transaction::UserCredential {
+                            username: username.clone(),
+                            owner_did: id.did.clone(),
+                            password_hash: String::new(),
+                            registered_at_height: 0,
+                            registered_at: 0,
+                            password_changed_at_height: 0,
+                        },
+                    );
+                }
+            }
+        }
+
         // council
         if bc.council_members.is_empty() {
             bc.council_threshold = self.bootstrap_council.threshold;
