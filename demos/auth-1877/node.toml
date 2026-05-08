@@ -1,0 +1,103 @@
+# AUTH-1877 Demo Node — standalone single-node chain
+# Ephemeral: data written to demos/auth-1877/data (relative to repo root; wiped on each run)
+
+mesh_mode = "Hybrid"
+security_level = "Medium"
+runtime_role = "VALIDATOR"
+data_directory = "./demos/auth-1877/data"
+
+[crypto_config]
+post_quantum_enabled = true
+dilithium_level = 3
+kyber_level = 768
+hybrid_mode = true
+memory_security = false
+
+[zk_config]
+plonky2_enabled = true
+proof_cache_size = 100
+circuit_cache_enabled = false
+parallel_proving = false
+verification_threads = 2
+
+[identity_config]
+auto_citizenship = true
+ubi_registration = true
+dao_auto_join = true
+recovery_modes = ["mnemonic"]
+reputation_enabled = false
+
+[storage_config]
+dht_port = 9001
+storage_capacity_gb = 10
+replication_factor = 1
+erasure_coding = false
+pricing_tier = "hot"
+
+[network_config]
+mesh_port = 9334
+max_peers = 5
+protocols = ["quic"]
+bootstrap_peers = []
+long_range_relays = false
+
+[blockchain_config]
+network_id = "auth-demo"
+chain_id = 1877
+block_time_seconds = 2
+max_block_size = 524288
+zk_transactions = false
+smart_contracts = true
+enforce_chain_id = false
+
+[consensus_config]
+consensus_type = "Hybrid"
+dao_enabled = false
+validator_enabled = true
+min_stake = 1
+reward_multipliers = {}
+
+[economics_config]
+ubi_enabled = false
+daily_ubi_amount = 0
+dao_fee_percentage = 0.0
+mesh_rewards = false
+
+[economics_config.token_economics]
+total_supply = 1000000
+inflation_rate = 0.0
+burn_rate = 0.0
+reward_pool_percentage = 0.0
+
+[protocols_config]
+lib_enabled = true
+zdns_enabled = false
+api_port = 9333
+max_connections = 50
+request_timeout_ms = 10000
+
+[resource_allocations]
+max_memory_mb = 512
+max_cpu_threads = 2
+max_disk_gb = 10
+bandwidth_allocation = {}
+
+[integration_settings]
+event_bus_enabled = true
+service_discovery = false
+health_check_interval_ms = 5000
+cross_package_timeouts = {}
+
+[security]
+require_signatures = true
+allow_unsafe_operations = true
+rate_limiting = false
+audit_logging = false
+firewall_enabled = false
+ddos_protection = false
+intrusion_detection = false
+
+[testnet_features]
+faucet_enabled = false
+debugging_apis = true
+performance_profiling = false

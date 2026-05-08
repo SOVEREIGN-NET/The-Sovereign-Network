@@ -9,8 +9,24 @@ use tracing_subscriber;
 use zhtp::config::{load_configuration, CliArgs, Environment, NodeType};
 use zhtp::runtime::RuntimeOrchestrator;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    // Run on a thread with an 8 MB stack. The OS default on Windows is 1 MB,
+    // which the deeply-nested startup futures (validator/full-node init) exceed
+    // on release builds.
+    let handle = std::thread::Builder::new()
+        .name("zhtp-main".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_stack_size(8 * 1024 * 1024)
+                .build()?;
+            runtime.block_on(async_main())
+        })?;
+    handle.join().expect("zhtp-main thread panicked")
+}
+
+async fn async_main() -> anyhow::Result<()> {
     // Initialize logging
     let filter = env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
 

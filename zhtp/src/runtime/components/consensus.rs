@@ -2072,7 +2072,7 @@ impl Component for ConsensusComponent {
         *self.local_validator_identity.write().await = Some(local_validator_id.clone());
         *self.local_validator_keypair.write().await = Some(local_validator_keypair.clone());
 
-        let active_validators: Vec<lib_blockchain::ValidatorInfo> = {
+        let mut active_validators: Vec<lib_blockchain::ValidatorInfo> = {
             let blockchain_opt = self.blockchain.read().await;
             let blockchain = blockchain_opt
                 .as_ref()
@@ -2092,9 +2092,77 @@ impl Component for ConsensusComponent {
         };
 
         if active_validators.is_empty() {
-            return Err(anyhow::anyhow!(
-                "Validator startup requires a canonical validator set in blockchain state"
-            ));
+            if !is_development {
+                return Err(anyhow::anyhow!(
+                    "Validator startup requires a canonical validator set in blockchain state"
+                ));
+            }
+            // Development mode: genesis does not currently populate the validator
+            // registry (see `fund_genesis_block` / `apply_allocations`), so a fresh
+            // single-node dev chain has no validators. Auto-register the local
+            // node's keypair so consensus can boot.
+            warn!(
+                "No validators in canonical state; auto-registering local node as validator (development mode only)"
+            );
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let dilithium_pk: [u8; 2592] = local_validator_keypair
+                .public_key
+                .dilithium_pk
+                .as_slice()
+                .try_into()
+                .map_err(|_| anyhow::anyhow!(
+                    "local validator dilithium_pk wrong length (expected 2592 bytes)"
+                ))?;
+            let local_info = lib_blockchain::ValidatorInfo {
+                identity_id: hex::encode(local_validator_id.as_bytes()),
+                // Stake must clear ValidatorManager's minimum (currently 10) and
+                // Blockchain::register_validator's height-0 minimum (1_000). Set
+                // well above both for safety.
+                stake: 1_000_000,
+                storage_provided: 0,
+                consensus_key: dilithium_pk,
+                // ValidatorManager requires non-empty networking/rewards keys
+                // distinct from consensus_key. Synthesize deterministic placeholders
+                // by hashing the consensus key with role-specific tags.
+                networking_key: lib_blockchain::types::hash::blake3_hash(
+                    &[b"dev-net-key:".as_slice(), dilithium_pk.as_slice()].concat(),
+                ).as_array().to_vec(),
+                rewards_key: lib_blockchain::types::hash::blake3_hash(
+                    &[b"dev-rewards-key:".as_slice(), dilithium_pk.as_slice()].concat(),
+                ).as_array().to_vec(),
+                network_address: "127.0.0.1:9334".to_string(),
+                commission_rate: 0,
+                status: "active".to_string(),
+                registered_at: now,
+                last_activity: now,
+                blocks_validated: 0,
+                slash_count: 0,
+                admission_source: "dev_auto_register".to_string(),
+                governance_proposal_id: None,
+                oracle_key_id: None,
+            };
+            {
+                let blockchain_opt = self.blockchain.read().await;
+                let blockchain = blockchain_opt
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("Blockchain not set for dev auto-register"))?
+                    .clone();
+                drop(blockchain_opt);
+                let mut bc = blockchain.write().await;
+                let height = bc.height;
+                // Bypass register_validator's strict validation (requires prior
+                // identity registration, distinct networking/rewards keys, and
+                // minimum stake). For a dev-only single-validator chain we only
+                // need the registry populated so consensus can find a quorum.
+                bc.validator_registry
+                    .insert(local_info.identity_id.clone(), local_info.clone());
+                bc.validator_blocks
+                    .insert(local_info.identity_id.clone(), height + 1);
+            }
+            active_validators.push(local_info);
         }
 
         let validator_adapters: Vec<BlockchainValidatorAdapter> = active_validators

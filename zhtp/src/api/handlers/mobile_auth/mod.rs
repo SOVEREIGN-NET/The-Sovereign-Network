@@ -65,7 +65,11 @@ impl MobileAuthHandler {
     // -----------------------------------------------------------------------
 
     async fn dispatch(&self, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let uri = request.uri.trim_end_matches('/');
+        // Match on path only - strip query string before route matching, but the
+        // handlers themselves still receive the full uri (request.uri) for
+        // query-string parsing (e.g. session/events uses session_id and since).
+        let path_only = request.uri.split_once('?').map(|(p, _)| p).unwrap_or(&request.uri);
+        let uri = path_only.trim_end_matches('/');
         let client_ip = extract_client_ip(request);
         let user_agent = extract_user_agent(request);
 
@@ -664,6 +668,217 @@ impl MobileAuthHandler {
 
         Ok(json_ok(json!({ "certs": certs })))
     }
+
+    // -----------------------------------------------------------------------
+    // Phase 4: Session event polling (QUIC path — no separate HTTP server)
+    // GET /api/v1/auth/session/events?session_id=<sid>&since=<seq>
+    // Requires: Bearer
+    //
+    // Returns all session events with sequence >= since. Client polls every
+    // 1-2 seconds. No persistent connection needed — stays on QUIC transport.
+    // -----------------------------------------------------------------------
+
+    async fn handle_session_events(
+        &self,
+        uri: &str,
+        headers: &ZhtpHeaders,
+        client_ip: &str,
+        user_agent: &str,
+    ) -> ZhtpResult<ZhtpResponse> {
+        let token = match extract_bearer(headers) {
+            Some(t) => t,
+            None => return Ok(json_error(ZhtpStatus::Unauthorized, "Missing Bearer token")),
+        };
+        let session = match self
+            .store
+            .validate_access_token(&token, client_ip, user_agent)
+            .await
+        {
+            Err(e) => return Ok(json_error(ZhtpStatus::Unauthorized, &e.to_string())),
+            Ok(s) => s,
+        };
+
+        // Parse query params from URI: ?session_id=X&since=N
+        let (session_id, since) = parse_event_query(uri, &session.challenge_session_id);
+
+        let events = self
+            .store
+            .get_session_events_since(&session_id, since)
+            .await;
+
+        let payload: Vec<serde_json::Value> = events
+            .into_iter()
+            .map(|(seq, event)| {
+                let mut v = serde_json::to_value(&event).unwrap_or_default();
+                if let Some(obj) = v.as_object_mut() {
+                    obj.insert("seq".to_string(), serde_json::json!(seq));
+                }
+                v
+            })
+            .collect();
+
+        Ok(json_ok(json!({
+            "session_id": session_id,
+            "events": payload,
+            "next_since": payload.last()
+                .and_then(|e| e.get("seq"))
+                .and_then(|s| s.as_u64())
+                .map(|s| s + 1)
+                .unwrap_or(since),
+        })))
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 4: Register push notification token
+    // POST /api/v1/auth/mobile/push-token
+    // Requires: Bearer
+    // Body: { "push_token": "<FCM or APNs device token>" }
+    // -----------------------------------------------------------------------
+
+    async fn handle_push_token(
+        &self,
+        body: &[u8],
+        headers: &ZhtpHeaders,
+        client_ip: &str,
+        user_agent: &str,
+    ) -> ZhtpResult<ZhtpResponse> {
+        #[derive(Deserialize)]
+        struct PushTokenRequest {
+            push_token: String,
+        }
+
+        let token = match extract_bearer(headers) {
+            Some(t) => t,
+            None => return Ok(json_error(ZhtpStatus::Unauthorized, "Missing Bearer token")),
+        };
+        let session = match self
+            .store
+            .validate_access_token(&token, client_ip, user_agent)
+            .await
+        {
+            Err(e) => return Ok(json_error(ZhtpStatus::Unauthorized, &e.to_string())),
+            Ok(s) => s,
+        };
+
+        let req: PushTokenRequest = match serde_json::from_slice(body) {
+            Ok(r) => r,
+            Err(e) => return Ok(json_error(ZhtpStatus::BadRequest, &e.to_string())),
+        };
+
+        if req.push_token.is_empty() {
+            return Ok(json_error(ZhtpStatus::BadRequest, "push_token must not be empty"));
+        }
+
+        self.store
+            .register_push_token(session.identity_id.clone(), req.push_token)
+            .await;
+
+        let entry = AuditLogEntry::new(
+            AuditEventKind::PushTokenRegistered,
+            None,
+            Some(&hex::encode(session.identity_id.as_ref())),
+            client_ip,
+            "push_token_registered",
+        );
+        self.store.append_audit(entry).await;
+
+        Ok(json_ok(json!({ "registered": true })))
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 4: Biometric gate confirmation
+    // POST /api/v1/auth/mobile/biometric-confirm
+    // Requires: Bearer
+    // Body: { "attestation_hex": "<Dilithium sig over access_token bytes>" }
+    //
+    // The mobile app performs a local biometric check (FaceID / fingerprint),
+    // then signs the access token with its private key. The server verifies
+    // the signature (proving it came from the authenticated mobile device) and
+    // marks the session as biometric-verified, unlocking high-value operations.
+    // -----------------------------------------------------------------------
+
+    async fn handle_biometric_confirm(
+        &self,
+        body: &[u8],
+        headers: &ZhtpHeaders,
+        client_ip: &str,
+        user_agent: &str,
+    ) -> ZhtpResult<ZhtpResponse> {
+        #[derive(Deserialize)]
+        struct BiometricRequest {
+            /// Dilithium signature over the access token bytes, produced after local biometric gate
+            attestation_hex: String,
+        }
+
+        let token = match extract_bearer(headers) {
+            Some(t) => t,
+            None => return Ok(json_error(ZhtpStatus::Unauthorized, "Missing Bearer token")),
+        };
+        let session = match self
+            .store
+            .validate_access_token(&token, client_ip, user_agent)
+            .await
+        {
+            Err(e) => return Ok(json_error(ZhtpStatus::Unauthorized, &e.to_string())),
+            Ok(s) => s,
+        };
+
+        let req: BiometricRequest = match serde_json::from_slice(body) {
+            Ok(r) => r,
+            Err(e) => return Ok(json_error(ZhtpStatus::BadRequest, &e.to_string())),
+        };
+
+        // Verify the attestation: it must be a Dilithium signature over the access token bytes,
+        // produced by the same public key that established this session.
+        let sig_valid = match CrossDeviceSessionBinder::verify_cross_device_binding(
+            &hex::encode(token.as_bytes()),
+            &session.public_key_hex,
+            &req.attestation_hex,
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                return Ok(json_error(
+                    ZhtpStatus::BadRequest,
+                    &format!("Attestation verification error: {}", e),
+                ))
+            }
+        };
+
+        if !sig_valid {
+            return Ok(json_error(ZhtpStatus::Unauthorized, "Invalid biometric attestation"));
+        }
+
+        match self
+            .store
+            .confirm_biometric(&token, &req.attestation_hex)
+            .await
+        {
+            Err(e) => return Ok(json_error(ZhtpStatus::BadRequest, &e.to_string())),
+            Ok(_) => {}
+        }
+
+        let entry = AuditLogEntry::new(
+            AuditEventKind::BiometricVerified,
+            None,
+            Some(&hex::encode(session.identity_id.as_ref())),
+            client_ip,
+            "biometric_confirmed",
+        );
+        self.store.append_audit(entry).await;
+
+        // Notify WebSocket subscribers that biometric is now verified
+        self.store
+            .publish_session_event(
+                &session.challenge_session_id,
+                SessionEvent::BiometricVerified {
+                    session_id: session.challenge_session_id.clone(),
+                },
+            )
+            .await;
+
+        Ok(json_ok(json!({ "biometric_verified": true })))
+    }
+
 }
 
 // ---------------------------------------------------------------------------
@@ -678,7 +893,10 @@ impl ZhtpRequestHandler for MobileAuthHandler {
 
     fn can_handle(&self, request: &ZhtpRequest) -> bool {
         let uri = request.uri.trim_end_matches('/');
-        uri.starts_with("/api/v1/auth/mobile") || uri.starts_with("/api/v1/auth/delegate")
+        uri.starts_with("/api/v1/auth/mobile")
+            || uri.starts_with("/api/v1/auth/delegate")
+            || uri.starts_with("/api/v1/auth/session/events")
+            || uri.starts_with("/api/v1/tx/")
     }
 }
 
