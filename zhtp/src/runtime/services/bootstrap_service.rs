@@ -240,7 +240,8 @@ impl BootstrapService {
 
         // Deserialize blocks
         let new_blocks: Vec<lib_blockchain::block::Block> =
-            bincode::deserialize(&blocks_data).context("Failed to deserialize blocks")?;
+            crate::runtime::deserialize_blocks_compatible(&blocks_data)
+                .context("Failed to deserialize blocks")?;
 
         info!("Appending {} new blocks to local chain", new_blocks.len());
 

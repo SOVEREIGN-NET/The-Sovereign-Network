@@ -479,6 +479,7 @@ impl EconomicTransactionProcessor {
                     dao_fee: 0,
                     controlled_nodes: Vec::new(),
                     owned_wallets: Vec::new(),
+                    kyber_public_key: Vec::new(),
                 })
             }
             EconomyTransactionType::ProposalVote | EconomyTransactionType::ProposalExecution => {
@@ -498,6 +499,7 @@ impl EconomicTransactionProcessor {
                     dao_fee: economy_tx.dao_fee as u64,
                     controlled_nodes: Vec::new(),
                     owned_wallets: Vec::new(),
+                    kyber_public_key: Vec::new(),
                 })
             }
             _ => None, // Regular payments don't require identity verification

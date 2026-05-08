@@ -10,10 +10,9 @@ use lib_storage::proofs::{
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Helper function to create test identity
-fn create_test_identity(name: &str) -> IdentityId {
-    Hash::from_bytes(&hash_blake3(name.as_bytes()))
-}
+mod common;
+
+fn create_test_identity(name: &str) -> IdentityId { common::consensus_fixtures::named_identity(name) }
 
 /// Helper function to create test network state
 fn create_test_network_state() -> NetworkState {
@@ -269,7 +268,13 @@ fn test_proof_of_useful_work_verification() -> Result<()> {
         node_id,
     )?;
 
-    let is_valid = proof.verify(&network_state)?;
+    // CONS-104: ProofOfUsefulWork::verify(&NetworkState) was extracted to a free
+    // function in lib-consensus because the orphan rule blocks adding inherent
+    // impls on the type (now in lib-proofs) from this crate.
+    let is_valid = lib_consensus::proof_verify::verify_pouw_against_network_state(
+        &proof,
+        &network_state,
+    )?;
 
     // Should be valid for test network state
     assert!(is_valid);

@@ -135,6 +135,90 @@ pub enum ZhtpCommand {
 
     /// CBE token operations (init pools, employment, payroll)
     Cbe(CbeArgs),
+
+    /// NFT operations (create collection, mint, transfer)
+    Nft(NftArgs),
+}
+
+/// NFT operation commands
+#[derive(Args, Debug, Clone)]
+pub struct NftArgs {
+    #[command(subcommand)]
+    pub action: NftAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum NftAction {
+    /// Create a new NFT collection
+    CreateCollection {
+        /// Collection name
+        #[arg(long)]
+        name: String,
+        /// Short symbol (e.g. ART)
+        #[arg(long)]
+        symbol: String,
+        /// Max tokens in collection (omit for unlimited)
+        #[arg(long)]
+        max_supply: Option<u64>,
+        /// Path to keystore directory
+        #[arg(long)]
+        keystore: Option<String>,
+    },
+    /// Mint a new NFT in a collection
+    Mint {
+        /// Collection ID (64-char hex)
+        #[arg(long)]
+        collection: String,
+        /// Recipient wallet ID (64-char hex)
+        #[arg(long)]
+        to: String,
+        /// Token name
+        #[arg(long)]
+        name: String,
+        /// Description
+        #[arg(long, default_value = "")]
+        description: String,
+        /// Web4 content CID for the image
+        #[arg(long, default_value = "")]
+        image_cid: String,
+        /// Path to keystore directory
+        #[arg(long)]
+        keystore: Option<String>,
+    },
+    /// Transfer an NFT to another wallet
+    Transfer {
+        /// Collection ID (64-char hex)
+        #[arg(long)]
+        collection: String,
+        /// Token ID (integer)
+        #[arg(long)]
+        token_id: u64,
+        /// Recipient wallet ID (64-char hex)
+        #[arg(long)]
+        to: String,
+        /// Path to keystore directory
+        #[arg(long)]
+        keystore: Option<String>,
+    },
+    /// Burn (destroy) an NFT
+    Burn {
+        /// Collection ID (64-char hex)
+        #[arg(long)]
+        collection: String,
+        /// Token ID (integer)
+        #[arg(long)]
+        token_id: u64,
+        /// Path to keystore directory
+        #[arg(long)]
+        keystore: Option<String>,
+    },
+    /// List collections
+    List,
+    /// List NFTs owned by a wallet
+    Owned {
+        /// Wallet ID (64-char hex)
+        wallet_id: String,
+    },
 }
 
 /// Node management commands
@@ -180,6 +264,14 @@ pub enum NodeAction {
     Status,
     /// Restart the node
     Restart,
+    /// Open the node setup web UI (localhost browser dashboard)
+    SetupUi,
+    /// Halt consensus for coordinated upgrade (Council only)
+    HaltConsensus {
+        /// Halt reason: "upgrade", "emergency", or custom
+        #[arg(short, long, default_value = "upgrade")]
+        reason: String,
+    },
 }
 
 /// Wallet operation commands
@@ -393,6 +485,27 @@ pub enum DaoAction {
         /// DAO ID (32-byte hex)
         #[arg(long)]
         dao_id: String,
+    },
+    /// Stake SOV into a sector DAO. Locks SOV in the DAO reserve and mints
+    /// 1:1 welfare tokens to your wallet. Sectors: healthcare, education,
+    /// energy, housing, food.
+    Stake {
+        /// Target sector: healthcare, education, energy, housing, food
+        #[arg(long)]
+        sector: String,
+        /// SOV amount to stake (in whole SOV, e.g. 100)
+        #[arg(long)]
+        amount: u128,
+        /// Lock period in blocks (minimum 100, ~100 seconds)
+        #[arg(long, default_value = "1000", value_parser = clap::value_parser!(u64).range(100..))]
+        lock_blocks: u64,
+    },
+    /// Unstake SOV from a sector DAO. Burns welfare tokens and returns SOV.
+    /// Only works after the lock period has expired.
+    Unstake {
+        /// Target sector: healthcare, education, energy, housing, food
+        #[arg(long)]
+        sector: String,
     },
     /// Create DAO via canonical factory DaoExecution tx broadcast
     FactoryCreate {
@@ -609,6 +722,18 @@ pub enum NetworkAction {
         /// Number of pings to send
         #[arg(short, long, default_value = "3")]
         count: u32,
+    },
+    /// Get relay-capable peer candidates (Issue #2197)
+    RelayCandidates {
+        /// Minimum quality score (trust score, 0.0-1.0)
+        #[arg(long)]
+        min_quality: Option<f64>,
+        /// Capability filter: relay, dht, api
+        #[arg(long)]
+        capability: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -938,6 +1063,14 @@ pub enum RewardAction {
     Storage,
     /// Show reward configuration
     Config,
+    /// Claim pending rewards (placeholder)
+    Claim,
+    /// Show reward history / past rounds (placeholder)
+    History {
+        /// Number of rounds to show (default: 10, max: 1000)
+        #[arg(short, long, default_value = "10")]
+        limit: usize,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1789,6 +1922,9 @@ pub async fn run_cli() -> Result<()> {
             .await
             .map_err(anyhow::Error::msg),
         ZhtpCommand::Cbe(args) => commands::cbe::handle_cbe_command(args.clone(), &cli)
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Nft(args) => commands::nft::handle_nft_command(args.clone(), &cli)
             .await
             .map_err(anyhow::Error::msg),
     }

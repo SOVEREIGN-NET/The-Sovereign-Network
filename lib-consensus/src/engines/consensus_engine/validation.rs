@@ -52,30 +52,37 @@ impl ConsensusEngine {
         &self,
         proof: &ConsensusProof,
     ) -> ConsensusResult<bool> {
+        // CONS-201 Scope B: proof fields are now opaque bytes —
+        // deserialize via `ConsensusProofExt` before verifying.
+        use crate::types::ConsensusProofExt;
         match proof.consensus_type {
-            ConsensusType::ProofOfStake => {
-                if let Some(stake_proof) = &proof.stake_proof {
-                    Ok(stake_proof.verify(self.current_round.height)?)
-                } else {
+            ConsensusType::ProofOfStake => match proof.decode_stake_proof() {
+                Some(Ok(stake_proof)) => Ok(stake_proof.verify(self.current_round.height)?),
+                Some(Err(e)) => {
+                    tracing::warn!("ConsensusProof.stake_proof decode failed: {}", e);
                     Ok(false)
                 }
-            }
-            ConsensusType::ProofOfStorage => {
-                if let Some(storage_proof) = &proof.storage_proof {
-                    Ok(storage_proof.verify()?)
-                } else {
+                None => Ok(false),
+            },
+            ConsensusType::ProofOfStorage => match proof.decode_storage_proof() {
+                Some(Ok(storage_proof)) => Ok(storage_proof.verify()?),
+                Some(Err(e)) => {
+                    tracing::warn!("ConsensusProof.storage_proof decode failed: {}", e);
                     Ok(false)
                 }
-            }
-            ConsensusType::ProofOfUsefulWork => {
-                if let Some(work_proof) = &proof.work_proof {
-                    Ok(work_proof.verify()?)
-                } else {
+                None => Ok(false),
+            },
+            ConsensusType::ProofOfUsefulWork => match proof.decode_work_proof() {
+                Some(Ok(work_proof)) => Ok(work_proof.verify()?),
+                Some(Err(e)) => {
+                    tracing::warn!("ConsensusProof.work_proof decode failed: {}", e);
                     Ok(false)
                 }
-            }
+                None => Ok(false),
+            },
             ConsensusType::ByzantineFaultTolerance => {
-                // For BFT, we rely on vote thresholds rather than individual proofs. This generic proof validator is not applicable to BFT proofs.
+                // For BFT, we rely on vote thresholds rather than individual proofs.
+                // This generic proof validator is not applicable to BFT proofs.
                 Ok(false)
             }
         }
@@ -261,15 +268,17 @@ impl ConsensusEngine {
 
         // 5. Round check.
         //
-        // Stale rounds (vote.round < current) are rejected outright.
-        // Higher rounds (vote.round > current) are allowed through so future-round
-        // votes can still be observed and stored, but they do not advance local round
-        // state. Round changes are driven by timeout, not by unilateral peer messages.
-        if vote.round < self.current_round.round {
+        // Accept votes within a small round window to handle cross-continent
+        // latency. Without this, round advances from incoming proposals
+        // invalidate in-flight votes — nodes never converge.
+        // Window of 3 rounds: votes from (current - 3) to any future round accepted.
+        const ROUND_ACCEPTANCE_WINDOW: u32 = 200;
+        if vote.round + ROUND_ACCEPTANCE_WINDOW < self.current_round.round {
             tracing::debug!(
-                "Vote rejected: stale round {} < our round {}",
+                "Vote rejected: stale round {} < our round {} (window {})",
                 vote.round,
-                self.current_round.round
+                self.current_round.round,
+                ROUND_ACCEPTANCE_WINDOW,
             );
             return Ok(false);
         }

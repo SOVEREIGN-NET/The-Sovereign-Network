@@ -99,16 +99,11 @@ pub use crate::encryption::{
 // Consensus message encryption (always available)
 pub use crate::consensus_encryption::{ConsensusAead, RoleDirection};
 
-// Consensus message broadcaster for validator communication (transport-dependent)
-#[cfg(any(
-    feature = "quic",
-    feature = "mdns",
-    feature = "lorawan",
-    feature = "full"
-))]
-pub use crate::message_broadcaster::{
-    BroadcastResult, MeshMessageBroadcaster, MessageBroadcaster, MockMessageBroadcaster,
-};
+// CONS-202: `lib_network::message_broadcaster::MessageBroadcaster` and its
+// `MeshMessageBroadcaster` impl + `BroadcastResult` + `MockMessageBroadcaster`
+// were deleted. The canonical engine-facing broadcaster trait is
+// `lib_consensus::types::MessageBroadcaster`; this module had no callers
+// outside its own crate (verified by `grep -r MeshMessageBroadcaster`).
 
 // Consensus receiver (transport-dependent)
 #[cfg(any(
@@ -129,6 +124,7 @@ pub use crate::consensus_receiver::{ConsensusReceiver, ReceivedConsensusMessage}
 pub use crate::validator_discovery_transport::MeshValidatorDiscoveryTransport;
 
 // Network utilities
+pub mod nat; // NAT traversal and endpoint reachability (#2200)
 pub mod network_utils;
 pub use crate::network_utils::{get_local_ip, get_local_ip_with_config, LocalIpConfig};
 
@@ -231,13 +227,8 @@ pub mod dht;
     feature = "full"
 ))]
 pub mod fragmentation_v2; // Protocol-grade message fragmentation (session-scoped, versioned)
-#[cfg(any(
-    feature = "quic",
-    feature = "mdns",
-    feature = "lorawan",
-    feature = "full"
-))]
-pub mod message_broadcaster; // Consensus message broadcaster trait
+// CONS-202: `pub mod message_broadcaster;` deleted (see comment above the
+// re-export block).
 #[cfg(any(
     feature = "quic",
     feature = "mdns",
@@ -308,6 +299,13 @@ pub mod validator_discovery_transport; // Mesh-based validator discovery gossip 
     feature = "full"
 ))]
 pub mod web4;
+#[cfg(any(
+    feature = "quic",
+    feature = "mdns",
+    feature = "lorawan",
+    feature = "full"
+))]
+pub mod zdns;
 #[cfg(any(
     feature = "quic",
     feature = "mdns",

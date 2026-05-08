@@ -173,6 +173,9 @@ impl BluetoothRouter {
                                     protocol: connection.protocol.clone(),
                                     signal_strength: 0.8,
                                     latency_ms: 50,
+                                    nat_type: None,
+                                    public_endpoint: None,
+                                    relay_endpoint: None,
                                 }],
                                 vec![connection.protocol.clone()],
                                 lib_network::peer_registry::ConnectionMetrics {
@@ -583,6 +586,9 @@ impl BluetoothRouter {
                             protocol: connection.protocol.clone(),
                             signal_strength: 0.8,
                             latency_ms: 50,
+                            nat_type: None,
+                            public_endpoint: None,
+                            relay_endpoint: None,
                         }],
                         vec![connection.protocol.clone()],
                         lib_network::peer_registry::ConnectionMetrics {

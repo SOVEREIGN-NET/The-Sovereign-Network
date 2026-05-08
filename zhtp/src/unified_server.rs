@@ -53,8 +53,9 @@ const QUIC_PORT: u16 = 9334;
 
 // Import our comprehensive API handlers
 use crate::api::handlers::{
-    BlockchainHandler, CbeHandler, DaoHandler, DhtHandler, DnsHandler, IdentityHandler,
-    MobileAuthHandler, ProtocolHandler, StorageHandler, TokenHandler, WalletHandler, Web4Handler,
+    BearerAuthMiddleware, BlockchainHandler, CbeHandler, DaoHandler, DhtHandler, DnsHandler,
+    IdentityHandler, MobileAuthHandler, ProtocolHandler, StorageHandler, TokenHandler,
+    WalletHandler, Web4Handler,
 };
 use crate::config::environment::detect_environment;
 use crate::session_manager::SessionManager;
@@ -104,7 +105,7 @@ pub struct ZhtpUnifiedServer {
     // POUW reward calculator (shared for persistence)
     pouw_calculator_arc: Arc<crate::pouw::RewardCalculator>,
 
-    // Monitoring system (metrics, health, alerts, dashboard)
+    // Monitoring system (metrics, health, alerts)
     monitoring_system: Option<MonitoringSystem>,
 
     // Protocol configuration (AUTHORITATIVE CONFIG LAYER)
@@ -751,9 +752,17 @@ impl ZhtpUnifiedServer {
             revenue_pools,
         );
 
-        // Wire identity store-and-forward for identity envelopes
+        // Wire identity store-and-forward for identity envelopes (persistent)
+        let store_forward_path = crate::node_data_dir().join("store_forward");
         let mut identity_store =
-            lib_network::identity_store_forward::IdentityStoreForward::new(128);
+            lib_network::identity_store_forward::IdentityStoreForward::new_persistent(
+                &store_forward_path,
+                128,
+            )
+            .unwrap_or_else(|e| {
+                warn!("Failed to open persistent store-forward at {:?}: {}. Using in-memory queue.", store_forward_path, e);
+                lib_network::identity_store_forward::IdentityStoreForward::new(128)
+            });
         identity_store.set_pouw_verifier(
             lib_network::identity_store_forward::IdentityStoreForward::default_pouw_verifier(),
         );
@@ -805,6 +814,58 @@ impl ZhtpUnifiedServer {
         Arc<crate::pouw::RewardCalculator>,
     )> {
         info!("📝 Registering API handlers on ZHTP router (QUIC is the only entry point)...");
+
+        // -----------------------------------------------------------------------
+        // ENDPOINT PROTECTION MATRIX (#2156)
+        //
+        // PUBLIC — no bearer token required:
+        //   /api/v1/auth/mobile/challenge    — start of auth flow (issues QR/nonce)
+        //   /api/v1/auth/mobile/verify       — completes auth flow (returns bearer)
+        //   /api/v1/dns                      — DNS resolution, read-only
+        //   /api/v1/web4                     — Web4 content serving, read-only
+        //   /api/v1/web4/gateway             — HTTPS gateway for browsers
+        //   /api/v1/dht                      — DHT peer discovery, read-only
+        //   /api/v1/protocol                 — protocol metadata, read-only
+        //   /api/v1/blockchain (GET)         — read chain state, no mutation
+        //   /api/v1/chain (GET)              — alias for blockchain, read-only
+        //   /api/v1/monitor                  — health/metrics, read-only
+        //   /api/v1/observer                 — consensus anomaly read, read-only
+        //
+        // PROTECTED — valid bearer token required (401 if missing/invalid):
+        //   /api/v1/auth/mobile/session      — read own session info
+        //   /api/v1/auth/mobile/signout      — revoke own session
+        //   /api/v1/auth/mobile/refresh      — rotate refresh token
+        //   /api/v1/auth/delegate            — issue/list/revoke delegation certs
+        //   /api/v1/tx/prepare               — prepare delegated tx (+ SubmitTx cap)
+        //   /api/v1/tx/submit-delegated      — submit mobile-signed tx
+        //   /api/v1/wallet                   — balance reads and transfers
+        //   /api/v1/token                    — token operations (mint/transfer/burn)
+        //   /api/v1/storage (write)          — content storage mutations
+        //   /api/v1/identity (write)         — identity mutations (read is public)
+        //   /api/v1/identity/guardians       — guardian management
+        //   /api/v1/identity/recovery        — recovery operations
+        //   /api/v1/zkp                      — ZKP proof generation/verification
+        //   /api/v1/dao                      — governance voting and proposals
+        //   /api/v1/pouw                     — proof-of-useful-work submission
+        //   /api/v1/cbe                      — contract-based execution
+        //   /api/v1/bonding-curve (write)    — AMM/liquidity mutations
+        //   /api/v1/oracle (write)           — oracle data submission
+        //   /api/v1/crypto                   — key operations
+        //   /api/v1/marketplace (write)      — marketplace listings/purchases
+        //
+        // NODE-INTERNAL — QUIC mesh auth only, no user bearer token:
+        //   /api/v1/network                  — peer mesh networking
+        //   /api/v1/mesh                     — mesh routing
+        //   /api/v1/blockchain/network       — cross-node sync
+        //   /api/v1/blockchain/sync          — block sync
+        //   /api/v1/validator                — validator operations
+        //
+        // ERROR RESPONSES:
+        //   401 Unauthorized — missing or invalid bearer token
+        //   403 Forbidden    — valid token but insufficient capability
+        //
+        // Implementation: bearer middleware is wired in #2157.
+        // -----------------------------------------------------------------------
 
         // Blockchain operations
         let environment = detect_environment();
@@ -885,20 +946,26 @@ impl ZhtpUnifiedServer {
         );
         zhtp_router.register_handler("/api/v1/storage".to_string(), storage_handler);
 
-        // Wallet operations
+        // Shared auth store for all bearer-protected routes and mobile auth handler (#2157).
+        // Defined here so BearerAuthMiddleware wrappers below can reference it before
+        // the mobile_auth_handler registration further down.
+        let mobile_auth_store =
+            Arc::new(lib_identity::auth::mobile_delegation::MobileAuthStore::new());
+
+        // Wallet operations — UHP-authenticated (bearer middleware removed for app compat)
         let wallet_handler: Arc<dyn ZhtpRequestHandler> =
             Arc::new(WalletHandler::new(identity_manager.clone()));
         zhtp_router.register_handler("/api/v1/wallet".to_string(), wallet_handler);
 
-        // Token operations (custom token creation, minting, transfer)
+        // Token operations — UHP-authenticated (bearer middleware removed for app compat)
         let token_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(TokenHandler::new());
         zhtp_router.register_handler("/api/v1/token".to_string(), token_handler);
 
-        // CBE token operations (init pools, employment contracts, payroll)
+        // CBE token operations — UHP-authenticated
         let cbe_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(CbeHandler::new());
         zhtp_router.register_handler("/api/v1/cbe".to_string(), cbe_handler);
 
-        // Canonical bonding-curve REST API endpoints
+        // Canonical bonding-curve REST API endpoints — UHP-authenticated
         let bonding_curve_api_handler: Arc<dyn ZhtpRequestHandler> =
             Arc::new(crate::api::handlers::bonding_curve::api_v1::BondingCurveApiHandler::new());
         zhtp_router.register_handler(
@@ -913,19 +980,88 @@ impl ZhtpUnifiedServer {
         ));
         zhtp_router.register_handler("/api/v1/dao".to_string(), dao_handler);
 
-        // Oracle price/status endpoints
+        // Oracle price/status endpoints — UHP-authenticated
         let oracle_handler: Arc<dyn ZhtpRequestHandler> =
             Arc::new(crate::api::handlers::oracle::OracleHandler::new());
         zhtp_router.register_handler("/api/v1/oracle".to_string(), oracle_handler);
 
-        // Crypto utilities (sign message, verify signature, generate keypair)
-        let crypto_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::CryptoHandler::new(identity_manager.clone()),
-        );
+        // Crypto utilities (sign message, verify signature, generate keypair) — UHP-authenticated
+        let crypto_handler: Arc<dyn ZhtpRequestHandler> =
+            Arc::new(crate::api::handlers::CryptoHandler::new(identity_manager.clone()));
         zhtp_router.register_handler("/api/v1/crypto".to_string(), crypto_handler);
 
         // Register DHT handler on ZHTP (already registered on mesh_router for pure UDP)
         zhtp_router.register_handler("/api/v1/dht".to_string(), dht_handler);
+
+        // Post-quantum encrypted messaging
+        {
+            let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+                .await
+                .unwrap_or_else(|_| {
+                    // Fallback: create a placeholder — will be replaced when blockchain is ready
+                    Arc::new(tokio::sync::RwLock::new(lib_blockchain::Blockchain::default()))
+                });
+            let deposits = Arc::new(crate::messaging::deposit::DepositStore::new());
+            let presence = Arc::new(crate::messaging::presence::PresenceTracker::new());
+
+            // Spawn deposit cleanup task (every 5 minutes)
+            let deposits_cleanup = deposits.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300));
+                loop {
+                    interval.tick().await;
+                    let expired = deposits_cleanup.cleanup_expired().await;
+                    if expired > 0 {
+                        tracing::info!("Cleaned up {} expired message deposits", expired);
+                    }
+                }
+            });
+
+            // Wire mesh relay receiver — incoming relayed messages get deposited
+            let deposits_relay = deposits.clone();
+            let (relay_tx, mut relay_rx) = tokio::sync::mpsc::channel::<(String, Vec<u8>)>(256);
+            tokio::spawn(async move {
+                while let Some((recipient_did, envelope)) = relay_rx.recv().await {
+                    // Extract sender DID from the envelope if possible
+                    let sender = bincode::deserialize::<crate::messaging::envelope::MessageEnvelope>(&envelope)
+                        .map(|env| env.sender_did)
+                        .unwrap_or_else(|_| "mesh_relay".to_string());
+                    if let Err(e) = deposits_relay
+                        .deposit(&sender, &recipient_did, vec![envelope])
+                        .await
+                    {
+                        tracing::warn!("Failed to deposit relayed message: {}", e);
+                    }
+                }
+            });
+
+            // Wire relay sender to mesh message handler — retry until QUIC is ready
+            tokio::spawn(async move {
+                for attempt in 0..30 {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                    if let Ok(mesh_router) = crate::runtime::mesh_router_provider::get_global_mesh_router().await {
+                        if let Some(qp) = mesh_router.quic_protocol.read().await.as_ref() {
+                            if let Some(handler) = qp.message_handler.as_ref() {
+                                handler.write().await.set_message_relay_sender(relay_tx);
+                                tracing::info!("Message relay sender wired (attempt {})", attempt + 1);
+                                return;
+                            }
+                        }
+                    }
+                }
+                tracing::warn!("Failed to wire message relay sender after 30 attempts");
+            });
+
+            let msg_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+                crate::messaging::handler::MessagingHandler::new(
+                    blockchain_arc,
+                    deposits,
+                    presence,
+                ),
+            );
+            zhtp_router.register_handler("/api/v1/msg".to_string(), msg_handler);
+            tracing::info!("Post-quantum messaging handler registered");
+        }
 
         // PoUW validator (created early so it can be shared with Web4 handlers)
         // Derive node key/id from identity manager; never use shared placeholder material.
@@ -992,7 +1128,7 @@ impl ZhtpUnifiedServer {
         );
         zhtp_router.register_handler("/api/content".to_string(), wallet_content_handler);
 
-        // Marketplace handler for buying/selling content (shares managers with wallet content)
+        // Marketplace handler for buying/selling content — UHP-authenticated
         let marketplace_handler: Arc<dyn ZhtpRequestHandler> =
             Arc::new(crate::api::handlers::MarketplaceHandler::new(
                 Arc::clone(&wallet_content_manager),
@@ -1050,17 +1186,22 @@ impl ZhtpUnifiedServer {
 
         // Mobile + Web App Authentication Delegation (Issue #1877)
         // All three phases (challenge/verify/session, refresh, delegation certs) share one store.
-        let mobile_auth_store =
-            Arc::new(lib_identity::auth::mobile_delegation::MobileAuthStore::new());
+        // mobile_auth_store is created above (before the bearer-protected routes) so it can be
+        // shared with BearerAuthMiddleware (#2157).
         let mobile_auth_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::MobileAuthHandler::new(mobile_auth_store),
+            crate::api::handlers::MobileAuthHandler::with_endpoint(mobile_auth_store.clone(), &node_did),
         );
         // Prefix routes — the handler's dispatch() does exact matching internally
         zhtp_router.register_handler(
             "/api/v1/auth/mobile".to_string(),
             mobile_auth_handler.clone(),
         );
-        zhtp_router.register_handler("/api/v1/auth/delegate".to_string(), mobile_auth_handler);
+        zhtp_router.register_handler(
+            "/api/v1/auth/delegate".to_string(),
+            mobile_auth_handler.clone(),
+        );
+        // Transaction delegation endpoints (#2153, #2154) — auth handled internally
+        zhtp_router.register_handler("/api/v1/tx".to_string(), mobile_auth_handler);
 
         info!("✅ All API handlers registered successfully on ZHTP router");
         Ok((pouw_validator_arc, pouw_calculator))
@@ -1087,7 +1228,7 @@ impl ZhtpUnifiedServer {
         // This enables mesh-based blockchain synchronization for new nodes joining the network
         crate::network_output_dispatcher::spawn_app_network_output_processor();
 
-        // Restore persisted POUW rewards from disk
+        // Restore persisted POUW rewards and budget from disk
         let rewards_path = crate::pouw::RewardCalculator::rewards_path_for(std::path::Path::new(
             &crate::config::environment::Environment::default().blockchain_data_path(),
         ));
@@ -1097,6 +1238,16 @@ impl ZhtpUnifiedServer {
             .await
         {
             tracing::warn!("Failed to load POUW rewards from disk: {}", e);
+        }
+        let budget_path = crate::pouw::RewardCalculator::budget_path_for(std::path::Path::new(
+            &crate::config::environment::Environment::default().blockchain_data_path(),
+        ));
+        if let Err(e) = self
+            .pouw_calculator_arc
+            .load_budget_from_file(&budget_path)
+            .await
+        {
+            tracing::warn!("Failed to load POUW budget from disk: {}", e);
         }
 
         // STEP 1: Apply network isolation to block internet access
@@ -1518,11 +1669,15 @@ impl ZhtpUnifiedServer {
         // WiFi Direct already initialized above with mDNS
         self.start_lorawan_handler().await?;
 
-        // Periodic POUW rewards persistence (every 60 seconds)
+        // Periodic POUW rewards + budget persistence (every 60 seconds)
         {
             let calc = self.pouw_calculator_arc.clone();
             let rewards_path =
                 crate::pouw::RewardCalculator::rewards_path_for(std::path::Path::new(
+                    &crate::config::environment::Environment::default().blockchain_data_path(),
+                ));
+            let budget_path =
+                crate::pouw::RewardCalculator::budget_path_for(std::path::Path::new(
                     &crate::config::environment::Environment::default().blockchain_data_path(),
                 ));
             tokio::spawn(async move {
@@ -1533,6 +1688,9 @@ impl ZhtpUnifiedServer {
                     if let Err(e) = calc.save_rewards_to_file(&rewards_path).await {
                         tracing::warn!("Failed to save POUW rewards to disk: {}", e);
                     }
+                    if let Err(e) = calc.save_budget_to_file(&budget_path).await {
+                        tracing::warn!("Failed to save POUW budget to disk: {}", e);
+                    }
                 }
             });
         }
@@ -1541,9 +1699,6 @@ impl ZhtpUnifiedServer {
         crate::pouw::spawn_pouw_payout_task(
             self.pouw_calculator_arc.clone(),
             self.blockchain.clone(),
-            std::path::PathBuf::from(
-                crate::config::environment::Environment::default().blockchain_data_path(),
-            ),
             crate::pouw::rewards::DEFAULT_EPOCH_DURATION_SECS,
         );
         info!(
@@ -1853,6 +2008,7 @@ impl ZhtpUnifiedServer {
         let network_handler: Arc<dyn ZhtpRequestHandler> =
             Arc::new(NetworkHandler::new(runtime.clone()));
         router_write.register_handler("/api/v1/network".to_string(), network_handler.clone());
+        router_write.register_handler("/api/v1/node".to_string(), network_handler.clone());
         router_write.register_handler(
             "/api/v1/blockchain/network".to_string(),
             network_handler.clone(),

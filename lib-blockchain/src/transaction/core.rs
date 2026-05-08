@@ -9,6 +9,7 @@ use crate::transaction::oracle_governance::{
     OracleConfigUpdateData,
 };
 use crate::types::{transaction_type::TransactionType, Hash};
+use bincode::Options;
 use serde::{Deserialize, Serialize};
 
 /// Zero-knowledge transaction with identity support
@@ -32,6 +33,77 @@ pub struct Transaction {
     pub memo: Vec<u8>,
     /// Typed transaction payload — replaces the old flat Option<FooData> field scatter.
     pub payload: TransactionPayload,
+}
+
+/// V9 transaction wire format: fee widened to u128 for 18-decimal SOV.
+/// V8 and below use u64 fee. The version byte is embedded in the serialized
+/// data — decode reads it first to select the correct layout.
+pub const TX_VERSION_V9: u32 = 9;
+
+/// V9 wire layout — identical to Transaction but with `fee: u128`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct TransactionV9Wire {
+    pub version: u32,
+    pub chain_id: u8,
+    pub transaction_type: TransactionType,
+    pub inputs: Vec<TransactionInput>,
+    pub outputs: Vec<TransactionOutput>,
+    pub fee: u128,
+    pub signature: crate::integration::crypto_integration::Signature,
+    pub memo: Vec<u8>,
+    pub payload: TransactionPayload,
+}
+
+impl TransactionV9Wire {
+    fn into_transaction(self) -> Result<Transaction, String> {
+        if self.fee > u64::MAX as u128 {
+            return Err(format!(
+                "V9 fee {} exceeds u64::MAX, cannot convert to on-chain format",
+                self.fee
+            ));
+        }
+        Ok(Transaction {
+            version: self.version,
+            chain_id: self.chain_id,
+            transaction_type: self.transaction_type,
+            inputs: self.inputs,
+            outputs: self.outputs,
+            fee: self.fee as u64,
+            signature: self.signature,
+            memo: self.memo,
+            payload: self.payload,
+        })
+    }
+}
+
+/// Version-gated decode for client-built signed transactions.
+///
+/// Reads the tx version (first 4 bytes) and branches:
+/// - V9+: u128 fee (16 bytes) — app FFI after 18-decimal SOV migration
+/// - V8 and below: u64 fee (8 bytes) — historical blocks, legacy clients, CLI
+///
+/// Returns the canonical `Transaction` with fee as u64 (on-chain format).
+/// All API decode points must use this function — no direct `bincode::deserialize`.
+pub fn decode_client_transaction(bytes: &[u8]) -> Result<Transaction, String> {
+    if bytes.len() < 4 {
+        return Err("transaction too short to contain version".to_string());
+    }
+    let version = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+
+    // Use size-limited deserialization to prevent allocator abuse.
+    // Must match legacy bincode encoding (fixint, allow trailing bytes).
+    let opts = bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .allow_trailing_bytes()
+        .with_limit(bytes.len() as u64);
+    if version >= TX_VERSION_V9 {
+        opts.deserialize::<TransactionV9Wire>(bytes)
+            .map_err(|e| format!("V9 decode failed: {}", e))
+            .and_then(|w| w.into_transaction())
+    } else {
+        opts.deserialize::<Transaction>(bytes)
+            .map_err(|e| format!("V8 decode failed: {}", e))
+    }
 }
 
 /// Transaction wire-format version constants.
@@ -459,6 +531,10 @@ pub struct IdentityTransactionData {
     pub controlled_nodes: Vec<String>,
     /// Wallet IDs owned by this identity
     pub owned_wallets: Vec<String>,
+    /// Kyber1024 public key for post-quantum key encapsulation (messaging, encryption).
+    /// 1568 bytes when present. Empty for identities registered before this field was added.
+    #[serde(default)]
+    pub kyber_public_key: Vec<u8>,
 }
 
 /// Wallet registration transaction data (processed by lib-identity package)
@@ -579,6 +655,42 @@ pub enum ValidatorOperation {
     Unregister,
 }
 
+/// Gateway registration transaction data.
+///
+/// Gateways are remote QUIC ingress nodes that forward native ZHTP traffic
+/// to validators.  They must stake SOV, maintain liveness, and sign all
+/// forwarded client context with their Dilithium5 key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayTransactionData {
+    /// Identity ID of the gateway (must be pre-registered)
+    pub identity_id: String,
+    /// Staked amount in micro-SOV
+    pub stake: u64,
+    /// Dilithium5 public key used to sign forwarded client context.
+    /// Fixed size [u8; 2592] on-chain; serialized as Vec<u8> in tx.
+    pub gateway_key: Vec<u8>,
+    /// Public QUIC endpoint(s) for clients to connect to.
+    /// Comma-separated host:port list.
+    pub endpoints: String,
+    /// Commission rate percentage (0-100) taken from routed DAO fees.
+    pub commission_rate: u8,
+    /// Gateway operation type
+    pub operation: GatewayOperation,
+    /// Timestamp of registration/update
+    pub timestamp: u64,
+}
+
+/// Gateway operation types
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum GatewayOperation {
+    /// Register as a new gateway
+    Register,
+    /// Update gateway information
+    Update,
+    /// Unregister and exit
+    Unregister,
+}
+
 impl Transaction {
     /// Create a new standard transfer transaction
     pub fn new(
@@ -666,6 +778,7 @@ impl Transaction {
             dao_fee: 0,
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
+                    kyber_public_key: Vec::new(),
         };
 
         Transaction {
@@ -881,6 +994,70 @@ impl Transaction {
             signature,
             memo,
             payload: TransactionPayload::Validator(validator_data),
+        }
+    }
+
+    /// Create a new gateway registration transaction
+    pub fn new_gateway_registration(
+        gateway_data: GatewayTransactionData,
+        outputs: Vec<TransactionOutput>, // For stake locking
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id: 0x03, // Default to development network
+            transaction_type: TransactionType::GatewayRegistration,
+            inputs: Vec::new(), // Gateway registration via staking
+            outputs,
+            fee: 0, // Fee paid via stake
+            signature,
+            memo,
+            payload: TransactionPayload::Gateway(gateway_data),
+        }
+    }
+
+    /// Create a new gateway update transaction
+    pub fn new_gateway_update(
+        gateway_data: GatewayTransactionData,
+        inputs: Vec<TransactionInput>, // Authorization
+        outputs: Vec<TransactionOutput>,
+        fee: u64,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id: 0x03, // Default to development network
+            transaction_type: TransactionType::GatewayUpdate,
+            inputs,
+            outputs,
+            fee,
+            signature,
+            memo,
+            payload: TransactionPayload::Gateway(gateway_data),
+        }
+    }
+
+    /// Create a new gateway unregister transaction
+    pub fn new_gateway_unregister(
+        gateway_data: GatewayTransactionData,
+        inputs: Vec<TransactionInput>,   // Authorization
+        outputs: Vec<TransactionOutput>, // Stake return
+        fee: u64,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id: 0x03, // Default to development network
+            transaction_type: TransactionType::GatewayUnregister,
+            inputs,
+            outputs,
+            fee,
+            signature,
+            memo,
+            payload: TransactionPayload::Gateway(gateway_data),
         }
     }
 
@@ -1135,6 +1312,12 @@ impl Transaction {
             _ => None,
         }
     }
+    pub fn gateway_data(&self) -> Option<&GatewayTransactionData> {
+        match &self.payload {
+            TransactionPayload::Gateway(d) => Some(d),
+            _ => None,
+        }
+    }
     pub fn dao_proposal_data(&self) -> Option<&DaoProposalData> {
         match &self.payload {
             TransactionPayload::DaoProposal(d) => Some(d),
@@ -1278,6 +1461,34 @@ impl Transaction {
     pub fn dao_unstake_data(&self) -> Option<&DaoUnstakeData> {
         match &self.payload {
             TransactionPayload::DaoUnstake(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    pub fn nft_create_collection_data(&self) -> Option<&NftCreateCollectionData> {
+        match &self.payload {
+            TransactionPayload::NftCreateCollection(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    pub fn nft_mint_data(&self) -> Option<&NftMintData> {
+        match &self.payload {
+            TransactionPayload::NftMint(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    pub fn nft_transfer_data(&self) -> Option<&NftTransferData> {
+        match &self.payload {
+            TransactionPayload::NftTransfer(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    pub fn nft_burn_data(&self) -> Option<&NftBurnData> {
+        match &self.payload {
+            TransactionPayload::NftBurn(d) => Some(d),
             _ => None,
         }
     }
@@ -1615,6 +1826,154 @@ impl Transaction {
             payload: TransactionPayload::DaoUnstake(data),
         }
     }
+
+    // =========================================================================
+    // Observer Admission Constructors
+    // =========================================================================
+
+    /// Build a RegisterObserver transaction.
+    pub fn new_register_observer(
+        chain_id: u8,
+        data: RegisterObserverData,
+        signature: Signature,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::RegisterObserver,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo: b"ZHTP_REGISTER_OBSERVER".to_vec(),
+            payload: TransactionPayload::RegisterObserver(data),
+        }
+    }
+
+    /// Build an UpdateObserverMetadata transaction.
+    pub fn new_update_observer_metadata(
+        chain_id: u8,
+        data: UpdateObserverMetadataData,
+        signature: Signature,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::UpdateObserverMetadata,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo: b"ZHTP_UPDATE_OBSERVER_META".to_vec(),
+            payload: TransactionPayload::UpdateObserverMetadata(data),
+        }
+    }
+
+    /// Build a SuspendObserver transaction.
+    pub fn new_suspend_observer(
+        chain_id: u8,
+        data: SuspendObserverData,
+        signature: Signature,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::SuspendObserver,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo: b"ZHTP_SUSPEND_OBSERVER".to_vec(),
+            payload: TransactionPayload::SuspendObserver(data),
+        }
+    }
+
+    /// Build a RevokeObserver transaction.
+    pub fn new_revoke_observer(
+        chain_id: u8,
+        data: RevokeObserverData,
+        signature: Signature,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::RevokeObserver,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo: b"ZHTP_REVOKE_OBSERVER".to_vec(),
+            payload: TransactionPayload::RevokeObserver(data),
+        }
+    }
+
+    /// Build a ReauthorizeObserver transaction.
+    pub fn new_reauthorize_observer(
+        chain_id: u8,
+        data: ReauthorizeObserverData,
+        signature: Signature,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::ReauthorizeObserver,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo: b"ZHTP_REAUTHORIZE_OBSERVER".to_vec(),
+            payload: TransactionPayload::ReauthorizeObserver(data),
+        }
+    }
+
+    // =========================================================================
+    // Observer Admission Accessors
+    // =========================================================================
+
+    /// Extract `RegisterObserverData` from the payload, if present.
+    pub fn register_observer_data(&self) -> Option<&RegisterObserverData> {
+        if let TransactionPayload::RegisterObserver(ref d) = self.payload {
+            Some(d)
+        } else {
+            None
+        }
+    }
+
+    /// Extract `UpdateObserverMetadataData` from the payload, if present.
+    pub fn update_observer_metadata_data(&self) -> Option<&UpdateObserverMetadataData> {
+        if let TransactionPayload::UpdateObserverMetadata(ref d) = self.payload {
+            Some(d)
+        } else {
+            None
+        }
+    }
+
+    /// Extract `SuspendObserverData` from the payload, if present.
+    pub fn suspend_observer_data(&self) -> Option<&SuspendObserverData> {
+        if let TransactionPayload::SuspendObserver(ref d) = self.payload {
+            Some(d)
+        } else {
+            None
+        }
+    }
+
+    /// Extract `RevokeObserverData` from the payload, if present.
+    pub fn revoke_observer_data(&self) -> Option<&RevokeObserverData> {
+        if let TransactionPayload::RevokeObserver(ref d) = self.payload {
+            Some(d)
+        } else {
+            None
+        }
+    }
+
+    /// Extract `ReauthorizeObserverData` from the payload, if present.
+    pub fn reauthorize_observer_data(&self) -> Option<&ReauthorizeObserverData> {
+        if let TransactionPayload::ReauthorizeObserver(ref d) = self.payload {
+            Some(d)
+        } else {
+            None
+        }
+    }
 }
 
 impl TransactionInput {
@@ -1683,7 +2042,14 @@ impl IdentityTransactionData {
             dao_fee,
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
+            kyber_public_key: Vec::new(),
         }
+    }
+
+    /// Set the Kyber1024 public key for post-quantum key encapsulation.
+    pub fn with_kyber_public_key(mut self, kyber_pk: Vec<u8>) -> Self {
+        self.kyber_public_key = kyber_pk;
+        self
     }
 
     /// Create identity transaction data with node and wallet associations
@@ -1714,6 +2080,7 @@ impl IdentityTransactionData {
             dao_fee,
             controlled_nodes,
             owned_wallets,
+            kyber_public_key: Vec::new(),
         }
     }
 
@@ -2225,6 +2592,177 @@ pub struct DaoUnstakeData {
 }
 
 // ============================================================================
+// NFT payload structs
+// ============================================================================
+
+/// Create a new NFT collection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NftCreateCollectionData {
+    pub name: String,
+    pub symbol: String,
+    pub max_supply: Option<u64>,
+}
+
+/// Mint a new NFT in a collection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NftMintData {
+    pub collection_id: [u8; 32],
+    pub recipient: [u8; 32],
+    pub name: String,
+    pub description: String,
+    pub image_cid: String,
+    pub attributes: Vec<(String, String)>,
+}
+
+/// Transfer an NFT to a new owner.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NftTransferData {
+    pub collection_id: [u8; 32],
+    pub token_id: u64,
+    pub from: [u8; 32],
+    pub to: [u8; 32],
+}
+
+/// Burn (destroy) an NFT.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NftBurnData {
+    pub collection_id: [u8; 32],
+    pub token_id: u64,
+    pub owner: [u8; 32],
+}
+
+// ============================================================================
+// Observer Admission Payload Types (observer-admission-3)
+// ============================================================================
+//
+// Rule: canonical shape lives here; lifecycle policy lives in the executor.
+// Sponsor DID binding and proof-level are stored verbatim so they can be
+// replayed deterministically without querying live identity state.
+// ============================================================================
+
+/// Payload for `RegisterObserver`.
+///
+/// Creates a new `ObserverAdmissionRecord` in `Pending` status.
+/// The signer must match `sponsor_user_did` (the tx signature public key's
+/// key_id must correspond to the sponsoring user's registered identity).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisterObserverData {
+    /// DID of the observer node (`did:zhtp:…`).
+    pub observer_node_did: String,
+    /// Raw Dilithium5 public key of the observer node.
+    pub observer_public_key: Vec<u8>,
+    /// Advertised endpoints (`host:port`).
+    #[serde(default)]
+    pub endpoints: Vec<String>,
+    /// DID of the sponsoring user (must match the transaction signer's identity).
+    pub sponsor_user_did: String,
+    /// Sponsor's proof level at enrollment time (snapshotted for determinism).
+    ///
+    /// **Limitation (admission-3):** This value is provided by the sponsor and is
+    /// NOT cross-validated against on-chain identity state because
+    /// `IdentityTransactionData` does not currently carry a canonical proof-level
+    /// field. Sponsor identity *existence* is enforced via
+    /// `validate_sender_identity_exists`, and signer↔DID binding is enforced via
+    /// `check_observer_signer`. Once a per-identity proof-level becomes canonical
+    /// on-chain, this field MUST be cross-checked at validation time.
+    pub sponsor_proof_level: lib_types::ObserverProofLevel,
+    /// Sponsor signature over the enrollment statement.
+    pub sponsor_signature: Vec<u8>,
+    /// Network / environment this observer is admitted for.
+    pub allowed_network: String,
+    /// Optional sync scope tag (e.g. `"full"` or `"light"`).
+    #[serde(default)]
+    pub trusted_sync_scope: Option<String>,
+    /// Rate-limit tier requested at enrollment.
+    pub rate_limit_tier: lib_types::ObserverRateLimitTier,
+    /// Optional expiry unix-seconds; `None` = no expiry.
+    #[serde(default)]
+    pub expires_at: Option<u64>,
+    /// Monotonic nonce on the sponsoring user DID (replay protection).
+    pub nonce: u64,
+}
+
+/// Payload for `UpdateObserverMetadata`.
+///
+/// Only the sponsoring user DID may submit this.
+/// Status transitions are NOT performed here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateObserverMetadataData {
+    /// Observer node DID to update.
+    pub observer_node_did: String,
+    /// DID of the actor authorizing the update (must be the sponsor).
+    pub actor_did: String,
+    /// Endpoint update.
+    /// - `None` (default) = no change to the existing endpoint list.
+    /// - `Some(vec)` = replace the entire endpoint list with `vec`.
+    /// - `Some(vec![])` = clear all endpoints.
+    #[serde(default)]
+    pub new_endpoints: Option<Vec<String>>,
+    /// Updated network / sync-scope binding. `None` = no change.
+    #[serde(default)]
+    pub new_network: Option<ObserverNetworkUpdate>,
+    /// Updated rate-limit tier. `None` = no change.
+    #[serde(default)]
+    pub new_rate_limit_tier: Option<lib_types::ObserverRateLimitTier>,
+    /// Updated expiry. `None` = no change, `Some(None)` = remove expiry.
+    #[serde(default)]
+    pub new_expires_at: Option<Option<u64>>,
+    /// Monotonic nonce on the sponsoring user DID (replay protection).
+    pub nonce: u64,
+}
+
+/// Inline network / sync-scope update for `UpdateObserverMetadata`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObserverNetworkUpdate {
+    pub allowed_network: String,
+    pub trusted_sync_scope: Option<String>,
+}
+
+/// Payload for `SuspendObserver`.
+///
+/// Valid transition: `Active → Suspended`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SuspendObserverData {
+    /// Observer node DID to suspend.
+    pub observer_node_did: String,
+    /// DID of the actor initiating the suspension (sponsor or governance).
+    pub actor_did: String,
+    /// Human-readable reason for the suspension.
+    pub reason: String,
+    /// Monotonic nonce on the actor's identity (replay protection).
+    pub nonce: u64,
+}
+
+/// Payload for `RevokeObserver`.
+///
+/// Valid transitions: `Pending → Revoked`, `Active → Revoked`, `Suspended → Revoked`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RevokeObserverData {
+    /// Observer node DID to revoke.
+    pub observer_node_did: String,
+    /// DID of the actor initiating revocation (sponsor or governance).
+    pub actor_did: String,
+    /// Human-readable reason for the revocation.
+    pub reason: String,
+    /// Monotonic nonce on the actor's identity (replay protection).
+    pub nonce: u64,
+}
+
+/// Payload for `ReauthorizeObserver`.
+///
+/// Valid transition: `Suspended → Active`.
+/// Only the original sponsor user DID may reauthorize.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReauthorizeObserverData {
+    /// Observer node DID to reauthorize.
+    pub observer_node_did: String,
+    /// DID of the sponsoring user reauthorizing the observer.
+    pub sponsor_user_did: String,
+    /// Monotonic nonce on the sponsoring user DID (replay protection).
+    pub nonce: u64,
+}
+
+// ============================================================================
 // TransactionPayload enum
 // ============================================================================
 
@@ -2241,6 +2779,7 @@ pub enum TransactionPayload {
     Identity(IdentityTransactionData),
     Wallet(WalletTransactionData),
     Validator(ValidatorTransactionData),
+    Gateway(GatewayTransactionData),
     DaoProposal(DaoProposalData),
     DaoVote(DaoVoteData),
     DaoExecution(DaoExecutionData),
@@ -2267,4 +2806,21 @@ pub enum TransactionPayload {
     DaoStake(DaoStakeData),
     /// SOV unstake from a sector DAO wallet (appended after DaoStake)
     DaoUnstake(DaoUnstakeData),
+    /// Create a new NFT collection
+    NftCreateCollection(NftCreateCollectionData),
+    /// Mint a new NFT
+    NftMint(NftMintData),
+    /// Transfer an NFT
+    NftTransfer(NftTransferData),
+    /// Burn an NFT
+    NftBurn(NftBurnData),
+    // Observer admission payloads (observer-admission-3)
+    RegisterObserver(RegisterObserverData),
+    UpdateObserverMetadata(UpdateObserverMetadataData),
+    SuspendObserver(SuspendObserverData),
+    RevokeObserver(RevokeObserverData),
+    ReauthorizeObserver(ReauthorizeObserverData),
+    // User credentials (username + password for public zone access)
+    RegisterCredential(crate::transaction::credentials::RegisterCredentialData),
+    UpdateCredentialPassword(crate::transaction::credentials::UpdateCredentialPasswordData),
 }

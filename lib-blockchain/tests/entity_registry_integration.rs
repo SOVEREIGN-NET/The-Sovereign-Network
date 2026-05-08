@@ -5,18 +5,10 @@ use lib_blockchain::types::transaction_type::TransactionType;
 use lib_blockchain::types::Hash;
 use lib_blockchain::{Block, BlockHeader, Blockchain, Transaction};
 
-fn test_public_key(id: u8) -> PublicKey {
-    PublicKey::new([id; 2592])
-}
+mod common;
 
-fn test_signature(signer: &PublicKey) -> Signature {
-    Signature {
-        signature: vec![0u8; 64],
-        public_key: signer.clone(),
-        algorithm: SignatureAlgorithm::DEFAULT,
-        timestamp: 0,
-    }
-}
+fn test_public_key(id: u8) -> PublicKey { common::crypto_fixtures::seeded_public_key(id) }
+fn test_signature(signer: &PublicKey) -> Signature { common::crypto_fixtures::signature_for(signer) }
 
 fn create_init_tx(signer: &PublicKey, cbe: PublicKey, nonprofit: PublicKey) -> Transaction {
     Transaction::new_init_entity_registry(1, cbe, nonprofit, 123, 0, test_signature(signer))

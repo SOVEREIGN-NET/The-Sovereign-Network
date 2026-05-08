@@ -13,10 +13,9 @@ use lib_consensus::{ConsensusConfig, DaoEngine, DaoProposalType, DaoVoteChoice};
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 
-/// Helper function to create test identity
-fn create_test_identity(name: &str) -> IdentityId {
-    Hash::from_bytes(&hash_blake3(name.as_bytes()))
-}
+mod common;
+
+fn create_test_identity(name: &str) -> IdentityId { common::consensus_fixtures::named_identity(name) }
 
 // ============================================================================
 // Test 1: DAO Engine Initialization
@@ -217,10 +216,13 @@ async fn test_governance_parameter_validation() -> Result<()> {
     assert!(result.is_ok());
 
     // Test multiple parameter update
+    // MaxValidators is bounded by MAX_VALIDATORS_HARD_CAP = 21
+    // (lib-types/src/consensus.rs § "Validator count bounds"). Any value > 21 is
+    // rejected by validate_governance_update.
     let multi_update = lib_consensus::GovernanceParameterUpdate {
         updates: vec![
             lib_consensus::GovernanceParameterValue::MinStake(5000),
-            lib_consensus::GovernanceParameterValue::MaxValidators(100),
+            lib_consensus::GovernanceParameterValue::MaxValidators(21),
         ],
     };
 

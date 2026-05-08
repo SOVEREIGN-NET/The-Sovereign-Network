@@ -92,15 +92,88 @@ pub struct RecoveryPhrase {
 }
 
 impl RecoveryPhrase {
-    /// Create RecoveryPhrase from word list
+    /// Decode a BIP39 mnemonic word list back to the original entropy.
+    ///
+    /// Reverses `from_entropy`: words → 11-bit indices → 264 bits →
+    /// 256-bit entropy + 8-bit checksum. Validates the checksum.
     pub fn from_words(words: Vec<String>) -> Result<Self> {
-        use rand::RngCore;
-        let mut entropy = vec![0u8; 32]; // 256 bits
-        rand::rngs::OsRng.fill_bytes(&mut entropy);
+        use sha2::Digest;
+
+        if words.len() != 24 && words.len() != 20 {
+            return Err(anyhow::anyhow!(
+                "Expected 24 (BIP39) or 20 (legacy) words, got {}",
+                words.len()
+            ));
+        }
+
+        let wordlist = crate::recovery::get_bip39_wordlist();
+
+        // Map each word to its 11-bit index
+        let mut bits: Vec<u8> = Vec::with_capacity(words.len() * 11);
+        for word in &words {
+            let lower = word.to_lowercase();
+            let index = wordlist
+                .iter()
+                .position(|w| w == &lower)
+                .ok_or_else(|| anyhow::anyhow!("Unknown BIP39 word: '{}'", word))?;
+            for i in (0..11).rev() {
+                bits.push(((index >> i) & 1) as u8);
+            }
+        }
+
+        // Total bits from words. Standard BIP39: 24×11=264 = 256 entropy + 8 checksum.
+        // ZHTP legacy phrases: 24×11=264 bits used as raw entropy (no checksum).
+        // We try BIP39 checksum first; if it fails, treat all bits as entropy.
+        let total_bits = bits.len();
+
+        // Try BIP39 first: last 8 bits are checksum
+        let bip39_entropy_bits = total_bits - 8;
+        let bip39_entropy_bytes = bip39_entropy_bits / 8;
+
+        let mut bip39_entropy = vec![0u8; bip39_entropy_bytes];
+        for (byte_idx, byte) in bip39_entropy.iter_mut().enumerate() {
+            for bit_idx in 0..8 {
+                let global = byte_idx * 8 + bit_idx;
+                if global < bip39_entropy_bits {
+                    *byte |= bits[global] << (7 - bit_idx);
+                }
+            }
+        }
+
+        let mut stored_checksum: u8 = 0;
+        for i in 0..8 {
+            stored_checksum |= bits[bip39_entropy_bits + i] << (7 - i);
+        }
+        let computed_checksum = sha2::Sha256::digest(&bip39_entropy)[0];
+
+        if stored_checksum == computed_checksum {
+            // Valid BIP39 checksum
+            return Ok(Self {
+                word_count: words.len(),
+                checksum: format!("{:02x}", computed_checksum),
+                language: "english".to_string(),
+                words,
+                entropy: bip39_entropy,
+            });
+        }
+
+        // BIP39 checksum failed — treat as ZHTP legacy phrase where all bits are entropy.
+        // entropy_to_words() generates words from raw entropy without appending a checksum,
+        // so the full 264 bits (24 words × 11 bits) encode 33 bytes of entropy directly.
+        let raw_bytes = total_bits / 8; // 264/8 = 33 bytes, drop remainder bits
+        let mut entropy = vec![0u8; raw_bytes];
+        for (byte_idx, byte) in entropy.iter_mut().enumerate() {
+            for bit_idx in 0..8 {
+                let global = byte_idx * 8 + bit_idx;
+                if global < total_bits {
+                    *byte |= bits[global] << (7 - bit_idx);
+                }
+            }
+        }
 
         Ok(Self {
             word_count: words.len(),
-            checksum: format!("{:x}", sha2::Sha256::digest(words.join(" ").as_bytes())),
+            checksum: String::new(),
             language: "english".to_string(),
             words,
             entropy,
@@ -1307,7 +1380,7 @@ impl RecoveryPhraseManager {
         &self,
         phrase_words: &[String],
     ) -> Result<(crate::types::IdentityId, Vec<u8>, Vec<u8>, [u8; 32])> {
-        use lib_crypto::{derive_keys, hash_blake3};
+        use lib_crypto::hash_blake3;
 
         // Validate phrase format (accept both 20-word custom and 24-word BIP39 standard)
         if phrase_words.len() != 20 && phrase_words.len() != 24 {
@@ -1317,28 +1390,22 @@ impl RecoveryPhraseManager {
             ));
         }
 
-        // Join words to create seed material
-        let phrase_text = phrase_words.join(" ");
+        // Decode mnemonic back to entropy via BIP39
+        let recovery = RecoveryPhrase::from_words(phrase_words.to_vec())?;
+        let entropy = &recovery.entropy;
 
-        // Derive entropy from phrase using Blake3
-        let phrase_hash = hash_blake3(phrase_text.as_bytes());
-
-        // Generate identity seed from phrase
-        let seed_material = [phrase_hash.as_slice(), b"ZHTP_identity_seed_v1"].concat();
+        // Derive a 32-byte seed for Dilithium keygen
+        let seed_material = [entropy.as_slice(), b"ZHTP_identity_seed_v1"].concat();
         let identity_seed_hash = hash_blake3(&seed_material);
         let mut seed = [0u8; 32];
         seed.copy_from_slice(&identity_seed_hash);
 
-        // Derive private key from seed
-        let private_key_material = derive_keys(&seed, b"ZHTP_private_key_derivation", 64)?;
+        // Generate deterministic Dilithium5 keypair from seed
+        let (public_key_bytes, private_key_bytes) =
+            lib_crypto::post_quantum::dilithium5_keypair_from_entropy(&seed);
 
-        // Derive public key from private key
-        let public_key_material =
-            [&private_key_material[..32], b"ZHTP_public_key_derivation"].concat();
-        let public_key = hash_blake3(&public_key_material).to_vec();
-
-        // Create identity ID from public key
-        let identity_id_hash = hash_blake3(&[public_key.as_slice(), b"ZHTP_identity_id"].concat());
+        // Identity ID = blake3(dilithium_pk)
+        let identity_id_hash = hash_blake3(&public_key_bytes);
         let identity_id = lib_crypto::Hash::from_bytes(&identity_id_hash);
 
         tracing::info!(
@@ -1346,7 +1413,7 @@ impl RecoveryPhraseManager {
             hex::encode(&identity_id.0[..8])
         );
 
-        Ok((identity_id, private_key_material, public_key, seed))
+        Ok((identity_id, private_key_bytes, public_key_bytes, seed))
     }
 }
 

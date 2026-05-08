@@ -30,6 +30,11 @@ clap_mangen = "0.2"
 # Configuration editing
 toml_edit = "0.22"
 
+# Setup UI (localhost HTTP bridge)
+axum = { version = "0.7", features = ["json"] }
+open = "5.0"
+sha2 = "0.10"
+
 # Async runtime and utilities (workspace shared)
 tokio = { version = "1.0", features = ["full"] }
 anyhow = "1.0"
@@ -48,6 +53,9 @@ mime_guess = "2.0"
 lib-identity = { path = "../lib-identity" }
 lib-crypto = { path = "../lib-crypto" }
 lib-economy = { path = "../lib-economy" }
+# CONS-103 / PR #2382 review: needed for `lib_types::sov::atoms` so placeholder
+# reward amounts are scaled into the same units as real reward rounds.
+lib-types = { path = "../lib-types" }
 lib-network = { path = "../lib-network" }
 lib-blockchain = { path = "../lib-blockchain", features = ["contracts"] }
 lib-protocols = { path = "../lib-protocols" }

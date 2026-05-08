@@ -31,8 +31,10 @@ pub fn node_data_dir() -> PathBuf {
 
 pub mod config;
 pub mod integration;
+pub mod messaging;
 pub mod monitoring;
 pub mod pouw;
+pub mod rewards;
 pub mod runtime; // Proof-of-Useful-Work (Phase 1: Challenge Generation)
                  // CLI module moved to separate zhtp-cli crate
 pub mod api;
@@ -44,6 +46,7 @@ pub mod security;
 pub mod server;
 pub mod session_manager;
 pub mod storage_network_integration;
+pub mod sync_wire;
 pub mod unified_server;
 pub mod utils;
 pub mod web4_manifest;

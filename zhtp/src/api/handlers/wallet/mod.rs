@@ -14,7 +14,7 @@ use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 
 // Import actual wallet system components
-use lib_blockchain::Blockchain;
+use lib_blockchain::{Blockchain, BlockchainQuery};
 use lib_crypto::Hash;
 use lib_economy::wallets::{
     multi_wallet::{MultiWalletManager, WalletType},
@@ -77,6 +77,14 @@ impl ZhtpRequestHandler for WalletHandler {
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         tracing::info!("Wallet handler: {} {}", request.method, request.uri);
 
+        // Access zone gate: password sessions cannot access wallet endpoints
+        if crate::session_manager::is_request_password_session(&request).await {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Wallet access requires key authentication (mobile app or seed phrase recovery)".to_string(),
+            ));
+        }
+
         let response = match (request.method, request.uri.as_str()) {
             // GET /api/v1/wallet/list/{identity_id}
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/wallet/list/") => {
@@ -127,14 +135,10 @@ impl ZhtpRequestHandler for WalletHandler {
             (ZhtpMethod::Post, "/api/v1/wallet/staking/unstake") => {
                 self.handle_unstake_tokens(request).await
             }
-            // POST /api/v1/wallet/provision
-            (ZhtpMethod::Post, "/api/v1/wallet/provision") => {
-                self.handle_provision_wallet(request).await
-            }
-            // POST /api/v1/wallet/mint-sov
-            (ZhtpMethod::Post, "/api/v1/wallet/mint-sov") => {
-                self.handle_mint_sov(request).await
-            }
+            // POST /api/v1/wallet/provision — REMOVED: wallets are provisioned
+            // during identity registration only, never via standalone API.
+            // POST /api/v1/wallet/mint-sov — REMOVED: minting is Treasury Kernel
+            // only, never via API endpoint.
             _ => Ok(create_error_response(
                 ZhtpStatus::NotFound,
                 "Wallet endpoint not found".to_string(),
@@ -263,16 +267,8 @@ impl WalletHandler {
         identity_id_bytes.copy_from_slice(&identity_hash);
         let identity_hash = Hash(identity_id_bytes);
 
-        // Graph-traversal guard: WalletGraph / Read
-        let principal = self.extract_principal(request);
-        let identity_manager = self.identity_manager.read().await;
-        if !identity_manager.check_access(&principal, &identity_hash, AccessDomain::WalletGraph, AccessOperation::Read) {
-            drop(identity_manager);
-            return Ok(create_error_response(
-                ZhtpStatus::Forbidden,
-                "Access denied to wallet list".to_string(),
-            ));
-        }
+        // TODO: Gate cross-identity wallet list once mobile app is updated.
+        // For now, return full data to maintain backward compatibility.
 
         // Get the identity
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
@@ -307,7 +303,7 @@ impl WalletHandler {
         if wallet_summaries.is_empty() {
             // Fallback: surface wallets from the on-chain registry that belong to this identity.
             let blockchain = self.blockchain.read().await;
-            for (wallet_id_hex, wallet_data) in &blockchain.wallet_registry {
+            for (wallet_id_hex, wallet_data) in blockchain.query_all_wallets() {
                 let owned = wallet_data
                     .owner_identity_id
                     .map(|owner| owner.as_bytes() == identity_id_bytes.as_slice())
@@ -319,7 +315,7 @@ impl WalletHandler {
                     .ok()
                     .filter(|b| b.len() == 32)
                     .and_then(|bytes| {
-                        blockchain.token_contracts.get(&sov_token_id).and_then(|token| {
+                        blockchain.query_token_contract(&sov_token_id).and_then(|token| {
                             let mut key_id = [0u8; 32];
                             key_id.copy_from_slice(&bytes);
                             let wallet_key =
@@ -487,17 +483,8 @@ impl WalletHandler {
         identity_id_bytes.copy_from_slice(&identity_hash);
         let identity_hash = Hash(identity_id_bytes);
 
-        // Graph-traversal guard: WalletGraph / Read
-        let principal = self.extract_principal(request);
-        let identity_manager = self.identity_manager.read().await;
-        if !identity_manager.check_access(&principal, &identity_hash, AccessDomain::WalletGraph, AccessOperation::Read) {
-            drop(identity_manager);
-            return Ok(create_error_response(
-                ZhtpStatus::Forbidden,
-                "Access denied to wallet balance".to_string(),
-            ));
-        }
-        drop(identity_manager);
+        // TODO: Gate cross-identity balance once mobile app is updated.
+        // For now, return full data to maintain backward compatibility.
 
         // Get the identity from stored state
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
@@ -543,7 +530,7 @@ impl WalletHandler {
                 // Prefer SOV token contract balance (live balance) for this wallet.
                 let blockchain = self.blockchain.read().await;
                 let wallet_id_hex = hex::encode(summary.id.0);
-                if let Some(wallet_data) = blockchain.wallet_registry.get(&wallet_id_hex) {
+                if let Some(wallet_data) = blockchain.query_wallet(&wallet_id_hex) {
                     if let Some(token) = blockchain
                         .token_contracts
                         .get(&lib_blockchain::contracts::utils::generate_lib_token_id())
@@ -644,17 +631,8 @@ impl WalletHandler {
         identity_id_bytes.copy_from_slice(&identity_hash);
         let identity_hash = Hash(identity_id_bytes);
 
-        // Graph-traversal guard: WalletGraph / Read
-        let principal = self.extract_principal(request);
-        let identity_manager = self.identity_manager.read().await;
-        if !identity_manager.check_access(&principal, &identity_hash, AccessDomain::WalletGraph, AccessOperation::Read) {
-            drop(identity_manager);
-            return Ok(create_error_response(
-                ZhtpStatus::Forbidden,
-                "Access denied to wallet statistics".to_string(),
-            ));
-        }
-        drop(identity_manager);
+        // TODO: Gate cross-identity statistics once mobile app is updated.
+        // For now, return full data to maintain backward compatibility.
 
         // Get the identity from stored state
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
@@ -721,7 +699,17 @@ impl WalletHandler {
 
     /// Handle cross-wallet transfer
     async fn handle_cross_wallet_transfer(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let principal = self.extract_principal(&request);
         let req_data: CrossWalletTransferRequest = serde_json::from_slice(&request.body)?;
+
+        // Verify caller owns the identity
+        let caller_hex = principal.did.strip_prefix("did:zhtp:").unwrap_or(&principal.did);
+        if caller_hex != req_data.identity_id && principal.role != lib_access_control::Role::Council {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Cannot transfer from an identity you don't own".to_string(),
+            ));
+        }
 
         // Parse wallet types
         let from_wallet_type = match self.parse_wallet_type(&req_data.from_wallet) {
@@ -830,7 +818,17 @@ impl WalletHandler {
 
     /// Handle staking tokens
     async fn handle_stake_tokens(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let principal = self.extract_principal(&request);
         let req_data: StakingRequest = serde_json::from_slice(&request.body)?;
+
+        // Verify caller owns the identity
+        let caller_hex = principal.did.strip_prefix("did:zhtp:").unwrap_or(&principal.did);
+        if caller_hex != req_data.identity_id && principal.role != lib_access_control::Role::Council {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Cannot stake from an identity you don't own".to_string(),
+            ));
+        }
 
         // Parse identity ID
         let identity_hash = hex::decode(&req_data.identity_id)
@@ -926,7 +924,17 @@ impl WalletHandler {
 
     /// Handle unstaking tokens
     async fn handle_unstake_tokens(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let principal = self.extract_principal(&request);
         let req_data: StakingRequest = serde_json::from_slice(&request.body)?;
+
+        // Verify caller owns the identity
+        let caller_hex = principal.did.strip_prefix("did:zhtp:").unwrap_or(&principal.did);
+        if caller_hex != req_data.identity_id && principal.role != lib_access_control::Role::Council {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Cannot unstake from an identity you don't own".to_string(),
+            ));
+        }
 
         // Parse identity ID
         let identity_hash = hex::decode(&req_data.identity_id)
@@ -1277,16 +1285,8 @@ impl WalletHandler {
         let identity_hash = Hash(identity_id_bytes);
 
         // Graph-traversal guard: WalletGraph / Read
-        let principal = self.extract_principal(request);
-        let identity_manager = self.identity_manager.read().await;
-        if !identity_manager.check_access(&principal, &identity_hash, AccessDomain::WalletGraph, AccessOperation::Read) {
-            drop(identity_manager);
-            return Ok(create_error_response(
-                ZhtpStatus::Forbidden,
-                "Access denied to wallet transactions".to_string(),
-            ));
-        }
-        drop(identity_manager);
+        // TODO: Gate cross-identity transaction history once mobile app is updated.
+        // For now, return full data to maintain backward compatibility.
 
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
             Some(identity) => identity,
@@ -1312,7 +1312,7 @@ impl WalletHandler {
 
         // Include any wallet registry entries linked to this identity that may
         // not be present in the in-memory identity wallet manager.
-        for (wallet_id_hex, wallet_data) in &blockchain.wallet_registry {
+        for (wallet_id_hex, wallet_data) in blockchain.query_all_wallets() {
             if wallet_data
                 .owner_identity_id
                 .as_ref()
@@ -1338,7 +1338,7 @@ impl WalletHandler {
         let mut tx_by_hash: HashMap<String, TransactionRecord> = HashMap::new();
 
         // Search through all blocks for transactions
-        for block in &blockchain.blocks {
+        for block in blockchain.query_blocks() {
             for tx in &block.transactions {
                 if Self::tx_involves_identity(
                     tx,
@@ -1363,7 +1363,8 @@ impl WalletHandler {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        for tx in &blockchain.pending_transactions {
+        let pending = blockchain.query_pending_transactions();
+        for tx in &pending {
             if Self::tx_involves_identity(
                 tx,
                 &tracked_key_ids,
@@ -1404,8 +1405,18 @@ impl WalletHandler {
 
     /// Handle simple payment (matching old ZHTP API)
     async fn handle_simple_send(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let principal = self.extract_principal(&request);
         let send_req: SimpleSendRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
+
+        // Verify caller owns the from_identity
+        let caller_hex = principal.did.strip_prefix("did:zhtp:").unwrap_or(&principal.did);
+        if caller_hex != send_req.from_identity && principal.role != lib_access_control::Role::Council {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Cannot send from an identity you don't own".to_string(),
+            ));
+        }
 
         // Parse identity ID
         let identity_hash = hex::decode(&send_req.from_identity)
@@ -1631,7 +1642,7 @@ impl WalletHandler {
             // If the owner identity is not in the identity_registry, register it
             // via a system transaction so it persists in blocks on all nodes.
             let did = format!("did:zhtp:{}", owner_hex);
-            if !blockchain.identity_registry.contains_key(&did) {
+            if !blockchain.query_identity_exists(&did) {
                 let identity_data = lib_blockchain::transaction::IdentityTransactionData {
                     did: did.clone(),
                     display_name: String::new(),
@@ -1646,6 +1657,7 @@ impl WalletHandler {
                     dao_fee: 0,
                     controlled_nodes: vec![],
                     owned_wallets: vec![],
+                    kyber_public_key: vec![],
                 };
 
                 // Create IdentityRegistration system transaction for block persistence
@@ -1665,7 +1677,12 @@ impl WalletHandler {
                 if let Err(e) = blockchain.add_system_transaction(identity_tx) {
                     tracing::warn!("Failed to submit identity tx: {}", e);
                 }
-                // Also insert in-memory so the handshake works immediately
+                // Cache warmup: identity must be visible immediately for QUIC handshake
+                // validation. The system transaction above ensures it persists in blocks,
+                // but won't be committed until the next block. This in-memory insert
+                // bridges the gap until block commit. Note: identity_blocks height will
+                // be the current chain height (not the future block height where the tx
+                // lands), but this is acceptable for the handshake check.
                 blockchain.identity_registry.insert(did.clone(), identity_data);
                 let current_height = blockchain.get_height();
                 blockchain.identity_blocks.insert(did.clone(), current_height);
@@ -1740,7 +1757,7 @@ impl WalletHandler {
         let tx_hash = {
             let mut blockchain = blockchain_arc.write().await;
 
-            if !blockchain.wallet_registry.contains_key(&wallet_id_hex) {
+            if !blockchain.query_wallet_exists(&wallet_id_hex) {
                 return Ok(create_error_response(
                     ZhtpStatus::NotFound,
                     format!("Wallet {} not found in registry", &wallet_id_hex[..16]),

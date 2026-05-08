@@ -41,7 +41,7 @@ pub const CALL_DEPTH_EXCEEDED: &str = "Call depth limit exceeded";
 #[derive(Debug, Clone)]
 struct PendingStateChanges {
     /// Custom token mutations pending commit
-    pub token_changes: std::collections::HashMap<[u8; 32], TokenContract>,
+    pub token_changes: std::collections::BTreeMap<[u8; 32], TokenContract>,
     /// UBI contract mutations pending commit
     pub ubi_change: Option<crate::contracts::UbiDistributor>,
     /// DevGrants contract mutations pending commit
@@ -54,7 +54,7 @@ impl PendingStateChanges {
     /// Create new pending state for the given block height
     fn new(block_height: u64) -> Self {
         Self {
-            token_changes: std::collections::HashMap::new(),
+            token_changes: std::collections::BTreeMap::new(),
             ubi_change: None,
             dev_grants_change: None,
             block_height,
@@ -654,6 +654,13 @@ impl<S: ContractStorage> ContractExecutor<S> {
             writes.push((storage_key, dg_data));
         }
 
+        // Sort writes by key for deterministic ordering across all binary versions.
+        // BTreeMap already iterates in sorted order, but UBI/DevGrants writes are
+        // appended after token writes — sorting the full vector guarantees order.
+        // We sort once here so the WAL, storage commit, and state-root hash all
+        // use the same deterministic sequence without an extra clone.
+        writes.sort_by(|a, b| a.0.cmp(&b.0));
+
         // Derive a write-ahead log key specific to this block height
         // MUST match format used by WalRecoveryManager: wal:{height_bytes}
         let mut wal_key = Vec::new();
@@ -681,10 +688,8 @@ impl<S: ContractStorage> ContractExecutor<S> {
         // block-level consensus. With persistent-contracts feature, the storage layer
         // can compute more comprehensive state roots post-finalization via StateRootComputation.
         let state_root = {
-            // Compute hash over all writes being committed (deterministic ordering)
             let mut hasher = blake3::Hasher::new();
 
-            // Hash token changes
             for (token_id, token) in &writes {
                 hasher.update(token_id);
                 hasher.update(token);

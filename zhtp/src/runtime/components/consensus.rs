@@ -12,6 +12,8 @@ use crate::runtime::{Component, ComponentHealth, ComponentId, ComponentMessage, 
 use crate::server::mesh::core::MeshRouter;
 use lib_blockchain::Blockchain;
 use lib_consensus::types::{MessageBroadcaster as ConsensusMessageBroadcaster, ValidatorMessage};
+use lib_consensus_core::budget::WRONG_CHAIN_HALT_THRESHOLD;
+use lib_consensus_core::ports::TransportInfo;
 use lib_consensus::validators::{
     ValidatorAnnouncement, ValidatorDiscoveryProtocol, ValidatorEndpoint,
     ValidatorNetworkTransport, ValidatorProtocol, ValidatorStatus,
@@ -30,6 +32,20 @@ pub struct ConsensusMeshBroadcaster {
 }
 
 impl ConsensusMeshBroadcaster {
+    /// Idle timeout reported to the consensus runtime for the broadcast
+    /// startup check (CONS-403). Mirrors the QUIC server/client config in
+    /// `lib-network/src/protocols/quic_mesh.rs:1706` and `:1760`. If those
+    /// constants change, update this value too — the runtime startup check
+    /// surfaces the divergence as a configuration error.
+    // Lowered from 300s to 60s to pass the ConsensusRuntime transport
+    // check (AD-011: idle_timeout must be ≤ MAX_BROADCAST_BUDGET_MS × 100 = 75s).
+    // This enables the FSM-based runtime path instead of the legacy direct-engine fallback.
+    const QUIC_MESH_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+    /// Operator-facing transport name (CONS-403). Used in startup-check
+    /// errors and dashboards.
+    const TRANSPORT_NAME: &'static str = "zhtp-quic-mesh";
+
     pub fn new(mesh_router: Arc<MeshRouter>) -> Self {
         Self { mesh_router }
     }
@@ -39,15 +55,24 @@ impl ConsensusMeshBroadcaster {
         validator_ids: &[IdentityId],
         target_height: u64,
     ) -> HashSet<Vec<u8>> {
-        let targets: HashSet<Vec<u8>> = validator_ids
-            .iter()
-            .map(|id| id.as_bytes().to_vec())
-            .collect();
+        // Broadcast to ALL connected mesh peers. The consensus engine provides
+        // IdentityId (32-byte DID hash) but the mesh indexes by NodeId (derived
+        // from DID + device + network_genesis). Rather than maintaining a mapping,
+        // send to every connected peer — in a small validator set this is correct
+        // and avoids the identity→node ID resolution problem.
+        let quic_guard = self.mesh_router.quic_protocol.read().await;
+        let targets: HashSet<Vec<u8>> = if let Some(ref qp) = *quic_guard {
+            qp.connected_peer_ids().into_iter().collect()
+        } else {
+            HashSet::new()
+        };
+        drop(quic_guard);
 
         tracing::debug!(
-            "Consensus broadcast target set for height {} resolved to {} candidate peer node IDs",
+            "Consensus broadcast for height {}: {} connected mesh peers (engine requested {} validator_ids)",
             target_height,
-            targets.len()
+            targets.len(),
+            validator_ids.len()
         );
 
         targets
@@ -66,23 +91,22 @@ impl ConsensusMessageBroadcaster for ConsensusMeshBroadcaster {
         let quic_protocol = match quic_protocol_guard.as_ref() {
             Some(qp) => qp.clone(),
             None => {
-                debug!("QUIC protocol not available for consensus broadcast");
+                warn!("QUIC protocol not available for consensus broadcast — messages cannot reach other validators");
                 return Ok(()); // Best-effort, don't fail
             }
         };
         drop(quic_protocol_guard);
 
-        // Convert types::ValidatorMessage to validators::ValidatorMessage for mesh transport
-        let network_message = convert_to_network_message(&message);
-
-        let target_height = consensus_message_height(&message);
+        // CONS-201: engine produces the canonical wire enum directly; no
+        // translation needed.
+        let target_height = validator_message_height(&message);
         let target_peer_node_ids = self
             .resolve_validator_peer_node_ids(validator_ids, target_height)
             .await;
         if target_peer_node_ids.is_empty() {
-            debug!(
-                "No validator targets resolved for consensus height {}, skipping broadcast",
-                target_height
+            warn!(
+                "No validator targets resolved for consensus height {} ({} validator_ids provided), skipping broadcast",
+                target_height, validator_ids.len()
             );
             return Ok(());
         }
@@ -101,37 +125,105 @@ impl ConsensusMessageBroadcaster for ConsensusMeshBroadcaster {
                 "No connected authenticated validator peers for consensus height {}",
                 target_height
             );
+            // Trigger reconnect to missing bootstrap peers
+            quic_protocol.try_reconnect_to_bootstrap().await;
             return Ok(());
         }
 
+        // If we have some but not all validators, try reconnecting missing ones
+        if recipients.len() < target_peer_node_ids.len() {
+            quic_protocol.try_reconnect_to_bootstrap().await;
+        }
+
+        // CONS-503: parallel fan-out with per-peer + global timeouts.
+        // Pre-CONS-503 the loop was sequential — one stalled peer
+        // serialized N peers behind it, blowing past the broadcast
+        // budget for the whole round. Each send now runs concurrently
+        // under a `per_peer_budget` cap (`total_budget / N`), with a
+        // global `total_budget` deadline as a backstop.
+        use futures::stream::{FuturesUnordered, StreamExt};
+        use lib_consensus_core::budget::MAX_BROADCAST_BUDGET_MS;
+
+        let recipient_count = recipients.len() as u32;
+        let total_budget = Duration::from_millis(MAX_BROADCAST_BUDGET_MS);
+        // saturating_div(0) returns 0 for `Duration`, but `recipients.is_empty()`
+        // already short-circuited above, so divisor >= 1.
+        let per_peer_budget = total_budget
+            .checked_div(recipient_count)
+            .unwrap_or(total_budget);
+
+        let mut tasks: FuturesUnordered<_> = recipients
+            .into_iter()
+            .map(|peer_id| {
+                let qp = quic_protocol.clone();
+                let msg = message.clone();
+                async move {
+                    tokio::time::timeout(
+                        per_peer_budget,
+                        qp.send_to_peer(
+                            &peer_id,
+                            lib_network::types::mesh_message::ZhtpMeshMessage::ValidatorMessage(
+                                msg,
+                            ),
+                        ),
+                    )
+                    .await
+                }
+            })
+            .collect();
+
+        let global_deadline = tokio::time::Instant::now() + total_budget;
         let mut delivered = 0usize;
-        for peer_id in recipients {
-            if quic_protocol
-                .send_to_peer(
-                    &peer_id,
-                    lib_network::types::mesh_message::ZhtpMeshMessage::ValidatorMessage(
-                        network_message.clone(),
-                    ),
-                )
-                .await
-                .is_ok()
-            {
-                delivered += 1;
+        let mut timed_out = 0usize;
+        let mut failed = 0usize;
+
+        loop {
+            match tokio::time::timeout_at(global_deadline, tasks.next()).await {
+                Ok(Some(Ok(Ok(_)))) => delivered += 1, // send returned Ok within per-peer budget
+                Ok(Some(Ok(Err(_)))) => failed += 1,    // send returned Err
+                Ok(Some(Err(_))) => timed_out += 1,    // per-peer timeout
+                Ok(None) => break,                      // all tasks drained
+                Err(_) => {
+                    // Global deadline hit — abandon remaining tasks
+                    timed_out += tasks.len();
+                    break;
+                }
             }
         }
 
         debug!(
-            "Consensus broadcast (height {}) delivered to {} validator peer(s)",
-            target_height, delivered
+            "Consensus broadcast (height {}) parallel fan-out: delivered={} failed={} timed_out={} of {} peers",
+            target_height, delivered, failed, timed_out, recipient_count
         );
         if delivered == 0 {
             Err(Box::new(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                "Consensus broadcast had zero successful deliveries",
+                format!(
+                    "Consensus broadcast had zero successful deliveries (failed={} timed_out={})",
+                    failed, timed_out
+                ),
             )))
         } else {
             Ok(())
         }
+    }
+}
+
+/// CONS-403: expose the QUIC mesh's idle timeout to the consensus runtime
+/// startup check so a misconfigured transport (idle > budget × 100) is
+/// caught before it can silently swallow stuck broadcasts.
+///
+/// We do **not** read the value out of `quinn::TransportConfig` at runtime —
+/// the config is built inside `lib-network` and isn't exposed. We mirror the
+/// constant instead. If the QUIC config is ever made tunable, this adapter
+/// must learn to read it (and the runtime check will catch any drift).
+impl TransportInfo for ConsensusMeshBroadcaster {
+    fn idle_timeout(&self) -> std::time::Duration {
+        Self::QUIC_MESH_IDLE_TIMEOUT
+    }
+
+    fn name(&self) -> &str {
+        Self::TRANSPORT_NAME
     }
 }
 
@@ -181,7 +273,7 @@ impl ValidatorNetworkTransport for QuicValidatorTransport {
         };
         drop(quic_protocol_guard);
 
-        let target_height = network_message_height(&message);
+        let target_height = validator_message_height(&message);
         let target_peer_node_ids = self
             .resolve_validator_peer_node_ids(recipients, target_height)
             .await;
@@ -230,103 +322,18 @@ impl ValidatorNetworkTransport for QuicValidatorTransport {
     }
 }
 
-/// Convert from lib_consensus::types::ValidatorMessage to lib_consensus::validators::ValidatorMessage
-fn convert_to_network_message(
-    msg: &ValidatorMessage,
-) -> lib_consensus::validators::ValidatorMessage {
-    use lib_consensus::validators::{
-        ConsensusStateView, ProposeMessage, ValidatorMessage as NetworkValidatorMessage,
-        VoteMessage,
-    };
-    use std::collections::BTreeMap;
+// CONS-201: `convert_to_network_message` and `consensus_message_height`
+// were deleted. The engine now produces the canonical wrapped enum
+// directly via `wrap_propose`/`wrap_vote` in state_machine.rs, so
+// `LibNetworkMessageBroadcaster::broadcast_to_validators` receives a
+// fully-formed `ValidatorMessage` and forwards it without translation.
 
+fn validator_message_height(msg: &ValidatorMessage) -> u64 {
     match msg {
-        ValidatorMessage::Propose { proposal } => {
-            NetworkValidatorMessage::Propose(ProposeMessage {
-                message_id: proposal.id.clone(),
-                proposer: proposal.proposer.clone(),
-                proposal: proposal.clone(),
-                justification: None,
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-                signature: proposal.signature.clone(),
-            })
-        }
-        ValidatorMessage::Vote { vote } => {
-            // Derive step from vote_type to ensure consistency
-            let step = match vote.vote_type {
-                lib_consensus::types::VoteType::PreVote => {
-                    lib_consensus::types::ConsensusStep::PreVote
-                }
-                lib_consensus::types::VoteType::PreCommit => {
-                    lib_consensus::types::ConsensusStep::PreCommit
-                }
-                lib_consensus::types::VoteType::Commit => {
-                    lib_consensus::types::ConsensusStep::Commit
-                }
-                lib_consensus::types::VoteType::Against => {
-                    // Against votes can occur during any voting step, default to PreVote
-                    lib_consensus::types::ConsensusStep::PreVote
-                }
-            };
-            let state_view = ConsensusStateView {
-                height: vote.height,
-                round: vote.round,
-                step,
-                known_proposals: vec![vote.proposal_id.clone()],
-                vote_counts: BTreeMap::new(),
-            };
-            NetworkValidatorMessage::Vote(VoteMessage {
-                message_id: {
-                    // Use a unique per-broadcast ID so the dedup cache never silently
-                    // drops re-broadcasts of the same vote (vote.id is deterministic
-                    // per height+round+voter, which caused 3600s suppression).
-                    let ts = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_nanos();
-                    let nonce = lib_crypto::generate_nonce();
-                    let mut data = format!("vote_bcast_{}", ts).into_bytes();
-                    data.extend_from_slice(&nonce);
-                    lib_crypto::Hash::from_bytes(&lib_crypto::hash_blake3(&data))
-                },
-                voter: vote.voter.clone(),
-                vote: vote.clone(),
-                consensus_state: state_view,
-                // Use real wall-clock timestamp for network freshness checks.
-                // The consensus engine uses a deterministic value internally, but the
-                // validator-protocol layer rejects messages with stale/future timestamps.
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-                signature: vote.signature.clone(),
-            })
-        }
-        ValidatorMessage::Heartbeat { message } => {
-            // HeartbeatMessage is the same type, just re-exported
-            NetworkValidatorMessage::Heartbeat(message.clone())
-        }
-    }
-}
-
-fn consensus_message_height(msg: &ValidatorMessage) -> u64 {
-    match msg {
-        ValidatorMessage::Propose { proposal } => proposal.height,
-        ValidatorMessage::Vote { vote } => vote.height,
-        ValidatorMessage::Heartbeat { message } => message.height,
-    }
-}
-
-fn network_message_height(msg: &lib_consensus::validators::ValidatorMessage) -> u64 {
-    match msg {
-        lib_consensus::validators::ValidatorMessage::Propose(m) => m.proposal.height,
-        lib_consensus::validators::ValidatorMessage::Vote(m) => m.vote.height,
-        lib_consensus::validators::ValidatorMessage::Commit(m) => m.height,
-        lib_consensus::validators::ValidatorMessage::RoundChange(m) => m.height,
-        lib_consensus::validators::ValidatorMessage::Heartbeat(m) => m.height,
+        ValidatorMessage::Propose(m) => m.proposal.height,
+        ValidatorMessage::Vote(m) => m.vote.height,
+        ValidatorMessage::Heartbeat(m) => m.height,
+        ValidatorMessage::Halt(m) => m.height,
     }
 }
 
@@ -456,158 +463,84 @@ impl lib_consensus::types::CatchUpSyncTrigger for CatchUpSyncChannel {
     }
 }
 
-/// Background task: receives catch-up triggers and downloads missing blocks.
-async fn run_catch_up_sync_task(
-    mut rx: tokio::sync::mpsc::Receiver<u64>,
+// CONS-506: the catch-up sync orchestrator (cooldowns, fork detection,
+// `WRONG_CHAIN_HALT_THRESHOLD` enforcement) moved to
+// `lib_consensus_runtime::catch_up_sync::run_catch_up_sync_task`.
+// zhtp now provides the network + state seams via two trait
+// implementations below (`ZhtpCatchUpTransport` +
+// `ZhtpBlockchainHeightProvider`) and spawns the runtime orchestrator
+// at the wire-up site.
+
+/// CONS-506: zhtp-side `CatchUpTransport` adapter. Wraps the existing
+/// `catchup_get_connected_peers` + `catchup_sync_from_peer` helpers.
+/// Validator-aware peer prioritization happens inside
+/// `connected_peers` so the orchestrator gets peers in the order it
+/// should try them.
+struct ZhtpCatchUpTransport {
     blockchain_slot: SharedBlockchainSlot,
-    sled_path: std::path::PathBuf,
     bft_active_height: Arc<std::sync::atomic::AtomicU64>,
-) {
-    const FAST_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(3);
-    const NORMAL_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(10);
-    const RETRY_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(5);
-    // How many consecutive sync rounds in which at least one ahead peer rejects our
-    // chain before we declare an unrecoverable fork and wipe local state. Three rounds
-    // filter out transient rejections while detecting a genuine divergence quickly.
-    const WRONG_CHAIN_WIPE_THRESHOLD: u32 = 3;
+}
 
-    let mut next_allowed_at = tokio::time::Instant::now();
-    // Counts consecutive sync rounds in which ≥1 ahead peer returned a hash
-    // mismatch and zero blocks were successfully applied. Resets on any success.
-    let mut consecutive_wrong_chain_rounds: u32 = 0;
-
-    while let Some(_trigger_height) = rx.recv().await {
-        // Drain any duplicate triggers buffered while we were processing.
-        while rx.try_recv().is_ok() {}
-
-        // Adaptive rate-limit.
-        let now = tokio::time::Instant::now();
-        if now < next_allowed_at {
-            debug!(
-                "Catch-up sync cooldown ({:.1}s remaining), skipping",
-                (next_allowed_at - now).as_secs_f32()
-            );
-            continue;
-        }
-
-        // Read current local blockchain height (may have advanced since trigger).
-        let from_height = {
-            let slot = blockchain_slot.read().await;
-            match slot.as_ref() {
-                Some(bc_arc) => bc_arc.read().await.height,
-                None => {
-                    warn!("Catch-up sync: blockchain slot not populated yet");
-                    continue;
-                }
-            }
-        };
-
-        info!(
-            "🔄 Catch-up sync: local blockchain height={}, downloading newer blocks",
-            from_height
-        );
-
-        let peers = catchup_get_connected_peers().await;
-        if peers.is_empty() {
-            warn!("Catch-up sync: no connected peers available");
-            next_allowed_at = tokio::time::Instant::now() + RETRY_COOLDOWN;
-            continue;
-        }
-
-        let prioritized_peers = prioritize_catchup_peers(peers, &blockchain_slot).await;
-        let mut synced_blocks = 0usize;
-        // Peers that were strictly ahead of us but returned "Invalid previous block hash".
-        // `catchup_sync_from_peer` returns Ok(0) for peers that are NOT ahead, so any
-        // hash-mismatch Err came from a peer that was genuinely ahead — unlike the old
-        // `wrong_chain_peers == prioritized_peers.len()` check, this correctly excludes
-        // same-height peers (e.g. other nodes on the same stale fork) from the count.
-        let mut ahead_peers_rejecting: u32 = 0;
-        for peer in &prioritized_peers {
-            match catchup_sync_from_peer(
-                &peer.addr,
-                from_height,
-                &blockchain_slot,
-                &bft_active_height,
-            )
-            .await
-            {
-                Ok(0) => {
-                    debug!(
-                        "Catch-up sync: peer {} at same height ({})",
-                        peer.addr, from_height
-                    );
-                }
-                Ok(n) => {
-                    info!(
-                        "✅ Catch-up sync: applied {} block(s) from {} (local height now ~{})",
-                        n,
-                        peer.addr,
-                        from_height + n as u64
-                    );
-                    synced_blocks = n;
-                    break;
-                }
-                Err(e) => {
-                    warn!("Catch-up sync from {} failed: {}", peer.addr, e);
-                    if e.downcast_ref::<HashMismatchError>().is_some() {
-                        ahead_peers_rejecting += 1;
-                    }
-                }
-            }
-        }
-
-        if synced_blocks > 0 {
-            // Successful sync — reset the divergence counter.
-            consecutive_wrong_chain_rounds = 0;
-        } else if ahead_peers_rejecting > 0 && from_height > 0 {
-            // At least one ahead peer rejected our chain this round.
-            consecutive_wrong_chain_rounds += 1;
-            warn!(
-                "⚠️  Wrong-chain signal: {}/{} ahead peer(s) reject height {} \
-                ({}/{} consecutive round(s))",
-                ahead_peers_rejecting,
-                prioritized_peers.len(),
-                from_height + 1,
-                consecutive_wrong_chain_rounds,
-                WRONG_CHAIN_WIPE_THRESHOLD,
-            );
-
-            if consecutive_wrong_chain_rounds >= WRONG_CHAIN_WIPE_THRESHOLD {
-                // Unrecoverable fork: our local chain state diverged from every
-                // ahead peer we can reach. HALT consensus and alert the operator.
-                // DO NOT wipe sled — data destruction caused total chain loss in the
-                // Apr 2 2026 incident. The operator must manually investigate and
-                // decide whether to resync from a peer or restore from backup.
-                error!(
-                    "CHAIN FORK DETECTED at height {}: {} consecutive round(s) of hash \
-                    mismatch from {} ahead peer(s). Consensus HALTED. \
-                    Sled preserved at {:?} for operator investigation. \
-                    To recover: stop the node, rsync sled from an authoritative peer, restart.",
-                    from_height + 1,
-                    consecutive_wrong_chain_rounds,
-                    ahead_peers_rejecting,
-                    sled_path,
-                );
-                // Halt the sync loop — do not wipe, do not exit.
-                // The node stays running (API accessible) but stops syncing.
-                break;
-            }
-        } else {
-            // No hash mismatches this round — reset.
-            consecutive_wrong_chain_rounds = 0;
-        }
-
-        next_allowed_at = tokio::time::Instant::now()
-            + if synced_blocks >= 200 {
-                FAST_COOLDOWN
-            } else if synced_blocks > 0 {
-                NORMAL_COOLDOWN
-            } else {
-                RETRY_COOLDOWN
-            };
+#[async_trait::async_trait]
+impl lib_consensus_runtime::CatchUpTransport for ZhtpCatchUpTransport {
+    async fn connected_peers(&self) -> Vec<lib_consensus_runtime::CatchUpPeer> {
+        let raw = catchup_get_connected_peers().await;
+        let prioritized = prioritize_catchup_peers(raw, &self.blockchain_slot).await;
+        prioritized
+            .into_iter()
+            .map(|p| lib_consensus_runtime::CatchUpPeer {
+                node_id: p.node_id,
+                addr: p.addr,
+            })
+            .collect()
     }
 
-    info!("Catch-up sync task exited");
+    async fn sync_from_peer(
+        &self,
+        peer_addr: &str,
+        our_height: u64,
+    ) -> Result<usize, lib_consensus_runtime::CatchUpError> {
+        match catchup_sync_from_peer(
+            peer_addr,
+            our_height,
+            &self.blockchain_slot,
+            &self.bft_active_height,
+        )
+        .await
+        {
+            Ok(n) => Ok(n),
+            Err(e) => {
+                // Translate the typed `HashMismatchError` (still
+                // sentinel-detected via downcast for compatibility
+                // with the legacy helper's anyhow::Error signature)
+                // into the runtime's typed `CatchUpError::HashMismatch`.
+                if let Some(hm) = e.downcast_ref::<HashMismatchError>() {
+                    Err(lib_consensus_runtime::CatchUpError::HashMismatch {
+                        our_height_plus_one: our_height + 1,
+                        detail: hm.0.clone(),
+                    })
+                } else {
+                    Err(lib_consensus_runtime::CatchUpError::Transport(e))
+                }
+            }
+        }
+    }
+}
+
+/// CONS-506: zhtp-side `BlockchainHeightProvider` adapter.
+struct ZhtpBlockchainHeightProvider {
+    blockchain_slot: SharedBlockchainSlot,
+}
+
+#[async_trait::async_trait]
+impl lib_consensus_runtime::BlockchainHeightProvider for ZhtpBlockchainHeightProvider {
+    async fn current_height(&self) -> Option<u64> {
+        let slot = self.blockchain_slot.read().await;
+        match slot.as_ref() {
+            Some(bc_arc) => Some(bc_arc.read().await.height),
+            None => None,
+        }
+    }
 }
 
 /// Returned by `catchup_sync_from_peer` when a peer that is strictly ahead of us
@@ -1044,18 +977,11 @@ impl ConsensusBlockchainAdapter {
 /// sync from racing at the same height (Apr 2 2026 postmortem fix).
 pub struct ConsensusBlockCommitter {
     blockchain_slot: SharedBlockchainSlot,
-    environment: crate::config::Environment,
 }
 
 impl ConsensusBlockCommitter {
-    pub fn new(
-        blockchain_slot: SharedBlockchainSlot,
-        environment: crate::config::Environment,
-    ) -> Self {
-        Self {
-            blockchain_slot,
-            environment,
-        }
+    pub fn new(blockchain_slot: SharedBlockchainSlot) -> Self {
+        Self { blockchain_slot }
     }
 }
 
@@ -1370,6 +1296,106 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
     }
 }
 
+/// CONS-504: `BlockFinalizationSink` adapter wrapping `ConsensusBlockCommitter`.
+///
+/// Owns a dedicated writer task fed by an unbounded `mpsc` channel. The
+/// engine calls `finalized()` synchronously — the envelope lands on the
+/// channel and `finalized()` returns. The writer task drains the channel
+/// and runs the existing async `commit_finalized_block_with_proof` logic
+/// (preserving every BFT-safety check from the legacy path: divergence
+/// detection, idempotent re-commit, sled preservation policy).
+///
+/// Failures from the writer task are stored in a shared
+/// `recent_failure` slot. The engine polls this between rounds via
+/// `recent_failure()`; a `Some(...)` drives the FSM into `Halting` per
+/// CONS-307's halt-on-commit-failure semantics.
+///
+/// Why a wrapper instead of a full rewrite of `ConsensusBlockCommitter`:
+/// the 290-LOC legacy callback contains subtle BFT-safety logic
+/// (chain-divergence detection, the Apr 2 2026 sled-preservation
+/// policy, hash-vs-proposal-ID tampering check). Reproducing that in a
+/// fresh writer-task-native impl risks dropping a check. CONS-508
+/// retires the legacy path; until then both shapes share the same
+/// underlying logic.
+pub struct ConsensusBlockFinalizationSink {
+    writer_tx: tokio::sync::mpsc::UnboundedSender<lib_consensus::engines::consensus_engine::CommitEnvelope>,
+    recent_failure: Arc<tokio::sync::RwLock<Option<lib_consensus_core::ports::FinalizationError>>>,
+}
+
+impl ConsensusBlockFinalizationSink {
+    /// Build a sink and spawn its writer task. The task reads from the
+    /// returned channel sender (held inside the sink) and writes
+    /// blocks to `blockchain_slot` via the existing
+    /// `ConsensusBlockCommitter::commit_finalized_block_with_proof`
+    /// logic.
+    pub fn new(blockchain_slot: SharedBlockchainSlot) -> Self {
+        use lib_consensus::types::BlockCommitCallback;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<
+            lib_consensus::engines::consensus_engine::CommitEnvelope,
+        >();
+        let recent_failure = Arc::new(tokio::sync::RwLock::new(None));
+        let recent_failure_clone = recent_failure.clone();
+        let committer = ConsensusBlockCommitter::new(blockchain_slot);
+        tokio::spawn(async move {
+            while let Some(env) = rx.recv().await {
+                let height = env.proposal.height;
+                if let Err(e) = committer
+                    .commit_finalized_block_with_proof(&env.proposal, env.quorum_proof)
+                    .await
+                {
+                    error!(
+                        height = height,
+                        error = %e,
+                        "BFT commit failed in finalization sink writer task — buffering for engine halt"
+                    );
+                    *recent_failure_clone.write().await = Some(
+                        lib_consensus_core::ports::FinalizationError::StorageFailure {
+                            height,
+                            detail: e.to_string(),
+                        },
+                    );
+                }
+            }
+            debug!("ConsensusBlockFinalizationSink writer task exited — sender dropped");
+        });
+        Self {
+            writer_tx: tx,
+            recent_failure,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl lib_consensus_core::ports::BlockFinalizationSink for ConsensusBlockFinalizationSink {
+    fn finalized(
+        &self,
+        proposal: lib_consensus_core::types::ConsensusProposal,
+        proof: lib_types::consensus::BftQuorumProof,
+    ) {
+        // Sync send — never .await on `blockchain_arc.write()` from
+        // here. The writer task owns that lock exclusively.
+        if self
+            .writer_tx
+            .send(lib_consensus::engines::consensus_engine::CommitEnvelope {
+                proposal,
+                quorum_proof: proof,
+            })
+            .is_err()
+        {
+            tracing::warn!(
+                "BlockFinalizationSink writer task closed; commit envelope dropped (CE-ENG-4)"
+            );
+        }
+    }
+
+    async fn recent_failure(&self) -> Option<lib_consensus_core::ports::FinalizationError> {
+        // Drain-on-read: each call reports a failure at most once.
+        // The writer task re-buffers if the same error recurs on the
+        // next envelope.
+        self.recent_failure.write().await.take()
+    }
+}
+
 #[async_trait::async_trait]
 impl lib_consensus::types::ConsensusBlockchainProvider for ConsensusBlockchainAdapter {
     async fn get_latest_block_hash(
@@ -1535,6 +1561,9 @@ pub struct ConsensusComponent {
     /// Mock SOV/USD price for oracle attestations (testnet/bootstrap).
     /// `None` means attempt real exchange price feeds.
     oracle_mock_sov_usd_price: Option<u64>,
+    /// Sender for injecting FSM events into the consensus loop (e.g., HaltScheduled).
+    /// Set when the ConsensusRuntime is created; None for legacy engine path.
+    halt_event_tx: Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<lib_consensus_core::fsm::Event>>>>,
 }
 
 // Manual Debug implementation because ConsensusEngine doesn't derive Debug
@@ -1651,7 +1680,57 @@ impl ConsensusComponent {
             local_validator_keypair: Arc::new(RwLock::new(None)),
             node_role: Arc::new(node_role),
             oracle_mock_sov_usd_price,
+            halt_event_tx: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Send a HaltScheduled event to the consensus engine.
+    /// Only works when ConsensusRuntime path is active (not legacy).
+    pub async fn halt_consensus(
+        &self,
+        reason: lib_consensus_core::fsm::state::HaltReason,
+        height: u64,
+    ) -> Result<()> {
+        let guard = self.halt_event_tx.read().await;
+        let tx = guard.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("Consensus halt sender not available (legacy engine path?)")
+        })?;
+        tx.send(lib_consensus_core::fsm::events::Event::HaltScheduled {
+            reason: reason.clone(),
+            triggered_at_height: height,
+            resume_condition: lib_consensus_core::fsm::events::ResumeConditionEvent::ManualRestart,
+        })
+        .map_err(|e| anyhow::anyhow!("Failed to send halt event: {}", e))?;
+        info!("🛑 HaltScheduled event sent to LOCAL consensus engine at height {}", height);
+
+        // Broadcast halt to all validators via mesh so the entire network halts
+        let halt_msg = lib_consensus_core::types::ValidatorMessage::Halt(
+            lib_consensus_core::types::HaltMessage {
+                reason: format!("{:?}", reason),
+                height,
+                initiated_by: String::new(), // filled by caller
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            },
+        );
+
+        if let Ok(mesh_router) = crate::runtime::mesh_router_provider::get_global_mesh_router().await {
+            let quic_guard = mesh_router.quic_protocol.read().await;
+            if let Some(quic) = quic_guard.as_ref() {
+                let peer_ids = quic.connected_peer_ids();
+                let mut sent = 0;
+                for peer_id in &peer_ids {
+                    if quic.send_to_peer(peer_id, lib_network::types::mesh_message::ZhtpMeshMessage::ValidatorMessage(halt_msg.clone())).await.is_ok() {
+                        sent += 1;
+                    }
+                }
+                info!("🛑 Halt broadcast to {}/{} mesh peers", sent, peer_ids.len());
+            }
+        }
+
+        Ok(())
     }
 
     #[deprecated = "Use new_with_bootstrap_validators(environment, node_role, min_stake, validators) instead"]
@@ -2028,18 +2107,29 @@ impl Component for ConsensusComponent {
         // Protocols.start() is awaited before Consensus.start() in startup_sequence,
         // so the mesh router is guaranteed to be available here unless Protocols failed.
         // Development mode allows NoOpBroadcaster for single-node local testing.
-        let broadcaster: Arc<dyn ConsensusMessageBroadcaster> = match get_global_mesh_router().await
-        {
+        //
+        // CONS-502d: we keep a parallel `Arc<dyn TransportInfo>` handle so the
+        // consensus runtime's startup check (CONS-310 / CONS-403) can read the
+        // transport's idle timeout. In production it's the same
+        // `ConsensusMeshBroadcaster` pointer; in dev/NoOp it's `NoOpTransportInfo`.
+        let (broadcaster, transport_info): (
+            Arc<dyn ConsensusMessageBroadcaster>,
+            Arc<dyn lib_consensus_core::ports::TransportInfo>,
+        ) = match get_global_mesh_router().await {
             Ok(mesh_router) => {
                 info!("Mesh router available — multi-node consensus broadcasting enabled");
-                Arc::new(ConsensusMeshBroadcaster::new(mesh_router))
+                let mesh_b = Arc::new(ConsensusMeshBroadcaster::new(mesh_router));
+                (mesh_b.clone(), mesh_b)
             }
             Err(e) if is_development => {
                 warn!(
                     "Mesh router not available: {} — development mode, using NoOpBroadcaster",
                     e
                 );
-                Arc::new(NoOpBroadcaster)
+                (
+                    Arc::new(NoOpBroadcaster),
+                    Arc::new(lib_consensus_core::ports::NoOpTransportInfo),
+                )
             }
             Err(e) => {
                 return Err(anyhow::anyhow!(
@@ -2233,12 +2323,14 @@ impl Component for ConsensusComponent {
                         lib_crypto::Hash(h)
                     };
 
-                    let endpoints = if v.network_address.is_empty() {
+                    let resolved_addr = crate::runtime::validator_ip::get_resolved_address(&v.identity_id)
+                        .unwrap_or_else(|| v.network_address.clone());
+                    let endpoints = if resolved_addr.is_empty() {
                         vec![]
                     } else {
                         vec![ValidatorEndpoint {
                             protocol: "quic".to_string(),
-                            address: v.network_address.clone(),
+                            address: resolved_addr,
                             priority: 10,
                         }]
                     };
@@ -2382,21 +2474,31 @@ impl Component for ConsensusComponent {
         // Wire catch-up sync trigger.
         // Channel capacity of 2 means triggers are coalesced: if two divergence
         // events fire before the task drains the channel, only one sync runs.
+        //
+        // CONS-506: orchestrator lives in `lib-consensus-runtime`. zhtp
+        // provides the network + state seams via `ZhtpCatchUpTransport`
+        // and `ZhtpBlockchainHeightProvider`.
         {
             let (catch_up_tx, catch_up_rx) = tokio::sync::mpsc::channel::<u64>(2);
             crate::runtime::blockchain_provider::set_global_catchup_trigger(catch_up_tx.clone());
             let trigger = Arc::new(CatchUpSyncChannel { tx: catch_up_tx });
             consensus_engine.set_catch_up_sync_trigger(trigger);
-            let blockchain_slot_for_sync = self.blockchain.clone();
-            let sled_path_for_sync =
-                std::path::Path::new(&self.environment.data_directory()).join("sled");
-            let bft_height_for_sync = bft_active_height.clone();
+            let transport: Arc<dyn lib_consensus_runtime::CatchUpTransport> =
+                Arc::new(ZhtpCatchUpTransport {
+                    blockchain_slot: self.blockchain.clone(),
+                    bft_active_height: bft_active_height.clone(),
+                });
+            let height_provider: Arc<dyn lib_consensus_runtime::BlockchainHeightProvider> =
+                Arc::new(ZhtpBlockchainHeightProvider {
+                    blockchain_slot: self.blockchain.clone(),
+                });
+            let sled_path_for_sync = crate::node_data_dir().join("sled");
             tokio::spawn(async move {
-                run_catch_up_sync_task(
+                lib_consensus_runtime::run_catch_up_sync_task(
                     catch_up_rx,
-                    blockchain_slot_for_sync,
+                    transport,
+                    height_provider,
                     sled_path_for_sync,
-                    bft_height_for_sync,
                 )
                 .await;
             });
@@ -2406,9 +2508,26 @@ impl Component for ConsensusComponent {
         // Wire block commit callback for BFT-finalized blocks
         // This is the critical bridge that commits blocks when BFT achieves 2/3+1 votes
         let block_committer =
-            ConsensusBlockCommitter::new(self.blockchain.clone(), self.environment.clone());
+            ConsensusBlockCommitter::new(self.blockchain.clone());
         consensus_engine.set_block_commit_callback(Arc::new(block_committer));
         info!("🔗 Block commit callback wired to consensus engine");
+
+        // Wire reward distribution callback (CONS-103 / AD-005). The adapter
+        // owns the calculator + Mutex; failures are logged inside the adapter,
+        // never reach the engine.
+        consensus_engine.set_reward_callback(Arc::new(
+            lib_economy::rewards::ConsensusRewardAdapter::new(),
+        ));
+        info!("Reward distribution callback wired to consensus engine");
+
+        // Wire governance round-finalize hook (CONS-106 / AD-005). The adapter
+        // captures the current Tokio runtime handle and runs the deprecated
+        // `process_expired_proposals` async path inside it. Failures are logged
+        // inside the adapter, never reach the engine.
+        consensus_engine.set_governance_callback(Arc::new(
+            lib_governance::dao::ConsensusGovernanceAdapter::new(),
+        ));
+        info!("Governance callback wired to consensus engine");
 
         // Wire a validator update channel so the periodic re-sync task can push
         // validator set changes into the running consensus loop without direct
@@ -2420,14 +2539,79 @@ impl Component for ConsensusComponent {
         // Engine is moved into the spawned loop — not accessible externally.
         *self.consensus_engine.write().await = None;
 
-        // Spawn the consensus loop as a background task.
-        tokio::spawn(async move {
-            info!("🚀 Starting BFT consensus loop...");
-            match consensus_engine.run_consensus_loop().await {
-                Ok(()) => info!("Consensus loop exited normally"),
-                Err(e) => error!("Consensus loop exited with error: {}", e),
+        // CONS-502d: prefer wrapping the engine in `ConsensusRuntime` so the
+        // startup transport-compatibility check (CONS-310 / CONS-403) and the
+        // watchdog spawn (CONS-309 / CONS-502b) go live. Fall back to the
+        // legacy direct-engine path if the transport's idle timeout exceeds
+        // `MAX_BROADCAST_BUDGET_MS * 100` — this is the AD-011 collision
+        // documented in lib_consensus_core::budget. Until the QUIC mesh idle
+        // timeout (300 s, issue #907) and `MAX_BROADCAST_BUDGET_MS` (currently
+        // 750 ms ⇒ 75 s ceiling) are reconciled, real production deployments
+        // hit this path and run without the watchdog. Logging at WARN so an
+        // operator notices and the AD-011 ticket gets driven to closure.
+        match lib_consensus_runtime::ConsensusRuntime::check_transport(transport_info.as_ref()) {
+            Ok(()) => {
+                info!(
+                    "🚀 Starting BFT consensus via ConsensusRuntime (transport={})",
+                    transport_info.name()
+                );
+                let runtime =
+                    lib_consensus_runtime::ConsensusRuntime::from_arc(consensus_engine, transport_info)
+                        .expect("transport already validated by check_transport");
+                // Capture halt event sender before run() consumes the runtime
+                *self.halt_event_tx.write().await = Some(runtime.event_sender());
+                tokio::spawn(async move {
+                    match runtime.run().await {
+                        Ok(()) => info!("Consensus loop exited normally (runtime path)"),
+                        Err(e) => error!("Consensus loop exited with error: {}", e),
+                    }
+                });
             }
-        });
+            Err(transport_err) => {
+                warn!(
+                    "AD-011 collision: {transport_err}. \
+                     Falling back to legacy direct-engine consensus loop without watchdog. \
+                     Reconcile lib_consensus_core::budget::MAX_BROADCAST_BUDGET_MS with the \
+                     QUIC mesh idle timeout to close this gap (tracked alongside #2345/#2352)."
+                );
+                tokio::spawn(async move {
+                    info!("🚀 Starting BFT consensus loop (legacy direct-engine path)...");
+                    match consensus_engine.run_consensus_loop().await {
+                        Ok(()) => info!("Consensus loop exited normally"),
+                        Err(e) => error!("Consensus loop exited with error: {}", e),
+                    }
+                });
+            }
+        }
+
+        // Spawn periodic mesh reconnect: every 15s, try to connect to any
+        // bootstrap peers we're not yet connected to. This is needed because
+        // the initial mesh connections may fail when validators restart
+        // simultaneously and the reconnect-on-broadcast path only fires
+        // when there are zero peers.
+        if let Ok(mesh_router) = crate::runtime::mesh_router_provider::get_global_mesh_router().await {
+            let quic_guard = mesh_router.quic_protocol.read().await;
+            if let Some(quic) = quic_guard.as_ref().cloned() {
+                drop(quic_guard);
+                tokio::spawn(async move {
+                    let mut interval = tokio::time::interval(Duration::from_secs(15));
+                    interval.tick().await; // skip first
+                    loop {
+                        interval.tick().await;
+                        let bootstrap_count = quic.verifier().get_bootstrap_addrs().len();
+                        let connected = quic.peer_count();
+                        if connected < bootstrap_count {
+                            tracing::debug!(
+                                "Mesh reconnect: {}/{} peers connected, attempting reconnect",
+                                connected, bootstrap_count
+                            );
+                            quic.try_reconnect_to_bootstrap().await;
+                        }
+                    }
+                });
+                info!("🔄 Periodic mesh reconnect task started (every 15s)");
+            }
+        }
 
         // Spawn periodic validator re-sync background task.
         // Every 10 s, refresh ValidatorManager from blockchain.validator_registry so

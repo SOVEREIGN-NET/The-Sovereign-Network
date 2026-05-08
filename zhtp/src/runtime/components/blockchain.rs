@@ -457,10 +457,20 @@ impl BlockchainComponent {
                     }
 
                     let blocks: Vec<lib_blockchain::Block> =
-                        match bincode::deserialize(&blocks_resp.body) {
+                        match crate::runtime::deserialize_blocks_compatible(&blocks_resp.body) {
                             Ok(b) => b,
                             Err(e) => {
-                                warn!("observer_sync: failed to deserialize blocks: {}", e);
+                                let prefix_len = std::cmp::min(16, blocks_resp.body.len());
+                                let prefix_hex = blocks_resp.body[..prefix_len]
+                                    .iter()
+                                    .map(|b| format!("{:02x}", b))
+                                    .collect::<String>();
+                                warn!(
+                                    "observer_sync: failed to deserialize blocks: {} (bytes={}, prefix_hex={})",
+                                    e,
+                                    blocks_resp.body.len(),
+                                    prefix_hex
+                                );
                                 break 'batches;
                             }
                         };

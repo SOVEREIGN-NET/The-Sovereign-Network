@@ -5,6 +5,12 @@ pub const DEFAULT_TX_BYTES_PER_SOV: u64 = 100;
 pub const DEFAULT_TX_WITNESS_CAP: u32 = 500;
 pub const DEFAULT_TOKEN_CREATION_FEE: u64 = 1_000;
 
+/// Non-refundable SOV burn applied at observer-admission registration time
+/// (observer-admission-3). Provides a small economic barrier against Sybil
+/// observer-node spam beyond the sponsor-identity gate. Debited from the
+/// transaction signer's SOV balance and burned (no treasury credit).
+pub const OBSERVER_REGISTRATION_FEE: u64 = 1_000;
+
 fn default_token_creation_fee() -> u64 {
     DEFAULT_TOKEN_CREATION_FEE
 }

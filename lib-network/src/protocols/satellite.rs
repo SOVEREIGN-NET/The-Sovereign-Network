@@ -72,6 +72,21 @@ impl SatelliteMeshProtocol {
         Ok(())
     }
 
+    /// Stop satellite mesh discovery
+    pub async fn stop_mesh_discovery(&self) -> Result<()> {
+        info!("🛰️ Stopping satellite mesh discovery...");
+
+        // In production, this would:
+        // 1. Disconnect from satellite network
+        // 2. Power down satellite terminal
+        // 3. Clear mesh routing tables
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        info!("Satellite mesh discovery stopped");
+        Ok(())
+    }
+
     /// Search for available satellite constellations
     async fn search_constellations(&self) -> Result<()> {
         info!("Searching for satellite constellations...");

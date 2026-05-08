@@ -8,6 +8,7 @@ pub mod contract_deployment;
 pub mod contract_execution;
 pub mod core;
 pub mod creation;
+pub mod credentials;
 pub mod domain;
 pub mod fee;
 pub mod hashing;
@@ -17,6 +18,9 @@ pub mod threshold_approval;
 pub mod token_creation;
 pub mod validation;
 
+pub use credentials::{
+    RegisterCredentialData, UpdateCredentialPasswordData, UserCredential,
+};
 pub use domain::{
     DomainRegistrationPayload, DomainUpdatePayload, OnChainDomainRecord,
     DOMAIN_REGISTRATION_PREFIX, DOMAIN_UPDATE_PREFIX,
@@ -26,13 +30,17 @@ pub use domain::{
 pub use core::{
     BondingCurveBuyData, BondingCurveDeployData, BondingCurveGraduateData, BondingCurveSellData,
     CreateEmploymentContractData, DaoExecutionData, DaoProposalData, DaoStakeData, DaoUnstakeData,
-    DaoVoteData,
+    DaoVoteData, GatewayOperation, GatewayTransactionData,
+    NftBurnData, NftCreateCollectionData, NftMintData, NftTransferData,
     GovernanceConfigOperation, GovernanceConfigUpdateData, IdentityTransactionData,
     InitCbeTokenData, InitEntityRegistryData, ProcessPayrollData, ProfitDeclarationData,
     RecordOnRampTradeData, RevenueSource, TokenMintData, TokenTransferData, Transaction,
     TransactionInput, TransactionOutput, TransactionPayload, TreasuryAllocationData, UbiClaimData,
     ValidatorOperation, ValidatorTransactionData, WalletPrivateData, WalletReference,
-    WalletTransactionData, TX_VERSION_V3, TX_VERSION_V7, TX_VERSION_V8,
+    WalletTransactionData, TX_VERSION_V3, TX_VERSION_V7, TX_VERSION_V8, TX_VERSION_V9,
+    // Observer admission (observer-admission-3)
+    RegisterObserverData, UpdateObserverMetadataData, ObserverNetworkUpdate,
+    SuspendObserverData, RevokeObserverData, ReauthorizeObserverData,
 };
 
 // Re-exports from threshold_approval module
@@ -84,6 +92,8 @@ pub use validation::{
     is_token_contract_execution, StatefulTransactionValidator, TransactionValidator,
     ValidationError, ValidationResult,
 };
+
+pub use core::decode_client_transaction;
 
 // Explicit re-exports from hashing module
 pub use hashing::{

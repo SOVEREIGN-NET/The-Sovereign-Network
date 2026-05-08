@@ -207,10 +207,16 @@ impl MeshRouter {
 
         // Clone connections for router initialization
         let connections_for_router = connections.clone();
-        let mesh_message_router = Arc::new(RwLock::new(MeshMessageRouter::new(
-            connections_for_router.clone(),
-            Arc::new(RwLock::new(HashMap::new())),
-        )));
+        let multi_hop_router = Arc::new(RwLock::new(
+            lib_network::routing::multi_hop::MultiHopRouter::new(),
+        ));
+        let mesh_message_router = Arc::new(RwLock::new(
+            MeshMessageRouter::new(
+                connections_for_router.clone(),
+                Arc::new(RwLock::new(HashMap::new())),
+            )
+            .with_multi_hop_router(multi_hop_router),
+        ));
 
         let (dht_dispatcher, dht_events_rx) = dht_integration_channel();
         tokio::spawn(crate::integration::dht_dispatcher::drain_dht_events(

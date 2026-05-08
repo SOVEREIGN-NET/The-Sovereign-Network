@@ -15,7 +15,7 @@
 //!
 //! ```ignore
 //! use lib_network::handshake::blockchain::*;
-//! use lib_consensus::ChainSummary;
+//! use lib_blockchain::ChainSummary;
 //! use lib_blockchain::Blockchain;
 //!
 //! async fn create_handshake_context(
@@ -66,8 +66,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
 use subtle::ConstantTimeEq;
 
-// Re-export ChainSummary from lib-consensus for blockchain state verification
-pub use lib_consensus::ChainSummary;
+// Re-export ChainSummary from lib-blockchain for blockchain state verification
+// (Moved from lib-consensus per CONS-107 / AD-003)
+pub use lib_blockchain::ChainSummary;
 
 // ============================================================================
 // GENESIS TRUST POLICY (BFT-G, Issue #1003)

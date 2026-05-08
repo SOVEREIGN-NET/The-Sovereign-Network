@@ -23,6 +23,8 @@ pub struct PartialConfig {
     #[serde(default)]
     pub environment: Option<super::Environment>,
     #[serde(default)]
+    pub node_type: Option<NodeType>,
+    #[serde(default)]
     pub runtime_role: Option<RuntimeRole>,
     #[serde(default)]
     pub network: Option<PartialNetworkConfig>,
@@ -36,6 +38,43 @@ pub struct PartialConfig {
     pub storage_config: Option<PartialStorageConfig>,
     #[serde(default)]
     pub validator_config: Option<PartialValidatorConfig>,
+    #[serde(default)]
+    pub zdns: Option<PartialZdnsConfig>,
+}
+
+/// Partial ZDNS configuration
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PartialZdnsConfig {
+    /// Enable ZDNS server (default: false — opt-in)
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    /// Bind address (default: 127.0.0.1)
+    #[serde(default)]
+    pub bind: Option<String>,
+    /// Port (default: 53)
+    #[serde(default)]
+    pub port: Option<u16>,
+}
+
+/// ZDNS server configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZdnsNodeConfig {
+    /// Enable ZDNS DNS server
+    pub enabled: bool,
+    /// Bind address (default: 127.0.0.1 — set to "0.0.0.0" to expose publicly)
+    pub bind: String,
+    /// DNS port (default: 53)
+    pub port: u16,
+}
+
+impl Default for ZdnsNodeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bind: "127.0.0.1".to_string(),
+            port: 53,
+        }
+    }
 }
 
 /// Partial network configuration (matches user-friendly [network_config] section)
@@ -208,6 +247,10 @@ pub struct NodeConfig {
     pub economics_config: EconomicsConfig,
     pub protocols_config: ProtocolsConfig,
     pub rewards_config: RewardsConfig,
+
+    /// ZDNS configuration (network directory DNS server)
+    #[serde(default, alias = "zdns")]
+    pub zdns_config: ZdnsNodeConfig,
 
     // Validator configuration (Gap 5)
     #[serde(default)]
@@ -811,6 +854,8 @@ impl Default for NodeConfig {
 
             rewards_config: RewardsConfig::default(),
 
+            zdns_config: ZdnsNodeConfig::default(),
+
             validator_config: None, // Gap 5: Disabled by default
 
             port_assignments: HashMap::new(),
@@ -1094,6 +1139,10 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
                         tracing::info!("Loaded environment = {:?} from config file", env);
                         config.environment = env;
                     }
+                    if let Some(node_type) = partial.node_type {
+                        tracing::info!("Loaded node_type = {:?} from config file", node_type);
+                        config.node_type = Some(node_type);
+                    }
                     if let Some(role) = partial.runtime_role {
                         tracing::info!("Loaded runtime_role = {:?} from config file", role);
                         config.runtime_role = role;
@@ -1264,6 +1313,20 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
                                 config.consensus_config.validator_enabled = true;
                                 tracing::info!("  validator_config.enabled = true implies consensus_config.validator_enabled = true");
                             }
+                        }
+                    }
+
+                    // Merge [zdns] section
+                    if let Some(zdns) = partial.zdns {
+                        config.zdns_config.enabled = zdns.enabled.unwrap_or(config.zdns_config.enabled);
+                        if config.zdns_config.enabled {
+                            tracing::info!("Loaded [zdns] section: enabled");
+                        }
+                        if let Some(bind) = zdns.bind {
+                            config.zdns_config.bind = bind;
+                        }
+                        if let Some(port) = zdns.port {
+                            config.zdns_config.port = port;
                         }
                     }
                 } else {
@@ -1689,5 +1752,48 @@ bootstrap_peers = ["10.0.0.1:9334", "10.0.0.2:9334"]
                 explicit_type
             );
         }
+    }
+
+    #[test]
+    fn test_apply_cli_overrides_sets_data_directory() {
+        let mut config = NodeConfig::default();
+        let args = crate::config::CliArgs {
+            mesh_port: None,
+            pure_mesh: false,
+            config: std::path::PathBuf::from("zhtp/configs/dev-node.toml"),
+            environment: Environment::Development,
+            log_level: "info".to_string(),
+            data_dir: std::path::PathBuf::from("/tmp/zhtp-custom-data"),
+            emergency_restore_from_local: false,
+            allow_emergency_restore_genesis_mismatch: false,
+        };
+
+        config
+            .apply_cli_overrides(&args)
+            .expect("cli overrides should apply");
+
+        assert_eq!(config.data_directory, "/tmp/zhtp-custom-data");
+    }
+
+    #[test]
+    fn test_apply_cli_overrides_sets_mesh_port_and_data_directory_together() {
+        let mut config = NodeConfig::default();
+        let args = crate::config::CliArgs {
+            mesh_port: Some(44555),
+            pure_mesh: false,
+            config: std::path::PathBuf::from("zhtp/configs/dev-node.toml"),
+            environment: Environment::Development,
+            log_level: "info".to_string(),
+            data_dir: std::path::PathBuf::from("/tmp/zhtp-override"),
+            emergency_restore_from_local: false,
+            allow_emergency_restore_genesis_mismatch: false,
+        };
+
+        config
+            .apply_cli_overrides(&args)
+            .expect("cli overrides should apply");
+
+        assert_eq!(config.network_config.mesh_port, 44555);
+        assert_eq!(config.data_directory, "/tmp/zhtp-override");
     }
 }

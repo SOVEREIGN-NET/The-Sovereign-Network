@@ -10,13 +10,9 @@ use lib_blockchain::types::Hash;
 use lib_blockchain::Blockchain;
 use lib_crypto::types::keys::PublicKey;
 
-/// Create a test public key with a specific ID byte
-/// Uses PublicKey::new() to ensure consistent key_id computation
-fn create_test_pubkey(id: u8) -> PublicKey {
-    // PublicKey::new() computes key_id as hash_blake3(&dilithium_pk)
-    // This ensures consistency between key creation and lookup
-    PublicKey::new([0u8; 2592])
-}
+mod common;
+
+fn create_test_pubkey(_id: u8) -> PublicKey { common::crypto_fixtures::dummy_public_key() }
 
 /// Setup a blockchain with treasury wallet and SOV token
 fn setup_blockchain_with_treasury() -> (Blockchain, PublicKey) {

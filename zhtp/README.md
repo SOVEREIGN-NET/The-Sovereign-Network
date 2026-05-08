@@ -97,7 +97,6 @@ The ZHTP orchestrator contains sophisticated internal systems:
 - **metrics.rs** - Real-time system metrics collection
 - **health_check.rs** - Component health monitoring
 - **alerting.rs** - Alert management and notifications
-- **dashboard.rs** - Web dashboard with live visualization
 
 #### Integration Layer (`src/integration/`)
 - **service_container.rs** - Dependency injection container
@@ -147,29 +146,27 @@ cargo run -- node start --dev
 
 ### Quick Start
 
-#### Method 1: Interactive CLI Mode (Recommended)
-```bash
-# Start the interactive ZHTP shell
-cargo run
+> **Note:** The interactive shell (`zhtp> …` prompt) is **not yet implemented** —
+> it requires server-side QUIC control surfaces that are still in development.
+> Use the `zhtp-cli` direct commands below instead.
 
-# Available commands in the shell(not all of them work):
-zhtp> help                    # Show all available commands
-zhtp> node start --port 9334  # Start the orchestrator node
-zhtp> node status             # Check node health
-zhtp> monitor system          # View system metrics
-zhtp> wallet create --name "MyWallet" --type citizen
-zhtp> dao info                # Check DAO status
-zhtp> identity create TestUser # Create new DID identity
-zhtp> network status          # Check mesh network status
-```
+#### Direct CLI Commands
 
-#### Method 2: Direct Commands
+From a repo checkout, run via Cargo (`cargo install --path ../zhtp-cli` to
+install the binary globally):
+
 ```bash
-# Execute single commands directly
-cargo run -- node start --config config.toml
-cargo run -- wallet balance <address>
-cargo run -- dao claim-ubi
-cargo run -- network peers
+# Start a node
+cargo run -p zhtp-cli -- node start --config config.toml
+
+# Wallet operations
+cargo run -p zhtp-cli -- wallet balance <address>
+
+# DAO governance
+cargo run -p zhtp-cli -- dao claim-ubi
+
+# Network info
+cargo run -p zhtp-cli -- network peers
 ```
 
 ## 📖 Usage Examples
@@ -316,8 +313,6 @@ daily_ubi_amount = 33000000000000000000    # 33 SOV tokens
 monthly_ubi_amount = 1000000000000000000000 # 1000 SOV tokens
 
 [monitoring]
-enable_dashboard = true
-dashboard_port = 9334
 metrics_interval = 30
 health_check_interval = 60
 
@@ -338,16 +333,6 @@ export ZHTP_ENVIRONMENT="development"
 ```
 
 ## Monitoring & Debugging
-
-### Web Dashboard
-
-Access the live monitoring dashboard at `http://127.0.0.1:9334` when the node is running:
-
-- **System Metrics** - CPU, memory, network usage
-- **Component Health** - Status of all 9 SOV libraries
-- **Network Statistics** - Mesh network connectivity and performance
-- **Economic Metrics** - UBI distribution, transaction volumes
-- **Security Status** - Cryptographic operations, threat detection
 
 ### Log Files
 
@@ -446,11 +431,12 @@ cargo run -- node start --config dev-config.toml --dev
 ## Roadmap
 
 ### Phase 1: Foundation (Current)
-- Core orchestrator implementation
-- Configuration management system
-- CLI interface and interactive shell
-- Monitoring and health checks
-- API server with REST endpoints
+- ✅ Core orchestrator implementation
+- ✅ Configuration management system
+- ✅ CLI direct commands (`zhtp-cli`)
+- ⏳ Interactive shell (awaiting QUIC control surfaces)
+- ✅ API server with REST endpoints
+- ⏳ Consensus rewrite v2 (in progress)
 
 ### Phase 2: Network Integration
 -  Complete mesh networking implementation

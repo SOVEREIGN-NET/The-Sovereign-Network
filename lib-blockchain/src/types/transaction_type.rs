@@ -162,6 +162,68 @@ pub enum TransactionType {
     /// Payload: `DOMUPD1:` prefix + bincode(DomainUpdatePayload) in memo field.
     /// Block processor updates record in `Blockchain::domain_registry`.
     DomainUpdate = 47,
+
+    // Gateway registry (remote QUIC ingress nodes)
+    GatewayRegistration = 48,
+    GatewayUpdate = 49,
+    GatewayUnregister = 50,
+
+    /// Create a new NFT collection.
+    NftCreateCollection = 51,
+    /// Mint a new NFT in a collection.
+    NftMint = 52,
+    /// Transfer NFT ownership.
+    NftTransfer = 53,
+    /// Burn (destroy) an NFT.
+    NftBurn = 54,
+
+    // =========================================================================
+    // Observer Admission (observer-admission-3)
+    // =========================================================================
+    // Observer eligibility is canonical: it is derived exclusively from the
+    // persisted ObserverAdmissionRecord, never from local runtime config.
+    // All observer txs require an explicit signature from the sponsoring user DID
+    // or from the observer node DID itself (depending on tx type — see validation).
+    // V1 does NOT require validator-style staking.
+    // =========================================================================
+
+    /// Register a new observer node on-chain.
+    ///
+    /// Creates an `ObserverAdmissionRecord` in `Pending` status.
+    /// The sponsor user DID is bound canonically at registration time.
+    /// Fails if the observer node DID is already registered.
+    RegisterObserver = 55,
+
+    /// Update mutable metadata on an existing observer record.
+    ///
+    /// Only the sponsor user DID may submit this transaction.
+    /// Updates endpoints, network binding, and rate-limit tier.
+    /// Status transitions are NOT performed via this type.
+    UpdateObserverMetadata = 56,
+
+    /// Suspend an Active observer (temporarily deny sync access).
+    ///
+    /// Valid transition: Active → Suspended.
+    /// Only the sponsor user DID or a governance actor may submit.
+    SuspendObserver = 57,
+
+    /// Revoke an observer's admission (permanently deny access).
+    ///
+    /// Valid transitions: Pending → Revoked, Active → Revoked, Suspended → Revoked.
+    /// Only the sponsor user DID or a governance actor may submit.
+    RevokeObserver = 58,
+
+    /// Reauthorize a Suspended observer back to Active.
+    ///
+    /// Valid transition: Suspended → Active.
+    /// Only the original sponsor user DID may reauthorize.
+    ReauthorizeObserver = 59,
+
+    /// Register username + password credentials for public-zone access.
+    /// Username is immutable after registration. Password hash stored on-chain.
+    RegisterCredential = 60,
+    /// Update password for an existing credential (requires DID ownership proof).
+    UpdateCredentialPassword = 61,
 }
 
 impl TransactionType {
@@ -328,6 +390,34 @@ impl TransactionType {
             TransactionType::DomainUpdate => {
                 "Update Web4 domain manifest (new deployment)"
             }
+            TransactionType::GatewayRegistration => "Gateway node registration",
+            TransactionType::GatewayUpdate => "Gateway node information update",
+            TransactionType::GatewayUnregister => "Gateway node unregistration",
+            TransactionType::NftCreateCollection => "Create a new NFT collection",
+            TransactionType::NftMint => "Mint a new NFT in a collection",
+            TransactionType::NftTransfer => "Transfer NFT ownership",
+            TransactionType::NftBurn => "Burn (destroy) an NFT",
+            TransactionType::RegisterObserver => {
+                "Register observer node on-chain (identity-backed admission)"
+            }
+            TransactionType::UpdateObserverMetadata => {
+                "Update mutable metadata on an existing observer admission record"
+            }
+            TransactionType::SuspendObserver => {
+                "Suspend an Active observer (Active → Suspended)"
+            }
+            TransactionType::RevokeObserver => {
+                "Revoke observer admission permanently"
+            }
+            TransactionType::ReauthorizeObserver => {
+                "Reauthorize a Suspended observer (Suspended → Active)"
+            }
+            TransactionType::RegisterCredential => {
+                "Register username + password credentials"
+            }
+            TransactionType::UpdateCredentialPassword => {
+                "Update password for existing credentials"
+            }
         }
     }
 
@@ -382,6 +472,20 @@ impl TransactionType {
             TransactionType::DaoUnstake => "dao_unstake",
             TransactionType::DomainRegistration => "domain_registration",
             TransactionType::DomainUpdate => "domain_update",
+            TransactionType::GatewayRegistration => "gateway_registration",
+            TransactionType::GatewayUpdate => "gateway_update",
+            TransactionType::GatewayUnregister => "gateway_unregister",
+            TransactionType::NftCreateCollection => "nft_create_collection",
+            TransactionType::NftMint => "nft_mint",
+            TransactionType::NftTransfer => "nft_transfer",
+            TransactionType::NftBurn => "nft_burn",
+            TransactionType::RegisterObserver => "register_observer",
+            TransactionType::UpdateObserverMetadata => "update_observer_metadata",
+            TransactionType::SuspendObserver => "suspend_observer",
+            TransactionType::RevokeObserver => "revoke_observer",
+            TransactionType::ReauthorizeObserver => "reauthorize_observer",
+            TransactionType::RegisterCredential => "register_credential",
+            TransactionType::UpdateCredentialPassword => "update_credential_password",
         }
     }
 
@@ -436,6 +540,20 @@ impl TransactionType {
             "dao_unstake" => Some(TransactionType::DaoUnstake),
             "domain_registration" => Some(TransactionType::DomainRegistration),
             "domain_update" => Some(TransactionType::DomainUpdate),
+            "gateway_registration" => Some(TransactionType::GatewayRegistration),
+            "gateway_update" => Some(TransactionType::GatewayUpdate),
+            "gateway_unregister" => Some(TransactionType::GatewayUnregister),
+            "nft_create_collection" => Some(TransactionType::NftCreateCollection),
+            "nft_mint" => Some(TransactionType::NftMint),
+            "nft_transfer" => Some(TransactionType::NftTransfer),
+            "nft_burn" => Some(TransactionType::NftBurn),
+            "register_observer" => Some(TransactionType::RegisterObserver),
+            "update_observer_metadata" => Some(TransactionType::UpdateObserverMetadata),
+            "suspend_observer" => Some(TransactionType::SuspendObserver),
+            "revoke_observer" => Some(TransactionType::RevokeObserver),
+            "reauthorize_observer" => Some(TransactionType::ReauthorizeObserver),
+            "register_credential" => Some(TransactionType::RegisterCredential),
+            "update_credential_password" => Some(TransactionType::UpdateCredentialPassword),
             _ => None,
         }
     }
@@ -463,5 +581,17 @@ impl TransactionType {
     /// Check if this is a treasury allocation transaction
     pub fn is_treasury_allocation(&self) -> bool {
         matches!(self, TransactionType::TreasuryAllocation)
+    }
+
+    /// Check if this transaction type is an observer lifecycle operation.
+    pub fn is_observer_transaction(&self) -> bool {
+        matches!(
+            self,
+            TransactionType::RegisterObserver
+                | TransactionType::UpdateObserverMetadata
+                | TransactionType::SuspendObserver
+                | TransactionType::RevokeObserver
+                | TransactionType::ReauthorizeObserver
+        )
     }
 }

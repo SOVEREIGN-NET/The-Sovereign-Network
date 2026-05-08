@@ -33,6 +33,7 @@ impl Did {
     }
 
     /// Convert DID to string format
+    #[allow(clippy::inherent_to_string_shadow_display)]
     pub fn to_string(&self) -> String {
         format!("did:{}:{}", self.method, self.identifier)
     }

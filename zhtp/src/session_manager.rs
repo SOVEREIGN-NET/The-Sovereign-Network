@@ -8,6 +8,32 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use std::sync::OnceLock;
+
+static GLOBAL_SESSION_MANAGER: OnceLock<Arc<SessionManager>> = OnceLock::new();
+
+/// Set the global session manager instance. Called once during startup.
+pub fn set_global_session_manager(manager: Arc<SessionManager>) {
+    let _ = GLOBAL_SESSION_MANAGER.set(manager);
+}
+
+/// Check if a request's bearer token is from a password session (public zone only).
+/// Returns true if the token is a password session → handler should reject wallet access.
+pub async fn is_request_password_session(request: &lib_protocols::types::ZhtpRequest) -> bool {
+    let token = match request.headers.get("Authorization") {
+        Some(auth) => match auth.strip_prefix("Bearer ") {
+            Some(t) => t.to_string(),
+            None => return false,
+        },
+        None => return false,
+    };
+    if let Some(mgr) = GLOBAL_SESSION_MANAGER.get() {
+        mgr.is_password_session(&token).await
+    } else {
+        false
+    }
+}
+
 /// Session manager for the ZHTP server
 #[derive(Debug)]
 pub struct SessionManager {
@@ -86,6 +112,31 @@ impl SessionManager {
         );
 
         Ok(token_string)
+    }
+
+    /// Create a password-authenticated session (public zone only).
+    pub async fn create_password_session(
+        &self,
+        identity_id: IdentityId,
+        client_ip: &str,
+        user_agent: &str,
+    ) -> Result<String> {
+        let token = self.create_session(identity_id, client_ip, user_agent).await?;
+        // Mark as password session
+        let mut sessions = self.sessions.write().await;
+        if let Some(session) = sessions.get_mut(&token) {
+            session.auth_method = lib_identity::auth::session::AuthMethod::Password;
+        }
+        Ok(token)
+    }
+
+    /// Check if a session was created via password (public zone only).
+    pub async fn is_password_session(&self, token: &str) -> bool {
+        let sessions = self.sessions.read().await;
+        sessions
+            .get(token)
+            .map(|s| s.auth_method == lib_identity::auth::session::AuthMethod::Password)
+            .unwrap_or(false)
     }
 
     /// Validate and get session token with IP/UA binding check (P0-6)

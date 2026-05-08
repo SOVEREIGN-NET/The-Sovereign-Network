@@ -18,7 +18,7 @@ use lib_protocols::zhtp::ZhtpRequestHandler;
 use lib_blockchain::contracts::utils::generate_custom_token_id;
 use lib_blockchain::transaction::{TokenCreationPayloadV1, Transaction};
 use lib_blockchain::types::transaction_type::TransactionType;
-use lib_blockchain::Blockchain;
+use lib_blockchain::{Blockchain, BlockchainQuery};
 use lib_crypto::types::keys::PublicKey;
 
 /// Helper function to create JSON responses
@@ -360,12 +360,12 @@ impl TokenHandler {
         // Recipient validation: log findings but don't reject — the token contract
         // will handle balance for any valid key_id.
         let blockchain = self.blockchain.read().await;
-        let in_wallet = blockchain.wallet_registry.contains_key(&recipient_hex);
+        let in_wallet = blockchain.query_wallet_exists(&recipient_hex);
         let in_identity = if is_sov {
             false
         } else {
             let did_key = format!("did:zhtp:{}", recipient_hex);
-            blockchain.identity_registry.contains_key(&did_key)
+            blockchain.query_identity_exists(&did_key)
         };
         drop(blockchain);
 
@@ -676,7 +676,7 @@ impl TokenHandler {
         use lib_blockchain::contracts::utils::generate_lib_token_id;
 
         let blockchain = self.blockchain.read().await;
-        let target_key_id = if let Some(wallet) = blockchain.wallet_registry.get(address) {
+        let target_key_id = if let Some(wallet) = blockchain.query_wallet(address) {
             let wallet_pk = PublicKey::new(
                 wallet.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
             );
@@ -691,7 +691,7 @@ impl TokenHandler {
             "token/balances: address={}, target_key_id={}, token_count={}",
             address,
             hex::encode(&target_key_id),
-            blockchain.token_contracts.len()
+            blockchain.query_token_count()
         );
 
         let native_token_id = generate_lib_token_id();
@@ -699,7 +699,7 @@ impl TokenHandler {
         let mut balances = Vec::new();
 
         // Collect balances from all token contracts
-        for (token_id, token) in &blockchain.token_contracts {
+        for (token_id, token) in blockchain.query_all_token_contracts() {
             let balance = if *token_id == native_token_id {
                 if let Some(wallet_id) = sov_wallet_id {
                     let wallet_key = PublicKey {
@@ -857,7 +857,7 @@ impl TokenHandler {
 
         // If this is already a wallet_id, accept it.
         let wallet_id_hex = hex::encode(&bytes);
-        if blockchain.wallet_registry.contains_key(&wallet_id_hex) {
+        if blockchain.query_wallet_exists(&wallet_id_hex) {
             let mut arr = [0u8; 32];
             arr.copy_from_slice(&bytes);
             return Some(arr);
@@ -865,19 +865,18 @@ impl TokenHandler {
 
         // Otherwise treat it as identity_id and try to find the Primary wallet.
         let identity_hash = lib_blockchain::Hash::from_slice(&bytes);
-        let primary_wallet = blockchain.wallet_registry.values().find(|wallet| {
+        let primary_wallet = blockchain.query_all_wallets().into_iter().find(|(_, wallet)| {
             wallet.owner_identity_id.as_ref() == Some(&identity_hash)
                 && wallet.wallet_type == "Primary"
         })?;
-        Some(primary_wallet.wallet_id.as_array())
+        Some(primary_wallet.1.wallet_id.as_array())
     }
 
     fn decode_signed_tx_raw(&self, signed_tx: &str) -> Result<Transaction> {
         let tx_bytes =
             hex::decode(signed_tx).map_err(|_| anyhow::anyhow!("Invalid signed_tx hex"))?;
-        let tx: Transaction = bincode::deserialize(&tx_bytes)
-            .map_err(|e| anyhow::anyhow!("Invalid signed_tx payload: {}", e))?;
-        Ok(tx)
+        lib_blockchain::transaction::decode_client_transaction(&tx_bytes)
+            .map_err(|e| anyhow::anyhow!("Invalid signed_tx payload: {}", e))
     }
 
     async fn submit_to_mempool(&self, tx: Transaction) -> Result<()> {
@@ -898,6 +897,14 @@ impl ZhtpRequestHandler for TokenHandler {
         request: ZhtpRequest,
     ) -> lib_protocols::zhtp::ZhtpResult<ZhtpResponse> {
         info!("Token handler: {} {}", request.method, request.uri);
+
+        // Access zone gate: password sessions cannot access token/balance endpoints
+        if crate::session_manager::is_request_password_session(&request).await {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Token access requires key authentication (mobile app or seed phrase recovery)".to_string(),
+            ));
+        }
 
         let response = match (request.method.clone(), request.uri.as_str()) {
             // POST /api/v1/token/create

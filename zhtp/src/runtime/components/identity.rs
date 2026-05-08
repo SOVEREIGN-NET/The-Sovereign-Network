@@ -631,6 +631,7 @@ async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
             dao_fee: 0,
             controlled_nodes: vec![],
             owned_wallets: vec![],
+            kyber_public_key: vec![],
         };
 
         // Register on blockchain
@@ -1274,6 +1275,7 @@ mod tests {
                 created_at: 1_700_000_000,
                 controlled_nodes: vec![],
                 owned_wallets: vec![],
+                kyber_public_key: vec![],
             },
         );
 
@@ -1331,6 +1333,7 @@ mod tests {
                 created_at: 1_700_000_100,
                 controlled_nodes: vec![],
                 owned_wallets: vec![],
+                kyber_public_key: vec![],
             },
         );
 

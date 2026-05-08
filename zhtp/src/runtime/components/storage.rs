@@ -60,7 +60,7 @@ impl Component for StorageComponent {
                     }
                 }
 
-                match lib_storage::UnifiedStorageSystem::new_persistent(config, &db_path).await {
+                match lib_storage::UnifiedStorageSystem::new_persistent(config, &db_path) {
                     Ok(storage) => {
                         info!(
                             "Persistent unified storage system initialized at {:?}",
