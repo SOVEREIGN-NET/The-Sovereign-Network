@@ -3654,6 +3654,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sled",
  "subtle",
  "tokio",
  "tokio-test",
