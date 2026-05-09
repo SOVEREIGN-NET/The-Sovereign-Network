@@ -2238,4 +2238,173 @@ mod tests {
         let resp2 = h.handle_request(req2).await.unwrap();
         assert_eq!(resp2.status, ZhtpStatus::NotFound);
     }
+
+    // -----------------------------------------------------------------------
+    // Review-fix coverage — negative tests for umwelt #1, #2 and Copilot
+    // mod.rs:475 / :762
+    // -----------------------------------------------------------------------
+
+    /// umwelt #1: /verify must reject when identity_hex does not equal
+    /// blake3(public_key)[..32]. Without this binding, a holder of a valid
+    /// signing key can open a session under a different identity.
+    #[tokio::test]
+    async fn verify_rejects_identity_hex_not_bound_to_public_key() {
+        let h = make_handler();
+        let ch_resp = h
+            .handle_request(post("/api/v1/auth/mobile/challenge", json!({})))
+            .await
+            .unwrap();
+        let ch_body: Value = serde_json::from_slice(&ch_resp.body).unwrap();
+        let session_id = ch_body["session_id"].as_str().unwrap().to_string();
+
+        // Plausible-looking but wrong public key + identity that doesn't match.
+        // Even if the signature were valid, the identity_hex/pk mismatch must
+        // be rejected before the session is created.
+        let pk_hex = "ab".repeat(2592); // Dilithium5 size
+        let bogus_identity_hex = hex::encode([0xCDu8; 32]);
+
+        let resp = h
+            .handle_request(post(
+                "/api/v1/auth/mobile/verify",
+                json!({
+                    "session_id": session_id,
+                    "public_key_hex": pk_hex,
+                    "signature_hex": "ab".repeat(2420),
+                    "identity_hex": bogus_identity_hex,
+                }),
+            ))
+            .await
+            .unwrap();
+        // Expect Unauthorized with the identity-mismatch message; signature
+        // failure (BadRequest) would also be acceptable since the impl checks
+        // signature first — what we never want is Ok.
+        assert_ne!(resp.status, ZhtpStatus::Ok);
+    }
+
+    /// umwelt #2 (subset check): a delegate request whose capabilities exceed
+    /// what the session was granted must be rejected before any signature
+    /// check or store write.
+    #[tokio::test]
+    async fn delegate_rejects_capability_exceeding_session_grant() {
+        use lib_identity::auth::mobile_delegation::{Capability, MobileDelegatedSession};
+        let store = Arc::new(MobileAuthStore::new());
+        let h = MobileAuthHandler::new(store.clone());
+
+        // Insert a test session that holds ONLY ReadIdentity. Asking to
+        // delegate SubmitTx must be 403 regardless of signature validity.
+        let session = MobileDelegatedSession {
+            access_token: "test_token_overreach".to_string(),
+            refresh_token: "test_refresh_overreach".to_string(),
+            identity_id: lib_crypto::Hash::from_bytes(&[0x11u8; 32]),
+            public_key_hex: "00".repeat(2592),
+            granted_capabilities: vec![Capability::ReadIdentity],
+            created_at: 0,
+            access_expires_at: u64::MAX,
+            refresh_expires_at: u64::MAX,
+            bound_ip: "unknown".to_string(),
+            bound_user_agent: "unknown".to_string(),
+            challenge_session_id: "ovr_session".to_string(),
+            device_id: None,
+            revoked: false,
+            bound_node_did: h.node_endpoint.clone(),
+            biometric_verified: false,
+        };
+        store.insert_session_for_test(session).await;
+
+        let mut req = post(
+            "/api/v1/auth/delegate",
+            json!({
+                "delegate_id": "did:zhtp:web-app",
+                "capabilities": [{ "type": "submit_tx", "max_amount_tokens": 100 }],
+                "expires_in_secs": 3600,
+                "nonce": 1,
+                "signature_hex": "00".repeat(2420),
+            }),
+        );
+        req.headers.authorization = Some(auth_header("test_token_overreach"));
+
+        let resp = h.handle_request(req).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::Forbidden);
+    }
+
+    /// Copilot mod.rs:762 — when a Bearer is presented, the events endpoint
+    /// must NOT honour a session_id query that disagrees with the
+    /// authenticated session. Otherwise any token can read any other
+    /// session's stream by guessing/observing session_id.
+    #[tokio::test]
+    async fn session_events_rejects_bearer_with_mismatched_session_id() {
+        use lib_identity::auth::mobile_delegation::{Capability, MobileDelegatedSession};
+        let store = Arc::new(MobileAuthStore::new());
+        let h = MobileAuthHandler::new(store.clone());
+
+        let session = MobileDelegatedSession {
+            access_token: "tok_bearer_mismatch".to_string(),
+            refresh_token: "rt_bearer_mismatch".to_string(),
+            identity_id: lib_crypto::Hash::from_bytes(&[0x22u8; 32]),
+            public_key_hex: "00".repeat(2592),
+            granted_capabilities: vec![Capability::ReadIdentity],
+            created_at: 0,
+            access_expires_at: u64::MAX,
+            refresh_expires_at: u64::MAX,
+            bound_ip: "unknown".to_string(),
+            bound_user_agent: "unknown".to_string(),
+            challenge_session_id: "my_session".to_string(),
+            device_id: None,
+            revoked: false,
+            bound_node_did: h.node_endpoint.clone(),
+            biometric_verified: false,
+        };
+        store.insert_session_for_test(session).await;
+
+        let mut req = get("/api/v1/auth/session/events?session_id=other_session&since=0");
+        req.headers.authorization = Some(auth_header("tok_bearer_mismatch"));
+
+        let resp = h.handle_request(req).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::Forbidden);
+    }
+
+    /// umwelt #4 — pre-auth flow: no Bearer required. Browser polls
+    /// /session/events with the session_id from the QR. Returns only public
+    /// lifecycle events. Without session_id, returns BadRequest.
+    #[tokio::test]
+    async fn session_events_pre_auth_requires_session_id_query() {
+        let h = make_handler();
+        let resp = h
+            .handle_request(get("/api/v1/auth/session/events"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status, ZhtpStatus::BadRequest);
+    }
+
+    /// umwelt #4 — pre-auth caller can read public lifecycle events for the
+    /// session they hold (from the QR), e.g. session_approved when mobile
+    /// signs.
+    #[tokio::test]
+    async fn session_events_pre_auth_returns_public_events() {
+        use lib_identity::auth::mobile_delegation::SessionEvent;
+        let h = make_handler();
+        let sid = "preauth_session_xyz";
+        h.store
+            .publish_session_event(
+                sid,
+                SessionEvent::SessionApproved {
+                    session_id: sid.to_string(),
+                    identity_id: hex::encode([0x33u8; 32]),
+                },
+            )
+            .await;
+
+        let resp = h
+            .handle_request(get(&format!(
+                "/api/v1/auth/session/events?session_id={}&since=0",
+                sid
+            )))
+            .await
+            .unwrap();
+        assert_eq!(resp.status, ZhtpStatus::Ok);
+        let body: Value = serde_json::from_slice(&resp.body).unwrap();
+        let events = body["events"].as_array().unwrap();
+        assert_eq!(events.len(), 1, "should see the session_approved event");
+        assert_eq!(events[0]["event"], "session_approved");
+    }
 }

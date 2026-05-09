@@ -1362,4 +1362,49 @@ mod tests {
         assert!(!constant_time_eq(b"hi", b"hello"));
         assert!(constant_time_eq(b"", b""));
     }
+
+    /// Copilot mobile_delegation.rs:803 — the per-session sequence counter
+    /// must keep increasing across log drains. Polling clients use seq as a
+    /// monotonic cursor; resetting it would cause them to re-deliver events
+    /// or skip new ones.
+    #[tokio::test]
+    async fn session_event_seq_is_monotonic_across_log_drain() {
+        let store = MobileAuthStore::new();
+        let sid = "seq_test_session";
+
+        // Drive past the 256-entry cap so the ring drains.
+        for i in 0..300 {
+            store
+                .publish_session_event(
+                    sid,
+                    SessionEvent::SessionApproved {
+                        session_id: sid.to_string(),
+                        identity_id: format!("{}", i),
+                    },
+                )
+                .await;
+        }
+
+        let events = store.get_session_events_since(sid, 0).await;
+        // After draining we keep <= 256 entries, but seq numbers must reflect
+        // total events published, never reset.
+        assert!(!events.is_empty());
+        let first_seq = events.first().unwrap().0;
+        let last_seq = events.last().unwrap().0;
+        assert!(
+            last_seq >= 299,
+            "last seq should be >= 299 after 300 publishes, got {}",
+            last_seq
+        );
+        assert!(
+            first_seq > 0,
+            "after drain, first seq should be > 0 (oldest entries dropped), got {}",
+            first_seq
+        );
+        // Strictly increasing
+        let seqs: Vec<u64> = events.iter().map(|(s, _)| *s).collect();
+        for w in seqs.windows(2) {
+            assert!(w[1] > w[0], "seq must be strictly increasing");
+        }
+    }
 }
