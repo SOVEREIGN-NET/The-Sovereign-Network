@@ -316,6 +316,7 @@ pub mod testing {
             did: "did:zhtp:test123".to_string(),
             display_name: "Test User".to_string(),
             public_key: vec![1, 2, 3, 4, 5],
+            kyber_public_key: vec![],
             ownership_proof: vec![6, 7, 8, 9, 10],
             identity_type: "human".to_string(),
             did_document_hash: Hash::default(),

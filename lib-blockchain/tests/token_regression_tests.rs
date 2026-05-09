@@ -202,6 +202,7 @@ fn register_identity(blockchain: &mut Blockchain, identity_id: &str, pubkey: &Pu
             did: identity_id.to_string(),
             display_name: format!("Test-{}", &identity_id[..8.min(identity_id.len())]),
             public_key: pubkey.dilithium_pk.to_vec(),
+            kyber_public_key: vec![],
             ownership_proof: vec![],
             identity_type: "human".to_string(),
             did_document_hash: Hash::zero(),
