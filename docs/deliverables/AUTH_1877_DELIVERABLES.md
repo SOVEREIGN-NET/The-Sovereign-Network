@@ -91,8 +91,14 @@ Web App                    Node (QUIC/ZHTP)          Mobile App
 ### Phase 4 — Session Event Relay (PR #2499)
 - All traffic on QUIC/ZHTP — no separate HTTP server; HTTP-to-QUIC bridge stays edge-case only
 - `GET /auth/session/events?session_id=X&since=N` — client polls every 1-2s, advances cursor with `next_since`
-- Per-session ordered event log, ring-buffered at 256 entries
-- Events: `challenge_issued`, `session_approved`, `session_revoked`, `biometric_verified`
+- Per-session ordered event log, ring-buffered at 256 entries; per-session monotonic seq counter survives drains and restarts
+- Pre-auth mode (no Bearer) returns only public lifecycle events for the supplied `session_id`; Bearer mode rejects mismatched `session_id`
+- Events: `challenge_issued`, `session_approved`, `session_revoked`, `biometric_verified` (`session_expired` is reserved but not yet emitted on TTL elapse — tracked separately)
+
+### Persistence (PR #2499, addresses umwelt review #3)
+- `MobileAuthStore::with_persistence(path)` opens a sled-backed store; sessions, refresh index, identity-session index, delegation certificates, audit log, push tokens, and the per-session event log + seq counter all survive process restart
+- `MobileAuthStore::new()` remains in-memory for tests
+- Challenges, broadcast channels, and rate-limit windows are intentionally in-memory only (TTL-bound or runtime-only state)
 
 ### Phase 4 — Push Notifications (PR #2499)
 - `POST /auth/mobile/push-token` — stores FCM/APNs token per identity (requires Bearer)

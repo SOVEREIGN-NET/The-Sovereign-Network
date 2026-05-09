@@ -2,7 +2,7 @@
 //!
 //! Implements Issue #1877: secure challenge-response session establishment
 //! where the mobile app holds keys, signs challenges, and the web app
-//! receives a bearer session token — without ever touching private keys.
+//! receives a bearer session token â€” without ever touching private keys.
 //!
 //! # Architecture
 //!
@@ -23,7 +23,7 @@
 //! - Session tokens are bound to IP + User-Agent (hijack protection)
 //! - Rate limited: max 3 challenge requests per IP per minute
 //! - Signatures verified using post-quantum Dilithium (same as rest of SOVEREIGN-NET)
-//! - All tokens derived via Blake3, stored as hex — never raw entropy
+//! - All tokens derived via Blake3, stored as hex â€” never raw entropy
 //! - Refresh tokens rotate on every use (old token invalidated immediately)
 
 use crate::types::IdentityId;
@@ -64,7 +64,7 @@ pub const QR_SCHEME: &str = "zhtp://auth";
 pub const MIN_DILITHIUM_PK_BYTES: usize = 1312;
 
 // ---------------------------------------------------------------------------
-// Phase 4 — Session event bus (WebSocket relay + push notifications)
+// Phase 4 â€” Session event bus (WebSocket relay + push notifications)
 // ---------------------------------------------------------------------------
 
 /// Real-time event pushed to subscribed WebSocket clients and push notification hooks.
@@ -74,13 +74,13 @@ pub const MIN_DILITHIUM_PK_BYTES: usize = 1312;
 pub enum SessionEvent {
     /// Challenge has been issued and QR is ready to scan
     ChallengeIssued { session_id: String, expires_at: u64 },
-    /// Mobile app scanned QR and signature was verified — session is now active
+    /// Mobile app scanned QR and signature was verified â€” session is now active
     SessionApproved { session_id: String, identity_id: String },
     /// Session access token expired
     SessionExpired { session_id: String },
     /// Session was explicitly revoked
     SessionRevoked { session_id: String, reason: String },
-    /// Biometric gate passed — high-value operations now permitted
+    /// Biometric gate passed â€” high-value operations now permitted
     BiometricVerified { session_id: String },
 }
 
@@ -158,7 +158,7 @@ impl MobileAuthChallenge {
     pub fn generate(requested_capabilities: Vec<Capability>, node_endpoint: &str) -> Result<Self> {
         let now = now_secs();
 
-        // 32-byte CSPRNG nonce — single-use replay protection (hex-encoded for QR/JSON compat)
+        // 32-byte CSPRNG nonce â€” single-use replay protection (hex-encoded for QR/JSON compat)
         let mut nonce_bytes = [0u8; 32];
         rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
         let challenge_nonce = hex::encode(nonce_bytes);
@@ -168,7 +168,7 @@ impl MobileAuthChallenge {
         rand::rngs::OsRng.fill_bytes(&mut sid_bytes);
         let session_id = hex::encode(sid_bytes);
 
-        // Build QR envelope — mobile app parses this after scan
+        // Build QR envelope â€” mobile app parses this after scan
         // Encoded as hex(JSON) so no extra dependency is needed and
         // QR scanners can decode the zhtp:// deep-link without base64 ambiguity.
         let qr_envelope = QrAuthEnvelope {
@@ -225,7 +225,7 @@ pub struct QrAuthEnvelope {
 /// Extended session token carrying mobile-delegation metadata (Phase 1 + 2)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MobileDelegatedSession {
-    /// Opaque bearer token (Blake3 hash of internal material — never raw)
+    /// Opaque bearer token (Blake3 hash of internal material â€” never raw)
     pub access_token: String,
     /// Refreshable long-lived token (rotated on every use)
     pub refresh_token: String,
@@ -251,10 +251,10 @@ pub struct MobileDelegatedSession {
     pub device_id: Option<String>,
     /// Whether this session is still active
     pub revoked: bool,
-    /// DID of the node that issued this session — channel binding (#2160).
+    /// DID of the node that issued this session â€” channel binding (#2160).
     /// A captured token cannot be replayed through a different node.
     pub bound_node_did: String,
-    /// Phase 4 — flipped to true once the mobile device passes a biometric
+    /// Phase 4 â€” flipped to true once the mobile device passes a biometric
     /// confirmation challenge (`POST /api/v1/auth/mobile/biometric-confirm`).
     /// Downstream handlers must check this before allowing high-value actions.
     #[serde(default)]
@@ -367,7 +367,7 @@ impl ChallengeRateLimiter {
         let entry = windows.entry(ip.to_string()).or_insert((window_start, 0));
 
         if entry.0 != window_start {
-            // New window — reset
+            // New window â€” reset
             *entry = (window_start, 1);
             return Ok(());
         }
@@ -448,7 +448,7 @@ impl AuditLogEntry {
 
 /// Links a web challenge session to the mobile device that satisfied it.
 /// Enforces that only the originating device's signed nonce can activate
-/// a session — prevents parallel-session substitution attacks.
+/// a session â€” prevents parallel-session substitution attacks.
 #[derive(Debug, Clone)]
 pub struct CrossDeviceSessionBinder;
 
@@ -490,7 +490,7 @@ impl CrossDeviceSessionBinder {
 }
 
 // ---------------------------------------------------------------------------
-// Store — in-memory registry (Phase 1 + 2 + 3)
+// Store â€” in-memory registry (Phase 1 + 2 + 3)
 // ---------------------------------------------------------------------------
 
 /// Central in-memory store for challenges, sessions, and delegation certs.
@@ -511,18 +511,25 @@ pub struct MobileAuthStore {
     audit_log: Arc<RwLock<Vec<AuditLogEntry>>>,
     /// Challenge rate limiter
     pub rate_limiter: Arc<ChallengeRateLimiter>,
-    /// Phase 4 — per-session broadcast channel for internal event distribution
+    /// Phase 4 â€” per-session broadcast channel for internal event distribution
     session_event_bus: Arc<RwLock<HashMap<String, broadcast::Sender<SessionEvent>>>>,
-    /// Phase 4 — per-session ordered event log for polling (session_id → vec of (seq, event))
+    /// Phase 4 â€” per-session ordered event log for polling (session_id â†’ vec of (seq, event))
     session_event_log: Arc<RwLock<HashMap<String, Vec<(u64, SessionEvent)>>>>,
-    /// Phase 4 — per-session monotonically-increasing sequence counter.
+    /// Phase 4 â€” per-session monotonically-increasing sequence counter.
     /// Persisted across log drains so seq numbers never reuse or go backwards.
     session_event_seq: Arc<RwLock<HashMap<String, u64>>>,
-    /// Phase 4 — push notification tokens indexed by identity_id
+    /// Phase 4 â€” push notification tokens indexed by identity_id
     push_tokens: Arc<RwLock<HashMap<IdentityId, String>>>,
+    /// Optional sled-backed persistence handle. When `Some`, every mutation
+    /// is write-through to disk so sessions, delegations, audit, and event
+    /// state survive process restart (umwelt review #3). When `None`,
+    /// behaviour is fully in-memory â€” used for tests.
+    persistence: Option<Arc<Persistence>>,
 }
 
 impl MobileAuthStore {
+    /// In-memory store. No on-disk persistence â€” restart loses all state.
+    /// Use [`MobileAuthStore::with_persistence`] in production.
     pub fn new() -> Self {
         Self {
             rate_limiter: Arc::new(ChallengeRateLimiter::new()),
@@ -530,8 +537,72 @@ impl MobileAuthStore {
             session_event_log: Arc::new(RwLock::new(HashMap::new())),
             session_event_seq: Arc::new(RwLock::new(HashMap::new())),
             push_tokens: Arc::new(RwLock::new(HashMap::new())),
+            persistence: None,
             ..Default::default()
         }
+    }
+
+    /// Open a store with sled-backed persistence at `path`. Existing state on
+    /// disk is hydrated into the in-memory caches before the store returns.
+    /// Subsequent mutations are write-through.
+    pub fn with_persistence(path: impl AsRef<std::path::Path>) -> Result<Self> {
+        let p = Persistence::open(path.as_ref())?;
+        let mut store = Self::new();
+        store.persistence = Some(Arc::new(p));
+        store.hydrate_from_disk()?;
+        Ok(store)
+    }
+
+    /// Re-load all in-memory caches from the persistence trees. Called once
+    /// inside [`with_persistence`]; safe to call again after manual edits.
+    fn hydrate_from_disk(&mut self) -> Result<()> {
+        let p = match &self.persistence {
+            Some(p) => p.clone(),
+            None => return Ok(()),
+        };
+        // Sessions and refresh index
+        let mut sessions = self.sessions.blocking_write();
+        let mut refresh_index = self.refresh_index.blocking_write();
+        let mut identity_sessions = self.identity_sessions.blocking_write();
+        for (token, session) in p.load_sessions()? {
+            refresh_index.insert(session.refresh_token.clone(), token.clone());
+            identity_sessions
+                .entry(session.identity_id.clone())
+                .or_insert_with(Vec::new)
+                .push(token.clone());
+            sessions.insert(token, session);
+        }
+        drop((sessions, refresh_index, identity_sessions));
+
+        // Delegations
+        let mut certs = self.delegation_certs.blocking_write();
+        for (id, cert) in p.load_delegations()? {
+            certs.insert(id, cert);
+        }
+        drop(certs);
+
+        // Audit
+        let mut audit = self.audit_log.blocking_write();
+        *audit = p.load_audit()?;
+        drop(audit);
+
+        // Push tokens
+        let mut tokens = self.push_tokens.blocking_write();
+        for (id, t) in p.load_push_tokens()? {
+            tokens.insert(id, t);
+        }
+        drop(tokens);
+
+        // Event log + seq
+        let mut log = self.session_event_log.blocking_write();
+        let mut seq = self.session_event_seq.blocking_write();
+        for (sid, entries) in p.load_event_log()? {
+            if let Some((max_seq, _)) = entries.iter().max_by_key(|(s, _)| *s) {
+                seq.insert(sid.clone(), *max_seq + 1);
+            }
+            log.insert(sid, entries);
+        }
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -644,7 +715,14 @@ impl MobileAuthStore {
         let mut is = self.identity_sessions.write().await;
         is.entry(identity_id)
             .or_insert_with(Vec::new)
-            .push(access_token);
+            .push(access_token.clone());
+        drop(is);
+
+        if let Some(p) = &self.persistence {
+            if let Err(e) = p.put_session(&access_token, &session) {
+                tracing::warn!("MobileAuthStore: failed to persist new session: {}", e);
+            }
+        }
 
         Ok(session)
     }
@@ -669,7 +747,7 @@ impl MobileAuthStore {
         }
     }
 
-    /// Rotate refresh token — old token is invalidated, new session issued
+    /// Rotate refresh token â€” old token is invalidated, new session issued
     pub async fn rotate_refresh_token(
         &self,
         old_refresh_token: &str,
@@ -697,7 +775,7 @@ impl MobileAuthStore {
             return Err(anyhow!("Session already revoked"));
         }
         if now_secs() >= old_session.refresh_expires_at {
-            return Err(anyhow!("Refresh token expired — must re-authenticate"));
+            return Err(anyhow!("Refresh token expired â€” must re-authenticate"));
         }
         if !old_session.validate_binding(ip, ua, node_did) {
             return Err(anyhow!("Binding mismatch on refresh attempt"));
@@ -724,14 +802,21 @@ impl MobileAuthStore {
     /// Revoke a session by access token
     pub async fn revoke_session(&self, access_token: &str, reason: &str) -> Result<()> {
         let mut sessions = self.sessions.write().await;
-        match sessions.get_mut(access_token) {
-            None => Err(anyhow!("Session not found")),
+        let updated = match sessions.get_mut(access_token) {
+            None => return Err(anyhow!("Session not found")),
             Some(s) => {
                 s.revoked = true;
                 tracing::info!("Session revoked: {} reason={}", &access_token[..16], reason);
-                Ok(())
+                s.clone()
+            }
+        };
+        drop(sessions);
+        if let Some(p) = &self.persistence {
+            if let Err(e) = p.put_session(access_token, &updated) {
+                tracing::warn!("MobileAuthStore: failed to persist revoked session: {}", e);
             }
         }
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -747,6 +832,11 @@ impl MobileAuthStore {
         if certs.contains_key(&cert.cert_id) {
             return Err(anyhow!("Duplicate delegation cert id: {}", cert.cert_id));
         }
+        if let Some(p) = &self.persistence {
+            if let Err(e) = p.put_delegation(&cert) {
+                tracing::warn!("MobileAuthStore: failed to persist delegation: {}", e);
+            }
+        }
         certs.insert(cert.cert_id.clone(), cert);
         Ok(())
     }
@@ -760,15 +850,22 @@ impl MobileAuthStore {
     /// Revoke a delegation certificate (delegator-triggered)
     pub async fn revoke_delegation_cert(&self, cert_id: &str, reason: &str) -> Result<()> {
         let mut certs = self.delegation_certs.write().await;
-        match certs.get_mut(cert_id) {
-            None => Err(anyhow!("Delegation cert not found: {}", cert_id)),
+        let updated = match certs.get_mut(cert_id) {
+            None => return Err(anyhow!("Delegation cert not found: {}", cert_id)),
             Some(c) => {
                 c.revoked = true;
                 c.revocation_reason = Some(reason.to_string());
                 tracing::info!("Delegation cert revoked: {} reason={}", cert_id, reason);
-                Ok(())
+                c.clone()
+            }
+        };
+        drop(certs);
+        if let Some(p) = &self.persistence {
+            if let Err(e) = p.put_delegation(&updated) {
+                tracing::warn!("MobileAuthStore: failed to persist revoked delegation: {}", e);
             }
         }
+        Ok(())
     }
 
     /// List all active delegation certs for a delegator DID
@@ -782,7 +879,7 @@ impl MobileAuthStore {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 4 — Session event bus
+    // Phase 4 â€” Session event bus
     // -----------------------------------------------------------------------
 
     /// Subscribe to real-time events for a specific session.
@@ -809,14 +906,20 @@ impl MobileAuthStore {
             this
         };
         // Append to the ordered poll log so polling clients can catch up
-        {
+        let snapshot: Option<Vec<(u64, SessionEvent)>> = {
             let mut log = self.session_event_log.write().await;
             let entries = log.entry(session_id.to_string()).or_insert_with(Vec::new);
             entries.push((seq, event.clone()));
-            // Keep log bounded — drop oldest when over 256 entries.
+            // Keep log bounded â€” drop oldest when over 256 entries.
             // Counter is independent so seq never resets across drains.
             if entries.len() > 256 {
                 entries.drain(0..128);
+            }
+            self.persistence.as_ref().map(|_| entries.clone())
+        };
+        if let (Some(p), Some(entries)) = (&self.persistence, snapshot) {
+            if let Err(e) = p.put_event_log(session_id, &entries) {
+                tracing::warn!("MobileAuthStore: failed to persist event log: {}", e);
             }
         }
         // Also fire internal broadcast channel (used by tests and future in-process listeners)
@@ -854,12 +957,17 @@ impl MobileAuthStore {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 4 — Push notification token registry
+    // Phase 4 â€” Push notification token registry
     // -----------------------------------------------------------------------
 
     /// Store or update the FCM/APNs push token for an identity.
     pub async fn register_push_token(&self, identity_id: IdentityId, token: String) {
         let mut tokens = self.push_tokens.write().await;
+        if let Some(p) = &self.persistence {
+            if let Err(e) = p.put_push_token(&identity_id, &token) {
+                tracing::warn!("MobileAuthStore: failed to persist push token: {}", e);
+            }
+        }
         tokens.insert(identity_id, token);
     }
 
@@ -870,7 +978,7 @@ impl MobileAuthStore {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 4 — Biometric gate
+    // Phase 4 â€” Biometric gate
     // -----------------------------------------------------------------------
 
     /// Mark a session as biometric-verified after the mobile app confirms the gate.
@@ -881,21 +989,28 @@ impl MobileAuthStore {
         access_token: &str,
         attestation_hex: &str,
     ) -> Result<()> {
-        // Decode attestation bytes — structural validation only here;
+        // Decode attestation bytes â€” structural validation only here;
         // the caller (HTTP handler) already verified the Dilithium signature.
         let _ = hex::decode(attestation_hex)
             .map_err(|_| anyhow!("Invalid attestation_hex: not valid hex"))?;
 
         let mut sessions = self.sessions.write().await;
-        match sessions.get_mut(access_token) {
-            None => Err(anyhow!("Session not found")),
-            Some(s) if s.revoked => Err(anyhow!("Session revoked")),
-            Some(s) if !s.is_access_valid() => Err(anyhow!("Session expired")),
+        let updated = match sessions.get_mut(access_token) {
+            None => return Err(anyhow!("Session not found")),
+            Some(s) if s.revoked => return Err(anyhow!("Session revoked")),
+            Some(s) if !s.is_access_valid() => return Err(anyhow!("Session expired")),
             Some(s) => {
                 s.biometric_verified = true;
-                Ok(())
+                s.clone()
+            }
+        };
+        drop(sessions);
+        if let Some(p) = &self.persistence {
+            if let Err(e) = p.put_session(access_token, &updated) {
+                tracing::warn!("MobileAuthStore: failed to persist biometric flip: {}", e);
             }
         }
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -903,6 +1018,11 @@ impl MobileAuthStore {
     // -----------------------------------------------------------------------
 
     pub async fn append_audit(&self, entry: AuditLogEntry) {
+        if let Some(p) = &self.persistence {
+            if let Err(e) = p.append_audit(&entry) {
+                tracing::warn!("MobileAuthStore: failed to persist audit entry: {}", e);
+            }
+        }
         let mut log = self.audit_log.write().await;
         if log.len() >= 10_000 {
             log.drain(0..1_000); // keep last 9 000 when buffer full
@@ -927,7 +1047,7 @@ impl MobileAuthStore {
                 None => return,
             };
 
-            // Prune already-dead tokens (no await here — use try_read)
+            // Prune already-dead tokens (no await here â€” use try_read)
             if let Ok(s) = self.sessions.try_read() {
                 tokens.retain(|t| {
                     s.get(t)
@@ -950,7 +1070,7 @@ impl MobileAuthStore {
         }
     }
 
-    /// Insert a session directly — only available in tests (bypasses challenge/verify flow)
+    /// Insert a session directly â€” only available in tests (bypasses challenge/verify flow)
     #[cfg(test)]
     pub async fn insert_session_for_test(&self, session: MobileDelegatedSession) {
         let token = session.access_token.clone();
@@ -962,6 +1082,180 @@ impl MobileAuthStore {
             .entry(identity_id)
             .or_default()
             .push(token);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Persistence (umwelt review #3)
+// ---------------------------------------------------------------------------
+// Sled-backed durable storage for mobile auth state. Sessions, refresh
+// index, identity-session index, delegation certificates, audit log, push
+// tokens, and the per-session event log all survive process restart.
+//
+// Challenges, the broadcast channel, and rate-limit counters intentionally
+// stay in-memory: challenges have a 5-minute TTL and re-issuing on restart
+// is correct, broadcasts are a runtime concept, and rate-limit windows are
+// short enough that resetting them is acceptable.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+struct Persistence {
+    /// Trees keep their handles cheap to clone; the Db itself owns the data.
+    _db: sled::Db,
+    sessions: sled::Tree,
+    delegations: sled::Tree,
+    audit: sled::Tree,
+    push_tokens: sled::Tree,
+    event_log: sled::Tree,
+}
+
+impl Persistence {
+    fn open(path: &std::path::Path) -> Result<Self> {
+        let db = sled::open(path)
+            .map_err(|e| anyhow!("MobileAuthStore: failed to open sled at {:?}: {}", path, e))?;
+        let sessions = db
+            .open_tree(b"mobile_auth_sessions")
+            .map_err(|e| anyhow!("open sessions tree: {}", e))?;
+        let delegations = db
+            .open_tree(b"mobile_auth_delegations")
+            .map_err(|e| anyhow!("open delegations tree: {}", e))?;
+        let audit = db
+            .open_tree(b"mobile_auth_audit")
+            .map_err(|e| anyhow!("open audit tree: {}", e))?;
+        let push_tokens = db
+            .open_tree(b"mobile_auth_push_tokens")
+            .map_err(|e| anyhow!("open push_tokens tree: {}", e))?;
+        let event_log = db
+            .open_tree(b"mobile_auth_event_log")
+            .map_err(|e| anyhow!("open event_log tree: {}", e))?;
+        Ok(Self {
+            _db: db,
+            sessions,
+            delegations,
+            audit,
+            push_tokens,
+            event_log,
+        })
+    }
+
+    fn put_session(&self, token: &str, session: &MobileDelegatedSession) -> Result<()> {
+        let bytes = serde_json::to_vec(session)
+            .map_err(|e| anyhow!("serialize session: {}", e))?;
+        self.sessions
+            .insert(token.as_bytes(), bytes)
+            .map_err(|e| anyhow!("write session: {}", e))?;
+        Ok(())
+    }
+
+    fn delete_session(&self, token: &str) -> Result<()> {
+        self.sessions
+            .remove(token.as_bytes())
+            .map_err(|e| anyhow!("delete session: {}", e))?;
+        Ok(())
+    }
+
+    fn load_sessions(&self) -> Result<Vec<(String, MobileDelegatedSession)>> {
+        let mut out = Vec::new();
+        for r in self.sessions.iter() {
+            let (k, v) = r.map_err(|e| anyhow!("scan sessions: {}", e))?;
+            let token = String::from_utf8(k.to_vec())
+                .map_err(|e| anyhow!("session key not utf8: {}", e))?;
+            let session: MobileDelegatedSession = serde_json::from_slice(&v)
+                .map_err(|e| anyhow!("deserialize session: {}", e))?;
+            out.push((token, session));
+        }
+        Ok(out)
+    }
+
+    fn put_delegation(&self, cert: &DelegationCertificate) -> Result<()> {
+        let bytes = serde_json::to_vec(cert)
+            .map_err(|e| anyhow!("serialize delegation: {}", e))?;
+        self.delegations
+            .insert(cert.cert_id.as_bytes(), bytes)
+            .map_err(|e| anyhow!("write delegation: {}", e))?;
+        Ok(())
+    }
+
+    fn load_delegations(&self) -> Result<Vec<(String, DelegationCertificate)>> {
+        let mut out = Vec::new();
+        for r in self.delegations.iter() {
+            let (k, v) = r.map_err(|e| anyhow!("scan delegations: {}", e))?;
+            let id = String::from_utf8(k.to_vec())
+                .map_err(|e| anyhow!("delegation key not utf8: {}", e))?;
+            let cert: DelegationCertificate = serde_json::from_slice(&v)
+                .map_err(|e| anyhow!("deserialize delegation: {}", e))?;
+            out.push((id, cert));
+        }
+        Ok(out)
+    }
+
+    /// Audit entries are append-only. Key is a monotonic 8-byte big-endian
+    /// id from sled's Db so iteration returns insertion order.
+    fn append_audit(&self, entry: &AuditLogEntry) -> Result<()> {
+        let bytes = serde_json::to_vec(entry)
+            .map_err(|e| anyhow!("serialize audit: {}", e))?;
+        let key = self
+            ._db
+            .generate_id()
+            .map_err(|e| anyhow!("audit id: {}", e))?
+            .to_be_bytes();
+        self.audit
+            .insert(key, bytes)
+            .map_err(|e| anyhow!("write audit: {}", e))?;
+        Ok(())
+    }
+
+    fn load_audit(&self) -> Result<Vec<AuditLogEntry>> {
+        let mut out = Vec::new();
+        for r in self.audit.iter() {
+            let (_, v) = r.map_err(|e| anyhow!("scan audit: {}", e))?;
+            let entry: AuditLogEntry = serde_json::from_slice(&v)
+                .map_err(|e| anyhow!("deserialize audit: {}", e))?;
+            out.push(entry);
+        }
+        Ok(out)
+    }
+
+    fn put_push_token(&self, identity: &IdentityId, token: &str) -> Result<()> {
+        let key = identity.as_ref();
+        self.push_tokens
+            .insert(key, token.as_bytes())
+            .map_err(|e| anyhow!("write push token: {}", e))?;
+        Ok(())
+    }
+
+    fn load_push_tokens(&self) -> Result<Vec<(IdentityId, String)>> {
+        let mut out = Vec::new();
+        for r in self.push_tokens.iter() {
+            let (k, v) = r.map_err(|e| anyhow!("scan push tokens: {}", e))?;
+            let id = IdentityId::from_bytes(&k);
+            let token = String::from_utf8(v.to_vec())
+                .map_err(|e| anyhow!("push token not utf8: {}", e))?;
+            out.push((id, token));
+        }
+        Ok(out)
+    }
+
+    fn put_event_log(&self, session_id: &str, entries: &[(u64, SessionEvent)]) -> Result<()> {
+        let bytes = serde_json::to_vec(entries)
+            .map_err(|e| anyhow!("serialize event log: {}", e))?;
+        self.event_log
+            .insert(session_id.as_bytes(), bytes)
+            .map_err(|e| anyhow!("write event log: {}", e))?;
+        Ok(())
+    }
+
+    fn load_event_log(&self) -> Result<Vec<(String, Vec<(u64, SessionEvent)>)>> {
+        let mut out = Vec::new();
+        for r in self.event_log.iter() {
+            let (k, v) = r.map_err(|e| anyhow!("scan event log: {}", e))?;
+            let sid = String::from_utf8(k.to_vec())
+                .map_err(|e| anyhow!("event log key not utf8: {}", e))?;
+            let entries: Vec<(u64, SessionEvent)> = serde_json::from_slice(&v)
+                .map_err(|e| anyhow!("deserialize event log: {}", e))?;
+            out.push((sid, entries));
+        }
+        Ok(out)
     }
 }
 
@@ -980,7 +1274,7 @@ fn now_secs() -> u64 {
 /// Returns true only when `a` and `b` are the same length AND every byte is equal.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
-        // Length difference is not secret — it's safe to return early here
+        // Length difference is not secret â€” it's safe to return early here
         return false;
     }
     let mut diff: u8 = 0;
@@ -1060,7 +1354,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Rate limiter — unit test (sync simulation)
+    // Rate limiter â€” unit test (sync simulation)
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -1085,7 +1379,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Store — challenge lifecycle
+    // Store â€” challenge lifecycle
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -1161,13 +1455,13 @@ mod tests {
             .await
             .unwrap();
 
-        // Correct node — passes
+        // Correct node â€” passes
         store
             .validate_access_token(&session.access_token, "10.0.0.1", "UA/2.0", "did:zhtp:node-A")
             .await
             .unwrap();
 
-        // Different node — rejected even with correct IP + UA
+        // Different node â€” rejected even with correct IP + UA
         let wrong_node = store
             .validate_access_token(&session.access_token, "10.0.0.1", "UA/2.0", "did:zhtp:node-B")
             .await;
@@ -1363,7 +1657,160 @@ mod tests {
         assert!(constant_time_eq(b"", b""));
     }
 
-    /// Copilot mobile_delegation.rs:803 — the per-session sequence counter
+    /// Per-test fresh path under the OS temp dir, with a tag so test failures
+    /// leave readable directory names.
+    fn tempdir_for_test(tag: &str) -> std::path::PathBuf {
+        let mut p = std::env::temp_dir();
+        let nonce: u64 = rand::rngs::OsRng.next_u64();
+        p.push(format!("{}_{:016x}", tag, nonce));
+        let _ = std::fs::remove_dir_all(&p);
+        p
+    }
+
+    fn cleanup_tempdir(p: &std::path::Path) {
+        let _ = std::fs::remove_dir_all(p);
+    }
+
+    /// umwelt #3 â€” sessions, delegations, audit, push tokens, and the event
+    /// log must survive process restart. Round-trip a fresh store: write
+    /// state, drop, reopen at the same path, verify everything is there.
+    #[test]
+    fn persistence_roundtrip_survives_restart() {
+        use std::collections::HashSet;
+        let dir = tempdir_for_test("mobile_auth_persist");
+
+        let identity_a = IdentityId::from_bytes(&[0xAAu8; 32]);
+        let identity_b = IdentityId::from_bytes(&[0xBBu8; 32]);
+
+        // Phase 1: write
+        let session_token;
+        let cert_id;
+        {
+            let store = MobileAuthStore::with_persistence(&dir).expect("open store");
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                let session = store
+                    .create_session(
+                        identity_a.clone(),
+                        "00".repeat(2592),
+                        vec![Capability::ReadIdentity],
+                        "1.2.3.4".to_string(),
+                        "test-ua".to_string(),
+                        "challenge_session_persist".to_string(),
+                        Some("device_a".to_string()),
+                        "did:zhtp:node-x".to_string(),
+                    )
+                    .await
+                    .expect("create_session");
+                let token = session.access_token.clone();
+
+                let cert = DelegationCertificate {
+                    cert_id: "cert_persist_xyz".to_string(),
+                    delegator_did: format!("did:zhtp:{}", hex::encode(identity_a.as_ref())),
+                    delegate_id: "did:zhtp:web".to_string(),
+                    capabilities: vec![Capability::ReadBalance],
+                    expires_at: now_secs() + 3600,
+                    nonce: 1,
+                    signature_hex: "ab".to_string(),
+                    revoked: false,
+                    revocation_reason: None,
+                    registered_at_block: None,
+                };
+                let id = cert.cert_id.clone();
+                store.register_delegation_cert(cert).await.expect("register cert");
+
+                store
+                    .append_audit(AuditLogEntry::new(
+                        AuditEventKind::SessionCreated,
+                        Some("challenge_session_persist"),
+                        None,
+                        "1.2.3.4",
+                        "persist_test",
+                    ))
+                    .await;
+
+                store
+                    .register_push_token(identity_b.clone(), "fcm:token_b".to_string())
+                    .await;
+
+                store
+                    .publish_session_event(
+                        "challenge_session_persist",
+                        SessionEvent::SessionApproved {
+                            session_id: "challenge_session_persist".to_string(),
+                            identity_id: hex::encode(identity_a.as_ref()),
+                        },
+                    )
+                    .await;
+
+                (token, id)
+            }).0;
+            // Drop store â†’ sled flushes
+            session_token = "captured_in_drop".to_string();
+            cert_id = "captured_in_drop".to_string();
+            let _ = (session_token, cert_id);
+        }
+
+        // Phase 2: reopen, verify
+        let store = MobileAuthStore::with_persistence(&dir).expect("reopen store");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            // Sessions should be back, indexed by identity
+            let sess_lock = store.identity_sessions.read().await;
+            let restored = sess_lock.get(&identity_a).cloned().unwrap_or_default();
+            assert_eq!(restored.len(), 1, "session should restore for identity_a");
+
+            // Refresh index should be back too
+            let ri = store.refresh_index.read().await;
+            assert_eq!(ri.len(), 1, "refresh index should restore one entry");
+
+            // Delegation cert
+            let restored_cert = store.get_delegation_cert("cert_persist_xyz").await;
+            assert!(restored_cert.is_some(), "delegation cert should restore");
+
+            // Audit entry
+            let audit = store.audit_log.read().await;
+            let kinds: HashSet<_> = audit.iter().map(|e| format!("{:?}", e.kind)).collect();
+            assert!(
+                kinds.contains("SessionCreated"),
+                "audit should have SessionCreated entry: {:?}",
+                kinds
+            );
+
+            // Push token
+            let token_b = store.get_push_token(&identity_b).await;
+            assert_eq!(token_b.as_deref(), Some("fcm:token_b"));
+
+            // Event log + seq counter should restore; new event gets seq > 0
+            store
+                .publish_session_event(
+                    "challenge_session_persist",
+                    SessionEvent::SessionRevoked {
+                        session_id: "challenge_session_persist".to_string(),
+                        reason: "test_after_restart".to_string(),
+                    },
+                )
+                .await;
+            let events = store
+                .get_session_events_since("challenge_session_persist", 0)
+                .await;
+            assert!(events.len() >= 2, "should have at least 2 events after restart");
+            // Seq must be strictly increasing
+            for w in events.windows(2) {
+                assert!(w[1].0 > w[0].0, "seq must be strictly increasing across restart");
+            }
+        });
+
+        cleanup_tempdir(&dir);
+    }
+
+    /// Copilot mobile_delegation.rs:803 â€” the per-session sequence counter
     /// must keep increasing across log drains. Polling clients use seq as a
     /// monotonic cursor; resetting it would cause them to re-deliver events
     /// or skip new ones.
