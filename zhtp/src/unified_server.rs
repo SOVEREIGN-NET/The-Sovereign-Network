@@ -949,8 +949,28 @@ impl ZhtpUnifiedServer {
         // Shared auth store for all bearer-protected routes and mobile auth handler (#2157).
         // Defined here so BearerAuthMiddleware wrappers below can reference it before
         // the mobile_auth_handler registration further down.
-        let mobile_auth_store =
-            Arc::new(lib_identity::auth::mobile_delegation::MobileAuthStore::new());
+        // Sled-backed durable store under <data_dir>/mobile_auth so sessions,
+        // delegations, audit, and event log survive restart (umwelt review #3).
+        // Falls back to in-memory only if sled fails to open — node still
+        // serves auth requests, just without persistence — and the failure
+        // is logged loudly so the operator notices.
+        let mobile_auth_path = crate::node_data_dir().join("mobile_auth");
+        let mobile_auth_store = Arc::new(
+            match lib_identity::auth::mobile_delegation::MobileAuthStore::with_persistence(
+                &mobile_auth_path,
+            ) {
+                Ok(s) => s,
+                Err(e) => {
+                    error!(
+                        "MobileAuthStore: failed to open persistent store at {:?}: {}. \
+                         Falling back to in-memory store — sessions and delegations \
+                         WILL NOT survive restart until this is resolved.",
+                        mobile_auth_path, e
+                    );
+                    lib_identity::auth::mobile_delegation::MobileAuthStore::new()
+                }
+            },
+        );
 
         // Wallet operations — UHP-authenticated (bearer middleware removed for app compat)
         let wallet_handler: Arc<dyn ZhtpRequestHandler> =
