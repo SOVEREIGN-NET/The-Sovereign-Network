@@ -63,6 +63,7 @@ async fn test_utxo_creation_and_tracking() -> Result<()> {
         did: "did:zhtp:test123".to_string(),
         display_name: "Test Identity".to_string(),
         public_key: vec![1, 2, 3, 4],
+        kyber_public_key: vec![],
         ownership_proof: vec![5, 6, 7, 8],
         identity_type: "human".to_string(),
         did_document_hash: Hash::from_hex(
@@ -262,6 +263,7 @@ async fn test_utxo_spending() -> Result<()> {
         did: "did:zhtp:test456".to_string(),
         display_name: "Test Creation".to_string(),
         public_key: vec![1, 2, 3, 4],
+        kyber_public_key: vec![],
         ownership_proof: vec![5, 6, 7, 8],
         identity_type: "human".to_string(),
         did_document_hash: Hash::from_hex(
@@ -354,6 +356,7 @@ async fn test_utxo_set_consistency() -> Result<()> {
             did: format!("did:zhtp:test{}", i),
             display_name: format!("Test Identity {}", i),
             public_key: vec![(i as u8), (i as u8) + 1, (i as u8) + 2],
+            kyber_public_key: vec![],
             ownership_proof: vec![(i as u8) + 3, (i as u8) + 4, (i as u8) + 5],
             identity_type: "human".to_string(),
             did_document_hash: Hash::from_hex(&format!("{:064x}", i + 2000))?,
@@ -472,6 +475,7 @@ async fn test_mixed_transaction_block() -> Result<()> {
         did: "did:zhtp:mixed1".to_string(),
         display_name: "Mixed Test Creation".to_string(),
         public_key: vec![1, 2, 3],
+        kyber_public_key: vec![],
         ownership_proof: vec![4, 5, 6],
         identity_type: "human".to_string(),
         did_document_hash: Hash::from_hex(
