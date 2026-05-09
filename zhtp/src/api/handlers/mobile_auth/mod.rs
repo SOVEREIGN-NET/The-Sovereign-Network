@@ -164,6 +164,25 @@ impl MobileAuthHandler {
                 )
                 .await
             }
+            // Phase 4 — Session event polling (replaces WebSocket; QUIC-only)
+            (ZhtpMethod::Get, "/api/v1/auth/session/events") => {
+                self.handle_session_events(&request.uri, &request.headers, &client_ip, &user_agent)
+                    .await
+            }
+            // Phase 4 — Push token registration and biometric gate
+            (ZhtpMethod::Post, "/api/v1/auth/mobile/push-token") => {
+                self.handle_push_token(&request.body, &request.headers, &client_ip, &user_agent)
+                    .await
+            }
+            (ZhtpMethod::Post, "/api/v1/auth/mobile/biometric-confirm") => {
+                self.handle_biometric_confirm(
+                    &request.body,
+                    &request.headers,
+                    &client_ip,
+                    &user_agent,
+                )
+                .await
+            }
             _ => Ok(json_error(ZhtpStatus::NotFound, "Not found")),
         }
     }
@@ -1154,6 +1173,240 @@ impl MobileAuthHandler {
             "memo": pending_tx.memo,
         })))
     }
+
+    // -----------------------------------------------------------------------
+    // Phase 4: Session event polling (QUIC path — no separate HTTP server)
+    // GET /api/v1/auth/session/events?session_id=<sid>&since=<seq>
+    //
+    // Two modes:
+    //   1. With Bearer  — session_id MUST match the authenticated session.
+    //   2. Without Bearer — session_id MUST be supplied via query.
+    //      Returns only public lifecycle events (challenge_issued,
+    //      session_approved, session_expired, session_revoked) so the
+    //      browser can drive the pre-auth flow without a token
+    //      (umwelt review #4).
+    //
+    // Returns events with sequence >= since. Client polls every 1-2s.
+    // -----------------------------------------------------------------------
+
+    async fn handle_session_events(
+        &self,
+        uri: &str,
+        headers: &ZhtpHeaders,
+        client_ip: &str,
+        user_agent: &str,
+    ) -> ZhtpResult<ZhtpResponse> {
+        let bearer = extract_bearer(headers);
+        let (query_session_id, since) = parse_event_query(uri, "");
+
+        let (session_id, allow_private_events) = if let Some(token) = bearer {
+            let session = match self
+                .store
+                .validate_access_token(&token, client_ip, user_agent, &self.node_endpoint)
+                .await
+            {
+                Err(e) => return Ok(json_error(ZhtpStatus::Unauthorized, &e.to_string())),
+                Ok(s) => s,
+            };
+            // SECURITY (Copilot mod.rs:762): the authenticated session is the
+            // ONLY session whose events this Bearer can read. Reject query
+            // session_id if it disagrees, instead of silently honoring it.
+            if !query_session_id.is_empty()
+                && query_session_id != session.challenge_session_id
+            {
+                return Ok(json_error(
+                    ZhtpStatus::Forbidden,
+                    "session_id does not match authenticated session",
+                ));
+            }
+            (session.challenge_session_id.clone(), true)
+        } else {
+            // Pre-auth path — browser polls for QR-scan approval before there is
+            // a Bearer. session_id from the QR is the only handle.
+            if query_session_id.is_empty() {
+                return Ok(json_error(
+                    ZhtpStatus::BadRequest,
+                    "session_id query parameter required when no Bearer is presented",
+                ));
+            }
+            (query_session_id, false)
+        };
+
+        let events = self
+            .store
+            .get_session_events_since(&session_id, since)
+            .await;
+
+        let payload: Vec<serde_json::Value> = events
+            .into_iter()
+            .filter(|(_, event)| allow_private_events || is_public_lifecycle_event(event))
+            .map(|(seq, event)| {
+                let mut v = serde_json::to_value(&event).unwrap_or_default();
+                if let Some(obj) = v.as_object_mut() {
+                    obj.insert("seq".to_string(), serde_json::json!(seq));
+                }
+                v
+            })
+            .collect();
+
+        Ok(json_ok(json!({
+            "session_id": session_id,
+            "events": payload,
+            "next_since": payload.last()
+                .and_then(|e| e.get("seq"))
+                .and_then(|s| s.as_u64())
+                .map(|s| s + 1)
+                .unwrap_or(since),
+        })))
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 4: Register push notification token
+    // POST /api/v1/auth/mobile/push-token
+    // Requires: Bearer
+    // Body: { "push_token": "<FCM or APNs device token>" }
+    // -----------------------------------------------------------------------
+
+    async fn handle_push_token(
+        &self,
+        body: &[u8],
+        headers: &ZhtpHeaders,
+        client_ip: &str,
+        user_agent: &str,
+    ) -> ZhtpResult<ZhtpResponse> {
+        #[derive(Deserialize)]
+        struct PushTokenRequest {
+            push_token: String,
+        }
+
+        let token = match extract_bearer(headers) {
+            Some(t) => t,
+            None => return Ok(json_error(ZhtpStatus::Unauthorized, "Missing Bearer token")),
+        };
+        let session = match self
+            .store
+            .validate_access_token(&token, client_ip, user_agent, &self.node_endpoint)
+            .await
+        {
+            Err(e) => return Ok(json_error(ZhtpStatus::Unauthorized, &e.to_string())),
+            Ok(s) => s,
+        };
+
+        let req: PushTokenRequest = match serde_json::from_slice(body) {
+            Ok(r) => r,
+            Err(e) => return Ok(json_error(ZhtpStatus::BadRequest, &e.to_string())),
+        };
+
+        if req.push_token.is_empty() {
+            return Ok(json_error(ZhtpStatus::BadRequest, "push_token must not be empty"));
+        }
+
+        self.store
+            .register_push_token(session.identity_id.clone(), req.push_token)
+            .await;
+
+        let entry = AuditLogEntry::new(
+            AuditEventKind::PushTokenRegistered,
+            None,
+            Some(&hex::encode(session.identity_id.as_ref())),
+            client_ip,
+            "push_token_registered",
+        );
+        self.store.append_audit(entry).await;
+
+        Ok(json_ok(json!({ "registered": true })))
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 4: Biometric gate confirmation
+    // POST /api/v1/auth/mobile/biometric-confirm
+    // Requires: Bearer
+    // Body: { "attestation_hex": "<Dilithium sig over access_token bytes>" }
+    // -----------------------------------------------------------------------
+
+    async fn handle_biometric_confirm(
+        &self,
+        body: &[u8],
+        headers: &ZhtpHeaders,
+        client_ip: &str,
+        user_agent: &str,
+    ) -> ZhtpResult<ZhtpResponse> {
+        #[derive(Deserialize)]
+        struct BiometricRequest {
+            attestation_hex: String,
+        }
+
+        let token = match extract_bearer(headers) {
+            Some(t) => t,
+            None => return Ok(json_error(ZhtpStatus::Unauthorized, "Missing Bearer token")),
+        };
+        let session = match self
+            .store
+            .validate_access_token(&token, client_ip, user_agent, &self.node_endpoint)
+            .await
+        {
+            Err(e) => return Ok(json_error(ZhtpStatus::Unauthorized, &e.to_string())),
+            Ok(s) => s,
+        };
+
+        let req: BiometricRequest = match serde_json::from_slice(body) {
+            Ok(r) => r,
+            Err(e) => return Ok(json_error(ZhtpStatus::BadRequest, &e.to_string())),
+        };
+
+        // SECURITY (Copilot mod.rs:891): client signs the *raw bytes of the
+        // access-token hex string* (the same bytes they receive from /verify)
+        // with the session's Dilithium key. verify_cross_device_binding takes
+        // a hex string, decodes it to message bytes, and verifies. The token
+        // is already hex — pass it directly. Old code hex-encoded the
+        // already-hex token, double-encoding the verified message.
+        let sig_valid = match CrossDeviceSessionBinder::verify_cross_device_binding(
+            &token,
+            &session.public_key_hex,
+            &req.attestation_hex,
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                return Ok(json_error(
+                    ZhtpStatus::BadRequest,
+                    &format!("Attestation verification error: {}", e),
+                ))
+            }
+        };
+
+        if !sig_valid {
+            return Ok(json_error(ZhtpStatus::Unauthorized, "Invalid biometric attestation"));
+        }
+
+        if let Err(e) = self
+            .store
+            .confirm_biometric(&token, &req.attestation_hex)
+            .await
+        {
+            return Ok(json_error(ZhtpStatus::BadRequest, &e.to_string()));
+        }
+
+        let entry = AuditLogEntry::new(
+            AuditEventKind::BiometricVerified,
+            None,
+            Some(&hex::encode(session.identity_id.as_ref())),
+            client_ip,
+            "biometric_confirmed",
+        );
+        self.store.append_audit(entry).await;
+
+        // Notify polling clients on the session's challenge_session_id channel
+        self.store
+            .publish_session_event(
+                &session.challenge_session_id,
+                SessionEvent::BiometricVerified {
+                    session_id: session.challenge_session_id.clone(),
+                },
+            )
+            .await;
+
+        Ok(json_ok(json!({ "biometric_verified": true })))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1167,9 +1420,11 @@ impl ZhtpRequestHandler for MobileAuthHandler {
     }
 
     fn can_handle(&self, request: &ZhtpRequest) -> bool {
-        let uri = request.uri.trim_end_matches('/');
+        let path_only = request.uri.split_once('?').map(|(p, _)| p).unwrap_or(&request.uri);
+        let uri = path_only.trim_end_matches('/');
         uri.starts_with("/api/v1/auth/mobile")
             || uri.starts_with("/api/v1/auth/delegate")
+            || uri.starts_with("/api/v1/auth/session/events")
             || uri.starts_with("/api/v1/tx/")
     }
 }
@@ -1205,6 +1460,34 @@ fn parse_event_query(uri: &str, default_session_id: &str) -> (String, u64) {
         }
     }
     (session_id, since)
+}
+
+/// Parse `session_id` and `since` from URI query string.
+/// Falls back to `default_session_id` and since=0 if params are absent.
+fn parse_event_query(uri: &str, default_session_id: &str) -> (String, u64) {
+    let query = uri.split_once('?').map(|(_, q)| q).unwrap_or("");
+    let mut session_id = default_session_id.to_string();
+    let mut since: u64 = 0;
+    for part in query.split('&') {
+        if let Some(v) = part.strip_prefix("session_id=") {
+            session_id = v.to_string();
+        } else if let Some(v) = part.strip_prefix("since=") {
+            since = v.parse().unwrap_or(0);
+        }
+    }
+    (session_id, since)
+}
+
+/// Pre-auth callers (no Bearer) can only see lifecycle events that the QR
+/// holder controls — never authenticated-session details.
+fn is_public_lifecycle_event(e: &SessionEvent) -> bool {
+    matches!(
+        e,
+        SessionEvent::ChallengeIssued { .. }
+            | SessionEvent::SessionApproved { .. }
+            | SessionEvent::SessionExpired { .. }
+            | SessionEvent::SessionRevoked { .. }
+    )
 }
 
 fn extract_bearer(headers: &ZhtpHeaders) -> Option<String> {
