@@ -534,7 +534,7 @@ impl ZhtpUnifiedServer {
         };
 
         // Register comprehensive API handlers on ZHTP router (QUIC is the only entry point)
-        let (pouw_validator_arc, pouw_calculator_arc, mobile_auth_store_for_ws) = Self::register_api_handlers(
+        let (pouw_validator_arc, pouw_calculator_arc) = Self::register_api_handlers(
             &mut zhtp_router,
             blockchain.clone(),
             storage.clone(),
@@ -548,11 +548,6 @@ impl ZhtpUnifiedServer {
             pouw_node_did.clone(),
         )
         .await?;
-
-        // Phase 4 (#2077): mobile_auth_store_for_ws is also registered on the ZHTP
-        // event-polling route below via the MobileAuthHandler that already holds it.
-        // No separate HTTP server — all traffic stays on the QUIC/ZHTP path.
-        drop(mobile_auth_store_for_ws);
 
         // Initialize QUIC handler for native ZHTP-over-QUIC (AFTER handler registration)
         let zhtp_router_arc = Arc::new(zhtp_router);
@@ -817,7 +812,6 @@ impl ZhtpUnifiedServer {
     ) -> Result<(
         Arc<RwLock<crate::pouw::validation::ReceiptValidator>>,
         Arc<crate::pouw::RewardCalculator>,
-        Arc<lib_identity::auth::mobile_delegation::MobileAuthStore>,
     )> {
         info!("📝 Registering API handlers on ZHTP router (QUIC is the only entry point)...");
 
@@ -1199,7 +1193,7 @@ impl ZhtpUnifiedServer {
         zhtp_router.register_handler("/api/v1/tx".to_string(), mobile_auth_handler);
 
         info!("✅ All API handlers registered successfully on ZHTP router");
-        Ok((pouw_validator_arc, pouw_calculator, mobile_auth_store))
+        Ok((pouw_validator_arc, pouw_calculator))
     }
 
     /// Start the unified server on port 9333

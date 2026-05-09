@@ -94,7 +94,8 @@ impl MobileAuthHandler {
     // -----------------------------------------------------------------------
 
     async fn dispatch(&self, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let uri = request.uri.trim_end_matches('/');
+        let path_only = request.uri.split_once('?').map(|(p, _)| p).unwrap_or(&request.uri);
+        let uri = path_only.trim_end_matches('/');
         let client_ip = extract_client_ip(request);
         let user_agent = extract_user_agent(request);
 
@@ -324,16 +325,38 @@ impl MobileAuthHandler {
             return Ok(json_error(ZhtpStatus::Unauthorized, "Invalid signature"));
         }
 
+        // SECURITY: bind identity_hex to public_key_hex (umwelt review #1).
+        // The DID for a Dilithium key is deterministic: blake3(public_key)[..32].
+        // The client cannot claim an identity it doesn't own — if their stated
+        // identity_hex doesn't match the derived value, reject (auth bypass).
+        let pk_bytes = match hex::decode(&req.public_key_hex) {
+            Ok(b) => b,
+            Err(_) => return Ok(json_error(ZhtpStatus::BadRequest, "Invalid public_key_hex")),
+        };
+        let derived_identity = blake3::hash(&pk_bytes);
+        let derived_identity_hex = hex::encode(&derived_identity.as_bytes()[..32]);
+        if derived_identity_hex != req.identity_hex.to_ascii_lowercase() {
+            let entry = AuditLogEntry::new(
+                AuditEventKind::ChallengeSigned,
+                Some(&req.session_id),
+                None,
+                client_ip,
+                "identity_hex_does_not_match_public_key",
+            );
+            self.store.append_audit(entry).await;
+            return Ok(json_error(
+                ZhtpStatus::Unauthorized,
+                "identity_hex does not match public_key_hex",
+            ));
+        }
+
         // Consume challenge (replay protection — must happen before session creation)
         if let Err(e) = self.store.consume_challenge(&req.session_id).await {
             return Ok(json_error(ZhtpStatus::BadRequest, &e.to_string()));
         }
 
-        // Decode identity_id
-        let identity_bytes = match hex::decode(&req.identity_hex) {
-            Ok(b) => b,
-            Err(_) => return Ok(json_error(ZhtpStatus::BadRequest, "Invalid identity_hex")),
-        };
+        // Use the server-derived identity (we just verified it matches client's claim)
+        let identity_bytes = derived_identity.as_bytes()[..32].to_vec();
         let identity_id = lib_crypto::Hash::from_bytes(&identity_bytes);
 
         // Create session — bound to this node's DID for channel binding (#2160)
@@ -443,32 +466,34 @@ impl MobileAuthHandler {
             None => return Ok(json_error(ZhtpStatus::Unauthorized, "Missing Bearer token")),
         };
 
-        // Validate first (ensure binding matches)
-        if let Err(e) = self
+        // Validate and capture session for event keying (Copilot mod.rs:475)
+        let session = match self
             .store
             .validate_access_token(&token, client_ip, user_agent, &self.node_endpoint)
             .await
         {
-            return Ok(json_error(ZhtpStatus::Unauthorized, &e.to_string()));
-        }
+            Ok(s) => s,
+            Err(e) => return Ok(json_error(ZhtpStatus::Unauthorized, &e.to_string())),
+        };
+        let session_id = session.challenge_session_id.clone();
 
         match self.store.revoke_session(&token, "user_signout").await {
             Ok(_) => {
                 let entry = AuditLogEntry::new(
                     AuditEventKind::SessionRevoked,
-                    Some(&token[..std::cmp::min(16, token.len())]),
+                    Some(&session_id),
                     None,
                     client_ip,
                     "user_signout",
                 );
                 self.store.append_audit(entry).await;
 
-                // Phase 4 — notify WebSocket subscribers the session is gone
+                // Phase 4 — emit on the same session_id polling clients are subscribed to
                 self.store
                     .publish_session_event(
-                        &token[..std::cmp::min(16, token.len())],
+                        &session_id,
                         SessionEvent::SessionRevoked {
-                            session_id: token[..std::cmp::min(16, token.len())].to_string(),
+                            session_id: session_id.clone(),
                             reason: "user_signout".to_string(),
                         },
                     )
@@ -583,8 +608,66 @@ impl MobileAuthHandler {
             ));
         }
 
+        // SECURITY: capabilities being delegated must be a subset of what the
+        // delegator was granted on this session — otherwise a user could mint a
+        // cert granting more than they hold (umwelt review #2).
+        for requested in &req.capabilities {
+            if !session.granted_capabilities.contains(requested) {
+                return Ok(json_error(
+                    ZhtpStatus::Forbidden,
+                    "Requested capability exceeds session grant",
+                ));
+            }
+        }
+
         // Build delegator DID from session identity
         let delegator_did = format!("did:zhtp:{}", hex::encode(session.identity_id.as_ref()));
+
+        // SECURITY: verify the delegator signed this cert with the same Dilithium
+        // key that authenticated the session — otherwise any session-holder could
+        // fabricate signature_hex and have it stored verbatim (umwelt review #2).
+        // Canonical signed message: tab-separated fields in fixed order.
+        let signed_message = format!(
+            "zhtp-delegation/v1\t{}\t{}\t{}\t{}\t{}",
+            delegator_did,
+            req.delegate_id,
+            serde_json::to_string(&req.capabilities).unwrap_or_default(),
+            req.expires_in_secs,
+            req.nonce,
+        );
+        let pk_bytes = match hex::decode(&session.public_key_hex) {
+            Ok(b) => b,
+            Err(_) => {
+                return Ok(json_error(
+                    ZhtpStatus::InternalServerError,
+                    "Session public key is not valid hex",
+                ))
+            }
+        };
+        let sig_bytes = match hex::decode(&req.signature_hex) {
+            Ok(b) => b,
+            Err(_) => {
+                return Ok(json_error(
+                    ZhtpStatus::BadRequest,
+                    "signature_hex is not valid hex",
+                ))
+            }
+        };
+        match lib_crypto::verify_signature(signed_message.as_bytes(), &sig_bytes, &pk_bytes) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Ok(json_error(
+                    ZhtpStatus::Unauthorized,
+                    "Delegation signature invalid",
+                ))
+            }
+            Err(e) => {
+                return Ok(json_error(
+                    ZhtpStatus::BadRequest,
+                    &format!("Delegation signature verification error: {}", e),
+                ))
+            }
+        }
 
         // Generate cert ID
         let mut cert_id_bytes = [0u8; 16];

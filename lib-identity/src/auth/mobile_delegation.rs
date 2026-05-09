@@ -254,6 +254,11 @@ pub struct MobileDelegatedSession {
     /// DID of the node that issued this session — channel binding (#2160).
     /// A captured token cannot be replayed through a different node.
     pub bound_node_did: String,
+    /// Phase 4 — flipped to true once the mobile device passes a biometric
+    /// confirmation challenge (`POST /api/v1/auth/mobile/biometric-confirm`).
+    /// Downstream handlers must check this before allowing high-value actions.
+    #[serde(default)]
+    pub biometric_verified: bool,
 }
 
 impl MobileDelegatedSession {
@@ -510,6 +515,9 @@ pub struct MobileAuthStore {
     session_event_bus: Arc<RwLock<HashMap<String, broadcast::Sender<SessionEvent>>>>,
     /// Phase 4 — per-session ordered event log for polling (session_id → vec of (seq, event))
     session_event_log: Arc<RwLock<HashMap<String, Vec<(u64, SessionEvent)>>>>,
+    /// Phase 4 — per-session monotonically-increasing sequence counter.
+    /// Persisted across log drains so seq numbers never reuse or go backwards.
+    session_event_seq: Arc<RwLock<HashMap<String, u64>>>,
     /// Phase 4 — push notification tokens indexed by identity_id
     push_tokens: Arc<RwLock<HashMap<IdentityId, String>>>,
 }
@@ -520,6 +528,7 @@ impl MobileAuthStore {
             rate_limiter: Arc::new(ChallengeRateLimiter::new()),
             session_event_bus: Arc::new(RwLock::new(HashMap::new())),
             session_event_log: Arc::new(RwLock::new(HashMap::new())),
+            session_event_seq: Arc::new(RwLock::new(HashMap::new())),
             push_tokens: Arc::new(RwLock::new(HashMap::new())),
             ..Default::default()
         }
@@ -621,6 +630,7 @@ impl MobileAuthStore {
             device_id,
             revoked: false,
             bound_node_did: node_did,
+            biometric_verified: false,
         };
 
         let mut sessions = self.sessions.write().await;
@@ -790,13 +800,21 @@ impl MobileAuthStore {
 
     /// Publish a session event: appends to the poll log and notifies broadcast subscribers.
     pub async fn publish_session_event(&self, session_id: &str, event: SessionEvent) {
+        // Allocate a monotonic seq from the per-session counter (survives log drains)
+        let seq = {
+            let mut seqs = self.session_event_seq.write().await;
+            let next = seqs.entry(session_id.to_string()).or_insert(0);
+            let this = *next;
+            *next = next.saturating_add(1);
+            this
+        };
         // Append to the ordered poll log so polling clients can catch up
         {
             let mut log = self.session_event_log.write().await;
             let entries = log.entry(session_id.to_string()).or_insert_with(Vec::new);
-            let seq = entries.len() as u64;
             entries.push((seq, event.clone()));
-            // Keep log bounded — drop oldest when over 256 entries
+            // Keep log bounded — drop oldest when over 256 entries.
+            // Counter is independent so seq never resets across drains.
             if entries.len() > 256 {
                 entries.drain(0..128);
             }
