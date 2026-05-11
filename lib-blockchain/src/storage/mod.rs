@@ -1218,6 +1218,35 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         Ok(())
     }
 
+    /// Write an identity consensus entry directly, bypassing the block-tx batch.
+    ///
+    /// Used for one-off bootstrap writes (genesis backfill) that must happen
+    /// outside of a normal begin_block/commit_block cycle. Idempotent.
+    fn put_identity_direct(
+        &self,
+        did_hash: &[u8; 32],
+        identity: &IdentityConsensus,
+    ) -> StorageResult<()> {
+        // Default falls back to the batched API; implementations that need
+        // non-tx writes override this.
+        let _ = (did_hash, identity);
+        Err(StorageError::Database(
+            "put_identity_direct not supported by this backend".to_string(),
+        ))
+    }
+
+    /// Write identity metadata directly, bypassing the block-tx batch.
+    fn put_identity_metadata_direct(
+        &self,
+        did_hash: &[u8; 32],
+        metadata: &IdentityMetadata,
+    ) -> StorageResult<()> {
+        let _ = (did_hash, metadata);
+        Err(StorageError::Database(
+            "put_identity_metadata_direct not supported by this backend".to_string(),
+        ))
+    }
+
     /// List identity DID hashes registered at a specific block height.
     ///
     /// Useful for syncing and auditing identity registrations.

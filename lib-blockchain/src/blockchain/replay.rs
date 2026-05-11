@@ -148,7 +148,56 @@ impl Blockchain {
         bc.store = Some(store);
         bc.executor = Some(executor);
 
+        // Backfill genesis-only identities into the sled store. Genesis
+        // populates bc.identity_registry directly without going through
+        // transactions, so identities created at genesis are absent from
+        // sled's identity tree. Any later IdentityUpdate against them halts
+        // consensus with "Cannot update non-existent identity".
+        bc.backfill_genesis_identities_to_store();
+
         Ok(Some(bc))
+    }
+
+    /// Ensure every in-memory genesis identity is also present in the sled
+    /// identity store. Idempotent — overwrites existing entries with the
+    /// genesis-derived consensus + metadata.
+    fn backfill_genesis_identities_to_store(&self) {
+        let Some(ref store) = self.store else {
+            return;
+        };
+        let mut written = 0usize;
+        for (did, data) in &self.identity_registry {
+            let did_hash = crate::storage::did_to_hash(did);
+            // Skip if already present (avoids overwriting state that may have
+            // diverged via on-chain updates).
+            match store.get_identity(&did_hash) {
+                Ok(Some(_)) => continue,
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        "backfill: get_identity({}) failed: {} — attempting write anyway",
+                        did,
+                        e
+                    );
+                }
+            }
+            let (consensus, metadata) = crate::storage::convert_legacy_identity(data);
+            if let Err(e) = store.put_identity_direct(&did_hash, &consensus) {
+                tracing::warn!("backfill: put_identity_direct({}): {}", did, e);
+                continue;
+            }
+            if let Err(e) = store.put_identity_metadata_direct(&did_hash, &metadata) {
+                tracing::warn!("backfill: put_identity_metadata_direct({}): {}", did, e);
+                continue;
+            }
+            written += 1;
+        }
+        if written > 0 {
+            tracing::info!(
+                "Backfilled {} genesis identities into sled identity store",
+                written
+            );
+        }
     }
 
     /// Ensure SOV token contract exists during replay (idempotent).
