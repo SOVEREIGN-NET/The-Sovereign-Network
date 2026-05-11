@@ -105,6 +105,21 @@ impl DepositStore {
             .as_secs();
 
         let mut deposits = self.deposits.write().await;
+        info!(
+            "collect_for_recipient: store has {} entries, looking for {}",
+            deposits.len(),
+            recipient_did
+        );
+        for ((s, r), d) in deposits.iter() {
+            info!(
+                "  entry: sender={}, recipient={}, envelopes={}, expires_at={}, matches={}",
+                s,
+                r,
+                d.envelopes.len(),
+                d.expires_at,
+                d.recipient_did == recipient_did
+            );
+        }
         let mut collected = Vec::new();
 
         deposits.retain(|(_sender, _recipient), delivery| {
