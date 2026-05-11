@@ -52,6 +52,8 @@ pub mod handshake;
 pub mod nft_tx;
 pub mod identity;
 pub mod messaging;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod quic_session;
 pub mod request;
 pub mod session;
 pub mod token_tx;
