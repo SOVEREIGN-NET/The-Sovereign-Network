@@ -906,17 +906,27 @@ impl MeshMessageHandler {
                 }
             }
             ZhtpMeshMessage::MessageRelay { recipient_did, envelope } => {
+                tracing::info!(
+                    "MessageRelay received: recipient={}, envelope_bytes={}",
+                    recipient_did,
+                    envelope.len()
+                );
                 if let Some(ref tx) = self.message_relay_sender {
-                    if let Err(e) = tx.try_send((recipient_did.clone(), envelope)) {
-                        warn!(
-                            "MessageRelay dropped for {} (inbox full or closed)",
-                            &recipient_did[..16.min(recipient_did.len())]
-                        );
+                    match tx.try_send((recipient_did.clone(), envelope)) {
+                        Ok(_) => tracing::info!(
+                            "MessageRelay forwarded to handler for {}",
+                            recipient_did
+                        ),
+                        Err(e) => warn!(
+                            "MessageRelay dropped for {} (inbox full or closed): {}",
+                            &recipient_did[..16.min(recipient_did.len())],
+                            e
+                        ),
                     }
                 } else {
-                    debug!(
-                        "Received MessageRelay for {} but relay sender not wired",
-                        &recipient_did[..16.min(recipient_did.len())]
+                    tracing::warn!(
+                        "Received MessageRelay for {} but relay sender NOT WIRED",
+                        recipient_did
                     );
                 }
             }

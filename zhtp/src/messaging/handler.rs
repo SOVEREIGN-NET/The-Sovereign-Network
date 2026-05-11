@@ -178,10 +178,23 @@ impl MessagingHandler {
                     recipient_did: recipient_did.clone(),
                     envelope: envelope_bytes,
                 };
-                for peer_id in &qp.connected_peer_ids() {
-                    let _ = qp.send_to_peer(peer_id, mesh_msg.clone()).await;
+                let peer_ids = qp.connected_peer_ids();
+                info!(
+                    "msg/send: relaying to {} mesh peers for recipient {}",
+                    peer_ids.len(),
+                    recipient_did
+                );
+                for peer_id in &peer_ids {
+                    match qp.send_to_peer(peer_id, mesh_msg.clone()).await {
+                        Ok(_) => info!("  relay -> peer {} OK", hex::encode(&peer_id[..8.min(peer_id.len())])),
+                        Err(e) => info!("  relay -> peer {} FAILED: {}", hex::encode(&peer_id[..8.min(peer_id.len())]), e),
+                    }
                 }
+            } else {
+                info!("msg/send: QUIC protocol not available — no mesh relay");
             }
+        } else {
+            info!("msg/send: mesh router unavailable — no mesh relay");
         }
 
         info!(
