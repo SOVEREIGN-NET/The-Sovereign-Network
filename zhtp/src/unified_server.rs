@@ -1004,6 +1004,12 @@ impl ZhtpUnifiedServer {
             let deposits = Arc::new(crate::messaging::deposit::DepositStore::new());
             let presence = Arc::new(crate::messaging::presence::PresenceTracker::new());
 
+            // Publish deposits to the global messaging provider so the QUIC handler
+            // (which special-cases /api/v1/msg/inbound for streaming) can drain on open.
+            crate::runtime::messaging_provider::get_global_messaging_provider()
+                .set_deposits(deposits.clone())
+                .await;
+
             // Spawn deposit cleanup task (every 5 minutes)
             let deposits_cleanup = deposits.clone();
             tokio::spawn(async move {
@@ -1017,12 +1023,23 @@ impl ZhtpUnifiedServer {
                 }
             });
 
-            // Wire mesh relay receiver — incoming relayed messages get deposited
+            // Wire mesh relay receiver — incoming relayed messages either push to a
+            // live inbound subscriber or fall back to the deposit store.
             let deposits_relay = deposits.clone();
             let (relay_tx, mut relay_rx) = tokio::sync::mpsc::channel::<(String, Vec<u8>)>(256);
             tokio::spawn(async move {
+                let provider =
+                    crate::runtime::messaging_provider::get_global_messaging_provider();
                 while let Some((recipient_did, envelope)) = relay_rx.recv().await {
-                    // Extract sender DID from the envelope if possible
+                    // Try live push first
+                    if provider.try_push(&recipient_did, envelope.clone()).await {
+                        tracing::debug!(
+                            "Relay pushed to live subscriber for {}",
+                            recipient_did
+                        );
+                        continue;
+                    }
+                    // Fallback: deposit
                     let sender = bincode::deserialize::<crate::messaging::envelope::MessageEnvelope>(&envelope)
                         .map(|env| env.sender_did)
                         .unwrap_or_else(|_| "mesh_relay".to_string());

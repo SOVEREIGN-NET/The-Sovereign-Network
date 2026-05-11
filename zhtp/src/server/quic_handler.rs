@@ -747,6 +747,47 @@ impl QuicHandler {
             return Ok(());
         }
 
+        // Special-case: streaming inbound message endpoint. We write the success
+        // header here, then hand the send stream to the streaming runner which
+        // pushes [u32 BE len][envelope] frames until the peer disconnects.
+        // Do NOT route through the regular handler chain (which expects a
+        // single ZhtpResponse) and do NOT finish() the stream — the runner does.
+        let is_inbound_stream = matches!(request.method, lib_protocols::types::ZhtpMethod::Get)
+            && request.uri == "/api/v1/msg/inbound";
+        if is_inbound_stream {
+            let requester_key_id = request
+                .requester
+                .as_ref()
+                .map(|id| hex::encode(&id.0))
+                .unwrap_or_default();
+            if requester_key_id.is_empty() {
+                let error_response = ZhtpResponseWire::error(
+                    wire_request.request_id,
+                    ZhtpStatus::Unauthorized,
+                    "Authenticated DID required".to_string(),
+                );
+                write_response(&mut send, &error_response).await?;
+                return Ok(());
+            }
+            let ok_response = ZhtpResponseWire::success(
+                wire_request.request_id,
+                ZhtpResponse::success(Vec::new(), None),
+            );
+            write_response(&mut send, &ok_response)
+                .await
+                .context("Failed to write inbound stream header")?;
+            // Hand off — the runner owns the send stream from here.
+            if let Err(e) = crate::messaging::inbound_stream::run_inbound_stream(
+                send,
+                requester_key_id,
+            )
+            .await
+            {
+                warn!("msg/inbound stream ended with error: {}", e);
+            }
+            return Ok(());
+        }
+
         let router = self.zhtp_router.read().await;
         let response = router.route_request(request).await.unwrap_or_else(|e| {
             warn!("Handler error: {}", e);

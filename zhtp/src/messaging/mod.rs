@@ -9,3 +9,4 @@ pub mod ratchet;
 pub mod deposit;
 pub mod presence;
 pub mod handler;
+pub mod inbound_stream;
