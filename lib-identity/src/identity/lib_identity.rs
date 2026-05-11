@@ -270,6 +270,87 @@ impl ZhtpIdentity {
         })
     }
 
+    /// Construct a minimal `ZhtpIdentity` from raw key material.
+    ///
+    /// Bridge for callers that already hold a flat keypair (e.g. lib-client's
+    /// `Identity` over FFI). Does not derive zk_secret/credential_hash/wallet
+    /// seeds from optional metadata — uses safe defaults sufficient for signing
+    /// and the UHP handshake. Intended for transport use (open a session,
+    /// authenticate, sign requests); not for full identity-manager operations.
+    pub fn from_raw_keys(
+        identity_type: IdentityType,
+        dilithium_pk: [u8; 2592],
+        dilithium_sk: [u8; 4896],
+        kyber_pk: [u8; 1568],
+        kyber_sk: [u8; 3168],
+        primary_device: String,
+    ) -> Result<Self> {
+        let public_key = PublicKey::new_with_kyber(dilithium_pk, kyber_pk);
+        let private_key = PrivateKey {
+            dilithium_sk,
+            dilithium_pk,
+            kyber_sk,
+            master_seed: [0u8; 64],
+        };
+        let did = Self::generate_did(&public_key)?;
+        let id = Hash::from_bytes(&public_key.key_id.to_vec());
+        let node_id = NodeId::from_did_device(&did, &primary_device)?;
+
+        let mut device_node_ids = HashMap::new();
+        device_node_ids.insert(primary_device.clone(), node_id.clone());
+
+        // Best-effort derivation; safe-default on failure.
+        let zk_identity_secret =
+            Self::derive_zk_secret(&private_key.dilithium_sk).unwrap_or([0u8; 32]);
+        let wallet_master_seed =
+            Self::derive_wallet_seed(&private_key.dilithium_sk).unwrap_or([0u8; 64]);
+        let dao_member_id =
+            Self::derive_dao_member_id(&did).unwrap_or_else(|_| String::new());
+
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+
+        let wallet_manager = crate::wallets::WalletManager::new(id.clone());
+
+        Ok(ZhtpIdentity {
+            id: id.clone(),
+            identity_type,
+            did,
+            public_key,
+            private_key: Some(private_key),
+            node_id,
+            device_node_ids,
+            primary_device,
+            ownership_proof: ZeroKnowledgeProof::default(),
+            credentials: HashMap::new(),
+            reputation: 0,
+            age: None,
+            access_level: AccessLevel::default(),
+            metadata: HashMap::new(),
+            private_data_id: Some(id),
+            wallet_manager,
+            attestations: Vec::new(),
+            created_at: current_time,
+            last_active: current_time,
+            recovery_keys: Vec::new(),
+            did_document_hash: None,
+            owner_identity_id: None,
+            reward_wallet_id: None,
+            encrypted_master_seed: None,
+            next_wallet_index: 0,
+            password_hash: None,
+            master_seed_phrase: None,
+            zk_identity_secret,
+            zk_credential_hash: [0u8; 32],
+            wallet_master_seed,
+            dao_member_id,
+            dao_voting_power: 0,
+            citizenship_verified: false,
+            jurisdiction: None,
+        })
+    }
+
     /// Create an "observed" identity from handshake public information
     ///
     /// This creates a lightweight identity from the public information exchanged

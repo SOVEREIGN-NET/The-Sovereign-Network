@@ -49,11 +49,19 @@ getrandom = "0.2"
 # UniFFI (for mobile bindings)
 uniffi = { version = "0.25", optional = true }
 
-# Native: PQC implementations
+# Native: PQC implementations + QUIC transport for FFI session
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pqcrypto-kyber = "0.8"
 pqcrypto-traits = "0.3"  # Required for pqcrypto-kyber trait methods
 crystals-dilithium = "1.0"
+# Persistent QUIC session FFI (zhtp_quic_session_*). Reuses lib-network's
+# UHP-handshake-aware ZhtpClient; only enabled for native mobile/CLI builds.
+quinn = { version = "0.11", default-features = false, features = ["rustls", "ring", "runtime-tokio"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "time", "net"] }
+lib-network = { path = "../lib-network" }
+lib-identity = { path = "../lib-identity" }
+lib-protocols = { path = "../lib-protocols" }
 
 # Android JNI bindings
 [target.'cfg(target_os = "android")'.dependencies]
