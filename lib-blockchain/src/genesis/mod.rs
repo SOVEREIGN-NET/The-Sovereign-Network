@@ -549,7 +549,9 @@ impl GenesisConfig {
             bc.wallet_blocks.insert(wallet_key, 0u64);
         }
 
-        // identities
+        // identities — populates in-memory registry only.
+        // Sled-store backfill happens post-replay (see backfill_genesis_identities_to_store),
+        // because bc.store is not yet attached at the time apply_genesis_state runs.
         for id in &alloc.identities {
             let pk_bytes = hex::decode(&id.public_key).map_err(|e| {
                 anyhow::anyhow!(

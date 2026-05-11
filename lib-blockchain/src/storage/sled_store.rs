@@ -1461,6 +1461,36 @@ impl BlockchainStore for SledStore {
         Ok(())
     }
 
+    fn put_identity_direct(
+        &self,
+        did_hash: &[u8; 32],
+        identity: &IdentityConsensus,
+    ) -> StorageResult<()> {
+        let value = Self::serialize(identity)?;
+        self.identities
+            .insert(did_hash.as_ref(), value)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        self.identities
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    fn put_identity_metadata_direct(
+        &self,
+        did_hash: &[u8; 32],
+        metadata: &IdentityMetadata,
+    ) -> StorageResult<()> {
+        let value = Self::serialize(metadata)?;
+        self.identity_metadata
+            .insert(did_hash.as_ref(), value)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        self.identity_metadata
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     fn get_identities_at_height(&self, height: u64) -> StorageResult<Vec<[u8; 32]>> {
         // Scan all identities and filter by registration height
         // Returns did_hashes, not full identity data
