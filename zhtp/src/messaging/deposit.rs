@@ -86,10 +86,11 @@ impl DepositStore {
         }
 
         info!(
-            "Deposited {} envelopes from {} for {} (expires in {}h)",
+            "Deposited {} envelopes from {} for {} (FULL recipient={}, expires in {}h)",
             count,
             &sender_did[..16.min(sender_did.len())],
             &recipient_did[..16.min(recipient_did.len())],
+            recipient_did,
             DEFAULT_DEPOSIT_TTL_SECS / 3600,
         );
 

@@ -285,11 +285,21 @@ impl MessagingHandler {
             }
         };
 
+        info!(
+            "msg/receive lookup: requester_key_id={} -> recipient_did={}",
+            requester_key_id, recipient_did
+        );
+
         // Mark as online
         self.presence.set_online(&recipient_did).await;
 
         // Collect pending deposits
         let deliveries = self.deposits.collect_for_recipient(&recipient_did).await;
+        info!(
+            "msg/receive collected {} deliveries for {}",
+            deliveries.len(),
+            recipient_did
+        );
 
         let mut all_envelopes: Vec<serde_json::Value> = Vec::new();
         for delivery in &deliveries {
