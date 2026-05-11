@@ -243,25 +243,42 @@ impl MessagingHandler {
             ));
         }
 
-        // Try both DID derivations: key_id-based and registry lookup
+        // Try multiple DID derivations to find the canonical DID the deposit was keyed under.
+        // QUIC identity_id = blake3(dilithium_pk || kyber_pk) — that's what request.requester.0 is.
+        // Canonical DID = "did:zhtp:" + blake3(dilithium_pk) — that's what envelopes use.
+        // The registry stores entries keyed by the canonical DID. To match the polling phone's
+        // authenticated identity to the canonical DID, we scan the registry trying all
+        // derivations (dil-only, dil||kyber). Genesis identities may have kyber_pk empty,
+        // mobile-registered identities have a real kyber_pk.
         let key_id_did = format!("did:zhtp:{}", requester_key_id);
         let recipient_did = {
             let blockchain = self.blockchain.read().await;
-            // First: check if key_id-based DID exists in registry
             if blockchain.identity_registry.contains_key(&key_id_did) {
                 key_id_did.clone()
             } else {
-                // Search registry for an identity whose key_id matches
                 blockchain
                     .identity_registry
                     .iter()
                     .find(|(_, id)| {
-                        if id.public_key.len() >= 32 {
-                            let pk_hash = hex::encode(lib_crypto::hash_blake3(&id.public_key));
-                            pk_hash == requester_key_id
-                        } else {
-                            false
+                        if id.public_key.len() < 32 {
+                            return false;
                         }
+                        // Match against dilithium-only hash (canonical DID derivation).
+                        let dil_hash = hex::encode(lib_crypto::hash_blake3(&id.public_key));
+                        if dil_hash == requester_key_id {
+                            return true;
+                        }
+                        // Match against dilithium||kyber hash (QUIC identity_id derivation).
+                        if !id.kyber_public_key.is_empty() {
+                            let combined =
+                                [&id.public_key[..], &id.kyber_public_key[..]].concat();
+                            let combined_hash =
+                                hex::encode(lib_crypto::hash_blake3(&combined));
+                            if combined_hash == requester_key_id {
+                                return true;
+                            }
+                        }
+                        false
                     })
                     .map(|(did, _)| did.clone())
                     .unwrap_or(key_id_did)
