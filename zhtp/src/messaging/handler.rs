@@ -142,21 +142,17 @@ impl MessagingHandler {
 
         let recipient_did = envelope.recipient_did.clone();
 
-        // Check if recipient is online on this node
-        if self.presence.is_online(&recipient_did).await {
-            // Recipient connected to this node — deliver directly
-            // The recipient will pick it up on their next /msg/receive poll
-            self.deposits
-                .deposit(
-                    &envelope.sender_did,
-                    &recipient_did,
-                    vec![envelope_bytes],
-                )
-                .await
-                .map_err(|e| anyhow::anyhow!("Deposit failed: {}", e))?;
+        let messaging_provider =
+            crate::runtime::messaging_provider::get_global_messaging_provider();
 
+        // Check if recipient has a live inbound subscriber on this node — push it
+        // straight onto the stream. Skips the deposit-then-poll round trip.
+        if messaging_provider
+            .try_push(&recipient_did, envelope_bytes.clone())
+            .await
+        {
             info!(
-                "Message delivered to local recipient {}",
+                "Message pushed to live subscriber for {}",
                 &recipient_did[..16.min(recipient_did.len())]
             );
             return json_response(json!({
@@ -165,7 +161,7 @@ impl MessagingHandler {
             }));
         }
 
-        // Always deposit locally — recipient may connect to any node including this one
+        // Always deposit locally — recipient may poll any node, or come online later
         let _ = self.deposits
             .deposit(&envelope.sender_did, &recipient_did, vec![envelope_bytes.clone()])
             .await;
