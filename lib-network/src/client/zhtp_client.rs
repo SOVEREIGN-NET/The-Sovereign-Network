@@ -672,6 +672,49 @@ impl ZhtpClient {
         self.request_on_connection(conn, request).await
     }
 
+    /// Open an authenticated bidi stream, write the request, and return the
+    /// streams to the caller. Used for endpoints whose response body is a
+    /// long-lived stream of framed payloads (e.g. `/msg/inbound`).
+    ///
+    /// On return:
+    /// - The `SendStream` has been finished (request body fully written).
+    /// - The `RecvStream` is positioned BEFORE the initial `ZhtpResponseWire`.
+    /// - `expected_request_id` lets the caller validate the response.
+    ///
+    /// Caller is responsible for reading the response header (with
+    /// `lib_protocols::wire::read_response`) and then consuming any subsequent
+    /// framed payloads from the recv stream.
+    pub async fn open_authenticated_stream(
+        &self,
+        request: ZhtpRequest,
+    ) -> Result<(quinn::SendStream, quinn::RecvStream, [u8; 16])> {
+        let conn = self
+            .connection
+            .as_ref()
+            .ok_or_else(|| anyhow!("Not connected to node"))?;
+        let seq = conn.next_sequence();
+        let wire_request = ZhtpRequestWire::new_authenticated(
+            request,
+            conn.session_id,
+            self.identity.did.clone(),
+            seq,
+            &conn.mac_key,
+        );
+        let request_id = wire_request.request_id;
+
+        let (mut send, recv) = conn
+            .quic_conn
+            .open_bi()
+            .await
+            .context("Failed to open QUIC stream")?;
+        write_request(&mut send, &wire_request)
+            .await
+            .context("Failed to send request")?;
+        send.finish().context("Failed to finish send stream")?;
+
+        Ok((send, recv, request_id))
+    }
+
     /// Send a GET request
     pub async fn get(&self, path: &str) -> Result<ZhtpResponse> {
         let request = ZhtpRequest::get(path.to_string(), Some(self.identity.id.clone()))?;
