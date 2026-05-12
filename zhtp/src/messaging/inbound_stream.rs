@@ -116,9 +116,15 @@ pub async fn run_inbound_stream(
 
     // 2. Register a live subscriber. This replaces any previous subscriber for
     // this DID (the prior stream's sender is dropped, its read loop will exit).
-    let mut rx = provider.register_subscriber(recipient_did.clone()).await;
+    // The `id` is what makes the cleanup at step 4 safe — without it, a stale
+    // stream exiting after a fresh registration would remove the live entry
+    // by key and the new subscriber would die microseconds after registering.
+    let (sub_id, mut rx) = provider.register_subscriber(recipient_did.clone()).await;
 
-    info!("msg/inbound: subscriber registered for {}", recipient_did);
+    info!(
+        "msg/inbound: subscriber registered for {} (id={})",
+        recipient_did, sub_id
+    );
 
     // 3. Push frames until the peer disconnects or a write fails.
     while let Some(envelope) = rx.recv().await {
@@ -128,9 +134,15 @@ pub async fn run_inbound_stream(
         }
     }
 
-    // 4. Cleanup.
-    provider.unregister_subscriber(&recipient_did).await;
+    // 4. Cleanup. The id-aware unregister is a no-op if the entry has
+    // already been superseded by a newer registration — exactly the
+    // case that bit us when stale streams from prior sessions were
+    // removing the live one's entry.
+    provider.unregister_subscriber(&recipient_did, sub_id).await;
     let _ = send.finish();
-    info!("msg/inbound: stream closed for {}", recipient_did);
+    info!(
+        "msg/inbound: stream closed for {} (id={})",
+        recipient_did, sub_id
+    );
     Ok(())
 }
