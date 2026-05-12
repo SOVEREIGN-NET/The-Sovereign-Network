@@ -361,7 +361,14 @@ pub extern "C" fn zhtp_quic_session_open(
             let _ = worker.join();
             return std::ptr::null_mut();
         }
-        Err(_) => return std::ptr::null_mut(),
+        Err(_) => {
+            // The worker dropped the ready sender without reporting a result.
+            // Mirror the other startup-failure path and clean up before
+            // returning a null handle.
+            drop(tx);
+            let _ = worker.join();
+            return std::ptr::null_mut();
+        }
     }
 
     Box::into_raw(Box::new(QuicSessionHandle {
