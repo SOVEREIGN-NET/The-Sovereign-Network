@@ -74,9 +74,20 @@ enum InboundEvent {
     Error(String),
 }
 
+/// Spawn the per-session worker thread. The thread builds its own
+/// tokio runtime, then **does the QUIC connect + UHP handshake on
+/// that runtime** before signalling readiness. This is load-bearing:
+/// Quinn's connection driver is tied to the runtime that called
+/// `Endpoint::connect`, so the connect and all subsequent RPCs MUST
+/// share a runtime. Previously the connect happened on a temporary
+/// runtime in `zhtp_quic_session_open` that was dropped before the
+/// worker started — that left the connection's I/O driver dead and
+/// every subsequent `open_bi()` returned `"closed"`.
 fn spawn_session_worker(
-    client: ZhtpClient,
+    addr: String,
+    identity: ZhtpIdentity,
     rx: tokio::sync::mpsc::Receiver<SessionCmd>,
+    ready: oneshot::Sender<Result<()>>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -84,9 +95,30 @@ fn spawn_session_worker(
             .build()
         {
             Ok(rt) => rt,
-            Err(_) => return,
+            Err(e) => {
+                let _ = ready.send(Err(anyhow!("runtime build failed: {}", e)));
+                return;
+            }
         };
-        runtime.block_on(session_loop(client, rx));
+        runtime.block_on(async move {
+            let trust = TrustConfig::bootstrap();
+            let config = ZhtpClientConfig { allow_bootstrap: true };
+            let mut client = match ZhtpClient::new_with_config(identity, trust, config).await {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = ready.send(Err(e.context("ZhtpClient::new_with_config")));
+                    return;
+                }
+            };
+            if let Err(e) = client.connect(&addr).await {
+                let _ = ready.send(Err(e.context("ZhtpClient::connect")));
+                return;
+            }
+            // Hand the open client to the loop and signal the caller
+            // that the session is usable.
+            let _ = ready.send(Ok(()));
+            session_loop(client, rx).await;
+        });
     })
 }
 
@@ -123,7 +155,8 @@ async fn do_rpc(
     path: String,
     body: Vec<u8>,
 ) -> Result<RpcResponse> {
-    let request = build_request(method, path, body)?;
+    let requester = Some(client.identity().id.clone());
+    let request = build_request(method, path, body, requester)?;
     let response = client.request(request).await?;
     Ok(RpcResponse {
         status: response.status.code() as u16,
@@ -135,7 +168,8 @@ async fn do_inbound_open(
     client: &Arc<ZhtpClient>,
     path: String,
 ) -> Result<InboundStreamHandle> {
-    let request = ZhtpRequest::get(path, None)?;
+    let requester = Some(client.identity().id.clone());
+    let request = ZhtpRequest::get(path, requester)?;
     let (_send, mut recv, expected_id) =
         client.open_authenticated_stream(request).await?;
 
@@ -204,16 +238,21 @@ async fn read_frame(recv: &mut quinn::RecvStream) -> Result<Option<Vec<u8>>> {
     Ok(Some(buf))
 }
 
-fn build_request(method: ZhtpMethod, path: String, body: Vec<u8>) -> Result<ZhtpRequest> {
+fn build_request(
+    method: ZhtpMethod,
+    path: String,
+    body: Vec<u8>,
+    requester: Option<lib_identity::IdentityId>,
+) -> Result<ZhtpRequest> {
     match method {
-        ZhtpMethod::Get => ZhtpRequest::get(path, None),
+        ZhtpMethod::Get => ZhtpRequest::get(path, requester),
         ZhtpMethod::Post => ZhtpRequest::post(
             path,
             body,
             "application/json".to_string(),
-            None,
+            requester,
         ),
-        ZhtpMethod::Delete => ZhtpRequest::delete(path, None),
+        ZhtpMethod::Delete => ZhtpRequest::delete(path, requester),
         _ => Err(anyhow!("Unsupported method")),
     }
 }
@@ -305,27 +344,32 @@ pub extern "C" fn zhtp_quic_session_open(
         Err(_) => return std::ptr::null_mut(),
     };
 
-    let rt = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(rt) => rt,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let client = rt.block_on(async {
-        let trust = TrustConfig::bootstrap();
-        let config = ZhtpClientConfig { allow_bootstrap: true };
-        let mut c = ZhtpClient::new_with_config(zhtp_identity, trust, config).await?;
-        c.connect(&addr).await?;
-        Ok::<_, anyhow::Error>(c)
-    });
-    let client = match client {
-        Ok(c) => c,
-        Err(_) => return std::ptr::null_mut(),
-    };
-
     let (tx, rx) = tokio::sync::mpsc::channel::<SessionCmd>(64);
-    let worker = spawn_session_worker(client, rx);
+    let (ready_tx, ready_rx) = oneshot::channel::<Result<()>>();
+    let worker = spawn_session_worker(addr, zhtp_identity, rx, ready_tx);
+
+    // Block until the worker has finished the QUIC connect + UHP
+    // handshake. Returning the handle before the connection is
+    // ready would race the next rpc() against an unconnected
+    // client and produce the same `closed` errors the temp-runtime
+    // bug used to.
+    match ready_rx.blocking_recv() {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) => {
+            // Worker exits naturally once we drop the tx (its rx ends).
+            drop(tx);
+            let _ = worker.join();
+            return std::ptr::null_mut();
+        }
+        Err(_) => {
+            // The worker dropped the ready sender without reporting a result.
+            // Mirror the other startup-failure path and clean up before
+            // returning a null handle.
+            drop(tx);
+            let _ = worker.join();
+            return std::ptr::null_mut();
+        }
+    }
 
     Box::into_raw(Box::new(QuicSessionHandle {
         tx,
