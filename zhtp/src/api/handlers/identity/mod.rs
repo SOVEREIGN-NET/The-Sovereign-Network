@@ -177,6 +177,11 @@ impl ZhtpRequestHandler for IdentityHandler {
             (ZhtpMethod::Post, "/api/v1/identity/update-kyber-key") => {
                 self.handle_update_kyber_key(request).await
             }
+            // Claim a username for an authenticated identity that doesn't have one yet.
+            // Username is unified with display_name on apply.
+            (ZhtpMethod::Post, "/api/v1/identity/claim-username") => {
+                self.handle_claim_username(request).await
+            }
             _ => Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
                 "Identity endpoint not found".to_string(),
@@ -1648,6 +1653,194 @@ impl IdentityHandler {
                 "status": "success",
                 "did": req.did,
                 "message": "Kyber public key updated on-chain"
+            }))?,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// POST /api/v1/identity/claim-username
+    ///
+    /// Authenticated caller (QUIC v2 session) claims a username for their DID,
+    /// without setting a password. The claimed username is also mirrored into
+    /// the identity's `display_name` at apply time (unified).
+    ///
+    /// Body: `{ "username": "alice" }`
+    /// Requires a key-authenticated session — rejects password-only sessions
+    /// to prevent username squatting via the public auth path.
+    async fn handle_claim_username(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        if crate::session_manager::is_request_password_session(&request).await {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::Forbidden,
+                "Key authentication required".to_string(),
+            ));
+        }
+
+        #[derive(Deserialize)]
+        struct ClaimUsernameRequest {
+            username: String,
+        }
+
+        let req: ClaimUsernameRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
+
+        let username = req.username.trim().to_ascii_lowercase();
+
+        if let Err(e) = lib_blockchain::transaction::credentials::validate_username(&username) {
+            return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e));
+        }
+
+        // Resolve canonical DID from the QUIC-authenticated identity. Tries both
+        // the key_id-direct DID and the registry scan against
+        // blake3(public_key) / blake3(public_key || kyber_public_key).
+        let requester_key_id = request
+            .requester
+            .as_ref()
+            .map(|id| hex::encode(&id.0))
+            .unwrap_or_default();
+        if requester_key_id.is_empty() {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::Unauthorized,
+                "Authenticated DID required".to_string(),
+            ));
+        }
+
+        let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+            .await
+            .map_err(|e| anyhow::anyhow!("Blockchain unavailable: {}", e))?;
+
+        let did: String = {
+            let blockchain = blockchain_arc.read().await;
+            let key_id_did = format!("did:zhtp:{}", requester_key_id);
+            if blockchain.identity_registry.contains_key(&key_id_did) {
+                key_id_did
+            } else {
+                let found = blockchain
+                    .identity_registry
+                    .iter()
+                    .find(|(_, id)| {
+                        if id.public_key.len() < 32 {
+                            return false;
+                        }
+                        let dil_hash =
+                            hex::encode(lib_crypto::hash_blake3(&id.public_key));
+                        if dil_hash == requester_key_id {
+                            return true;
+                        }
+                        if !id.kyber_public_key.is_empty() {
+                            let combined =
+                                [&id.public_key[..], &id.kyber_public_key[..]].concat();
+                            let combined_hash =
+                                hex::encode(lib_crypto::hash_blake3(&combined));
+                            return combined_hash == requester_key_id;
+                        }
+                        false
+                    })
+                    .map(|(did, _)| did.clone());
+                match found {
+                    Some(d) => d,
+                    None => {
+                        return Ok(ZhtpResponse::error(
+                            ZhtpStatus::NotFound,
+                            "Authenticated identity not found on chain".to_string(),
+                        ));
+                    }
+                }
+            }
+        };
+
+        // Conflict checks (caller-friendly errors before the chain rejects).
+        {
+            let blockchain = blockchain_arc.read().await;
+            if blockchain.credential_registry.contains_key(&username) {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::Conflict,
+                    "Username already taken".to_string(),
+                ));
+            }
+            if blockchain.did_to_username.contains_key(&did) {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::Conflict,
+                    "Identity already has a username".to_string(),
+                ));
+            }
+        }
+
+        // Build + submit RegisterCredential tx with empty password_hash.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let credential_data = lib_blockchain::transaction::RegisterCredentialData {
+            username: username.clone(),
+            owner_did: did.clone(),
+            password_hash: String::new(),
+        };
+        let tx = lib_blockchain::Transaction {
+            version: 8,
+            chain_id: 0x03,
+            transaction_type: lib_blockchain::TransactionType::RegisterCredential,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature: lib_blockchain::integration::crypto_integration::Signature {
+                signature: Vec::new(),
+                public_key: lib_blockchain::integration::crypto_integration::PublicKey {
+                    dilithium_pk: [0u8; 2592],
+                    kyber_pk: [0u8; 1568],
+                    key_id: [0u8; 32],
+                },
+                algorithm:
+                    lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
+                timestamp: now,
+            },
+            memo: format!("credential:claim:{}", username).into_bytes(),
+            payload: lib_blockchain::transaction::TransactionPayload::RegisterCredential(
+                credential_data,
+            ),
+        };
+
+        {
+            let mut blockchain = blockchain_arc.write().await;
+            if let Err(e) = blockchain.add_system_transaction(tx) {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("Failed to submit claim tx: {}", e),
+                ));
+            }
+            // Cache warmup so subsequent reads see the username before the block commits.
+            let height = blockchain.height;
+            blockchain.credential_registry.insert(
+                username.clone(),
+                lib_blockchain::transaction::UserCredential {
+                    username: username.clone(),
+                    owner_did: did.clone(),
+                    password_hash: String::new(),
+                    registered_at_height: height,
+                    registered_at: now,
+                    password_changed_at_height: 0,
+                },
+            );
+            blockchain
+                .did_to_username
+                .insert(did.clone(), username.clone());
+            if let Some(id) = blockchain.identity_registry.get_mut(&did) {
+                id.display_name = username.clone();
+            }
+        }
+
+        tracing::info!(
+            "Username claimed: '{}' for DID {}",
+            username,
+            &did[..20.min(did.len())]
+        );
+
+        Ok(ZhtpResponse::success_with_content_type(
+            serde_json::to_vec(&json!({
+                "status": "success",
+                "username": username,
+                "did": did,
+                "message": "Username claimed and mirrored to display_name"
             }))?,
             "application/json".to_string(),
             None,

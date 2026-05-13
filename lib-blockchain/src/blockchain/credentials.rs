@@ -70,6 +70,12 @@ impl Blockchain {
                         self.credential_registry
                             .insert(data.username.clone(), credential);
 
+                        // Unify: mirror the username into the identity's display_name
+                        // so callers reading either field get the same value.
+                        if let Some(id) = self.identity_registry.get_mut(&data.owner_did) {
+                            id.display_name = data.username.clone();
+                        }
+
                         info!(
                             "Credential registered: username '{}' for DID {}... at height {}",
                             data.username,
