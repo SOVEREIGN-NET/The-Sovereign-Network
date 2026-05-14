@@ -144,6 +144,47 @@ pub struct ReauthorizeObserverRequest {
     pub tx_signature: TxSignatureEnvelope,
 }
 
+/// Request body for `POST /api/v1/observer/admission/prepare`.
+///
+/// All hex strings use lowercase hex without a `0x` prefix.
+#[derive(Debug, Deserialize)]
+pub struct PrepareObserverRequest {
+    pub observer_node_did: String,
+    /// Hex-encoded Dilithium5 public key of the observer node (2592 bytes).
+    pub observer_dilithium_pk_hex: String,
+    /// Hex-encoded Kyber1024 public key of the observer node (1568 bytes).
+    /// Pass an empty string or omit to use an all-zero placeholder.
+    #[serde(default)]
+    pub observer_kyber_pk_hex: String,
+    #[serde(default)]
+    pub endpoints: Vec<String>,
+    pub sponsor_user_did: String,
+    pub sponsor_proof_level: ObserverProofLevel,
+    pub allowed_network: String,
+    #[serde(default)]
+    pub trusted_sync_scope: Option<String>,
+    pub rate_limit_tier: ObserverRateLimitTier,
+    #[serde(default)]
+    pub expires_at: Option<u64>,
+}
+
+/// Response body for `POST /api/v1/observer/admission/prepare`.
+#[derive(Debug, Serialize)]
+pub struct PrepareObserverResponse {
+    /// Hex-encoded 32-byte blake3 hash that the sponsor must sign with their
+    /// Dilithium5 private key. Pass the resulting signature bytes as
+    /// `tx_signature.signature_bytes` in the subsequent `/admission/register`
+    /// call, using the same `nonce` field that appears in this response.
+    pub tx_canonical_bytes_hex: String,
+    /// The nonce value that must appear in the `/admission/register` request.
+    /// This is the sponsor's current SOV nonce; the executor expects this
+    /// exact value and increments it to `sponsor_next_nonce` on success.
+    pub nonce: u64,
+    /// The sponsor's SOV nonce after this transaction is applied (= nonce + 1).
+    pub sponsor_next_nonce: u64,
+    pub chain_id: u8,
+}
+
 #[derive(Debug, Serialize)]
 pub struct TxSubmissionResponse {
     pub status: String,
@@ -582,6 +623,122 @@ pub async fn handle_admission_by_sponsor(request: ZhtpRequest) -> ZhtpResult<Zht
     }
 }
 
+/// `POST /api/v1/observer/admission/prepare` — build canonical signing bytes.
+///
+/// Called by the mobile app after scanning the sponsor QR code. Returns the
+/// 32-byte blake3 signing hash (hex-encoded) that the sponsor must sign with
+/// their Dilithium5 key. The returned `nonce` must be echoed verbatim in the
+/// subsequent `/admission/register` call.
+///
+/// Returns 403 when the sponsor DID has no on-chain identity record.
+pub async fn handle_admission_prepare(
+    request: ZhtpRequest,
+    chain_id: u8,
+) -> ZhtpResult<ZhtpResponse> {
+    let req: PrepareObserverRequest = match serde_json::from_slice(&request.body) {
+        Ok(r) => r,
+        Err(e) => return Ok(bad_request(format!("invalid prepare request: {e}"))),
+    };
+
+    if req.observer_node_did.trim().is_empty() {
+        return Ok(bad_request("observer_node_did is required"));
+    }
+    if req.sponsor_user_did.trim().is_empty() {
+        return Ok(bad_request("sponsor_user_did is required"));
+    }
+    if req.allowed_network.trim().is_empty() {
+        return Ok(bad_request("allowed_network is required"));
+    }
+    if req.observer_dilithium_pk_hex.trim().is_empty() {
+        return Ok(bad_request("observer_dilithium_pk_hex is required"));
+    }
+
+    let observer_dilithium_pk = match hex::decode(&req.observer_dilithium_pk_hex) {
+        Ok(b) => b,
+        Err(_) => return Ok(bad_request("observer_dilithium_pk_hex is not valid hex")),
+    };
+
+    if !req.observer_kyber_pk_hex.trim().is_empty() {
+        if hex::decode(&req.observer_kyber_pk_hex).is_err() {
+            return Ok(bad_request("observer_kyber_pk_hex is not valid hex"));
+        }
+    }
+
+    let blockchain_arc =
+        match crate::runtime::blockchain_provider::get_global_blockchain().await {
+            Ok(bc) => bc,
+            Err(e) => {
+                return Ok(forbidden(format!(
+                    "blockchain provider unavailable: {e}"
+                )));
+            }
+        };
+    let blockchain = blockchain_arc.read().await;
+    let store = match blockchain.store.as_ref() {
+        Some(s) => s.clone(),
+        None => return Ok(server_error("blockchain has no persistent store")),
+    };
+    drop(blockchain);
+
+    let sponsor_did_hash = did_to_hash(&req.sponsor_user_did);
+    let identity = match store.get_identity(&sponsor_did_hash) {
+        Ok(Some(id)) => id,
+        Ok(None) => {
+            return Ok(forbidden(format!(
+                "sponsor DID {} not found on chain",
+                req.sponsor_user_did
+            )))
+        }
+        Err(e) => return Ok(server_error(format!("identity store error: {e}"))),
+    };
+
+    let sov_token = lib_blockchain::storage::TokenId::new(
+        lib_blockchain::contracts::utils::generate_lib_token_id(),
+    );
+    let sponsor_addr = identity.owner;
+    let current_nonce = match store.get_token_nonce(&sov_token, &sponsor_addr) {
+        Ok(n) => n,
+        Err(e) => return Ok(server_error(format!("nonce lookup failed: {e}"))),
+    };
+
+    let data = RegisterObserverData {
+        observer_node_did: req.observer_node_did,
+        observer_public_key: observer_dilithium_pk,
+        endpoints: req.endpoints,
+        sponsor_user_did: req.sponsor_user_did,
+        sponsor_proof_level: req.sponsor_proof_level,
+        sponsor_signature: Vec::new(),
+        allowed_network: req.allowed_network,
+        trusted_sync_scope: req.trusted_sync_scope,
+        rate_limit_tier: req.rate_limit_tier,
+        expires_at: req.expires_at,
+        nonce: current_nonce,
+    };
+
+    let zeroed_sig = lib_crypto::Signature {
+        signature: Vec::new(),
+        public_key: lib_crypto::PublicKey {
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
+            key_id: [0u8; 32],
+        },
+        algorithm: lib_crypto::SignatureAlgorithm::DEFAULT,
+        timestamp: 0,
+    };
+
+    let tx = Transaction::new_register_observer(chain_id, data, zeroed_sig);
+    let signing_hash =
+        lib_blockchain::transaction::hashing::hash_for_signature(&tx);
+    let tx_canonical_bytes_hex = hex::encode(signing_hash.as_bytes());
+
+    json_ok(&PrepareObserverResponse {
+        tx_canonical_bytes_hex,
+        nonce: current_nonce,
+        sponsor_next_nonce: current_nonce.saturating_add(1),
+        chain_id,
+    })
+}
+
 /// Convenience wrapper for routing in `observer.rs` that resolves the
 /// chain_id from the runtime before dispatching write endpoints.
 pub async fn dispatch_admission_write(
@@ -591,6 +748,9 @@ pub async fn dispatch_admission_write(
 ) -> ZhtpResult<ZhtpResponse> {
     let chain_id = chain_id_from_runtime(runtime);
     match path {
+        "/api/v1/observer/admission/prepare" => {
+            handle_admission_prepare(request, chain_id).await
+        }
         "/api/v1/observer/admission/register" => {
             let policy = resolve_admission_policy(runtime);
             handle_admission_register(request, chain_id, &policy).await
@@ -876,5 +1036,119 @@ mod tests {
     fn pre_validate_proof_level_helper_rejects_none() {
         let policy = lib_blockchain::observer::default_policy();
         assert!(pre_validate_register_proof_level(ObserverProofLevel::None, &policy).is_some());
+    }
+
+    // ---- prepare endpoint unit tests (no blockchain required) ----
+
+    #[tokio::test]
+    async fn prepare_rejects_missing_observer_did() {
+        let body = serde_json::to_vec(&serde_json::json!({
+            "observer_node_did": "",
+            "observer_dilithium_pk_hex": hex::encode(vec![1u8; 2592]),
+            "sponsor_user_did": "did:zhtp:sponsor",
+            "sponsor_proof_level": "Basic",
+            "allowed_network": "testnet",
+            "rate_limit_tier": "Standard"
+        }))
+        .unwrap();
+        let req = build_request(
+            ZhtpMethod::Post,
+            "/api/v1/observer/admission/prepare",
+            body,
+        );
+        let resp = handle_admission_prepare(req, 3).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::BadRequest);
+    }
+
+    #[tokio::test]
+    async fn prepare_rejects_missing_sponsor_did() {
+        let body = serde_json::to_vec(&serde_json::json!({
+            "observer_node_did": "did:zhtp:obs",
+            "observer_dilithium_pk_hex": hex::encode(vec![1u8; 2592]),
+            "sponsor_user_did": "",
+            "sponsor_proof_level": "Basic",
+            "allowed_network": "testnet",
+            "rate_limit_tier": "Standard"
+        }))
+        .unwrap();
+        let req = build_request(
+            ZhtpMethod::Post,
+            "/api/v1/observer/admission/prepare",
+            body,
+        );
+        let resp = handle_admission_prepare(req, 3).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::BadRequest);
+    }
+
+    #[tokio::test]
+    async fn prepare_rejects_missing_dilithium_pk() {
+        let body = serde_json::to_vec(&serde_json::json!({
+            "observer_node_did": "did:zhtp:obs",
+            "observer_dilithium_pk_hex": "",
+            "sponsor_user_did": "did:zhtp:sponsor",
+            "sponsor_proof_level": "Basic",
+            "allowed_network": "testnet",
+            "rate_limit_tier": "Standard"
+        }))
+        .unwrap();
+        let req = build_request(
+            ZhtpMethod::Post,
+            "/api/v1/observer/admission/prepare",
+            body,
+        );
+        let resp = handle_admission_prepare(req, 3).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::BadRequest);
+    }
+
+    #[tokio::test]
+    async fn prepare_rejects_invalid_hex_pk() {
+        let body = serde_json::to_vec(&serde_json::json!({
+            "observer_node_did": "did:zhtp:obs",
+            "observer_dilithium_pk_hex": "not-valid-hex!!",
+            "sponsor_user_did": "did:zhtp:sponsor",
+            "sponsor_proof_level": "Basic",
+            "allowed_network": "testnet",
+            "rate_limit_tier": "Standard"
+        }))
+        .unwrap();
+        let req = build_request(
+            ZhtpMethod::Post,
+            "/api/v1/observer/admission/prepare",
+            body,
+        );
+        let resp = handle_admission_prepare(req, 3).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::BadRequest);
+    }
+
+    #[tokio::test]
+    async fn prepare_returns_403_when_blockchain_unavailable() {
+        // No global blockchain is seeded; provider returns an error → 403.
+        let body = serde_json::to_vec(&serde_json::json!({
+            "observer_node_did": "did:zhtp:obs",
+            "observer_dilithium_pk_hex": hex::encode(vec![1u8; 2592]),
+            "sponsor_user_did": "did:zhtp:sponsor",
+            "sponsor_proof_level": "Basic",
+            "allowed_network": "testnet",
+            "rate_limit_tier": "Standard"
+        }))
+        .unwrap();
+        let req = build_request(
+            ZhtpMethod::Post,
+            "/api/v1/observer/admission/prepare",
+            body,
+        );
+        let resp = handle_admission_prepare(req, 3).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::Forbidden);
+    }
+
+    #[tokio::test]
+    async fn prepare_rejects_malformed_body() {
+        let req = build_request(
+            ZhtpMethod::Post,
+            "/api/v1/observer/admission/prepare",
+            b"not json".to_vec(),
+        );
+        let resp = handle_admission_prepare(req, 3).await.unwrap();
+        assert_eq!(resp.status, ZhtpStatus::BadRequest);
     }
 }
