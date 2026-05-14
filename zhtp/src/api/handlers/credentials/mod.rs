@@ -70,6 +70,23 @@ fn error_resp(status: ZhtpStatus, msg: &str) -> ZhtpResponse {
     ZhtpResponse::error(status, msg.to_string())
 }
 
+/// S7 #2561: 409 response steering a legacy argon2id user through OPAQUE
+/// registration to migrate their credential in place.
+fn upgrade_required_resp(did: &str, username: &str) -> ZhtpResponse {
+    let body = serde_json::to_vec(&json!({
+        "status": "upgrade_required",
+        "did": did,
+        "username": username,
+        "hint": "call /api/v1/auth/opaque/register/start to upgrade"
+    }))
+    .unwrap_or_default();
+    let mut resp =
+        ZhtpResponse::success_with_content_type(body, "application/json".to_string(), None);
+    resp.status = ZhtpStatus::Conflict;
+    resp.status_message = ZhtpStatus::Conflict.reason_phrase().to_string();
+    resp
+}
+
 impl CredentialsHandler {
     pub fn new(blockchain: Arc<RwLock<Blockchain>>, session_manager: Arc<SessionManager>) -> Self {
         Self {
@@ -249,6 +266,19 @@ impl CredentialsHandler {
             }
         };
 
+        // S7 #2561: once a credential has been migrated to OPAQUE, the legacy
+        // signin endpoint refuses to authenticate it at all — the client must
+        // use the OPAQUE login flow. Reply 401 (same shape as bad-password)
+        // to avoid leaking that this username has migrated.
+        if credential.auth_method
+            == lib_blockchain::transaction::credentials::AuthMethod::Opaque
+        {
+            return Ok(error_resp(
+                ZhtpStatus::Unauthorized,
+                "Invalid username or password",
+            ));
+        }
+
         if credential.password_hash != req.password_hash {
             return Ok(error_resp(
                 ZhtpStatus::Unauthorized,
@@ -256,43 +286,20 @@ impl CredentialsHandler {
             ));
         }
 
-        let client_ip = request
-            .headers
-            .get("X-Real-IP")
-            .unwrap_or_else(|| "unknown".to_string());
-        let user_agent = request
-            .headers
-            .get("User-Agent")
-            .unwrap_or_else(|| "unknown".to_string());
-
-        let identity_hash = {
-            let did_hex = credential
-                .owner_did
-                .strip_prefix("did:zhtp:")
-                .unwrap_or(&credential.owner_did);
-            let mut h = [0u8; 32];
-            if let Ok(bytes) = hex::decode(did_hex) {
-                let len = bytes.len().min(32);
-                h[..len].copy_from_slice(&bytes[..len]);
-            }
-            lib_crypto::Hash(h)
-        };
-
-        let session_token = self
-            .session_manager
-            .create_password_session(identity_hash, &client_ip, &user_agent)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to create session: {}", e))?;
-
-        info!("Password signin: '{}' from {}", req.username, client_ip);
-
-        create_json_response(json!({
-            "status": "success",
-            "session_token": session_token,
-            "did": credential.owner_did,
-            "username": credential.username,
-            "access_zone": "public"
-        }))
+        // S7 #2561: argon2id credential, password verified. Don't mint a
+        // session — instead instruct the client to upgrade to OPAQUE.
+        // After the OPAQUE register flow lands the new record on-chain,
+        // the same user signs in via /opaque/login. The 409 + hint is the
+        // wire signal to mobile to walk that flow now.
+        let _ = request; // unused once we stop minting sessions here
+        info!(
+            "Legacy signin attempted for '{}' — returning 409 upgrade_required",
+            req.username
+        );
+        Ok(upgrade_required_resp(
+            &credential.owner_did,
+            &credential.username,
+        ))
     }
 
     async fn handle_recover(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
