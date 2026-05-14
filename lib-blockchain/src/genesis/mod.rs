@@ -58,6 +58,20 @@ pub struct GenesisConfig {
     pub cbe_curve: CbeCurveConfig,
     #[serde(default)]
     pub allocations: GenesisAllocations,
+    /// Lobby-auth OPAQUE server setup, embedded once at the genesis ceremony.
+    /// Optional in v1 — missing `[opaque]` means no lobby auth is configured
+    /// for this network, and OPAQUE endpoints will return 503 at runtime.
+    #[serde(default)]
+    pub opaque: Option<OpaqueConfig>,
+}
+
+/// `[opaque]` section of `genesis.toml` — locks the OPAQUE server setup
+/// (an `opaque-ke`-serialized blob) into the chain.
+#[derive(Debug, Clone, Deserialize)]
+pub struct OpaqueConfig {
+    /// `ServerSetup::serialize()` bytes, base64-encoded (STANDARD alphabet).
+    /// Generated once at genesis via the keygen helper; never rotates in v1.
+    pub server_setup_b64: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -640,6 +654,25 @@ impl GenesisConfig {
     /// the identity/wallet registries are empty because genesis state is populated via
     /// direct inserts in build_block0(), not via transactions.
     pub fn apply_genesis_state(&self, bc: &mut crate::Blockchain) -> Result<()> {
+        // Load the OPAQUE server setup if `[opaque]` is present.
+        // Missing section is allowed in v1 — networks without lobby auth
+        // simply have `bc.opaque_server_setup = None` and the OPAQUE
+        // endpoints will return 503 at runtime.
+        if let Some(ref op) = self.opaque {
+            let bytes = crate::opaque::parse_server_setup_b64(&op.server_setup_b64)
+                .context("genesis [opaque] server_setup_b64 invalid")?;
+            info!(
+                "Loaded OPAQUE server setup (ciphersuite={}, fingerprint={}, bytes={})",
+                crate::opaque::CIPHERSUITE_ID,
+                bytes.fingerprint(),
+                bytes.as_slice().len()
+            );
+            bc.opaque_server_setup = Some(bytes);
+        } else {
+            info!(
+                "No [opaque] section in genesis — lobby auth disabled for this network"
+            );
+        }
         {
             let alloc = &self.allocations;
             // identities

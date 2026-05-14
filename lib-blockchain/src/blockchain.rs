@@ -349,6 +349,12 @@ pub struct Blockchain {
     /// Reverse index: DID → username (one credential per DID).
     #[serde(default)]
     pub did_to_username: HashMap<String, String>,
+    /// Lobby-auth OPAQUE server setup bytes loaded from `genesis.toml`.
+    /// `None` if no `[opaque]` section was present at genesis. Never mutated
+    /// at runtime. Treat as opaque by lib-blockchain — the typed
+    /// `ServerSetup<CipherSuite>` is constructed in the server crate.
+    #[serde(skip)]
+    pub opaque_server_setup: Option<crate::opaque::OpaqueServerSetupBytes>,
     // =========================================================================
     // DAO Treasury Execution (dao-2)
     // =========================================================================
