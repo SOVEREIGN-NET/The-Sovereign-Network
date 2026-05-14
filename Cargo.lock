@@ -7259,6 +7259,7 @@ dependencies = [
  "lib-identity",
  "lib-network",
  "lib-protocols",
+ "lib-types",
  "serde",
  "serde_json",
  "sled",
