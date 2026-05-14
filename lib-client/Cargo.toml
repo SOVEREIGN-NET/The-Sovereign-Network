@@ -68,6 +68,8 @@ opaque-ke = { version = "4", default-features = false, features = ["ristretto255
 argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
 sha2 = { version = "0.10", default-features = false }
 generic-array = "0.14"
+hmac = { version = "0.12", default-features = false }
+subtle = { version = "2.5", default-features = false }
 
 # Android JNI bindings
 [target.'cfg(target_os = "android")'.dependencies]

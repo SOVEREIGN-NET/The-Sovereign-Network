@@ -352,6 +352,250 @@ pub extern "C" fn zhtp_opaque_login_state_free(state: *mut OpaqueLoginState) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Channel binding — per-request HMAC over canonical request bytes (L2 #2563)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Wrapper for the 64-byte OPAQUE-derived session key. The HMAC key for
+/// per-request channel binding on every lobby request after login.
+#[derive(Clone)]
+pub struct LobbySessionKey(pub [u8; 64]);
+
+impl LobbySessionKey {
+    /// Build from a raw 64-byte slice (e.g. directly from `login_finish` output).
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() != 64 {
+            return Err(anyhow!(
+                "LobbySessionKey requires 64 bytes, got {}",
+                bytes.len()
+            ));
+        }
+        let mut arr = [0u8; 64];
+        arr.copy_from_slice(bytes);
+        Ok(LobbySessionKey(arr))
+    }
+}
+
+/// Encode the canonical request bytes that the MAC covers.
+///
+/// **This format is the wire contract** — server-side verifier (S6 #2560)
+/// must produce identical bytes for the same inputs or every MAC check fails.
+/// Layout:
+/// ```text
+///   method_byte:    u8         (GET=0, POST=1, PUT=2, DELETE=3, …)
+///   uri_len:        u32 BE
+///   uri:            uri_len bytes UTF-8
+///   body_len:       u32 BE
+///   body:           body_len bytes
+///   seq:            u64 BE
+/// ```
+pub fn canonical_request_bytes(method: u8, uri: &[u8], body: &[u8], seq: u64) -> Vec<u8> {
+    let mut out = Vec::with_capacity(1 + 4 + uri.len() + 4 + body.len() + 8);
+    out.push(method);
+    out.extend_from_slice(&(uri.len() as u32).to_be_bytes());
+    out.extend_from_slice(uri);
+    out.extend_from_slice(&(body.len() as u32).to_be_bytes());
+    out.extend_from_slice(body);
+    out.extend_from_slice(&seq.to_be_bytes());
+    out
+}
+
+/// Compute HMAC-SHA512(session_key, canonical_request_bytes). Truncated to
+/// 32 bytes for use as the `X-OPAQUE-Mac` header value (hex-encoded by the
+/// caller).
+pub fn compute_mac(
+    key: &LobbySessionKey,
+    method: u8,
+    uri: &[u8],
+    body: &[u8],
+    seq: u64,
+) -> [u8; 32] {
+    use hmac::Mac;
+    type HmacSha512 = hmac::Hmac<sha2::Sha512>;
+    let mut mac = <HmacSha512 as hmac::Mac>::new_from_slice(&key.0)
+        .expect("HMAC-SHA512 accepts any key length");
+    let canonical = canonical_request_bytes(method, uri, body, seq);
+    mac.update(&canonical);
+    let full = mac.finalize().into_bytes();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&full[..32]);
+    out
+}
+
+/// Constant-time comparison of two MAC bytes (for callers verifying server
+/// responses — server-side has its own verification path).
+pub fn verify_mac_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
+    use subtle::ConstantTimeEq;
+    a.ct_eq(b).into()
+}
+
+/// Method byte encoding used by `canonical_request_bytes`.
+pub mod method {
+    pub const GET: u8 = 0;
+    pub const POST: u8 = 1;
+    pub const PUT: u8 = 2;
+    pub const DELETE: u8 = 3;
+    pub const PATCH: u8 = 4;
+    pub const HEAD: u8 = 5;
+    pub const OPTIONS: u8 = 6;
+}
+
+/// Compute the HMAC for a lobby request. Mobile / native callers invoke this
+/// before sending; the resulting 32 bytes go into the `X-OPAQUE-Mac` header
+/// (hex-encoded), and `seq` into `X-OPAQUE-Seq`.
+///
+/// `session_key_ptr` MUST point to exactly 64 bytes (the session_key
+/// returned by `zhtp_opaque_login_finish`).
+///
+/// `out_mac` is filled with exactly 32 bytes on success; do not free it
+/// (it's caller-owned space, e.g. a fixed `[u8;32]` on the stack).
+///
+/// Returns 0 on success, -1 on invalid input.
+#[no_mangle]
+pub extern "C" fn zhtp_lobby_mac_compute(
+    session_key_ptr: *const u8,
+    session_key_len: usize,
+    method: u8,
+    uri: *const u8,
+    uri_len: usize,
+    body: *const u8,
+    body_len: usize,
+    seq: u64,
+    out_mac: *mut u8,
+) -> i32 {
+    if session_key_ptr.is_null() || session_key_len != 64 || out_mac.is_null() {
+        return -1;
+    }
+    if uri.is_null() && uri_len != 0 {
+        return -1;
+    }
+    if body.is_null() && body_len != 0 {
+        return -1;
+    }
+    let key_slice = unsafe { std::slice::from_raw_parts(session_key_ptr, 64) };
+    let key = match LobbySessionKey::from_bytes(key_slice) {
+        Ok(k) => k,
+        Err(_) => return -1,
+    };
+    let uri_slice = if uri_len == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(uri, uri_len) }
+    };
+    let body_slice = if body_len == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(body, body_len) }
+    };
+    let mac = compute_mac(&key, method, uri_slice, body_slice, seq);
+    unsafe { std::ptr::copy_nonoverlapping(mac.as_ptr(), out_mac, 32) };
+    0
+}
+
+#[cfg(test)]
+mod mac_tests {
+    use super::*;
+
+    fn key() -> LobbySessionKey {
+        LobbySessionKey([0xab; 64])
+    }
+
+    #[test]
+    fn deterministic_for_same_input() {
+        let k = key();
+        let a = compute_mac(&k, method::GET, b"/api/v1/chain/info", b"", 1);
+        let b = compute_mac(&k, method::GET, b"/api/v1/chain/info", b"", 1);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn different_uri_different_mac() {
+        let k = key();
+        let a = compute_mac(&k, method::GET, b"/api/v1/chain/info", b"", 1);
+        let b = compute_mac(&k, method::GET, b"/api/v1/dao/proposals", b"", 1);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn different_body_different_mac() {
+        let k = key();
+        let a = compute_mac(&k, method::POST, b"/x", b"alpha", 1);
+        let b = compute_mac(&k, method::POST, b"/x", b"beta", 1);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn different_seq_different_mac() {
+        let k = key();
+        let a = compute_mac(&k, method::GET, b"/x", b"", 1);
+        let b = compute_mac(&k, method::GET, b"/x", b"", 2);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn different_key_different_mac() {
+        let k1 = LobbySessionKey([0x11; 64]);
+        let k2 = LobbySessionKey([0x22; 64]);
+        let a = compute_mac(&k1, method::GET, b"/x", b"", 1);
+        let b = compute_mac(&k2, method::GET, b"/x", b"", 1);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn canonical_bytes_layout() {
+        // method=POST(1), uri="/x", body="hi", seq=42
+        let bytes = canonical_request_bytes(1, b"/x", b"hi", 42);
+        assert_eq!(
+            bytes,
+            vec![
+                1, // method
+                0, 0, 0, 2, b'/', b'x', // uri_len=2 + uri
+                0, 0, 0, 2, b'h', b'i', // body_len=2 + body
+                0, 0, 0, 0, 0, 0, 0, 42, // seq=42
+            ]
+        );
+    }
+
+    #[test]
+    fn ffi_matches_rust() {
+        let k = key();
+        let rust_mac = compute_mac(&k, method::POST, b"/api/v1/foo", b"bar", 7);
+
+        let mut ffi_mac = [0u8; 32];
+        let rc = zhtp_lobby_mac_compute(
+            k.0.as_ptr(),
+            64,
+            method::POST,
+            b"/api/v1/foo".as_ptr(),
+            "/api/v1/foo".len(),
+            b"bar".as_ptr(),
+            3,
+            7,
+            ffi_mac.as_mut_ptr(),
+        );
+        assert_eq!(rc, 0);
+        assert_eq!(rust_mac, ffi_mac);
+    }
+
+    #[test]
+    fn ffi_rejects_wrong_key_len() {
+        let k = [0u8; 32];
+        let mut out = [0u8; 32];
+        let rc = zhtp_lobby_mac_compute(
+            k.as_ptr(),
+            32,
+            method::GET,
+            b"/x".as_ptr(),
+            2,
+            std::ptr::null(),
+            0,
+            0,
+            out.as_mut_ptr(),
+        );
+        assert_eq!(rc, -1);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tests — full register + login roundtrip using the server half of opaque-ke.
 // (Server side is otherwise instantiated only in the zhtp crate; we reach into
 // the same library here just for the test.)
