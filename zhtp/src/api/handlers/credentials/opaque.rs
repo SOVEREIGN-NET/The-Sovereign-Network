@@ -248,6 +248,59 @@ pub struct OpaqueHandlers {
     pub blockchain: Arc<tokio::sync::RwLock<Blockchain>>,
     pub state: Arc<OpaqueAuthState>,
     pub session_manager: Arc<crate::session_manager::SessionManager>,
+    pub rate_limiter: Arc<super::rate_limit::LobbyRateLimiter>,
+}
+
+fn ip_of(request: &ZhtpRequest) -> String {
+    request
+        .headers
+        .get("X-Real-IP")
+        .or_else(|| request.headers.get("peer_addr"))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn rate_limit_response(d: &super::rate_limit::RateDecision) -> Option<ZhtpResponse> {
+    use super::rate_limit::RateDecision::*;
+    let mut resp = match d {
+        Allowed => return None,
+        UsernameLocked { retry_after_secs } => {
+            let mut r = json_err(
+                ZhtpStatus::TooManyRequests,
+                &format!("Username locked. Retry after {}s.", retry_after_secs),
+            );
+            r.headers
+                .set("Retry-After", retry_after_secs.to_string());
+            r
+        }
+        LifetimeCapHit => json_err(
+            ZhtpStatus::TooManyRequests,
+            "Too many failed attempts. Recovery flow required.",
+        ),
+        IpThrottled { retry_after_secs } => {
+            let mut r = json_err(
+                ZhtpStatus::TooManyRequests,
+                &format!("IP throttled. Retry after {}s.", retry_after_secs),
+            );
+            r.headers
+                .set("Retry-After", retry_after_secs.to_string());
+            r
+        }
+        LoginStartThrottled { retry_after_secs } => {
+            let mut r = json_err(
+                ZhtpStatus::TooManyRequests,
+                &format!(
+                    "Too many login_start requests. Retry after {}s.",
+                    retry_after_secs
+                ),
+            );
+            r.headers
+                .set("Retry-After", retry_after_secs.to_string());
+            r
+        }
+    };
+    resp.headers
+        .set("Content-Type", "application/json".to_string());
+    Some(resp)
 }
 
 impl OpaqueHandlers {
@@ -479,6 +532,13 @@ impl OpaqueHandlers {
             .map_err(|e| anyhow!("Invalid request body: {}", e))?;
         let username = lower_username(&req.username);
 
+        // Burst throttle on login_start independently of the finish gate.
+        let ip = ip_of(request);
+        let decision = self.rate_limiter.check_login_start(&ip).await;
+        if let Some(resp) = rate_limit_response(&decision) {
+            return Ok(resp);
+        }
+
         let credential = {
             let bc = self.blockchain.read().await;
             bc.credential_registry.get(&username).cloned()
@@ -598,6 +658,16 @@ impl OpaqueHandlers {
             }
         };
 
+        // Rate-limit gate BEFORE running OPAQUE finish — cheap fast-reject.
+        let ip = ip_of(request);
+        let decision = self
+            .rate_limiter
+            .check_login_finish(&pending.username, &ip)
+            .await;
+        if let Some(resp) = rate_limit_response(&decision) {
+            return Ok(resp);
+        }
+
         let msg3 = match unb64(&req.msg3_b64) {
             Ok(v) => v,
             Err(e) => return Ok(json_err(ZhtpStatus::BadRequest, &e.to_string())),
@@ -619,6 +689,11 @@ impl OpaqueHandlers {
         {
             Ok(r) => r,
             Err(_) => {
+                // Record failure (both axes) — may tip into lock/throttle.
+                let d = self.rate_limiter.record_failure(&pending.username, &ip).await;
+                if let Some(resp) = rate_limit_response(&d) {
+                    return Ok(resp);
+                }
                 tokio::time::sleep(Duration::from_millis(150)).await;
                 return Ok(json_err(
                     ZhtpStatus::Unauthorized,
@@ -627,6 +702,11 @@ impl OpaqueHandlers {
             }
         };
         let session_key_bytes = finish_result.session_key.to_vec();
+
+        // Successful login clears the per-username counter.
+        self.rate_limiter
+            .record_success_for_username(&pending.username)
+            .await;
 
         // Resolve DID for the username.
         let did = {
