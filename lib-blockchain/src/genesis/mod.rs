@@ -725,6 +725,8 @@ impl GenesisConfig {
                             registered_at_height: 0,
                             registered_at: 0,
                             password_changed_at_height: 0,
+                            opaque_record: Vec::new(),
+                            auth_method: crate::transaction::credentials::AuthMethod::Argon2idPhc,
                         },
                     );
                 }

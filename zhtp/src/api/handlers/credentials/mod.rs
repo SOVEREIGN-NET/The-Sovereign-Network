@@ -125,11 +125,14 @@ impl CredentialsHandler {
             }
         }
 
-        // Submit transaction + cache warmup
+        // Submit transaction + cache warmup. Legacy endpoint emits an
+        // Argon2idPhc record; opaque_record stays empty.
         let credential_data = lib_blockchain::transaction::RegisterCredentialData {
             username: req.username.clone(),
             owner_did: req.did.clone(),
             password_hash: req.password_hash.clone(),
+            opaque_record: Vec::new(),
+            auth_method: lib_blockchain::transaction::credentials::AuthMethod::Argon2idPhc,
         };
 
         let tx = self.build_system_tx(
@@ -156,6 +159,8 @@ impl CredentialsHandler {
                     registered_at_height: height,
                     registered_at: now,
                     password_changed_at_height: 0,
+                    opaque_record: Vec::new(),
+                    auth_method: lib_blockchain::transaction::credentials::AuthMethod::Argon2idPhc,
                 },
             );
             blockchain

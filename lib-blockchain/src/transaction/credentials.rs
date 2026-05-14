@@ -12,6 +12,22 @@
 
 use serde::{Deserialize, Serialize};
 
+/// How a credential authenticates the user.
+///
+/// `Argon2idPhc` is the legacy v1 method (client-side argon2id PHC string,
+/// equality compared server-side). `Opaque` is the new OPAQUE-based method
+/// (offline-attack-resistant, RFC 9497 / IETF CFRG draft).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum AuthMethod {
+    /// Legacy argon2id PHC string in `password_hash`. Deserializes by default
+    /// so older blocks/sled records without the field load cleanly.
+    #[default]
+    Argon2idPhc,
+    /// OPAQUE — `opaque_record` is the authoritative verifier; `password_hash`
+    /// is ignored.
+    Opaque,
+}
+
 /// On-chain credential record indexed by username.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UserCredential {
@@ -19,7 +35,8 @@ pub struct UserCredential {
     pub username: String,
     /// DID that owns this credential (did:zhtp:...)
     pub owner_did: String,
-    /// Argon2id password hash (PHC string format: $argon2id$v=19$m=...$...)
+    /// Argon2id password hash (PHC string format: $argon2id$v=19$m=...$...).
+    /// Used only when `auth_method = Argon2idPhc`. Empty for Opaque entries.
     pub password_hash: String,
     /// Block height at registration
     pub registered_at_height: u64,
@@ -27,6 +44,14 @@ pub struct UserCredential {
     pub registered_at: u64,
     /// Block height of last password change (0 = never changed)
     pub password_changed_at_height: u64,
+    /// OPAQUE registration record bytes (per RFC 9497). Empty for legacy entries.
+    /// Used only when `auth_method = Opaque`.
+    #[serde(default)]
+    pub opaque_record: Vec<u8>,
+    /// Which auth primitive backs this credential.
+    /// Defaults to `Argon2idPhc` for blocks/records that pre-date this field.
+    #[serde(default)]
+    pub auth_method: AuthMethod,
 }
 
 /// Payload for RegisterCredential transaction.
@@ -36,8 +61,15 @@ pub struct RegisterCredentialData {
     pub username: String,
     /// DID that owns this credential
     pub owner_did: String,
-    /// Argon2id password hash (computed client-side, PHC string format)
+    /// Argon2id password hash (computed client-side, PHC string format).
+    /// Empty when `auth_method = Opaque`.
     pub password_hash: String,
+    /// OPAQUE registration record bytes. Empty when `auth_method = Argon2idPhc`.
+    #[serde(default)]
+    pub opaque_record: Vec<u8>,
+    /// Which auth primitive this credential uses.
+    #[serde(default)]
+    pub auth_method: AuthMethod,
 }
 
 /// Payload for UpdateCredentialPassword transaction.
