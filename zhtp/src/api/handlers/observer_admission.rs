@@ -1120,25 +1120,207 @@ mod tests {
         assert_eq!(resp.status, ZhtpStatus::BadRequest);
     }
 
+    /// Full round-trip: prepare → sign → register → apply block → verify sled record.
+    ///
+    /// Also validates:
+    ///   - prepare returns valid bytes and nonce for a known sponsor (acceptance criterion 1)
+    ///   - 403 when sponsor DID is not found on chain (acceptance criterion 3)
+    ///   - observer record appears in sled with correct sponsor binding (acceptance criterion 2)
     #[tokio::test]
-    async fn prepare_returns_403_when_blockchain_unavailable() {
-        // No global blockchain is seeded; provider returns an error → 403.
-        let body = serde_json::to_vec(&serde_json::json!({
-            "observer_node_did": "did:zhtp:obs",
-            "observer_dilithium_pk_hex": hex::encode(vec![1u8; 2592]),
-            "sponsor_user_did": "did:zhtp:sponsor",
+    async fn prepare_register_round_trip() {
+        use lib_blockchain::{
+            storage::{did_to_hash, IdentityConsensus, IdentityStatus, IdentityType, SledStore},
+            Block, BlockHeader, Blockchain,
+        };
+        use lib_blockchain::contracts::utils::generate_lib_token_id;
+        use lib_blockchain::observer::default_policy;
+        use lib_blockchain::storage::{Address, TokenId};
+        use lib_blockchain::types::Hash;
+        use lib_crypto::KeyPair;
+        use std::sync::Arc;
+        use tokio::sync::RwLock;
+
+        // --- Sled store (temp dir kept alive for test duration) ---
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store: Arc<dyn lib_blockchain::storage::BlockchainStore> =
+            Arc::new(SledStore::open(dir.path()).expect("sled open"));
+
+        // --- Sponsor keypair + identity ---
+        let sponsor_kp = KeyPair::generate().expect("sponsor keygen");
+        let sponsor_did = "did:zhtp:sponsor-rt";
+        let sponsor_did_hash = did_to_hash(sponsor_did);
+        let sponsor_addr = Address::new(sponsor_kp.public_key.key_id);
+
+        store
+            .put_identity(
+                &sponsor_did_hash,
+                &IdentityConsensus::new(
+                    sponsor_did_hash,
+                    sponsor_addr,
+                    &sponsor_kp.public_key.dilithium_pk,
+                    IdentityType::User,
+                ),
+            )
+            .expect("put identity");
+        store
+            .put_identity_owner_index(&sponsor_addr, &sponsor_did_hash)
+            .expect("owner index");
+
+        // --- Fund sponsor with enough SOV for the registration fee ---
+        let sov_token = TokenId::new(generate_lib_token_id());
+        store
+            .set_token_balance(&sov_token, &sponsor_addr, 1_000_000)
+            .expect("seed SOV");
+
+        // --- Seed auto-approve policy so the record lands in Active status ---
+        let mut policy = default_policy();
+        policy.auto_approve = true;
+        store.save_observer_policy(&policy).expect("seed policy");
+
+        // --- Create blockchain and apply genesis ---
+        let bc = Blockchain::new_with_store(store.clone()).expect("new blockchain");
+        let genesis = lib_blockchain::create_genesis_block();
+        let genesis_hash = genesis.header.block_hash;
+        bc.executor
+            .as_ref()
+            .expect("executor")
+            .apply_block(&genesis)
+            .expect("genesis");
+
+        // --- Seed global provider (bypasses IPC server) ---
+        let bc_arc = Arc::new(RwLock::new(bc));
+        crate::runtime::blockchain_provider::initialize_global_blockchain_provider()
+            .set_blockchain(bc_arc.clone())
+            .await
+            .expect("set global blockchain");
+
+        // --- Observer keypair ---
+        let obs_kp = KeyPair::generate().expect("obs keygen");
+        let obs_did = "did:zhtp:observer-rt";
+
+        // --- Call prepare ---
+        let prep_body = serde_json::to_vec(&serde_json::json!({
+            "observer_node_did": obs_did,
+            "observer_dilithium_pk_hex": hex::encode(obs_kp.public_key.dilithium_pk),
+            "observer_kyber_pk_hex": "",
+            "endpoints": ["127.0.0.1:9000"],
+            "sponsor_user_did": sponsor_did,
             "sponsor_proof_level": "Basic",
             "allowed_network": "testnet",
             "rate_limit_tier": "Standard"
         }))
         .unwrap();
-        let req = build_request(
+        let prep_req = build_request(
             ZhtpMethod::Post,
             "/api/v1/observer/admission/prepare",
-            body,
+            prep_body,
         );
-        let resp = handle_admission_prepare(req, 3).await.unwrap();
-        assert_eq!(resp.status, ZhtpStatus::Forbidden);
+        let prep_resp = handle_admission_prepare(prep_req, 0x03).await.unwrap();
+        assert_eq!(prep_resp.status, ZhtpStatus::Ok, "prepare must succeed");
+
+        let prep: PrepareObserverResponse =
+            serde_json::from_slice(&prep_resp.body).expect("parse prepare response");
+        assert_eq!(prep.chain_id, 0x03);
+        assert_eq!(prep.nonce, 0, "fresh sponsor nonce must be 0");
+        assert_eq!(prep.sponsor_next_nonce, 1);
+        assert_eq!(prep.tx_canonical_bytes_hex.len(), 64, "32 bytes hex = 64 chars");
+
+        // --- 403 for sponsor not on chain (acceptance criterion 3) ---
+        let bad_body = serde_json::to_vec(&serde_json::json!({
+            "observer_node_did": obs_did,
+            "observer_dilithium_pk_hex": hex::encode(obs_kp.public_key.dilithium_pk),
+            "sponsor_user_did": "did:zhtp:no-such-sponsor",
+            "sponsor_proof_level": "Basic",
+            "allowed_network": "testnet",
+            "rate_limit_tier": "Standard"
+        }))
+        .unwrap();
+        let bad_req = build_request(
+            ZhtpMethod::Post,
+            "/api/v1/observer/admission/prepare",
+            bad_body,
+        );
+        let bad_resp = handle_admission_prepare(bad_req, 0x03).await.unwrap();
+        assert_eq!(bad_resp.status, ZhtpStatus::Forbidden, "unknown sponsor must 403");
+
+        // --- Sign canonical bytes ---
+        let canonical = hex::decode(&prep.tx_canonical_bytes_hex).expect("decode hex");
+        let sig = sponsor_kp.sign(&canonical).expect("sign");
+
+        // --- Submit to /admission/register ---
+        let reg_body = serde_json::to_vec(&serde_json::json!({
+            "observer_node_did": obs_did,
+            "observer_public_key": obs_kp.public_key.dilithium_pk.to_vec(),
+            "endpoints": ["127.0.0.1:9000"],
+            "sponsor_user_did": sponsor_did,
+            "sponsor_proof_level": "Basic",
+            "sponsor_signature": sig.signature,
+            "allowed_network": "testnet",
+            "rate_limit_tier": "Standard",
+            "nonce": prep.nonce,
+            "tx_signature": {
+                "signature_bytes": sig.signature,
+                "signer_dilithium_pk": sponsor_kp.public_key.dilithium_pk.to_vec()
+            }
+        }))
+        .unwrap();
+        let reg_req = build_request(
+            ZhtpMethod::Post,
+            "/api/v1/observer/admission/register",
+            reg_body,
+        );
+        let reg_policy = default_policy();
+        let reg_resp = handle_admission_register(reg_req, 0x03, &reg_policy)
+            .await
+            .unwrap();
+        assert_eq!(reg_resp.status, ZhtpStatus::Ok, "register must be submitted");
+
+        // --- Apply a block to execute the pending transaction ---
+        let pending_tx = {
+            let bc = bc_arc.read().await;
+            bc.pending_transactions
+                .first()
+                .cloned()
+                .expect("pending tx must exist after register")
+        };
+
+        let apply_block = {
+            let mut hash_bytes = [0u8; 32];
+            hash_bytes[0..8].copy_from_slice(&1u64.to_be_bytes());
+            let block_hash = Hash::new(hash_bytes);
+            let header = BlockHeader {
+                version: 1,
+                previous_hash: genesis_hash.into(),
+                data_helix_root: Hash::default().into(),
+                timestamp: 2_000_000,
+                height: 1,
+                verification_helix_root: [0u8; 32],
+                state_root: Hash::default().into(),
+                bft_quorum_root: [0u8; 32],
+                block_hash,
+            };
+            Block::new(header, vec![pending_tx])
+        };
+
+        {
+            let bc = bc_arc.read().await;
+            bc.executor
+                .as_ref()
+                .expect("executor")
+                .apply_block(&apply_block)
+                .expect("apply register block");
+        }
+
+        // --- Verify observer record exists in sled with correct sponsor binding ---
+        let obs_did_hash = did_to_hash(obs_did);
+        let record = store
+            .get_observer_record(&obs_did_hash)
+            .expect("store read")
+            .expect("observer record must exist in sled after block apply");
+
+        assert_eq!(record.node_info.observer_node_did, obs_did);
+        assert_eq!(record.sponsor.sponsoring_user_did, sponsor_did);
+        assert_eq!(record.node_info.endpoints, vec!["127.0.0.1:9000"]);
     }
 
     #[tokio::test]
