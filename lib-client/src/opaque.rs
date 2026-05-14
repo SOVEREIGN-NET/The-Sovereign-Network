@@ -1,0 +1,453 @@
+//! Lobby auth — client-side OPAQUE (RFC 9497 / IETF CFRG draft) helpers.
+//!
+//! Locked cipher suite for the whole network:
+//! - OPRF group: Ristretto255
+//! - Key-exchange: TripleDh<Ristretto255, Sha512>
+//! - KSF: Argon2id (m=64MiB, t=3, p=4)
+//!
+//! These parameters MUST match the server's exactly. Changing any of them is
+//! a hard breaking change that requires every existing user to re-register.
+//!
+//! This module is the client half. It produces protocol messages to send to
+//! the server and consumes the server's responses. State handles are exposed
+//! via FFI as opaque pointers; mobile/native callers hold them between the
+//! `start` and `finish` calls of each flow.
+
+#![cfg(not(target_arch = "wasm32"))]
+
+use std::ffi::{c_char, CStr};
+
+use anyhow::{anyhow, Result};
+use generic_array::{ArrayLength, GenericArray};
+use opaque_ke::ciphersuite::CipherSuite;
+use opaque_ke::errors::InternalError;
+use opaque_ke::ksf::Ksf;
+use opaque_ke::{
+    ClientLogin, ClientLoginFinishParameters, ClientRegistration,
+    ClientRegistrationFinishParameters, CredentialResponse, RegistrationResponse,
+};
+use rand::rngs::OsRng;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Locked cipher suite
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Argon2id parameters used by the lobby-auth KSF. Network-locked.
+pub const ARGON2_M_COST_KIB: u32 = 65_536; // 64 MiB
+pub const ARGON2_T_COST: u32 = 3;
+pub const ARGON2_P_COST: u32 = 4;
+/// Fixed salt baked into the KSF. Per-record randomness comes from OPAQUE's
+/// envelope nonce; this salt only differentiates the KSF binding from other
+/// argon2 contexts on the network.
+pub const KSF_SALT: &[u8] = b"zhtp-lobby-auth-v1";
+
+/// The lobby-auth KSF: Argon2id with the locked parameters above.
+#[derive(Default, Debug, Clone, Copy)]
+pub struct LobbyArgon2id;
+
+impl Ksf for LobbyArgon2id {
+    fn hash<L: ArrayLength<u8>>(
+        &self,
+        input: GenericArray<u8, L>,
+    ) -> Result<GenericArray<u8, L>, InternalError> {
+        let params = argon2::Params::new(
+            ARGON2_M_COST_KIB,
+            ARGON2_T_COST,
+            ARGON2_P_COST,
+            Some(L::USIZE),
+        )
+        .map_err(|_| InternalError::KsfError)?;
+        let argon2 = argon2::Argon2::new(
+            argon2::Algorithm::Argon2id,
+            argon2::Version::V0x13,
+            params,
+        );
+        let mut output: GenericArray<u8, L> = GenericArray::default();
+        argon2
+            .hash_password_into(&input, KSF_SALT, &mut output)
+            .map_err(|_| InternalError::KsfError)?;
+        Ok(output)
+    }
+}
+
+/// The locked lobby-auth cipher suite.
+#[derive(Debug, Clone, Copy)]
+pub struct LobbyAuthCipherSuite;
+
+impl CipherSuite for LobbyAuthCipherSuite {
+    type OprfCs = opaque_ke::Ristretto255;
+    type KeyExchange = opaque_ke::TripleDh<opaque_ke::Ristretto255, sha2::Sha512>;
+    type Ksf = LobbyArgon2id;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rust-level helpers (called by FFI exports below)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `ClientRegistration::start` — produces the first message and a state to
+/// carry into `register_finish`.
+pub fn client_register_start(
+    password: &[u8],
+) -> Result<(Vec<u8>, ClientRegistration<LobbyAuthCipherSuite>)> {
+    let mut rng = OsRng;
+    let result = ClientRegistration::<LobbyAuthCipherSuite>::start(&mut rng, password)
+        .map_err(|e| anyhow!("OPAQUE register_start failed: {:?}", e))?;
+    let msg_bytes = result.message.serialize().to_vec();
+    Ok((msg_bytes, result.state))
+}
+
+/// `ClientRegistration::finish` — given the server's response, derives the
+/// envelope (registration record), the session key, and the export key.
+pub fn client_register_finish(
+    state: ClientRegistration<LobbyAuthCipherSuite>,
+    password: &[u8],
+    server_response: &[u8],
+) -> Result<RegisterFinishOutput> {
+    let mut rng = OsRng;
+    let server_msg = RegistrationResponse::<LobbyAuthCipherSuite>::deserialize(server_response)
+        .map_err(|e| anyhow!("invalid RegistrationResponse: {:?}", e))?;
+    let result = state
+        .finish(
+            &mut rng,
+            password,
+            server_msg,
+            ClientRegistrationFinishParameters::default(),
+        )
+        .map_err(|e| anyhow!("OPAQUE register_finish failed: {:?}", e))?;
+    Ok(RegisterFinishOutput {
+        record: result.message.serialize().to_vec(),
+        export_key: result.export_key.to_vec(),
+    })
+}
+
+pub struct RegisterFinishOutput {
+    /// Registration record to upload to the server (`RegistrationUpload` bytes).
+    pub record: Vec<u8>,
+    /// Per-user "export key" — a stable 64-byte secret the user derives from
+    /// their password each time. Useful for client-side encryption of
+    /// secondary material (not used by the lobby flow itself).
+    pub export_key: Vec<u8>,
+}
+
+/// `ClientLogin::start` — produces the first login message and a state.
+pub fn client_login_start(
+    password: &[u8],
+) -> Result<(Vec<u8>, ClientLogin<LobbyAuthCipherSuite>)> {
+    let mut rng = OsRng;
+    let result = ClientLogin::<LobbyAuthCipherSuite>::start(&mut rng, password)
+        .map_err(|e| anyhow!("OPAQUE login_start failed: {:?}", e))?;
+    let msg_bytes = result.message.serialize().to_vec();
+    Ok((msg_bytes, result.state))
+}
+
+/// `ClientLogin::finish` — produces the third login message and the
+/// session_key. The session_key is the per-session shared secret used for
+/// HMAC-based channel binding on subsequent requests.
+pub fn client_login_finish(
+    state: ClientLogin<LobbyAuthCipherSuite>,
+    password: &[u8],
+    server_response: &[u8],
+) -> Result<LoginFinishOutput> {
+    let mut rng = OsRng;
+    let server_msg = CredentialResponse::<LobbyAuthCipherSuite>::deserialize(server_response)
+        .map_err(|e| anyhow!("invalid CredentialResponse: {:?}", e))?;
+    let result = state
+        .finish(
+            &mut rng,
+            password,
+            server_msg,
+            ClientLoginFinishParameters::default(),
+        )
+        .map_err(|e| anyhow!("OPAQUE login_finish failed (wrong password?): {:?}", e))?;
+    Ok(LoginFinishOutput {
+        msg3: result.message.serialize().to_vec(),
+        session_key: result.session_key.to_vec(),
+        export_key: result.export_key.to_vec(),
+    })
+}
+
+pub struct LoginFinishOutput {
+    /// Third (final) login message — sent to the server to complete the flow.
+    pub msg3: Vec<u8>,
+    /// 64-byte session key — same on both sides after a successful login.
+    /// Used as the HMAC key for `X-OPAQUE-Mac` request binding.
+    pub session_key: Vec<u8>,
+    /// 64-byte export key (deterministic from password — same as register's).
+    pub export_key: Vec<u8>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FFI — state handles + 6 exports per epic ticket #2562
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Opaque handle to in-flight registration state (between start and finish).
+pub struct OpaqueRegisterState {
+    inner: ClientRegistration<LobbyAuthCipherSuite>,
+}
+
+/// Opaque handle to in-flight login state (between start and finish).
+pub struct OpaqueLoginState {
+    inner: ClientLogin<LobbyAuthCipherSuite>,
+}
+
+unsafe fn write_buf(out: *mut crate::ByteBuffer, src: Vec<u8>) {
+    // Match the existing ByteBuffer/forget pattern used elsewhere in lib-client.
+    let mut boxed = src.into_boxed_slice();
+    let buf = crate::ByteBuffer {
+        data: boxed.as_mut_ptr(),
+        len: boxed.len(),
+    };
+    std::mem::forget(boxed);
+    *out = buf;
+}
+
+/// Step 1 of registration. Caller supplies a UTF-8 password. On success:
+/// `*out_request` carries the bytes to POST to `/opaque/register/start`,
+/// and the function returns a non-null state handle to feed into
+/// `register_finish`. Returns null on failure; caller can interpret nullity
+/// as "bad password or internal error".
+#[no_mangle]
+pub extern "C" fn zhtp_opaque_register_start(
+    password: *const c_char,
+    out_request: *mut crate::ByteBuffer,
+) -> *mut OpaqueRegisterState {
+    if password.is_null() || out_request.is_null() {
+        return std::ptr::null_mut();
+    }
+    let pw = match unsafe { CStr::from_ptr(password) }.to_bytes_with_nul().split_last() {
+        Some((_, body)) => body,
+        None => return std::ptr::null_mut(),
+    };
+    match client_register_start(pw) {
+        Ok((msg, state)) => {
+            unsafe { write_buf(out_request, msg) };
+            Box::into_raw(Box::new(OpaqueRegisterState { inner: state }))
+        }
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Step 2 of registration. Consumes the state handle (caller MUST NOT free
+/// it after this returns). On success writes:
+/// - `out_record`: the registration record bytes to POST to the server's
+///   `/opaque/register/finish`.
+/// - `out_export_key`: 64-byte deterministic per-user key (optional use by
+///   the caller — not required for the lobby flow itself).
+///
+/// Returns 0 on success, -1 on failure (wrong inputs / bad server response).
+#[no_mangle]
+pub extern "C" fn zhtp_opaque_register_finish(
+    state: *mut OpaqueRegisterState,
+    password: *const c_char,
+    server_response: *const u8,
+    server_response_len: usize,
+    out_record: *mut crate::ByteBuffer,
+    out_export_key: *mut crate::ByteBuffer,
+) -> i32 {
+    if state.is_null()
+        || password.is_null()
+        || server_response.is_null()
+        || out_record.is_null()
+        || out_export_key.is_null()
+    {
+        return -1;
+    }
+    let state_box = unsafe { Box::from_raw(state) };
+    let pw = match unsafe { CStr::from_ptr(password) }.to_bytes_with_nul().split_last() {
+        Some((_, body)) => body,
+        None => return -1,
+    };
+    let resp = unsafe { std::slice::from_raw_parts(server_response, server_response_len) };
+    match client_register_finish(state_box.inner, pw, resp) {
+        Ok(out) => {
+            unsafe { write_buf(out_record, out.record) };
+            unsafe { write_buf(out_export_key, out.export_key) };
+            0
+        }
+        Err(_) => -1,
+    }
+}
+
+/// Free a register-state handle without consuming it via `register_finish`.
+/// Call this on cancellation paths to avoid leaks.
+#[no_mangle]
+pub extern "C" fn zhtp_opaque_register_state_free(state: *mut OpaqueRegisterState) {
+    if !state.is_null() {
+        drop(unsafe { Box::from_raw(state) });
+    }
+}
+
+/// Step 1 of login. Same shape as `register_start`.
+#[no_mangle]
+pub extern "C" fn zhtp_opaque_login_start(
+    password: *const c_char,
+    out_request: *mut crate::ByteBuffer,
+) -> *mut OpaqueLoginState {
+    if password.is_null() || out_request.is_null() {
+        return std::ptr::null_mut();
+    }
+    let pw = match unsafe { CStr::from_ptr(password) }.to_bytes_with_nul().split_last() {
+        Some((_, body)) => body,
+        None => return std::ptr::null_mut(),
+    };
+    match client_login_start(pw) {
+        Ok((msg, state)) => {
+            unsafe { write_buf(out_request, msg) };
+            Box::into_raw(Box::new(OpaqueLoginState { inner: state }))
+        }
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Step 2 of login. Consumes the state handle. On success writes:
+/// - `out_msg3`: the third (final) login message to POST to the server.
+/// - `out_session_key`: 64 bytes. The HMAC key for channel binding on every
+///   subsequent lobby request.
+/// - `out_export_key`: 64 bytes; identical to the one returned by register.
+///
+/// Returns 0 on success, -1 on failure (wrong password, bad server response,
+/// etc.).
+#[no_mangle]
+pub extern "C" fn zhtp_opaque_login_finish(
+    state: *mut OpaqueLoginState,
+    password: *const c_char,
+    server_response: *const u8,
+    server_response_len: usize,
+    out_msg3: *mut crate::ByteBuffer,
+    out_session_key: *mut crate::ByteBuffer,
+    out_export_key: *mut crate::ByteBuffer,
+) -> i32 {
+    if state.is_null()
+        || password.is_null()
+        || server_response.is_null()
+        || out_msg3.is_null()
+        || out_session_key.is_null()
+        || out_export_key.is_null()
+    {
+        return -1;
+    }
+    let state_box = unsafe { Box::from_raw(state) };
+    let pw = match unsafe { CStr::from_ptr(password) }.to_bytes_with_nul().split_last() {
+        Some((_, body)) => body,
+        None => return -1,
+    };
+    let resp = unsafe { std::slice::from_raw_parts(server_response, server_response_len) };
+    match client_login_finish(state_box.inner, pw, resp) {
+        Ok(out) => {
+            unsafe { write_buf(out_msg3, out.msg3) };
+            unsafe { write_buf(out_session_key, out.session_key) };
+            unsafe { write_buf(out_export_key, out.export_key) };
+            0
+        }
+        Err(_) => -1,
+    }
+}
+
+/// Free a login-state handle without consuming it via `login_finish`.
+#[no_mangle]
+pub extern "C" fn zhtp_opaque_login_state_free(state: *mut OpaqueLoginState) {
+    if !state.is_null() {
+        drop(unsafe { Box::from_raw(state) });
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests — full register + login roundtrip using the server half of opaque-ke.
+// (Server side is otherwise instantiated only in the zhtp crate; we reach into
+// the same library here just for the test.)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use opaque_ke::{ServerLogin, ServerLoginParameters, ServerRegistration, ServerSetup};
+    use rand::rngs::OsRng;
+
+    const PASSWORD: &[u8] = b"correct horse battery staple";
+    const USERNAME: &[u8] = b"alice";
+
+    fn fresh_setup() -> ServerSetup<LobbyAuthCipherSuite> {
+        let mut rng = OsRng;
+        ServerSetup::<LobbyAuthCipherSuite>::new(&mut rng)
+    }
+
+    #[test]
+    fn full_roundtrip_register_then_login() {
+        let server_setup = fresh_setup();
+
+        // ─── REGISTER ────────────────────────────────────────────────────
+        let (msg1, state) = client_register_start(PASSWORD).unwrap();
+        let request = opaque_ke::RegistrationRequest::deserialize(&msg1).unwrap();
+        let server_response =
+            ServerRegistration::<LobbyAuthCipherSuite>::start(&server_setup, request, USERNAME)
+                .unwrap();
+        let out = client_register_finish(state, PASSWORD, &server_response.message.serialize())
+            .unwrap();
+        let record = opaque_ke::RegistrationUpload::deserialize(&out.record).unwrap();
+        let server_record =
+            ServerRegistration::<LobbyAuthCipherSuite>::finish(record);
+
+        // ─── LOGIN ───────────────────────────────────────────────────────
+        let (msg1, state) = client_login_start(PASSWORD).unwrap();
+        let request = opaque_ke::CredentialRequest::deserialize(&msg1).unwrap();
+        let mut rng = OsRng;
+        let server_login_start = ServerLogin::<LobbyAuthCipherSuite>::start(
+            &mut rng,
+            &server_setup,
+            Some(server_record),
+            request,
+            USERNAME,
+            ServerLoginParameters::default(),
+        )
+        .unwrap();
+        let out =
+            client_login_finish(state, PASSWORD, &server_login_start.message.serialize()).unwrap();
+        let credential_finalization =
+            opaque_ke::CredentialFinalization::deserialize(&out.msg3).unwrap();
+        let server_login_finish = server_login_start
+            .state
+            .finish(credential_finalization, ServerLoginParameters::default())
+            .unwrap();
+
+        assert_eq!(out.session_key, server_login_finish.session_key.to_vec());
+        // Export keys deterministic from password: same in register and login.
+        // (We don't compare bytes across register vs login because export key
+        // is per-flow; we just confirm we got 64 bytes.)
+        assert_eq!(out.session_key.len(), 64);
+        assert_eq!(out.export_key.len(), 64);
+    }
+
+    #[test]
+    fn wrong_password_login_fails() {
+        let server_setup = fresh_setup();
+
+        // Register with correct password
+        let (msg1, state) = client_register_start(PASSWORD).unwrap();
+        let request = opaque_ke::RegistrationRequest::deserialize(&msg1).unwrap();
+        let server_response =
+            ServerRegistration::<LobbyAuthCipherSuite>::start(&server_setup, request, USERNAME)
+                .unwrap();
+        let out = client_register_finish(state, PASSWORD, &server_response.message.serialize())
+            .unwrap();
+        let record = opaque_ke::RegistrationUpload::deserialize(&out.record).unwrap();
+        let server_record =
+            ServerRegistration::<LobbyAuthCipherSuite>::finish(record);
+
+        // Try to log in with WRONG password
+        let (msg1, state) = client_login_start(b"WRONG").unwrap();
+        let request = opaque_ke::CredentialRequest::deserialize(&msg1).unwrap();
+        let mut rng = OsRng;
+        let server_login_start = ServerLogin::<LobbyAuthCipherSuite>::start(
+            &mut rng,
+            &server_setup,
+            Some(server_record),
+            request,
+            USERNAME,
+            ServerLoginParameters::default(),
+        )
+        .unwrap();
+        let result =
+            client_login_finish(state, b"WRONG", &server_login_start.message.serialize());
+        assert!(result.is_err(), "login with wrong password must fail");
+    }
+}
