@@ -67,10 +67,25 @@ pub struct GenesisConfig {
 
 /// `[opaque]` section of `genesis.toml` — locks the OPAQUE server setup
 /// (an `opaque-ke`-serialized blob) into the chain.
+///
+/// **SECURITY (reviewer #2569)**: `ServerSetup::serialize()` output contains
+/// the OPRF *private* seed. Anyone holding these bytes can offline-attack
+/// every credential ever registered against this server setup. Therefore:
+///
+/// - The repo's checked-in `genesis.toml` MUST NOT carry a production
+///   setup blob. Treat any `server_setup_b64` committed to source as
+///   throwaway / testnet-only.
+/// - Real-network genesis is produced by the genesis-ceremony helper and
+///   distributed to validators out-of-band; the checked-in file gets the
+///   real value swapped in at deployment time and is never pushed back.
+/// - Removing `[opaque]` from genesis disables lobby auth on that
+///   deployment (OPAQUE endpoints return 503) — preferred for any build
+///   that isn't actually a validator.
 #[derive(Debug, Clone, Deserialize)]
 pub struct OpaqueConfig {
     /// `ServerSetup::serialize()` bytes, base64-encoded (STANDARD alphabet).
-    /// Generated once at genesis via the keygen helper; never rotates in v1.
+    /// Generated once at the genesis ceremony; never rotates in v1.
+    /// **Contains the OPRF private seed — see struct-level note.**
     pub server_setup_b64: String,
 }
 
@@ -649,6 +664,34 @@ impl GenesisConfig {
         Ok(())
     }
 
+    /// Resolve the OPAQUE server-setup bytes from this config, if the
+    /// `[opaque]` section is present. Pulled out into its own helper so
+    /// every Blockchain construction path (apply_genesis_state, load_from_store)
+    /// can load it consistently (reviewer #2569 — restart path was skipping it).
+    pub fn load_opaque_setup(
+        &self,
+    ) -> Result<Option<crate::opaque::OpaqueServerSetupBytes>> {
+        match self.opaque {
+            Some(ref op) => {
+                let bytes = crate::opaque::parse_server_setup_b64(&op.server_setup_b64)
+                    .context("genesis [opaque] server_setup_b64 invalid")?;
+                info!(
+                    "Loaded OPAQUE server setup (ciphersuite={}, fingerprint={}, bytes={})",
+                    crate::opaque::CIPHERSUITE_ID,
+                    bytes.fingerprint(),
+                    bytes.as_slice().len()
+                );
+                Ok(Some(bytes))
+            }
+            None => {
+                info!(
+                    "No [opaque] section in genesis — lobby auth disabled for this network"
+                );
+                Ok(None)
+            }
+        }
+    }
+
     /// Re-apply genesis state (identities, wallets, validators, council) to an existing
     /// blockchain during catch-up sync. Called when a synced node receives block 0 but
     /// the identity/wallet registries are empty because genesis state is populated via
@@ -658,21 +701,7 @@ impl GenesisConfig {
         // Missing section is allowed in v1 — networks without lobby auth
         // simply have `bc.opaque_server_setup = None` and the OPAQUE
         // endpoints will return 503 at runtime.
-        if let Some(ref op) = self.opaque {
-            let bytes = crate::opaque::parse_server_setup_b64(&op.server_setup_b64)
-                .context("genesis [opaque] server_setup_b64 invalid")?;
-            info!(
-                "Loaded OPAQUE server setup (ciphersuite={}, fingerprint={}, bytes={})",
-                crate::opaque::CIPHERSUITE_ID,
-                bytes.fingerprint(),
-                bytes.as_slice().len()
-            );
-            bc.opaque_server_setup = Some(bytes);
-        } else {
-            info!(
-                "No [opaque] section in genesis — lobby auth disabled for this network"
-            );
-        }
+        bc.opaque_server_setup = self.load_opaque_setup()?;
         {
             let alloc = &self.allocations;
             // identities
