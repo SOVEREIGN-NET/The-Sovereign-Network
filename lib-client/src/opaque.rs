@@ -491,6 +491,225 @@ pub extern "C" fn zhtp_lobby_mac_compute(
     0
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// LobbySession handle — bearer + key + seq, drives every lobby request (L3 #2564)
+// ─────────────────────────────────────────────────────────────────────────────
+
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// A bound lobby session. Holds the bearer token, the OPAQUE session_key,
+/// identity metadata, and a monotonic per-session sequence counter.
+///
+/// One handle drives N concurrent authenticated lobby requests safely —
+/// `next_seq()` is atomic so each request gets a unique seq.
+pub struct LobbySession {
+    pub session_token: String,
+    pub session_key: LobbySessionKey,
+    pub did: String,
+    pub username: String,
+    next_seq: AtomicU64,
+}
+
+impl LobbySession {
+    pub fn new(
+        session_token: String,
+        session_key: LobbySessionKey,
+        did: String,
+        username: String,
+    ) -> Self {
+        Self {
+            session_token,
+            session_key,
+            did,
+            username,
+            // Start at 1 — server rejects seq <= last_seen, so first request
+            // uses seq=1 and the server's last_seen starts at 0.
+            next_seq: AtomicU64::new(1),
+        }
+    }
+
+    /// Allocate the next sequence number for a request. Atomic; safe under
+    /// concurrent use.
+    pub fn next_seq(&self) -> u64 {
+        self.next_seq.fetch_add(1, Ordering::SeqCst)
+    }
+
+    /// Build the three headers required for a lobby request.
+    /// Returns (Authorization, X-OPAQUE-Mac (hex), X-OPAQUE-Seq (decimal)).
+    pub fn prepare_headers(
+        &self,
+        method: u8,
+        uri: &[u8],
+        body: &[u8],
+    ) -> (String, String, String) {
+        let seq = self.next_seq();
+        let mac = compute_mac(&self.session_key, method, uri, body, seq);
+        (
+            format!("Bearer {}", self.session_token),
+            hex::encode(mac),
+            seq.to_string(),
+        )
+    }
+}
+
+/// Construct a `LobbySession` handle from raw fields.
+///
+/// `session_key_ptr` MUST point to exactly 64 bytes. Other pointers are
+/// nul-terminated UTF-8.
+///
+/// Returns a handle the caller owns; free with `zhtp_lobby_session_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_lobby_session_new(
+    session_token: *const c_char,
+    session_key_ptr: *const u8,
+    session_key_len: usize,
+    did: *const c_char,
+    username: *const c_char,
+) -> *mut LobbySession {
+    if session_token.is_null()
+        || session_key_ptr.is_null()
+        || session_key_len != 64
+        || did.is_null()
+        || username.is_null()
+    {
+        return std::ptr::null_mut();
+    }
+    let token = match unsafe { CStr::from_ptr(session_token) }.to_str() {
+        Ok(s) => s.to_string(),
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let did = match unsafe { CStr::from_ptr(did) }.to_str() {
+        Ok(s) => s.to_string(),
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let username = match unsafe { CStr::from_ptr(username) }.to_str() {
+        Ok(s) => s.to_string(),
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let key_slice = unsafe { std::slice::from_raw_parts(session_key_ptr, 64) };
+    let key = match LobbySessionKey::from_bytes(key_slice) {
+        Ok(k) => k,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    Box::into_raw(Box::new(LobbySession::new(token, key, did, username)))
+}
+
+/// Prepare the headers for one lobby request. Three NUL-terminated strings
+/// returned via output `ByteBuffer`s (each containing the bytes of one
+/// header value, NUL-terminated for ease of consumption by callers that
+/// expect C strings).
+///
+/// Returns 0 on success, -1 on bad input.
+///
+/// Caller frees each ByteBuffer with `zhtp_client_byte_buffer_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_lobby_session_prepare(
+    session: *const LobbySession,
+    method: u8,
+    uri: *const u8,
+    uri_len: usize,
+    body: *const u8,
+    body_len: usize,
+    out_authorization: *mut crate::ByteBuffer,
+    out_mac_hex: *mut crate::ByteBuffer,
+    out_seq: *mut crate::ByteBuffer,
+) -> i32 {
+    if session.is_null()
+        || out_authorization.is_null()
+        || out_mac_hex.is_null()
+        || out_seq.is_null()
+    {
+        return -1;
+    }
+    if uri.is_null() && uri_len != 0 {
+        return -1;
+    }
+    if body.is_null() && body_len != 0 {
+        return -1;
+    }
+    let session = unsafe { &*session };
+    let uri_slice = if uri_len == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(uri, uri_len) }
+    };
+    let body_slice = if body_len == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(body, body_len) }
+    };
+    let (auth, mac_hex, seq) = session.prepare_headers(method, uri_slice, body_slice);
+
+    unsafe {
+        write_buf(out_authorization, auth.into_bytes());
+        write_buf(out_mac_hex, mac_hex.into_bytes());
+        write_buf(out_seq, seq.into_bytes());
+    }
+    0
+}
+
+/// Free a LobbySession handle.
+#[no_mangle]
+pub extern "C" fn zhtp_lobby_session_free(session: *mut LobbySession) {
+    if !session.is_null() {
+        drop(unsafe { Box::from_raw(session) });
+    }
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+
+    fn make_session() -> LobbySession {
+        LobbySession::new(
+            "deadbeef".to_string(),
+            LobbySessionKey([0x42; 64]),
+            "did:zhtp:abc".to_string(),
+            "alice".to_string(),
+        )
+    }
+
+    #[test]
+    fn seqs_are_monotonic() {
+        let s = make_session();
+        assert_eq!(s.next_seq(), 1);
+        assert_eq!(s.next_seq(), 2);
+        assert_eq!(s.next_seq(), 3);
+    }
+
+    #[test]
+    fn concurrent_seqs_are_unique() {
+        use std::sync::Arc;
+        use std::thread;
+        let s = Arc::new(make_session());
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let s = s.clone();
+            handles.push(thread::spawn(move || {
+                let mut local = Vec::new();
+                for _ in 0..256 {
+                    local.push(s.next_seq());
+                }
+                local
+            }));
+        }
+        let mut all: Vec<u64> = handles.into_iter().flat_map(|h| h.join().unwrap()).collect();
+        all.sort();
+        all.dedup();
+        assert_eq!(all.len(), 8 * 256, "no two requests should share a seq");
+    }
+
+    #[test]
+    fn headers_format_correct() {
+        let s = make_session();
+        let (auth, mac_hex, seq) = s.prepare_headers(method::GET, b"/x", b"", );
+        assert!(auth.starts_with("Bearer "));
+        assert_eq!(auth, "Bearer deadbeef");
+        assert_eq!(mac_hex.len(), 64); // 32 bytes hex
+        assert_eq!(seq, "1");
+    }
+}
+
 #[cfg(test)]
 mod mac_tests {
     use super::*;
