@@ -104,6 +104,7 @@ impl Blockchain {
             observer_blocks: HashMap::new(),
             credential_registry: HashMap::new(),
             did_to_username: HashMap::new(),
+            opaque_server_setup: None,
         }
     }
 

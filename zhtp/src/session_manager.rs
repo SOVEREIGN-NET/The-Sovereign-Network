@@ -45,6 +45,10 @@ pub struct SessionManager {
     default_session_duration: u64,
     /// Maximum concurrent sessions per identity
     max_sessions_per_identity: usize,
+    /// OPAQUE-derived session keys, keyed by session_token. Only present
+    /// for sessions issued through the lobby OPAQUE login flow. Used for
+    /// per-request HMAC channel binding (verified in S6 #2560).
+    opaque_session_keys: Arc<RwLock<HashMap<String, Vec<u8>>>>,
 }
 
 impl SessionManager {
@@ -55,7 +59,32 @@ impl SessionManager {
             sessions_by_identity: Arc::new(RwLock::new(HashMap::new())),
             default_session_duration: 24 * 60 * 60, // 24 hours
             max_sessions_per_identity: 5,
+            opaque_session_keys: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Create a password-authenticated session AND store the OPAQUE-derived
+    /// session_key alongside it. The key is later used by the per-request
+    /// HMAC channel-binding check (S6 #2560).
+    pub async fn create_password_session_with_key(
+        &self,
+        identity_id: IdentityId,
+        client_ip: &str,
+        user_agent: &str,
+        session_key: Vec<u8>,
+    ) -> Result<String> {
+        let token = self
+            .create_password_session(identity_id, client_ip, user_agent)
+            .await?;
+        let mut keys = self.opaque_session_keys.write().await;
+        keys.insert(token.clone(), session_key);
+        Ok(token)
+    }
+
+    /// Fetch the OPAQUE session_key for a token, if any. Used by the
+    /// channel-binding middleware.
+    pub async fn opaque_session_key(&self, token: &str) -> Option<Vec<u8>> {
+        self.opaque_session_keys.read().await.get(token).cloned()
     }
 
     /// Create a new session for an authenticated identity
@@ -344,6 +373,7 @@ impl SessionManager {
             sessions_by_identity: Arc::clone(&self.sessions_by_identity),
             default_session_duration: self.default_session_duration,
             max_sessions_per_identity: self.max_sessions_per_identity,
+            opaque_session_keys: Arc::clone(&self.opaque_session_keys),
         };
 
         tokio::spawn(async move {
