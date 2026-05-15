@@ -99,6 +99,24 @@ fn make_block_with_txs(height: u64, prev: Hash, txs: Vec<Transaction>) -> Block 
 fn apply_genesis(executor: &BlockExecutor) -> Hash {
     let g = create_genesis_block();
     executor.apply_block(&g).expect("apply genesis");
+    // Fund the dummy signer (all-zero key_id from dummy_signature) so the
+    // RegisterObserver / Suspend / Revoke / Reauth fee can be debited.
+    // Without this the executor returns InsufficientBalance for every
+    // observer tx the test sends.
+    {
+        use lib_blockchain::storage::{Address, TokenId};
+        let sov = TokenId::new(lib_blockchain::contracts::utils::generate_lib_token_id());
+        // PublicKey::new derives key_id = blake3(dilithium_pk). dummy_signature
+        // uses PublicKey::new([0u8; 2592]), so the signer Address is
+        // blake3([0u8; 2592]), not the zero address.
+        let dilithium_zero = [0u8; 2592];
+        let key_id: [u8; 32] = blake3::hash(&dilithium_zero).into();
+        let signer = Address::new(key_id);
+        executor
+            .store()
+            .force_set_token_balances(&[(sov, signer, 10_000_000u128)])
+            .expect("seed dummy signer balance");
+    }
     g.header.block_hash
 }
 
@@ -185,13 +203,13 @@ fn replay_determinism_for_admission_tx_sequence() {
         let b1 = make_block_with_txs(
             1,
             g,
-            vec![register_tx("did:zhtp:obsA", "did:zhtp:spA", ObserverProofLevel::Basic, 1)],
+            vec![register_tx("did:zhtp:obsA", "did:zhtp:spA", ObserverProofLevel::Basic, 0)],
         );
         exec.apply_block(&b1).expect("b1");
         let b2 = make_block_with_txs(
             2,
             b1.header.block_hash,
-            vec![register_tx("did:zhtp:obsB", "did:zhtp:spB", ObserverProofLevel::Enhanced, 2)],
+            vec![register_tx("did:zhtp:obsB", "did:zhtp:spB", ObserverProofLevel::Enhanced, 1)],
         );
         exec.apply_block(&b2).expect("b2");
         fingerprint_registry(&s)
@@ -211,14 +229,14 @@ fn duplicate_registration_rejected() {
     let b1 = make_block_with_txs(
         1,
         g,
-        vec![register_tx("did:zhtp:dupA", "did:zhtp:spX", ObserverProofLevel::Basic, 1)],
+        vec![register_tx("did:zhtp:dupA", "did:zhtp:spX", ObserverProofLevel::Basic, 0)],
     );
     exec.apply_block(&b1).expect("first registration must succeed");
 
     let b2 = make_block_with_txs(
         2,
         b1.header.block_hash,
-        vec![register_tx("did:zhtp:dupA", "did:zhtp:spX", ObserverProofLevel::Basic, 2)],
+        vec![register_tx("did:zhtp:dupA", "did:zhtp:spX", ObserverProofLevel::Basic, 1)],
     );
     let err = exec
         .apply_block(&b2)
@@ -239,7 +257,7 @@ fn invalid_sponsor_binding_rejected() {
     let b1 = make_block_with_txs(
         1,
         g,
-        vec![register_tx("did:zhtp:noSp", "", ObserverProofLevel::Basic, 1)],
+        vec![register_tx("did:zhtp:noSp", "", ObserverProofLevel::Basic, 0)],
     );
     let err = exec
         .apply_block(&b1)
@@ -261,7 +279,7 @@ fn anonymous_sponsor_rejected_by_policy() {
     let b1 = make_block_with_txs(
         1,
         g,
-        vec![register_tx("did:zhtp:anonObs", "did:zhtp:anonSp", ObserverProofLevel::None, 1)],
+        vec![register_tx("did:zhtp:anonObs", "did:zhtp:anonSp", ObserverProofLevel::None, 0)],
     );
     let err = exec
         .apply_block(&b1)
@@ -283,14 +301,14 @@ fn sponsor_quota_enforced_for_basic_tier() {
     let b1 = make_block_with_txs(
         1,
         g,
-        vec![register_tx("did:zhtp:quotaA", "did:zhtp:spQ", ObserverProofLevel::Basic, 1)],
+        vec![register_tx("did:zhtp:quotaA", "did:zhtp:spQ", ObserverProofLevel::Basic, 0)],
     );
     exec.apply_block(&b1).expect("first observer under Basic sponsor");
 
     let b2 = make_block_with_txs(
         2,
         b1.header.block_hash,
-        vec![register_tx("did:zhtp:quotaB", "did:zhtp:spQ", ObserverProofLevel::Basic, 2)],
+        vec![register_tx("did:zhtp:quotaB", "did:zhtp:spQ", ObserverProofLevel::Basic, 1)],
     );
     let err = exec
         .apply_block(&b2)
@@ -313,7 +331,7 @@ fn pending_observer_cannot_bootstrap() {
     let b1 = make_block_with_txs(
         1,
         g,
-        vec![register_tx("did:zhtp:pendObs", "did:zhtp:spP", ObserverProofLevel::Basic, 1)],
+        vec![register_tx("did:zhtp:pendObs", "did:zhtp:spP", ObserverProofLevel::Basic, 0)],
     );
     exec.apply_block(&b1).expect("register");
     let record = record_for(&s, "did:zhtp:pendObs").expect("record exists");
@@ -343,7 +361,7 @@ fn status_transitions_active_suspend_reauthorize() {
     let b1 = make_block_with_txs(
         1,
         g,
-        vec![register_tx("did:zhtp:lifeObs", "did:zhtp:lifeSp", ObserverProofLevel::Basic, 1)],
+        vec![register_tx("did:zhtp:lifeObs", "did:zhtp:lifeSp", ObserverProofLevel::Basic, 0)],
     );
     exec.apply_block(&b1).expect("register");
     assert_eq!(
@@ -356,7 +374,7 @@ fn status_transitions_active_suspend_reauthorize() {
     let b2 = make_block_with_txs(
         2,
         b1.header.block_hash,
-        vec![suspend_tx("did:zhtp:lifeObs", "did:zhtp:lifeSp", 2)],
+        vec![suspend_tx("did:zhtp:lifeObs", "did:zhtp:lifeSp", 1)],
     );
     exec.apply_block(&b2).expect("suspend active");
     assert_eq!(
@@ -378,7 +396,7 @@ fn status_transitions_active_suspend_reauthorize() {
     let b3 = make_block_with_txs(
         3,
         b2.header.block_hash,
-        vec![reauth_tx("did:zhtp:lifeObs", "did:zhtp:lifeSp", 3)],
+        vec![reauth_tx("did:zhtp:lifeObs", "did:zhtp:lifeSp", 2)],
     );
     exec.apply_block(&b3).expect("reauthorize suspended");
     let reactivated = record_for(&s, "did:zhtp:lifeObs").unwrap();
@@ -402,7 +420,7 @@ fn status_transitions_revoke_paths_all_deny_bootstrap() {
         let b1 = make_block_with_txs(
             1,
             g,
-            vec![register_tx("did:zhtp:rA", "did:zhtp:spR", ObserverProofLevel::Basic, 1)],
+            vec![register_tx("did:zhtp:rA", "did:zhtp:spR", ObserverProofLevel::Basic, 0)],
         );
         exec.apply_block(&b1).expect("register");
         let h = did_to_hash(&"did:zhtp:rA".to_string());
@@ -414,7 +432,7 @@ fn status_transitions_revoke_paths_all_deny_bootstrap() {
         let b2 = make_block_with_txs(
             2,
             b1.header.block_hash,
-            vec![revoke_tx("did:zhtp:rA", "did:zhtp:spR", 2)],
+            vec![revoke_tx("did:zhtp:rA", "did:zhtp:spR", 1)],
         );
         exec.apply_block(&b2).expect("A->R");
         let rec = s.get_observer_record(&h).unwrap().unwrap();
@@ -435,13 +453,13 @@ fn status_transitions_revoke_paths_all_deny_bootstrap() {
         let b1 = make_block_with_txs(
             1,
             g,
-            vec![register_tx("did:zhtp:rS", "did:zhtp:spS", ObserverProofLevel::Basic, 1)],
+            vec![register_tx("did:zhtp:rS", "did:zhtp:spS", ObserverProofLevel::Basic, 0)],
         );
         exec.apply_block(&b1).expect("register");
         let b2 = make_block_with_txs(
             2,
             b1.header.block_hash,
-            vec![suspend_tx("did:zhtp:rS", "did:zhtp:spS", 2)],
+            vec![suspend_tx("did:zhtp:rS", "did:zhtp:spS", 1)],
         );
         exec.apply_block(&b2).expect("A->S");
         let h = did_to_hash(&"did:zhtp:rS".to_string());
@@ -453,7 +471,7 @@ fn status_transitions_revoke_paths_all_deny_bootstrap() {
         let b3 = make_block_with_txs(
             3,
             b2.header.block_hash,
-            vec![revoke_tx("did:zhtp:rS", "did:zhtp:spS", 3)],
+            vec![revoke_tx("did:zhtp:rS", "did:zhtp:spS", 2)],
         );
         exec.apply_block(&b3).expect("S->R");
         let rec = s.get_observer_record(&h).unwrap().unwrap();
@@ -468,7 +486,7 @@ fn status_transitions_revoke_paths_all_deny_bootstrap() {
         let b1 = make_block_with_txs(
             1,
             g,
-            vec![register_tx("did:zhtp:rP", "did:zhtp:spP2", ObserverProofLevel::Basic, 1)],
+            vec![register_tx("did:zhtp:rP", "did:zhtp:spP2", ObserverProofLevel::Basic, 0)],
         );
         exec.apply_block(&b1).expect("register");
         let h = did_to_hash(&"did:zhtp:rP".to_string());
@@ -478,7 +496,7 @@ fn status_transitions_revoke_paths_all_deny_bootstrap() {
         let b2 = make_block_with_txs(
             2,
             b1.header.block_hash,
-            vec![revoke_tx("did:zhtp:rP", "did:zhtp:spP2", 2)],
+            vec![revoke_tx("did:zhtp:rP", "did:zhtp:spP2", 1)],
         );
         exec.apply_block(&b2).expect("P->R revoke");
         let rec = s.get_observer_record(&h).unwrap().unwrap();
@@ -496,7 +514,7 @@ fn trusted_sync_source_enforcement_via_evaluate_admission() {
     let b1 = make_block_with_txs(
         1,
         g,
-        vec![register_tx("did:zhtp:tsObs", "did:zhtp:tsSp", ObserverProofLevel::Basic, 1)],
+        vec![register_tx("did:zhtp:tsObs", "did:zhtp:tsSp", ObserverProofLevel::Basic, 0)],
     );
     exec.apply_block(&b1).expect("register");
     let h = did_to_hash(&"did:zhtp:tsObs".to_string());
@@ -529,7 +547,7 @@ fn expired_record_denied_bootstrap() {
     let exec = BlockExecutor::with_store(s.clone());
     let g = apply_genesis(&exec);
     // Register with an explicit expires_at in the past.
-    let mut tx = register_tx("did:zhtp:expObs", "did:zhtp:expSp", ObserverProofLevel::Basic, 1);
+    let mut tx = register_tx("did:zhtp:expObs", "did:zhtp:expSp", ObserverProofLevel::Basic, 0);
     if let lib_blockchain::transaction::TransactionPayload::RegisterObserver(ref mut data) = tx.payload {
         data.expires_at = Some(NOW - 1);
     } else {
