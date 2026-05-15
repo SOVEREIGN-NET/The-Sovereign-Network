@@ -324,6 +324,7 @@ pub mod testing {
             dao_fee: 100,
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
+            kyber_public_key: Vec::new(),
         }
     }
 }
