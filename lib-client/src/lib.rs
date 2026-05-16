@@ -52,6 +52,7 @@ pub mod handshake;
 pub mod nft_tx;
 pub mod identity;
 pub mod messaging;
+pub mod observer_admission;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod quic_session;
 pub mod request;
@@ -3006,4 +3007,70 @@ pub extern "C" fn zhtp_identity_build_kyber_key_update(
     });
 
     string_to_cstr(body.to_string())
+}
+
+// =============================================================================
+// C FFI Exports — Observer Admission
+// =============================================================================
+
+/// Build canonical signing bytes for observer registration.
+///
+/// `inputs_json`  — JSON-encoded `RegisterObserverInputs`
+/// Returns 32-byte buffer the sponsor signs with Dilithium.
+/// Caller must free with `zhtp_client_buffer_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_observer_build_payload(
+    inputs_json: *const std::ffi::c_char,
+) -> ByteBuffer {
+    if inputs_json.is_null() {
+        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+    }
+    let json_str = unsafe { std::ffi::CStr::from_ptr(inputs_json) }
+        .to_str()
+        .unwrap_or("");
+    let inputs: observer_admission::RegisterObserverInputs = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(_) => return ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+    };
+    let mut payload = observer_admission::build_register_observer_payload(&inputs);
+    let buf = ByteBuffer { data: payload.as_mut_ptr(), len: payload.len() };
+    std::mem::forget(payload);
+    buf
+}
+
+/// Build the full JSON request body for `/admission/register`.
+///
+/// `inputs_json`        — JSON-encoded `RegisterObserverInputs`
+/// `sponsor_sig`        — Dilithium signature bytes (over payload from above)
+/// `sponsor_sig_len`    — length of signature
+/// `sponsor_dpk`        — sponsor raw Dilithium public key (2592 bytes)
+/// `sponsor_dpk_len`    — length
+/// `sponsor_kpk`        — sponsor raw Kyber public key (1568 bytes)
+/// `sponsor_kpk_len`    — length
+/// Returns null-terminated JSON string. Caller must free with `zhtp_client_string_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_observer_build_request(
+    inputs_json: *const std::ffi::c_char,
+    sponsor_sig: *const u8,
+    sponsor_sig_len: usize,
+    sponsor_dpk: *const u8,
+    sponsor_dpk_len: usize,
+    sponsor_kpk: *const u8,
+    sponsor_kpk_len: usize,
+) -> *mut std::ffi::c_char {
+    if inputs_json.is_null() || sponsor_sig.is_null() || sponsor_dpk.is_null() || sponsor_kpk.is_null() {
+        return std::ptr::null_mut();
+    }
+    let json_str = unsafe { std::ffi::CStr::from_ptr(inputs_json) }
+        .to_str()
+        .unwrap_or("");
+    let inputs: observer_admission::RegisterObserverInputs = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let sig = unsafe { std::slice::from_raw_parts(sponsor_sig, sponsor_sig_len) };
+    let dpk = unsafe { std::slice::from_raw_parts(sponsor_dpk, sponsor_dpk_len) };
+    let kpk = unsafe { std::slice::from_raw_parts(sponsor_kpk, sponsor_kpk_len) };
+    let json = observer_admission::build_register_observer_request(&inputs, sig, dpk, kpk);
+    string_to_cstr(json.to_string())
 }

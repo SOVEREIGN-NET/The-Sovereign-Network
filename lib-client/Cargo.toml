@@ -36,6 +36,7 @@ flate2 = "1.0"
 lib-blockchain = { path = "../lib-blockchain" }
 lib-crypto = { path = "../lib-crypto" }
 lib-identity-core = { path = "../lib-identity-core" }
+lib-types = { path = "../lib-types" }
 
 # Post-quantum crypto (native builds use C-based implementations)
 blake3 = "1.5"
