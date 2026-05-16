@@ -3,11 +3,9 @@
 //! Builds the JSON payloads for the observer admission endpoints so mobile
 //! clients never have to construct bincode or understand the transaction format.
 
-use crate::crypto;
 use lib_blockchain::integration::crypto_integration::{PublicKey, Signature};
 use lib_blockchain::transaction::{RegisterObserverData, Transaction};
 use lib_crypto::types::SignatureAlgorithm;
-use lib_types::{ObserverProofLevel, ObserverRateLimitTier};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -15,16 +13,21 @@ use serde::{Deserialize, Serialize};
 // ============================================================================
 
 /// All inputs required to build an observer registration payload.
+///
+/// `sponsor_proof_level` and `rate_limit_tier` are plain strings that must
+/// match the enum variant names expected by the server (e.g. `"Basic"`,
+/// `"Standard"`). They are passed through as JSON and deserialized by the
+/// server's serde implementation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegisterObserverInputs {
     pub observer_node_did: String,
     pub observer_dilithium_pk: Vec<u8>,
     pub endpoints: Vec<String>,
     pub sponsor_user_did: String,
-    pub sponsor_proof_level: ObserverProofLevel,
+    pub sponsor_proof_level: String,
     pub allowed_network: String,
     pub trusted_sync_scope: Option<String>,
-    pub rate_limit_tier: ObserverRateLimitTier,
+    pub rate_limit_tier: String,
     pub expires_at: Option<u64>,
     pub nonce: u64,
     pub chain_id: u8,
@@ -84,16 +87,22 @@ pub fn build_register_observer_request(
 // ============================================================================
 
 fn inputs_to_data(inputs: &RegisterObserverInputs, sponsor_signature: Vec<u8>) -> RegisterObserverData {
+    // Parse string fields into their typed enum equivalents via serde_json.
+    // Variant names must match the server's enum (e.g. "Basic", "Standard").
+    let proof_level = serde_json::from_value(serde_json::Value::String(inputs.sponsor_proof_level.clone()))
+        .expect("sponsor_proof_level must be a valid ObserverProofLevel variant");
+    let rate_tier = serde_json::from_value(serde_json::Value::String(inputs.rate_limit_tier.clone()))
+        .expect("rate_limit_tier must be a valid ObserverRateLimitTier variant");
     RegisterObserverData {
         observer_node_did: inputs.observer_node_did.clone(),
         observer_public_key: inputs.observer_dilithium_pk.clone(),
         endpoints: inputs.endpoints.clone(),
         sponsor_user_did: inputs.sponsor_user_did.clone(),
-        sponsor_proof_level: inputs.sponsor_proof_level.clone(),
+        sponsor_proof_level: proof_level,
         sponsor_signature,
         allowed_network: inputs.allowed_network.clone(),
         trusted_sync_scope: inputs.trusted_sync_scope.clone(),
-        rate_limit_tier: inputs.rate_limit_tier.clone(),
+        rate_limit_tier: rate_tier,
         expires_at: inputs.expires_at,
         nonce: inputs.nonce,
     }
@@ -126,10 +135,10 @@ mod tests {
             observer_dilithium_pk: vec![0u8; 2592],
             endpoints: vec!["127.0.0.1:9000".into()],
             sponsor_user_did: "did:zhtp:sponsor-test".into(),
-            sponsor_proof_level: ObserverProofLevel::Basic,
+            sponsor_proof_level: "Basic".into(),
             allowed_network: "testnet".into(),
             trusted_sync_scope: None,
-            rate_limit_tier: ObserverRateLimitTier::Standard,
+            rate_limit_tier: "Standard".into(),
             expires_at: None,
             nonce: 0,
             chain_id: 0x03,
