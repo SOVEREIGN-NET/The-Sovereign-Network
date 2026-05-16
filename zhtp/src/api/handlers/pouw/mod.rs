@@ -254,6 +254,65 @@ impl PouwHandler {
             })
     }
 
+    /// Resolve the authenticated requester's *canonical* DID.
+    ///
+    /// `request.requester` carries the QUIC identity_id, which is
+    /// `blake3(dilithium_pk || kyber_pk)` for mobile-registered identities
+    /// but `blake3(dilithium_pk)` for genesis identities. The canonical DID
+    /// stored in `identity_registry` is always `blake3(dilithium_pk)`.
+    ///
+    /// Scan the registry trying both derivations. Returns the canonical DID
+    /// (the registry key) on a match, or `None` if the requester can't be
+    /// resolved. Mirrors the lookup in `messaging::handler::handle_receive`.
+    async fn resolve_requester_canonical_did(
+        &self,
+        request: &ZhtpRequest,
+    ) -> Option<String> {
+        let requester_key_id = request
+            .requester
+            .as_ref()
+            .map(|id| hex::encode(&id.0))?;
+        if requester_key_id.is_empty() {
+            return None;
+        }
+        let key_id_did = format!("did:zhtp:{}", requester_key_id);
+
+        let blockchain_arc =
+            crate::runtime::blockchain_provider::get_global_blockchain()
+                .await
+                .ok()?;
+        let blockchain = blockchain_arc.read().await;
+
+        // Fast path: the QUIC identity_id is itself the canonical DID.
+        if blockchain.identity_registry.contains_key(&key_id_did) {
+            return Some(key_id_did);
+        }
+        // Slow path: scan, matching dilithium-only and dilithium||kyber.
+        blockchain
+            .identity_registry
+            .iter()
+            .find(|(_, id)| {
+                if id.public_key.len() < 32 {
+                    return false;
+                }
+                let dil_hash = hex::encode(lib_crypto::hash_blake3(&id.public_key));
+                if dil_hash == requester_key_id {
+                    return true;
+                }
+                if !id.kyber_public_key.is_empty() {
+                    let combined =
+                        [&id.public_key[..], &id.kyber_public_key[..]].concat();
+                    let combined_hash =
+                        hex::encode(lib_crypto::hash_blake3(&combined));
+                    if combined_hash == requester_key_id {
+                        return true;
+                    }
+                }
+                false
+            })
+            .map(|(did, _)| did.clone())
+    }
+
     async fn check_reward_query_access(
         &self,
         request: &ZhtpRequest,
@@ -298,13 +357,23 @@ impl PouwHandler {
             ));
         }
         if requester_did != target_did {
-            return Err(ZhtpResponse::error(
-                ZhtpStatus::Forbidden,
-                format!(
-                    "Requester DID {} cannot access {}",
-                    requester_did, target_did
-                ),
-            ));
+            // The QUIC identity_id in request.requester is blake3(dilithium_pk
+            // || kyber_pk); the canonical DID registered on-chain (and what a
+            // mobile client passes as target) is blake3(dilithium_pk) only.
+            // A raw `!=` therefore rejects a legitimate self-access. Resolve
+            // the requester's canonical DID via the identity registry —
+            // trying both derivations — before denying. Mirrors the
+            // msg/receive canonical-DID lookup.
+            let canonical = self.resolve_requester_canonical_did(request).await;
+            if canonical.as_deref() != Some(target_did) {
+                return Err(ZhtpResponse::error(
+                    ZhtpStatus::Forbidden,
+                    format!(
+                        "Requester DID {} cannot access {}",
+                        requester_did, target_did
+                    ),
+                ));
+            }
         }
 
         if let Err(e) = self.validate_client_identity(target_did).await {
