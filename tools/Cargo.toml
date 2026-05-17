@@ -12,6 +12,10 @@ name = "chain_audit"
 path = "chain_audit.rs"
 
 [[bin]]
+name = "wallet_probe"
+path = "wallet_probe.rs"
+
+[[bin]]
 name = "sled_migration"
 path = "sled_migration.rs"
 
