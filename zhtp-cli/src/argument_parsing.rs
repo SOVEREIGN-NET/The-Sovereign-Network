@@ -138,6 +138,9 @@ pub enum ZhtpCommand {
 
     /// NFT operations (create collection, mint, transfer)
     Nft(NftArgs),
+
+    /// Observer node admission and lifecycle commands
+    Observer(ObserverArgs),
 }
 
 /// NFT operation commands
@@ -218,6 +221,65 @@ pub enum NftAction {
     Owned {
         /// Wallet ID (64-char hex)
         wallet_id: String,
+    },
+}
+
+/// Observer node admission and lifecycle commands
+#[derive(Args, Debug, Clone)]
+pub struct ObserverArgs {
+    #[command(subcommand)]
+    pub action: ObserverAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum ObserverAction {
+    /// Generate a new observer identity (Dilithium5 + Kyber1024 keypair)
+    /// and save to ~/.zhtp/keystore/observer/
+    Generate,
+
+    /// Print the JSON payload the mobile app reads from the QR code.
+    QrPayload {
+        /// Observer DID to use
+        #[arg(long)]
+        did: String,
+    },
+
+    /// Render an ASCII QR code of the admission payload in the terminal.
+    QrRender {
+        /// Observer DID to use
+        #[arg(long)]
+        did: String,
+    },
+
+    /// Query the current admission status of an observer.
+    Status {
+        /// Observer DID to query
+        #[arg(long)]
+        did: String,
+    },
+
+    /// Poll admission status until Active or timeout.
+    Wait {
+        /// Observer DID to wait for
+        #[arg(long)]
+        did: String,
+        /// Maximum seconds to wait (default 300)
+        #[arg(long, default_value = "300")]
+        timeout: u64,
+    },
+
+    /// Start the observer node (requires Active admission status).
+    Start {
+        /// Observer DID to start
+        #[arg(long)]
+        did: String,
+    },
+
+    /// List all observers sponsored by a particular user DID.
+    BySponsor {
+        /// Sponsor user DID
+        #[arg(long)]
+        did: String,
     },
 }
 
@@ -1925,6 +1987,9 @@ pub async fn run_cli() -> Result<()> {
             .await
             .map_err(anyhow::Error::msg),
         ZhtpCommand::Nft(args) => commands::nft::handle_nft_command(args.clone(), &cli)
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Observer(args) => commands::observer::handle_observer_command(args.clone(), &cli)
             .await
             .map_err(anyhow::Error::msg),
     }
