@@ -108,6 +108,23 @@ pub struct DaoRegistryIndexEntry {
     pub created_at: u64,
 }
 
+/// A single PoUW reward payout, observed on-chain.
+///
+/// Recorded whenever a `TokenMint` transaction carrying a `pouw:mint:` memo
+/// is applied during block processing. Because every node processes the same
+/// blocks, the resulting index is identical on every node — unlike the
+/// node-local `RewardCalculator` ledger. This is the consensus-derived source
+/// for `/api/v1/pouw/rewards/<did>`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PouwMintRecord {
+    /// Amount of SOV minted to the recipient (atomic units).
+    pub amount: u128,
+    /// Block height at which the mint was applied.
+    pub block_height: u64,
+    /// Hash of the TokenMint transaction.
+    pub tx_hash: [u8; 32],
+}
+
 /// Blockchain state with identity registry and UTXO management
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -473,6 +490,13 @@ pub struct Blockchain {
     /// keys/dao-wallets.json (registered 2026-04-10).
     #[serde(default)]
     pub fee_router: crate::contracts::economics::fee_router::FeeRouter,
+    /// PoUW reward payouts observed on-chain, keyed by recipient key_id.
+    /// Rebuilt deterministically from block replay (`process_token_transactions`),
+    /// so it is identical on every node — the consensus-derived backing for the
+    /// `/api/v1/pouw/rewards` query. `#[serde(skip)]`: never persisted, always
+    /// derived from blocks.
+    #[serde(skip)]
+    pub pouw_mint_index: HashMap<[u8; 32], Vec<PouwMintRecord>>,
 }
 
 /// Validator information stored on-chain.
