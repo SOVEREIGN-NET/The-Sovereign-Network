@@ -290,6 +290,7 @@ impl BlockchainV1 {
             observer_blocks: HashMap::new(),
             credential_registry: HashMap::new(),
             did_to_username: HashMap::new(),
+            pouw_mint_index: HashMap::new(),
         }
     }
 }
@@ -617,6 +618,7 @@ impl BlockchainStorageV3 {
             did_to_username: HashMap::new(),
             observer_registry: HashMap::new(),
             observer_blocks: HashMap::new(),
+            pouw_mint_index: HashMap::new(),
         }
     }
 }
