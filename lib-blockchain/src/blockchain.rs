@@ -20,7 +20,7 @@ use crate::transaction::{
 };
 use crate::types::transaction_type::TransactionType;
 use crate::types::{Difficulty, DifficultyConfig, Hash};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use lib_storage::dht::storage::DhtStorage;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -106,6 +106,23 @@ pub struct DaoRegistryIndexEntry {
     pub treasury_key_id: [u8; 32],
     pub owner_key_id: [u8; 32],
     pub created_at: u64,
+}
+
+/// A single PoUW reward payout, observed on-chain.
+///
+/// Recorded whenever a `TokenMint` transaction carrying a `pouw:mint:` memo
+/// is applied during block processing. Because every node processes the same
+/// blocks, the resulting index is identical on every node — unlike the
+/// node-local `RewardCalculator` ledger. This is the consensus-derived source
+/// for `/api/v1/pouw/rewards/<did>`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PouwMintRecord {
+    /// Amount of SOV minted to the recipient (atomic units).
+    pub amount: u128,
+    /// Block height at which the mint was applied.
+    pub block_height: u64,
+    /// Hash of the TokenMint transaction.
+    pub tx_hash: [u8; 32],
 }
 
 /// Blockchain state with identity registry and UTXO management
@@ -479,6 +496,13 @@ pub struct Blockchain {
     /// keys/dao-wallets.json (registered 2026-04-10).
     #[serde(default)]
     pub fee_router: crate::contracts::economics::fee_router::FeeRouter,
+    /// PoUW reward payouts observed on-chain, keyed by recipient key_id.
+    /// Rebuilt deterministically from block replay (`process_token_transactions`),
+    /// so it is identical on every node — the consensus-derived backing for the
+    /// `/api/v1/pouw/rewards` query. `#[serde(skip)]`: never persisted, always
+    /// derived from blocks.
+    #[serde(skip)]
+    pub pouw_mint_index: HashMap<[u8; 32], Vec<PouwMintRecord>>,
 }
 
 /// Validator information stored on-chain.
@@ -4276,79 +4300,6 @@ impl Blockchain {
             .map_err(|e| anyhow::anyhow!("Failed to serialize blockchain: {}", e))
     }
 
-    /// Validate imported oracle state for consistency (ORACLE-10).
-    ///
-    /// Performs the following validations:
-    /// - Committee members must exist in validator_registry (no ghost members)
-    /// - Finalized prices must be in ascending epoch order
-    /// - No price from a future epoch (relative to imported block height)
-    fn validate_imported_oracle_state(
-        &self,
-        oracle_state: &crate::oracle::OracleState,
-        last_oracle_epoch_processed: u64,
-        imported_block_height: u64,
-    ) -> Result<()> {
-        // 1. Verify committee members are all in validator_registry (no ghost members)
-        // Precompute HashSet of validator key_ids for O(1) lookup (O(n) total instead of O(n*m))
-        let validator_key_ids: HashSet<[u8; 32]> = self
-            .validator_registry
-            .values()
-            .map(|v| lib_crypto::hash_blake3(&v.consensus_key))
-            .collect();
-        for member_key_id in oracle_state.committee.members() {
-            if !validator_key_ids.contains(member_key_id) {
-                return Err(anyhow::anyhow!(
-                    "Ghost committee member: validator with key_id {} not found in registry",
-                    hex::encode(member_key_id)
-                ));
-            }
-        }
-
-        // 2. Verify finalized prices are in ascending epoch order
-        let mut prev_epoch: Option<u64> = None;
-        for (epoch_id, _price) in oracle_state.all_finalized_prices() {
-            if let Some(prev) = prev_epoch {
-                if *epoch_id <= prev {
-                    return Err(anyhow::anyhow!(
-                        "Finalized prices not in ascending epoch order: {} followed by {}",
-                        prev,
-                        epoch_id
-                    ));
-                }
-            }
-            prev_epoch = Some(*epoch_id);
-        }
-
-        // 3. Verify no price is from a future epoch (relative to imported block height)
-        // Estimate max reasonable epoch from the imported block height.
-        // Assuming ~10 second blocks, timestamp ≈ height * 10 for a rough estimate.
-        let estimated_tip_timestamp = imported_block_height.saturating_mul(10);
-        let max_reasonable_epoch = oracle_state
-            .epoch_id(estimated_tip_timestamp)
-            .saturating_add(10); // Allow some buffer
-
-        for (epoch_id, _price) in oracle_state.all_finalized_prices() {
-            if *epoch_id > max_reasonable_epoch {
-                return Err(anyhow::anyhow!(
-                    "Future epoch price detected: epoch {} at imported height {} (max reasonable epoch: {})",
-                    epoch_id, imported_block_height, max_reasonable_epoch
-                ));
-            }
-        }
-
-        // 4. Verify last_oracle_epoch_processed is consistent with finalized prices
-        if let Some((&max_epoch, _)) = oracle_state.all_finalized_prices().iter().next_back() {
-            if last_oracle_epoch_processed < max_epoch {
-                return Err(anyhow::anyhow!(
-                    "Inconsistent last_oracle_epoch_processed: {} but have finalized price for epoch {}",
-                    last_oracle_epoch_processed, max_epoch
-                ));
-            }
-        }
-
-        Ok(())
-    }
-
     /// Evaluate and potentially merge a blockchain from another node
     /// Uses consensus rules to decide whether to adopt the imported chain
     pub async fn evaluate_and_merge_chain(
@@ -4364,60 +4315,115 @@ impl Blockchain {
         let import: BlockchainImport = bincode::deserialize(&data)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize blockchain: {}", e))?;
 
-        // Fast path: if local chain is empty (fresh node bootstrap), directly adopt
-        // the imported chain without verification against empty state.
-        // An empty blockchain has no state to validate transactions against,
-        // so verify_block() would reject valid genesis transactions.
-        // Check both is_empty() (no blocks at all) and height==0 (has placeholder genesis).
+        // SECURITY — fresh-node safety: a node with no chain of its own MUST NOT
+        // adopt an imported chain on trust. The legacy fast path assigned the
+        // import's precomputed blocks AND state maps (validator_registry,
+        // utxo_set, identity_registry, …) directly, letting any peer substitute
+        // a fabricated genesis, validator set, and balances onto a bootstrapping
+        // node — a complete chain-substitution takeover.
+        //
+        // Instead: pin block 0 to this node's own embedded genesis.toml, verify
+        // continuity, and apply every imported block through the standard
+        // verified sync path (`apply_block_trusted_for_sync`). All state is
+        // *derived* from the verified blocks; the import's state maps are never
+        // trusted. Block 0 carries the canonical genesis state, so subsequent
+        // blocks are validated against real state — the reason the legacy path
+        // gave for skipping verification (empty state) no longer applies.
+        //
+        // Check both is_empty() (no blocks at all) and height==0 (placeholder genesis).
         if self.blocks.is_empty() || self.height == 0 {
             if import.blocks.is_empty() {
                 info!("Both local and imported chains are empty - nothing to merge");
                 return Ok(crate::ChainMergeResult::LocalKept);
             }
-            let imported_height = import.blocks.len() as u64 - 1;
-            info!("Local chain is empty - directly adopting imported chain (height={}, identities={}, validators={}, oracle_prices={})",
-                  imported_height, import.identity_registry.len(), import.validator_registry.len(),
-                  import.oracle_state.as_ref().map(|s| s.finalized_prices_len()).unwrap_or(0));
-            self.blocks = import.blocks;
-            self.height = imported_height;
-            self.utxo_set = import.utxo_set;
-            self.identity_registry = import.identity_registry;
-            self.wallet_registry =
-                self.convert_wallet_references_to_full_data(&import.wallet_references);
-            self.validator_registry = import.validator_registry;
-            self.token_contracts = import.token_contracts;
-            self.web4_contracts = import.web4_contracts;
-            self.contract_blocks = import.contract_blocks;
-            self.dao_registry_index = import.dao_registry_index;
-            self.rebuild_dao_registry_index();
 
-            // ORACLE-10: Import oracle state if present
-            if let Some(oracle_state) = import.oracle_state {
-                // Validate imported oracle state before accepting
-                match self.validate_imported_oracle_state(
-                    &oracle_state,
-                    import.last_oracle_epoch_processed,
-                    imported_height,
-                ) {
-                    Ok(()) => {
-                        self.oracle_state = oracle_state;
-                        self.last_oracle_epoch_processed = import.last_oracle_epoch_processed;
-                        info!(
-                            "🔮 Oracle state imported: {} finalized prices, epoch {}",
-                            self.oracle_state.finalized_prices_len(),
-                            self.last_oracle_epoch_processed
-                        );
-                    }
-                    Err(e) => {
-                        warn!("⚠️ Oracle state validation failed during import: {}. Starting with empty oracle state.", e);
-                        // Start with default oracle state - will be backfilled from blocks
-                    }
-                }
-            } else {
-                warn!("⚠️ Oracle state not present in import — new node will start without oracle prices (backfill from blocks)");
+            let BlockchainImport {
+                blocks: imported_blocks,
+                ..
+            } = import;
+            info!(
+                "Fresh node bootstrap: verifying imported chain ({} blocks) before adoption",
+                imported_blocks.len()
+            );
+
+            // 1. Genesis pinning — rebuild the canonical block 0 from the
+            //    genesis.toml baked into this binary. An import whose block 0
+            //    differs is on a different network and is rejected outright.
+            let cfg = crate::genesis::GenesisConfig::from_embedded()
+                .context("loading embedded genesis.toml for genesis pinning")?;
+            let mut adopted = cfg
+                .build_block0()
+                .context("building canonical genesis block 0")?;
+            cfg.verify_hash(&adopted.blocks[0].header.block_hash.as_array())
+                .context("verifying canonical genesis hash")?;
+
+            let canonical_genesis_hash = adopted.blocks[0].hash();
+            let imported_genesis_hash = imported_blocks[0].hash();
+            if imported_genesis_hash != canonical_genesis_hash {
+                return Err(anyhow::anyhow!(
+                    "Imported chain rejected: genesis block mismatch.\n  \
+                     expected (canonical): {}\n  imported            : {}\n  \
+                     The peer is on a different network — refusing to adopt.",
+                    canonical_genesis_hash,
+                    imported_genesis_hash,
+                ));
             }
 
-            info!("Successfully adopted imported chain during bootstrap");
+            // 2. Carry process-local runtime handles (the #[serde(skip)] fields)
+            //    onto the canonical chain before it replaces `self`. These are
+            //    not chain state and must survive the swap.
+            if let Some(processor) = self.economic_processor.take() {
+                adopted.economic_processor = Some(processor);
+            }
+            adopted.storage_manager = self.storage_manager.take();
+            adopted.store = self.store.take();
+            adopted.proof_aggregator = self.proof_aggregator.take();
+            adopted.broadcast_sender = self.broadcast_sender.take();
+            adopted.treasury_kernel = self.treasury_kernel.take();
+            adopted.executor = self.executor.take();
+            adopted.auto_persist_enabled = self.auto_persist_enabled;
+            std::mem::swap(&mut self.event_publisher, &mut adopted.event_publisher);
+            *self = adopted;
+
+            // 3. Apply each imported block through the verified sync path.
+            //    Continuity is checked explicitly; transaction validity and all
+            //    state derivation are handled by `apply_block_trusted_for_sync`.
+            for (height, block) in imported_blocks.into_iter().enumerate().skip(1) {
+                let expected_previous = self
+                    .blocks
+                    .last()
+                    .expect("chain always retains the genesis block")
+                    .hash();
+                if block.header.previous_hash != expected_previous.as_array() {
+                    return Err(anyhow::anyhow!(
+                        "Imported chain rejected: block {} breaks continuity \
+                         (previous_hash does not link to block {})",
+                        height,
+                        height - 1,
+                    ));
+                }
+                if block.header.height != height as u64 {
+                    return Err(anyhow::anyhow!(
+                        "Imported chain rejected: block at index {} declares height {}",
+                        height,
+                        block.header.height,
+                    ));
+                }
+                self.apply_block_trusted_for_sync(block).await.map_err(|e| {
+                    anyhow::anyhow!(
+                        "Imported chain rejected: block {} failed verification during adoption: {}",
+                        height,
+                        e
+                    )
+                })?;
+            }
+
+            info!(
+                "✅ Verified imported chain adopted during bootstrap (height={}, identities={}, validators={})",
+                self.height,
+                self.identity_registry.len(),
+                self.validator_registry.len()
+            );
             return Ok(crate::ChainMergeResult::ImportedAdopted);
         }
 

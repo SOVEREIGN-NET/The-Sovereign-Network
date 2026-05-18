@@ -105,6 +105,7 @@ impl Blockchain {
             credential_registry: HashMap::new(),
             did_to_username: HashMap::new(),
             opaque_server_setup: None,
+            pouw_mint_index: HashMap::new(),
         }
     }
 
@@ -703,6 +704,11 @@ impl Blockchain {
             blockchain.wallet_registry.len(),
             blockchain.token_contracts.len()
         );
+
+        // load_from_store deliberately skips token-tx processing, so the
+        // PoUW mint index is not built incrementally on this path. Rebuild it
+        // from the loaded blocks so /api/v1/pouw/rewards has the full history.
+        blockchain.rebuild_pouw_mint_index();
 
         Ok(Some(blockchain))
     }
