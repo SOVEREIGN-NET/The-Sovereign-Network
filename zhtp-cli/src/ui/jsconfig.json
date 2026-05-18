@@ -1,0 +1,5 @@
+{
+  "compilerOptions": {},
+  "include": [],
+  "exclude": ["qrcode.min.js"]
+}

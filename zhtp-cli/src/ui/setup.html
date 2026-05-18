@@ -387,6 +387,101 @@ button,input{font:inherit}
   .hero-copy p{font-size:1rem}
   .status-badge{font-size:10px;padding:8px 10px}
 }
+
+/* ── Observer Admission Panel Styles ── */
+#view-observer{display:grid;gap:24px}
+.obs-hero{grid-column:1/-1}
+.obs-panel{
+  border:1px solid var(--line);
+  background:var(--panel);
+  border-radius:24px;
+  padding:24px;
+  position:relative;
+  overflow:hidden;
+}
+.obs-panel::before{
+  content:"";position:absolute;top:0;left:0;right:0;height:3px;
+  background:linear-gradient(90deg, rgba(159,106,31,.7), rgba(15,118,110,.48), transparent 92%);
+}
+.obs-panel .panel-header{margin-bottom:18px}
+.obs-panel .panel-title{font-family:var(--display);font-size:28px;line-height:1;text-transform:uppercase}
+.obs-panel .panel-subtitle{font-size:1rem;color:var(--muted);max-width:34rem}
+.obs-qr-wrap{
+  display:flex;flex-direction:column;align-items:center;
+  padding:24px;background:rgba(255,255,255,.6);border-radius:18px;
+  border:1px solid var(--line);margin-bottom:16px;
+}
+.obs-qr-wrap canvas,.obs-qr-wrap img{border-radius:8px;display:block;margin:0 auto}
+.obs-qr-status{
+  display:flex;align-items:center;gap:10px;
+  margin-top:16px;font-family:var(--mono);font-size:13px;color:var(--muted);
+}
+.obs-spinner{
+  display:inline-block;width:18px;height:18px;
+  border:2px solid var(--line);border-top-color:var(--gold);
+  border-radius:50%;animation:obs-spin .8s linear infinite;
+}
+@keyframes obs-spin{to{transform:rotate(360deg)}}
+.obs-check{
+  width:48px;height:48px;border-radius:50%;
+  background:var(--signal-soft);color:var(--signal);
+  display:flex;align-items:center;justify-content:center;
+  font-size:24px;margin-bottom:12px;
+}
+.obs-error-icon{
+  width:48px;height:48px;border-radius:50%;
+  background:var(--err-soft);color:var(--err);
+  display:flex;align-items:center;justify-content:center;
+  font-size:24px;margin-bottom:12px;
+}
+.obs-ascii-qr{
+  font-family:var(--mono);font-size:8px;line-height:1;
+  padding:16px;background:#fff;border-radius:12px;
+  border:1px solid var(--line);overflow-x:auto;white-space:pre;
+  max-height:200px;overflow-y:auto;
+}
+.obs-did-display{
+  padding:14px 16px;border-radius:18px;
+  background:rgba(255,255,255,.5);border:1px solid var(--line);
+  font-family:var(--mono);font-size:13px;line-height:1.6;word-break:break-all;
+  margin-bottom:16px;
+}
+.obs-status-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.obs-status-item{
+  padding:16px;border-radius:18px;border:1px solid var(--line);background:rgba(255,255,255,.46)
+}
+.obs-status-item .meta-key{margin-bottom:8px}
+.obs-status-item .value{font-family:var(--display);font-size:22px;line-height:1;word-break:break-word}
+.obs-status-item.compact .value{font-size:16px;font-family:var(--mono);text-transform:none}
+.obs-notes{display:grid;gap:12px;margin-top:16px}
+.obs-note{
+  padding:16px 18px;border-radius:18px;border:1px solid var(--line);background:rgba(255,255,255,.42)
+}
+.obs-note strong{display:block;margin-bottom:8px;font-family:var(--display);font-size:20px;text-transform:uppercase;letter-spacing:.06em}
+.obs-note p{font-size:1rem;line-height:1.3;color:var(--muted)}
+.obs-running-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:16px}
+.obs-running-metric{padding:20px;border:1px solid var(--line);background:var(--panel);border-radius:24px;position:relative;overflow:hidden}
+.obs-running-metric.emphasis{grid-column:span 2;padding:26px}
+.obs-running-metric .stat-label{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin-bottom:14px}
+.obs-running-metric .metric-value{font-family:var(--display);font-size:clamp(2rem,4vw,3.25rem);line-height:.95;text-transform:uppercase}
+.obs-running-metric .metric-sub{margin-top:10px;font-family:var(--mono);font-size:12px;color:var(--muted);word-break:break-word}
+.obs-running-metric .metric-foot{margin-top:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.obs-progress{margin:16px 0}
+.obs-progress-bar{
+  height:14px;border-radius:999px;border:1px solid var(--line);overflow:hidden;
+  background:rgba(255,255,255,.56);margin-bottom:12px
+}
+.obs-progress-fill{
+  height:100%;width:0;
+  background:linear-gradient(90deg, rgba(159,106,31,.72), rgba(15,118,110,.78));
+  transition:width .45s ease;
+}
+.obs-progress-meta{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-family:var(--mono);font-size:12px;color:var(--muted)}
+@media (max-width:760px){
+  .obs-status-grid,.obs-running-metrics{grid-template-columns:1fr}
+  .obs-running-metric.emphasis{grid-column:auto}
+  .obs-qr-wrap{padding:14px}
+}
 </style>
 </head>
 <body>
@@ -678,6 +773,160 @@ button,input{font:inherit}
         </div>
       </section>
 
+      <!-- ── Observer Admission Panel (hidden by default) ── -->
+      <section id="view-observer" class="hidden" style="display:none">
+        <div class="obs-hero panel"style="padding:22px">
+          <div class="panel-header">
+            <div>
+              <div class="panel-label">Observer Node Setup</div>
+              <div class="panel-title">Onboard Observer</div>
+            </div>
+          </div>
+       <p class="panel-subtitle">This machine will run as an observer node on the Sovereign Network Your phone acts as the sole signer — no private key or seed phrase is ever entered on this desktop.</p>
+        </div>
+
+        <!-- State: Generate -->
+        <div id="obs-generate" class="obs-panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-label">Step 1</div>
+              <div class="panel-title">Create Observer Identity</div>
+            </div>
+          </div>
+        <p class="panel-subtitle">Generate a post-quantum Dilithium5+Kyber1024 keypair for this observer node. The keypair is stored locally in <code>~/.zhtp/keystore/observer/</code> — your phone never sees these keys</p>
+          <div id="obs-generate-error" class="error-box hidden" role="alert"></div>
+          <div class="panel-actions" style="margin-top:18px">
+            <button class="btn btn-primary" type="button" id="obs-gen-btn" onclick="doObserverGenerate()">Create Observer Identity</button>
+          </div>
+          <div class="obs-notes">
+            <div class="obs-note">
+              <strong>Phone is the Signer</strong>
+              <p>The desktop holds only the observer node identity. Your Sovereign phone app signs the admission transaction — no private key material ever leaves your phone</p>
+            </div>
+            <div class="obs-note">
+              <strong>What happens next</strong>
+              <p>After generating the identity, a QR code will appear. Scan it with the Sovereign mobile app to authorize this node on-chain.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- State: Pending QR -->
+        <div id="obs-qr" class="obs-panel hidden">
+          <div class="panel-header">
+            <div>
+              <div class="panel-label">Step 2</div>
+              <div class="panel-title">Scan with Mobile App</div>
+            </div>
+            <div class="panel-actions">
+              <button class="btn btn-ghost" type="button" id="obs-cancel-btn" onclick="cancelObserverAdmission()">Cancel</button>
+            </div>
+          </div>
+        <p class="panel-subtitle">Open the Sovereign mobile app, navigate to Observer Admission, and scan the QR code below. Your phone will prompt and sign.</p>
+          <div class="obs-qr-wrap">
+            <div id="obs-qr-container" style="width:256px;height:256px;display:flex;align-items:center;justify-content:center;background:#fff;border-radius:8px">
+              <span style="color:var(--muted);font-family:var(--mono);font-size:11px">Generating QR…</span>
+            </div>
+            <div class="obs-qr-status">
+              <span class="obs-spinner" id="obs-qr-spinner"></span>
+              <span id="obs-qr-status-text">Waiting for phone approval…</span>
+            </div>
+          </div>
+          <div class="obs-did-display" id="obs-qr-did">did:zhtp:…</div>
+          <div class="panel-actions">
+            <button class="btn btn-secondary" type="button" id="obs-copy-did-btn" onclick="copyObserverDid()">Copy DID</button>
+            <button class="btn btn-secondary" type="button" id="obs-ascii-qr-btn" onclick="showAsciiQr()">Show ASCII QR</button>
+          </div>
+          <div id="obs-ascii-qr-container" class="obs-ascii-qr hidden" style="margin-top:12px"></div>
+          <div id="obs-qr-error" class="error-box hidden" role="alert"></div>
+        </div>
+
+        <!-- State: Admitted -->
+        <div id="obs-admitted" class="obs-panel hidden">
+          <div class="panel-header">
+            <div>
+              <div class="panel-label">Step 3</div>
+              <div class="panel-title">Admitted on Chain</div>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding:16px 0">
+            <div class="obs-check">✓</div>
+            <p style="font-family:var(--display);font-size:22px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Observer Admitted</p>
+            <p style="color:var(--muted);font-size:1rem;max-width:28rem">The observer identity is now registered on-chain. Starting the observer node…</p>
+          </div>
+          <div class="obs-status-grid" style="margin-top:16px">
+            <div class="obs-status-item">
+              <div class="meta-key">Observer DID</div>
+              <div class="value" id="obs-admitted-did" style="font-size:14px;font-family:var(--mono);word-break:break-all">—</div>
+            </div>
+            <div class="obs-status-item">
+              <div class="meta-key">Status</div>
+              <div class="value" id="obs-admitted-status" style="color:var(--signal)">Active</div>
+            </div>
+          </div>
+          <div id="obs-admitted-error" class="error-box hidden" role="alert"></div>
+          <div class="panel-actions" style="margin-top:18px">
+            <button class="btn btn-primary" type="button" id="obs-start-btn" onclick="doStartObserverNode()">Start Node</button>
+          </div>
+        </div>
+
+        <!-- State: Running -->
+        <div id="obs-running" class="obs-panel hidden">
+          <div class="panel-header">
+            <div>
+              <div class="panel-label">Live</div>
+              <div class="panel-title">Observer Running</div>
+            </div>
+            <div class="panel-actions">
+              <button class="btn btn-secondary" type="button" id="obs-refresh-btn" onclick="refreshObserverStatus()">Refresh</button>
+              <button class="btn btn-danger" type="button" id="obs-stop-btn" onclick="openStopDialog()">Stop</button>
+            </div>
+          </div>
+          <div class="obs-running-metrics">
+            <article class="obs-running-metric emphasis">
+              <div class="stat-label">Chain Height</div>
+              <div class="metric-value" id="obs-metric-height">0</div>
+              <div class="metric-foot">
+                <span class="status-pill syncing" id="obs-state-pill"><span class="signal-dot" id="obs-state-pill-dot"></span><span id="obs-state-pill-text">Syncing</span></span>
+                <span class="metric-sub" id="obs-status-detail">Waiting for bridge telemetry.</span>
+              </div>
+            </article>
+            <article class="obs-running-metric">
+              <div class="stat-label">Peers</div>
+              <div class="metric-value" id="obs-metric-peers">0</div>
+              <div class="metric-sub">Connected bootstrap peers</div>
+            </article>
+            <article class="obs-running-metric">
+              <div class="stat-label">Network</div>
+              <div class="metric-value" id="obs-metric-network" style="font-size:1.4rem;text-transform:none">—</div>
+              <div class="metric-sub">Active network</div>
+            </article>
+          </div>
+          <div class="obs-progress">
+            <div class="obs-progress-bar">
+              <div class="obs-progress-fill" id="obs-progress-fill"></div>
+            </div>
+            <div class="obs-progress-meta">
+              <span id="obs-progress-label">0%</span>
+              <span id="obs-progress-detail">Synchronizing chain data…</span>
+            </div>
+          </div>
+          <div id="obs-running-error" class="error-box hidden" role="alert"></div>
+        </div>
+
+        <!-- State: Error -->
+        <div id="obs-error" class="obs-panel hidden">
+          <div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding:16px 0">
+            <div class="obs-error-icon">⚠</div>
+            <p style="font-family:var(--display);font-size:22px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Admission Error</p>
+            <p id="obs-error-message" style="color:var(--err);font-size:1rem;max-width:28rem">An error occurred during the admission flow.</p>
+          </div>
+          <div class="panel-actions" style="justify-content:center;margin-top:16px">
+            <button class="btn btn-primary" type="button" id="obs-retry-btn" onclick="retryObserverAdmission()">Retry</button>
+            <button class="btn btn-ghost" type="button" id="obs-reset-btn" onclick="resetObserverFlow()">Reset</button>
+          </div>
+        </div>
+      </section>
+
     </main>
   </div>
 </div>
@@ -694,6 +943,7 @@ button,input{font:inherit}
   </div>
 </div>
 
+<script src="/js/qrcode.min.js"></script>
 <script>
 const API = "";
 const POLL_MS = 2500;
@@ -716,7 +966,19 @@ function cacheElements() {
     "status-detail","progress-fill","progress-label","progress-detail","progress-copy","did-value",
     "status-network","status-registered","status-wallet","copy-did-btn","register-cta",
     "register-info","state-pill","state-pill-dot","state-pill-text","stop-dialog",
-    "register-btn","disconnect-btn","disconnect-confirm-btn","force-sync-btn","reset-identity-btn"
+    "register-btn","disconnect-btn","disconnect-confirm-btn","force-sync-btn","reset-identity-btn",
+    /* Observer panel elements */
+    "view-observer",
+    "obs-generate","obs-qr","obs-admitted","obs-running","obs-error",
+    "obs-gen-btn","obs-generate-error",
+    "obs-qr-container","obs-qr-spinner","obs-qr-status-text","obs-qr-did",
+    "obs-copy-did-btn","obs-ascii-qr-btn","obs-cancel-btn","obs-qr-error","obs-ascii-qr-container",
+    "obs-admitted-did","obs-admitted-status","obs-admitted-error","obs-start-btn",
+    "obs-metric-height","obs-metric-peers","obs-metric-network",
+    "obs-state-pill","obs-state-pill-dot","obs-state-pill-text","obs-status-detail",
+    "obs-progress-fill","obs-progress-label","obs-progress-detail",
+    "obs-running-error","obs-refresh-btn","obs-stop-btn",
+    "obs-error-message","obs-retry-btn","obs-reset-btn"
   ].forEach(function(id){els[id] = $(id);});
 }
 
@@ -730,6 +992,7 @@ function setView(mode) {
   els["view-setup"].classList.toggle("hidden", mode !== "setup");
   els["view-dashboard"].classList.toggle("hidden", mode !== "dashboard");
   els["view-topology"].classList.toggle("hidden", mode !== "topology");
+  els["view-observer"].classList.toggle("hidden", mode !== "observer");
   if (mode === "dashboard") startPolling();
   if (mode === "topology") fetchTopology();
 }
@@ -1243,6 +1506,11 @@ async function bootstrap() {
 
   try {
     const data = await requestJson("/api/status");
+    // Observer mode: bridge reports "mode": "observer"
+    if (data.mode === "observer") {
+      enterObserverMode();
+      return;
+    }
     if (data.state === "setup_required" && !data.did) {
       applyNavStatus(mapState(data), data);
       if (data.local_identity_error) {
@@ -1434,6 +1702,220 @@ function drawTopoSVG(vs, gs) {
     svg.appendChild(iplabel);
   });
 }
+// ════════════════════════════════════════════════════════════════
+// Observer Admission Flow
+// ════════════════════════════════════════════════════════════════
+
+let obsDid = null;
+let obsPayload = null;
+let obsPollTimer = null;
+let obsRunningPollTimer = null;
+
+function enterObserverMode() {
+  document.title = "Sovereign Network — Observer Setup";
+  setView("observer");
+  showObserverState("generate");
+}
+
+function showObserverState(state) {
+  ["obs-generate","obs-qr","obs-admitted","obs-running","obs-error"].forEach(function(id) {
+    els[id].classList.add("hidden");
+  });
+  els["obs-" + state].classList.remove("hidden");
+  if (state === "qr") {
+    startObserverPolling();
+  } else {
+    stopObserverPolling();
+  }
+}
+
+function showObserverError(id, message) {
+  const el = els[id];
+  el.textContent = message;
+  el.classList.remove("hidden");
+}
+
+function clearObserverError(id) {
+  const el = els[id];
+  el.textContent = "";
+  el.classList.add("hidden");
+}
+
+async function doObserverGenerate() {
+  clearObserverError("obs-generate-error");
+  setBusy("obs-gen-btn", true, "Generating...");
+  try {
+    const data = await postControl("generate_observer_identity");
+    if (data.error) throw new Error(data.error);
+    if (!data.did) throw new Error("No DID returned from identity generation");
+    obsDid = data.did;
+    els["obs-qr-did"].textContent = obsDid;
+    showObserverState("qr");
+    await loadQrPayload();
+  } catch (error) {
+    showObserverError("obs-generate-error", error.message || "Failed to generate observer identity.");
+  } finally {
+    setBusy("obs-gen-btn", false, "Create Observer Identity");
+  }
+}
+
+async function loadQrPayload() {
+  clearObserverError("obs-qr-error");
+  els["obs-qr-container"].innerHTML = '<span style="color:var(--muted);font-family:var(--mono);font-size:11px">Loading payload…</span>';
+  try {
+    const data = await postControl("admission_qr_payload", { did: obsDid });
+    if (data.error) throw new Error(data.error);
+    obsPayload = data;
+    renderQr(data);
+  } catch (error) {
+    showObserverError("obs-qr-error", error.message || "Failed to load QR payload.");
+    els["obs-qr-container"].innerHTML = '<span style="color:var(--err);font-family:var(--mono);font-size:11px">QR unavailable</span>';
+  }
+}
+
+function renderQr(payload) {
+  const container = els["obs-qr-container"];
+  container.innerHTML = "";
+  var payloadStr = JSON.stringify(payload);
+  try {
+    // Use the qrcode-generator factory: QRCode(typeNumber, errorCorrectLevel)
+    // typeNumber=0 for auto, errorCorrectLevel=2 (Q ~25%) for good balance
+    var qr = QRCode(0, 2);
+    qr.addData(payloadStr);
+    qr.make();
+    // Render as SVG tag inside the container
+    container.innerHTML = qr.createSvgTag(256, 4);
+    // Pre-compute ASCII QR for the "Show ASCII QR" button
+    try {
+      var ascii = qr.createASCII();
+      els["obs-ascii-qr-container"].textContent = ascii;
+    } catch (_) { }
+  } catch (e) {
+    container.textContent = "QR unavailable";
+    container.style.fontSize = "11px";
+    container.style.color = "var(--muted)";
+  }
+}
+
+function showAsciiQr() {
+  els["obs-ascii-qr-container"].classList.toggle("hidden");
+}
+
+function startObserverPolling() {
+  stopObserverPolling();
+  obsPollTimer = window.setInterval(pollObserverStatus, 2000);
+}
+
+function stopObserverPolling() {
+  if (obsPollTimer) {
+    window.clearInterval(obsPollTimer);
+    obsPollTimer = null;
+  }
+}
+
+async function pollObserverStatus() {
+  try {
+    const data = await postControl("admission_status", { did: obsDid });
+    if (data.error) throw new Error(data.error);
+    if (data.record && data.record.status === "Active") {
+      stopObserverPolling();
+      els["obs-admitted-did"].textContent = obsDid;
+      showObserverState("admitted");
+      // Auto-start after a short delay
+      setTimeout(doStartObserverNode, 500);
+    } else if (data.record) {
+      els["obs-qr-status-text"].textContent = "Status: " + data.record.status + " — waiting…";
+    } else {
+      els["obs-qr-status-text"].textContent = "No admission record yet — waiting for phone approval…";
+    }
+  } catch (error) {
+    els["obs-qr-status-text"].textContent = "Polling error — retrying…";
+  }
+}
+
+async function doStartObserverNode() {
+  clearObserverError("obs-admitted-error");
+  setBusy("obs-start-btn", true, "Starting...");
+  try {
+    const data = await postControl("start_observer_node", { did: obsDid });
+    if (data.error) throw new Error(data.error);
+    showObserverState("running");
+    startObserverRunningPolling();
+  } catch (error) {
+    showObserverError("obs-admitted-error", error.message || "Failed to start observer node.");
+  } finally {
+    setBusy("obs-start-btn", false, "Start Node");
+  }
+}
+
+function startObserverRunningPolling() {
+  if (obsRunningPollTimer) window.clearInterval(obsRunningPollTimer);
+  refreshObserverStatus();
+  obsRunningPollTimer = window.setInterval(refreshObserverStatus, POLL_MS);
+}
+
+async function refreshObserverStatus() {
+  try {
+    const data = await requestJson("/api/status");
+    applyObserverRunningStatus(data);
+  } catch (_) {
+    // Keep last values
+  }
+}
+
+function applyObserverRunningStatus(status) {
+  els["obs-metric-height"].textContent = formatNumber(status.chain_height);
+  els["obs-metric-peers"].textContent = formatNumber(status.validator_count || status.connected_peers);
+  els["obs-metric-network"].textContent = status.network_id || "Unknown";
+  els["obs-status-detail"].textContent = status.seconds_behind ? String(status.seconds_behind) + "s behind tip" : "At chain tip";
+
+  const behind = Number(status.seconds_behind || 0);
+  const syncPct = behind < 10 ? 100 : Math.max(50, Math.round(100 - (behind / 12)));
+  els["obs-progress-fill"].style.width = Math.min(100, syncPct) + "%";
+  els["obs-progress-label"].textContent = Math.min(100, syncPct) + "%";
+  els["obs-progress-detail"].textContent = syncPct >= 100 ? "Synchronized" : "Synchronizing…";
+
+  var stateKey = "syncing";
+  var stateLabel = "Syncing";
+  if (syncPct >= 100) { stateKey = "ready"; stateLabel = "Connected"; }
+  els["obs-state-pill"].className = "status-pill " + stateKey;
+  els["obs-state-pill-text"].textContent = stateLabel;
+  els["obs-state-pill-dot"].className = "signal-dot " + stateKey;
+}
+
+function copyObserverDid() {
+  if (!obsDid) return;
+  copyText(obsDid, "Copied", "Copy Failed", "obs-copy-did-btn");
+}
+
+async function cancelObserverAdmission() {
+  stopObserverPolling();
+  obsDid = null;
+  obsPayload = null;
+  showObserverState("generate");
+}
+
+function retryObserverAdmission() {
+  if (obsDid) {
+    showObserverState("qr");
+    loadQrPayload();
+  } else {
+    showObserverState("generate");
+  }
+}
+
+function resetObserverFlow() {
+  stopObserverPolling();
+  if (obsRunningPollTimer) window.clearInterval(obsRunningPollTimer);
+  obsDid = null;
+  obsPayload = null;
+  showObserverState("generate");
+}
+
+// ════════════════════════════════════════════════════════════════
+// End Observer Admission Flow
+// ════════════════════════════════════════════════════════════════
+
 </script>
 </body>
 </html>
