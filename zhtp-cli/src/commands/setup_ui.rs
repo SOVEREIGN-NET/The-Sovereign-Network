@@ -8,10 +8,16 @@ use crate::commands::web4_utils::{default_keystore_path, load_identity_from_keys
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
 use tokio::sync::watch;
+use std::path::PathBuf;
+use lib_crypto::keypair::KeyPair;
+use lib_crypto::types::PrivateKey;
+use lib_identity::ZhtpIdentity;
+use zhtp::keyfile_names::{KeystorePrivateKey, NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME};
 
 const UI_HTML: &str = include_str!("../ui/setup.html");
 const TOPOLOGY_HTML: &str = include_str!("../../../zhtp/src/ui/topology.html");
 const DEFAULT_UI_PORT: u16 = 7840;
+const QRCODE_JS: &str = include_str!("../ui/qrcode.min.js");
 
 /// Run the setup UI bridge
 pub async fn run_setup_ui(cli: &ZhtpCli, output: &dyn Output) -> CliResult<()> {
@@ -50,6 +56,7 @@ pub async fn run_setup_ui(cli: &ZhtpCli, output: &dyn Output) -> CliResult<()> {
         .route("/api/status", get(proxy_status))
         .route("/api/control", post(proxy_control))
         .route("/api/v1/network/directory", get(proxy_directory))
+        .route("/js/qrcode.min.js", get(serve_qrcode_js))
         .with_state(state);
 
     async fn serve_ui() -> Html<&'static str> {
@@ -58,6 +65,13 @@ pub async fn run_setup_ui(cli: &ZhtpCli, output: &dyn Output) -> CliResult<()> {
 
     async fn serve_topology() -> Html<&'static str> {
         Html(TOPOLOGY_HTML)
+    }
+
+    async fn serve_qrcode_js() -> impl IntoResponse {
+        (
+            [("content-type", "application/javascript")],
+            QRCODE_JS,
+        )
     }
 
     async fn proxy_status(
@@ -138,6 +152,32 @@ pub async fn run_setup_ui(cli: &ZhtpCli, output: &dyn Output) -> CliResult<()> {
                         "message": "Setup UI bridge stopping",
                     })),
                 )
+            }
+            "generate_observer_identity" => {
+                match try_generate_observer_identity().await {
+                    Ok(json) => (StatusCode::OK, Json(json)),
+                    Err(e) => (StatusCode::OK, Json(serde_json::json!({ "error": e }))),
+                }
+            }
+            "admission_status" => {
+                let did = body.get("did").and_then(|d| d.as_str()).unwrap_or("");
+                match try_admission_status(&state.quic_server, did).await {
+                    Ok(json) => (StatusCode::OK, Json(json)),
+                    Err(e) => (StatusCode::OK, Json(serde_json::json!({ "error": e }))),
+                }
+            }
+            "admission_qr_payload" => {
+                match try_admission_qr_payload(&state.quic_server).await {
+                    Ok(json) => (StatusCode::OK, Json(json)),
+                    Err(e) => (StatusCode::OK, Json(serde_json::json!({ "error": e }))),
+                }
+            }
+            "start_observer_node" => {
+                let did = body.get("did").and_then(|d| d.as_str()).unwrap_or("");
+                match try_start_observer_node(&state.quic_server, did).await {
+                    Ok(json) => (StatusCode::OK, Json(json)),
+                    Err(e) => (StatusCode::OK, Json(serde_json::json!({ "error": e }))),
+                }
             }
             _ => (
                 StatusCode::BAD_REQUEST,
@@ -482,4 +522,212 @@ async fn try_get_directory(server: &str) -> Result<serde_json::Value, String> {
 
     serde_json::from_slice(&response.body)
         .map_err(|e| format!("Invalid JSON response: {}", e))
+}
+
+// ---------------------------------------------------------------------------
+// Observer admission control actions (T5)
+// ---------------------------------------------------------------------------
+
+/// Path to the observer-specific keystore directory.
+fn observer_keystore_path() -> Result<PathBuf, String> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| "Cannot determine home directory".to_string())?;
+    Ok(home.join(".zhtp").join("keystore").join("observer"))
+}
+
+/// Load observer identity from ~/.zhtp/keystore/observer/.
+fn load_observer_identity() -> Result<(ZhtpIdentity, KeyPair), String> {
+    let keystore = observer_keystore_path()?;
+    if !keystore.exists() {
+        return Err(format!(
+            "Observer keystore not found at {:?}. Create an observer identity first.",
+            keystore
+        ));
+    }
+    let identity_file = keystore.join(NODE_IDENTITY_FILENAME);
+    let private_key_file = keystore.join(NODE_PRIVATE_KEY_FILENAME);
+    if !identity_file.exists() {
+        return Err(format!("Observer identity file not found: {:?}", identity_file));
+    }
+    if !private_key_file.exists() {
+        return Err(format!("Observer private key not found: {:?}", private_key_file));
+    }
+    let identity_json = std::fs::read_to_string(&identity_file)
+        .map_err(|e| format!("Failed to read identity: {}", e))?;
+    let private_key_json = std::fs::read_to_string(&private_key_file)
+        .map_err(|e| format!("Failed to read private key: {}", e))?;
+    let keystore_key: KeystorePrivateKey = serde_json::from_str(&private_key_json)
+        .map_err(|e| format!("Failed to parse private key: {}", e))?;
+    let private_key = PrivateKey {
+        dilithium_sk: keystore_key.dilithium_sk,
+        dilithium_pk: keystore_key.dilithium_pk,
+        kyber_sk: keystore_key.kyber_sk,
+        master_seed: keystore_key.master_seed,
+    };
+    let identity = ZhtpIdentity::from_serialized(&identity_json, &private_key)
+        .map_err(|e| format!("Failed to restore identity: {}", e))?;
+    let keypair = KeyPair {
+        public_key: identity.public_key.clone(),
+        private_key,
+    };
+    Ok((identity, keypair))
+}
+
+/// Connect to a node using the observer identity (bootstrap trust).
+async fn connect_observer_with(
+    identity: ZhtpIdentity,
+    server: &str,
+) -> Result<lib_network::client::ZhtpClient, String> {
+    let trust_config = crate::commands::web4_utils::build_trust_config(None, None, false, true)
+        .map_err(|e| e.to_string())?;
+    crate::commands::web4_utils::connect_client(identity, trust_config, server)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Create a Dilithium5+Kyber1024 observer keypair in ~/.zhtp/keystore/observer/.
+async fn try_generate_observer_identity() -> Result<serde_json::Value, String> {
+    let keystore = observer_keystore_path()?;
+    let identity_file = keystore.join(NODE_IDENTITY_FILENAME);
+
+    if identity_file.exists() {
+        let (identity, keypair) = load_observer_identity()?;
+        return Ok(serde_json::json!({
+            "success": true,
+            "did": identity.did,
+            "dilithium_pk_hex": hex::encode(&keypair.public_key.dilithium_pk[..]),
+            "kyber_pk_hex": hex::encode(&keypair.public_key.kyber_pk[..]),
+            "message": "Observer identity already exists",
+            "keystore": keystore.to_string_lossy(),
+        }));
+    }
+
+    std::fs::create_dir_all(&keystore)
+        .map_err(|e| format!("Failed to create observer keystore: {}", e))?;
+
+    let identity = ZhtpIdentity::new_unified(
+        lib_identity::IdentityType::Device,
+        None,
+        None,
+        "observer-node",
+        None,
+    )
+    .map_err(|e| format!("Key generation failed: {}", e))?;
+
+    let private_key = identity.private_key.as_ref()
+        .ok_or_else(|| "Generated identity missing private key".to_string())?;
+
+    // Save private key
+    let private_key_file = keystore.join(NODE_PRIVATE_KEY_FILENAME);
+    crate::commands::web4_utils::save_private_key_to_file(private_key, &private_key_file)
+        .map_err(|e| e.to_string())?;
+
+    // Save identity JSON
+    let identity_json = serde_json::to_string_pretty(&identity)
+        .map_err(|e| format!("Serialization failed: {}", e))?;
+    std::fs::write(&identity_file, &identity_json)
+        .map_err(|e| format!("Failed to write identity file: {}", e))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&private_key_file, std::fs::Permissions::from_mode(0o600));
+        let _ = std::fs::set_permissions(&identity_file, std::fs::Permissions::from_mode(0o600));
+    }
+
+    Ok(serde_json::json!({
+        "success": true,
+        "did": identity.did,
+        "dilithium_pk_hex": hex::encode(&private_key.dilithium_pk[..]),
+        "kyber_pk_hex": hex::encode(&private_key.kyber_sk[..32]),
+        "message": "Observer identity created",
+        "keystore": keystore.to_string_lossy(),
+    }))
+}
+
+/// Proxy GET /api/v1/observer/admission/status?did=<did> over QUIC.
+async fn try_admission_status(server: &str, did: &str) -> Result<serde_json::Value, String> {
+    let did_encoded = urlencoding::encode(did);
+    let path = format!("/api/v1/observer/admission/status?did={}", did_encoded);
+
+    let (identity, _keypair) = load_observer_identity()?;
+    let mut client = connect_observer_with(identity, server).await?;
+
+    let response = client
+        .get(&path)
+        .await
+        .map_err(|e| format!("Status query failed: {}", e))?;
+
+    lib_network::client::ZhtpClient::parse_json(&response)
+        .map_err(|e| format!("Failed to parse response: {}", e))
+}
+
+/// Build the v1 QR payload JSON for the desktop UI to render.
+async fn try_admission_qr_payload(server: &str) -> Result<serde_json::Value, String> {
+    let (identity, keypair) = load_observer_identity()?;
+
+    Ok(serde_json::json!({
+        "version": 1,
+        "observer_node_did": identity.did,
+        "observer_dilithium_pk_hex": hex::encode(&keypair.public_key.dilithium_pk[..]),
+        "observer_kyber_pk_hex": hex::encode(&keypair.public_key.kyber_pk[..]),
+        "bootstrap_node": server,
+        "network": "testnet",
+        "requested_proof_level": "Verified",
+        "requested_rate_limit": "Default"
+    }))
+}
+
+/// Start the observer node process once the admission record is Active on chain.
+async fn try_start_observer_node(server: &str, did: &str) -> Result<serde_json::Value, String> {
+    // Verify admission record exists and is Active
+    let status = try_admission_status(server, did).await?;
+
+    let obs_status = status
+        .get("record")
+        .and_then(|r| r.get("status"))
+        .and_then(|v| v.as_str());
+
+    match obs_status {
+        Some("Active") => { /* proceed */ }
+        Some(s) => {
+            return Err(format!(
+                "Observer {} is not Active (current: {}). Complete phone enrollment first.",
+                did, s
+            ));
+        }
+        None => {
+            return Err(format!(
+                "Observer {} has no admission record. Complete phone enrollment first.",
+                did
+            ));
+        }
+    }
+
+    let keystore = observer_keystore_path()?;
+    let keystore_str = keystore.to_string_lossy().to_string();
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("zhtp-cli"));
+
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.arg("node")
+        .env("ZHTP_OBSERVER_KEYSTORE", &keystore_str)
+        .env("ZHTP_OBSERVER_BOOTSTRAP", server)
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    let child = cmd.spawn().map_err(|e| {
+        format!("Failed to spawn observer node: {}", e)
+    })?;
+
+    Ok(serde_json::json!({
+        "success": true,
+        "pid": child.id(),
+        "message": format!("Observer node started (PID: {})", child.id()),
+    }))
 }
