@@ -92,7 +92,7 @@ impl CredentialsHandler {
         self.opaque
             .get_or_init(|| async {
                 let bc = self.blockchain.read().await;
-                let bytes = bc.opaque_server_setup.as_ref()?.0.clone();
+                let bytes = bc.opaque_server_setup.as_ref()?.as_slice().to_vec();
                 drop(bc);
                 match opaque::OpaqueAuthState::from_setup_bytes(&bytes) {
                     Ok(state) => {
