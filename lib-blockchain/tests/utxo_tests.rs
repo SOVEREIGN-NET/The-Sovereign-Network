@@ -73,6 +73,7 @@ async fn test_utxo_creation_and_tracking() -> Result<()> {
         dao_fee: 1000,          // Increase DAO fee too
         controlled_nodes: Vec::new(),
         owned_wallets: Vec::new(),
+        kyber_public_key: Vec::new(),
     };
 
     let transaction = Transaction::new_identity_registration(
@@ -272,6 +273,7 @@ async fn test_utxo_spending() -> Result<()> {
         dao_fee: 1000,
         controlled_nodes: Vec::new(),
         owned_wallets: Vec::new(),
+        kyber_public_key: Vec::new(),
     };
 
     let creation_tx = Transaction::new_identity_registration(
@@ -362,6 +364,7 @@ async fn test_utxo_set_consistency() -> Result<()> {
             dao_fee: 1000,
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
+            kyber_public_key: Vec::new(),
         };
 
         let transaction = Transaction::new_identity_registration(
@@ -482,6 +485,7 @@ async fn test_mixed_transaction_block() -> Result<()> {
         dao_fee: 1000,
         controlled_nodes: Vec::new(),
         owned_wallets: Vec::new(),
+        kyber_public_key: Vec::new(),
     };
 
     let creation_tx = Transaction::new_identity_registration(
