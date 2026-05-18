@@ -6,6 +6,12 @@
 //!   POST /api/v1/auth/credentials/register — set username + password (requires existing DID)
 //!   POST /api/v1/auth/credentials/signin   — username + password → session token
 //!   POST /api/v1/auth/credentials/recover  — seed phrase → prove DID → new password
+//!   POST /api/v1/auth/opaque/register/start  — OPAQUE register step 1 (S3 of epic #2554)
+//!   POST /api/v1/auth/opaque/register/finish — OPAQUE register step 2
+//!   POST /api/v1/auth/opaque/login/start     — OPAQUE login step 1
+//!   POST /api/v1/auth/opaque/login/finish    — OPAQUE login step 2 + session token
+
+pub mod opaque;
 
 use anyhow::Result;
 use serde::Deserialize;
@@ -23,6 +29,9 @@ use crate::session_manager::SessionManager;
 pub struct CredentialsHandler {
     blockchain: Arc<RwLock<Blockchain>>,
     session_manager: Arc<SessionManager>,
+    /// OPAQUE handler state — None when the network has no [opaque] section
+    /// in genesis (lobby auth disabled), populated when present.
+    opaque: tokio::sync::OnceCell<Option<Arc<opaque::OpaqueAuthState>>>,
 }
 
 #[derive(Deserialize)]
@@ -66,6 +75,44 @@ impl CredentialsHandler {
         Self {
             blockchain,
             session_manager,
+            opaque: tokio::sync::OnceCell::new(),
+        }
+    }
+
+    /// Lazily initialise the OPAQUE handler state from the genesis-loaded
+    /// server setup bytes. Returns None when the network has no `[opaque]`
+    /// section (lobby auth disabled — endpoints return 503).
+    async fn opaque_state(&self) -> Option<Arc<opaque::OpaqueAuthState>> {
+        self.opaque
+            .get_or_init(|| async {
+                let bc = self.blockchain.read().await;
+                let bytes = bc.opaque_server_setup.as_ref()?.as_slice().to_vec();
+                drop(bc);
+                match opaque::OpaqueAuthState::from_setup_bytes(&bytes) {
+                    Ok(state) => {
+                        let arc = Arc::new(state);
+                        // Kick off the TTL sweep task.
+                        arc.clone().spawn_sweep();
+                        Some(arc)
+                    }
+                    Err(e) => {
+                        warn!("OPAQUE state init failed: {}", e);
+                        None
+                    }
+                }
+            })
+            .await
+            .clone()
+    }
+
+    fn opaque_handlers(
+        &self,
+        state: Arc<opaque::OpaqueAuthState>,
+    ) -> opaque::OpaqueHandlers {
+        opaque::OpaqueHandlers {
+            blockchain: self.blockchain.clone(),
+            state,
+            session_manager: self.session_manager.clone(),
         }
     }
 
@@ -398,6 +445,37 @@ impl ZhtpRequestHandler for CredentialsHandler {
             (ZhtpMethod::Post, "/api/v1/auth/credentials/recover") => {
                 Ok(self.handle_recover(&request).await?)
             }
+            // OPAQUE flow (S3 of epic #2554)
+            (ZhtpMethod::Post, "/api/v1/auth/opaque/register/start")
+            | (ZhtpMethod::Post, "/api/v1/auth/opaque/register/finish")
+            | (ZhtpMethod::Post, "/api/v1/auth/opaque/login/start")
+            | (ZhtpMethod::Post, "/api/v1/auth/opaque/login/finish") => {
+                let state = match self.opaque_state().await {
+                    Some(s) => s,
+                    None => {
+                        return Ok(error_resp(
+                            ZhtpStatus::ServiceUnavailable,
+                            "Lobby auth not configured (no [opaque] in genesis)",
+                        ));
+                    }
+                };
+                let h = self.opaque_handlers(state);
+                match path {
+                    "/api/v1/auth/opaque/register/start" => {
+                        Ok(h.handle_register_start(&request).await?)
+                    }
+                    "/api/v1/auth/opaque/register/finish" => {
+                        Ok(h.handle_register_finish(&request).await?)
+                    }
+                    "/api/v1/auth/opaque/login/start" => {
+                        Ok(h.handle_login_start(&request).await?)
+                    }
+                    "/api/v1/auth/opaque/login/finish" => {
+                        Ok(h.handle_login_finish(&request).await?)
+                    }
+                    _ => unreachable!(),
+                }
+            }
             _ => Ok(error_resp(ZhtpStatus::NotFound, "Not found")),
         }
     }
@@ -405,5 +483,6 @@ impl ZhtpRequestHandler for CredentialsHandler {
     fn can_handle(&self, request: &ZhtpRequest) -> bool {
         let path = request.uri.split('?').next().unwrap_or("");
         path.starts_with("/api/v1/auth/credentials/")
+            || path.starts_with("/api/v1/auth/opaque/")
     }
 }
