@@ -290,6 +290,8 @@ impl BlockchainV1 {
             observer_blocks: HashMap::new(),
             credential_registry: HashMap::new(),
             did_to_username: HashMap::new(),
+            opaque_server_setup: None,
+            pouw_mint_index: HashMap::new(),
         }
     }
 }
@@ -615,8 +617,10 @@ impl BlockchainStorageV3 {
             nft_collections: HashMap::new(),
             credential_registry: HashMap::new(),
             did_to_username: HashMap::new(),
+            opaque_server_setup: None,
             observer_registry: HashMap::new(),
             observer_blocks: HashMap::new(),
+            pouw_mint_index: HashMap::new(),
         }
     }
 }

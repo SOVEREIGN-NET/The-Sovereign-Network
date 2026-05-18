@@ -17,6 +17,27 @@ use super::serialization::{
     deserialize_request_with_format, serialize_response_with_format, PayloadFormat,
 };
 
+/// Strip trailing slash(es) from a request URI's path component in place.
+///
+/// `/api/v1/wallet/list/abc/`  → `/api/v1/wallet/list/abc`
+/// `/api/v1/foo/?x=1`          → `/api/v1/foo?x=1`
+/// `/`                         → `/`   (root is left intact)
+///
+/// Idempotent and query-string aware. Collapses multiple trailing slashes.
+fn normalize_request_uri(uri: &mut String) {
+    // Split off the query string so it is never touched.
+    let (path, query) = match uri.find('?') {
+        Some(i) => (uri[..i].to_string(), uri[i..].to_string()),
+        None => (uri.clone(), String::new()),
+    };
+    // Never strip the lone root "/".
+    let trimmed = path.trim_end_matches('/');
+    let trimmed = if trimmed.is_empty() { "/" } else { trimmed };
+    if trimmed.len() != path.len() {
+        *uri = format!("{}{}", trimmed, query);
+    }
+}
+
 /// Native ZHTP router for QUIC streams
 pub struct ZhtpRouter {
     /// Registered route handlers
@@ -390,7 +411,17 @@ impl ZhtpRouter {
     }
 
     /// Route a ZHTP request to the appropriate handler
-    pub async fn route_request(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+    pub async fn route_request(&self, mut request: ZhtpRequest) -> Result<ZhtpResponse> {
+        // Canonicalize the URI: strip trailing slash(es) from the path.
+        // Path-parameter routes (e.g. /api/v1/wallet/list/<hex-id>) must not
+        // depend on a trailing slash — a client that appends one would feed
+        // the '/' straight into hex::decode and trigger a 500
+        // ("Odd number of digits"). Normalize ONCE here, at the single
+        // dispatch funnel, so every handler — and every handler's own
+        // internal uri match — sees the canonical form. The query string,
+        // if any, is preserved.
+        normalize_request_uri(&mut request.uri);
+
         let path = &request.uri;
 
         // Try exact match first
@@ -467,6 +498,49 @@ impl Clone for ZhtpRouter {
 mod tests {
     use super::*;
     use lib_protocols::types::{ZhtpHeaders, ZhtpMethod};
+
+    fn norm(s: &str) -> String {
+        let mut u = s.to_string();
+        normalize_request_uri(&mut u);
+        u
+    }
+
+    #[test]
+    fn normalize_strips_single_trailing_slash() {
+        assert_eq!(
+            norm("/api/v1/wallet/list/abc123"),
+            "/api/v1/wallet/list/abc123"
+        );
+        assert_eq!(
+            norm("/api/v1/wallet/list/abc123/"),
+            "/api/v1/wallet/list/abc123"
+        );
+    }
+
+    #[test]
+    fn normalize_collapses_multiple_trailing_slashes() {
+        assert_eq!(norm("/api/v1/foo///"), "/api/v1/foo");
+    }
+
+    #[test]
+    fn normalize_leaves_root_intact() {
+        assert_eq!(norm("/"), "/");
+        assert_eq!(norm("//"), "/");
+    }
+
+    #[test]
+    fn normalize_preserves_query_string() {
+        assert_eq!(norm("/api/v1/foo/?x=1"), "/api/v1/foo?x=1");
+        assert_eq!(norm("/api/v1/foo?x=1"), "/api/v1/foo?x=1");
+        // A slash inside the query value must NOT be touched.
+        assert_eq!(norm("/api/v1/foo/?path=a/b/"), "/api/v1/foo?path=a/b/");
+    }
+
+    #[test]
+    fn normalize_is_idempotent() {
+        let once = norm("/api/v1/wallet/list/abc/");
+        assert_eq!(norm(&once), once);
+    }
 
     // Mock handler for testing
     struct MockHandler;
