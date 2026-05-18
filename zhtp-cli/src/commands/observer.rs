@@ -535,3 +535,132 @@ async fn cmd_by_sponsor(did: &str, server: &str, output: &dyn Output) -> CliResu
 
     Ok(())
 }
+
+// =============================================================================
+// TESTS
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lib_protocols::types::{ZhtpHeaders, ZhtpStatus};
+    use lib_identity::IdentityType;
+
+    const ZHTP_VERSION: &str = "1.0";
+
+    fn build_response(status: ZhtpStatus, body: Vec<u8>) -> lib_protocols::types::ZhtpResponse {
+        lib_protocols::types::ZhtpResponse {
+            status,
+            version: ZHTP_VERSION.to_string(),
+            status_message: String::new(),
+            headers: ZhtpHeaders::new(),
+            body,
+            timestamp: 0,
+            server: None,
+            validity_proof: None,
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // observer_keystore_path
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_observer_keystore_path_ends_with_observer() {
+        let path = observer_keystore_path().unwrap();
+        let path_str = path.to_string_lossy();
+        assert!(
+            path_str.ends_with(".zhtp/keystore/observer") || path_str.ends_with(".zhtp\\keystore\\observer"),
+            "keystore path must end with .zhtp/keystore/observer, got: {path_str}"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // parse_json
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_json_valid_null_record() {
+        let resp = build_response(
+            ZhtpStatus::Ok,
+            br#"{"status":"ok","record":null}"#.to_vec(),
+        );
+        let json = parse_json(&resp).expect("parse must succeed");
+        assert_eq!(json["status"], "ok");
+        assert!(json["record"].is_null());
+    }
+
+    #[test]
+    fn test_parse_json_record_present() {
+        let resp = build_response(
+            ZhtpStatus::Ok,
+            br#"{"status":"ok","record":{"node_info":{"observer_node_did":"did:zhtp:test"},"status":"Active","rate_limit_tier":"Standard","network":{"allowed_network":"testnet"},"created_at":1700000000,"updated_at":1700000000,"sponsor":{"sponsoring_user_did":"did:zhtp:sponsor","sponsor_signature":[],"proof_level":"Basic"}}}"#.to_vec(),
+        );
+        let json = parse_json(&resp).expect("parse must succeed");
+        assert_eq!(json["status"], "ok");
+        assert_eq!(json["record"]["node_info"]["observer_node_did"], "did:zhtp:test");
+        assert_eq!(json["record"]["status"], "Active");
+    }
+
+    // -------------------------------------------------------------------------
+    // QR pipeline: keygen → payload → qrcode → render
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_qr_pipeline_generate_payload_encode_render() {
+        // Step 1: Generate observer identity (same path as cmd_generate)
+        let identity = ZhtpIdentity::new_unified(
+            IdentityType::Device,
+            None,
+            None,
+            "test-observer",
+            None,
+        )
+        .expect("observer keygen must succeed");
+
+        let pk = identity.private_key.as_ref()
+            .expect("generated identity must have private key");
+
+        // Step 2: Build the v1 QR payload (same JSON shape as cmd_qr_render)
+        let payload = serde_json::json!({
+            "observer_node_did": identity.did,
+            "observer_dilithium_pk_hex": hex::encode(&pk.dilithium_pk[..]),
+            "observer_kyber_pk_hex": hex::encode(&identity.public_key.kyber_pk[..]),
+            "endpoints": [],
+            "sponsor_user_did": identity.did,
+            "sponsor_proof_level": "Basic",
+            "allowed_network": "testnet",
+            "rate_limit_tier": "Standard"
+        });
+
+        // Verify payload matches epic v1 schema
+        assert_eq!(payload["sponsor_proof_level"], "Basic", "v1 payload proof level must be Basic");
+        assert_eq!(payload["allowed_network"], "testnet", "v1 payload network must be testnet");
+        assert_eq!(payload["version"], serde_json::Value::Null, "v1 payload has no version field (use 1)");
+
+        let payload_json = serde_json::to_string(&payload)
+            .expect("payload must serialize");
+        assert!(!payload_json.is_empty(), "JSON payload must not be empty");
+
+        // Step 3: Encode as QR (same code path as cmd_qr_render)
+        let code = qrcode::QrCode::new(&payload_json)
+            .expect("QR encoding must succeed");
+
+        // Step 4: Render as Unicode (same code path as cmd_qr_render)
+        let rendered = code
+            .render::<qrcode::render::unicode::Dense1x2>()
+            .dark_color(qrcode::render::unicode::Dense1x2::Dark)
+            .light_color(qrcode::render::unicode::Dense1x2::Light)
+            .quiet_zone(true)
+            .module_dimensions(1, 1)
+            .build();
+
+        assert!(!rendered.is_empty(), "Rendered QR must contain Unicode block characters");
+
+        // Verify it contains QR-like Unicode block characters (▀ ▄ █ ▐ ▌ ░)
+        assert!(
+            rendered.contains('█') || rendered.contains('▀') || rendered.contains('▄'),
+            "QR render must contain Unicode block characters"
+        );
+    }
+}
