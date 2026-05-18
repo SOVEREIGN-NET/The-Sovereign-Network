@@ -63,6 +63,8 @@ impl Blockchain {
                             registered_at_height: block_height,
                             registered_at: block_ts,
                             password_changed_at_height: 0,
+                            opaque_record: data.opaque_record.clone(),
+                            auth_method: data.auth_method,
                         };
 
                         self.did_to_username
