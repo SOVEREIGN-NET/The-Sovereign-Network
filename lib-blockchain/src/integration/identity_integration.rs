@@ -376,6 +376,7 @@ mod tests {
             dao_fee: 0,
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
+            kyber_public_key: Vec::new(),
         };
 
         assert!(validate_identity_data(&identity_data)?);
@@ -398,6 +399,7 @@ mod tests {
             dao_fee: 0,
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
+            kyber_public_key: Vec::new(),
         };
 
         let registration_id = process_identity_registration(&identity_data)?;

@@ -254,6 +254,65 @@ impl PouwHandler {
             })
     }
 
+    /// Resolve the authenticated requester's *canonical* DID.
+    ///
+    /// `request.requester` carries the QUIC identity_id, which is
+    /// `blake3(dilithium_pk || kyber_pk)` for mobile-registered identities
+    /// but `blake3(dilithium_pk)` for genesis identities. The canonical DID
+    /// stored in `identity_registry` is always `blake3(dilithium_pk)`.
+    ///
+    /// Scan the registry trying both derivations. Returns the canonical DID
+    /// (the registry key) on a match, or `None` if the requester can't be
+    /// resolved. Mirrors the lookup in `messaging::handler::handle_receive`.
+    async fn resolve_requester_canonical_did(
+        &self,
+        request: &ZhtpRequest,
+    ) -> Option<String> {
+        let requester_key_id = request
+            .requester
+            .as_ref()
+            .map(|id| hex::encode(&id.0))?;
+        if requester_key_id.is_empty() {
+            return None;
+        }
+        let key_id_did = format!("did:zhtp:{}", requester_key_id);
+
+        let blockchain_arc =
+            crate::runtime::blockchain_provider::get_global_blockchain()
+                .await
+                .ok()?;
+        let blockchain = blockchain_arc.read().await;
+
+        // Fast path: the QUIC identity_id is itself the canonical DID.
+        if blockchain.identity_registry.contains_key(&key_id_did) {
+            return Some(key_id_did);
+        }
+        // Slow path: scan, matching dilithium-only and dilithium||kyber.
+        blockchain
+            .identity_registry
+            .iter()
+            .find(|(_, id)| {
+                if id.public_key.len() < 32 {
+                    return false;
+                }
+                let dil_hash = hex::encode(lib_crypto::hash_blake3(&id.public_key));
+                if dil_hash == requester_key_id {
+                    return true;
+                }
+                if !id.kyber_public_key.is_empty() {
+                    let combined =
+                        [&id.public_key[..], &id.kyber_public_key[..]].concat();
+                    let combined_hash =
+                        hex::encode(lib_crypto::hash_blake3(&combined));
+                    if combined_hash == requester_key_id {
+                        return true;
+                    }
+                }
+                false
+            })
+            .map(|(did, _)| did.clone())
+    }
+
     async fn check_reward_query_access(
         &self,
         request: &ZhtpRequest,
@@ -298,13 +357,23 @@ impl PouwHandler {
             ));
         }
         if requester_did != target_did {
-            return Err(ZhtpResponse::error(
-                ZhtpStatus::Forbidden,
-                format!(
-                    "Requester DID {} cannot access {}",
-                    requester_did, target_did
-                ),
-            ));
+            // The QUIC identity_id in request.requester is blake3(dilithium_pk
+            // || kyber_pk); the canonical DID registered on-chain (and what a
+            // mobile client passes as target) is blake3(dilithium_pk) only.
+            // A raw `!=` therefore rejects a legitimate self-access. Resolve
+            // the requester's canonical DID via the identity registry —
+            // trying both derivations — before denying. Mirrors the
+            // msg/receive canonical-DID lookup.
+            let canonical = self.resolve_requester_canonical_did(request).await;
+            if canonical.as_deref() != Some(target_did) {
+                return Err(ZhtpResponse::error(
+                    ZhtpStatus::Forbidden,
+                    format!(
+                        "Requester DID {} cannot access {}",
+                        requester_did, target_did
+                    ),
+                ));
+            }
         }
 
         if let Err(e) = self.validate_client_identity(target_did).await {
@@ -577,37 +646,64 @@ impl PouwHandler {
         }
 
         let (limit, offset) = Self::parse_pagination(&request.uri);
-        let calculator = &*self.reward_calculator;
-        let rewards = calculator.get_client_rewards(client_did).await;
 
-        let total_earned: u128 =
-            Self::checked_reward_sum(&rewards, "total_earned", &format!("client {}", client_did));
-        let paid_rewards: Vec<_> = rewards
+        // Option A: report reward history from the consensus-derived on-chain
+        // index (`pouw_mint_index`) instead of the node-local RewardCalculator
+        // ledger. The index is rebuilt deterministically from block replay, so
+        // every node returns the same numbers — no per-node flicker. It holds
+        // only PAID rewards (a reward becomes an on-chain `pouw:mint` TokenMint
+        // when the payout task runs); rewards still pending payout are not yet
+        // on-chain and are reported as 0 pending until the next epoch payout.
+        let key_id: [u8; 32] = match client_did
+            .strip_prefix("did:zhtp:")
+            .and_then(|h| hex::decode(h).ok())
+            .filter(|b| b.len() == 32)
+        {
+            Some(b) => {
+                let mut a = [0u8; 32];
+                a.copy_from_slice(&b);
+                a
+            }
+            None => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    "client_did must be did:zhtp:<64-hex-char> form".to_string(),
+                ));
+            }
+        };
+
+        let mut records = match crate::runtime::blockchain_provider::get_global_blockchain().await {
+            Ok(bc_arc) => {
+                let bc = bc_arc.read().await;
+                bc.pouw_mint_index.get(&key_id).cloned().unwrap_or_default()
+            }
+            Err(_) => Vec::new(),
+        };
+        // Newest first.
+        records.sort_by(|a, b| b.block_height.cmp(&a.block_height));
+
+        let total_rewards = records.len();
+        let total_paid: u128 = records
             .iter()
-            .filter(|r| r.payout_status == crate::pouw::rewards::PayoutStatus::Paid)
-            .cloned()
-            .collect();
-        let total_paid: u128 = Self::checked_reward_sum(
-            &paid_rewards,
-            "total_paid",
-            &format!("client {}", client_did),
-        );
+            .map(|r| r.amount)
+            .fold(0u128, |acc, a| acc.saturating_add(a));
 
-        let total_rewards = rewards.len();
-        let page_rewards: Vec<_> = rewards.into_iter().skip(offset).take(limit).collect();
-
-        let reward_list: Vec<serde_json::Value> = page_rewards
+        let reward_list: Vec<serde_json::Value> = records
             .iter()
+            .skip(offset)
+            .take(limit)
             .map(|r| {
+                let tx_hex = hex::encode(r.tx_hash);
                 serde_json::json!({
-                    "reward_id": hex::encode(&r.reward_id),
-                    "epoch": r.epoch,
-                    "total_bytes": r.total_bytes,
-                    "raw_amount": r.raw_amount,
-                    "final_amount": r.final_amount,
-                    "payout_status": Self::payout_status_str(r.payout_status),
-                    "paid_at": r.paid_at,
-                    "tx_hash": r.tx_hash.as_ref().map(|h| hex::encode(h)),
+                    "reward_id": tx_hex,
+                    "epoch": serde_json::Value::Null,
+                    "total_bytes": 0,
+                    "raw_amount": r.amount,
+                    "final_amount": r.amount,
+                    "payout_status": "paid",
+                    "paid_at": serde_json::Value::Null,
+                    "block_height": r.block_height,
+                    "tx_hash": tx_hex,
                 })
             })
             .collect();
@@ -615,12 +711,13 @@ impl PouwHandler {
         let body = serde_json::json!({
             "client_did": client_did,
             "total_rewards": total_rewards,
-            "total_earned": total_earned,
+            "total_earned": total_paid,
             "total_paid": total_paid,
-            "pending": total_earned.saturating_sub(total_paid),
+            "pending": 0,
             "limit": limit,
             "offset": offset,
             "rewards": reward_list,
+            "source": "on-chain pouw:mint index",
         });
 
         Ok(ZhtpResponse::json(&body, None).map_err(|e| anyhow::anyhow!(e))?)

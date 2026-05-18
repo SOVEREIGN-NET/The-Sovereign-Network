@@ -100,7 +100,8 @@ pub use block::{
 // Blockchain module
 pub use blockchain::{
     Blockchain, BlockchainBroadcastMessage, BlockchainImport, ConsensusCheckpoint,
-    EconomicsTransaction, ValidatorInfo, GatewayInfo, ADMISSION_SOURCE_BOOTSTRAP_GENESIS,
+    EconomicsTransaction, PouwMintRecord, ValidatorInfo, GatewayInfo,
+    ADMISSION_SOURCE_BOOTSTRAP_GENESIS,
 };
 pub use query::{BlockchainQuery, BlockchainMutate};
 #[cfg(feature = "contracts")]

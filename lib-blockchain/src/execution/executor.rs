@@ -3379,6 +3379,14 @@ impl BlockExecutor {
             | TransactionType::GatewayUpdate
             | TransactionType::GatewayUnregister => Ok(TxOutcome::LegacySystem),
 
+            // Credential lifecycle — state applied by process_credential_transactions()
+            // in finish_block_processing(). Per-tx pass is a no-op (mirrors Gateway / Oracle).
+            // Without this arm a RegisterCredential or UpdateCredentialPassword tx falls
+            // through to the catch-all and halts the chain via TxApplyError::UnsupportedType
+            // even though the validator and the pre-validation passthrough both admit it.
+            TransactionType::RegisterCredential
+            | TransactionType::UpdateCredentialPassword => Ok(TxOutcome::LegacySystem),
+
             TransactionType::TreasuryAllocation => {
                 self.apply_treasury_allocation(mutator, tx)?;
                 Ok(TxOutcome::TreasuryAllocation)
