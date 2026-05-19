@@ -182,4 +182,56 @@ mod tests {
         assert!(json.get("nonce").is_some());
         assert!(json.get("tx_signature").is_some());
     }
+
+    #[test]
+    fn payload_signed_via_sign_message_produces_valid_request() {
+        // Acceptance criterion 2: payload signed via zhtp_client_sign_message
+        // produces a request body accepted by /admission/register.
+        //
+        // We verify here at the lib-client boundary:
+        //   - sign_message produces a non-empty signature over the canonical bytes
+        //   - build_register_observer_request includes that signature in tx_signature
+        //   - the request JSON is structurally valid for /admission/register
+        //
+        // The server-side acceptance (executor nonce check + fee debit) is covered
+        // by the round-trip test in zhtp/src/api/handlers/observer_admission.rs.
+
+        let sponsor = crate::identity::generate_identity("test-device".into())
+            .expect("generate sponsor identity");
+
+        let mut inputs = test_inputs();
+        inputs.observer_dilithium_pk = sponsor.public_key.clone();
+
+        // Step 1: get canonical bytes (what mobile calls zhtp_observer_build_payload for)
+        let payload = build_register_observer_payload(&inputs);
+        assert_eq!(payload.len(), 32);
+
+        // Step 2: sign via the same path as zhtp_client_sign_message FFI
+        let signature = crate::identity::sign_message(&sponsor, &payload)
+            .expect("sign_message must succeed");
+        assert!(!signature.is_empty(), "signature must be non-empty");
+
+        // Step 3: build the register request (what mobile calls zhtp_observer_build_request for)
+        let kyber_pk = sponsor.kyber_public_key.clone();
+        let json = build_register_observer_request(
+            &inputs,
+            &signature,
+            &sponsor.public_key,
+            &kyber_pk,
+        );
+
+        // Verify all fields /admission/register requires are present and non-null
+        assert_eq!(json["observer_node_did"], inputs.observer_node_did);
+        assert_eq!(json["sponsor_user_did"], inputs.sponsor_user_did);
+        assert_eq!(json["nonce"], inputs.nonce);
+        assert_eq!(json["allowed_network"], inputs.allowed_network);
+        assert!(json["sponsor_signature"].is_array(), "sponsor_signature must be array");
+        assert!(json["tx_signature"]["signature_bytes"].is_array(), "signature_bytes must be array");
+        assert!(json["tx_signature"]["signer_dilithium_pk"].is_array(), "signer pk must be array");
+
+        // Verify the signature bytes in the JSON match what sign_message produced
+        let sig_from_json: Vec<u8> = serde_json::from_value(json["tx_signature"]["signature_bytes"].clone())
+            .expect("deserialize signature");
+        assert_eq!(sig_from_json, signature, "signature in request must match sign_message output");
+    }
 }
