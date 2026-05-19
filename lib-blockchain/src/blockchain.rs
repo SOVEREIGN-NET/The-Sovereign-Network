@@ -1177,7 +1177,7 @@ impl Blockchain {
 
         // Legacy path: direct state mutations (when no executor configured)
         // Verify the block
-        let previous_block = self.blocks.last();
+        let previous_block = self.latest_block();
         if !self.verify_block(&block, previous_block)? {
             if activated_version.is_some() {
                 self.oracle_state.protocol_config = previous_protocol_config.clone();
@@ -4715,9 +4715,9 @@ impl Blockchain {
             .map(|b| hex::encode(b.header.data_helix_root))
             .unwrap_or_else(|| "none".to_string());
 
-        let genesis_timestamp = self.blocks.first().map(|b| b.header.timestamp).unwrap_or(0);
+        let genesis_timestamp = self.get_block(0).map(|b| b.header.timestamp).unwrap_or(0);
 
-        let latest_timestamp = self.blocks.last().map(|b| b.header.timestamp).unwrap_or(0);
+        let latest_timestamp = self.latest_block().map(|b| b.header.timestamp).unwrap_or(0);
 
         // CONS-505: validator stats previously came from
         // `BlockchainConsensusCoordinator::list_all_validators()`.
@@ -4886,7 +4886,7 @@ impl Blockchain {
 
                 for block in missing_blocks {
                     // Verify block before adding
-                    let prev_block = self.blocks.last();
+                    let prev_block = self.latest_block();
                     if self.verify_block(block, prev_block)? {
                         self.blocks.push(block.clone());
                         self.height = block.height();
