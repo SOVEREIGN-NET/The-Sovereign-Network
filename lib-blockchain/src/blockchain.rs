@@ -5982,6 +5982,20 @@ impl Blockchain {
         // Clone the current UTXO set
         let snapshot = self.utxo_set.clone();
 
+        // BST-202: a per-height *full* UTXO-set clone does not scale — the
+        // real fix is live-state + an undo journal (see the epic's Future
+        // Work). Until then, retention stays bounded via `prune_utxo_history`;
+        // this warns when an individual snapshot is large enough to matter.
+        const LARGE_SNAPSHOT_UTXOS: usize = 100_000;
+        if snapshot.len() >= LARGE_SNAPSHOT_UTXOS {
+            warn!(
+                "⚠️ Large UTXO snapshot at block {}: {} UTXOs cloned in-memory \
+                 — per-height full snapshots do not scale (BST-202)",
+                block_height,
+                snapshot.len()
+            );
+        }
+
         // Save to snapshots map
         self.utxo_snapshots.insert(block_height, snapshot);
 

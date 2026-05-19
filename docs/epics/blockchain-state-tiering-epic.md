@@ -111,9 +111,11 @@ With `Table` in place, each cold dataset is one declaration.
 
 `receipts: HashMap<Hash, TransactionReceipt>` removed from `Blockchain`. `create_receipt` stages into the table; `get_receipt`/finality updates read/rewrite through it. ~6 call sites (`blockchain.rs:5599–5679`).
 
-## BST-202 · Per-height snapshots → `UtxoSnapshotTable`, `ContractStateHistoryTable`
+## BST-202 · Per-height snapshots — NOT naively moved (decision 2026-05-19)
 
-`utxo_snapshots` and `contract_state_history` (`BTreeMap<u64, …>`) become height-keyed tables. Pruning (existing `remove(&key)` logic) becomes range-delete on the table. ~10 call sites (`blockchain.rs:5964–6075`).
+`utxo_snapshots` and `contract_state_history` map each height to a **full clone** of the entire UTXO set / contract state. Moving those giant blobs behind the store as-is is explicitly **rejected** as a long-term design — it just relocates an O(state × height) footprint.
+
+Short term: they stay in memory with the existing bounded-retention pruning (`prune_utxo_history` / `prune_contract_history`), now with an explicit size warning in `save_utxo_snapshot`. The real direction is **live state + an undo journal / checkpoints** (see Future Work), tracked as a separate epic — not a blob relocation.
 
 ## BST-203 · Audit logs & finalized-block history → tables
 
