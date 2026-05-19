@@ -42,7 +42,6 @@ impl Blockchain {
             blocks_since_last_persist: 0,
             broadcast_sender: None,
             executed_dao_proposals: HashSet::new(),
-            receipts: HashMap::new(),
             finality_depth: 12,
             finalized_blocks: HashSet::new(),
             contract_states: HashMap::new(),

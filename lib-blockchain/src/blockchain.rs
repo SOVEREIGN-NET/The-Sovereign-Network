@@ -241,9 +241,6 @@ pub struct Blockchain {
     /// Track executed DAO proposals to prevent double-execution
     #[serde(default)]
     pub executed_dao_proposals: HashSet<Hash>,
-    /// Transaction receipts for confirmation tracking (tx_hash -> receipt)
-    #[serde(default)]
-    pub receipts: HashMap<Hash, crate::receipts::TransactionReceipt>,
     /// Finality depth (number of confirmations required for finality)
     #[serde(default = "default_finality_depth")]
     pub finality_depth: u64,
@@ -5558,7 +5555,25 @@ impl Blockchain {
             chrono::Utc::now().timestamp() as u64,
         );
 
-        self.receipts.insert(tx.hash(), receipt);
+        // Receipts live behind the store (BST-201). They are created after the
+        // block transaction commits, so this is a direct write — best-effort,
+        // since receipts are rebuildable from blocks.
+        match self.store() {
+            Ok(store) => {
+                if let Err(e) = store.put_receipt(&receipt) {
+                    warn!(
+                        "Failed to persist receipt for tx {}: {}",
+                        hex::encode(tx.hash().as_bytes()),
+                        e
+                    );
+                }
+            }
+            Err(e) => warn!(
+                "Cannot persist receipt for tx {}: {}",
+                hex::encode(tx.hash().as_bytes()),
+                e
+            ),
+        }
         debug!(
             "📋 Receipt created for tx {} at block {} (index {})",
             hex::encode(tx.hash().as_bytes()),
@@ -5569,21 +5584,12 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Get transaction receipt by hash
+    /// Get transaction receipt by hash.
     pub fn get_receipt(&self, tx_hash: &Hash) -> Option<crate::receipts::TransactionReceipt> {
-        self.receipts.get(tx_hash).cloned()
-    }
-
-    /// Update confirmation counts for all receipts
-    pub fn update_confirmation_counts(&mut self) {
-        for receipt in self.receipts.values_mut() {
-            receipt.update_confirmations(self.height);
-            if receipt.is_finalized()
-                && receipt.status != crate::receipts::TransactionStatus::Finalized
-            {
-                receipt.finalize();
-            }
-        }
+        self.store()
+            .and_then(|s| s.get_receipt(&tx_hash.as_array()))
+            .ok()
+            .flatten()
     }
 
     /// Get blocks that have reached finality (12+ confirmations)
@@ -5613,8 +5619,6 @@ impl Blockchain {
     /// Trigger finalization for blocks that have reached 12+ confirmations
     /// Returns number of blocks finalized
     pub async fn finalize_blocks(&mut self) -> Result<u64> {
-        self.update_confirmation_counts();
-
         // Collect finalized block data before modifying self
         let finalized_data: Vec<(u64, usize)> = {
             let finalized = self.get_finalized_blocks(self.finality_depth);
@@ -5628,22 +5632,8 @@ impl Blockchain {
         let mut count = 0u64;
 
         for (block_height, tx_count) in finalized_data {
-            // Collect transaction hashes for this block
-            let tx_hashes: Vec<Hash> = self
-                .blocks
-                .iter()
-                .find(|b| b.header.height == block_height)
-                .map(|b| b.transactions.iter().map(|tx| tx.hash()).collect())
-                .unwrap_or_default();
-
-            // Mark all transactions as finalized
-            for tx_hash in tx_hashes {
-                if let Some(receipt) = self.receipts.get_mut(&tx_hash) {
-                    receipt.status = crate::receipts::TransactionStatus::Finalized;
-                }
-            }
-
-            // Mark block as finalized
+            // Receipt finality is derived on read (TransactionReceipt::
+            // is_finalized) — no per-tx receipt rewrite here.
             self.mark_block_finalized(block_height);
             count += 1;
 

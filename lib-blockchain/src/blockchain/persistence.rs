@@ -228,7 +228,6 @@ impl BlockchainV1 {
             blocks_since_last_persist: self.blocks_since_last_persist,
             broadcast_sender: None,
             executed_dao_proposals: HashSet::new(),
-            receipts: HashMap::new(),
             finality_depth: default_finality_depth(),
             finalized_blocks: HashSet::new(),
             contract_states: HashMap::new(),
@@ -478,7 +477,9 @@ impl BlockchainStorageV3 {
             auto_persist_enabled: bc.auto_persist_enabled,
             blocks_since_last_persist: bc.blocks_since_last_persist,
             executed_dao_proposals: bc.executed_dao_proposals.clone(),
-            receipts: bc.receipts.clone(),
+            // receipts removed from Blockchain (now a direct-write store tree).
+            // V3 keeps the field for old .dat reads; new saves write empty.
+            receipts: HashMap::new(),
             finality_depth: bc.finality_depth,
             finalized_blocks: bc.finalized_blocks.clone(),
             contract_states: bc.contract_states.clone(),
@@ -560,7 +561,6 @@ impl BlockchainStorageV3 {
             auto_persist_enabled: self.auto_persist_enabled,
             blocks_since_last_persist: self.blocks_since_last_persist,
             executed_dao_proposals: self.executed_dao_proposals,
-            receipts: self.receipts,
             finality_depth: self.finality_depth,
             finalized_blocks: self.finalized_blocks,
             contract_states: self.contract_states,

@@ -1660,4 +1660,26 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     fn iter_fork_points(&self) -> StorageResult<Vec<crate::fork_recovery::ForkPoint>> {
         Ok(Vec::new())
     }
+
+    // =========================================================================
+    // Transaction receipts (BST-201) — direct durable writes
+    // =========================================================================
+    // Receipts are created after the block transaction has committed, so they
+    // use direct writes, not the block batch. They are rebuildable from blocks,
+    // so per-receipt fsync is not required — sled flushes on its own cadence.
+
+    /// Store a transaction receipt, keyed by transaction hash.
+    fn put_receipt(&self, _receipt: &crate::receipts::TransactionReceipt) -> StorageResult<()> {
+        Err(StorageError::Database(
+            "receipt persistence not supported by this store".to_string(),
+        ))
+    }
+
+    /// Fetch a transaction receipt by transaction hash.
+    fn get_receipt(
+        &self,
+        _tx_hash: &[u8; 32],
+    ) -> StorageResult<Option<crate::receipts::TransactionReceipt>> {
+        Ok(None)
+    }
 }

@@ -2272,10 +2272,10 @@ impl BlockchainHandler {
                 "block_hash": hex::encode(receipt.block_hash.as_bytes()),
                 "transaction_index": receipt.tx_index,
                 "fee_paid": receipt.fee_paid,
-                "confirmations": receipt.confirmations,
+                "confirmations": receipt.confirmations(blockchain.height),
                 "timestamp": receipt.timestamp,
                 "status_text": format!("{}", receipt.status),
-                "is_finalized": receipt.is_finalized(),
+                "is_finalized": receipt.is_finalized(blockchain.height),
                 "logs": receipt.logs,
             });
 
