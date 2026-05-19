@@ -62,8 +62,6 @@ pub mod messaging;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod opaque;
 #[cfg(not(target_arch = "wasm32"))]
-pub mod opaque;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod quic_session;
 pub mod request;
 pub mod session;
