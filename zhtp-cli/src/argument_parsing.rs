@@ -242,6 +242,9 @@ pub enum ObserverAction {
         /// Observer DID to use
         #[arg(long)]
         did: String,
+        /// Sponsor (on-chain user) DID; required by /prepare
+        #[arg(long)]
+        sponsor: String,
     },
 
     /// Render an ASCII QR code of the admission payload in the terminal.
@@ -249,6 +252,9 @@ pub enum ObserverAction {
         /// Observer DID to use
         #[arg(long)]
         did: String,
+        /// Sponsor (on-chain user) DID; required by /prepare
+        #[arg(long)]
+        sponsor: String,
     },
 
     /// Query the current admission status of an observer.
@@ -2264,13 +2270,16 @@ mod tests {
             "qr-payload",
             "--did",
             "did:zhtp:abc123",
+            "--sponsor",
+            "did:zhtp:sponsor123",
         ])
         .expect("observer qr-payload should parse");
         match parsed.command {
             ZhtpCommand::Observer(ObserverArgs {
-                action: ObserverAction::QrPayload { did },
+                action: ObserverAction::QrPayload { did, sponsor },
             }) => {
                 assert_eq!(did, "did:zhtp:abc123");
+                assert_eq!(sponsor, "did:zhtp:sponsor123");
             }
             other => panic!("unexpected command parsed: {other:?}"),
         }
@@ -2284,13 +2293,16 @@ mod tests {
             "qr-render",
             "--did",
             "did:zhtp:xyz789",
+            "--sponsor",
+            "did:zhtp:sponsor456",
         ])
         .expect("observer qr-render should parse");
         match parsed.command {
             ZhtpCommand::Observer(ObserverArgs {
-                action: ObserverAction::QrRender { did },
+                action: ObserverAction::QrRender { did, sponsor },
             }) => {
                 assert_eq!(did, "did:zhtp:xyz789");
+                assert_eq!(sponsor, "did:zhtp:sponsor456");
             }
             other => panic!("unexpected command parsed: {other:?}"),
         }

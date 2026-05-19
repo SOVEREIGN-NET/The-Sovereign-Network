@@ -34,7 +34,7 @@ toml_edit = "0.22"
 axum = { version = "0.7", features = ["json"] }
 open = "5.0"
 sha2 = "0.10"
-qrcode = { version = "0.14", default-features = false, features = ["default"] }
+qrcode = { version = "0.14", default-features = false }
 urlencoding = "2.1"
 
 # Async runtime and utilities (workspace shared)
