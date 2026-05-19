@@ -52,7 +52,7 @@ own operator UI), versioned under `/api/v1/node/`. Shapes are proposals.
 | `GET  /api/v1/node/status` | T2 | run state, role, height, peer count, uptime, version |
 | `GET  /api/v1/node/sync`   | T3 | local height, observed network height, blocks/sec, ETA, sync state |
 | `GET  /api/v1/node/rewards`| T4 | earnings grouped by activity, running totals, history series |
-| `POST /api/v1/node/control`| T5 | `{ "action": "start" \| "stop" \| "restart" }` — clean-stop enforced |
+| `POST /api/v1/node/control`| T5 | `{ "action": "start | stop | restart" }` — clean-stop enforced |
 | `GET  /api/v1/node/logs`   | T5 | recent log tail |
 | `GET  /api/v1/node/config` | T5 | current effective config (read; edit scoped per T5) |
 | `GET  /api/v1/node/update` | T6 | current version, available version, changelog |
@@ -60,6 +60,13 @@ own operator UI), versioned under `/api/v1/node/`. Shapes are proposals.
 
 Node registration (T1) reuses the **existing** node registration
 transaction / endpoint — no new chain logic is expected.
+
+**Existing node-control endpoints.** The node already exposes verb-specific
+control routes — `/api/v1/node/shutdown`, `/api/v1/node/force-sync`,
+`/api/v1/node/halt-consensus`. T5 must decide whether `POST /api/v1/node/control`
+*replaces/aliases* these (single action endpoint) or is an *additional*
+surface alongside them; the spec proposes consolidating onto `control` to
+avoid a diverging API, but this is T5's call to confirm.
 
 ### Authentication
 
@@ -94,7 +101,7 @@ pattern used by the observer-admission UI work (#2527/#2528):
 - Rejections (insufficient funds, duplicate) surface a clear error.
 
 ### T2 — Node status & health dashboard (#2596)
-- `GET /node/status` returns run state, role, height, peer count, uptime, version.
+- `GET /api/v1/node/status` returns run state, role, height, peer count, uptime, version.
 - UI panel polls and renders live; clearly distinguishes running vs stopped.
 - Endpoint is sane mid-startup and when stopped — no panic, clear state.
 - Sourced from existing chain-tip / peer / version state, not duplicated.
@@ -145,5 +152,5 @@ pattern used by the observer-admission UI work (#2527/#2528):
    they are fetched — same channel as the manifest, or separate.
 3. **Multi-node operators.** Whether one UI instance manages a single node
    or several. This spec assumes single-node; revisit if not.
-4. **Endpoint auth gate (§3).** Exact mechanism locking the `/node/*`
+4. **Endpoint auth gate (§3).** Exact mechanism locking the `/api/v1/node/*`
    control endpoints to the local operator — settled during T2.
