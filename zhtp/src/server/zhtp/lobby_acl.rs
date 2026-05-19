@@ -55,6 +55,16 @@ pub const ALLOWLIST: &[AllowEntry] = &[
 ];
 
 /// Is this method+URI permitted for a Password (lobby) session?
+///
+/// Match rules (tightened in response to reviewer #2575):
+/// - Exact-match entry (`prefix: false`): URI must equal `path` byte-for-byte.
+/// - Prefix entry (`prefix: true`): URI must either equal `path` exactly OR
+///   start with `path` followed by `/`. This means
+///   `path = "/api/v1/dao/proposals"` lets `/api/v1/dao/proposals` and
+///   `/api/v1/dao/proposals/42` through, but NOT
+///   `/api/v1/dao/proposals_internal`. The old naive `starts_with` would
+///   have allowed the third — a real security loosening for any future
+///   route that happens to share a prefix.
 pub fn is_lobby_allowed(method: &ZhtpMethod, uri: &str) -> bool {
     // Normalize: ignore query string.
     let path = match uri.find('?') {
@@ -66,7 +76,16 @@ pub fn is_lobby_allowed(method: &ZhtpMethod, uri: &str) -> bool {
             continue;
         }
         if entry.prefix {
-            if path.starts_with(entry.path) {
+            if path == entry.path {
+                return true;
+            }
+            // Treat an entry with a trailing '/' identically to one without —
+            // we always require either exact-match or a path-segment boundary.
+            let base = entry.path.strip_suffix('/').unwrap_or(entry.path);
+            if path.len() > base.len()
+                && path.starts_with(base)
+                && path.as_bytes()[base.len()] == b'/'
+            {
                 return true;
             }
         } else if path == entry.path {
@@ -139,6 +158,34 @@ mod tests {
         assert!(!is_lobby_allowed(
             &ZhtpMethod::Get,
             "/api/v1/chain/information"
+        ));
+    }
+
+    /// Reviewer #2575: prefix entries must match only at path-segment
+    /// boundaries, not raw `starts_with`. Otherwise any future GET route
+    /// whose path shares the prefix string gets auto-allowed.
+    #[test]
+    fn prefix_match_respects_path_segment_boundary() {
+        // /api/v1/dao/proposals — exact match allowed.
+        assert!(is_lobby_allowed(&ZhtpMethod::Get, "/api/v1/dao/proposals"));
+        // Sub-path under it — allowed.
+        assert!(is_lobby_allowed(
+            &ZhtpMethod::Get,
+            "/api/v1/dao/proposals/42"
+        ));
+        // Adjacent route that shares the prefix string but is a different
+        // route altogether — MUST NOT be auto-allowed.
+        assert!(!is_lobby_allowed(
+            &ZhtpMethod::Get,
+            "/api/v1/dao/proposals_internal"
+        ));
+        assert!(!is_lobby_allowed(
+            &ZhtpMethod::Get,
+            "/api/v1/oracle/prices_internal"
+        ));
+        assert!(!is_lobby_allowed(
+            &ZhtpMethod::Get,
+            "/api/v1/observer/admission/by-sponsorship"
         ));
     }
 

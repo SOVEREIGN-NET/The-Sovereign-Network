@@ -196,7 +196,28 @@ impl ChainSync {
     /// - `HeightMismatch` if blocks are not in correct sequence
     /// - `BlockApplyFailed` if any block fails to apply
     /// - `Storage` for underlying storage errors
+    ///
+    /// This is the no-progress form of [`Self::import_blocks_with_progress`],
+    /// which carries the single shared import implementation.
     pub fn import_blocks(&self, blocks: Vec<Block>) -> SyncResult<ImportResult> {
+        self.import_blocks_with_progress(blocks, |_, _| {})
+    }
+
+    /// Import blocks by replaying them through the executor, invoking
+    /// `on_progress(height, total_imported)` after each successfully committed
+    /// block.
+    ///
+    /// This carries the shared import implementation; [`Self::import_blocks`] is
+    /// the no-progress wrapper around it. Import rules and errors are documented
+    /// on [`Self::import_blocks`].
+    pub fn import_blocks_with_progress<F>(
+        &self,
+        blocks: Vec<Block>,
+        mut on_progress: F,
+    ) -> SyncResult<ImportResult>
+    where
+        F: FnMut(u64, usize), // (height, total_imported)
+    {
         if blocks.is_empty() {
             return Ok(ImportResult {
                 blocks_imported: 0,
@@ -205,7 +226,7 @@ impl ChainSync {
         }
 
         if Self::requires_canonical_runtime_import(&blocks) {
-            return self.import_blocks_via_canonical_runtime(blocks, None);
+            return self.import_blocks_via_canonical_runtime(blocks, Some(&mut on_progress));
         }
 
         let executor = BlockExecutor::from_config_trusted_replay(
@@ -270,69 +291,6 @@ impl ChainSync {
                 .map_err(|e| SyncError::BlockApplyFailed { height, error: e })?;
 
             prev_block_hash = Some(block.header.block_hash.as_array());
-
-            imported_count += 1;
-            last_height = Some(height);
-        }
-
-        Ok(ImportResult {
-            blocks_imported: imported_count,
-            final_height: last_height,
-        })
-    }
-
-    /// Import blocks with progress callback.
-    ///
-    /// Same as `import_blocks` but calls the callback after each successful block.
-    pub fn import_blocks_with_progress<F>(
-        &self,
-        blocks: Vec<Block>,
-        mut on_progress: F,
-    ) -> SyncResult<ImportResult>
-    where
-        F: FnMut(u64, usize), // (height, total_imported)
-    {
-        if blocks.is_empty() {
-            return Ok(ImportResult {
-                blocks_imported: 0,
-                final_height: None,
-            });
-        }
-
-        if Self::requires_canonical_runtime_import(&blocks) {
-            return self.import_blocks_via_canonical_runtime(blocks, Some(&mut on_progress));
-        }
-
-        let executor = BlockExecutor::from_config_trusted_replay(
-            Arc::clone(&self.store),
-            self.executor_config.clone(),
-        );
-
-        // Determine expected starting height
-        let expected_start = match self.store.latest_height() {
-            Ok(h) => h + 1,
-            Err(StorageError::NotInitialized) => 0,
-            Err(e) => return Err(SyncError::Storage(e)),
-        };
-
-        // Validate first block height
-        let first_block_height = blocks[0].header.height;
-        if first_block_height != expected_start {
-            return Err(SyncError::HeightMismatch {
-                expected: expected_start,
-                actual: first_block_height,
-            });
-        }
-
-        let mut imported_count = 0;
-        let mut last_height = None;
-
-        for block in blocks {
-            let height = block.header.height;
-
-            executor
-                .apply_block(&block)
-                .map_err(|e| SyncError::BlockApplyFailed { height, error: e })?;
 
             imported_count += 1;
             last_height = Some(height);
@@ -821,5 +779,44 @@ mod tests {
         assert_eq!(progress_calls.len(), 5);
         assert_eq!(progress_calls[0], (0, 1));
         assert_eq!(progress_calls[4], (4, 5));
+    }
+
+    #[test]
+    fn test_progress_import_rejects_broken_continuity() {
+        let (_dir, store) = create_test_store();
+        let sync = ChainSync::new(Arc::clone(&store));
+
+        // Commit a valid genesis + block 1.
+        let genesis = create_genesis_block();
+        let block1 = create_block_at_height(1, genesis.header.block_hash);
+        sync.import_blocks(vec![genesis, block1]).unwrap();
+
+        // Block 2 with a wrong previous_hash must be rejected by the progress
+        // variant's continuity check — the trusted-replay executor does not
+        // validate prev-hash itself, so ChainSync must.
+        let bad_block2 = create_block_at_height(2, Hash::new([0x99u8; 32]));
+
+        let mut progress_calls = vec![];
+        let result = sync.import_blocks_with_progress(vec![bad_block2], |height, count| {
+            progress_calls.push((height, count));
+        });
+
+        assert!(
+            matches!(
+                result,
+                Err(SyncError::BlockApplyFailed {
+                    height: 2,
+                    error: BlockApplyError::InvalidPreviousHash { .. }
+                })
+            ),
+            "import_blocks_with_progress must reject a broken previous_hash, got {result:?}"
+        );
+        // The rejected block must not have fired the progress callback…
+        assert!(
+            progress_calls.is_empty(),
+            "progress callback must not fire for a rejected block"
+        );
+        // …and the chain must be unchanged at height 1.
+        assert_eq!(store.latest_height().unwrap(), 1);
     }
 }
