@@ -782,7 +782,7 @@ impl Blockchain {
     pub async fn persist_block(&mut self, block: &Block) -> Result<Option<StorageOperationResult>> {
         if let Some(ref storage_manager_arc) = self.storage_manager {
             let mut storage_manager = storage_manager_arc.write().await;
-            let result = storage_manager.store_block(block).await?;
+            let result = storage_manager.store_block(&block).await?;
             Ok(Some(result))
         } else {
             Ok(None)
@@ -1080,7 +1080,7 @@ impl Blockchain {
                     }
 
                     // Update blockchain metadata
-                    self.blocks.push(block.clone());
+                    self.push_block_windowed(block.clone());
                     self.height += 1;
                     self.process_validator_registration_transactions(&block);
                     self.process_gateway_transactions(&block);
@@ -1216,7 +1216,7 @@ impl Blockchain {
         }
 
         // Update blockchain state
-        self.blocks.push(block.clone());
+        self.push_block_windowed(block.clone());
         self.height += 1;
         self.update_utxo_set(&block)?;
         self.save_utxo_snapshot(self.height)?;
@@ -2089,30 +2089,66 @@ impl Blockchain {
         self.latest_block().map(|b| b.header.timestamp).unwrap_or(0)
     }
 
-    /// Get block by height
-    pub fn get_block(&self, height: u64) -> Option<&Block> {
-        if height >= self.block_count() {
+    /// Get a block by height.
+    ///
+    /// Phase 3 (BST-301/302): `blocks` is a bounded hot window of the most
+    /// recent blocks. Heights inside the window are served from memory; older
+    /// ("cold") heights are read from the backing store. Returns `None` only
+    /// for a height past the tip or a cold height with no store attached.
+    pub fn get_block(&self, height: u64) -> Option<Block> {
+        if height > self.height {
             return None;
         }
-        Some(&self.blocks[height as usize])
+        // The window holds the last `blocks.len()` blocks: [window_start ..= tip].
+        let window_start = self
+            .block_count()
+            .saturating_sub(self.blocks.len() as u64);
+        if height >= window_start {
+            return self.blocks.get((height - window_start) as usize).cloned();
+        }
+        // Cold height — read from the durable store.
+        self.store()
+            .ok()
+            .and_then(|s| s.get_block_by_height(height).ok().flatten())
     }
 
     /// Number of blocks in the chain (genesis..=tip).
     ///
-    /// Phase 3 (BST-302): the canonical count is `height + 1` — it does not
-    /// depend on how many blocks are resident in memory, so it stays correct
-    /// once `blocks` becomes a bounded hot window backed by the store.
+    /// The canonical count is `height + 1` — independent of how many blocks
+    /// are resident in the hot window.
     pub fn block_count(&self) -> u64 {
         self.height + 1
     }
 
-    /// Iterate the resident blocks (oldest → newest).
+    /// Size of the in-memory hot block window (BST-301): twice the finality
+    /// depth, never below 128 — derived from consensus rollback guarantees,
+    /// not an arbitrary constant.
+    fn block_window_size(&self) -> usize {
+        (self.finality_depth.saturating_mul(2)).max(128) as usize
+    }
+
+    /// Append a block to the hot window, evicting the oldest once the window
+    /// exceeds its bound.
     ///
-    /// Phase 3 (BST-302): the single seam for block iteration. Full-chain
-    /// scans route through here so they can switch to store iteration once
-    /// `blocks` becomes a bounded hot window.
-    pub fn iter_blocks(&self) -> impl Iterator<Item = &Block> + '_ {
-        self.blocks.as_slice().iter()
+    /// Eviction only happens when a store is attached — the store is then the
+    /// durable source for evicted cold blocks. Without a store the window
+    /// keeps the whole chain (unchanged legacy/test behavior).
+    fn push_block_windowed(&mut self, block: Block) {
+        self.blocks.push(block);
+        if self.store.is_some() {
+            let window = self.block_window_size();
+            while self.blocks.len() > window {
+                self.blocks.remove(0);
+            }
+        }
+    }
+
+    /// Iterate every block in the chain (genesis → tip), oldest first.
+    ///
+    /// Cold blocks come from the store; the window serves recent ones. Used
+    /// by full-chain scans (export, integrity check, summaries).
+    pub fn iter_blocks(&self) -> impl Iterator<Item = Block> + '_ {
+        (0..self.block_count()).filter_map(move |h| self.get_block(h))
     }
 
     /// Get current blockchain height
@@ -3908,7 +3944,7 @@ impl Blockchain {
     fn count_user_dao_votes(&self, user_id: &lib_identity::IdentityId) -> u64 {
         let user_id_str = user_id.to_string();
         self.iter_blocks()
-            .flat_map(|block| &block.transactions)
+            .flat_map(|block| block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoVote)
             .filter(|tx| {
                 // Check if vote is from this user
@@ -3925,7 +3961,7 @@ impl Blockchain {
     fn count_user_dao_proposals(&self, user_id: &lib_identity::IdentityId) -> u64 {
         let user_id_str = user_id.to_string();
         self.iter_blocks()
-            .flat_map(|block| &block.transactions)
+            .flat_map(|block| block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoProposal)
             .filter(|tx| {
                 // Check if proposal is from this user
@@ -4130,7 +4166,7 @@ impl Blockchain {
             let mut storage_manager = storage_manager_arc.write().await;
             // Persist any unpersisted blocks
             for block in self.iter_blocks() {
-                let _ = storage_manager.store_block(block).await;
+                let _ = storage_manager.store_block(&block).await;
             }
 
             // Persist all identity data
@@ -4252,7 +4288,7 @@ impl Blockchain {
             .collect();
 
         let export = BlockchainExport {
-            blocks: self.blocks.clone(),
+            blocks: self.iter_blocks().collect(),
             utxo_set: self.utxo_set.clone(),
             identity_registry: self.identity_registry.clone(),
             wallet_references, // Only minimal wallet references (no sensitive data)
@@ -4596,9 +4632,10 @@ impl Blockchain {
 
                     // Clear nullifier set and rebuild from new chain
                     self.nullifier_set.clear();
-                    // Field-level borrow: this loop rebuilds `nullifier_set`
-                    // while iterating blocks (handled by the windowing commit).
-                    for block in &self.blocks {
+                    // Rebuild from the *whole* chain — collect first so the
+                    // store-backed scan's borrow ends before mutating self.
+                    let all_blocks: Vec<Block> = self.iter_blocks().collect();
+                    for block in &all_blocks {
                         for tx in &block.transactions {
                             for input in &tx.inputs {
                                 self.nullifier_set.insert(input.nullifier);
@@ -4756,7 +4793,7 @@ impl Blockchain {
 
         // Estimate TPS based on recent blocks
         let expected_tps = if (self.block_count() as usize) >= 10 {
-            let recent_blocks: Vec<&Block> = (self.block_count().saturating_sub(10)
+            let recent_blocks: Vec<Block> = (self.block_count().saturating_sub(10)
                 ..self.block_count())
                 .filter_map(|h| self.get_block(h))
                 .collect();
@@ -4915,7 +4952,7 @@ impl Blockchain {
                     // Verify block before adding
                     let prev_block = self.latest_block();
                     if self.verify_block(block, prev_block)? {
-                        self.blocks.push(block.clone());
+                        self.push_block_windowed(block.clone());
                         self.height = block.height();
                         added_blocks += 1;
                         info!("  Added missing block at height {}", block.height());
@@ -5137,8 +5174,10 @@ impl Blockchain {
 
         // Step 9: Rebuild nullifier set from merged state
         self.nullifier_set.clear();
-        // Field-level borrow: rebuilds `nullifier_set` while iterating blocks.
-        for block in &self.blocks {
+        // Rebuild from the *whole* chain — collect first so the store-backed
+        // scan's borrow ends before mutating self.
+        let all_blocks: Vec<Block> = self.iter_blocks().collect();
+        for block in &all_blocks {
             for tx in &block.transactions {
                 for input in &tx.inputs {
                     self.nullifier_set.insert(input.nullifier);
@@ -5634,7 +5673,7 @@ impl Blockchain {
     }
 
     /// Get blocks that have reached finality (12+ confirmations)
-    pub fn get_finalized_blocks(&self, depth: u64) -> Vec<&Block> {
+    pub fn get_finalized_blocks(&self, depth: u64) -> Vec<Block> {
         let current_height = self.height;
         if current_height < depth {
             return vec![];
