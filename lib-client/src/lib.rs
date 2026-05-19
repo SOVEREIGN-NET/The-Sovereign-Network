@@ -3032,7 +3032,10 @@ pub extern "C" fn zhtp_observer_build_payload(
         Ok(v) => v,
         Err(_) => return ByteBuffer { data: std::ptr::null_mut(), len: 0 },
     };
-    let mut payload = observer_admission::build_register_observer_payload(&inputs);
+    let mut payload = match observer_admission::build_register_observer_payload(&inputs) {
+        Ok(v) => v,
+        Err(_) => return ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+    };
     let buf = ByteBuffer { data: payload.as_mut_ptr(), len: payload.len() };
     std::mem::forget(payload);
     buf
@@ -3071,6 +3074,9 @@ pub extern "C" fn zhtp_observer_build_request(
     let sig = unsafe { std::slice::from_raw_parts(sponsor_sig, sponsor_sig_len) };
     let dpk = unsafe { std::slice::from_raw_parts(sponsor_dpk, sponsor_dpk_len) };
     let kpk = unsafe { std::slice::from_raw_parts(sponsor_kpk, sponsor_kpk_len) };
-    let json = observer_admission::build_register_observer_request(&inputs, sig, dpk, kpk);
+    let json = match observer_admission::build_register_observer_request(&inputs, sig, dpk, kpk) {
+        Ok(v) => v,
+        Err(_) => return std::ptr::null_mut(),
+    };
     string_to_cstr(json.to_string())
 }

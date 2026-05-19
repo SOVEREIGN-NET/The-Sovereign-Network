@@ -42,12 +42,15 @@ pub struct RegisterObserverInputs {
 /// These are the 32 bytes the sponsor must sign with Dilithium before
 /// calling `/admission/register`. Matches exactly what the server's
 /// `hash_for_signature()` produces.
-pub fn build_register_observer_payload(inputs: &RegisterObserverInputs) -> Vec<u8> {
+///
+/// Returns `Err` if `sponsor_proof_level` or `rate_limit_tier` are not valid
+/// enum variant names (e.g. `"Basic"`, `"Standard"`).
+pub fn build_register_observer_payload(inputs: &RegisterObserverInputs) -> Result<Vec<u8>, serde_json::Error> {
     let zeroed_sig = zeroed_signature();
-    let data = inputs_to_data(inputs, Vec::new());
+    let data = inputs_to_data(inputs, Vec::new())?;
     let tx = Transaction::new_register_observer(inputs.chain_id, data, zeroed_sig);
     let hash = lib_blockchain::transaction::hashing::hash_for_signature(&tx);
-    hash.as_bytes().to_vec()
+    Ok(hash.as_bytes().to_vec())
 }
 
 /// Returns the full JSON body for `POST /api/v1/observer/admission/register`.
@@ -56,13 +59,19 @@ pub fn build_register_observer_payload(inputs: &RegisterObserverInputs) -> Vec<u
 ///                        `build_register_observer_payload`
 /// `sponsor_dilithium_pk` — raw 2592-byte Dilithium public key of the sponsor
 /// `sponsor_kyber_pk`   — raw 1568-byte Kyber public key of the sponsor
+///
+/// Returns `Err` if `sponsor_proof_level` or `rate_limit_tier` are not valid
+/// enum variant names.
 pub fn build_register_observer_request(
     inputs: &RegisterObserverInputs,
     sponsor_signature: &[u8],
     sponsor_dilithium_pk: &[u8],
     sponsor_kyber_pk: &[u8],
-) -> serde_json::Value {
-    serde_json::json!({
+) -> Result<serde_json::Value, serde_json::Error> {
+    // Validate enum fields before building the payload — ensures bad variant
+    // names are caught here rather than silently producing a rejected request.
+    inputs_to_data(inputs, Vec::new())?;
+    Ok(serde_json::json!({
         "observer_node_did":   inputs.observer_node_did,
         "observer_public_key": inputs.observer_dilithium_pk,
         "endpoints":           inputs.endpoints,
@@ -79,21 +88,19 @@ pub fn build_register_observer_request(
             "signer_dilithium_pk": sponsor_dilithium_pk,
             "signer_kyber_pk":     sponsor_kyber_pk,
         }
-    })
+    }))
 }
 
 // ============================================================================
 // Internal helpers
 // ============================================================================
 
-fn inputs_to_data(inputs: &RegisterObserverInputs, sponsor_signature: Vec<u8>) -> RegisterObserverData {
+fn inputs_to_data(inputs: &RegisterObserverInputs, sponsor_signature: Vec<u8>) -> Result<RegisterObserverData, serde_json::Error> {
     // Parse string fields into their typed enum equivalents via serde_json.
     // Variant names must match the server's enum (e.g. "Basic", "Standard").
-    let proof_level = serde_json::from_value(serde_json::Value::String(inputs.sponsor_proof_level.clone()))
-        .expect("sponsor_proof_level must be a valid ObserverProofLevel variant");
-    let rate_tier = serde_json::from_value(serde_json::Value::String(inputs.rate_limit_tier.clone()))
-        .expect("rate_limit_tier must be a valid ObserverRateLimitTier variant");
-    RegisterObserverData {
+    let proof_level = serde_json::from_value(serde_json::Value::String(inputs.sponsor_proof_level.clone()))?;
+    let rate_tier = serde_json::from_value(serde_json::Value::String(inputs.rate_limit_tier.clone()))?;
+    Ok(RegisterObserverData {
         observer_node_did: inputs.observer_node_did.clone(),
         observer_public_key: inputs.observer_dilithium_pk.clone(),
         endpoints: inputs.endpoints.clone(),
@@ -105,7 +112,7 @@ fn inputs_to_data(inputs: &RegisterObserverInputs, sponsor_signature: Vec<u8>) -
         rate_limit_tier: rate_tier,
         expires_at: inputs.expires_at,
         nonce: inputs.nonce,
-    }
+    })
 }
 
 fn zeroed_signature() -> Signature {
@@ -148,15 +155,15 @@ mod tests {
     #[test]
     fn payload_is_32_bytes() {
         let inputs = test_inputs();
-        let payload = build_register_observer_payload(&inputs);
+        let payload = build_register_observer_payload(&inputs).expect("valid inputs");
         assert_eq!(payload.len(), 32, "canonical hash must be 32 bytes");
     }
 
     #[test]
     fn payload_is_deterministic() {
         let inputs = test_inputs();
-        let a = build_register_observer_payload(&inputs);
-        let b = build_register_observer_payload(&inputs);
+        let a = build_register_observer_payload(&inputs).expect("valid inputs");
+        let b = build_register_observer_payload(&inputs).expect("valid inputs");
         assert_eq!(a, b, "payload must be deterministic");
     }
 
@@ -165,9 +172,17 @@ mod tests {
         let inputs_0 = test_inputs();
         let mut inputs_1 = test_inputs();
         inputs_1.nonce = 1;
-        let a = build_register_observer_payload(&inputs_0);
-        let b = build_register_observer_payload(&inputs_1);
+        let a = build_register_observer_payload(&inputs_0).expect("valid inputs");
+        let b = build_register_observer_payload(&inputs_1).expect("valid inputs");
         assert_ne!(a, b, "different nonce must produce different payload");
+    }
+
+    #[test]
+    fn invalid_proof_level_returns_err() {
+        let mut inputs = test_inputs();
+        inputs.sponsor_proof_level = "NotAVariant".into();
+        assert!(build_register_observer_payload(&inputs).is_err());
+        assert!(build_register_observer_request(&inputs, &[], &[], &[]).is_err());
     }
 
     #[test]
@@ -176,7 +191,7 @@ mod tests {
         let sig = vec![1u8; 64];
         let dpk = vec![2u8; 2592];
         let kpk = vec![3u8; 1568];
-        let json = build_register_observer_request(&inputs, &sig, &dpk, &kpk);
+        let json = build_register_observer_request(&inputs, &sig, &dpk, &kpk).expect("valid inputs");
         assert!(json.get("observer_node_did").is_some());
         assert!(json.get("sponsor_user_did").is_some());
         assert!(json.get("nonce").is_some());
@@ -203,7 +218,7 @@ mod tests {
         inputs.observer_dilithium_pk = sponsor.public_key.clone();
 
         // Step 1: get canonical bytes (what mobile calls zhtp_observer_build_payload for)
-        let payload = build_register_observer_payload(&inputs);
+        let payload = build_register_observer_payload(&inputs).expect("valid inputs");
         assert_eq!(payload.len(), 32);
 
         // Step 2: sign via the same path as zhtp_client_sign_message FFI
@@ -218,7 +233,7 @@ mod tests {
             &signature,
             &sponsor.public_key,
             &kyber_pk,
-        );
+        ).expect("valid inputs");
 
         // Verify all fields /admission/register requires are present and non-null
         assert_eq!(json["observer_node_did"], inputs.observer_node_did);
