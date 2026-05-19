@@ -500,7 +500,7 @@ pub async fn add_transaction(transaction: Transaction) -> Result<String> {
 pub async fn get_block(height: u64) -> Result<Option<Block>> {
     let blockchain = get_global_blockchain().await?;
     let blockchain_lock = blockchain.read().await;
-    Ok(blockchain_lock.get_block(height).cloned())
+    Ok(blockchain_lock.get_block(height))
 }
 
 /// Get a transaction by hash from the global blockchain

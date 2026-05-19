@@ -1471,10 +1471,9 @@ impl BlockchainHandler {
         let block = if let Ok(height) = block_id.parse::<u64>() {
             blockchain.get_block(height)
         } else {
-            // For hash lookup, we'll need to search through blocks manually
+            // Hash lookup: full-chain scan (window + store-backed cold blocks).
             blockchain
-                .blocks
-                .iter()
+                .iter_blocks()
                 .find(|b| b.header.block_hash.to_string() == *block_id)
         };
 

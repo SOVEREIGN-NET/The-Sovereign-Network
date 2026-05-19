@@ -18,7 +18,7 @@ impl BlockchainQuery for Blockchain {
         self.blocks.len()
     }
 
-    fn query_block(&self, height: u64) -> Option<&Block> {
+    fn query_block(&self, height: u64) -> Option<Block> {
         self.get_block(height)
     }
 

@@ -782,7 +782,7 @@ impl Blockchain {
     pub async fn persist_block(&mut self, block: &Block) -> Result<Option<StorageOperationResult>> {
         if let Some(ref storage_manager_arc) = self.storage_manager {
             let mut storage_manager = storage_manager_arc.write().await;
-            let result = storage_manager.store_block(block).await?;
+            let result = storage_manager.store_block(&block).await?;
             Ok(Some(result))
         } else {
             Ok(None)
@@ -1080,7 +1080,7 @@ impl Blockchain {
                     }
 
                     // Update blockchain metadata
-                    self.blocks.push(block.clone());
+                    self.push_block_windowed(block.clone());
                     self.height += 1;
                     self.process_validator_registration_transactions(&block);
                     self.process_gateway_transactions(&block);
@@ -1177,7 +1177,7 @@ impl Blockchain {
 
         // Legacy path: direct state mutations (when no executor configured)
         // Verify the block
-        let previous_block = self.blocks.last();
+        let previous_block = self.latest_block();
         if !self.verify_block(&block, previous_block)? {
             if activated_version.is_some() {
                 self.oracle_state.protocol_config = previous_protocol_config.clone();
@@ -1216,7 +1216,7 @@ impl Blockchain {
         }
 
         // Update blockchain state
-        self.blocks.push(block.clone());
+        self.push_block_windowed(block.clone());
         self.height += 1;
         self.update_utxo_set(&block)?;
         self.save_utxo_snapshot(self.height)?;
@@ -1576,7 +1576,9 @@ impl Blockchain {
 
         // Get previous state root
         let previous_state_root = if block.height() > 0 {
-            self.blocks[block.height() as usize - 1].header.state_root
+            self.get_block(block.height() - 1)
+                .map(|b| b.header.state_root)
+                .unwrap_or_default()
         } else {
             [0u8; 32] // Genesis block
         };
@@ -1991,8 +1993,12 @@ impl Blockchain {
             return Ok(());
         }
 
-        let current_block = &self.blocks[self.height as usize];
-        let interval_start = &self.blocks[(self.height - adjustment_interval) as usize];
+        let current_block = self
+            .latest_block()
+            .expect("difficulty adjustment runs on a non-empty chain");
+        let interval_start = self
+            .get_block(self.height - adjustment_interval)
+            .expect("difficulty interval-start block is within the hot window");
         let interval_start_time = interval_start.timestamp();
         let interval_end_time = current_block.timestamp();
 
@@ -2083,12 +2089,66 @@ impl Blockchain {
         self.latest_block().map(|b| b.header.timestamp).unwrap_or(0)
     }
 
-    /// Get block by height
-    pub fn get_block(&self, height: u64) -> Option<&Block> {
-        if height >= self.blocks.len() as u64 {
+    /// Get a block by height.
+    ///
+    /// Phase 3 (BST-301/302): `blocks` is a bounded hot window of the most
+    /// recent blocks. Heights inside the window are served from memory; older
+    /// ("cold") heights are read from the backing store. Returns `None` only
+    /// for a height past the tip or a cold height with no store attached.
+    pub fn get_block(&self, height: u64) -> Option<Block> {
+        if height > self.height {
             return None;
         }
-        Some(&self.blocks[height as usize])
+        // The window holds the last `blocks.len()` blocks: [window_start ..= tip].
+        let window_start = self
+            .block_count()
+            .saturating_sub(self.blocks.len() as u64);
+        if height >= window_start {
+            return self.blocks.get((height - window_start) as usize).cloned();
+        }
+        // Cold height — read from the durable store.
+        self.store()
+            .ok()
+            .and_then(|s| s.get_block_by_height(height).ok().flatten())
+    }
+
+    /// Number of blocks in the chain (genesis..=tip).
+    ///
+    /// The canonical count is `height + 1` — independent of how many blocks
+    /// are resident in the hot window.
+    pub fn block_count(&self) -> u64 {
+        self.height + 1
+    }
+
+    /// Size of the in-memory hot block window (BST-301): twice the finality
+    /// depth, never below 128 — derived from consensus rollback guarantees,
+    /// not an arbitrary constant.
+    fn block_window_size(&self) -> usize {
+        (self.finality_depth.saturating_mul(2)).max(128) as usize
+    }
+
+    /// Append a block to the hot window, evicting the oldest once the window
+    /// exceeds its bound.
+    ///
+    /// Eviction only happens when a store is attached — the store is then the
+    /// durable source for evicted cold blocks. Without a store the window
+    /// keeps the whole chain (unchanged legacy/test behavior).
+    fn push_block_windowed(&mut self, block: Block) {
+        self.blocks.push(block);
+        if self.store.is_some() {
+            let window = self.block_window_size();
+            while self.blocks.len() > window {
+                self.blocks.remove(0);
+            }
+        }
+    }
+
+    /// Iterate every block in the chain (genesis → tip), oldest first.
+    ///
+    /// Cold blocks come from the store; the window serves recent ones. Used
+    /// by full-chain scans (export, integrity check, summaries).
+    pub fn iter_blocks(&self) -> impl Iterator<Item = Block> + '_ {
+        (0..self.block_count()).filter_map(move |h| self.get_block(h))
     }
 
     /// Get current blockchain height
@@ -2663,7 +2723,7 @@ impl Blockchain {
         let mut aggregator = aggregator_arc.write().await;
         let mut previous_chain_proof: Option<lib_proofs::ChainRecursiveProof> = None;
 
-        for (i, block) in self.blocks.iter().enumerate() {
+        for (i, block) in self.iter_blocks().enumerate() {
             info!("Processing block {} for recursive proof aggregation", i);
 
             // Convert block transactions to the format expected by the aggregator
@@ -2692,7 +2752,9 @@ impl Blockchain {
 
             // Get previous state root (using merkle root as state representation)
             let previous_state_root = if i > 0 {
-                self.blocks[i - 1].header.state_root
+                self.get_block((i - 1) as u64)
+                    .map(|b| b.header.state_root)
+                    .unwrap_or_default()
             } else {
                 [0u8; 32] // Genesis block
             };
@@ -2757,7 +2819,7 @@ impl Blockchain {
 
         info!(
             "O(1) instant verification enabled for entire blockchain with {} blocks",
-            self.blocks.len()
+            (self.block_count() as usize)
         );
         Ok(())
     }
@@ -3881,9 +3943,8 @@ impl Blockchain {
     /// Count number of DAO votes cast by user
     fn count_user_dao_votes(&self, user_id: &lib_identity::IdentityId) -> u64 {
         let user_id_str = user_id.to_string();
-        self.blocks
-            .iter()
-            .flat_map(|block| &block.transactions)
+        self.iter_blocks()
+            .flat_map(|block| block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoVote)
             .filter(|tx| {
                 // Check if vote is from this user
@@ -3899,9 +3960,8 @@ impl Blockchain {
     /// Count number of DAO proposals submitted by user
     fn count_user_dao_proposals(&self, user_id: &lib_identity::IdentityId) -> u64 {
         let user_id_str = user_id.to_string();
-        self.blocks
-            .iter()
-            .flat_map(|block| &block.transactions)
+        self.iter_blocks()
+            .flat_map(|block| block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoProposal)
             .filter(|tx| {
                 // Check if proposal is from this user
@@ -3997,9 +4057,12 @@ impl Blockchain {
         info!("Verifying blockchain integrity...");
 
         // Verify block chain continuity
-        for i in 1..self.blocks.len() {
-            let current = &self.blocks[i];
-            let previous = &self.blocks[i - 1];
+        for i in 1..self.block_count() {
+            let (Some(current), Some(previous)) = (self.get_block(i), self.get_block(i - 1))
+            else {
+                error!("Block chain continuity broken: missing block near height {}", i);
+                return Ok(false);
+            };
 
             if current.previous_hash() != previous.hash() {
                 error!("Block chain continuity broken at height {}", i);
@@ -4016,7 +4079,7 @@ impl Blockchain {
         let mut rebuilt_utxo_set = HashMap::new();
         let mut rebuilt_nullifier_set = HashSet::new();
 
-        for block in &self.blocks {
+        for block in self.iter_blocks() {
             for tx in &block.transactions {
                 // Add nullifiers
                 for input in &tx.inputs {
@@ -4102,8 +4165,8 @@ impl Blockchain {
 
             let mut storage_manager = storage_manager_arc.write().await;
             // Persist any unpersisted blocks
-            for block in &self.blocks {
-                let _ = storage_manager.store_block(block).await;
+            for block in self.iter_blocks() {
+                let _ = storage_manager.store_block(&block).await;
             }
 
             // Persist all identity data
@@ -4139,7 +4202,7 @@ impl Blockchain {
             let stats = serde_json::json!({
                 "utxo_count": self.utxo_set.len(),
                 "identity_count": self.identity_registry.len(),
-                "block_count": self.blocks.len(),
+                "block_count": (self.block_count() as usize),
                 "nullifier_count": self.nullifier_set.len(),
                 "height": self.height,
                 "auto_persist_enabled": self.auto_persist_enabled,
@@ -4225,7 +4288,7 @@ impl Blockchain {
             .collect();
 
         let export = BlockchainExport {
-            blocks: self.blocks.clone(),
+            blocks: self.iter_blocks().collect(),
             utxo_set: self.utxo_set.clone(),
             identity_registry: self.identity_registry.clone(),
             wallet_references, // Only minimal wallet references (no sensitive data)
@@ -4241,11 +4304,11 @@ impl Blockchain {
         };
 
         info!(" Exporting blockchain: {} blocks, {} validators, {} token contracts, {} web4 contracts, {} oracle finalized prices", 
-            self.blocks.len(), self.validator_registry.len(), self.token_contracts.len(), self.web4_contracts.len(),
+            (self.block_count() as usize), self.validator_registry.len(), self.token_contracts.len(), self.web4_contracts.len(),
             self.oracle_state.finalized_prices_len());
 
         // Debug: Log transaction counts for each block
-        for (i, block) in self.blocks.iter().enumerate() {
+        for (i, block) in self.iter_blocks().enumerate() {
             info!(
                 "   Block {}: height={}, transactions={}, merkle_root={}",
                 i,
@@ -4491,18 +4554,22 @@ impl Blockchain {
 
                 // Check if this is a genesis replacement (different genesis blocks)
                 // Different genesis data helix roots imply different networks.
-                let is_genesis_replacement = if !self.blocks.is_empty() && !import.blocks.is_empty()
-                {
-                    self.blocks[0].header.data_helix_root != import.blocks[0].header.data_helix_root
-                } else {
-                    false
+                let is_genesis_replacement = match (self.get_block(0), import.blocks.first()) {
+                    (Some(local_g), Some(imported_g)) => {
+                        local_g.header.data_helix_root != imported_g.header.data_helix_root
+                    }
+                    _ => false,
                 };
 
                 if is_genesis_replacement {
                     info!("🔀 Genesis mismatch detected - performing full consolidation merge");
                     info!(
                         "   Old genesis data helix: {}",
-                        hex::encode(self.blocks[0].header.data_helix_root)
+                        hex::encode(
+                            self.get_block(0)
+                                .map(|b| b.header.data_helix_root)
+                                .unwrap_or_default()
+                        )
                     );
                     info!(
                         "   New genesis data helix: {}",
@@ -4523,7 +4590,7 @@ impl Blockchain {
                             );
                             // Fallback: just adopt imported chain
                             self.blocks = import.blocks;
-                            self.height = self.blocks.len() as u64 - 1;
+                            self.height = self.block_count() - 1;
                             self.utxo_set = import.utxo_set;
                             self.identity_registry = import.identity_registry;
                             // Convert wallet references to full data (sensitive data will need DHT retrieval)
@@ -4546,7 +4613,7 @@ impl Blockchain {
                     info!(" Same genesis - adopting longer chain");
                     // Simple case: same genesis, just adopt imported chain
                     self.blocks = import.blocks;
-                    self.height = self.blocks.len() as u64 - 1;
+                    self.height = self.block_count() - 1;
                     self.utxo_set = import.utxo_set;
                     self.identity_registry = import.identity_registry;
                     // Convert wallet references to full data (sensitive data will need DHT retrieval)
@@ -4565,7 +4632,10 @@ impl Blockchain {
 
                     // Clear nullifier set and rebuild from new chain
                     self.nullifier_set.clear();
-                    for block in &self.blocks {
+                    // Rebuild from the *whole* chain — collect first so the
+                    // store-backed scan's borrow ends before mutating self.
+                    let all_blocks: Vec<Block> = self.iter_blocks().collect();
+                    for block in &all_blocks {
                         for tx in &block.transactions {
                             for input in &tx.inputs {
                                 self.nullifier_set.insert(input.nullifier);
@@ -4674,8 +4744,8 @@ impl Blockchain {
                 warn!(" Chain conflict detected - different genesis blocks");
                 warn!(
                     "   Local genesis: {}",
-                    if !self.blocks.is_empty() {
-                        hex::encode(self.blocks[0].header.block_hash.as_bytes())
+                    if let Some(genesis) = self.get_block(0) {
+                        hex::encode(genesis.header.block_hash.as_bytes())
                     } else {
                         "none".to_string()
                     }
@@ -4706,9 +4776,9 @@ impl Blockchain {
             .map(|b| hex::encode(b.header.data_helix_root))
             .unwrap_or_else(|| "none".to_string());
 
-        let genesis_timestamp = self.blocks.first().map(|b| b.header.timestamp).unwrap_or(0);
+        let genesis_timestamp = self.get_block(0).map(|b| b.header.timestamp).unwrap_or(0);
 
-        let latest_timestamp = self.blocks.last().map(|b| b.header.timestamp).unwrap_or(0);
+        let latest_timestamp = self.latest_block().map(|b| b.header.timestamp).unwrap_or(0);
 
         // CONS-505: validator stats previously came from
         // `BlockchainConsensusCoordinator::list_all_validators()`.
@@ -4722,8 +4792,11 @@ impl Blockchain {
             (0, 0, String::new());
 
         // Estimate TPS based on recent blocks
-        let expected_tps = if self.blocks.len() >= 10 {
-            let recent_blocks = &self.blocks[self.blocks.len().saturating_sub(10)..];
+        let expected_tps = if (self.block_count() as usize) >= 10 {
+            let recent_blocks: Vec<Block> = (self.block_count().saturating_sub(10)
+                ..self.block_count())
+                .filter_map(|h| self.get_block(h))
+                .collect();
             let total_txs: u64 = recent_blocks
                 .iter()
                 .map(|b| b.transactions.len() as u64)
@@ -4869,17 +4942,17 @@ impl Blockchain {
         }
 
         // If chains have different heights, merge missing blocks
-        if import.blocks.len() != self.blocks.len() {
-            if import.blocks.len() > self.blocks.len() {
+        if import.blocks.len() != (self.block_count() as usize) {
+            if import.blocks.len() > (self.block_count() as usize) {
                 // Imported chain is longer - add missing blocks
-                let missing_blocks = &import.blocks[self.blocks.len()..];
+                let missing_blocks = &import.blocks[(self.block_count() as usize)..];
                 let mut added_blocks = 0;
 
                 for block in missing_blocks {
                     // Verify block before adding
-                    let prev_block = self.blocks.last();
+                    let prev_block = self.latest_block();
                     if self.verify_block(block, prev_block)? {
-                        self.blocks.push(block.clone());
+                        self.push_block_windowed(block.clone());
                         self.height = block.height();
                         added_blocks += 1;
                         info!("  Added missing block at height {}", block.height());
@@ -4897,7 +4970,7 @@ impl Blockchain {
                 }
             } else {
                 // Local chain is longer - just report the difference
-                let block_diff = self.blocks.len() - import.blocks.len();
+                let block_diff = (self.block_count() as usize) - import.blocks.len();
                 info!(
                     "  Local chain is {} blocks ahead, not adopting shorter chain",
                     block_diff
@@ -4919,7 +4992,7 @@ impl Blockchain {
         info!("🔀 Starting network merge with economic reconciliation");
         info!(
             "   Local network: {} blocks, {} identities, {} validators",
-            self.blocks.len(),
+            (self.block_count() as usize),
             self.identity_registry.len(),
             self.validator_registry.len()
         );
@@ -5016,7 +5089,7 @@ impl Blockchain {
 
         // Step 6: Adopt imported chain as base
         self.blocks = import.blocks.clone();
-        self.height = self.blocks.len() as u64 - 1;
+        self.height = self.block_count() - 1;
         self.identity_registry = import.identity_registry.clone();
         self.wallet_registry =
             self.convert_wallet_references_to_full_data(&import.wallet_references);
@@ -5101,7 +5174,10 @@ impl Blockchain {
 
         // Step 9: Rebuild nullifier set from merged state
         self.nullifier_set.clear();
-        for block in &self.blocks {
+        // Rebuild from the *whole* chain — collect first so the store-backed
+        // scan's borrow ends before mutating self.
+        let all_blocks: Vec<Block> = self.iter_blocks().collect();
+        for block in &all_blocks {
             for tx in &block.transactions {
                 for input in &tx.inputs {
                     self.nullifier_set.insert(input.nullifier);
@@ -5112,7 +5188,7 @@ impl Blockchain {
         info!(" Network merge complete with economic reconciliation!");
         info!(
             "   Final network: {} blocks, {} identities, {} validators, {} UTXOs",
-            self.blocks.len(),
+            (self.block_count() as usize),
             self.identity_registry.len(),
             self.validator_registry.len(),
             self.utxo_set.len()
@@ -5138,7 +5214,7 @@ impl Blockchain {
         info!("🔀 Merging imported network into stronger local network");
         info!(
             "   Local network (BASE): {} blocks, {} identities, {} validators",
-            self.blocks.len(),
+            (self.block_count() as usize),
             self.identity_registry.len(),
             self.validator_registry.len()
         );
@@ -5274,7 +5350,7 @@ impl Blockchain {
         info!(" Imported network successfully merged into local base!");
         info!(
             "   Final network: {} blocks, {} identities, {} validators, {} UTXOs",
-            self.blocks.len(),
+            (self.block_count() as usize),
             self.identity_registry.len(),
             self.validator_registry.len(),
             self.utxo_set.len()
@@ -5295,7 +5371,7 @@ impl Blockchain {
         let mut merged_items = Vec::new();
 
         info!("Extracting unique content from shorter chain (height {}) into longer chain (height {})",
-              import.blocks.len(), self.blocks.len());
+              import.blocks.len(), (self.block_count() as usize));
 
         // Merge identities (add new ones that don't exist in local chain)
         let mut new_identities = 0;
@@ -5517,7 +5593,7 @@ impl Blockchain {
 
     /// Calculate total work for current blockchain
     fn calculate_total_work(&self) -> u128 {
-        self.blocks.len() as u128
+        (self.block_count() as usize) as u128
     }
 
     /// Store a consensus checkpoint record.
@@ -5597,15 +5673,14 @@ impl Blockchain {
     }
 
     /// Get blocks that have reached finality (12+ confirmations)
-    pub fn get_finalized_blocks(&self, depth: u64) -> Vec<&Block> {
+    pub fn get_finalized_blocks(&self, depth: u64) -> Vec<Block> {
         let current_height = self.height;
         if current_height < depth {
             return vec![];
         }
 
         let finality_height = current_height.saturating_sub(depth);
-        self.blocks
-            .iter()
+        self.iter_blocks()
             .filter(|b| b.header.height <= finality_height)
             .collect()
     }
@@ -5649,7 +5724,7 @@ impl Blockchain {
             );
 
             // Emit BlockFinalized event (Issue #11)
-            if let Some(block) = self.blocks.iter().find(|b| b.header.height == block_height) {
+            if let Some(block) = self.iter_blocks().find(|b| b.header.height == block_height) {
                 // Block hash should always be 32 bytes, but handle gracefully if not
                 let block_hash = block.hash();
                 let block_hash_bytes = block_hash.as_bytes();
@@ -5690,7 +5765,7 @@ impl Blockchain {
         new_block_hash: Hash,
     ) -> Option<crate::fork_recovery::ForkDetection> {
         // Find existing block at this height
-        let existing_block = self.blocks.iter().find(|b| b.header.height == height)?;
+        let existing_block = self.iter_blocks().find(|b| b.header.height == height)?;
 
         // If hashes differ, we have a fork
         if existing_block.header.block_hash != new_block_hash {
@@ -5839,9 +5914,9 @@ impl Blockchain {
             .map(|b| b.header.block_hash);
 
         // Remove old blocks from target_height onwards
-        let old_count = self.blocks.len();
+        let old_count = (self.block_count() as usize);
         self.blocks.retain(|b| b.header.height < target_height);
-        let removed_count = old_count - self.blocks.len();
+        let removed_count = old_count - (self.block_count() as usize);
 
         // Add new blocks
         for block in new_blocks {
