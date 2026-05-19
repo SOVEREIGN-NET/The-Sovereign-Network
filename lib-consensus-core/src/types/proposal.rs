@@ -125,4 +125,14 @@ pub struct ConsensusProposal {
     pub signature: PostQuantumSignature,
     /// Combined proof bundle for this proposal.
     pub consensus_proof: ConsensusProof,
+    /// Tendermint `validRound`: when the proposer is re-proposing a
+    /// block it observed reach a prevote quorum in an earlier round,
+    /// this carries that round. `None` for a freshly built block.
+    /// Receivers use it in the prevote lock rule — a locked validator
+    /// may prevote a conflicting block only when `valid_round >=
+    /// locked_round`. Appended at struct end (never mid-struct) so
+    /// bincode stays compatible; `#[serde(default)]` decodes pre-field
+    /// proposals as `None`.
+    #[serde(default)]
+    pub valid_round: Option<u32>,
 }

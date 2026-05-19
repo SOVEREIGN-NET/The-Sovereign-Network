@@ -449,6 +449,7 @@ impl ConsensusEngine {
             proposal.round,
             &proposal.previous_hash,
             &proposal.block_data,
+            proposal.valid_round,
         )?;
 
         if !self
