@@ -422,21 +422,56 @@ impl ZhtpRouter {
         // if any, is preserved.
         normalize_request_uri(&mut request.uri);
 
-        // S5 #2559 — default-deny for Password (OPAQUE lobby) sessions.
-        // Key (Dilithium) sessions and unauthenticated requests bypass this
-        // gate; only Password sessions are constrained to the allowlist.
-        if crate::session_manager::is_request_password_session(&request).await
-            && !super::lobby_acl::is_lobby_allowed(&request.method, &request.uri)
+        // S5 #2559 + S6 #2560 — lobby auth zone enforcement.
+        // Key (Dilithium) sessions and unauthenticated requests bypass.
+        if let Some((token, key)) =
+            crate::session_manager::request_password_session_with_key(&request).await
         {
-            warn!(
-                "🔒 lobby session blocked from {} {} (not in allowlist)",
-                request.method.as_str(),
-                request.uri
-            );
-            return Ok(ZhtpResponse::error(
-                ZhtpStatus::Forbidden,
-                "Forbidden — lobby session".to_string(),
-            ));
+            // ACL: lobby sessions may only call allowlisted (method, uri).
+            if !super::lobby_acl::is_lobby_allowed(&request.method, &request.uri) {
+                warn!(
+                    "🔒 lobby session blocked from {} {} (not in allowlist)",
+                    request.method.as_str(),
+                    request.uri
+                );
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::Forbidden,
+                    "Forbidden — lobby session".to_string(),
+                ));
+            }
+
+            // S6: channel-binding MAC + seq verification. The OPAQUE auth
+            // endpoints themselves (login/start, login/finish, etc.) are
+            // exempt — at those points the client either has no session yet
+            // or is establishing one. Once the session exists, every
+            // subsequent request must be MAC'd.
+            let on_auth_endpoint = request.uri.starts_with("/api/v1/auth/opaque/")
+                || request.uri.starts_with("/api/v1/auth/credentials/recover");
+            if !on_auth_endpoint {
+                let mgr = match crate::session_manager::session_manager_handle() {
+                    Some(m) => m,
+                    None => {
+                        return Ok(ZhtpResponse::error(
+                            ZhtpStatus::InternalServerError,
+                            "session manager not initialized".into(),
+                        ));
+                    }
+                };
+                if let Err(err) =
+                    super::lobby_mac::verify(&request, &token, &key, mgr.as_ref()).await
+                {
+                    warn!(
+                        "🔒 lobby MAC verify failed on {} {}: {:?}",
+                        request.method.as_str(),
+                        request.uri,
+                        err
+                    );
+                    return Ok(ZhtpResponse::error(
+                        ZhtpStatus::Unauthorized,
+                        "Unauthorized".to_string(),
+                    ));
+                }
+            }
         }
 
         let path = &request.uri;
