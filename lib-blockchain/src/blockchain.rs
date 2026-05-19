@@ -1576,7 +1576,9 @@ impl Blockchain {
 
         // Get previous state root
         let previous_state_root = if block.height() > 0 {
-            self.blocks[block.height() as usize - 1].header.state_root
+            self.get_block(block.height() - 1)
+                .map(|b| b.header.state_root)
+                .unwrap_or_default()
         } else {
             [0u8; 32] // Genesis block
         };
@@ -1991,8 +1993,12 @@ impl Blockchain {
             return Ok(());
         }
 
-        let current_block = &self.blocks[self.height as usize];
-        let interval_start = &self.blocks[(self.height - adjustment_interval) as usize];
+        let current_block = self
+            .latest_block()
+            .expect("difficulty adjustment runs on a non-empty chain");
+        let interval_start = self
+            .get_block(self.height - adjustment_interval)
+            .expect("difficulty interval-start block is within the hot window");
         let interval_start_time = interval_start.timestamp();
         let interval_end_time = current_block.timestamp();
 
@@ -2710,7 +2716,9 @@ impl Blockchain {
 
             // Get previous state root (using merkle root as state representation)
             let previous_state_root = if i > 0 {
-                self.blocks[i - 1].header.state_root
+                self.get_block((i - 1) as u64)
+                    .map(|b| b.header.state_root)
+                    .unwrap_or_default()
             } else {
                 [0u8; 32] // Genesis block
             };
@@ -4013,9 +4021,12 @@ impl Blockchain {
         info!("Verifying blockchain integrity...");
 
         // Verify block chain continuity
-        for i in 1..(self.block_count() as usize) {
-            let current = &self.blocks[i];
-            let previous = &self.blocks[i - 1];
+        for i in 1..self.block_count() {
+            let (Some(current), Some(previous)) = (self.get_block(i), self.get_block(i - 1))
+            else {
+                error!("Block chain continuity broken: missing block near height {}", i);
+                return Ok(false);
+            };
 
             if current.previous_hash() != previous.hash() {
                 error!("Block chain continuity broken at height {}", i);
@@ -4507,18 +4518,22 @@ impl Blockchain {
 
                 // Check if this is a genesis replacement (different genesis blocks)
                 // Different genesis data helix roots imply different networks.
-                let is_genesis_replacement = if !self.blocks.is_empty() && !import.blocks.is_empty()
-                {
-                    self.blocks[0].header.data_helix_root != import.blocks[0].header.data_helix_root
-                } else {
-                    false
+                let is_genesis_replacement = match (self.get_block(0), import.blocks.first()) {
+                    (Some(local_g), Some(imported_g)) => {
+                        local_g.header.data_helix_root != imported_g.header.data_helix_root
+                    }
+                    _ => false,
                 };
 
                 if is_genesis_replacement {
                     info!("🔀 Genesis mismatch detected - performing full consolidation merge");
                     info!(
                         "   Old genesis data helix: {}",
-                        hex::encode(self.blocks[0].header.data_helix_root)
+                        hex::encode(
+                            self.get_block(0)
+                                .map(|b| b.header.data_helix_root)
+                                .unwrap_or_default()
+                        )
                     );
                     info!(
                         "   New genesis data helix: {}",
@@ -4692,8 +4707,8 @@ impl Blockchain {
                 warn!(" Chain conflict detected - different genesis blocks");
                 warn!(
                     "   Local genesis: {}",
-                    if !self.blocks.is_empty() {
-                        hex::encode(self.blocks[0].header.block_hash.as_bytes())
+                    if let Some(genesis) = self.get_block(0) {
+                        hex::encode(genesis.header.block_hash.as_bytes())
                     } else {
                         "none".to_string()
                     }
@@ -4741,7 +4756,10 @@ impl Blockchain {
 
         // Estimate TPS based on recent blocks
         let expected_tps = if (self.block_count() as usize) >= 10 {
-            let recent_blocks = &self.blocks[(self.block_count() as usize).saturating_sub(10)..];
+            let recent_blocks: Vec<&Block> = (self.block_count().saturating_sub(10)
+                ..self.block_count())
+                .filter_map(|h| self.get_block(h))
+                .collect();
             let total_txs: u64 = recent_blocks
                 .iter()
                 .map(|b| b.transactions.len() as u64)
