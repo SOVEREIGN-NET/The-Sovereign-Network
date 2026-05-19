@@ -422,6 +422,23 @@ impl ZhtpRouter {
         // if any, is preserved.
         normalize_request_uri(&mut request.uri);
 
+        // S5 #2559 — default-deny for Password (OPAQUE lobby) sessions.
+        // Key (Dilithium) sessions and unauthenticated requests bypass this
+        // gate; only Password sessions are constrained to the allowlist.
+        if crate::session_manager::is_request_password_session(&request).await
+            && !super::lobby_acl::is_lobby_allowed(&request.method, &request.uri)
+        {
+            warn!(
+                "🔒 lobby session blocked from {} {} (not in allowlist)",
+                request.method.as_str(),
+                request.uri
+            );
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::Forbidden,
+                "Forbidden — lobby session".to_string(),
+            ));
+        }
+
         let path = &request.uri;
 
         // Try exact match first
