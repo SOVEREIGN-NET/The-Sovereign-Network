@@ -17,6 +17,28 @@ pub fn set_global_session_manager(manager: Arc<SessionManager>) {
     let _ = GLOBAL_SESSION_MANAGER.set(manager);
 }
 
+/// Access the global session manager. Returns `None` if startup hasn't yet
+/// installed one — only happens in unit tests or during early bootstrap.
+pub fn session_manager_handle() -> Option<Arc<SessionManager>> {
+    GLOBAL_SESSION_MANAGER.get().cloned()
+}
+
+/// S6: if this request carries a Password (OPAQUE lobby) session bearer
+/// token, return `(token, session_key)`. Returns `None` for unauthenticated
+/// requests, Key sessions, or Password sessions without a stored key.
+pub async fn request_password_session_with_key(
+    request: &lib_protocols::types::ZhtpRequest,
+) -> Option<(String, Vec<u8>)> {
+    let auth = request.headers.get("Authorization")?;
+    let token = auth.strip_prefix("Bearer ")?.to_string();
+    let mgr = GLOBAL_SESSION_MANAGER.get()?;
+    if !mgr.is_password_session(&token).await {
+        return None;
+    }
+    let key = mgr.opaque_session_key(&token).await?;
+    Some((token, key))
+}
+
 /// Check if a request's bearer token is from a password session (public zone only).
 /// Returns true if the token is a password session → handler should reject wallet access.
 pub async fn is_request_password_session(request: &lib_protocols::types::ZhtpRequest) -> bool {
@@ -45,6 +67,13 @@ pub struct SessionManager {
     default_session_duration: u64,
     /// Maximum concurrent sessions per identity
     max_sessions_per_identity: usize,
+    /// OPAQUE-derived session keys, keyed by session_token. Only present
+    /// for sessions issued through the lobby OPAQUE login flow. Used for
+    /// per-request HMAC channel binding (verified in S6 #2560).
+    opaque_session_keys: Arc<RwLock<HashMap<String, Vec<u8>>>>,
+    /// Highest `X-OPAQUE-Seq` value seen for each OPAQUE-bound session.
+    /// Strict monotonic — server rejects seq ≤ last seen as replay (S6).
+    opaque_last_seq: Arc<RwLock<HashMap<String, u64>>>,
 }
 
 impl SessionManager {
@@ -55,7 +84,47 @@ impl SessionManager {
             sessions_by_identity: Arc::new(RwLock::new(HashMap::new())),
             default_session_duration: 24 * 60 * 60, // 24 hours
             max_sessions_per_identity: 5,
+            opaque_session_keys: Arc::new(RwLock::new(HashMap::new())),
+            opaque_last_seq: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// S6: atomically verify and advance the per-session monotonic sequence
+    /// counter. Returns `true` if `seq` is strictly greater than the last
+    /// seen value (or this is the first request) — the counter is then
+    /// updated to `seq`. Returns `false` for a replay or out-of-order seq.
+    pub async fn check_and_advance_seq(&self, token: &str, seq: u64) -> bool {
+        let mut map = self.opaque_last_seq.write().await;
+        let last = map.get(token).copied().unwrap_or(0);
+        if seq <= last {
+            return false;
+        }
+        map.insert(token.to_string(), seq);
+        true
+    }
+
+    /// Create a password-authenticated session AND store the OPAQUE-derived
+    /// session_key alongside it. The key is later used by the per-request
+    /// HMAC channel-binding check (S6 #2560).
+    pub async fn create_password_session_with_key(
+        &self,
+        identity_id: IdentityId,
+        client_ip: &str,
+        user_agent: &str,
+        session_key: Vec<u8>,
+    ) -> Result<String> {
+        let token = self
+            .create_password_session(identity_id, client_ip, user_agent)
+            .await?;
+        let mut keys = self.opaque_session_keys.write().await;
+        keys.insert(token.clone(), session_key);
+        Ok(token)
+    }
+
+    /// Fetch the OPAQUE session_key for a token, if any. Used by the
+    /// channel-binding middleware.
+    pub async fn opaque_session_key(&self, token: &str) -> Option<Vec<u8>> {
+        self.opaque_session_keys.read().await.get(token).cloned()
     }
 
     /// Create a new session for an authenticated identity
@@ -181,6 +250,10 @@ impl SessionManager {
 
     /// Remove a session (signout)
     pub async fn remove_session(&self, token: &str) -> Result<()> {
+        // Clean up OPAQUE-side state alongside the session itself.
+        self.opaque_session_keys.write().await.remove(token);
+        self.opaque_last_seq.write().await.remove(token);
+
         let mut sessions = self.sessions.write().await;
 
         if let Some(session) = sessions.remove(token) {
@@ -344,6 +417,8 @@ impl SessionManager {
             sessions_by_identity: Arc::clone(&self.sessions_by_identity),
             default_session_duration: self.default_session_duration,
             max_sessions_per_identity: self.max_sessions_per_identity,
+            opaque_session_keys: Arc::clone(&self.opaque_session_keys),
+            opaque_last_seq: Arc::clone(&self.opaque_last_seq),
         };
 
         tokio::spawn(async move {

@@ -5,34 +5,72 @@ use lib_crypto::{hash_blake3, Hash, PostQuantumSignature};
 use lib_storage::proofs::StorageCapacityAttestation;
 
 impl ConsensusEngine {
-    /// Create a new proposal
+    /// Create a new proposal.
+    ///
+    /// Tendermint valid-value rule: if this node holds a `valid_value` —
+    /// a block that reached a prevote quorum in an earlier round of the
+    /// CURRENT height — the proposer re-proposes that exact block,
+    /// **re-using its proposal id**, and advertises `valid_round`. Locked
+    /// validators recognise the id (or honour `valid_round` via the unlock
+    /// rule) and can prevote it; without this a locked network could never
+    /// make progress. Otherwise a fresh block is built with no `valid_round`.
     pub(super) async fn create_proposal(&self) -> ConsensusResult<ConsensusProposal> {
         let validator_id = self
             .validator_identity
             .as_ref()
             .ok_or_else(|| ConsensusError::ValidatorError("No validator identity".to_string()))?;
 
-        // Get previous block hash from blockchain state
-        let previous_hash = self.get_previous_block_hash().await?;
+        // Locate the valid_value artifact to re-propose, if we hold one.
+        let reproposal = match (
+            self.current_round.valid_proposal.as_ref(),
+            self.current_round.valid_round,
+        ) {
+            (Some(valid_id), Some(_)) => self
+                .pending_proposals
+                .iter()
+                .find(|p| &p.id == valid_id)
+                .or_else(|| self.proposal_for_round.values().find(|p| &p.id == valid_id))
+                .cloned(),
+            _ => None,
+        };
 
-        // Collect pending transactions for this block
-        let block_data = self.collect_block_transactions().await?;
-
-        // Generate proposal ID from deterministic data.
-        // Bound to (height, round, proposer, previous_hash, block_data) so
-        // that the same proposer at the same height but a different round
-        // produces a distinct proposal ID.
-        let proposal_id = Hash::from_bytes(&hash_blake3(
-            &[
-                b"ZHTP/PROPOSAL/ID/v1\0" as &[u8],
-                validator_id.as_bytes(),
-                &self.current_round.height.to_le_bytes(),
-                &self.current_round.round.to_le_bytes(),
-                previous_hash.as_bytes(),
-                &block_data,
-            ]
-            .concat(),
-        ));
+        let (proposal_id, previous_hash, block_data, valid_round) = match reproposal {
+            Some(artifact) => {
+                tracing::info!(
+                    "Re-proposing valid_value {:?} (valid_round {:?}) at H={} R={}",
+                    artifact.id,
+                    self.current_round.valid_round,
+                    self.current_round.height,
+                    self.current_round.round,
+                );
+                (
+                    artifact.id.clone(),
+                    artifact.previous_hash.clone(),
+                    artifact.block_data.clone(),
+                    self.current_round.valid_round,
+                )
+            }
+            None => {
+                // Fresh block. Proposal ID is bound to (height, round,
+                // proposer, previous_hash, block_data) so the same proposer
+                // at the same height but a different round produces a
+                // distinct ID. `valid_round` is None — this is a new value.
+                let previous_hash = self.get_previous_block_hash().await?;
+                let block_data = self.collect_block_transactions().await?;
+                let proposal_id = Hash::from_bytes(&hash_blake3(
+                    &[
+                        b"ZHTP/PROPOSAL/ID/v1\0" as &[u8],
+                        validator_id.as_bytes(),
+                        &self.current_round.height.to_le_bytes(),
+                        &self.current_round.round.to_le_bytes(),
+                        previous_hash.as_bytes(),
+                        &block_data,
+                    ]
+                    .concat(),
+                ));
+                (proposal_id, previous_hash, block_data, None)
+            }
+        };
 
         // Create consensus proof
         let consensus_proof = self.create_consensus_proof().await?;
@@ -45,6 +83,7 @@ impl ConsensusEngine {
             self.current_round.round,
             &previous_hash,
             &block_data,
+            valid_round,
         )?;
 
         let signature = self.sign_proposal_data(&proposal_data).await?;
@@ -63,6 +102,7 @@ impl ConsensusEngine {
             timestamp: self.current_round.height,
             signature,
             consensus_proof,
+            valid_round,
         };
 
         tracing::info!(
@@ -159,9 +199,13 @@ impl ConsensusEngine {
         round: u32,
         previous_hash: &Hash,
         block_data: &[u8],
+        valid_round: Option<u32>,
     ) -> ConsensusResult<Vec<u8>> {
         let mut data = Vec::new();
-        data.extend_from_slice(b"ZHTP/PROPOSAL/SIG/v1\0");
+        // v2 payload: appends the Tendermint `valid_round` field. The
+        // domain tag is bumped alongside CONSENSUS_PROTOCOL_VERSION 3 so
+        // a v1-payload signature can never validate against a v2 verifier.
+        data.extend_from_slice(b"ZHTP/PROPOSAL/SIG/v2\0");
         data.extend_from_slice(proposal_id.as_bytes());
         data.extend_from_slice(proposer.as_bytes());
         data.extend_from_slice(&height.to_le_bytes());
@@ -169,6 +213,18 @@ impl ConsensusEngine {
         data.extend_from_slice(previous_hash.as_bytes());
         data.extend_from_slice(&(block_data.len() as u32).to_le_bytes());
         data.extend_from_slice(block_data);
+        // valid_round: 1 presence byte + u32 value (0 when absent), so the
+        // signed payload is fixed-layout and unambiguous.
+        match valid_round {
+            Some(vr) => {
+                data.push(1);
+                data.extend_from_slice(&vr.to_le_bytes());
+            }
+            None => {
+                data.push(0);
+                data.extend_from_slice(&0u32.to_le_bytes());
+            }
+        }
         Ok(data)
     }
 

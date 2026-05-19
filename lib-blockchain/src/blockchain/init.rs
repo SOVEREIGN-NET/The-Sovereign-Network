@@ -104,6 +104,7 @@ impl Blockchain {
             observer_blocks: HashMap::new(),
             credential_registry: HashMap::new(),
             did_to_username: HashMap::new(),
+            opaque_server_setup: None,
             pouw_mint_index: HashMap::new(),
         }
     }
@@ -361,6 +362,26 @@ impl Blockchain {
         blockchain.auto_persist_enabled = false;
         blockchain.blocks.clear();
         blockchain.height = 0;
+
+        // Reviewer #2569: `opaque_server_setup` is `#[serde(skip)]` so it
+        // would otherwise be lost across restart. Re-parse it from the
+        // embedded genesis on every load so validators that restart pick
+        // up the same OPRF setup they started with.
+        match crate::genesis::GenesisConfig::from_embedded() {
+            Ok(gen) => match gen.load_opaque_setup() {
+                Ok(setup) => blockchain.opaque_server_setup = setup,
+                Err(e) => warn!(
+                    "Embedded genesis [opaque] section invalid during load_from_store: {} \
+                     — lobby auth endpoints will return 503",
+                    e
+                ),
+            },
+            Err(e) => warn!(
+                "Embedded genesis unavailable during load_from_store: {} \
+                 — lobby auth setup not loaded",
+                e
+            ),
+        }
 
         for height in 0..=latest_height {
             match store.get_block_by_height(height)? {

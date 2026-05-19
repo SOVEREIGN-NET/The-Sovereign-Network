@@ -290,6 +290,7 @@ impl BlockchainV1 {
             observer_blocks: HashMap::new(),
             credential_registry: HashMap::new(),
             did_to_username: HashMap::new(),
+            opaque_server_setup: None,
             pouw_mint_index: HashMap::new(),
         }
     }
@@ -616,6 +617,7 @@ impl BlockchainStorageV3 {
             nft_collections: HashMap::new(),
             credential_registry: HashMap::new(),
             did_to_username: HashMap::new(),
+            opaque_server_setup: None,
             observer_registry: HashMap::new(),
             observer_blocks: HashMap::new(),
             pouw_mint_index: HashMap::new(),
@@ -943,7 +945,10 @@ impl Blockchain {
         }
 
         let storage = BlockchainStorageV11::from_blockchain(self);
-        let serialized = bincode::serialize(&storage)
+        // Serialize on a large-stack thread — the nested BlockchainStorageV11
+        // wrapper chain overflows a default 2 MiB worker/test thread stack.
+        let serialized = with_large_stack(move || bincode::serialize(&storage))
+            .map_err(|e| anyhow::anyhow!("Blockchain serialization thread failed: {}", e))?
             .map_err(|e| anyhow::anyhow!("Failed to serialize blockchain: {}", e))?;
 
         let mut file_data = Vec::with_capacity(6 + serialized.len());
@@ -1323,12 +1328,49 @@ impl Blockchain {
     }
 }
 
+/// Run `f` on a freshly-spawned thread with a large stack.
+///
+/// `save_to_file` / `load_from_file` (de)serialize `BlockchainStorageV11` — a
+/// chain of nine nested wrapper structs (`V11 → V10 → … → V3`) over the full
+/// `Blockchain`. serde's derived (de)serializers for those large structs have
+/// big stack frames; nested, they exceed the 2 MiB default stack of a tokio
+/// worker thread or a Rust test thread and overflow it. Doing the work on a
+/// thread with a generous stack makes this path robust regardless of the
+/// stack size of whichever thread the caller happens to run on.
+///
+/// Returns `Err` when the OS refuses to create the thread, or when the worker
+/// panics — both are surfaced to the caller (`save_to_file` / `load_from_file`
+/// return `Result`) instead of crashing the process via `expect`.
+fn with_large_stack<T, F>(f: F) -> Result<T>
+where
+    T: Send,
+    F: FnOnce() -> T + Send,
+{
+    const LARGE_STACK: usize = 32 * 1024 * 1024;
+    std::thread::scope(|scope| {
+        let handle = std::thread::Builder::new()
+            .name("blockchain-serde".to_string())
+            .stack_size(LARGE_STACK)
+            .spawn_scoped(scope, f)
+            .map_err(|e| {
+                anyhow::anyhow!("failed to spawn large-stack (de)serialization thread: {}", e)
+            })?;
+        handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("large-stack (de)serialization thread panicked"))
+    })
+}
+
 fn deserialize_or_err<T, U, F>(data: &[u8], label: &str, on_success: F) -> Result<U>
 where
-    T: serde::de::DeserializeOwned,
+    T: serde::de::DeserializeOwned + Send,
     F: FnOnce(T) -> U,
 {
-    match bincode::deserialize::<T>(data) {
+    let decoded = with_large_stack(|| bincode::deserialize::<T>(data)).map_err(|e| {
+        error!("❌ {} (de)serialization thread failed: {}", label, e);
+        anyhow::anyhow!("{} (de)serialization thread failed: {}", label, e)
+    })?;
+    match decoded {
         Ok(storage) => Ok(on_success(storage)),
         Err(storage_err) => {
             error!("❌ Failed to deserialize {}: {}", label, storage_err);
