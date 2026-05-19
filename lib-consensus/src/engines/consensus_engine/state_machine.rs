@@ -147,6 +147,33 @@ fn now_secs() -> u64 {
         .as_secs()
 }
 
+/// Why the engine is entering a new round.
+///
+/// Round progress is network-evidence-driven (Tendermint-style round
+/// synchronization): a validator jumps to a higher round when it observes
+/// proof that the network is already there, instead of relying solely on
+/// its own local timer. This enum records which trigger fired — used for
+/// structured logging and to keep the jump paths auditable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RoundJumpReason {
+    /// Trigger A — a valid proposal for a higher round was admitted.
+    HigherRoundProposal,
+    /// Trigger B — f+1 distinct validators observed prevoting in a higher round.
+    HigherRoundPrevoteEvidence,
+    /// Trigger C — f+1 distinct validators observed precommitting in a higher round.
+    HigherRoundPrecommitEvidence,
+    /// Local prevote timer fired without a prevote quorum.
+    LocalPrevoteTimeout,
+    /// Local precommit timer fired without a precommit quorum.
+    LocalPrecommitTimeout,
+    /// Local commit-step timer fired without the height advancing.
+    LocalCommitTimeout,
+    /// Local timer fired in a state with no dedicated timeout semantics
+    /// (the defensive `NewRound` re-drive). Generic so the audit log does
+    /// not misattribute it to a prevote/precommit/commit timeout.
+    LocalTimeout,
+}
+
 /// Build the `ValidatorRewardInput` slice the engine hands to
 /// `RewardCallback::on_round_finalized` (CONS-103). Keeps the trait
 /// independent of `ValidatorManager`.
@@ -567,7 +594,13 @@ impl ConsensusEngine {
         Ok(())
     }
 
-    /// Advance to the next consensus round
+    /// Advance to the next consensus *height* (round resets to 0).
+    ///
+    /// This crosses a height boundary, so the Tendermint lock state IS
+    /// cleared here — locks bind a value to a height, and the previous
+    /// height is now committed and final. (A round *jump* within a height,
+    /// `enter_round`, must NOT clear locks.) The round-keyed proposal
+    /// buffer is also dropped since its entries belong to the old height.
     fn advance_to_next_round(&mut self) {
         self.current_round.height += 1;
         self.current_round.round = 0;
@@ -580,7 +613,10 @@ impl ConsensusEngine {
         self.current_round.votes.clear();
         self.current_round.timed_out = false;
         self.current_round.locked_proposal = None;
+        self.current_round.locked_round = None;
         self.current_round.valid_proposal = None;
+        self.current_round.valid_round = None;
+        self.proposal_for_round.clear();
     }
 
     /// Run the propose step
@@ -903,6 +939,80 @@ impl ConsensusEngine {
         );
 
         Ok(vote)
+    }
+
+    /// Tendermint prevote lock rule.
+    ///
+    /// A validator may prevote `proposal_id` when ANY holds:
+    /// - it is not locked on any value; or
+    /// - it is locked on this exact value; or
+    /// - the proposal advertises a `valid_round` proving a prevote quorum
+    ///   existed for it at a round `>=` the lock round (safe unlock).
+    ///
+    /// Otherwise it must NOT prevote this proposal. We implement "prevote
+    /// nil" as abstention (cast no prevote): abstaining can never violate
+    /// BFT safety, and the round-synchronization layer still drives
+    /// liveness — the round times out and the node jumps forward on
+    /// evidence. This avoids the larger surface of explicit nil-vote
+    /// quorum machinery while satisfying the lock-safety requirement.
+    pub(super) fn prevote_permitted_by_lock(
+        &self,
+        proposal: Option<&ConsensusProposal>,
+        proposal_id: &Hash,
+    ) -> bool {
+        match (&self.current_round.locked_proposal, self.current_round.locked_round) {
+            // Not locked — free to prevote.
+            (None, _) => true,
+            // Locked on this very value — prevote it again.
+            (Some(locked), _) if locked == proposal_id => true,
+            // Locked on a different value: unlock only on proof that this
+            // proposal reached a prevote quorum at round >= lock round.
+            (Some(_), Some(locked_round)) => {
+                matches!(
+                    proposal.and_then(|p| p.valid_round),
+                    Some(vr) if vr >= locked_round
+                )
+            }
+            // Locked but lock round unknown — conservatively refuse.
+            (Some(_), None) => false,
+        }
+    }
+
+    /// Cast (and broadcast) a prevote for `proposal_id`, gated by the
+    /// Tendermint lock rule. When the lock rule forbids it, the node
+    /// abstains (logs and casts nothing) — see [`Self::prevote_permitted_by_lock`].
+    async fn cast_prevote_for_proposal(&mut self, proposal_id: &Hash) -> ConsensusResult<()> {
+        let round = self.current_round.round;
+        let proposal = self
+            .pending_proposals
+            .iter()
+            .find(|p| &p.id == proposal_id)
+            .cloned()
+            .or_else(|| {
+                self.proposal_for_round
+                    .get(&round)
+                    .filter(|p| &p.id == proposal_id)
+                    .cloned()
+            });
+
+        if !self.prevote_permitted_by_lock(proposal.as_ref(), proposal_id) {
+            tracing::info!(
+                "🔒 Lock rule: abstaining from prevote for {:?} at H={} R={} \
+                 (locked on {:?} @ round {:?})",
+                proposal_id,
+                self.current_round.height,
+                round,
+                self.current_round.locked_proposal,
+                self.current_round.locked_round,
+            );
+            return Ok(());
+        }
+
+        let vote = self.cast_vote(proposal_id.clone(), VoteType::PreVote).await?;
+        let msg = wrap_vote(vote, self.validator_keypair.as_ref());
+        let validator_ids = self.get_active_validator_ids();
+        self.broadcast(msg, &validator_ids).await;
+        Ok(())
     }
 
     /// Wait for step timeout
@@ -1304,126 +1414,189 @@ impl ConsensusEngine {
         }
     }
 
-    pub(super) async fn on_proposal(&mut self, proposal: ConsensusProposal) -> ConsensusResult<()> {
-        // BFT SAFETY: Reject any proposal that would create a fork.
-        //
-        // In BFT consensus, forks are invalid by definition. Once a block is committed
-        // at height H, no other block is valid at that height. Any proposal targeting
-        // an already-committed height with a different block hash is a fork attempt
-        // and must be rejected immediately, before any other processing.
-        //
-        // Same-round fork: if `valid_proposal` is already set for the current round
-        // and a conflicting proposal arrives for the SAME round, it is a fork.
-        // Proposals for different rounds are handled independently and do not mutate
-        // local round state until timeout advances the round.
-        //
-        // This is a hard gate: fork proposals are never stored, never voted on,
-        // and never forwarded to peers.
-        if let Err(e) = self.validate_no_fork_proposal(proposal.height, proposal.round, &proposal.id) {
-            // Stale or out-of-order proposal — discard and continue.
-            // This is expected when a lagging node (e.g. late joiner) proposes for a height
-            // that the local node has already committed past.  It is NOT a Byzantine fault:
-            // the consensus engine already committed that height and the proposal is simply
-            // irrelevant.  Crashing here would take down the consensus loop unnecessarily.
-            tracing::warn!(
-                "FORK REJECTED: Proposal {:?} from proposer {} at height {} \
-                 rejected as invalid fork: {} — discarding (not crashing)",
-                proposal.id,
-                proposal.proposer,
-                proposal.height,
-                e,
+    /// Tendermint `f + 1` for the current validator set — the minimum
+    /// number of distinct validators observed in a higher round that
+    /// proves at least one *correct* validator is already there, making
+    /// it safe to jump forward. `f = floor((n - 1) / 3)`.
+    pub(super) fn round_sync_threshold(&self) -> u64 {
+        let n = self.validator_manager.get_active_validators().len() as u64;
+        let f = n.saturating_sub(1) / 3;
+        f + 1
+    }
+
+    /// Canonical entry point for every round transition at the current
+    /// height. Round progress is evidence-driven: callers pass the round
+    /// they have proof the network has reached (a higher-round proposal,
+    /// f+1 higher-round votes) or a local-timeout bump.
+    ///
+    /// Invariants:
+    /// - never moves to a different height (height advance happens on commit);
+    /// - never moves backward (`round <= current` is a no-op);
+    /// - per-round state (proposer, proposals, votes, timed_out) is reset;
+    /// - cross-round lock state (`locked_proposal`/`locked_round`/
+    ///   `valid_proposal`/`valid_round`) is PRESERVED — a round jump must
+    ///   never unlock a validator, or BFT safety breaks;
+    /// - stale-round timers are neutralized by the `TimerToken` generation
+    ///   check in `run_consensus_loop` (a fired timer whose (height, round,
+    ///   step) no longer matches current state is discarded).
+    pub(super) async fn enter_round(
+        &mut self,
+        height: u64,
+        round: u32,
+        reason: RoundJumpReason,
+    ) {
+        // Height guard: enter_round only moves rounds within the current
+        // height. A mismatch means the evidence is for a height we have
+        // already left behind or not yet reached — ignore it here; the
+        // catch-up / commit paths own height movement.
+        if height != self.current_round.height {
+            tracing::debug!(
+                "enter_round({}, {}) ignored — current height is {}",
+                height,
+                round,
+                self.current_round.height,
             );
-            return Ok(());
+            return;
         }
 
-        if !self.is_proposal_relevant(&proposal) {
-            return Ok(());
+        // Never jump backward. Lower or equal rounds are stale evidence.
+        if round <= self.current_round.round {
+            return;
         }
 
-        // **BFT safety fix (KI: test_future_round_proposal_does_not_advance_local_round)**:
-        // Do NOT advance our local round counter on a single
-        // validator's future-round proposal.  A Byzantine validator
-        // could send a proposal with `round = 999` to disrupt
-        // consensus.  Round advancement requires >2/3 evidence
-        // (timeout-driven on this node, or quorum on a higher round
-        // observed in vote pool — out of scope for this handler).
-        //
-        // Track the proposal in `pending_proposals` so it can be
-        // referenced if our round eventually catches up; do not
-        // touch `current_round`.
-        if proposal.round > self.current_round.round {
-            // Advance to the proposal's round to re-synchronize with the network.
-            // Without this, nodes at different rounds never converge because each
-            // rejects the others' proposals as "future round".
-            tracing::info!(
-                "Advancing from round {} to {} to match proposal from {}",
-                self.current_round.round,
-                proposal.round,
-                proposal.proposer,
-            );
-            self.current_round.round = proposal.round;
-            self.current_round.step = ConsensusStep::Propose;
-            self.current_round.proposer = None;
-            self.current_round.proposals.clear();
-            self.current_round.votes.clear();
-            self.current_round.timed_out = false;
-            self.current_round.locked_proposal = None;
-            self.current_round.valid_proposal = None;
+        let from_round = self.current_round.round;
+        tracing::info!(
+            "⤴️  Round sync: height {} round {} → {} ({:?})",
+            height,
+            from_round,
+            round,
+            reason,
+        );
 
-            // Reset FSM from Rejected → Proposing so ProposalAdmitted can
-            // transition to Prevoting. Without this, the FSM stays in Rejected
-            // and ignores all events — votes are never cast.
-            if matches!(self.fsm_state, lib_consensus_core::fsm::ValidatorState::Rejected { .. }) {
-                self.fsm_state = lib_consensus_core::fsm::ValidatorState::Proposing;
+        // Set the new round; lock state is intentionally NOT touched (a
+        // round jump must never unlock a validator). `restart_propose_for_current_round`
+        // resets the remaining per-round state and drives the FSM.
+        self.current_round.round = round;
+        self.current_round.start_time = height;
+        self.restart_propose_for_current_round().await;
+    }
+
+    /// Reset per-round transient state for `current_round` and drive the
+    /// FSM Idle → Proposing, then replay any buffered evidence.
+    ///
+    /// Shared by `enter_round` (round jump within a height) and the
+    /// new-height path after a commit. The caller is responsible for
+    /// having set `current_round.{height,round}` first; this method does
+    /// NOT touch lock state, so callers that cross a height boundary must
+    /// clear locks themselves (see `sync_height_with_blockchain`).
+    pub(super) async fn restart_propose_for_current_round(&mut self) {
+        let height = self.current_round.height;
+        let round = self.current_round.round;
+
+        self.current_round.step = ConsensusStep::Propose;
+        self.current_round.proposer = None;
+        self.current_round.proposals.clear();
+        self.current_round.votes.clear();
+        self.current_round.timed_out = false;
+
+        self.snapshot_validator_set(height);
+
+        // Drive the FSM Idle → Proposing. The phase-entry hook in
+        // `enter_fsm_state` runs `enter_propose_step`, which elects the
+        // proposer and — if this node is it — builds, broadcasts, and
+        // prevotes its proposal.
+        self.fsm_state = lib_consensus_core::fsm::ValidatorState::Idle;
+        let (next, actions) = lib_consensus_core::fsm::transition(
+            self.fsm_state.clone(),
+            lib_consensus_core::fsm::events::Event::SelectedAsProposer { height, round },
+        );
+        self.enter_fsm_state(next).await;
+        for action in actions {
+            self.dispatch_action(action).await;
+        }
+
+        // Replay evidence already buffered for this round so a jump never
+        // strands an in-hand proposal or pooled votes.
+        self.reevaluate_current_round().await;
+    }
+
+    /// After a round jump, replay any proposal already buffered for the
+    /// new round and re-run quorum checks against votes already pooled.
+    /// Without this a node that jumps via vote evidence would stall until
+    /// the proposal and votes were re-broadcast.
+    async fn reevaluate_current_round(&mut self) {
+        let height = self.current_round.height;
+        let round = self.current_round.round;
+
+        // Replay a buffered proposal if we don't already hold one for the
+        // round (i.e. we are not the proposer and it arrived earlier).
+        if self.current_round.proposals.is_empty() {
+            if let Some(buffered) = self.proposal_for_round.get(&round).cloned() {
+                if buffered.height == height && buffered.round == round {
+                    if let Err(e) = self.admit_proposal_for_current_round(buffered).await {
+                        tracing::warn!(error = ?e, "Buffered-proposal replay failed");
+                    }
+                }
             }
-
-            // Fall through to process this proposal normally at the new round
         }
 
+        // Re-check quorums for the round against the existing vote pool —
+        // prevotes/precommits that arrived before the jump never fired an
+        // on_prevote/on_precommit quorum check from this round's vantage.
+        if let Some(proposal_id) = self.current_round.proposals.first().cloned() {
+            let total = self.validator_manager.get_active_validators().len() as u64;
+            let prevotes = self.count_prevotes_for(height, round, &proposal_id);
+            if check_supermajority(prevotes, total)
+                && self.current_round.step <= ConsensusStep::PreCommit
+            {
+                if self.current_round.valid_proposal.is_none() {
+                    self.current_round.valid_proposal = Some(proposal_id.clone());
+                    self.current_round.valid_round = Some(round);
+                }
+                if let Err(e) = self.enter_precommit_step().await {
+                    tracing::warn!(error = ?e, "reevaluate: enter_precommit_step failed");
+                }
+            }
+            if let Err(e) = self.maybe_finalize(height, round, &proposal_id).await {
+                tracing::warn!(error = ?e, "reevaluate: maybe_finalize failed");
+            }
+        }
+    }
+
+    /// Admit a proposal known to target the current `(height, round)`:
+    /// store it, relay it (star-topology gossip), and drive the FSM
+    /// `ProposalAdmitted` transition so the node casts its prevote.
+    ///
+    /// Shared by `on_proposal` (live receipt) and `reevaluate_current_round`
+    /// (buffered replay after a round jump).
+    async fn admit_proposal_for_current_round(
+        &mut self,
+        proposal: ConsensusProposal,
+    ) -> ConsensusResult<()> {
+        // Idempotent: a proposal for this round is already held.
         if !self.current_round.proposals.is_empty() {
             return Ok(());
         }
-
-        // Full admission gate: proposer identity, cryptographic signature,
-        // previous-hash continuity, and block payload decode.
-        // Subsumes the old `proposer == expected` identity-only check.
-        if let Err(e) = self.validate_incoming_proposal(&proposal).await {
-            tracing::warn!(
-                "Proposal {:?} from {} at H={} R={} rejected by admission gate: {} — discarding",
-                proposal.id,
-                proposal.proposer,
-                proposal.height,
-                proposal.round,
-                e,
-            );
+        if self.current_round.step >= ConsensusStep::Commit {
             return Ok(());
         }
 
         let proposal_id = proposal.id.clone();
-        self.current_round.proposals.push(proposal_id.clone());
-
-        // Relay proposal to all validators so nodes without a direct connection
-        // to the proposer still receive it (star-topology gossip).
-        // This is safe: on_proposal's `proposals.is_empty()` check prevents double-processing,
-        // and each node only relays a proposal once (the second time proposals is non-empty).
-        let relay_proposal = proposal.clone();
-        let relay_validator_ids = self.get_active_validator_ids();
-        let relay_msg = wrap_propose(relay_proposal, self.validator_keypair.as_ref());
-        self.broadcast(relay_msg, &relay_validator_ids).await;
-
-        // CONS-305e: route admitted proposal through the FSM. The
-        // proposal has passed every gate (no-fork, signature, proposer
-        // election, payload validity); the FSM advances Proposing →
-        // Prevoting and emits `[BroadcastProposal, SendPrevote,
-        // ResetWatchdog]`. The existing relay above + the
-        // `enter_prevote_step()` call below continue to do that work
-        // until CONS-305f folds them into the action handlers.
         let proposal_height = proposal.height;
         let proposal_round = proposal.round;
+        self.current_round.proposals.push(proposal_id.clone());
+
+        // Star-topology relay so validators without a direct link to the
+        // proposer still receive it. Idempotent: the second arrival hits
+        // the non-empty `proposals` guard above and is not re-relayed.
+        let relay_msg = wrap_propose(proposal.clone(), self.validator_keypair.as_ref());
+        let relay_validator_ids = self.get_active_validator_ids();
+        self.broadcast(relay_msg, &relay_validator_ids).await;
+
         self.pending_proposals.push_back(proposal);
 
-        // Prior state derived from legacy step (source of truth
-        // during the migration) per #2398 review.
+        // FSM: Proposing → Prevoting on ProposalAdmitted; the emitted
+        // SendPrevote action casts the prevote via enter_prevote_step.
         let prior_fsm = self.fsm_state.clone();
         let (next_fsm, actions) = lib_consensus_core::fsm::transition(
             prior_fsm,
@@ -1438,62 +1611,127 @@ impl ConsensusEngine {
             self.dispatch_action(action).await;
         }
 
-        // CONS-305f: the per-step branch is reduced to the late-
-        // proposal case below. The Propose-step path used to call
-        // `enter_prevote_step` here; that work is now dispatched by
-        // the FSM `SendPrevote` action above (see the loop over
-        // `actions` returned by `transition()`).
-        match self.current_round.step {
-            ConsensusStep::Propose => {
-                // Handled by FSM action dispatch above.
-            }
-            ConsensusStep::PreVote => {
-                // Proposal arrived after the local prevote timer already fired.
-                // Cast a prevote now if we haven't voted for this round yet.
-                let already_voted = self
-                    .validator_identity
-                    .as_ref()
-                    .map(|id| {
-                        self.vote_pool.contains_key(&VotePoolKey {
-                            height: self.current_round.height,
-                            round: self.current_round.round,
-                            vote_type: VoteType::PreVote,
-                            validator_id: id.clone(),
-                        })
+        // Late proposal: arrived after our prevote timer already advanced
+        // the step to PreVote. Cast the prevote now if we have not voted.
+        if self.current_round.step == ConsensusStep::PreVote {
+            let already_voted = self
+                .validator_identity
+                .as_ref()
+                .map(|id| {
+                    self.vote_pool.contains_key(&VotePoolKey {
+                        height: self.current_round.height,
+                        round: self.current_round.round,
+                        vote_type: VoteType::PreVote,
+                        validator_id: id.clone(),
                     })
-                    .unwrap_or(true);
+                })
+                .unwrap_or(true);
 
-                if !already_voted {
-                    tracing::info!(
-                        "📨 Late proposal for H={} R={}: casting prevote now",
-                        self.current_round.height,
-                        self.current_round.round
-                    );
-                    let vote = self
-                        .cast_vote(proposal_id.clone(), VoteType::PreVote)
-                        .await?;
-                    let msg = wrap_vote(vote, self.validator_keypair.as_ref());
-                    let validator_ids = self.get_active_validator_ids();
-                    self.broadcast(msg, &validator_ids).await;
+            if !already_voted {
+                tracing::info!(
+                    "📨 Late proposal for H={} R={}: casting prevote now",
+                    self.current_round.height,
+                    self.current_round.round
+                );
+                self.cast_prevote_for_proposal(&proposal_id).await?;
 
-                    // Check if this late prevote completes the quorum
-                    let prevote_count = self.count_prevotes_for(
-                        self.current_round.height,
-                        self.current_round.round,
-                        &proposal_id,
-                    );
-                    let total_validators =
-                        self.validator_manager.get_active_validators().len() as u64;
-                    if check_supermajority(prevote_count, total_validators) {
-                        self.current_round.valid_proposal = Some(proposal_id);
-                        self.enter_precommit_step().await?;
-                    }
+                let prevote_count = self.count_prevotes_for(
+                    self.current_round.height,
+                    self.current_round.round,
+                    &proposal_id,
+                );
+                let total_validators =
+                    self.validator_manager.get_active_validators().len() as u64;
+                if check_supermajority(prevote_count, total_validators) {
+                    self.current_round.valid_proposal = Some(proposal_id.clone());
+                    self.current_round.valid_round = Some(self.current_round.round);
+                    self.enter_precommit_step().await?;
                 }
             }
-            _ => {}
         }
 
         Ok(())
+    }
+
+    pub(super) async fn on_proposal(&mut self, proposal: ConsensusProposal) -> ConsensusResult<()> {
+        // ── Hard fork gate ───────────────────────────────────────────────
+        // In BFT consensus a proposal for an already-committed height is a
+        // fork attempt — never stored, voted on, or relayed. A lagging
+        // proposer hitting this is expected, not Byzantine; discard quietly.
+        if let Err(e) =
+            self.validate_no_fork_proposal(proposal.height, proposal.round, &proposal.id)
+        {
+            tracing::warn!(
+                "FORK REJECTED: Proposal {:?} from proposer {} at height {} \
+                 rejected as invalid fork: {} — discarding (not crashing)",
+                proposal.id,
+                proposal.proposer,
+                proposal.height,
+                e,
+            );
+            return Ok(());
+        }
+
+        // ── Height relevance ─────────────────────────────────────────────
+        // enter_round only moves rounds within a height; height movement is
+        // owned by the commit / catch-up paths. A proposal for a different
+        // height is not actionable here.
+        if proposal.height != self.current_round.height {
+            return Ok(());
+        }
+
+        // The local round is already in its Commit step — an equal/lower
+        // round proposal is moot. A higher-round proposal can still pull us
+        // forward, so only short-circuit equal/lower rounds.
+        if self.current_round.step >= ConsensusStep::Commit
+            && proposal.round <= self.current_round.round
+        {
+            return Ok(());
+        }
+
+        // ── Full admission gate ──────────────────────────────────────────
+        // Proposer election for the proposal's OWN round, signature,
+        // previous-hash continuity, payload decode, protocol version.
+        if let Err(e) = self.validate_incoming_proposal(&proposal).await {
+            tracing::warn!(
+                "Proposal {:?} from {} at H={} R={} rejected by admission gate: {} — discarding",
+                proposal.id,
+                proposal.proposer,
+                proposal.height,
+                proposal.round,
+                e,
+            );
+            return Ok(());
+        }
+
+        // Buffer the admitted proposal keyed by its round so a later round
+        // jump (timeout- or evidence-driven) can replay it instead of
+        // stalling until a re-broadcast.
+        self.proposal_for_round
+            .entry(proposal.round)
+            .or_insert_with(|| proposal.clone());
+
+        match proposal.round.cmp(&self.current_round.round) {
+            // Trigger A — a valid proposal for a higher round is proof the
+            // network has moved on. Jump forward; `enter_round` replays the
+            // proposal we just buffered for the destination round.
+            std::cmp::Ordering::Greater => {
+                self.enter_round(
+                    proposal.height,
+                    proposal.round,
+                    RoundJumpReason::HigherRoundProposal,
+                )
+                .await;
+                Ok(())
+            }
+            // Stale-round proposal: buffered for accounting only. Never move
+            // local round state backward.
+            std::cmp::Ordering::Less => Ok(()),
+            // Current round: admit and (lock rule permitting) prevote.
+            std::cmp::Ordering::Equal => {
+                self.admit_proposal_for_current_round(proposal).await
+            }
+        }
     }
 
     pub(super) async fn on_prevote(&mut self, vote: ConsensusVote) -> ConsensusResult<()> {
@@ -1568,63 +1806,81 @@ impl ConsensusEngine {
             vote.round
         );
 
-        // **CE-S1**: Check supermajority for THIS proposal, not the round aggregate
-        // Matching votes means: same height, round, proposal/block hash, and vote type
-        let prevote_count = self.count_prevotes_for(vote.height, vote.round, &proposal_id);
-        let total_validators = self.validator_manager.get_active_validators().len() as u64;
-
-        if check_supermajority(prevote_count, total_validators)
-            && self.current_round.step <= ConsensusStep::PreCommit
+        // ── Trigger B — round sync on higher-round prevote evidence ──────
+        // f+1 distinct validators prevoting in a higher round proves at
+        // least one *correct* validator is already there; jump forward.
+        // f+1 is below quorum, so this can never commit anything — it only
+        // re-synchronizes the round. enter_round then re-evaluates pooled
+        // evidence for the destination round.
+        if vote.height == self.current_round.height
+            && vote.round > self.current_round.round
         {
-            // **CE-S1**: Only transition if this proposal can be the valid proposal
-            // If valid_proposal is already set to a DIFFERENT proposal, we have conflicting quorums
-            // which violates safety - don't transition
-            if let Some(existing) = self.current_round.valid_proposal.as_ref() {
-                if existing != &proposal_id {
-                    tracing::warn!(
-                        "Conflicting quorum detected: proposal {:?} has quorum but valid_proposal is already {:?}",
-                        proposal_id, existing
-                    );
-                    // Don't transition - this violates BFT safety
-                    return Ok(());
-                }
-            } else {
-                // First proposal to reach quorum in this round
-                self.current_round.valid_proposal = Some(proposal_id.clone());
+            let distinct = self.count_distinct_prevoters(vote.height, vote.round);
+            if distinct >= self.round_sync_threshold() {
+                self.enter_round(
+                    vote.height,
+                    vote.round,
+                    RoundJumpReason::HigherRoundPrevoteEvidence,
+                )
+                .await;
+                return Ok(());
             }
-
-            // CONS-305d: route the prevote-quorum threshold through
-            // the FSM. `(Prevoting, PrevoteThresholdReached) →
-            // (Precommitting, [SendPrecommit, ResetWatchdog])`.  The
-            // existing `enter_precommit_step()` does the casting and
-            // broadcast; the FSM observes the state advance.
-            //
-            // Prior state derived from legacy step (source of truth
-            // during the migration) per #2398 review.
-            let prior_fsm = self.fsm_state.clone();
-            let (next_fsm, actions) = lib_consensus_core::fsm::transition(
-                prior_fsm,
-                lib_consensus_core::fsm::Event::PrevoteThresholdReached {
-                    block_id: proposal_id.clone(),
-                },
-            );
-            self.enter_fsm_state(next_fsm).await;
-            for action in actions {
-                self.dispatch_action(action).await;
-            }
-
-            // CONS-305f / #2405: late-quorum runtime guard removed.
-            // The FSM now emits `SendPrecommit` on
-            // `(Precommitting, PrevoteThresholdReached)` so
-            // `dispatch_action` casts the late precommit through
-            // `enter_precommit_step`.  On the on-TIME path
-            // (Prevoting → Precommitting kind change),
-            // `enter_fsm_state`'s phase-entry hook also runs
-            // `enter_precommit_step`; the helper is idempotent so
-            // the action dispatch's later call is a safe no-op.
         }
 
-        // **CE-L1, CE-L2**: Always check if commit quorum is reached, even in PreVote step
+        // **CE-S1**: prevote-quorum check, proposal-scoped (never the round
+        // aggregate) and CURRENT-round-only. A quorum in a stale round is
+        // not actionable; a quorum in a higher round is handled by the
+        // Trigger B jump above, after which enter_round re-checks quorum.
+        if vote.round == self.current_round.round
+            && vote.height == self.current_round.height
+        {
+            let prevote_count =
+                self.count_prevotes_for(vote.height, vote.round, &proposal_id);
+            let total_validators =
+                self.validator_manager.get_active_validators().len() as u64;
+
+            if check_supermajority(prevote_count, total_validators)
+                && self.current_round.step <= ConsensusStep::PreCommit
+            {
+                // **CE-S1**: only transition if this proposal can be THE
+                // valid proposal. A conflicting valid_proposal already set
+                // means two quorums — refuse, to preserve BFT safety.
+                if let Some(existing) = self.current_round.valid_proposal.as_ref() {
+                    if existing != &proposal_id {
+                        tracing::warn!(
+                            "Conflicting quorum detected: proposal {:?} has quorum but valid_proposal is already {:?}",
+                            proposal_id, existing
+                        );
+                        return Ok(());
+                    }
+                } else {
+                    // First proposal to reach a prevote quorum this round.
+                    // Record valid_proposal AND valid_round — a future
+                    // re-proposing proposer advertises valid_round so locked
+                    // peers can apply the Tendermint unlock rule.
+                    self.current_round.valid_proposal = Some(proposal_id.clone());
+                    self.current_round.valid_round = Some(self.current_round.round);
+                }
+
+                // CONS-305d: route the prevote-quorum threshold through the
+                // FSM. `(Prevoting, PrevoteThresholdReached) → Precommitting`
+                // — `enter_precommit_step` casts + broadcasts the precommit.
+                let prior_fsm = self.fsm_state.clone();
+                let (next_fsm, actions) = lib_consensus_core::fsm::transition(
+                    prior_fsm,
+                    lib_consensus_core::fsm::Event::PrevoteThresholdReached {
+                        block_id: proposal_id.clone(),
+                    },
+                );
+                self.enter_fsm_state(next_fsm).await;
+                for action in actions {
+                    self.dispatch_action(action).await;
+                }
+            }
+        }
+
+        // **CE-L1, CE-L2**: commit-quorum finalization is height-scoped and
+        // safe across rounds — always check, regardless of local step/round.
         self.maybe_finalize(vote.height, vote.round, &proposal_id)
             .await?;
 
@@ -1700,64 +1956,78 @@ impl ConsensusEngine {
             vote.round
         );
 
-        // **CE-S1**: Check supermajority for THIS proposal, not the round aggregate
-        // Matching votes means: same height, round, proposal/block hash, and vote type
-        let precommit_count = self.count_precommits_for(vote.height, vote.round, &proposal_id);
-        let total_validators = self.validator_manager.get_active_validators().len() as u64;
-
-        if check_supermajority(precommit_count, total_validators)
-            && self.current_round.step <= ConsensusStep::Commit
+        // ── Trigger C — round sync on higher-round precommit evidence ────
+        // f+1 distinct validators precommitting in a higher round proves a
+        // correct validator is already there; jump forward. f+1 is below
+        // quorum so this never commits — round synchronization only.
+        if vote.height == self.current_round.height
+            && vote.round > self.current_round.round
         {
-            // **CE-S1**: Only transition if this proposal can be locked
-            // If locked_proposal is already set to a DIFFERENT proposal, we have conflicting quorums
-            if let Some(existing) = self.current_round.locked_proposal.as_ref() {
-                if existing != &proposal_id {
-                    tracing::warn!(
-                        "Conflicting precommit quorum detected: proposal {:?} has quorum but locked_proposal is already {:?}",
-                        proposal_id, existing
-                    );
-                    // Don't transition - this violates BFT safety
-                    return Ok(());
-                }
-            } else {
-                // First proposal to reach precommit quorum in this round
-                self.current_round.locked_proposal = Some(proposal_id.clone());
+            let distinct = self.count_distinct_precommitters(vote.height, vote.round);
+            if distinct >= self.round_sync_threshold() {
+                self.enter_round(
+                    vote.height,
+                    vote.round,
+                    RoundJumpReason::HigherRoundPrecommitEvidence,
+                )
+                .await;
+                return Ok(());
             }
-
-            // CONS-305c: route the precommit-quorum threshold through
-            // the FSM. `(Precommitting, PrecommitThresholdReached) →
-            // (Precommitting, [SendCommit, ResetWatchdog])` — state
-            // stays Precommitting (we are now waiting for the
-            // commit-vote quorum that maybe_finalize handles); the
-            // SendCommit action is the work that `enter_commit_step`
-            // already does.
-            // Derive the prior state from the legacy step (the
-            // source of truth during the migration) rather than
-            // `self.fsm_state` to avoid silent action drops if the
-            // mirror has drifted — PR #2398 review.
-            let prior_fsm = self.fsm_state.clone();
-            let (next_fsm, actions) = lib_consensus_core::fsm::transition(
-                prior_fsm,
-                lib_consensus_core::fsm::Event::PrecommitThresholdReached {
-                    block_id: proposal_id.clone(),
-                },
-            );
-            self.enter_fsm_state(next_fsm).await;
-            for action in actions {
-                self.dispatch_action(action).await;
-            }
-
-            // CONS-305f / #2405: late-quorum runtime guard removed.
-            // The FSM now emits `SendCommit` on
-            // `(Committed, PrecommitThresholdReached)` so
-            // `dispatch_action` casts the late commit vote through
-            // `enter_commit_step`. On the on-TIME path
-            // (Precommitting + PrecommitThresholdReached → stays
-            // Precommitting), the FSM also emits SendCommit and
-            // dispatch_action calls enter_commit_step (idempotent).
         }
 
-        // **CE-L1, CE-L2**: Always check if commit quorum is reached, even in PreCommit step
+        // **CE-S1**: precommit-quorum check — proposal-scoped, current-round
+        // only. A higher-round quorum is reached via the Trigger C jump
+        // above; a stale-round quorum is not actionable for locking.
+        if vote.round == self.current_round.round
+            && vote.height == self.current_round.height
+        {
+            let precommit_count =
+                self.count_precommits_for(vote.height, vote.round, &proposal_id);
+            let total_validators =
+                self.validator_manager.get_active_validators().len() as u64;
+
+            if check_supermajority(precommit_count, total_validators)
+                && self.current_round.step <= ConsensusStep::Commit
+            {
+                // **CE-S1**: only lock if this proposal can BE the lock. A
+                // conflicting locked_proposal means two precommit quorums —
+                // refuse, to preserve BFT safety.
+                if let Some(existing) = self.current_round.locked_proposal.as_ref() {
+                    if existing != &proposal_id {
+                        tracing::warn!(
+                            "Conflicting precommit quorum detected: proposal {:?} has quorum but locked_proposal is already {:?}",
+                            proposal_id, existing
+                        );
+                        return Ok(());
+                    }
+                } else {
+                    // First proposal to reach a precommit quorum this round.
+                    // Record locked_proposal AND locked_round — the prevote
+                    // lock rule needs both to decide whether a conflicting
+                    // proposal in a later round may be prevoted.
+                    self.current_round.locked_proposal = Some(proposal_id.clone());
+                    self.current_round.locked_round = Some(self.current_round.round);
+                }
+
+                // CONS-305c: route the precommit-quorum threshold through
+                // the FSM. `enter_commit_step` (via SendCommit) casts the
+                // commit vote.
+                let prior_fsm = self.fsm_state.clone();
+                let (next_fsm, actions) = lib_consensus_core::fsm::transition(
+                    prior_fsm,
+                    lib_consensus_core::fsm::Event::PrecommitThresholdReached {
+                        block_id: proposal_id.clone(),
+                    },
+                );
+                self.enter_fsm_state(next_fsm).await;
+                for action in actions {
+                    self.dispatch_action(action).await;
+                }
+            }
+        }
+
+        // **CE-L1, CE-L2**: commit-quorum finalization is height-scoped and
+        // safe across rounds — always check, regardless of local step/round.
         self.maybe_finalize(vote.height, vote.round, &proposal_id)
             .await?;
 
@@ -2032,134 +2302,151 @@ impl ConsensusEngine {
         }
     }
 
+    /// Liveness handler for a fired round timer.
+    ///
+    /// Timers are liveness triggers only — they are NOT the round
+    /// synchronization mechanism (that is `enter_round`, driven by network
+    /// evidence). Per consensus step:
+    ///
+    /// - **Propose** — no proposal arrived: walk to the PreVote step and
+    ///   abstain ("prevote nil"). The round is NOT advanced here.
+    /// - **PreVote** — no prevote quorum: advance the round (`enter_round`,
+    ///   locks preserved).
+    /// - **PreCommit** — try to finalize a locked/valid proposal; if that
+    ///   does not commit, advance the round.
+    /// - **Commit** — sync height with the blockchain. If it advanced, a
+    ///   new height begins (locks already retired by the sync); otherwise
+    ///   re-drive the same height at the next round.
+    ///
+    /// A stale timer never reaches here: `run_consensus_loop` discards a
+    /// fired timer whose `(height, round, step)` token no longer matches.
     pub(super) async fn on_round_timeout(&mut self) -> ConsensusResult<()> {
         use lib_consensus_core::fsm::{transition, Event};
 
+        let height = self.current_round.height;
+        let round = self.current_round.round;
+        let step = self.current_round.step.clone();
+
         tracing::debug!(
             "Round timeout at height {} round {} step {:?} fsm {:?}",
-            self.current_round.height,
-            self.current_round.round,
-            self.current_round.step,
+            height,
+            round,
+            step,
             self.fsm_state.kind(),
         );
 
-        // CONS-305: Route the timeout through the FSM with walk-through semantics.
-        // The FSM's threshold-gated transitions (Precommitting stays on Timeout)
-        // don't match the Sovereign engine's walk-through model where each phase
-        // advances on timeout. We emit VoteFailed when a phase times out without
-        // reaching threshold, causing the FSM to advance to the next phase or Rejected.
-        let prior_step = self.current_round.step.clone();
-        let prior_fsm = self.fsm_state.clone();
-
-        // Choose the right event: if we're in an active phase that timed out
-        // without reaching threshold, emit VoteFailed to advance the FSM.
-        let event = match &prior_fsm {
-            lib_consensus_core::fsm::ValidatorState::Prevoting => {
-                Event::VoteFailed(lib_consensus_core::fsm::state::RejectionReason::InsufficientPrevotes)
-            }
-            lib_consensus_core::fsm::ValidatorState::Precommitting => {
-                Event::VoteFailed(lib_consensus_core::fsm::state::RejectionReason::InsufficientPrecommits)
-            }
-            _ => Event::Timeout,
-        };
-
-        let (next_fsm, actions) = transition(prior_fsm, event);
-        self.enter_fsm_state(next_fsm).await;
-        for action in actions {
-            self.dispatch_action(action).await;
-        }
-
-        // CONS-305: If the FSM landed in Rejected (from VoteFailed or Timeout),
-        // the runtime must reset to Idle → Proposing for the next round.
-        // CRITICAL: On rejection, stay at the SAME height with round+1.
-        // Only advance height after a block is committed.
-        if matches!(self.fsm_state, lib_consensus_core::fsm::ValidatorState::Rejected { .. }) {
-            self.current_round.round += 1;
-            self.current_round.step = ConsensusStep::Propose;
-            self.current_round.proposer = None;
-            self.current_round.proposals.clear();
-            self.current_round.votes.clear();
-            self.current_round.timed_out = false;
-            self.current_round.locked_proposal = None;
-            self.current_round.valid_proposal = None;
-            self.snapshot_validator_set(self.current_round.height);
-            self.fsm_state = lib_consensus_core::fsm::ValidatorState::Idle;
-            let (next, actions) = lib_consensus_core::fsm::transition(
-                self.fsm_state.clone(),
-                lib_consensus_core::fsm::events::Event::SelectedAsProposer {
-                    height: self.current_round.height,
-                    round: self.current_round.round,
-                },
-            );
-            self.enter_fsm_state(next).await;
-            for action in actions {
-                self.dispatch_action(action).await;
-            }
-        }
-
-        //
-        // Special handling for Commit timeout: sync height + advance round.
-        // The FSM transitions Committed.Timeout → Rejected → (runtime resets
-        // to Idle). We need to sync blockchain height and reset round state.
-        if prior_step == ConsensusStep::Commit {
-            let height_before_sync = self.current_round.height;
-            if let Err(e) = self.sync_height_with_blockchain().await {
-                tracing::warn!(
-                    "Commit timeout: failed to sync blockchain height ({}), using height+1 fallback",
-                    e
+        match step {
+            // Proposal timeout: no proposal for this round. Walk the FSM
+            // Proposing → Prevoting so the node enters the PreVote step;
+            // with no proposal in hand `enter_prevote_step` casts nothing,
+            // which is "prevote nil" (abstention). The round is unchanged.
+            ConsensusStep::Propose => {
+                tracing::info!(
+                    "⏱️  Proposal timeout H={} R={} — no proposal, prevoting nil",
+                    height,
+                    round,
                 );
-                self.advance_to_next_round();
-                self.snapshot_validator_set(self.current_round.height);
-            } else {
-                let height_after_sync = self.current_round.height;
-                let next_round = if height_after_sync == height_before_sync {
-                    self.current_round.round + 1
+                let (next_fsm, actions) = transition(self.fsm_state.clone(), Event::Timeout);
+                self.enter_fsm_state(next_fsm).await;
+                for action in actions {
+                    self.dispatch_action(action).await;
+                }
+                // Defensive: ensure the step mirror reached PreVote even if
+                // the FSM transition was a no-op for this state.
+                if self.current_round.step < ConsensusStep::PreVote {
+                    self.current_round.step = ConsensusStep::PreVote;
+                }
+            }
+
+            // Prevote timeout without a prevote quorum → next round.
+            ConsensusStep::PreVote => {
+                self.enter_round(height, round + 1, RoundJumpReason::LocalPrevoteTimeout)
+                    .await;
+            }
+
+            // Precommit timeout: a precommit quorum may have formed in a
+            // round whose on_precommit handler did not finalize (round
+            // already advanced). Try to finalize a locked/valid proposal
+            // first; only advance the round if that does not commit.
+            ConsensusStep::PreCommit => {
+                let target = self
+                    .current_round
+                    .valid_proposal
+                    .clone()
+                    .or_else(|| self.current_round.locked_proposal.clone());
+                if let Some(proposal_id) = target {
+                    self.maybe_finalize(height, round, &proposal_id).await?;
+                }
+                // maybe_finalize advances the step to Commit on success.
+                if self.current_round.height == height
+                    && self.current_round.step < ConsensusStep::Commit
+                {
+                    self.enter_round(height, round + 1, RoundJumpReason::LocalPrecommitTimeout)
+                        .await;
+                }
+            }
+
+            // Commit step timed out: the block was applied; advance height.
+            ConsensusStep::Commit => {
+                let height_before = self.current_round.height;
+                if let Err(e) = self.sync_height_with_blockchain().await {
+                    tracing::warn!(
+                        "Commit timeout: blockchain height sync failed ({}) — \
+                         falling back to local height advance",
+                        e,
+                    );
+                    self.advance_to_next_round();
+                }
+                if self.current_round.height == height_before {
+                    // Height did not advance — re-drive the same height at
+                    // the next round so a missed commit does not wedge us.
+                    self.enter_round(
+                        height,
+                        round + 1,
+                        RoundJumpReason::LocalCommitTimeout,
+                    )
+                    .await;
                 } else {
-                    0
-                };
-                self.current_round.round = next_round;
-                self.current_round.proposer = None;
-                self.current_round.proposals.clear();
-                self.current_round.votes.clear();
-                self.current_round.timed_out = false;
-                self.current_round.locked_proposal = None;
-                self.current_round.valid_proposal = None;
-                self.snapshot_validator_set(self.current_round.height);
+                    // New height: sync_height_with_blockchain (or
+                    // advance_to_next_round) already reset round to 0 and
+                    // retired the lock state. Kick off its propose step.
+                    self.restart_propose_for_current_round().await;
+                }
             }
 
-            // Reset FSM: Rejected/Committed → Idle → Proposing
-            self.fsm_state = lib_consensus_core::fsm::ValidatorState::Idle;
-            let (next, actions) = lib_consensus_core::fsm::transition(
-                self.fsm_state.clone(),
-                lib_consensus_core::fsm::events::Event::SelectedAsProposer {
-                    height: self.current_round.height,
-                    round: self.current_round.round,
-                },
-            );
-            self.enter_fsm_state(next).await;
-            for action in actions {
-                self.dispatch_action(action).await;
-            }
-        }
-
-        // For PreCommit timeout, also try to finalize if we have a valid proposal
-        if prior_step == ConsensusStep::PreCommit {
-            let target = self
-                .current_round
-                .valid_proposal
-                .clone()
-                .or(self.current_round.locked_proposal.clone());
-            if let Some(proposal_id) = target {
-                self.maybe_finalize(
-                    self.current_round.height,
-                    self.current_round.round,
-                    &proposal_id,
-                )
-                .await?;
+            // Between rounds — nothing concrete to time out. Re-drive
+            // defensively so the loop cannot stall in this transient state.
+            ConsensusStep::NewRound => {
+                self.enter_round(height, round + 1, RoundJumpReason::LocalTimeout)
+                    .await;
             }
         }
 
         Ok(())
+    }
+
+    /// Whether this node's blockchain is too far behind to propose.
+    ///
+    /// Consensus deciding block `height` builds on block `height - 1`, so
+    /// the local chain must have reached `height - 1`. Returns `true` when
+    /// `blockchain_height + 1 < consensus_height`. With no blockchain
+    /// provider (test contexts) it returns `false` — nothing to gate on.
+    pub(super) async fn proposer_blockchain_is_behind(&self) -> bool {
+        let Some(provider) = self.blockchain_provider.as_ref() else {
+            return false;
+        };
+        match provider.get_blockchain_height().await {
+            Ok(blockchain_height) => {
+                blockchain_height + 1 < self.current_round.height
+            }
+            Err(e) => {
+                // Could not determine our height — do not block proposing on
+                // a transient provider error; create_proposal's previous-hash
+                // fetch is the backstop and fails loudly if the tip is wrong.
+                tracing::warn!("Catch-up gate: blockchain height query failed: {}", e);
+                false
+            }
+        }
     }
 
     /// Enter the propose step: select proposer and create/broadcast proposal if we're it.
@@ -2207,6 +2494,27 @@ impl ConsensusEngine {
                     self.current_round.height,
                     self.current_round.round
                 );
+
+                // Catch-up gating: a proposer must not propose while its
+                // own blockchain is behind the consensus height. Consensus
+                // is deciding block `height`, which builds on block
+                // `height - 1`; a node whose chain has not reached
+                // `height - 1` would propose against a stale tip — peers
+                // reject it as a fork and the round is wasted. Instead the
+                // behind node abstains, triggers catch-up sync, and lets
+                // the round time out so peers round-sync past it.
+                if self.proposer_blockchain_is_behind().await {
+                    tracing::warn!(
+                        "⛔ Not proposing for H={} R={}: local blockchain is behind \
+                         consensus height — entering catch-up instead",
+                        self.current_round.height,
+                        self.current_round.round,
+                    );
+                    if let Some(ref trigger) = self.catch_up_sync_trigger {
+                        trigger.trigger(self.current_round.height.saturating_sub(1));
+                    }
+                    return Ok(());
+                }
 
                 match self.create_proposal().await {
                     Ok(proposal) => {
@@ -2281,11 +2589,9 @@ impl ConsensusEngine {
         );
 
         if let Some(proposal_id) = self.current_round.proposals.first().cloned() {
-            let vote = self.cast_vote(proposal_id, VoteType::PreVote).await?;
-            let msg = wrap_vote(vote, self.validator_keypair.as_ref());
-            let validator_ids = self.get_active_validator_ids();
-
-            self.broadcast(msg, &validator_ids).await;
+            // Prevote is gated by the Tendermint lock rule — a locked
+            // validator abstains rather than prevoting a conflicting value.
+            self.cast_prevote_for_proposal(&proposal_id).await?;
         }
 
         Ok(())
@@ -2355,7 +2661,18 @@ impl ConsensusEngine {
                 let vote = self
                     .cast_vote(proposal_id.clone(), VoteType::PreCommit)
                     .await?;
-                self.current_round.valid_proposal = Some(proposal_id);
+
+                // The node has now precommitted this value: it is LOCKED on
+                // it (Tendermint `lockedValue`/`lockedRound`). The lock must
+                // be recorded at precommit-cast time — before commit quorum
+                // — so that if the node jumps to a later round it cannot
+                // prevote a conflicting block unless the unlock rule allows.
+                // `valid_*` is the prevote-quorum proof; `locked_*` is this
+                // node's own precommit commitment.
+                self.current_round.valid_proposal = Some(proposal_id.clone());
+                self.current_round.valid_round = Some(self.current_round.round);
+                self.current_round.locked_proposal = Some(proposal_id);
+                self.current_round.locked_round = Some(self.current_round.round);
 
                 let msg = wrap_vote(vote, self.validator_keypair.as_ref());
                 let validator_ids = self.get_active_validator_ids();
@@ -2461,19 +2778,6 @@ impl ConsensusEngine {
         Ok(())
     }
 
-    fn is_proposal_relevant(&self, proposal: &ConsensusProposal) -> bool {
-        if proposal.height != self.current_round.height {
-            return false;
-        }
-        // Accept proposals up through PreCommit step.  A proposal that arrives
-        // after the local timer advanced to PreVote (before it could be received)
-        // is still valid and needed so that the node can cast a prevote.
-        // Proposals in Commit step or later are irrelevant.
-        if self.current_round.step >= ConsensusStep::Commit {
-            return false;
-        }
-        true
-    }
 
     /// Check if commit quorum is reached for a proposal and finalize if so.
     /// **CE-L1**: Commit quorum finalizes regardless of local step.
@@ -2651,6 +2955,7 @@ mod state_machine_tests {
                 zk_did_proof: None,
                 timestamp: 0,
             },
+            valid_round: None,
         };
         let result = cb.commit_finalized_block(&proposal).await;
         assert!(result.is_err(), "commit callback must propagate errors");
