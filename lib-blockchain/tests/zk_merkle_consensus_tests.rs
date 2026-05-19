@@ -60,6 +60,12 @@ fn create_blockchain_with_temp_store() -> Result<(Blockchain, tempfile::TempDir)
     Ok((bc, tmp))
 }
 
+// Ignored: this test exercises Zk proof generation/verification, but
+// `lib-proofs` deliberately disables the stub backend for dependency builds
+// (`ZkCircuit::prove`/`verify` are `#[cfg(any(test, feature = "fake-proofs"))]`)
+// and the real ZK backend is not yet integrated. The test cannot pass until
+// that backend lands — tracked separately. Run explicitly once available.
+#[ignore = "requires the real ZK backend — not yet integrated (see #2612)"]
 #[tokio::test]
 async fn test_dual_node_merkle_root_consensus_with_real_zk_proofs() -> Result<()> {
     // Create two independent nodes with isolated storage.
