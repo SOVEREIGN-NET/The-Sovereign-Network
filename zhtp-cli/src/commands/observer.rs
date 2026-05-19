@@ -14,12 +14,11 @@ use crate::commands::web4_utils::{self, connect_default, save_private_key_to_fil
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
 use lib_crypto::keypair::KeyPair;
-use lib_crypto::types::PrivateKey;
 use lib_identity::ZhtpIdentity;
 use lib_network::client::ZhtpClient;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
-use zhtp::keyfile_names::{KeystorePrivateKey, NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME};
+use zhtp::keyfile_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME};
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -80,30 +79,7 @@ fn load_observer_identity() -> CliResult<(ZhtpIdentity, KeyPair)> {
         )));
     }
 
-    let identity_json = std::fs::read_to_string(&identity_file)
-        .map_err(|e| CliError::IdentityError(format!("Failed to read identity: {}", e)))?;
-    let private_key_json = std::fs::read_to_string(&private_key_file)
-        .map_err(|e| CliError::IdentityError(format!("Failed to read private key: {}", e)))?;
-
-    let keystore_key: KeystorePrivateKey = serde_json::from_str(&private_key_json)
-        .map_err(|e| CliError::IdentityError(format!("Failed to parse private key: {}", e)))?;
-
-    let private_key = PrivateKey {
-        dilithium_sk: keystore_key.dilithium_sk,
-        dilithium_pk: keystore_key.dilithium_pk,
-        kyber_sk: keystore_key.kyber_sk,
-        master_seed: keystore_key.master_seed,
-    };
-
-    let identity = ZhtpIdentity::from_serialized(&identity_json, &private_key)
-        .map_err(|e| CliError::IdentityError(format!("Failed to restore identity: {}", e)))?;
-
-    let keypair = KeyPair {
-        public_key: identity.public_key.clone(),
-        private_key,
-    };
-
-    Ok((identity, keypair))
+    crate::commands::web4_utils::load_identity_from_files(&identity_file, &private_key_file)
 }
 
 /// Connect to a node using an already-loaded observer identity.
