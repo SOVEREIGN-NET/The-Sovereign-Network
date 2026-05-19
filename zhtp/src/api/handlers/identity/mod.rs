@@ -1775,6 +1775,8 @@ impl IdentityHandler {
             username: username.clone(),
             owner_did: did.clone(),
             password_hash: String::new(),
+            opaque_record: Vec::new(),
+            auth_method: lib_blockchain::transaction::credentials::AuthMethod::Argon2idPhc,
         };
         let tx = lib_blockchain::Transaction {
             version: 8,
@@ -1819,6 +1821,8 @@ impl IdentityHandler {
                     registered_at_height: height,
                     registered_at: now,
                     password_changed_at_height: 0,
+                    opaque_record: Vec::new(),
+                    auth_method: lib_blockchain::transaction::credentials::AuthMethod::Argon2idPhc,
                 },
             );
             blockchain
