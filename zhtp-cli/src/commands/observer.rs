@@ -33,8 +33,8 @@ pub async fn handle_observer_command(
     let output = crate::output::ConsoleOutput;
     match &args.action {
         ObserverAction::Generate => cmd_generate(&output).await,
-        ObserverAction::QrPayload { did } => cmd_qr_payload(did, &cli.server, &output).await,
-        ObserverAction::QrRender { did } => cmd_qr_render(did, &cli.server, &output).await,
+        ObserverAction::QrPayload { did, sponsor } => cmd_qr_payload(did, sponsor, &cli.server, &output).await,
+        ObserverAction::QrRender { did, sponsor } => cmd_qr_render(did, sponsor, &cli.server, &output).await,
         ObserverAction::Status { did } => cmd_status(did, &cli.server, &output).await,
         ObserverAction::Wait { did, timeout } => cmd_wait(did, *timeout, &cli.server, &output).await,
         ObserverAction::Start { did } => cmd_start(did, &cli.server, &output).await,
@@ -190,11 +190,11 @@ async fn cmd_generate(output: &dyn Output) -> CliResult<()> {
     output.print(&format!("  DID:                {}", identity.did))?;
     output.print(&format!(
         "  Dilithium PK (hex): {}",
-        hex::encode(&private_key.dilithium_pk[..])
+        hex::encode(&identity.public_key.dilithium_pk[..])
     ))?;
     output.print(&format!(
         "  Kyber PK (hex):     {}",
-        hex::encode(&private_key.kyber_sk[..32])
+        hex::encode(&identity.public_key.kyber_pk[..])
     ))?;
     output.print(&format!("  Keystore:           {:?}", keystore))?;
     output.info("Share the DID and Dilithium PK hex with your sponsor.")?;
@@ -202,8 +202,12 @@ async fn cmd_generate(output: &dyn Output) -> CliResult<()> {
     Ok(())
 }
 
-/// `observer qr-payload` — POST /prepare, print JSON for mobile app.
-async fn cmd_qr_payload(did: &str, server: &str, output: &dyn Output) -> CliResult<()> {
+/// Shared helper: load observer identity, build prepare body, POST, return JSON.
+async fn fetch_prepare_payload(
+    did: &str,
+    sponsor: &str,
+    server: &str,
+) -> CliResult<serde_json::Value> {
     let (identity, keypair) = load_observer_identity()?;
 
     if identity.did != did {
@@ -218,7 +222,7 @@ async fn cmd_qr_payload(did: &str, server: &str, output: &dyn Output) -> CliResu
         "observer_dilithium_pk_hex": hex::encode(&keypair.public_key.dilithium_pk[..]),
         "observer_kyber_pk_hex": hex::encode(&keypair.public_key.kyber_pk[..]),
         "endpoints": [],
-        "sponsor_user_did": did,
+        "sponsor_user_did": sponsor,
         "sponsor_proof_level": "Basic",
         "allowed_network": "testnet",
         "rate_limit_tier": "Standard"
@@ -229,46 +233,33 @@ async fn cmd_qr_payload(did: &str, server: &str, output: &dyn Output) -> CliResu
         .post_json("/api/v1/observer/admission/prepare", &body)
         .await
         .map_err(|e| CliError::ConfigError(format!("Prepare request failed: {}", e)))?;
-    let json = parse_json(&response)?;
+    parse_json(&response)
+}
 
+/// `observer qr-payload` — POST /prepare, print JSON for mobile app.
+async fn cmd_qr_payload(
+    did: &str,
+    sponsor: &str,
+    server: &str,
+    output: &dyn Output,
+) -> CliResult<()> {
+    let json = fetch_prepare_payload(did, sponsor, server).await?;
     output.print(&serde_json::to_string_pretty(&json)?)?;
     Ok(())
 }
 
 /// `observer qr-render` — same payload but rendered as ASCII QR.
-async fn cmd_qr_render(did: &str, server: &str, output: &dyn Output) -> CliResult<()> {
-    let (identity, keypair) = load_observer_identity()?;
+async fn cmd_qr_render(
+    did: &str,
+    sponsor: &str,
+    server: &str,
+    output: &dyn Output,
+) -> CliResult<()> {
+    let json = fetch_prepare_payload(did, sponsor, server).await?;
 
-    if identity.did != did {
-        return Err(CliError::IdentityError(format!(
-            "Observer DID mismatch: keystore has '{}', but --did specified '{}'",
-            identity.did, did
-        )));
-    }
-
-    let body = serde_json::json!({
-        "observer_node_did": did,
-        "observer_dilithium_pk_hex": hex::encode(&keypair.public_key.dilithium_pk[..]),
-        "observer_kyber_pk_hex": hex::encode(&keypair.public_key.kyber_pk[..]),
-        "endpoints": [],
-        "sponsor_user_did": did,
-        "sponsor_proof_level": "Basic",
-        "allowed_network": "testnet",
-        "rate_limit_tier": "Standard"
-    });
-
-    let mut client = connect_observer_with(identity, server).await?;
-    let response = client
-        .post_json("/api/v1/observer/admission/prepare", &body)
-        .await
-        .map_err(|e| CliError::ConfigError(format!("Prepare request failed: {}", e)))?;
-    let json = parse_json(&response)?;
-
-    // Serialize to compact JSON string for the QR payload
     let qr_data = serde_json::to_string(&json)
         .map_err(|e| CliError::ConfigError(format!("JSON serialization failed: {}", e)))?;
 
-    // Render ASCII QR using Unicode half-blocks for phone scannability
     output.info("Scan this QR code with the Sovereign mobile app:")?;
     let code = qrcode::QrCode::new(&qr_data)
         .map_err(|e| CliError::ConfigError(format!("QR encoding failed: {}", e)))?;
@@ -406,6 +397,11 @@ async fn cmd_wait(
 }
 
 /// `observer start` — start the observer node after admission.
+///
+/// NOTE: The observer daemon binary (zhtp-observer, T6) is not yet implemented.
+/// Once T6 ships, this should spawn `zhtp-observer` (or `zhtp-cli` with an
+/// observer-specific subcommand) using the observer keystore. For now, emit a
+/// clear message pointing to the pending work.
 async fn cmd_start(did: &str, server: &str, output: &dyn Output) -> CliResult<()> {
     // First check admission status
     let did_encoded = urlencoding::encode(did);
@@ -425,7 +421,7 @@ async fn cmd_start(did: &str, server: &str, output: &dyn Output) -> CliResult<()
 
     match obs_status {
         Some("Active") => {
-            output.success(&format!("Observer {} is Active — starting node...", did))?;
+            output.success(&format!("Observer {} is Active on chain.", did))?;
         }
         Some(s) => {
             return Err(CliError::ConfigError(format!(
@@ -443,57 +439,13 @@ async fn cmd_start(did: &str, server: &str, output: &dyn Output) -> CliResult<()
         }
     }
 
-    let keystore = observer_keystore_path()?;
-
-    // Spawn the zhtp binary in observer mode.
-    output.info(&format!(
-        "Spawning observer node with keystore {:?}...",
-        keystore
-    ))?;
-
-    let keystore_str = keystore.to_string_lossy().to_string();
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("zhtp-cli"));
-
-    let mut cmd = std::process::Command::new(&exe);
-    cmd.arg("node")
-        .env("ZHTP_OBSERVER_KEYSTORE", &keystore_str)
-        .env("ZHTP_OBSERVER_BOOTSTRAP", server)
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit());
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
-    }
-
-    let mut child = cmd.spawn().map_err(|e| {
-        CliError::ConfigError(format!(
-            "Failed to spawn observer node process ({}): {}",
-            exe.display(),
-            e
-        ))
-    })?;
-
-    output.success(&format!(
-        "Observer node started (PID: {}). Use Ctrl+C to stop.",
-        child.id()
-    ))?;
-
-    let status = child.wait().map_err(|e| {
-        CliError::ConfigError(format!("Observer node process error: {}", e))
-    })?;
-
-    if status.success() {
-        output.info("Observer node exited cleanly.")?;
-    } else {
-        return Err(CliError::ConfigError(format!(
-            "Observer node exited with code: {:?}",
-            status.code()
-        )));
-    }
-
-    Ok(())
+    // Observer daemon (T6, #2529) is not yet available.
+    Err(CliError::ConfigError(
+        "Observer daemon binary (zhtp-observer) is not yet implemented (T6). \
+         Once available, run: zhtp-observer \
+         or: zhtp-cli node --env ZHTP_OBSERVER_KEYSTORE=... --env ZHTP_OBSERVER_BOOTSTRAP=..."
+            .to_string(),
+    ))
 }
 
 /// `observer by-sponsor` — list observers sponsored by a DID.
@@ -621,13 +573,15 @@ mod tests {
         let pk = identity.private_key.as_ref()
             .expect("generated identity must have private key");
 
+        let sponsor_did = "did:zhtp:sponsor-identity-on-chain";
+
         // Step 2: Build the v1 QR payload (same JSON shape as cmd_qr_render)
         let payload = serde_json::json!({
             "observer_node_did": identity.did,
             "observer_dilithium_pk_hex": hex::encode(&pk.dilithium_pk[..]),
             "observer_kyber_pk_hex": hex::encode(&identity.public_key.kyber_pk[..]),
             "endpoints": [],
-            "sponsor_user_did": identity.did,
+            "sponsor_user_did": sponsor_did,
             "sponsor_proof_level": "Basic",
             "allowed_network": "testnet",
             "rate_limit_tier": "Standard"
@@ -636,7 +590,7 @@ mod tests {
         // Verify payload matches epic v1 schema
         assert_eq!(payload["sponsor_proof_level"], "Basic", "v1 payload proof level must be Basic");
         assert_eq!(payload["allowed_network"], "testnet", "v1 payload network must be testnet");
-        assert_eq!(payload["version"], serde_json::Value::Null, "v1 payload has no version field (use 1)");
+        assert_eq!(payload["sponsor_user_did"], sponsor_did, "sponsor must be a distinct on-chain identity");
 
         let payload_json = serde_json::to_string(&payload)
             .expect("payload must serialize");
