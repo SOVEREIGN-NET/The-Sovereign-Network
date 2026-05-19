@@ -12,6 +12,7 @@
 //!   POST /api/v1/auth/opaque/login/finish    — OPAQUE login step 2 + session token
 
 pub mod opaque;
+pub mod rate_limit;
 
 use anyhow::Result;
 use serde::Deserialize;
@@ -32,6 +33,8 @@ pub struct CredentialsHandler {
     /// OPAQUE handler state — None when the network has no [opaque] section
     /// in genesis (lobby auth disabled), populated when present.
     opaque: tokio::sync::OnceCell<Option<Arc<opaque::OpaqueAuthState>>>,
+    /// Rate limiter for OPAQUE login flow (S4 #2558).
+    rate_limiter: Arc<rate_limit::LobbyRateLimiter>,
 }
 
 #[derive(Deserialize)]
@@ -89,10 +92,13 @@ fn upgrade_required_resp(did: &str, username: &str) -> ZhtpResponse {
 
 impl CredentialsHandler {
     pub fn new(blockchain: Arc<RwLock<Blockchain>>, session_manager: Arc<SessionManager>) -> Self {
+        let rate_limiter = Arc::new(rate_limit::LobbyRateLimiter::new());
+        rate_limiter.clone().spawn_sweep();
         Self {
             blockchain,
             session_manager,
             opaque: tokio::sync::OnceCell::new(),
+            rate_limiter,
         }
     }
 
@@ -103,7 +109,7 @@ impl CredentialsHandler {
         self.opaque
             .get_or_init(|| async {
                 let bc = self.blockchain.read().await;
-                let bytes = bc.opaque_server_setup.as_ref()?.0.clone();
+                let bytes = bc.opaque_server_setup.as_ref()?.as_slice().to_vec();
                 drop(bc);
                 match opaque::OpaqueAuthState::from_setup_bytes(&bytes) {
                     Ok(state) => {
@@ -130,6 +136,7 @@ impl CredentialsHandler {
             blockchain: self.blockchain.clone(),
             state,
             session_manager: self.session_manager.clone(),
+            rate_limiter: self.rate_limiter.clone(),
         }
     }
 

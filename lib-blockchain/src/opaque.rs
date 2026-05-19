@@ -31,13 +31,46 @@ pub const ARGON2_P_COST: u32 = 4;
 pub const CIPHERSUITE_ID: &str = "ristretto255-sha512-argon2id-v1";
 
 /// Raw bytes of an OPAQUE server setup, as serialized by `opaque-ke`'s
-/// `ServerSetup::serialize`. Treated as opaque by lib-blockchain.
+/// `ServerSetup::serialize`. Treated as opaque by lib-blockchain — the inner
+/// field is private specifically to prevent downstream code from mutating
+/// the supposedly immutable setup or accidentally constructing one from an
+/// arbitrary `Vec<u8>` (reviewer #2569).
+///
+/// **Security-sensitive content**: the serialized form produced by
+/// `ServerSetup::serialize` includes the OPRF *private* seed. Anyone with
+/// this byte string can impersonate the server side of the OPAQUE protocol
+/// and offline-attack every credential ever registered against it. Do not
+/// log, persist outside of the network's authoritative genesis source, or
+/// ship in any non-validator binary.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpaqueServerSetupBytes(pub Vec<u8>);
+pub struct OpaqueServerSetupBytes(Vec<u8>);
 
 impl OpaqueServerSetupBytes {
+    /// Construct from already-validated bytes. Module-internal only — every
+    /// public construction path runs `parse_server_setup_b64()` first to
+    /// enforce the size sanity checks.
+    pub(crate) fn from_validated_bytes(bytes: Vec<u8>) -> Self {
+        Self(bytes)
+    }
+
     pub fn as_slice(&self) -> &[u8] {
         &self.0
+    }
+
+    /// Hand back the underlying bytes (consumes self). Required by the
+    /// server crate when feeding them to `ServerSetup::deserialize`. Use
+    /// this in preference to cloning + leaking the Vec.
+    pub fn into_inner(self) -> Vec<u8> {
+        self.0
+    }
+
+    /// Number of bytes in the setup. Useful for `Debug`-free assertions.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 
     /// Short fingerprint for log lines — confirms every validator loaded the
@@ -67,7 +100,7 @@ pub fn parse_server_setup_b64(s: &str) -> Result<OpaqueServerSetupBytes> {
             bytes.len()
         ));
     }
-    Ok(OpaqueServerSetupBytes(bytes))
+    Ok(OpaqueServerSetupBytes::from_validated_bytes(bytes))
 }
 
 /// Encode raw bytes to base64 (used by the genesis-keygen helper tool).
@@ -93,7 +126,7 @@ mod tests {
     #[test]
     fn fingerprint_stable() {
         let raw = vec![7u8; 64];
-        let bytes = OpaqueServerSetupBytes(raw);
+        let bytes = OpaqueServerSetupBytes::from_validated_bytes(raw);
         assert_eq!(bytes.fingerprint(), bytes.fingerprint());
     }
 
