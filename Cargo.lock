@@ -3415,6 +3415,7 @@ name = "lib-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "argon2",
  "base64 0.21.7",
  "bincode",
  "blake3",
@@ -3423,6 +3424,7 @@ dependencies = [
  "console_error_panic_hook",
  "crystals-dilithium",
  "flate2",
+ "generic-array",
  "getrandom 0.2.17",
  "hex",
  "hkdf",
@@ -3434,6 +3436,7 @@ dependencies = [
  "lib-identity-core",
  "lib-network",
  "lib-protocols",
+ "opaque-ke",
  "pqc_kyber",
  "pqcrypto-kyber",
  "pqcrypto-traits",

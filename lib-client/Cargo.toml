@@ -62,6 +62,12 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-ut
 lib-network = { path = "../lib-network" }
 lib-identity = { path = "../lib-identity" }
 lib-protocols = { path = "../lib-protocols" }
+# Lobby auth: OPAQUE (RFC 9497 / IETF CFRG draft) password-authenticated key
+# exchange. Locked cipher suite: Ristretto255 + Sha512 + TripleDh + Argon2id.
+opaque-ke = { version = "4", default-features = false, features = ["ristretto255", "argon2", "serde"] }
+argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
+sha2 = { version = "0.10", default-features = false }
+generic-array = "0.14"
 
 # Android JNI bindings
 [target.'cfg(target_os = "android")'.dependencies]

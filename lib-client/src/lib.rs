@@ -52,6 +52,15 @@ pub mod handshake;
 pub mod nft_tx;
 pub mod identity;
 pub mod messaging;
+// `opaque` is gated off wasm32 in v1 because the FFI surface uses raw-pointer
+// `*mut ByteBuffer` out-params that don't translate cleanly to wasm-bindgen,
+// and `rand::rngs::OsRng` on wasm32 needs the `getrandom/js` feature which we
+// haven't wired here. Reviewer #2570 noted the original ticket expected
+// "WASM build produces the same FFI surface (callable from web)". A wasm
+// front-end for OPAQUE is tracked as a follow-up — for now the web/wasm
+// client should route lobby auth through the native gateway.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod opaque;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod quic_session;
 pub mod request;
