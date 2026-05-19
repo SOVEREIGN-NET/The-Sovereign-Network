@@ -2100,6 +2100,15 @@ impl Blockchain {
         self.height + 1
     }
 
+    /// Iterate the resident blocks (oldest → newest).
+    ///
+    /// Phase 3 (BST-302): the single seam for block iteration. Full-chain
+    /// scans route through here so they can switch to store iteration once
+    /// `blocks` becomes a bounded hot window.
+    pub fn iter_blocks(&self) -> impl Iterator<Item = &Block> + '_ {
+        self.blocks.as_slice().iter()
+    }
+
     /// Get current blockchain height
     pub fn get_height(&self) -> u64 {
         self.height
@@ -2672,7 +2681,7 @@ impl Blockchain {
         let mut aggregator = aggregator_arc.write().await;
         let mut previous_chain_proof: Option<lib_proofs::ChainRecursiveProof> = None;
 
-        for (i, block) in self.blocks.iter().enumerate() {
+        for (i, block) in self.iter_blocks().enumerate() {
             info!("Processing block {} for recursive proof aggregation", i);
 
             // Convert block transactions to the format expected by the aggregator
@@ -3890,8 +3899,7 @@ impl Blockchain {
     /// Count number of DAO votes cast by user
     fn count_user_dao_votes(&self, user_id: &lib_identity::IdentityId) -> u64 {
         let user_id_str = user_id.to_string();
-        self.blocks
-            .iter()
+        self.iter_blocks()
             .flat_map(|block| &block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoVote)
             .filter(|tx| {
@@ -3908,8 +3916,7 @@ impl Blockchain {
     /// Count number of DAO proposals submitted by user
     fn count_user_dao_proposals(&self, user_id: &lib_identity::IdentityId) -> u64 {
         let user_id_str = user_id.to_string();
-        self.blocks
-            .iter()
+        self.iter_blocks()
             .flat_map(|block| &block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoProposal)
             .filter(|tx| {
@@ -4025,7 +4032,7 @@ impl Blockchain {
         let mut rebuilt_utxo_set = HashMap::new();
         let mut rebuilt_nullifier_set = HashSet::new();
 
-        for block in &self.blocks {
+        for block in self.iter_blocks() {
             for tx in &block.transactions {
                 // Add nullifiers
                 for input in &tx.inputs {
@@ -4111,7 +4118,7 @@ impl Blockchain {
 
             let mut storage_manager = storage_manager_arc.write().await;
             // Persist any unpersisted blocks
-            for block in &self.blocks {
+            for block in self.iter_blocks() {
                 let _ = storage_manager.store_block(block).await;
             }
 
@@ -4254,7 +4261,7 @@ impl Blockchain {
             self.oracle_state.finalized_prices_len());
 
         // Debug: Log transaction counts for each block
-        for (i, block) in self.blocks.iter().enumerate() {
+        for (i, block) in self.iter_blocks().enumerate() {
             info!(
                 "   Block {}: height={}, transactions={}, merkle_root={}",
                 i,
@@ -4574,6 +4581,8 @@ impl Blockchain {
 
                     // Clear nullifier set and rebuild from new chain
                     self.nullifier_set.clear();
+                    // Field-level borrow: this loop rebuilds `nullifier_set`
+                    // while iterating blocks (handled by the windowing commit).
                     for block in &self.blocks {
                         for tx in &block.transactions {
                             for input in &tx.inputs {
@@ -5110,6 +5119,7 @@ impl Blockchain {
 
         // Step 9: Rebuild nullifier set from merged state
         self.nullifier_set.clear();
+        // Field-level borrow: rebuilds `nullifier_set` while iterating blocks.
         for block in &self.blocks {
             for tx in &block.transactions {
                 for input in &tx.inputs {
@@ -5613,8 +5623,7 @@ impl Blockchain {
         }
 
         let finality_height = current_height.saturating_sub(depth);
-        self.blocks
-            .iter()
+        self.iter_blocks()
             .filter(|b| b.header.height <= finality_height)
             .collect()
     }
@@ -5658,7 +5667,7 @@ impl Blockchain {
             );
 
             // Emit BlockFinalized event (Issue #11)
-            if let Some(block) = self.blocks.iter().find(|b| b.header.height == block_height) {
+            if let Some(block) = self.iter_blocks().find(|b| b.header.height == block_height) {
                 // Block hash should always be 32 bytes, but handle gracefully if not
                 let block_hash = block.hash();
                 let block_hash_bytes = block_hash.as_bytes();
@@ -5699,7 +5708,7 @@ impl Blockchain {
         new_block_hash: Hash,
     ) -> Option<crate::fork_recovery::ForkDetection> {
         // Find existing block at this height
-        let existing_block = self.blocks.iter().find(|b| b.header.height == height)?;
+        let existing_block = self.iter_blocks().find(|b| b.header.height == height)?;
 
         // If hashes differ, we have a fork
         if existing_block.header.block_hash != new_block_hash {
