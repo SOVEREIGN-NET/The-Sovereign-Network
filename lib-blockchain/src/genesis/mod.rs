@@ -917,7 +917,8 @@ mod tests {
     #[test]
     fn test_from_embedded_parses() {
         let config = GenesisConfig::from_embedded().expect("embedded genesis.toml should parse");
-        assert_eq!(config.chain.chain_id, 1);
+        // v2 chain (CONS-305 cutover): chain_id 2, distinct from v1's 1.
+        assert_eq!(config.chain.chain_id, 2);
         assert_eq!(config.bootstrap_council.threshold, 1);
         assert!(!config.bootstrap_council.members.is_empty(), "council must have at least one member");
         assert_eq!(config.bonding_curve.graduation_threshold, 2_745_966);
@@ -927,8 +928,8 @@ mod tests {
     fn test_genesis_timestamp() {
         let config = GenesisConfig::from_embedded().expect("parse");
         let ts = config.genesis_timestamp().expect("timestamp");
-        // 2026-04-05T00:00:00Z = 1775347200
-        assert_eq!(ts, 1_775_347_200);
+        // genesis.toml genesis_time "2026-05-01T00:00:00Z" = 1777593600
+        assert_eq!(ts, 1_777_593_600);
     }
 
     // cbe_token field removed from Blockchain (EPIC-001 Phase 1).
