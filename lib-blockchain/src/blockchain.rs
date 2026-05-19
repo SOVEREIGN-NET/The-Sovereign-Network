@@ -160,9 +160,6 @@ pub struct Blockchain {
     pub wallet_registry: HashMap<String, crate::transaction::WalletTransactionData>,
     /// Wallet ID to block height mapping for verification
     pub wallet_blocks: HashMap<String, u64>,
-    /// Economics transaction storage (handled by lib-economy)
-    #[serde(default)]
-    pub economics_transactions: Vec<EconomicsTransaction>,
     /// Smart contract registry - Token contracts (contract_id -> TokenContract)
     #[serde(default)]
     pub token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
@@ -2771,46 +2768,14 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Store an economics transaction on the blockchain
-    pub fn store_economics_transaction(&mut self, transaction: EconomicsTransaction) {
-        self.economics_transactions.push(transaction);
-    }
-
-    /// Get all economics transactions for a specific address
-    pub fn get_transactions_for_address(&self, address: &str) -> Vec<serde_json::Value> {
-        let address_bytes = if address.len() == 64 {
-            address.as_bytes().to_vec()
-        } else {
-            let mut addr_bytes = [0u8; 32];
-            let input_bytes = address.as_bytes();
-            let copy_len = std::cmp::min(input_bytes.len(), 32);
-            addr_bytes[..copy_len].copy_from_slice(&input_bytes[..copy_len]);
-            addr_bytes.to_vec()
-        };
-
-        let mut address_array = [0u8; 32];
-        if address_bytes.len() >= 32 {
-            address_array.copy_from_slice(&address_bytes[..32]);
-        } else {
-            address_array[..address_bytes.len()].copy_from_slice(&address_bytes);
-        }
-
-        self.economics_transactions
-            .iter()
-            .filter(|tx| tx.to == address_array || tx.from == address_array)
-            .map(|tx| {
-                serde_json::json!({
-                    "id": format!("{:?}", tx.tx_id),
-                    "hash": format!("{:?}", tx.tx_id),
-                    "from": format!("{:?}", tx.from),
-                    "to": format!("{:?}", tx.to),
-                    "amount": tx.amount,
-                    "transaction_type": tx.tx_type,
-                    "timestamp": tx.timestamp,
-                    "block_height": tx.block_height,
-                })
-            })
-            .collect()
+    /// Per-address economics transaction history.
+    ///
+    /// The `economics_transactions` field was an unfinished feature — no writer
+    /// ever populated it — and has been removed from consensus state. This
+    /// endpoint returns empty until economics history is reintroduced as a
+    /// proper event/indexing layer rather than in-struct consensus state.
+    pub fn get_transactions_for_address(&self, _address: &str) -> Vec<serde_json::Value> {
+        Vec::new()
     }
 
     // ===== ECONOMIC INTEGRATION METHODS =====

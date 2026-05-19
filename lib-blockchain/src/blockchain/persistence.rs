@@ -206,7 +206,6 @@ impl BlockchainV1 {
             identity_blocks: self.identity_blocks,
             wallet_registry: migrate_legacy_wallet_registry(self.wallet_registry),
             wallet_blocks: self.wallet_blocks,
-            economics_transactions: self.economics_transactions,
             token_contracts: self.token_contracts,
             web4_contracts: self.web4_contracts,
             contract_blocks: self.contract_blocks,
@@ -460,7 +459,9 @@ impl BlockchainStorageV3 {
                 })
             }).collect(),
             wallet_blocks: bc.wallet_blocks.clone(),
-            economics_transactions: bc.economics_transactions.clone(),
+            // economics_transactions removed from Blockchain — V3 keeps the
+            // field only to read pre-existing .dat files; new saves write empty.
+            economics_transactions: Vec::new(),
             token_contracts: bc.token_contracts.clone(),
             web4_contracts: bc.web4_contracts.clone(),
             contract_blocks: bc.contract_blocks.clone(),
@@ -535,7 +536,6 @@ impl BlockchainStorageV3 {
             identity_blocks: self.identity_blocks,
             wallet_registry: migrate_legacy_wallet_registry(self.wallet_registry),
             wallet_blocks: self.wallet_blocks,
-            economics_transactions: self.economics_transactions,
             token_contracts: self.token_contracts,
             web4_contracts: self.web4_contracts,
             contract_blocks: self.contract_blocks,

@@ -19,7 +19,6 @@ impl Blockchain {
             identity_blocks: HashMap::new(),
             wallet_registry: HashMap::new(),
             wallet_blocks: HashMap::new(),
-            economics_transactions: Vec::new(),
             token_contracts: HashMap::new(),
             web4_contracts: HashMap::new(),
             contract_blocks: HashMap::new(),
