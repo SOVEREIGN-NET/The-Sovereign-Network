@@ -1957,6 +1957,57 @@ impl BlockchainStore for SledStore {
     }
 
     // =========================================================================
+    // Generic Table Access (BST-101)
+    // =========================================================================
+
+    fn get_raw(&self, tree: &'static str, key: &[u8]) -> StorageResult<Option<Vec<u8>>> {
+        let t = self.tree_by_name(tree).ok_or_else(|| {
+            StorageError::Database(format!("unknown table keyspace '{}'", tree))
+        })?;
+        match t.get(key) {
+            Ok(Some(v)) => Ok(Some(v.to_vec())),
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn stage_raw(
+        &self,
+        tree: &'static str,
+        key: &[u8],
+        value: Option<&[u8]>,
+    ) -> StorageResult<()> {
+        self.require_transaction()?;
+        if self.tree_by_name(tree).is_none() {
+            return Err(StorageError::Database(format!(
+                "unknown table keyspace '{}'",
+                tree
+            )));
+        }
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            match value {
+                Some(v) => batch.tree(tree).insert(key, v),
+                None => batch.tree(tree).remove(key),
+            }
+        }
+        Ok(())
+    }
+
+    fn iter_raw(
+        &self,
+        tree: &'static str,
+    ) -> StorageResult<Box<dyn Iterator<Item = StorageResult<(Vec<u8>, Vec<u8>)>> + '_>> {
+        let t = self.tree_by_name(tree).ok_or_else(|| {
+            StorageError::Database(format!("unknown table keyspace '{}'", tree))
+        })?;
+        Ok(Box::new(t.iter().map(|r| {
+            r.map(|(k, v)| (k.to_vec(), v.to_vec()))
+                .map_err(|e| StorageError::Database(e.to_string()))
+        })))
+    }
+
+    // =========================================================================
     // Bonding Curve Operations
     // =========================================================================
 
@@ -3258,5 +3309,72 @@ mod tests {
         assert_eq!(store.latest_height().unwrap(), 0);
         assert!(store.get_block_by_height(0).unwrap().is_some());
         assert!(store.wal.get(WAL_PENDING_KEY).unwrap().is_none());
+    }
+
+    // =========================================================================
+    // Generic Table abstraction (BST-101)
+    // =========================================================================
+
+    /// A `Table` declared purely for the round-trip test, backed by the (empty
+    /// in a fresh store) `dao_stakes` keyspace.
+    struct TableProbe;
+    impl crate::storage::Table for TableProbe {
+        const NAME: &'static str = TREE_DAO_STAKES;
+        const VERSION: u32 = 1;
+        type Key = [u8; 8];
+        type Value = u64;
+        fn encode_key(key: &[u8; 8]) -> Vec<u8> {
+            key.to_vec()
+        }
+    }
+
+    /// One `impl Table` yields typed `get` / `stage` / `stage_delete` / `iter`
+    /// with no bespoke store methods — staged writes land atomically with the
+    /// block commit, exactly like every other tree.
+    #[test]
+    fn test_generic_table_round_trip() {
+        use crate::storage::TableAccess;
+
+        let store = SledStore::open_temporary().unwrap();
+        let block0 = create_test_block(0, Hash::default());
+
+        store.begin_block(0).unwrap();
+        store.append_block(&block0).unwrap();
+        store.stage::<TableProbe>(&1u64.to_be_bytes(), &111u64).unwrap();
+        store.stage::<TableProbe>(&2u64.to_be_bytes(), &222u64).unwrap();
+        // Staged writes are not visible until the block commits.
+        assert_eq!(store.get::<TableProbe>(&1u64.to_be_bytes()).unwrap(), None);
+        store.commit_block().unwrap();
+
+        assert_eq!(store.get::<TableProbe>(&1u64.to_be_bytes()).unwrap(), Some(111));
+        assert_eq!(store.get::<TableProbe>(&2u64.to_be_bytes()).unwrap(), Some(222));
+        assert_eq!(store.get::<TableProbe>(&9u64.to_be_bytes()).unwrap(), None);
+
+        let mut all = store.iter::<TableProbe>().unwrap();
+        all.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].1, 111);
+        assert_eq!(all[1].1, 222);
+
+        // stage_delete also lands with the block commit.
+        let block1 = create_test_block(1, block0.header.block_hash);
+        store.begin_block(1).unwrap();
+        store.append_block(&block1).unwrap();
+        store.stage_delete::<TableProbe>(&1u64.to_be_bytes()).unwrap();
+        store.commit_block().unwrap();
+        assert_eq!(store.get::<TableProbe>(&1u64.to_be_bytes()).unwrap(), None);
+        assert_eq!(store.get::<TableProbe>(&2u64.to_be_bytes()).unwrap(), Some(222));
+    }
+
+    /// Generic table writes outside `begin_block` are rejected, like every
+    /// other staged write.
+    #[test]
+    fn test_generic_table_stage_requires_transaction() {
+        use crate::storage::TableAccess;
+        let store = SledStore::open_temporary().unwrap();
+        assert!(matches!(
+            store.stage::<TableProbe>(&1u64.to_be_bytes(), &1u64),
+            Err(StorageError::NoActiveTransaction)
+        ));
     }
 }
