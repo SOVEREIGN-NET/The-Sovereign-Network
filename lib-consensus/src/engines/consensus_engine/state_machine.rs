@@ -166,6 +166,12 @@ pub(super) enum RoundJumpReason {
     LocalPrevoteTimeout,
     /// Local precommit timer fired without a precommit quorum.
     LocalPrecommitTimeout,
+    /// Local commit-step timer fired without the height advancing.
+    LocalCommitTimeout,
+    /// Local timer fired in a state with no dedicated timeout semantics
+    /// (the defensive `NewRound` re-drive). Generic so the audit log does
+    /// not misattribute it to a prevote/precommit/commit timeout.
+    LocalTimeout,
 }
 
 /// Build the `ValidatorRewardInput` slice the engine hands to
@@ -2397,7 +2403,7 @@ impl ConsensusEngine {
                     self.enter_round(
                         height,
                         round + 1,
-                        RoundJumpReason::LocalPrecommitTimeout,
+                        RoundJumpReason::LocalCommitTimeout,
                     )
                     .await;
                 } else {
@@ -2411,7 +2417,7 @@ impl ConsensusEngine {
             // Between rounds — nothing concrete to time out. Re-drive
             // defensively so the loop cannot stall in this transient state.
             ConsensusStep::NewRound => {
-                self.enter_round(height, round + 1, RoundJumpReason::LocalPrevoteTimeout)
+                self.enter_round(height, round + 1, RoundJumpReason::LocalTimeout)
                     .await;
             }
         }
