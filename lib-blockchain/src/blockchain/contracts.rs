@@ -81,6 +81,49 @@ impl Blockchain {
         call.contract_type == crate::types::ContractType::Token && call.method == "transfer"
     }
 
+    /// Rebuild the PoUW reward mint index from all in-memory blocks.
+    ///
+    /// Scans every block for `TokenMint` transactions carrying a `pouw:mint:`
+    /// memo and records them keyed by recipient key_id. Clears the index
+    /// first, so it is idempotent. Called once after chain load — necessary
+    /// because `load_from_store` deliberately skips token-tx processing, so
+    /// the incremental hook in `process_token_transactions` does not fire on
+    /// that path. The per-block hook still keeps the index current for live
+    /// block commits.
+    pub fn rebuild_pouw_mint_index(&mut self) {
+        self.pouw_mint_index.clear();
+        let mut total = 0usize;
+        for block in &self.blocks {
+            let height = block.height();
+            for tx in &block.transactions {
+                if tx.transaction_type != TransactionType::TokenMint {
+                    continue;
+                }
+                if !tx.memo.starts_with(b"pouw:mint:") {
+                    continue;
+                }
+                let Some(mint) = tx.token_mint_data() else {
+                    continue;
+                };
+                let tx_hash = tx.hash().as_array();
+                let entry = self.pouw_mint_index.entry(mint.to).or_default();
+                if !entry.iter().any(|r| r.tx_hash == tx_hash) {
+                    entry.push(crate::PouwMintRecord {
+                        amount: mint.amount,
+                        block_height: height,
+                        tx_hash,
+                    });
+                    total += 1;
+                }
+            }
+        }
+        tracing::info!(
+            "PoUW mint index rebuilt: {} reward payouts across {} recipients",
+            total,
+            self.pouw_mint_index.len()
+        );
+    }
+
     /// Process token transfer and mint transactions from a block.
     pub fn process_token_transactions(&mut self, block: &Block) -> Result<()> {
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
@@ -581,6 +624,26 @@ impl Blockchain {
                         let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
                         if let Err(e) = store_ref.put_token_contract(token) {
                             warn!("Failed to persist token contract after mint: {}", e);
+                        }
+                    }
+
+                    // PoUW reward index (option A): a TokenMint carrying a
+                    // `pouw:mint:` memo is a proof-of-useful-work payout. Record
+                    // it keyed by recipient key_id so /api/v1/pouw/rewards can
+                    // report consensus-derived history. This runs in every
+                    // block-processing path (live commit + replay), so the
+                    // index is rebuilt deterministically and is identical on
+                    // every node. Dedup by tx_hash guards against a block being
+                    // processed twice.
+                    if transaction.memo.starts_with(b"pouw:mint:") {
+                        let tx_hash = transaction.hash().as_array();
+                        let entry = self.pouw_mint_index.entry(mint.to).or_default();
+                        if !entry.iter().any(|r| r.tx_hash == tx_hash) {
+                            entry.push(crate::PouwMintRecord {
+                                amount: mint.amount,
+                                block_height: block.height(),
+                                tx_hash,
+                            });
                         }
                     }
                 }

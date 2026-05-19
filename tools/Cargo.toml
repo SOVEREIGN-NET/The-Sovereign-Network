@@ -12,6 +12,10 @@ name = "chain_audit"
 path = "chain_audit.rs"
 
 [[bin]]
+name = "wallet_probe"
+path = "wallet_probe.rs"
+
+[[bin]]
 name = "sled_migration"
 path = "sled_migration.rs"
 
@@ -25,6 +29,9 @@ lib-protocols = { path = "../lib-protocols" }
 lib-network = { path = "../lib-network" }
 lib-crypto = { path = "../lib-crypto" }
 lib-blockchain = { path = "../lib-blockchain" }
+# chain_audit / testnet_reset / replay_wallets reference `lib_types::sov::*`
+# but this manifest never declared the dep — pre-existing workspace breakage.
+lib-types = { path = "../lib-types" }
 hex = "0.4"
 anyhow = "1"
 sled = "0.34"

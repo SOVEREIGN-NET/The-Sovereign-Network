@@ -270,30 +270,23 @@ impl WalletHandler {
         // TODO: Gate cross-identity wallet list once mobile app is updated.
         // For now, return full data to maintain backward compatibility.
 
-        // Get the identity
-        let identity = match self.get_identity_by_id(&identity_id_bytes).await {
-            Some(identity) => identity,
-            None => {
-                let error_response = json!({
-                    "status": "identity_not_found",
-                    "identity_id": identity_id,
-                    "total_wallets": 0,
-                    "total_balance": 0,
-                    "wallets": []
-                });
-                let json_response = serde_json::to_vec(&error_response)?;
-                return Ok(ZhtpResponse::success_with_content_type(
-                    json_response,
-                    "application/json".to_string(),
-                    None,
-                ));
-            }
-        };
+        // The in-memory identity_manager is an optional fast-path for the rich
+        // Identity object (it carries the WalletManager with staked/pending
+        // detail). It is NOT rebuilt from chain on restart and only holds
+        // identities that registered/handshook live on THIS node — so a miss
+        // here is normal and MUST NOT hide on-chain wallets. The authoritative
+        // source is blockchain.wallet_registry; fall through to it whenever
+        // the in-memory manager has nothing for this identity.
+        let identity_opt = self.get_identity_by_id(&identity_id_bytes).await;
 
-        // Get wallets from the identity's wallet manager (created during identity registration).
-        // If empty (e.g. after sled wipe + seed recovery), fall back to scanning
-        // blockchain.wallet_registry for wallets owned by this identity.
-        let wallet_summaries = identity.list_wallets();
+        // Get wallets from the identity's wallet manager (created during identity
+        // registration). If absent (identity not in the in-memory manager) or
+        // empty (e.g. after restart / sled wipe + seed recovery), fall back to
+        // scanning blockchain.wallet_registry for wallets owned by this identity.
+        let wallet_summaries = identity_opt
+            .as_ref()
+            .map(|identity| identity.list_wallets())
+            .unwrap_or_default();
 
         let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
 
@@ -363,6 +356,13 @@ impl WalletHandler {
                 None,
             ));
         }
+
+        // Reached only when wallet_summaries is non-empty, which implies the
+        // in-memory identity was present (summaries were derived from it).
+        let identity = match identity_opt {
+            Some(identity) => identity,
+            None => unreachable!("non-empty wallet_summaries implies identity present"),
+        };
 
         for summary in wallet_summaries.iter() {
             // Get full wallet details to access staked_balance and pending_rewards
@@ -1288,23 +1288,23 @@ impl WalletHandler {
         // TODO: Gate cross-identity transaction history once mobile app is updated.
         // For now, return full data to maintain backward compatibility.
 
-        let identity = match self.get_identity_by_id(&identity_id_bytes).await {
-            Some(identity) => identity,
-            None => {
-                return create_json_response(json!({
-                    "status": "identity_not_found",
-                    "identity_id": identity_id,
-                    "total_transactions": 0,
-                    "transactions": []
-                }));
-            }
-        };
+        // The in-memory identity_manager is an optional fast-path only; a miss
+        // must not hide on-chain transaction history. Fall through to the
+        // blockchain wallet_registry + block scan regardless.
+        let identity_opt = self.get_identity_by_id(&identity_id_bytes).await;
 
-        let identity_did = identity.did.clone();
+        let identity_did = identity_opt
+            .as_ref()
+            .map(|identity| identity.did.clone())
+            .unwrap_or_else(|| format!("did:zhtp:{}", identity_id));
         let mut tracked_key_ids: HashSet<[u8; 32]> = HashSet::new();
-        tracked_key_ids.insert(identity.public_key.key_id);
-        for wallet in identity.list_wallets() {
-            tracked_key_ids.insert(wallet.id.0);
+        // The URL identity id is itself a tracked key id (DID == key_id form).
+        tracked_key_ids.insert(identity_id_bytes);
+        if let Some(ref identity) = identity_opt {
+            tracked_key_ids.insert(identity.public_key.key_id);
+            for wallet in identity.list_wallets() {
+                tracked_key_ids.insert(wallet.id.0);
+            }
         }
 
         // Get blockchain
