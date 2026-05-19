@@ -44,8 +44,6 @@ pub struct TransactionReceipt {
     pub block_height: u64,
     /// Index of transaction within block
     pub tx_index: u32,
-    /// Current status (Pending/Confirmed/Finalized/Failed)
-    pub status: TransactionStatus,
     /// Gas used by transaction (0 for now, reserved for future)
     pub gas_used: u64,
     /// Fee paid by sender
@@ -71,11 +69,23 @@ impl TransactionReceipt {
             block_hash,
             block_height,
             tx_index,
-            status: TransactionStatus::Confirmed,
             gas_used: 0,
             fee_paid,
             logs: Vec::new(),
             timestamp,
+        }
+    }
+
+    /// Status as of `current_height`, derived from height.
+    ///
+    /// A stored receipt always belongs to an included transaction, so it is
+    /// `Confirmed` until it reaches finality depth, then `Finalized`. Status
+    /// is computed, not a stored field that must be rewritten on every tick.
+    pub fn status(&self, current_height: u64) -> TransactionStatus {
+        if self.is_finalized(current_height) {
+            TransactionStatus::Finalized
+        } else {
+            TransactionStatus::Confirmed
         }
     }
 
@@ -107,7 +117,8 @@ mod tests {
         assert_eq!(receipt.tx_hash, hash);
         assert_eq!(receipt.block_height, 100);
         assert_eq!(receipt.fee_paid, 1000);
-        assert_eq!(receipt.status, TransactionStatus::Confirmed);
+        assert_eq!(receipt.status(100), TransactionStatus::Confirmed);
+        assert_eq!(receipt.status(120), TransactionStatus::Finalized);
         assert!(!receipt.is_finalized(100));
     }
 

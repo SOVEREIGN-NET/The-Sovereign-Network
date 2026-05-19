@@ -523,6 +523,20 @@ impl BlockchainStorageV3 {
     }
 
     pub(super) fn to_blockchain(self) -> Blockchain {
+        // Legacy `.dat` files carried `receipts` and `fork_points` inline.
+        // Those datasets now live behind `BlockchainStore`; a `.dat` load is a
+        // one-time migration that does not repopulate them — receipts are
+        // reconstructible from block replay, fork points are historical audit
+        // data. Warn loudly rather than drop them silently.
+        if !self.receipts.is_empty() || !self.fork_points.is_empty() {
+            tracing::warn!(
+                "Legacy .dat migration: {} receipt(s) and {} fork point(s) are \
+                 NOT carried into the store-backed model (receipts rebuild from \
+                 blocks; fork history is audit-only).",
+                self.receipts.len(),
+                self.fork_points.len(),
+            );
+        }
         Blockchain {
             blocks: self.blocks,
             height: self.height,

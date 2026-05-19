@@ -5584,12 +5584,16 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Get transaction receipt by hash.
-    pub fn get_receipt(&self, tx_hash: &Hash) -> Option<crate::receipts::TransactionReceipt> {
-        self.store()
-            .and_then(|s| s.get_receipt(&tx_hash.as_array()))
-            .ok()
-            .flatten()
+    /// Get a transaction receipt by hash.
+    ///
+    /// `Ok(None)` is a genuine "no such receipt"; an `Err` is a real store
+    /// failure (I/O, deserialization, no store attached) — the two must stay
+    /// distinguishable so callers don't report a 404 for an infrastructure error.
+    pub fn get_receipt(
+        &self,
+        tx_hash: &Hash,
+    ) -> Result<Option<crate::receipts::TransactionReceipt>> {
+        Ok(self.store()?.get_receipt(&tx_hash.as_array())?)
     }
 
     /// Get blocks that have reached finality (12+ confirmations)
