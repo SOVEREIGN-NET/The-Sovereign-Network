@@ -160,9 +160,6 @@ pub struct Blockchain {
     pub wallet_registry: HashMap<String, crate::transaction::WalletTransactionData>,
     /// Wallet ID to block height mapping for verification
     pub wallet_blocks: HashMap<String, u64>,
-    /// Economics transaction storage (handled by lib-economy)
-    #[serde(default)]
-    pub economics_transactions: Vec<EconomicsTransaction>,
     /// Smart contract registry - Token contracts (contract_id -> TokenContract)
     #[serde(default)]
     pub token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
@@ -244,9 +241,6 @@ pub struct Blockchain {
     /// Track executed DAO proposals to prevent double-execution
     #[serde(default)]
     pub executed_dao_proposals: HashSet<Hash>,
-    /// Transaction receipts for confirmation tracking (tx_hash -> receipt)
-    #[serde(default)]
-    pub receipts: HashMap<Hash, crate::receipts::TransactionReceipt>,
     /// Finality depth (number of confirmations required for finality)
     #[serde(default = "default_finality_depth")]
     pub finality_depth: u64,
@@ -266,9 +260,6 @@ pub struct Blockchain {
     /// UTXO set snapshots per block height for state recovery and reorg support
     #[serde(default)]
     pub utxo_snapshots: std::collections::BTreeMap<u64, HashMap<Hash, TransactionOutput>>,
-    /// Fork history for audit trail (height -> ForkPoint)
-    #[serde(default)]
-    pub fork_points: HashMap<u64, crate::fork_recovery::ForkPoint>,
     /// Count of reorganizations for monitoring
     #[serde(default)]
     pub reorg_count: u64,
@@ -2771,46 +2762,14 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Store an economics transaction on the blockchain
-    pub fn store_economics_transaction(&mut self, transaction: EconomicsTransaction) {
-        self.economics_transactions.push(transaction);
-    }
-
-    /// Get all economics transactions for a specific address
-    pub fn get_transactions_for_address(&self, address: &str) -> Vec<serde_json::Value> {
-        let address_bytes = if address.len() == 64 {
-            address.as_bytes().to_vec()
-        } else {
-            let mut addr_bytes = [0u8; 32];
-            let input_bytes = address.as_bytes();
-            let copy_len = std::cmp::min(input_bytes.len(), 32);
-            addr_bytes[..copy_len].copy_from_slice(&input_bytes[..copy_len]);
-            addr_bytes.to_vec()
-        };
-
-        let mut address_array = [0u8; 32];
-        if address_bytes.len() >= 32 {
-            address_array.copy_from_slice(&address_bytes[..32]);
-        } else {
-            address_array[..address_bytes.len()].copy_from_slice(&address_bytes);
-        }
-
-        self.economics_transactions
-            .iter()
-            .filter(|tx| tx.to == address_array || tx.from == address_array)
-            .map(|tx| {
-                serde_json::json!({
-                    "id": format!("{:?}", tx.tx_id),
-                    "hash": format!("{:?}", tx.tx_id),
-                    "from": format!("{:?}", tx.from),
-                    "to": format!("{:?}", tx.to),
-                    "amount": tx.amount,
-                    "transaction_type": tx.tx_type,
-                    "timestamp": tx.timestamp,
-                    "block_height": tx.block_height,
-                })
-            })
-            .collect()
+    /// Per-address economics transaction history.
+    ///
+    /// The `economics_transactions` field was an unfinished feature — no writer
+    /// ever populated it — and has been removed from consensus state. This
+    /// endpoint returns empty until economics history is reintroduced as a
+    /// proper event/indexing layer rather than in-struct consensus state.
+    pub fn get_transactions_for_address(&self, _address: &str) -> Vec<serde_json::Value> {
+        Vec::new()
     }
 
     // ===== ECONOMIC INTEGRATION METHODS =====
@@ -5596,7 +5555,25 @@ impl Blockchain {
             chrono::Utc::now().timestamp() as u64,
         );
 
-        self.receipts.insert(tx.hash(), receipt);
+        // Receipts live behind the store (BST-201). They are created after the
+        // block transaction commits, so this is a direct write — best-effort,
+        // since receipts are rebuildable from blocks.
+        match self.store() {
+            Ok(store) => {
+                if let Err(e) = store.put_receipt(&receipt) {
+                    warn!(
+                        "Failed to persist receipt for tx {}: {}",
+                        hex::encode(tx.hash().as_bytes()),
+                        e
+                    );
+                }
+            }
+            Err(e) => warn!(
+                "Cannot persist receipt for tx {}: {}",
+                hex::encode(tx.hash().as_bytes()),
+                e
+            ),
+        }
         debug!(
             "📋 Receipt created for tx {} at block {} (index {})",
             hex::encode(tx.hash().as_bytes()),
@@ -5607,21 +5584,16 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Get transaction receipt by hash
-    pub fn get_receipt(&self, tx_hash: &Hash) -> Option<crate::receipts::TransactionReceipt> {
-        self.receipts.get(tx_hash).cloned()
-    }
-
-    /// Update confirmation counts for all receipts
-    pub fn update_confirmation_counts(&mut self) {
-        for receipt in self.receipts.values_mut() {
-            receipt.update_confirmations(self.height);
-            if receipt.is_finalized()
-                && receipt.status != crate::receipts::TransactionStatus::Finalized
-            {
-                receipt.finalize();
-            }
-        }
+    /// Get a transaction receipt by hash.
+    ///
+    /// `Ok(None)` is a genuine "no such receipt"; an `Err` is a real store
+    /// failure (I/O, deserialization, no store attached) — the two must stay
+    /// distinguishable so callers don't report a 404 for an infrastructure error.
+    pub fn get_receipt(
+        &self,
+        tx_hash: &Hash,
+    ) -> Result<Option<crate::receipts::TransactionReceipt>> {
+        Ok(self.store()?.get_receipt(&tx_hash.as_array())?)
     }
 
     /// Get blocks that have reached finality (12+ confirmations)
@@ -5651,8 +5623,6 @@ impl Blockchain {
     /// Trigger finalization for blocks that have reached 12+ confirmations
     /// Returns number of blocks finalized
     pub async fn finalize_blocks(&mut self) -> Result<u64> {
-        self.update_confirmation_counts();
-
         // Collect finalized block data before modifying self
         let finalized_data: Vec<(u64, usize)> = {
             let finalized = self.get_finalized_blocks(self.finality_depth);
@@ -5666,22 +5636,8 @@ impl Blockchain {
         let mut count = 0u64;
 
         for (block_height, tx_count) in finalized_data {
-            // Collect transaction hashes for this block
-            let tx_hashes: Vec<Hash> = self
-                .blocks
-                .iter()
-                .find(|b| b.header.height == block_height)
-                .map(|b| b.transactions.iter().map(|tx| tx.hash()).collect())
-                .unwrap_or_default();
-
-            // Mark all transactions as finalized
-            for tx_hash in tx_hashes {
-                if let Some(receipt) = self.receipts.get_mut(&tx_hash) {
-                    receipt.status = crate::receipts::TransactionStatus::Finalized;
-                }
-            }
-
-            // Mark block as finalized
+            // Receipt finality is derived on read (TransactionReceipt::
+            // is_finalized) — no per-tx receipt rewrite here.
             self.mark_block_finalized(block_height);
             count += 1;
 
@@ -5747,9 +5703,24 @@ impl Blockchain {
         None
     }
 
-    /// Record a fork point in history for audit trail
+    /// Borrow the backing store, or a typed error if none is attached.
+    ///
+    /// Cold-state datasets (fork audit log, …) live behind `BlockchainStore`;
+    /// this is the single access point. (AD-005: the field stays `Option` for
+    /// now — flipping it non-optional is a 220-site change for a separate pass.)
+    pub fn store(&self) -> crate::storage::StorageResult<&dyn crate::storage::BlockchainStore> {
+        self.store
+            .as_deref()
+            .ok_or(crate::storage::StorageError::NotInitialized)
+    }
+
+    /// Record a fork point in the durable audit log.
+    ///
+    /// Written directly to the store, not via the block batch — a reorg has no
+    /// open block transaction. Recording is best-effort audit data, so a store
+    /// error is logged, not propagated.
     fn record_fork_point(
-        &mut self,
+        &self,
         height: u64,
         original_hash: Hash,
         forked_hash: Hash,
@@ -5766,11 +5737,16 @@ impl Blockchain {
             resolution,
         );
 
-        self.fork_points.insert(height, fork_point);
-        info!(
-            "🍴 Fork recorded at height {}: {:?} -> {:?}",
-            height, original_hash, forked_hash
-        );
+        match self.store() {
+            Ok(store) => match store.put_fork_point(height, &fork_point) {
+                Ok(()) => info!(
+                    "🍴 Fork recorded at height {}: {:?} -> {:?}",
+                    height, original_hash, forked_hash
+                ),
+                Err(e) => warn!("Failed to persist fork point at height {}: {}", height, e),
+            },
+            Err(e) => warn!("Cannot record fork point at height {}: {}", height, e),
+        }
     }
 
     /// Prevent reorg below finalized blocks
@@ -5896,11 +5872,11 @@ impl Blockchain {
         Ok(removed_count as u64)
     }
 
-    /// Get fork history for audit purposes
+    /// Get fork history for audit purposes, ascending by height.
     pub fn get_fork_history(&self) -> Vec<crate::fork_recovery::ForkPoint> {
-        let mut forks: Vec<_> = self.fork_points.values().cloned().collect();
-        forks.sort_by_key(|f| f.height);
-        forks
+        self.store()
+            .and_then(|s| s.iter_fork_points())
+            .unwrap_or_default()
     }
 
     /// Get reorg count (for monitoring)
@@ -6009,6 +5985,20 @@ impl Blockchain {
     pub fn save_utxo_snapshot(&mut self, block_height: u64) -> Result<()> {
         // Clone the current UTXO set
         let snapshot = self.utxo_set.clone();
+
+        // BST-202: a per-height *full* UTXO-set clone does not scale — the
+        // real fix is live-state + an undo journal (see the epic's Future
+        // Work). Until then, retention stays bounded via `prune_utxo_history`;
+        // this warns when an individual snapshot is large enough to matter.
+        const LARGE_SNAPSHOT_UTXOS: usize = 100_000;
+        if snapshot.len() >= LARGE_SNAPSHOT_UTXOS {
+            warn!(
+                "⚠️ Large UTXO snapshot at block {}: {} UTXOs cloned in-memory \
+                 — per-height full snapshots do not scale (BST-202)",
+                block_height,
+                snapshot.len()
+            );
+        }
 
         // Save to snapshots map
         self.utxo_snapshots.insert(block_height, snapshot);
