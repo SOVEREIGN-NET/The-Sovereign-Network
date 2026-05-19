@@ -707,6 +707,46 @@ impl Blockchain {
         // from the loaded blocks so /api/v1/pouw/rewards has the full history.
         blockchain.rebuild_pouw_mint_index();
 
+        // The store's wallet-projection index is non-authoritative and
+        // rebuildable; it can be stale or empty after a wipe. We have just
+        // re-derived the canonical wallet state (`wallet_registry` /
+        // `wallet_blocks`) from full block replay, so re-persist the
+        // projection index from it — `replace_wallet_projections` is
+        // purpose-built for exactly this startup recovery. Without this, a
+        // wiped projection index is never repaired and `get_wallet_projection`
+        // diverges from the replayed truth.
+        {
+            let projections: Vec<([u8; 32], crate::storage::WalletProjectionRecord)> = blockchain
+                .wallet_registry
+                .iter()
+                .filter_map(|(wallet_id_hex, wallet_data)| {
+                    let wallet_id = Self::wallet_id_bytes(wallet_id_hex)?;
+                    let committed_at_height = blockchain
+                        .wallet_blocks
+                        .get(wallet_id_hex)
+                        .copied()
+                        .unwrap_or(0);
+                    Some((
+                        wallet_id,
+                        crate::storage::WalletProjectionRecord {
+                            wallet_data: wallet_data.clone(),
+                            committed_at_height,
+                        },
+                    ))
+                })
+                .collect();
+            match store.replace_wallet_projections(&projections) {
+                Ok(()) => debug!(
+                    "🔁 Rebuilt wallet-projection index from replay ({} entries)",
+                    projections.len()
+                ),
+                Err(e) => warn!(
+                    "⚠️ Failed to rebuild wallet-projection index during load_from_store: {}",
+                    e
+                ),
+            }
+        }
+
         Ok(Some(blockchain))
     }
 
