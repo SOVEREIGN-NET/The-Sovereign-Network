@@ -57,6 +57,13 @@ const TREE_WAL: &str = "wal_block_commit"; // Write-ahead log for crash-safe blo
 /// suffices: present ⇒ a commit may be incomplete, absent ⇒ no commit pending.
 const WAL_PENDING_KEY: &[u8] = b"pending_block_commit";
 
+/// Upper bound on a serialized WAL record. A block-commit post-image is
+/// realistically well under a few MiB; this cap exists purely so a corrupted
+/// or maliciously crafted `wal` tree entry cannot drive an unbounded
+/// allocation when `recover_pending_commit` runs at startup. The same limit
+/// is applied on the write side so the two stay symmetric.
+const MAX_WAL_RECORD_BYTES: u64 = 256 * 1024 * 1024;
+
 /// Sled-based implementation of BlockchainStore
 pub struct SledStore {
     db: Db,
@@ -682,6 +689,44 @@ impl SledStore {
         bincode::deserialize(bytes).map_err(|e| StorageError::Serialization(e.to_string()))
     }
 
+    /// Serialize a WAL record with an explicit byte limit.
+    ///
+    /// The limit is applied symmetrically with [`Self::deserialize_wal`]; both
+    /// use `bincode::DefaultOptions` (whose encoding differs from the bare
+    /// `bincode::serialize`), so WAL records MUST round-trip exclusively
+    /// through this pair.
+    fn serialize_wal<T: serde::Serialize>(value: &T) -> StorageResult<Vec<u8>> {
+        use bincode::Options;
+        bincode::DefaultOptions::new()
+            .with_limit(MAX_WAL_RECORD_BYTES)
+            .serialize(value)
+            .map_err(|e| StorageError::Serialization(e.to_string()))
+    }
+
+    /// Deserialize a WAL record, refusing anything that would read past
+    /// [`MAX_WAL_RECORD_BYTES`].
+    ///
+    /// `recover_pending_commit` runs this at startup against `wal` tree
+    /// contents that are not yet trusted: a corrupted entry could otherwise
+    /// encode enormous length prefixes and drive bincode into an unbounded
+    /// allocation. The explicit `bytes.len()` guard rejects an oversized
+    /// record outright; the `with_limit` config bounds allocation driven by
+    /// internal length prefixes within an otherwise small record.
+    fn deserialize_wal<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> StorageResult<T> {
+        use bincode::Options;
+        if bytes.len() as u64 > MAX_WAL_RECORD_BYTES {
+            return Err(StorageError::CorruptedData(format!(
+                "WAL record is {} bytes, exceeds the {}-byte maximum — refusing to deserialize",
+                bytes.len(),
+                MAX_WAL_RECORD_BYTES,
+            )));
+        }
+        bincode::DefaultOptions::new()
+            .with_limit(MAX_WAL_RECORD_BYTES)
+            .deserialize(bytes)
+            .map_err(|e| StorageError::Serialization(e.to_string()))
+    }
+
     /// Get the current latest height, or None if chain is empty
     fn get_latest_height_internal(&self) -> StorageResult<Option<u64>> {
         match self.meta.get(keys::meta::LATEST_HEIGHT) {
@@ -782,7 +827,7 @@ impl SledStore {
             return Ok(());
         };
 
-        let record: WalRecord = Self::deserialize(&bytes)?;
+        let record: WalRecord = Self::deserialize_wal(&bytes)?;
         tracing::warn!(
             "SledStore: interrupted block commit detected at height {} (hash {}); \
              rolling forward from the write-ahead log",
@@ -833,7 +878,7 @@ impl SledStore {
 
         // Step 1 of commit_block: durably stage the WAL record.
         self.wal
-            .insert(WAL_PENDING_KEY, Self::serialize(&record)?)
+            .insert(WAL_PENDING_KEY, Self::serialize_wal(&record)?)
             .map_err(|e| StorageError::Database(e.to_string()))?;
         self.db
             .flush()
@@ -1887,7 +1932,7 @@ impl BlockchainStore for SledStore {
         // state is therefore never left partially committed.
         let record = batch.to_wal_record(height);
 
-        let record_bytes = Self::serialize(&record)?;
+        let record_bytes = Self::serialize_wal(&record)?;
         self.wal
             .insert(WAL_PENDING_KEY, record_bytes)
             .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -3147,89 +3192,105 @@ mod tests {
     fn test_wal_recovers_interrupted_block_commit() {
         use tempfile::TempDir;
 
-        // `stop_after` 0 → interrupted before any tree; values up the range
-        // cover interruption after each successive tree batch and after all
-        // of them. `write_latest_height` covers both sides of that write —
-        // including the worst case (latest_height set, no tree data applied).
-        for stop_after in 0..=10usize {
-            for write_latest_height in [false, true] {
-                let dir = TempDir::new().unwrap();
-                let scenario = format!(
-                    "stop_after={stop_after}, write_latest_height={write_latest_height}"
+        // Run one interruption scenario end-to-end and return the total
+        // number of per-tree batches in block 1's staged WAL record, so the
+        // caller can iterate exactly the data-dependent set of boundaries
+        // rather than a hard-coded range.
+        let run_scenario = |stop_after: usize, write_latest_height: bool| -> usize {
+            let dir = TempDir::new().unwrap();
+            let scenario =
+                format!("stop_after={stop_after}, write_latest_height={write_latest_height}");
+
+            let block0 = create_test_block(0, Hash::default());
+            let block1 = create_test_block(1, block0.header.block_hash);
+            let addr = Address([0x42; 32]);
+            let account = AccountState::new(addr).with_wallet(WalletState::new(7));
+            let outpoint = OutPoint::new(TxHash([0x99; 32]), 0);
+            let utxo = Utxo::native(555, addr, 1);
+
+            // --- session 1: commit genesis cleanly, then interrupt block 1 ---
+            let total = {
+                let store = SledStore::open(dir.path()).unwrap();
+
+                store.begin_block(0).unwrap();
+                store.append_block(&block0).unwrap();
+                store.commit_block().unwrap();
+
+                // Stage block 1 across several trees, then interrupt the
+                // commit partway with the WAL marker still in place.
+                store.begin_block(1).unwrap();
+                store.append_block(&block1).unwrap();
+                store.put_account(&addr, &account).unwrap();
+                store.put_utxo(&outpoint, &utxo).unwrap();
+                let total = store
+                    .debug_interrupt_commit(stop_after, write_latest_height)
+                    .unwrap();
+                assert!(total >= 4, "block 1 should touch several trees ({scenario})");
+
+                assert!(
+                    store.wal.get(WAL_PENDING_KEY).unwrap().is_some(),
+                    "interrupted commit must leave a WAL marker ({scenario})"
                 );
+                total
+            }; // store dropped — simulates the process dying mid-commit
 
-                let block0 = create_test_block(0, Hash::default());
-                let block1 = create_test_block(1, block0.header.block_hash);
-                let addr = Address([0x42; 32]);
-                let account = AccountState::new(addr).with_wallet(WalletState::new(7));
-                let outpoint = OutPoint::new(TxHash([0x99; 32]), 0);
-                let utxo = Utxo::native(555, addr, 1);
+            // --- session 2: reopening MUST roll the commit forward ---
+            {
+                let store = SledStore::open(dir.path()).unwrap();
 
-                // --- session 1: commit genesis cleanly, then interrupt block 1 ---
-                {
-                    let store = SledStore::open(dir.path()).unwrap();
+                assert_eq!(
+                    store.latest_height().unwrap(),
+                    1,
+                    "recovery must finish block 1 ({scenario})"
+                );
+                let block = store.get_block_by_height(1).unwrap();
+                assert!(block.is_some(), "block 1 must be present after recovery ({scenario})");
+                assert_eq!(block.unwrap().header.height, 1);
 
-                    store.begin_block(0).unwrap();
-                    store.append_block(&block0).unwrap();
-                    store.commit_block().unwrap();
+                let recovered_account = store
+                    .get_account(&addr)
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("account missing after recovery ({scenario})"));
+                assert_eq!(recovered_account.wallet.unwrap().nonce, 7, "{scenario}");
 
-                    // Stage block 1 across several trees, then interrupt the
-                    // commit partway with the WAL marker still in place.
-                    store.begin_block(1).unwrap();
-                    store.append_block(&block1).unwrap();
-                    store.put_account(&addr, &account).unwrap();
-                    store.put_utxo(&outpoint, &utxo).unwrap();
-                    let total = store
-                        .debug_interrupt_commit(stop_after, write_latest_height)
-                        .unwrap();
-                    assert!(total >= 4, "block 1 should touch several trees ({scenario})");
+                let recovered_utxo = store
+                    .get_utxo(&outpoint)
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("utxo missing after recovery ({scenario})"));
+                assert_eq!(recovered_utxo.amount, 555, "{scenario}");
 
-                    assert!(
-                        store.wal.get(WAL_PENDING_KEY).unwrap().is_some(),
-                        "interrupted commit must leave a WAL marker ({scenario})"
-                    );
-                } // store dropped — simulates the process dying mid-commit
+                assert!(
+                    store.wal.get(WAL_PENDING_KEY).unwrap().is_none(),
+                    "WAL marker must be cleared once recovery completes ({scenario})"
+                );
+            }
 
-                // --- session 2: reopening MUST roll the commit forward ---
-                {
-                    let store = SledStore::open(dir.path()).unwrap();
+            // --- session 3: a second reopen is a clean no-op ---
+            {
+                let store = SledStore::open(dir.path()).unwrap();
+                assert_eq!(store.latest_height().unwrap(), 1, "{scenario}");
+                assert!(
+                    store.wal.get(WAL_PENDING_KEY).unwrap().is_none(),
+                    "no recovery should be pending on a clean reopen ({scenario})"
+                );
+            }
 
-                    assert_eq!(
-                        store.latest_height().unwrap(),
-                        1,
-                        "recovery must finish block 1 ({scenario})"
-                    );
-                    let block = store.get_block_by_height(1).unwrap();
-                    assert!(block.is_some(), "block 1 must be present after recovery ({scenario})");
-                    assert_eq!(block.unwrap().header.height, 1);
+            total
+        };
 
-                    let recovered_account = store
-                        .get_account(&addr)
-                        .unwrap()
-                        .unwrap_or_else(|| panic!("account missing after recovery ({scenario})"));
-                    assert_eq!(recovered_account.wallet.unwrap().nonce, 7, "{scenario}");
-
-                    let recovered_utxo = store
-                        .get_utxo(&outpoint)
-                        .unwrap()
-                        .unwrap_or_else(|| panic!("utxo missing after recovery ({scenario})"));
-                    assert_eq!(recovered_utxo.amount, 555, "{scenario}");
-
-                    assert!(
-                        store.wal.get(WAL_PENDING_KEY).unwrap().is_none(),
-                        "WAL marker must be cleared once recovery completes ({scenario})"
-                    );
-                }
-
-                // --- session 3: a second reopen is a clean no-op ---
-                {
-                    let store = SledStore::open(dir.path()).unwrap();
-                    assert_eq!(store.latest_height().unwrap(), 1, "{scenario}");
-                    assert!(
-                        store.wal.get(WAL_PENDING_KEY).unwrap().is_none(),
-                        "no recovery should be pending on a clean reopen ({scenario})"
-                    );
-                }
+        // Probe once to learn how many per-tree batches block 1 actually
+        // produces, then exercise EVERY interruption boundary: `stop_after`
+        // 0 → interrupted before any tree, `total` → after all of them.
+        // Deriving the bound from the data keeps every tree boundary covered
+        // even as the set of trees a commit touches changes.
+        let total_trees = run_scenario(0, false);
+        for stop_after in 0..=total_trees {
+            for write_latest_height in [false, true] {
+                let total = run_scenario(stop_after, write_latest_height);
+                assert_eq!(
+                    total, total_trees,
+                    "per-tree batch count must be deterministic across scenarios"
+                );
             }
         }
     }

@@ -948,6 +948,7 @@ impl Blockchain {
         // Serialize on a large-stack thread — the nested BlockchainStorageV11
         // wrapper chain overflows a default 2 MiB worker/test thread stack.
         let serialized = with_large_stack(move || bincode::serialize(&storage))
+            .map_err(|e| anyhow::anyhow!("Blockchain serialization thread failed: {}", e))?
             .map_err(|e| anyhow::anyhow!("Failed to serialize blockchain: {}", e))?;
 
         let mut file_data = Vec::with_capacity(6 + serialized.len());
@@ -1336,20 +1337,27 @@ impl Blockchain {
 /// worker thread or a Rust test thread and overflow it. Doing the work on a
 /// thread with a generous stack makes this path robust regardless of the
 /// stack size of whichever thread the caller happens to run on.
-fn with_large_stack<T, F>(f: F) -> T
+///
+/// Returns `Err` when the OS refuses to create the thread, or when the worker
+/// panics — both are surfaced to the caller (`save_to_file` / `load_from_file`
+/// return `Result`) instead of crashing the process via `expect`.
+fn with_large_stack<T, F>(f: F) -> Result<T>
 where
     T: Send,
     F: FnOnce() -> T + Send,
 {
     const LARGE_STACK: usize = 32 * 1024 * 1024;
     std::thread::scope(|scope| {
-        std::thread::Builder::new()
+        let handle = std::thread::Builder::new()
             .name("blockchain-serde".to_string())
             .stack_size(LARGE_STACK)
             .spawn_scoped(scope, f)
-            .expect("spawn large-stack (de)serialization thread")
+            .map_err(|e| {
+                anyhow::anyhow!("failed to spawn large-stack (de)serialization thread: {}", e)
+            })?;
+        handle
             .join()
-            .expect("large-stack (de)serialization thread panicked")
+            .map_err(|_| anyhow::anyhow!("large-stack (de)serialization thread panicked"))
     })
 }
 
@@ -1358,7 +1366,11 @@ where
     T: serde::de::DeserializeOwned + Send,
     F: FnOnce(T) -> U,
 {
-    match with_large_stack(|| bincode::deserialize::<T>(data)) {
+    let decoded = with_large_stack(|| bincode::deserialize::<T>(data)).map_err(|e| {
+        error!("❌ {} (de)serialization thread failed: {}", label, e);
+        anyhow::anyhow!("{} (de)serialization thread failed: {}", label, e)
+    })?;
+    match decoded {
         Ok(storage) => Ok(on_success(storage)),
         Err(storage_err) => {
             error!("❌ Failed to deserialize {}: {}", label, storage_err);
