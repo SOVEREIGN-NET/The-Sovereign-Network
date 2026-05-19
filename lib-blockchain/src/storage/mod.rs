@@ -1637,4 +1637,27 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
             "generic table access not supported by this store".to_string(),
         ))
     }
+
+    // =========================================================================
+    // Fork audit log (BST-203)
+    // =========================================================================
+    // Fork points are recorded during reorgs, which are NOT block commits —
+    // there is no open block transaction. So they use direct durable writes,
+    // not the block batch. Audit data, not consensus state.
+
+    /// Durably record a fork point, keyed by height.
+    fn put_fork_point(
+        &self,
+        _height: u64,
+        _fork_point: &crate::fork_recovery::ForkPoint,
+    ) -> StorageResult<()> {
+        Err(StorageError::Database(
+            "fork point persistence not supported by this store".to_string(),
+        ))
+    }
+
+    /// All recorded fork points, ascending by height.
+    fn iter_fork_points(&self) -> StorageResult<Vec<crate::fork_recovery::ForkPoint>> {
+        Ok(Vec::new())
+    }
 }

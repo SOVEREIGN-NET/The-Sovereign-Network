@@ -234,7 +234,6 @@ impl BlockchainV1 {
             contract_states: HashMap::new(),
             contract_state_history: std::collections::BTreeMap::new(),
             utxo_snapshots: std::collections::BTreeMap::new(),
-            fork_points: HashMap::new(),
             reorg_count: 0,
             fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig::default(),
             event_publisher: crate::events::BlockchainEventPublisher::new(),
@@ -485,7 +484,9 @@ impl BlockchainStorageV3 {
             contract_states: bc.contract_states.clone(),
             contract_state_history: bc.contract_state_history.clone(),
             utxo_snapshots: bc.utxo_snapshots.clone(),
-            fork_points: bc.fork_points.clone(),
+            // fork_points removed from Blockchain (now a direct-write store
+            // tree). V3 keeps the field for old .dat reads; new saves: empty.
+            fork_points: HashMap::new(),
             reorg_count: bc.reorg_count,
             fork_recovery_config: bc.fork_recovery_config.clone(),
             ubi_registry: bc.ubi_registry.clone(),
@@ -565,7 +566,6 @@ impl BlockchainStorageV3 {
             contract_states: self.contract_states,
             contract_state_history: self.contract_state_history,
             utxo_snapshots: self.utxo_snapshots,
-            fork_points: self.fork_points,
             reorg_count: self.reorg_count,
             fork_recovery_config: self.fork_recovery_config,
             ubi_registry: self.ubi_registry,

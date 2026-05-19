@@ -48,7 +48,6 @@ impl Blockchain {
             contract_states: HashMap::new(),
             contract_state_history: std::collections::BTreeMap::new(),
             utxo_snapshots: std::collections::BTreeMap::new(),
-            fork_points: HashMap::new(),
             reorg_count: 0,
             fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig::default(),
             event_publisher: crate::events::BlockchainEventPublisher::new(),

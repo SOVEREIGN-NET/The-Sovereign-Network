@@ -263,9 +263,6 @@ pub struct Blockchain {
     /// UTXO set snapshots per block height for state recovery and reorg support
     #[serde(default)]
     pub utxo_snapshots: std::collections::BTreeMap<u64, HashMap<Hash, TransactionOutput>>,
-    /// Fork history for audit trail (height -> ForkPoint)
-    #[serde(default)]
-    pub fork_points: HashMap<u64, crate::fork_recovery::ForkPoint>,
     /// Count of reorganizations for monitoring
     #[serde(default)]
     pub reorg_count: u64,
@@ -5712,9 +5709,24 @@ impl Blockchain {
         None
     }
 
-    /// Record a fork point in history for audit trail
+    /// Borrow the backing store, or a typed error if none is attached.
+    ///
+    /// Cold-state datasets (fork audit log, …) live behind `BlockchainStore`;
+    /// this is the single access point. (AD-005: the field stays `Option` for
+    /// now — flipping it non-optional is a 220-site change for a separate pass.)
+    pub fn store(&self) -> crate::storage::StorageResult<&dyn crate::storage::BlockchainStore> {
+        self.store
+            .as_deref()
+            .ok_or(crate::storage::StorageError::NotInitialized)
+    }
+
+    /// Record a fork point in the durable audit log.
+    ///
+    /// Written directly to the store, not via the block batch — a reorg has no
+    /// open block transaction. Recording is best-effort audit data, so a store
+    /// error is logged, not propagated.
     fn record_fork_point(
-        &mut self,
+        &self,
         height: u64,
         original_hash: Hash,
         forked_hash: Hash,
@@ -5731,11 +5743,16 @@ impl Blockchain {
             resolution,
         );
 
-        self.fork_points.insert(height, fork_point);
-        info!(
-            "🍴 Fork recorded at height {}: {:?} -> {:?}",
-            height, original_hash, forked_hash
-        );
+        match self.store() {
+            Ok(store) => match store.put_fork_point(height, &fork_point) {
+                Ok(()) => info!(
+                    "🍴 Fork recorded at height {}: {:?} -> {:?}",
+                    height, original_hash, forked_hash
+                ),
+                Err(e) => warn!("Failed to persist fork point at height {}: {}", height, e),
+            },
+            Err(e) => warn!("Cannot record fork point at height {}: {}", height, e),
+        }
     }
 
     /// Prevent reorg below finalized blocks
@@ -5861,11 +5878,11 @@ impl Blockchain {
         Ok(removed_count as u64)
     }
 
-    /// Get fork history for audit purposes
+    /// Get fork history for audit purposes, ascending by height.
     pub fn get_fork_history(&self) -> Vec<crate::fork_recovery::ForkPoint> {
-        let mut forks: Vec<_> = self.fork_points.values().cloned().collect();
-        forks.sort_by_key(|f| f.height);
-        forks
+        self.store()
+            .and_then(|s| s.iter_fork_points())
+            .unwrap_or_default()
     }
 
     /// Get reorg count (for monitoring)
