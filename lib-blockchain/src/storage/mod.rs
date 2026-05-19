@@ -39,6 +39,7 @@
 
 pub mod keys;
 pub mod sled_store;
+pub mod table;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -47,6 +48,7 @@ use thiserror::Error;
 
 // Re-export the store implementation
 pub use sled_store::SledStore;
+pub use table::{Table, TableAccess};
 
 // Import ALL canonical types from lib-types
 // These are the authoritative definitions for consensus-critical types
@@ -1591,5 +1593,48 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         _policy: &lib_types::ObserverAdmissionPolicy,
     ) -> StorageResult<()> {
         Ok(())
+    }
+
+    // =========================================================================
+    // Generic Table Access (blockchain-state-tiering epic, BST-101)
+    // =========================================================================
+    // Object-safe byte-level primitives. The typed, generic API is layered on
+    // top by the `TableAccess` extension trait — see `storage::table`. A
+    // dataset declares one `impl Table` instead of a bespoke get/put/delete/
+    // iter method quadruple.
+    //
+    // Default impls error: a store that has not opted into generic table
+    // access does not support it. `SledStore` overrides all three.
+    // =========================================================================
+
+    /// Read a raw value from keyspace `tree`.
+    fn get_raw(&self, _tree: &'static str, _key: &[u8]) -> StorageResult<Option<Vec<u8>>> {
+        Err(StorageError::Database(
+            "generic table access not supported by this store".to_string(),
+        ))
+    }
+
+    /// Stage a raw write (`Some` = insert, `None` = delete) into keyspace
+    /// `tree`. MUST be called within `begin_block`/`commit_block`.
+    fn stage_raw(
+        &self,
+        _tree: &'static str,
+        _key: &[u8],
+        _value: Option<&[u8]>,
+    ) -> StorageResult<()> {
+        Err(StorageError::Database(
+            "generic table access not supported by this store".to_string(),
+        ))
+    }
+
+    /// Iterate every `(key, value)` pair in keyspace `tree`.
+    #[allow(clippy::type_complexity)]
+    fn iter_raw(
+        &self,
+        _tree: &'static str,
+    ) -> StorageResult<Box<dyn Iterator<Item = StorageResult<(Vec<u8>, Vec<u8>)>> + '_>> {
+        Err(StorageError::Database(
+            "generic table access not supported by this store".to_string(),
+        ))
     }
 }
