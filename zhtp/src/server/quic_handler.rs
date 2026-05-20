@@ -893,7 +893,7 @@ impl QuicHandler {
             Ok(blockchain_arc) => {
                 let blockchain = blockchain_arc.read().await;
                 blockchain
-                    .identity_registry
+                    .identity_registry()
                     .get(peer_did)
                     .map(|id| id.created_at)
             }

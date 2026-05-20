@@ -332,7 +332,7 @@ impl Web4Handler {
             let blockchain = self.blockchain.read().await;
 
             let owner_wallet_id = blockchain
-                .wallet_registry
+                .wallet_registry()
                 .values()
                 .find(|wallet| {
                     wallet.owner_identity_id.as_ref() == Some(&owner_identity_hash)
@@ -349,7 +349,7 @@ impl Web4Handler {
 
             // Check if SOV token contract exists
             let sov_token = blockchain
-                .token_contracts
+                .token_contracts()
                 .get(&sov_token_id)
                 .ok_or_else(|| {
                     anyhow!(
@@ -546,7 +546,7 @@ impl Web4Handler {
             // Check if domain already exists to choose registration vs update
             let is_update = {
                 let blockchain = self.blockchain.read().await;
-                blockchain.domain_registry.contains_key(&simple_request.domain)
+                blockchain.domain_registry().contains_key(&simple_request.domain)
             };
 
             let (tx_type, memo) = if is_update {
@@ -841,7 +841,7 @@ impl Web4Handler {
 
             let is_update = {
                 let blockchain = self.blockchain.read().await;
-                blockchain.domain_registry.contains_key(&request.domain)
+                blockchain.domain_registry().contains_key(&request.domain)
             };
 
             let (tx_type, memo) = if is_update {
@@ -936,7 +936,7 @@ impl Web4Handler {
 
         // Find owner's Primary wallet
         let owner_wallet = blockchain
-            .wallet_registry
+            .wallet_registry()
             .values()
             .find(|w| {
                 w.owner_identity_id.as_ref() == Some(&owner_hash)
@@ -972,8 +972,7 @@ impl Web4Handler {
         };
 
         let token = blockchain
-            .token_contracts
-            .get_mut(&sov_token_id)
+            .get_token_contract_mut(&sov_token_id)
             .ok_or_else(|| anyhow!("SOV token contract not initialized"))?;
 
         let balance = u128::from(token.balance_of(&sender_key));
@@ -2252,7 +2251,7 @@ mod tests {
         // Set wallet public key deterministically for fee tx signer check.
         let owner_wallet_pk = owner_identity.public_key.dilithium_pk.clone();
         // Test scaffold: direct insert for test setup (not production code)
-        blockchain.wallet_registry.insert(
+        blockchain.insert_wallet_unchecked(
             hex::encode(owner_wallet_id),
             wallet_data(
                 owner_wallet_id,
@@ -2262,7 +2261,7 @@ mod tests {
             ),
         );
         // Test scaffold: direct insert for test setup (not production code)
-        blockchain.wallet_registry.insert(
+        blockchain.insert_wallet_unchecked(
             hex::encode(treasury_wallet_id),
             wallet_data(treasury_wallet_id, "Treasury", None, vec![8u8; 32]),
         );
@@ -2277,8 +2276,7 @@ mod tests {
         };
         sov.mint(&owner_wallet_key, 100).unwrap();
         blockchain
-            .token_contracts
-            .insert(generate_lib_token_id(), sov);
+            .insert_token_contract_unchecked(generate_lib_token_id(), sov);
 
         let blockchain = Arc::new(RwLock::new(blockchain));
         let owner_private = owner_identity
@@ -2363,7 +2361,7 @@ mod tests {
         // Assert balances changed: sender debited, treasury credited
         let bc = blockchain.read().await;
         let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
-        let token = bc.token_contracts.get(&sov_token_id).unwrap();
+        let token = bc.token_contracts().get(&sov_token_id).unwrap();
 
         let sender_key = BcPublicKey {
             dilithium_pk: [0u8; 2592],
@@ -2392,7 +2390,7 @@ mod tests {
         {
             let mut bc = blockchain.write().await;
             let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
-            let token = bc.token_contracts.get_mut(&sov_token_id).unwrap();
+            let token = bc.get_token_contract_mut(&sov_token_id).unwrap();
             let sender_key = BcPublicKey {
                 dilithium_pk: [0u8; 2592],
                 kyber_pk: [0u8; 1568],

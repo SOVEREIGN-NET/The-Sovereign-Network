@@ -341,7 +341,7 @@ fn controlled_nodes_for_validator_id(
     blockchain: &Blockchain,
     validator_id: &IdentityId,
 ) -> Option<Vec<Vec<u8>>> {
-    for (did, identity_data) in blockchain.identity_registry.iter() {
+    for (did, identity_data) in blockchain.identity_registry().iter() {
         let did_hash = did_hash_to_identity_id(did)?;
         if did_hash != *validator_id {
             continue;
@@ -1432,7 +1432,7 @@ impl lib_consensus::types::ConsensusBlockchainProvider for ConsensusBlockchainAd
         drop(slot);
 
         let blockchain = blockchain_arc.read().await;
-        let pending = blockchain.pending_transactions.clone();
+        let pending = blockchain.get_pending_transactions();
         // Capture a nonce-validity snapshot while we hold the read lock.
         // This is the last-line defense: even if a stale tx slipped past
         // mempool admission, it will be filtered out here before the

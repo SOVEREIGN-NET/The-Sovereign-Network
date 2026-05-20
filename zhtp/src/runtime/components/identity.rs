@@ -568,7 +568,7 @@ async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
         // Check if already on blockchain
         {
             let bc = blockchain_arc.read().await;
-            if bc.identity_registry.contains_key(did) {
+            if bc.identity_registry().contains_key(did) {
                 debug!("Identity {} already on blockchain, skipping", id_preview);
                 skipped += 1;
                 continue;
@@ -657,7 +657,7 @@ async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
         info!("⛏️  Mining migration block to persist identities to sled...");
 
         let mut bc = blockchain_arc.write().await;
-        let pending_count = bc.pending_transactions.len();
+        let pending_count = bc.pending_transactions().len();
 
         if pending_count > 0 {
             // Use BlockBuilder to create and mine a block
@@ -673,7 +673,7 @@ async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
             let difficulty = bc.difficulty.clone();
 
             // Create block using BlockBuilder
-            let transactions = bc.pending_transactions.clone();
+            let transactions = bc.get_pending_transactions();
             let block = lib_blockchain::block::BlockBuilder::new(prev_hash, height, difficulty)
                 .transactions(transactions)
                 .build();
@@ -970,7 +970,7 @@ async fn bootstrap_identities_from_dht(
 
                             // Migrate primary wallet if missing
                             if let Some(wid) = primary_wallet_id {
-                                if !bc.wallet_registry.contains_key(wid) {
+                                if !bc.wallet_registry().contains_key(wid) {
                                     let wallet_bytes = hex::decode(wid).unwrap_or_default();
                                     if wallet_bytes.len() >= 32 {
                                         const WELCOME_BONUS: u128 = SOV_WELCOME_BONUS;
@@ -1012,7 +1012,7 @@ async fn bootstrap_identities_from_dht(
 
                             // Migrate UBI wallet if missing
                             if let Some(wid) = ubi_wallet_id {
-                                if !bc.wallet_registry.contains_key(wid) {
+                                if !bc.wallet_registry().contains_key(wid) {
                                     let wallet_bytes = hex::decode(wid).unwrap_or_default();
                                     if wallet_bytes.len() >= 32 {
                                         let wallet_data =
@@ -1045,7 +1045,7 @@ async fn bootstrap_identities_from_dht(
 
                             // Migrate savings wallet if missing
                             if let Some(wid) = savings_wallet_id {
-                                if !bc.wallet_registry.contains_key(wid) {
+                                if !bc.wallet_registry().contains_key(wid) {
                                     let wallet_bytes = hex::decode(wid).unwrap_or_default();
                                     if wallet_bytes.len() >= 32 {
                                         let wallet_data =
@@ -1087,7 +1087,7 @@ async fn bootstrap_identities_from_dht(
                                 ) {
                                     if let Some(ref bc_arc) = blockchain_arc {
                                         let bc = bc_arc.read().await;
-                                        if let Some(wallet_data) = bc.wallet_registry.get(wid) {
+                                        if let Some(wallet_data) = bc.wallet_registry().get(wid) {
                                             if let Some(wallet) =
                                                 identity.wallet_manager.get_wallet_mut(&wallet_id)
                                             {
@@ -1106,7 +1106,7 @@ async fn bootstrap_identities_from_dht(
                                 ) {
                                     if let Some(ref bc_arc) = blockchain_arc {
                                         let bc = bc_arc.read().await;
-                                        if let Some(wallet_data) = bc.wallet_registry.get(wid) {
+                                        if let Some(wallet_data) = bc.wallet_registry().get(wid) {
                                             if let Some(wallet) =
                                                 identity.wallet_manager.get_wallet_mut(&wallet_id)
                                             {
@@ -1124,7 +1124,7 @@ async fn bootstrap_identities_from_dht(
                                 ) {
                                     if let Some(ref bc_arc) = blockchain_arc {
                                         let bc = bc_arc.read().await;
-                                        if let Some(wallet_data) = bc.wallet_registry.get(wid) {
+                                        if let Some(wallet_data) = bc.wallet_registry().get(wid) {
                                             if let Some(wallet) =
                                                 identity.wallet_manager.get_wallet_mut(&wallet_id)
                                             {
@@ -1223,8 +1223,8 @@ async fn backfill_identities_from_blockchain(
     };
 
     let bc = blockchain_arc.read().await;
-    let identity_registry = bc.identity_registry.clone();
-    let wallet_registry = bc.wallet_registry.clone();
+    let identity_registry = bc.identity_registry().clone();
+    let wallet_registry = bc.wallet_registry().clone();
     drop(bc);
 
     if identity_registry.is_empty() {

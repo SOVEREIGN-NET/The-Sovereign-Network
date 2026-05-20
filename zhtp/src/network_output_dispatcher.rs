@@ -224,9 +224,9 @@ impl NetworkOutputHandler for AppNetworkOutputHandler {
             BlockchainRequestType::Mempool => {
                 info!(
                     "Serving mempool ({} pending transactions)",
-                    blockchain_guard.pending_transactions.len()
+                    blockchain_guard.pending_transactions().len()
                 );
-                match bincode::serialize(&blockchain_guard.pending_transactions) {
+                match bincode::serialize(blockchain_guard.pending_transactions()) {
                     Ok(data) => {
                         drop(blockchain_guard);
                         if let Err(e) =

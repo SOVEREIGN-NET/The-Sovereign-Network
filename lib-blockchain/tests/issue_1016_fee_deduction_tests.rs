@@ -77,7 +77,7 @@ fn test_fee_deduction_reduces_sender_balance() {
     let sov_token_id = generate_lib_token_id();
 
     // Register the SOV token
-    blockchain.token_contracts.insert(sov_token_id, sov_token);
+    blockchain.insert_token_contract_unchecked(sov_token_id, sov_token);
 
     // Setup sender with initial balance
     let sender = create_test_pubkey(1);
@@ -85,13 +85,13 @@ fn test_fee_deduction_reduces_sender_balance() {
     let fee: u64 = 100;
 
     // Credit initial balance to sender
-    if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+    if let Some(token) = blockchain.get_token_contract_mut(&sov_token_id) {
         token.set_balance(&sender, initial_balance);
     }
 
     // Verify initial balance
     let balance_before = blockchain
-        .token_contracts
+        .token_contracts()
         .get(&sov_token_id)
         .map(|t| t.balance_of(&sender))
         .unwrap_or(0);
@@ -115,7 +115,7 @@ fn test_fee_deduction_reduces_sender_balance() {
 
     // Verify: sender balance was reduced
     let balance_after = blockchain
-        .token_contracts
+        .token_contracts()
         .get(&sov_token_id)
         .map(|t| t.balance_of(&sender))
         .unwrap_or(0);
@@ -140,7 +140,7 @@ fn test_fee_deduction_skips_system_transactions() {
     let sov_token_id = generate_lib_token_id();
 
     // Register the SOV token
-    blockchain.token_contracts.insert(sov_token_id, sov_token);
+    blockchain.insert_token_contract_unchecked(sov_token_id, sov_token);
 
     // Create a system transaction (empty inputs = UBI distribution)
     let sender = create_test_pubkey(1);
@@ -171,7 +171,7 @@ fn test_fee_deduction_handles_insufficient_balance() {
     let sov_token_id = generate_lib_token_id();
 
     // Register the SOV token
-    blockchain.token_contracts.insert(sov_token_id, sov_token);
+    blockchain.insert_token_contract_unchecked(sov_token_id, sov_token);
 
     // Setup sender with low balance (less than fee)
     let sender = create_test_pubkey(1);
@@ -179,7 +179,7 @@ fn test_fee_deduction_handles_insufficient_balance() {
     let fee: u64 = 100; // More than balance
 
     // Credit low balance to sender
-    if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+    if let Some(token) = blockchain.get_token_contract_mut(&sov_token_id) {
         token.set_balance(&sender, initial_balance);
     }
 
@@ -200,7 +200,7 @@ fn test_fee_deduction_handles_insufficient_balance() {
 
     // Verify: sender balance unchanged
     let balance_after = blockchain
-        .token_contracts
+        .token_contracts()
         .get(&sov_token_id)
         .map(|t| t.balance_of(&sender))
         .unwrap_or(0);
@@ -222,7 +222,7 @@ fn test_fee_deduction_accumulates_multiple_transactions() {
     let sov_token_id = generate_lib_token_id();
 
     // Register the SOV token
-    blockchain.token_contracts.insert(sov_token_id, sov_token);
+    blockchain.insert_token_contract_unchecked(sov_token_id, sov_token);
 
     // Setup multiple senders with balances
     let sender1 = create_test_pubkey(1);
@@ -231,7 +231,7 @@ fn test_fee_deduction_accumulates_multiple_transactions() {
     let initial_balance: u128 = 10_000;
 
     // Credit initial balances
-    if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+    if let Some(token) = blockchain.get_token_contract_mut(&sov_token_id) {
         token.set_balance(&sender1, initial_balance);
         token.set_balance(&sender2, initial_balance);
         token.set_balance(&sender3, initial_balance);
@@ -261,7 +261,7 @@ fn test_fee_deduction_accumulates_multiple_transactions() {
     );
 
     // Verify: each sender's balance was reduced correctly
-    let token = blockchain.token_contracts.get(&sov_token_id).unwrap();
+    let token = blockchain.token_contracts().get(&sov_token_id).unwrap();
     assert_eq!(token.balance_of(&sender1), initial_balance - fee1 as u128);
     assert_eq!(token.balance_of(&sender2), initial_balance - fee2 as u128);
     assert_eq!(token.balance_of(&sender3), initial_balance - fee3 as u128);

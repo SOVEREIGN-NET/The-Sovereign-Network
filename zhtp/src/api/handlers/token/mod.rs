@@ -453,7 +453,7 @@ impl TokenHandler {
             .get_token_contract(&token_id_array)
             .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
-        let created_at = blockchain.contract_blocks.get(&token_id_array).copied();
+        let created_at = blockchain.contract_blocks().get(&token_id_array).copied();
 
         let response = TokenInfoResponse {
             token_id: token_id_hex.to_string(),
@@ -561,7 +561,7 @@ impl TokenHandler {
         let blockchain = self.blockchain.read().await;
 
         let mut tokens: Vec<TokenListItem> = blockchain
-            .token_contracts
+            .token_contracts()
             .iter()
             .map(|(id, token)| TokenListItem {
                 token_id: hex::encode(id),
@@ -649,7 +649,7 @@ impl TokenHandler {
 
         // Check if any existing token uses this symbol (case-insensitive)
         let existing_token = blockchain
-            .token_contracts
+            .token_contracts()
             .values()
             .find(|token| token.symbol.to_uppercase() == symbol_upper);
 
@@ -776,7 +776,7 @@ impl TokenHandler {
             .any(|b| b.get("token_id").and_then(|v| v.as_str()) == Some(&native_token_id_hex));
         if !has_sov {
             let (name, symbol, decimals) = blockchain
-                .token_contracts
+                .token_contracts()
                 .get(&native_token_id)
                 .map(|t| (t.name.clone(), t.symbol.clone(), t.decimals))
                 .unwrap_or_else(|| ("Sovereign".to_string(), "SOV".to_string(), 8));

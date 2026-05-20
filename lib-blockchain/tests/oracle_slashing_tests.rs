@@ -61,8 +61,7 @@ fn slashing_reduces_stake_by_one_percent() {
     let (validator, key_id) = create_validator_info(consensus_key, 1_000_000);
 
     blockchain
-        .validator_registry
-        .insert(hex::encode(key_id), validator);
+        .insert_validator_unchecked(hex::encode(key_id), validator);
 
     // Default config is 1%
     assert_eq!(blockchain.oracle_slashing_config.slash_fraction_bps, 100);
@@ -76,7 +75,7 @@ fn slashing_reduces_stake_by_one_percent() {
 
     // Verify stake reduced
     let v = blockchain
-        .validator_registry
+        .validator_registry()
         .get(&hex::encode(key_id))
         .unwrap();
     assert_eq!(v.stake, 990_000); // 1M - 10K
@@ -91,8 +90,7 @@ fn custom_slash_fraction() {
     let (validator, key_id) = create_validator_info(consensus_key, 1_000_000);
 
     blockchain
-        .validator_registry
-        .insert(hex::encode(key_id), validator);
+        .insert_validator_unchecked(hex::encode(key_id), validator);
 
     // Use 5% slash fraction
     blockchain.oracle_slashing_config = OracleSlashingConfig::with_slash_fraction(500);
@@ -103,7 +101,7 @@ fn custom_slash_fraction() {
     assert_eq!(slashed, 50_000);
 
     let v = blockchain
-        .validator_registry
+        .validator_registry()
         .get(&hex::encode(key_id))
         .unwrap();
     assert_eq!(v.stake, 950_000);
@@ -118,8 +116,7 @@ fn slashing_records_event() {
     let (validator, key_id) = create_validator_info(consensus_key, 500_000);
 
     blockchain
-        .validator_registry
-        .insert(hex::encode(key_id), validator);
+        .insert_validator_unchecked(hex::encode(key_id), validator);
 
     blockchain.slash_oracle_validator(key_id, OracleSlashReason::ConflictingAttestation, 42);
 
@@ -144,8 +141,7 @@ fn slashing_bans_validator() {
     let (validator, key_id) = create_validator_info(consensus_key, 100_000);
 
     blockchain
-        .validator_registry
-        .insert(hex::encode(key_id), validator);
+        .insert_validator_unchecked(hex::encode(key_id), validator);
 
     // Initially not banned
     assert!(!blockchain.oracle_banned_validators.contains(&key_id));
@@ -165,8 +161,7 @@ fn slashing_removes_from_committee() {
     let (validator, key_id) = create_validator_info(consensus_key, 100_000);
 
     blockchain
-        .validator_registry
-        .insert(hex::encode(key_id), validator);
+        .insert_validator_unchecked(hex::encode(key_id), validator);
 
     // Setup committee with validator
     blockchain.oracle_state = OracleState::default();
@@ -211,8 +206,7 @@ fn slashing_events_survive_restart() {
     let (validator, key_id) = create_validator_info(consensus_key, 100_000);
 
     blockchain
-        .validator_registry
-        .insert(hex::encode(key_id), validator);
+        .insert_validator_unchecked(hex::encode(key_id), validator);
 
     blockchain.slash_oracle_validator(key_id, OracleSlashReason::ConflictingAttestation, 100);
 
@@ -262,8 +256,7 @@ fn slashing_zero_stake() {
     let (validator, key_id) = create_validator_info(consensus_key, 0);
 
     blockchain
-        .validator_registry
-        .insert(hex::encode(key_id), validator);
+        .insert_validator_unchecked(hex::encode(key_id), validator);
 
     let slashed = blockchain.slash_oracle_validator(key_id, OracleSlashReason::WrongEpoch, 100);
 
@@ -289,11 +282,9 @@ fn multiple_slashes_recorded() {
     let (validator2, key_id2) = create_validator_info(consensus_key2, 200_000);
 
     blockchain
-        .validator_registry
-        .insert(hex::encode(key_id1), validator1);
+        .insert_validator_unchecked(hex::encode(key_id1), validator1);
     blockchain
-        .validator_registry
-        .insert(hex::encode(key_id2), validator2);
+        .insert_validator_unchecked(hex::encode(key_id2), validator2);
 
     // Slash both
     blockchain.slash_oracle_validator(key_id1, OracleSlashReason::ConflictingAttestation, 100);

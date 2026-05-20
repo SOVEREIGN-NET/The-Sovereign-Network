@@ -35,11 +35,11 @@ async fn resolve_recipient_did(requester_key_id: &str) -> Option<String> {
     let blockchain = blockchain_arc.read().await;
 
     let key_id_did = format!("did:zhtp:{}", requester_key_id);
-    if blockchain.identity_registry.contains_key(&key_id_did) {
+    if blockchain.identity_registry().contains_key(&key_id_did) {
         return Some(key_id_did);
     }
 
-    for (did, id) in blockchain.identity_registry.iter() {
+    for (did, id) in blockchain.identity_registry().iter() {
         if id.public_key.len() < 32 {
             continue;
         }

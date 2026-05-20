@@ -431,7 +431,7 @@ impl OracleHandler {
                         "current_epoch": current_epoch,
                     })
                 } else if let Some(token) =
-                    bc.token_contracts.values().find(|t| t.symbol == cbe_symbol)
+                    bc.token_contracts().values().find(|t| t.symbol == cbe_symbol)
                 {
                     // CBE exists as a standard token contract without a bonding curve price.
                     json!({
@@ -624,7 +624,7 @@ impl OracleHandler {
                         "can_graduate": stats.can_graduate,
                     })
                 } else if let Some(token) =
-                    bc.token_contracts.values().find(|t| t.symbol == cbe_symbol)
+                    bc.token_contracts().values().find(|t| t.symbol == cbe_symbol)
                 {
                     // CBE exists as a standard token contract; no bonding curve variation data.
                     json!({

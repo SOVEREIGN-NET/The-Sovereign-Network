@@ -1278,7 +1278,7 @@ mod tests {
         // --- Apply a block to execute the pending transaction ---
         let pending_tx = {
             let bc = bc_arc.read().await;
-            bc.pending_transactions
+            bc.pending_transactions()
                 .first()
                 .cloned()
                 .expect("pending tx must exist after register")

@@ -81,8 +81,7 @@ fn register_validator_identity(blockchain: &mut Blockchain, id: &str) -> Result<
         100,
     );
     blockchain
-        .identity_registry
-        .insert(id.to_string(), identity_data);
+        .insert_identity_unchecked(id.to_string(), identity_data);
     Ok(())
 }
 
@@ -117,11 +116,11 @@ async fn test_blockchain_creation() -> Result<()> {
     // Check initial state
     assert_eq!(blockchain.height, 0);
     assert_eq!(blockchain.blocks.len(), 1); // Genesis block
-    assert!(blockchain.utxo_set.is_empty());
-    assert!(blockchain.nullifier_set.is_empty());
-    assert!(blockchain.pending_transactions.is_empty());
+    assert!(blockchain.utxo_set().is_empty());
+    assert!(blockchain.nullifier_set().is_empty());
+    assert!(blockchain.pending_transactions().is_empty());
     // identity_registry may be non-empty if genesis.toml pre-seeds identities
-    // assert!(blockchain.identity_registry.is_empty());
+    // assert!(blockchain.identity_registry().is_empty());
 
     // Check genesis block
     let genesis = blockchain.latest_block().unwrap();
@@ -167,11 +166,9 @@ async fn test_identity_registration() -> Result<()> {
 
     // Register the identity directly in registry (bypass transaction validation for test)
     blockchain
-        .identity_registry
-        .insert(identity_data.did.clone(), identity_data.clone());
+        .insert_identity_unchecked(identity_data.did.clone(), identity_data.clone());
     blockchain
-        .identity_blocks
-        .insert(identity_data.did.clone(), blockchain.height + 1);
+        .set_identity_block_height_unchecked(identity_data.did.clone(), blockchain.height + 1);
 
     // Verify registration
     assert!(blockchain.identity_exists("did:zhtp:test123"));
@@ -200,11 +197,9 @@ async fn test_identity_update() -> Result<()> {
     );
 
     blockchain
-        .identity_registry
-        .insert(original_data.did.clone(), original_data);
+        .insert_identity_unchecked(original_data.did.clone(), original_data);
     blockchain
-        .identity_blocks
-        .insert("did:zhtp:update_test".to_string(), blockchain.height);
+        .set_identity_block_height_unchecked("did:zhtp:update_test".to_string(), blockchain.height);
 
     // Update the identity
     let updated_data = IdentityTransactionData::new(
@@ -220,8 +215,7 @@ async fn test_identity_update() -> Result<()> {
 
     // Update directly for test
     blockchain
-        .identity_registry
-        .insert(updated_data.did.clone(), updated_data);
+        .insert_identity_unchecked(updated_data.did.clone(), updated_data);
 
     // Verify update
     let updated_identity = blockchain.get_identity("did:zhtp:update_test").unwrap();
@@ -248,19 +242,16 @@ async fn test_identity_revocation() -> Result<()> {
     );
 
     blockchain
-        .identity_registry
-        .insert(identity_data.did.clone(), identity_data);
+        .insert_identity_unchecked(identity_data.did.clone(), identity_data);
     blockchain
-        .identity_blocks
-        .insert("did:zhtp:revoke_test".to_string(), blockchain.height);
+        .set_identity_block_height_unchecked("did:zhtp:revoke_test".to_string(), blockchain.height);
     assert!(blockchain.identity_exists("did:zhtp:revoke_test"));
 
     // Revoke the identity directly for test
-    if let Some(mut identity_data) = blockchain.identity_registry.remove("did:zhtp:revoke_test") {
+    if let Some(mut identity_data) = blockchain.remove_identity_unchecked("did:zhtp:revoke_test") {
         identity_data.identity_type = "revoked".to_string();
         blockchain
-            .identity_registry
-            .insert("did:zhtp:revoke_test_revoked".to_string(), identity_data);
+            .insert_identity_unchecked("did:zhtp:revoke_test_revoked".to_string(), identity_data);
     }
 
     // Verify revocation
@@ -318,12 +309,12 @@ async fn test_pending_transactions() -> Result<()> {
     let transaction = create_test_transaction("pending test")?;
 
     // Add to pending pool - this will fail validation, so let's bypass it
-    blockchain.pending_transactions.push(transaction.clone());
-    assert_eq!(blockchain.pending_transactions.len(), 1);
+    blockchain.push_pending_transaction_unchecked(transaction.clone());
+    assert_eq!(blockchain.pending_transactions().len(), 1);
 
     // Remove from pending pool
     blockchain.remove_pending_transactions(&[transaction]);
-    assert_eq!(blockchain.pending_transactions.len(), 0);
+    assert_eq!(blockchain.pending_transactions().len(), 0);
 
     Ok(())
 }
@@ -455,11 +446,9 @@ async fn test_identity_confirmations() -> Result<()> {
                     println!("Transaction validation failed: {:?}", validation_error);
                     // For now, let's bypass the validation issue and manually test confirmations
                     blockchain
-                        .identity_registry
-                        .insert(identity_data.did.clone(), identity_data.clone());
+                        .insert_identity_unchecked(identity_data.did.clone(), identity_data.clone());
                     blockchain
-                        .identity_blocks
-                        .insert(identity_data.did.clone(), blockchain.height + 1);
+                        .set_identity_block_height_unchecked(identity_data.did.clone(), blockchain.height + 1);
 
                     let confirmations =
                         blockchain.get_identity_confirmations("did:zhtp:confirmations_test");
@@ -624,11 +613,9 @@ async fn test_register_validator_added_to_blockchain() -> Result<()> {
     // Directly add validator to registry for testing
     let validator_info = create_test_validator("validator_001", 5000);
     blockchain
-        .validator_registry
-        .insert("validator_001".to_string(), validator_info.clone());
+        .insert_validator_unchecked("validator_001".to_string(), validator_info.clone());
     blockchain
-        .validator_blocks
-        .insert("validator_001".to_string(), blockchain.height + 1);
+        .set_validator_block_height_unchecked("validator_001".to_string(), blockchain.height + 1);
 
     // Verify validator exists and is active
     assert!(
@@ -653,15 +640,15 @@ async fn test_consensus_queries_validator_set() -> Result<()> {
     register_validator_identity(&mut blockchain, "validator_003")?;
 
     // Directly add validators to registry for testing
-    blockchain.validator_registry.insert(
+    blockchain.insert_validator_unchecked(
         "validator_001".to_string(),
         create_test_validator("validator_001", 5000),
     );
-    blockchain.validator_registry.insert(
+    blockchain.insert_validator_unchecked(
         "validator_002".to_string(),
         create_test_validator("validator_002", 3000),
     );
-    blockchain.validator_registry.insert(
+    blockchain.insert_validator_unchecked(
         "validator_003".to_string(),
         create_test_validator("validator_003", 2000),
     );
@@ -695,11 +682,11 @@ async fn test_validator_set_in_sync() -> Result<()> {
     register_validator_identity(&mut blockchain, "validator_003")?;
 
     // Add initial validators
-    blockchain.validator_registry.insert(
+    blockchain.insert_validator_unchecked(
         "validator_001".to_string(),
         create_test_validator("validator_001", 5000),
     );
-    blockchain.validator_registry.insert(
+    blockchain.insert_validator_unchecked(
         "validator_002".to_string(),
         create_test_validator("validator_002", 3000),
     );
@@ -709,7 +696,7 @@ async fn test_validator_set_in_sync() -> Result<()> {
     assert_eq!(initial_set.len(), 2);
 
     // Add a new validator
-    blockchain.validator_registry.insert(
+    blockchain.insert_validator_unchecked(
         "validator_003".to_string(),
         create_test_validator("validator_003", 2000),
     );
@@ -733,7 +720,7 @@ async fn test_validator_stake_update_propagates() -> Result<()> {
     register_validator_identity(&mut blockchain, "validator_001")?;
 
     // Add a validator
-    blockchain.validator_registry.insert(
+    blockchain.insert_validator_unchecked(
         "validator_001".to_string(),
         create_test_validator("validator_001", 5000),
     );
@@ -748,7 +735,7 @@ async fn test_validator_stake_update_propagates() -> Result<()> {
     assert_eq!(initial_stake, 5000);
 
     // Update validator stake directly in registry
-    blockchain.validator_registry.insert(
+    blockchain.insert_validator_unchecked(
         "validator_001".to_string(),
         create_test_validator("validator_001", 7500),
     );
@@ -775,15 +762,15 @@ async fn test_total_validator_stake_calculation() -> Result<()> {
     register_validator_identity(&mut blockchain, "validator_003")?;
 
     // Add validators with specific stakes
-    blockchain.validator_registry.insert(
+    blockchain.insert_validator_unchecked(
         "validator_001".to_string(),
         create_test_validator("validator_001", 5000),
     );
-    blockchain.validator_registry.insert(
+    blockchain.insert_validator_unchecked(
         "validator_002".to_string(),
         create_test_validator("validator_002", 3000),
     );
-    blockchain.validator_registry.insert(
+    blockchain.insert_validator_unchecked(
         "validator_003".to_string(),
         create_test_validator("validator_003", 2000),
     );
@@ -805,7 +792,7 @@ async fn test_is_validator_active_check() -> Result<()> {
     register_validator_identity(&mut blockchain, "validator_001")?;
 
     // Add a validator
-    blockchain.validator_registry.insert(
+    blockchain.insert_validator_unchecked(
         "validator_001".to_string(),
         create_test_validator("validator_001", 5000),
     );
@@ -834,11 +821,11 @@ async fn test_sync_validator_set_to_consensus() -> Result<()> {
     register_validator_identity(&mut blockchain, "validator_002")?;
 
     // Add validators
-    blockchain.validator_registry.insert(
+    blockchain.insert_validator_unchecked(
         "validator_001".to_string(),
         create_test_validator("validator_001", 5000),
     );
-    blockchain.validator_registry.insert(
+    blockchain.insert_validator_unchecked(
         "validator_002".to_string(),
         create_test_validator("validator_002", 3000),
     );

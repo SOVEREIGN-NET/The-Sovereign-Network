@@ -805,7 +805,7 @@ impl DaoHandler {
                 .map_err(|e| anyhow::anyhow!("Invalid oracle committee update payload: {}", e))?;
 
             let active_validator_key_ids: std::collections::HashSet<[u8; 32]> = blockchain
-                .validator_registry
+                .validator_registry()
                 .values()
                 .filter(|v| v.status == "active")
                 .map(|v| {
@@ -1533,7 +1533,7 @@ impl DaoHandler {
             .get_dao_votes_for_proposal(&proposal_id)
             .iter()
             .any(|v| v.voter == voter_identity.did)
-            || blockchain.pending_transactions.iter().any(|tx| {
+            || blockchain.pending_transactions().iter().any(|tx| {
                 tx.transaction_type == lib_blockchain::TransactionType::DaoVote
                     && tx.dao_vote_data()
                         .map(|v| v.proposal_id == proposal_id && v.voter == voter_identity.did)
@@ -3751,7 +3751,7 @@ mod tests {
     }
 
     fn insert_active_validator(blockchain: &mut Blockchain, did: &str, key_id: [u8; 32]) {
-        blockchain.validator_registry.insert(
+        blockchain.insert_validator_unchecked(
             did.to_string(),
             ValidatorInfo {
                 identity_id: did.to_string(),

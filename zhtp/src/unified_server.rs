@@ -2066,8 +2066,8 @@ impl ZhtpUnifiedServer {
         let blockchain = self.blockchain.read().await;
         Ok(serde_json::json!({
             "block_count": blockchain.blocks.len(),
-            "pending_transactions": blockchain.pending_transactions.len(),
-            "identity_count": blockchain.identity_registry.len(),
+            "pending_transactions": blockchain.pending_transactions().len(),
+            "identity_count": blockchain.identity_registry().len(),
             "server_id": self.server_id
         }))
     }
@@ -2112,6 +2112,6 @@ struct BlockchainIdentityRegistryVerifier {
 impl IdentityRegistryVerifier for BlockchainIdentityRegistryVerifier {
     async fn is_registered(&self, did: &str) -> Result<bool> {
         let bc = self.blockchain.read().await;
-        Ok(bc.identity_registry.contains_key(did) || bc.validator_registry.contains_key(did))
+        Ok(bc.identity_registry().contains_key(did) || bc.validator_registry().contains_key(did))
     }
 }

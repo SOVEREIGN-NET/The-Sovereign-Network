@@ -462,7 +462,7 @@ impl Component for ProtocolsComponent {
                         Ok(bc) => bc,
                         Err(_) => return fallback_ips.clone(),
                     };
-                    let ips: Vec<std::net::Ipv4Addr> = bc.validator_registry
+                    let ips: Vec<std::net::Ipv4Addr> = bc.validator_registry()
                         .values()
                         .filter(|v| v.status == "active")
                         .filter_map(|v| {
@@ -485,7 +485,7 @@ impl Component for ProtocolsComponent {
                         Ok(bc) => bc,
                         Err(_) => return vec![],
                     };
-                    bc.gateway_registry
+                    bc.gateway_registry()
                         .values()
                         .filter(|g| g.status == "active")
                         .filter_map(|g| {

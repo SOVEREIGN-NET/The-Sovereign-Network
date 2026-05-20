@@ -262,11 +262,11 @@ impl MessagingHandler {
         let key_id_did = format!("did:zhtp:{}", requester_key_id);
         let recipient_did = {
             let blockchain = self.blockchain.read().await;
-            if blockchain.identity_registry.contains_key(&key_id_did) {
+            if blockchain.identity_registry().contains_key(&key_id_did) {
                 key_id_did.clone()
             } else {
                 blockchain
-                    .identity_registry
+                    .identity_registry()
                     .iter()
                     .find(|(_, id)| {
                         if id.public_key.len() < 32 {

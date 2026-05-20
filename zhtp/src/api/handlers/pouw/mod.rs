@@ -200,7 +200,7 @@ impl PouwHandler {
                     Ok(blockchain_arc) => {
                         let blockchain = blockchain_arc.read().await;
                         blockchain
-                            .identity_registry
+                            .identity_registry()
                             .get(client_did)
                             .map(|id| id.created_at)
                             .unwrap_or(identity.created_at)
@@ -284,12 +284,12 @@ impl PouwHandler {
         let blockchain = blockchain_arc.read().await;
 
         // Fast path: the QUIC identity_id is itself the canonical DID.
-        if blockchain.identity_registry.contains_key(&key_id_did) {
+        if blockchain.identity_registry().contains_key(&key_id_did) {
             return Some(key_id_did);
         }
         // Slow path: scan, matching dilithium-only and dilithium||kyber.
         blockchain
-            .identity_registry
+            .identity_registry()
             .iter()
             .find(|(_, id)| {
                 if id.public_key.len() < 32 {

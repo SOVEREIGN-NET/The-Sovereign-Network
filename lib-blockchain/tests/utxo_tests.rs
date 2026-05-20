@@ -94,7 +94,7 @@ async fn test_utxo_creation_and_tracking() -> Result<()> {
     // Add the block and verify UTXOs were created
     blockchain.add_block(block).await?;
 
-    assert_eq!(blockchain.utxo_set.len(), 2);
+    assert_eq!(blockchain.utxo_set().len(), 2);
 
     // Verify we can calculate output IDs correctly
     let tx_hash = transaction.hash();
@@ -105,7 +105,7 @@ async fn test_utxo_creation_and_tracking() -> Result<()> {
         lib_blockchain::types::hash::blake3_hash(&data)
     };
 
-    assert!(blockchain.utxo_set.contains_key(&expected_output_id_0));
+    assert!(blockchain.utxo_set().contains_key(&expected_output_id_0));
 
     Ok(())
 }
@@ -157,7 +157,7 @@ async fn test_nullifier_tracking() -> Result<()> {
     blockchain.add_block(block).await?;
 
     // Verify nullifiers were tracked
-    assert_eq!(blockchain.nullifier_set.len(), 2);
+    assert_eq!(blockchain.nullifier_set().len(), 2);
     assert!(blockchain.is_nullifier_used(&nullifier1));
     assert!(blockchain.is_nullifier_used(&nullifier2));
 
@@ -293,8 +293,8 @@ async fn test_utxo_spending() -> Result<()> {
     blockchain.add_block(block1).await?;
 
     // Verify UTXO was created
-    assert_eq!(blockchain.utxo_set.len(), 1);
-    let initial_utxo_count = blockchain.utxo_set.len();
+    assert_eq!(blockchain.utxo_set().len(), 1);
+    let initial_utxo_count = blockchain.utxo_set().len();
 
     // Step 2: Spend the UTXO
     let spending_nullifier =
@@ -332,7 +332,7 @@ async fn test_utxo_spending() -> Result<()> {
 
     // Verify UTXO set was updated
     // We still have UTXOs (the new one), and nullifier was added
-    assert!(blockchain.utxo_set.len() >= 1);
+    assert!(blockchain.utxo_set().len() >= 1);
     assert!(blockchain.is_nullifier_used(&spending_nullifier));
 
     Ok(())
@@ -393,10 +393,10 @@ async fn test_utxo_set_consistency() -> Result<()> {
     }
 
     // Verify UTXO set matches expectations
-    assert_eq!(blockchain.utxo_set.len(), expected_utxos.len());
+    assert_eq!(blockchain.utxo_set().len(), expected_utxos.len());
 
     for expected_utxo in &expected_utxos {
-        assert!(blockchain.utxo_set.contains_key(expected_utxo));
+        assert!(blockchain.utxo_set().contains_key(expected_utxo));
     }
 
     Ok(())
@@ -448,7 +448,7 @@ async fn test_large_nullifier_set() -> Result<()> {
     blockchain.add_block(block).await?;
 
     // Verify all nullifiers were tracked
-    assert_eq!(blockchain.nullifier_set.len(), nullifier_count);
+    assert_eq!(blockchain.nullifier_set().len(), nullifier_count);
 
     for expected_nullifier in &expected_nullifiers {
         assert!(blockchain.is_nullifier_used(expected_nullifier));
@@ -533,8 +533,8 @@ async fn test_mixed_transaction_block() -> Result<()> {
     blockchain.add_block(block).await?;
 
     // Verify mixed state updates
-    assert_eq!(blockchain.utxo_set.len(), 2); // Two outputs created
-    assert_eq!(blockchain.nullifier_set.len(), 1); // One nullifier used
+    assert_eq!(blockchain.utxo_set().len(), 2); // Two outputs created
+    assert_eq!(blockchain.nullifier_set().len(), 1); // One nullifier used
 
     Ok(())
 }

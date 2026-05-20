@@ -103,13 +103,13 @@ impl MiningService {
             }
         }
 
-        if blockchain.pending_transactions.is_empty() && ubi_txs.is_empty() {
+        if blockchain.pending_transactions().is_empty() && ubi_txs.is_empty() {
             return Err(anyhow::anyhow!("No pending transactions to mine"));
         }
 
         info!(
             "Mining block with {} pending txs + {} UBI mints",
-            blockchain.pending_transactions.len(),
+            blockchain.pending_transactions().len(),
             ubi_txs.len()
         );
 
@@ -120,7 +120,7 @@ impl MiningService {
         if remaining > 0 {
             transactions_for_block.extend(
                 blockchain
-                    .pending_transactions
+                    .pending_transactions()
                     .iter()
                     .take(remaining)
                     .cloned(),
@@ -185,10 +185,10 @@ impl MiningService {
                 info!("Block Hash: {:?}", new_block.hash());
                 info!("Block Height: {}", blockchain.height);
                 info!("Transactions in Block: {}", new_block.transactions.len());
-                info!("Total UTXOs: {}", blockchain.utxo_set.len());
+                info!("Total UTXOs: {}", blockchain.utxo_set().len());
                 info!(
                     "Identity Registry: {} entries",
-                    blockchain.identity_registry.len()
+                    blockchain.identity_registry().len()
                 );
 
                 if let Err(e) = index_block_in_dht(&new_block).await {
@@ -227,7 +227,7 @@ impl MiningService {
             match crate::runtime::blockchain_provider::get_global_blockchain().await {
                 Ok(shared_blockchain) => {
                     let blockchain_guard = shared_blockchain.read().await;
-                    let pending_count = blockchain_guard.pending_transactions.len();
+                    let pending_count = blockchain_guard.pending_transactions().len();
                     let current_height = blockchain_guard.height;
 
                     info!(
@@ -235,8 +235,8 @@ impl MiningService {
                         block_counter,
                         current_height,
                         pending_count,
-                        blockchain_guard.utxo_set.len(),
-                        blockchain_guard.identity_registry.len()
+                        blockchain_guard.utxo_set().len(),
+                        blockchain_guard.identity_registry().len()
                     );
 
                     // Check if we have pending transactions
@@ -266,7 +266,7 @@ impl MiningService {
 
                                     // Find which user controls this node
                                     for (did_string, identity_data) in
-                                        blockchain_guard.identity_registry.iter()
+                                        blockchain_guard.identity_registry().iter()
                                     {
                                         if identity_data.controlled_nodes.contains(&node_id_hex) {
                                             if let Some(identity_hex) =

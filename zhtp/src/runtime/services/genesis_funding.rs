@@ -56,9 +56,9 @@ impl GenesisFundingService {
 
         // Initialize SOV token contract FIRST so we can credit balances during genesis
         let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
-        if !blockchain.token_contracts.contains_key(&sov_token_id) {
+        if !blockchain.token_contracts().contains_key(&sov_token_id) {
             let sov_token = lib_blockchain::contracts::TokenContract::new_sov_native();
-            blockchain.token_contracts.insert(sov_token_id, sov_token);
+            blockchain.insert_token_contract_unchecked(sov_token_id, sov_token);
             info!(
                 "🪙 SOV token contract initialized: {}",
                 hex::encode(&sov_token_id[..8])
@@ -124,7 +124,12 @@ impl GenesisFundingService {
             return Err(anyhow::anyhow!("No genesis block found in blockchain"));
         }
 
-        let genesis_block = &mut blockchain.blocks[0];
+        // BST/Phase 4a: the `&mut blockchain.blocks[0]` borrow used to coexist
+        // with `blockchain.wallet_registry.insert(...)` via Rust's split-borrow
+        // rules, because both were direct field accesses on disjoint fields.
+        // After privatization, the registry mutations go through methods that
+        // borrow `&mut blockchain` as a whole — so the genesis_block borrow is
+        // deferred to the point of first use (line ~276) to keep the split.
 
         // Add system funding pools (unchanged amounts for network operation)
         genesis_outputs.extend(vec![
@@ -212,17 +217,15 @@ impl GenesisFundingService {
             };
 
             blockchain
-                .wallet_registry
-                .insert(hex::encode(&wallet_id.0), wallet_data);
+                .insert_wallet_unchecked(hex::encode(&wallet_id.0), wallet_data);
             blockchain
-                .wallet_blocks
-                .insert(hex::encode(&wallet_id.0), 0);
+                .set_wallet_block_height_unchecked(hex::encode(&wallet_id.0), 0);
 
             let mut wallet_id_bytes_arr = [0u8; 32];
             wallet_id_bytes_arr.copy_from_slice(&wallet_id.0);
             let recipient_pk =
                 lib_blockchain::contracts::utils::wallet_key_for_sov(wallet_id_bytes_arr);
-            if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+            if let Some(token) = blockchain.get_token_contract_mut(&sov_token_id) {
                 if token.balance_of(&recipient_pk) == 0 {
                     token
                         .mint(&recipient_pk, SOV_WELCOME_BONUS as u128)
@@ -274,7 +277,10 @@ impl GenesisFundingService {
             payload: lib_blockchain::transaction::TransactionPayload::None,
         };
 
-        // Add genesis transaction to the genesis block
+        // Add genesis transaction to the genesis block (see Phase 4a note above
+        // — this borrow is taken now, after the wallet/identity/validator
+        // mutations have all completed).
+        let genesis_block = &mut blockchain.blocks[0];
         genesis_block.transactions.push(genesis_tx.clone());
 
         // Note: Genesis funding is handled via UTXO outputs; SOV mints are issued via
@@ -299,7 +305,7 @@ impl GenesisFundingService {
             let utxo_hash = lib_blockchain::types::hash::blake3_hash(
                 &format!("genesis_funding:{}:{}", hex::encode(genesis_tx_id), index).as_bytes(),
             );
-            blockchain.utxo_set.insert(utxo_hash, output.clone());
+            blockchain.insert_utxo_unchecked(utxo_hash, output.clone());
         }
 
         info!(
@@ -320,7 +326,7 @@ impl GenesisFundingService {
         info!("   - Mining Pool: 300,000 SOV");
         info!("   - Development Pool: 200,000 SOV");
         info!("   - Total validator stake: {} SOV", total_validator_stake);
-        info!("   - Total UTXO entries: {}", blockchain.utxo_set.len());
+        info!("   - Total UTXO entries: {}", blockchain.utxo_set().len());
 
         // Register USER identity on blockchain (not just validators)
         Self::register_user_identity(
@@ -339,9 +345,9 @@ impl GenesisFundingService {
         info!(
             "   Genesis block finalized - Height: {}, UTXOs: {}, Identities: {}, Pending: {}",
             blockchain.height,
-            blockchain.utxo_set.len(),
-            blockchain.identity_registry.len(),
-            blockchain.pending_transactions.len()
+            blockchain.utxo_set().len(),
+            blockchain.identity_registry().len(),
+            blockchain.pending_transactions().len()
         );
 
         Ok(())
@@ -403,16 +409,15 @@ impl GenesisFundingService {
                 kyber_public_key: vec![],
             };
 
-            if blockchain.identity_registry.contains_key(&user_did) {
+            if blockchain.identity_registry().contains_key(&user_did) {
                 warn!(
                     "  User identity {} already present in genesis state",
                     user_did
                 );
             } else {
                 blockchain
-                    .identity_registry
-                    .insert(user_did.clone(), user_identity_data);
-                blockchain.identity_blocks.insert(user_did.clone(), 0);
+                    .insert_identity_unchecked(user_did.clone(), user_identity_data);
+                blockchain.set_identity_block_height_unchecked(user_did.clone(), 0);
                 info!(" Genesis USER identity registered directly in genesis state");
                 info!("   - DID: {}", user_did);
                 info!("   - Identity ID: {}", hex::encode(&user_id.0));
@@ -473,8 +478,8 @@ impl GenesisFundingService {
                 oracle_key_id: None,
             };
 
-            if !blockchain.identity_registry.contains_key(&validator_did) {
-                blockchain.identity_registry.insert(
+            if !blockchain.identity_registry().contains_key(&validator_did) {
+                blockchain.insert_identity_unchecked(
                     validator_did.clone(),
                     IdentityTransactionData {
                         did: validator_did.clone(),
@@ -497,13 +502,12 @@ impl GenesisFundingService {
                         kyber_public_key: Vec::new(),
                     },
                 );
-                blockchain.identity_blocks.insert(validator_did.clone(), 0);
+                blockchain.set_identity_block_height_unchecked(validator_did.clone(), 0);
             }
 
             blockchain
-                .validator_registry
-                .insert(validator_did.clone(), validator_info);
-            blockchain.validator_blocks.insert(validator_did.clone(), 0);
+                .insert_validator_unchecked(validator_did.clone(), validator_info);
+            blockchain.set_validator_block_height_unchecked(validator_did.clone(), 0);
             registered_validators += 1;
             info!(
                 " Genesis validator {} registered directly in validator_registry",
@@ -525,11 +529,11 @@ impl GenesisFundingService {
         );
         info!(
             "   - Pending transactions: {}",
-            blockchain.pending_transactions.len()
+            blockchain.pending_transactions().len()
         );
         info!(
             "   - Identities in registry: {}",
-            blockchain.identity_registry.len()
+            blockchain.identity_registry().len()
         );
 
         Ok(())

@@ -12,10 +12,10 @@ mod tests {
 
         // Fresh v2 genesis seeds identity allocations for API/query surfaces
         // (mirrors test_wallet_registry_structure below).
-        assert!(!blockchain.identity_registry.is_empty());
+        assert!(!blockchain.identity_registry().is_empty());
 
         let identity = blockchain
-            .identity_registry
+            .identity_registry()
             .values()
             .next()
             .expect("Expected seeded identity allocation");
@@ -28,10 +28,10 @@ mod tests {
         let blockchain = Blockchain::new().expect("Failed to create blockchain");
 
         // Fresh genesis seeds wallet allocations for API/query surfaces.
-        assert!(!blockchain.wallet_registry.is_empty());
+        assert!(!blockchain.wallet_registry().is_empty());
 
         let wallet = blockchain
-            .wallet_registry
+            .wallet_registry()
             .values()
             .next()
             .expect("Expected seeded wallet allocation");
@@ -113,7 +113,7 @@ mod tests {
         // the fields the API/query layer depends on. Structural check only —
         // actual data querying happens in the API layer.
         let identity = blockchain
-            .identity_registry
+            .identity_registry()
             .values()
             .next()
             .expect("Expected seeded identity allocation");
@@ -136,7 +136,7 @@ mod tests {
         // - created_at
 
         let wallet = blockchain
-            .wallet_registry
+            .wallet_registry()
             .values()
             .next()
             .expect("Expected seeded wallet allocation");

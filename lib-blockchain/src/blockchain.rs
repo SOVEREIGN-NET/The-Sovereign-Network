@@ -146,52 +146,58 @@ pub struct Blockchain {
     pub tx_fee_config_updated_at_height: u64,
     /// Total work done (cumulative difficulty)
     pub total_work: u128,
+    // Phase 4a — Consensus-state registries are pub(crate) so that external
+    // crates must go through the typed accessors (`utxo_set()`,
+    // `identity_registry()`, …) and the wrapper mutators
+    // (`*_unchecked`/`get_*_mut`). lib-blockchain internal code keeps
+    // direct mutable access until Phase 5 routes them through the executor.
+
     /// UTXO set for transaction validation
-    pub utxo_set: HashMap<Hash, TransactionOutput>,
+    pub(crate) utxo_set: HashMap<Hash, TransactionOutput>,
     /// Used nullifiers to prevent double-spending
-    pub nullifier_set: HashSet<Hash>,
+    pub(crate) nullifier_set: HashSet<Hash>,
     /// Pending transactions waiting to be mined
-    pub pending_transactions: Vec<Transaction>,
+    pub(crate) pending_transactions: Vec<Transaction>,
     /// On-chain identity registry (DID -> Identity data)
-    pub identity_registry: HashMap<String, IdentityTransactionData>,
+    pub(crate) identity_registry: HashMap<String, IdentityTransactionData>,
     /// Identity DID to block height mapping for verification
-    pub identity_blocks: HashMap<String, u64>,
+    pub(crate) identity_blocks: HashMap<String, u64>,
     /// On-chain wallet registry (wallet_id -> Wallet data)
-    pub wallet_registry: HashMap<String, crate::transaction::WalletTransactionData>,
+    pub(crate) wallet_registry: HashMap<String, crate::transaction::WalletTransactionData>,
     /// Wallet ID to block height mapping for verification
-    pub wallet_blocks: HashMap<String, u64>,
+    pub(crate) wallet_blocks: HashMap<String, u64>,
     /// Smart contract registry - Token contracts (contract_id -> TokenContract)
     #[serde(default)]
-    pub token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
+    pub(crate) token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
     /// Smart contract registry - Web4 Website contracts (contract_id -> Web4Contract)
     #[serde(default)]
-    pub web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
+    pub(crate) web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
     /// NFT collection registry (collection_id -> NftContract)
     #[serde(default)]
-    pub nft_collections: HashMap<[u8; 32], crate::contracts::nft::NftContract>,
+    pub(crate) nft_collections: HashMap<[u8; 32], crate::contracts::nft::NftContract>,
     /// Authoritative on-chain domain registry (domain name -> record).
     /// Populated from DomainRegistration / DomainUpdate transactions committed to blocks.
     /// This is the canonical source of truth; sled/DHT DomainRegistry is a cache.
     #[serde(default)]
-    pub domain_registry: HashMap<String, crate::transaction::OnChainDomainRecord>,
+    pub(crate) domain_registry: HashMap<String, crate::transaction::OnChainDomainRecord>,
     /// Contract deployment block heights (contract_id -> block_height)
     #[serde(default)]
-    pub contract_blocks: HashMap<[u8; 32], u64>,
+    pub(crate) contract_blocks: HashMap<[u8; 32], u64>,
     /// Indexed DAO registry (dao_id -> entry), updated incrementally per block.
     #[serde(default)]
-    pub dao_registry_index: HashMap<[u8; 32], DaoRegistryIndexEntry>,
+    pub(crate) dao_registry_index: HashMap<[u8; 32], DaoRegistryIndexEntry>,
     /// On-chain validator registry (identity_id -> Validator info)
     #[serde(default)]
-    pub validator_registry: HashMap<String, ValidatorInfo>,
+    pub(crate) validator_registry: HashMap<String, ValidatorInfo>,
     /// Validator registration block heights (identity_id -> block_height)
     #[serde(default)]
-    pub validator_blocks: HashMap<String, u64>,
+    pub(crate) validator_blocks: HashMap<String, u64>,
     /// On-chain gateway registry (identity_id -> Gateway info)
     #[serde(default)]
-    pub gateway_registry: HashMap<String, GatewayInfo>,
+    pub(crate) gateway_registry: HashMap<String, GatewayInfo>,
     /// Gateway registration block heights (identity_id -> block_height)
     #[serde(default)]
-    pub gateway_blocks: HashMap<String, u64>,
+    pub(crate) gateway_blocks: HashMap<String, u64>,
     /// DAO treasury wallet ID (stores collected fees for governance)
     #[serde(default)]
     pub dao_treasury_wallet_id: Option<String>,
@@ -243,7 +249,7 @@ pub struct Blockchain {
     pub finality_depth: u64,
     /// Per-contract state storage (contract_id -> state bytes)
     #[serde(default)]
-    pub contract_states: HashMap<[u8; 32], Vec<u8>>,
+    pub(crate) contract_states: HashMap<[u8; 32], Vec<u8>>,
     /// Treasury Kernel - single authority for SOV and DAO token balance mutations
     /// Custom tokens (without kernel_mint_authority) bypass the kernel
     #[serde(skip)]
@@ -2251,6 +2257,316 @@ impl Blockchain {
     /// Check if a nullifier has been used
     pub fn is_nullifier_used(&self, nullifier: &Hash) -> bool {
         self.nullifier_set.contains(nullifier)
+    }
+
+    // =========================================================================
+    // Phase 4a — Consensus-state registry accessors
+    // =========================================================================
+    // These are the read-only entry points for the consensus-state registries
+    // the P0 finding names (UTXOs, nullifiers, identity/wallet/validator/gateway
+    // registries, token/web4/nft/domain contracts, contract state). External
+    // crates (zhtp, lib-consensus-*, …) MUST go through these accessors —
+    // direct field access from outside lib-blockchain is no longer supported
+    // (fields become `pub(crate)` in a follow-up commit).
+    //
+    // The accessors return immutable references. Mutations go through the
+    // wrapper methods further down (`record_*`, `set_*`, executor writes).
+    // =========================================================================
+
+    /// All unspent transaction outputs, keyed by their hash.
+    pub fn utxo_set(&self) -> &HashMap<Hash, TransactionOutput> {
+        &self.utxo_set
+    }
+
+    /// Number of unspent outputs currently tracked.
+    pub fn utxo_set_len(&self) -> usize {
+        self.utxo_set.len()
+    }
+
+    /// True iff a UTXO with the given hash exists.
+    pub fn has_utxo(&self, hash: &Hash) -> bool {
+        self.utxo_set.contains_key(hash)
+    }
+
+    /// Look up a single UTXO by hash.
+    pub fn get_utxo(&self, hash: &Hash) -> Option<&TransactionOutput> {
+        self.utxo_set.get(hash)
+    }
+
+    /// All used nullifiers (the set is read-only outside the executor; mutation
+    /// only happens during block application).
+    pub fn nullifier_set(&self) -> &HashSet<Hash> {
+        &self.nullifier_set
+    }
+
+    /// On-chain identity registry, keyed by DID string.
+    ///
+    /// Per-DID lookup is `get_identity` / `identity_exists` (defined in
+    /// `blockchain::identity`); this accessor exposes the full registry for
+    /// iteration / metrics.
+    pub fn identity_registry(&self) -> &HashMap<String, IdentityTransactionData> {
+        &self.identity_registry
+    }
+
+    /// Number of identities currently registered.
+    pub fn identity_count(&self) -> usize {
+        self.identity_registry.len()
+    }
+
+    /// Block height at which a DID was registered (committed on-chain).
+    pub fn identity_block_height(&self, did: &str) -> Option<u64> {
+        self.identity_blocks.get(did).copied()
+    }
+
+    /// On-chain wallet registry, keyed by wallet_id (hex string).
+    ///
+    /// Per-wallet lookup is `get_wallet` / `wallet_exists` (defined in
+    /// `blockchain::wallets`).
+    pub fn wallet_registry(&self) -> &HashMap<String, crate::transaction::WalletTransactionData> {
+        &self.wallet_registry
+    }
+
+    /// Number of wallets currently registered.
+    pub fn wallet_count(&self) -> usize {
+        self.wallet_registry.len()
+    }
+
+    /// On-chain validator registry, keyed by identity_id.
+    ///
+    /// Per-validator lookup is `get_validator` / `validator_exists` (defined
+    /// in `blockchain::validators`).
+    pub fn validator_registry(&self) -> &HashMap<String, ValidatorInfo> {
+        &self.validator_registry
+    }
+
+    /// Number of validators currently registered (any status).
+    pub fn validator_count(&self) -> usize {
+        self.validator_registry.len()
+    }
+
+    /// On-chain gateway registry, keyed by identity_id.
+    pub fn gateway_registry(&self) -> &HashMap<String, GatewayInfo> {
+        &self.gateway_registry
+    }
+
+    /// All token contracts (SOV plus any custom tokens), keyed by token_id.
+    ///
+    /// Per-contract lookup with store fallback is `get_token_contract`
+    /// (defined in `blockchain::contracts`).
+    pub fn token_contracts(&self) -> &HashMap<[u8; 32], crate::contracts::TokenContract> {
+        &self.token_contracts
+    }
+
+    /// Number of token contracts.
+    pub fn token_contract_count(&self) -> usize {
+        self.token_contracts.len()
+    }
+
+    /// True iff a token contract with this id exists in the in-memory map.
+    ///
+    /// Does not consult the store fallback that `get_token_contract` uses; this
+    /// is the cheap "is it loaded" check.
+    pub fn has_token_contract(&self, token_id: &[u8; 32]) -> bool {
+        self.token_contracts.contains_key(token_id)
+    }
+
+    /// Web4 site contract registry, keyed by contract_id.
+    pub fn web4_contracts(&self) -> &HashMap<[u8; 32], crate::contracts::web4::Web4Contract> {
+        &self.web4_contracts
+    }
+
+    /// NFT collection registry, keyed by collection_id.
+    pub fn nft_collections(&self) -> &HashMap<[u8; 32], crate::contracts::nft::NftContract> {
+        &self.nft_collections
+    }
+
+    /// Authoritative on-chain domain registry, keyed by domain name.
+    pub fn domain_registry(&self) -> &HashMap<String, crate::transaction::OnChainDomainRecord> {
+        &self.domain_registry
+    }
+
+    /// True iff the given domain name is registered.
+    pub fn has_domain(&self, name: &str) -> bool {
+        self.domain_registry.contains_key(name)
+    }
+
+    /// Per-contract state storage, keyed by contract_id.
+    pub fn contract_states(&self) -> &HashMap<[u8; 32], Vec<u8>> {
+        &self.contract_states
+    }
+
+    /// Pending mempool transactions (read-only borrow).
+    ///
+    /// For an owned snapshot use [`get_pending_transactions`]; for adding a
+    /// transaction use [`add_pending_transaction`].
+    pub fn pending_transactions(&self) -> &[Transaction] {
+        &self.pending_transactions
+    }
+
+    /// Number of transactions currently in the mempool.
+    pub fn pending_transactions_count(&self) -> usize {
+        self.pending_transactions.len()
+    }
+
+    /// Block-height map for identity registrations (DID → block_height).
+    pub fn identity_blocks(&self) -> &HashMap<String, u64> {
+        &self.identity_blocks
+    }
+
+    /// Block-height map for wallet registrations.
+    pub fn wallet_blocks(&self) -> &HashMap<String, u64> {
+        &self.wallet_blocks
+    }
+
+    /// Block-height map for validator registrations.
+    pub fn validator_blocks(&self) -> &HashMap<String, u64> {
+        &self.validator_blocks
+    }
+
+    /// Block-height map for gateway registrations.
+    pub fn gateway_blocks(&self) -> &HashMap<String, u64> {
+        &self.gateway_blocks
+    }
+
+    /// Block-height map for contract deployments.
+    pub fn contract_blocks(&self) -> &HashMap<[u8; 32], u64> {
+        &self.contract_blocks
+    }
+
+    /// Indexed DAO registry, keyed by dao_id.
+    pub fn dao_registry_index(&self) -> &HashMap<[u8; 32], DaoRegistryIndexEntry> {
+        &self.dao_registry_index
+    }
+
+    // =========================================================================
+    // Phase 4a — Consensus-state registry mutators (`_unchecked` family)
+    // =========================================================================
+    // These exist so that genesis bootstrap, API handlers, and other callers
+    // outside lib-blockchain can keep performing direct-registry mutations
+    // they were doing before, but now through explicit named methods rather
+    // than raw field access. The `_unchecked` suffix is a deliberate code
+    // smell — every call site is a candidate for routing through the
+    // executor in Phase 5. New code SHOULD use the transaction APIs
+    // (`register_*`, `add_pending_transaction`, etc.) instead.
+    // =========================================================================
+
+    /// Insert/overwrite a UTXO directly. Used by genesis funding only.
+    pub fn insert_utxo_unchecked(&mut self, hash: Hash, output: TransactionOutput) {
+        self.utxo_set.insert(hash, output);
+    }
+
+    /// Insert/overwrite an identity-registry entry directly. Used by genesis
+    /// funding and a small number of API handlers that pre-existed Phase 4a.
+    pub fn insert_identity_unchecked(
+        &mut self,
+        did: String,
+        data: IdentityTransactionData,
+    ) {
+        self.identity_registry.insert(did, data);
+    }
+
+    /// Mutable borrow of an identity record. Used by attribute-update API
+    /// handlers that mutate an existing identity in-place.
+    pub fn get_identity_mut(
+        &mut self,
+        did: &str,
+    ) -> Option<&mut IdentityTransactionData> {
+        self.identity_registry.get_mut(did)
+    }
+
+    /// Record the block height at which a DID was registered.
+    pub fn set_identity_block_height_unchecked(&mut self, did: String, height: u64) {
+        self.identity_blocks.insert(did, height);
+    }
+
+    /// Insert/overwrite a wallet-registry entry directly. Used by API handlers
+    /// that pre-create wallets (e.g. domain-name registration flow).
+    pub fn insert_wallet_unchecked(
+        &mut self,
+        wallet_id: String,
+        data: crate::transaction::WalletTransactionData,
+    ) {
+        self.wallet_registry.insert(wallet_id, data);
+    }
+
+    /// Insert/overwrite a validator-registry entry directly. Used by DAO API
+    /// validator-admission flow.
+    pub fn insert_validator_unchecked(
+        &mut self,
+        identity_id: String,
+        info: ValidatorInfo,
+    ) {
+        self.validator_registry.insert(identity_id, info);
+    }
+
+    /// Record the block height at which a validator was registered.
+    pub fn set_validator_block_height_unchecked(
+        &mut self,
+        identity_id: String,
+        height: u64,
+    ) {
+        self.validator_blocks.insert(identity_id, height);
+    }
+
+    /// Record the block height at which a wallet was registered.
+    pub fn set_wallet_block_height_unchecked(
+        &mut self,
+        wallet_id: String,
+        height: u64,
+    ) {
+        self.wallet_blocks.insert(wallet_id, height);
+    }
+
+    /// Insert/overwrite a token contract directly. Used by genesis SOV-token
+    /// init paths.
+    pub fn insert_token_contract_unchecked(
+        &mut self,
+        token_id: [u8; 32],
+        contract: crate::contracts::TokenContract,
+    ) {
+        self.token_contracts.insert(token_id, contract);
+    }
+
+    /// Drain the pending-transaction queue, returning the previous contents.
+    /// Used by sync paths that hand the mempool off to a fresh round.
+    pub fn take_pending_transactions(&mut self) -> Vec<Transaction> {
+        std::mem::take(&mut self.pending_transactions)
+    }
+
+    /// Push a transaction onto the mempool directly, bypassing validation.
+    /// Used only by tests that exercise mempool state without going through
+    /// the regular `add_pending_transaction` admission path.
+    pub fn push_pending_transaction_unchecked(&mut self, tx: Transaction) {
+        self.pending_transactions.push(tx);
+    }
+
+    /// Remove an identity record directly, returning it. Used by tests that
+    /// manipulate identity-registry state without going through transactions
+    /// (e.g. simulating revocation).
+    pub fn remove_identity_unchecked(
+        &mut self,
+        did: &str,
+    ) -> Option<IdentityTransactionData> {
+        self.identity_registry.remove(did)
+    }
+
+    /// Mutable borrow of a wallet record. Used by handlers that update wallet
+    /// metadata in place (alias / display name changes).
+    pub fn get_wallet_mut(
+        &mut self,
+        wallet_id: &str,
+    ) -> Option<&mut crate::transaction::WalletTransactionData> {
+        self.wallet_registry.get_mut(wallet_id)
+    }
+
+    /// Wholesale-replace the validator registry. Used by the emergency
+    /// `.dat` restore path that re-injects validators from a known-good
+    /// snapshot. Not for normal operation.
+    pub fn replace_validator_registry_unchecked(
+        &mut self,
+        registry: HashMap<String, ValidatorInfo>,
+    ) {
+        self.validator_registry = registry;
     }
 
     /// Check whether a transaction's nonce is still valid against committed chain state.

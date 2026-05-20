@@ -36,7 +36,7 @@ impl NftHandler {
     async fn handle_list_collections(&self) -> Result<ZhtpResponse> {
         let bc = self.blockchain.read().await;
         let collections: Vec<serde_json::Value> = bc
-            .nft_collections
+            .nft_collections()
             .values()
             .map(|c| {
                 json!({
@@ -67,7 +67,7 @@ impl NftHandler {
         arr.copy_from_slice(&id);
 
         let bc = self.blockchain.read().await;
-        match bc.nft_collections.get(&arr) {
+        match bc.nft_collections().get(&arr) {
             Some(c) => {
                 let tokens: Vec<serde_json::Value> = c
                     .all_tokens()
@@ -118,7 +118,7 @@ impl NftHandler {
         };
 
         let bc = self.blockchain.read().await;
-        match bc.nft_collections.get(&arr) {
+        match bc.nft_collections().get(&arr) {
             Some(c) => {
                 let owner = c.owner_of(token_id);
                 let meta = c.metadata_of(token_id);
@@ -158,7 +158,7 @@ impl NftHandler {
 
         let bc = self.blockchain.read().await;
         let mut owned: Vec<serde_json::Value> = Vec::new();
-        for (col_id, collection) in &bc.nft_collections {
+        for (col_id, collection) in bc.nft_collections() {
             for token_id in collection.tokens_of(&arr) {
                 let meta = collection.metadata_of(token_id);
                 owned.push(json!({

@@ -157,7 +157,7 @@ impl BootstrapService {
 
         // If same height, check if peer has more identities/data
         if peer_tip.height == local_height {
-            let local_identity_count = local_blockchain.identity_registry.len();
+            let local_identity_count = local_blockchain.identity_registry().len();
             drop(local_blockchain); // Release lock before any network I/O
 
             if peer_tip.identity_count > local_identity_count {
@@ -271,7 +271,7 @@ impl BootstrapService {
             peer_label
         );
         info!("  New height: {}", blockchain_guard.height);
-        info!("  Identities: {}", blockchain_guard.identity_registry.len());
+        info!("  Identities: {}", blockchain_guard.identity_registry().len());
 
         Ok(blockchain_guard.clone())
     }

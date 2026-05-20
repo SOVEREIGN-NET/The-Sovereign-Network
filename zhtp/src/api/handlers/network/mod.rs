@@ -927,7 +927,7 @@ impl NetworkHandler {
                         // would never match a real entry in the balances HashMap.
                         let wallet_key_id = w.wallet_id.as_array();
                         let balance = blockchain
-                            .token_contracts
+                            .token_contracts()
                             .get(&sov_token_id)
                             .and_then(|t| t.find_balance_by_key_id(&wallet_key_id))
                             .map(|(_, bal)| bal)
@@ -1128,7 +1128,7 @@ impl NetworkHandler {
         // Build validator entries from on-chain registry, with IP overlay
         let ip_overlay = crate::runtime::validator_ip::get_all_resolved_addresses();
         let validators: Vec<serde_json::Value> = blockchain
-            .validator_registry
+            .validator_registry()
             .iter()
             .filter(|(_, v)| v.status == "active")
             .map(|(did, v)| {
@@ -1155,7 +1155,7 @@ impl NetworkHandler {
 
         // Gateway entries from on-chain registry (populated via GatewayRegistration transactions)
         let gateways: Vec<serde_json::Value> = blockchain
-            .gateway_registry
+            .gateway_registry()
             .values()
             .filter(|g| g.status == "active")
             .map(|g| {

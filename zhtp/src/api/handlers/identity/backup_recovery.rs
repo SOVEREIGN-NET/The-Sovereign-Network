@@ -437,7 +437,7 @@ pub async fn handle_recover_identity(
     let (display_name, username) = {
         if let Ok(blockchain_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
             let blockchain = blockchain_arc.read().await;
-            let dn = blockchain.identity_registry.get(&did).map(|id| id.display_name.clone());
+            let dn = blockchain.identity_registry().get(&did).map(|id| id.display_name.clone());
             let un = blockchain.did_to_username.get(&did).cloned();
             (dn, un)
         } else {
@@ -499,7 +499,7 @@ async fn auto_create_identity_from_seed(
                     // Preserve existing on-chain display_name if available
                     let existing_name = if let Ok(bc_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
                         let bc = bc_arc.read().await;
-                        bc.identity_registry.get(&did).map(|id| id.display_name.clone())
+                        bc.identity_registry().get(&did).map(|id| id.display_name.clone())
                     } else {
                         None
                     };
@@ -630,7 +630,7 @@ async fn migrate_wallets_for_identity(
         let token_id_storage = lib_blockchain::storage::TokenId::new(sov_token_id);
 
         let owned: Vec<_> = blockchain
-            .wallet_registry
+            .wallet_registry()
             .values()
             .filter(|w| {
                 w.owner_identity_id
@@ -792,8 +792,7 @@ async fn create_fallback_wallet(
     match blockchain.add_system_transaction(reg_tx) {
         Ok(_) => {
             blockchain
-                .wallet_registry
-                .insert(wallet_id_hex.clone(), wallet_data);
+                .insert_wallet_unchecked(wallet_id_hex.clone(), wallet_data);
             tracing::info!(
                 "Recovery: created fallback wallet {} ({} SOV)",
                 &wallet_id_hex[..16.min(wallet_id_hex.len())],
@@ -1923,8 +1922,7 @@ pub async fn handle_migrate_identity(
                     } else {
                         // Update in-memory view immediately (the block will make it durable).
                         blockchain
-                            .wallet_registry
-                            .insert(wallet_id_str.clone(), updated);
+                            .insert_wallet_unchecked(wallet_id_str.clone(), updated);
                     }
                 } else {
                     tracing::warn!(
@@ -2591,7 +2589,7 @@ mod tests {
         rewards_key_arr.iter_mut().for_each(|b| *b = b.wrapping_add(1)); // distinct from others
         let rewards_key = rewards_key_arr.to_vec();
         // Test scaffold: direct insert for test setup (not production code)
-        bc.validator_registry.insert(
+        bc.insert_validator_unchecked(
             validator_did.clone(),
             lib_blockchain::ValidatorInfo {
                 identity_id: validator_did,
@@ -2624,7 +2622,7 @@ mod tests {
                 format!("seed_commitment:{}", wallet_id_hex).as_bytes(),
             );
             // Test scaffold: direct insert for test setup (not production code)
-            bc.wallet_registry.insert(
+            bc.insert_wallet_unchecked(
                 wallet_id_hex,
                 lib_blockchain::transaction::WalletTransactionData {
                     wallet_id: wallet_hash,

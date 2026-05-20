@@ -1189,7 +1189,7 @@ impl BlockchainHandler {
 
         let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
         let total_supply = blockchain
-            .token_contracts
+            .token_contracts()
             .get(&sov_token_id)
             .map(|token| token.total_supply)
             .unwrap_or(0);
@@ -2447,20 +2447,20 @@ impl BlockchainHandler {
         if contract_filter == "all" || contract_filter == "token" {
             contracts.extend(
                 blockchain
-                    .token_contracts
+                    .token_contracts()
                     .keys()
                     .map(|id| ContractListItem {
                         contract_id: hex::encode(id),
                         contract_kind: "token".to_string(),
-                        block_height: blockchain.contract_blocks.get(id).copied(),
+                        block_height: blockchain.contract_blocks().get(id).copied(),
                     }),
             );
         }
         if contract_filter == "all" || contract_filter == "web4" {
-            contracts.extend(blockchain.web4_contracts.keys().map(|id| ContractListItem {
+            contracts.extend(blockchain.web4_contracts().keys().map(|id| ContractListItem {
                 contract_id: hex::encode(id),
                 contract_kind: "web4".to_string(),
-                block_height: blockchain.contract_blocks.get(id).copied(),
+                block_height: blockchain.contract_blocks().get(id).copied(),
             }));
         }
 
@@ -2511,7 +2511,7 @@ impl BlockchainHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
-        let block_height = blockchain.contract_blocks.get(&contract_id).copied();
+        let block_height = blockchain.contract_blocks().get(&contract_id).copied();
         let (contract_kind, state_json) =
             if let Some(token) = blockchain.query_token_contract(&contract_id) {
                 let raw_state = blockchain
@@ -2530,7 +2530,7 @@ impl BlockchainHandler {
                         "raw_state_hex": raw_state,
                     }),
                 )
-            } else if let Some(web4) = blockchain.web4_contracts.get(&contract_id) {
+            } else if let Some(web4) = blockchain.web4_contracts().get(&contract_id) {
                 let raw_state = blockchain
                     .get_contract_state(&contract_id)
                     .map(hex::encode)
@@ -2579,7 +2579,7 @@ impl BlockchainHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
-        let block_height = blockchain.contract_blocks.get(&contract_id).copied();
+        let block_height = blockchain.contract_blocks().get(&contract_id).copied();
         let (contract_kind, metadata) =
             if let Some(token) = blockchain.query_token_contract(&contract_id) {
                 (
@@ -2594,7 +2594,7 @@ impl BlockchainHandler {
                         "kernel_only_mode": token.kernel_only_mode,
                     }),
                 )
-            } else if let Some(web4) = blockchain.web4_contracts.get(&contract_id) {
+            } else if let Some(web4) = blockchain.web4_contracts().get(&contract_id) {
                 (
                     "web4".to_string(),
                     serde_json::json!({
@@ -3006,7 +3006,7 @@ impl BlockchainHandler {
         let storage_bytes = headers_count * 200;
 
         // Count UTXOs
-        let utxos_tracked = blockchain.utxo_set.len();
+        let utxos_tracked = blockchain.utxo_set().len();
 
         // Network height is same as current height in this context
         // In a full implementation, this would query other peers
@@ -3186,7 +3186,7 @@ impl BlockchainHandler {
 
         // Collect wallets, optionally filtering by owner_identity_id
         let wallets: Vec<serde_json::Value> = blockchain
-            .wallet_registry
+            .wallet_registry()
             .iter()
             .filter(|(_, wallet)| {
                 if let Some(ref owner_id) = owner_filter {

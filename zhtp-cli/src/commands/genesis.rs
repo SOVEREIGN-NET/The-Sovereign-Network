@@ -71,9 +71,9 @@ fn cmd_export_state(dat_file: Option<PathBuf>, output: PathBuf) -> Result<()> {
     println!(
         "Loaded blockchain: height={}, wallets={}, identities={}, web4={}",
         bc.height,
-        bc.wallet_registry.len(),
-        bc.identity_registry.len(),
-        bc.web4_contracts.len(),
+        bc.wallet_registry().len(),
+        bc.identity_registry().len(),
+        bc.web4_contracts().len(),
     );
 
     let snapshot = lib_blockchain::genesis::GenesisStateSnapshot::from_blockchain(&bc);

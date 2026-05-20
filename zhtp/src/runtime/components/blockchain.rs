@@ -166,7 +166,7 @@ impl BlockchainComponent {
         match crate::runtime::blockchain_provider::get_global_blockchain().await {
             Ok(blockchain_arc) => {
                 let mut blockchain = blockchain_arc.write().await;
-                if let Some(identity_data) = blockchain.identity_registry.get_mut(&user_did) {
+                if let Some(identity_data) = blockchain.get_identity_mut(&user_did) {
                     if !identity_data.controlled_nodes.contains(&node_id_hex) {
                         identity_data.controlled_nodes.push(node_id_hex.clone());
                         info!(
@@ -860,12 +860,12 @@ impl Component for BlockchainComponent {
             metrics.insert("total_blocks".to_string(), blockchain.blocks.len() as f64);
             metrics.insert(
                 "pending_transactions".to_string(),
-                blockchain.pending_transactions.len() as f64,
+                blockchain.pending_transactions().len() as f64,
             );
-            metrics.insert("utxo_count".to_string(), blockchain.utxo_set.len() as f64);
+            metrics.insert("utxo_count".to_string(), blockchain.utxo_set().len() as f64);
             metrics.insert(
                 "identity_count".to_string(),
-                blockchain.identity_registry.len() as f64,
+                blockchain.identity_registry().len() as f64,
             );
             metrics.insert("total_work".to_string(), blockchain.total_work as f64);
 
@@ -885,12 +885,12 @@ impl Component for BlockchainComponent {
             metrics.insert("total_blocks".to_string(), blockchain.blocks.len() as f64);
             metrics.insert(
                 "pending_transactions".to_string(),
-                blockchain.pending_transactions.len() as f64,
+                blockchain.pending_transactions().len() as f64,
             );
-            metrics.insert("utxo_count".to_string(), blockchain.utxo_set.len() as f64);
+            metrics.insert("utxo_count".to_string(), blockchain.utxo_set().len() as f64);
             metrics.insert(
                 "identity_count".to_string(),
-                blockchain.identity_registry.len() as f64,
+                blockchain.identity_registry().len() as f64,
             );
             metrics.insert("total_work".to_string(), blockchain.total_work as f64);
 

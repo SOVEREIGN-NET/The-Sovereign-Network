@@ -128,7 +128,7 @@ impl SharedBlockchainService {
 
                     // Also check pending transactions if not found in blocks
                     if found_tx.is_none() {
-                        for tx in &blockchain.pending_transactions {
+                        for tx in blockchain.pending_transactions() {
                             if format!("{:?}", tx.hash()) == hash {
                                 found_tx = Some(tx.clone());
                                 break;
@@ -146,7 +146,7 @@ impl SharedBlockchainService {
             BlockchainOperation::GetMempool { response_tx } => {
                 let result = {
                     let blockchain = blockchain_arc.read().await;
-                    Ok(blockchain.pending_transactions.clone())
+                    Ok(blockchain.get_pending_transactions())
                 };
                 let _ = response_tx.send(result);
             }
@@ -163,16 +163,15 @@ impl SharedBlockchainService {
                 let result = {
                     let mut blockchain = blockchain_arc.write().await;
                     // Create a simple block with pending transactions
-                    if !blockchain.pending_transactions.is_empty() {
+                    if !blockchain.pending_transactions().is_empty() {
                         info!(
                             "Mining block with {} transactions",
-                            blockchain.pending_transactions.len()
+                            blockchain.pending_transactions().len()
                         );
 
                         // For this implementation, we'll just create a simple block
                         // mining would involve proof of work
-                        let transactions = blockchain.pending_transactions.clone();
-                        blockchain.pending_transactions.clear();
+                        let transactions = blockchain.take_pending_transactions();
 
                         let timestamp = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)

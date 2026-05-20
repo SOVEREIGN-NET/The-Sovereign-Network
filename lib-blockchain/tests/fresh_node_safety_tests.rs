@@ -168,6 +168,7 @@ async fn fresh_node_ignores_forged_state_maps() -> Result<()> {
         bincode::deserialize(&export).expect("legit export deserializes");
 
     // The blocks stay legitimate; only the trusted-on-faith maps are forged.
+    // BlockchainImport (not Blockchain) — direct field access remains.
     import
         .validator_registry
         .insert("attacker_validator".to_string(), attacker_validator());
@@ -189,7 +190,7 @@ async fn fresh_node_ignores_forged_state_maps() -> Result<()> {
 
     // …but the attacker's forged validator must NOT have leaked into state.
     assert!(
-        !node.validator_registry.contains_key("attacker_validator"),
+        !node.validator_registry().contains_key("attacker_validator"),
         "forged validator from the import map must be ignored — state is \
          derived from blocks, not copied from the import"
     );

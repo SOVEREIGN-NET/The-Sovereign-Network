@@ -479,11 +479,9 @@ fn test_full_integration_workflow() -> Result<()> {
             );
             // Manually add to registry for the rest of the test
             blockchain
-                .identity_registry
-                .insert(identity_data.did.clone(), identity_data.clone());
+                .insert_identity_unchecked(identity_data.did.clone(), identity_data.clone());
             blockchain
-                .identity_blocks
-                .insert(identity_data.did.clone(), blockchain.height + 1);
+                .set_identity_block_height_unchecked(identity_data.did.clone(), blockchain.height + 1);
         }
     }
 
@@ -554,7 +552,7 @@ fn test_full_integration_workflow() -> Result<()> {
     assert!(blockchain.identity_exists("did:zhtp:workflow_test"));
     println!(
         "Pending transactions count: {}",
-        blockchain.pending_transactions.len()
+        blockchain.pending_transactions().len()
     );
     // Don't assert exact count since transactions might fail validation in integration tests
 
@@ -563,8 +561,8 @@ fn test_full_integration_workflow() -> Result<()> {
     let deserialized_state = storage_integration::deserialize_blockchain_state(&serialized_state)?;
 
     assert_eq!(
-        deserialized_state.identity_registry.len(),
-        blockchain.identity_registry.len()
+        deserialized_state.identity_registry().len(),
+        blockchain.identity_registry().len()
     );
     println!("Successfully serialized and deserialized blockchain state");
 

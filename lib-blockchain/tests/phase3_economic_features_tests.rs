@@ -19,7 +19,7 @@ mod tests {
         // For now, we verify the blockchain is properly initialized
         assert_eq!(blockchain.get_height(), 0);
         // identity_blocks may be pre-seeded by genesis config
-        assert!(blockchain.identity_blocks.len() >= 0);
+        assert!(blockchain.identity_blocks().len() >= 0);
     }
 
     #[test]
@@ -30,17 +30,16 @@ mod tests {
         // Simulate recording a UBI claim using the identity_blocks map
         let claim_key = "ubi_claim:citizen_001:1";
         blockchain
-            .identity_blocks
-            .insert(claim_key.to_string(), 100);
+            .set_identity_block_height_unchecked(claim_key.to_string(), 100);
 
         // Verify it was recorded
         assert!(
-            blockchain.identity_blocks.contains_key(claim_key),
+            blockchain.identity_blocks().contains_key(claim_key),
             "UBI claim tracking should work"
         );
 
         // Simulate checking for duplicate
-        let duplicate_exists = blockchain.identity_blocks.contains_key(claim_key);
+        let duplicate_exists = blockchain.identity_blocks().contains_key(claim_key);
         assert!(duplicate_exists, "Duplicate claim detection should work");
     }
 
@@ -53,26 +52,24 @@ mod tests {
         let declaration_key_q2 = "profit_declaration:business_001:2026-Q2";
 
         blockchain
-            .identity_blocks
-            .insert(declaration_key_q1.to_string(), 100);
+            .set_identity_block_height_unchecked(declaration_key_q1.to_string(), 100);
         blockchain
-            .identity_blocks
-            .insert(declaration_key_q2.to_string(), 200);
+            .set_identity_block_height_unchecked(declaration_key_q2.to_string(), 200);
 
         // Verify both quarters are tracked
         assert!(
-            blockchain.identity_blocks.contains_key(declaration_key_q1),
+            blockchain.identity_blocks().contains_key(declaration_key_q1),
             "Q1 declaration should be tracked"
         );
         assert!(
-            blockchain.identity_blocks.contains_key(declaration_key_q2),
+            blockchain.identity_blocks().contains_key(declaration_key_q2),
             "Q2 declaration should be tracked"
         );
 
         // Verify both declarations exist (don't check absolute count — genesis pre-seeds)
         assert!(
-            blockchain.identity_blocks.contains_key(declaration_key_q1)
-                && blockchain.identity_blocks.contains_key(declaration_key_q2),
+            blockchain.identity_blocks().contains_key(declaration_key_q1)
+                && blockchain.identity_blocks().contains_key(declaration_key_q2),
             "Both declarations should be tracked"
         );
     }
@@ -139,25 +136,25 @@ mod tests {
         // Simulate registering economic feature activity
         let mut ubi_claims = 0;
         let mut profit_declarations = 0;
-        let baseline = blockchain.identity_blocks.len();
+        let baseline = blockchain.identity_blocks().len();
 
         // Record 5 UBI claims
         for i in 1..=5 {
             let key = format!("ubi_claim:citizen_{}:1", i);
-            blockchain.identity_blocks.insert(key, 100 + i as u64);
+            blockchain.set_identity_block_height_unchecked(key, 100 + i as u64);
             ubi_claims += 1;
         }
 
         // Record 3 profit declarations
         for i in 1..=3 {
             let key = format!("profit_declaration:business_{}:2026-Q1", i);
-            blockchain.identity_blocks.insert(key, 200 + i as u64);
+            blockchain.set_identity_block_height_unchecked(key, 200 + i as u64);
             profit_declarations += 1;
         }
 
         // Verify we added 8 economic transactions
         assert_eq!(
-            blockchain.identity_blocks.len() - baseline,
+            blockchain.identity_blocks().len() - baseline,
             8,
             "Should have added 8 economic transactions"
         );
@@ -169,26 +166,24 @@ mod tests {
 
         // Verify different economic features don't interfere
         blockchain
-            .identity_blocks
-            .insert("ubi_claim:citizen_001:1".to_string(), 100);
+            .set_identity_block_height_unchecked("ubi_claim:citizen_001:1".to_string(), 100);
         blockchain
-            .identity_blocks
-            .insert("profit_declaration:business_001:2026-Q1".to_string(), 200);
+            .set_identity_block_height_unchecked("profit_declaration:business_001:2026-Q1".to_string(), 200);
 
         // Both should exist
         assert!(blockchain
-            .identity_blocks
+            .identity_blocks()
             .contains_key("ubi_claim:citizen_001:1"));
         assert!(blockchain
-            .identity_blocks
+            .identity_blocks()
             .contains_key("profit_declaration:business_001:2026-Q1"));
 
         // Verify isolation - wrong key should not exist
         assert!(!blockchain
-            .identity_blocks
+            .identity_blocks()
             .contains_key("ubi_claim:business_001:1"));
         assert!(!blockchain
-            .identity_blocks
+            .identity_blocks()
             .contains_key("profit_declaration:citizen_001:2026-Q1"));
     }
 
@@ -198,30 +193,27 @@ mod tests {
 
         // Simulate economic features at different block heights
         blockchain
-            .identity_blocks
-            .insert("ubi_claim:citizen_001:1".to_string(), 100);
+            .set_identity_block_height_unchecked("ubi_claim:citizen_001:1".to_string(), 100);
         blockchain
-            .identity_blocks
-            .insert("ubi_claim:citizen_002:1".to_string(), 150);
+            .set_identity_block_height_unchecked("ubi_claim:citizen_002:1".to_string(), 150);
         blockchain
-            .identity_blocks
-            .insert("profit_declaration:business_001:2026-Q1".to_string(), 200);
+            .set_identity_block_height_unchecked("profit_declaration:business_001:2026-Q1".to_string(), 200);
 
         // Verify height tracking
         let citizen_1_height = blockchain
-            .identity_blocks
+            .identity_blocks()
             .get("ubi_claim:citizen_001:1")
             .copied();
         assert_eq!(citizen_1_height, Some(100));
 
         let citizen_2_height = blockchain
-            .identity_blocks
+            .identity_blocks()
             .get("ubi_claim:citizen_002:1")
             .copied();
         assert_eq!(citizen_2_height, Some(150));
 
         let business_height = blockchain
-            .identity_blocks
+            .identity_blocks()
             .get("profit_declaration:business_001:2026-Q1")
             .copied();
         assert_eq!(business_height, Some(200));

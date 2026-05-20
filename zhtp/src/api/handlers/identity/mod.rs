@@ -1147,7 +1147,7 @@ impl IdentityHandler {
         let (chain_display_name, chain_username) = {
             if let Ok(bc_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
                 let bc = bc_arc.read().await;
-                let dn = bc.identity_registry.get(&did).map(|id| id.display_name.clone());
+                let dn = bc.identity_registry().get(&did).map(|id| id.display_name.clone());
                 let un = bc.did_to_username.get(&did).cloned();
                 (dn, un)
             } else {
@@ -1555,7 +1555,7 @@ impl IdentityHandler {
                 .await
                 .map_err(|e| anyhow::anyhow!("Blockchain unavailable: {}", e))?;
             let blockchain = blockchain_arc.read().await;
-            match blockchain.identity_registry.get(&req.did) {
+            match blockchain.identity_registry().get(&req.did) {
                 Some(id) => id.public_key.clone(),
                 None => {
                     return Ok(ZhtpResponse::error(
@@ -1605,13 +1605,13 @@ impl IdentityHandler {
             let mut blockchain = blockchain_arc.write().await;
 
             // Update in-memory immediately (cache warmup)
-            if let Some(id) = blockchain.identity_registry.get_mut(&req.did) {
+            if let Some(id) = blockchain.get_identity_mut(&req.did) {
                 id.kyber_public_key = kyber_pk.clone();
             }
 
             // Submit IdentityUpdate system transaction for block persistence
             let mut identity_data = blockchain
-                .identity_registry
+                .identity_registry()
                 .get(&req.did)
                 .cloned()
                 .unwrap_or_else(|| lib_blockchain::transaction::IdentityTransactionData::new(
@@ -1712,11 +1712,11 @@ impl IdentityHandler {
         let did: String = {
             let blockchain = blockchain_arc.read().await;
             let key_id_did = format!("did:zhtp:{}", requester_key_id);
-            if blockchain.identity_registry.contains_key(&key_id_did) {
+            if blockchain.identity_registry().contains_key(&key_id_did) {
                 key_id_did
             } else {
                 let found = blockchain
-                    .identity_registry
+                    .identity_registry()
                     .iter()
                     .find(|(_, id)| {
                         if id.public_key.len() < 32 {
@@ -1828,7 +1828,7 @@ impl IdentityHandler {
             blockchain
                 .did_to_username
                 .insert(did.clone(), username.clone());
-            if let Some(id) = blockchain.identity_registry.get_mut(&did) {
+            if let Some(id) = blockchain.get_identity_mut(&did) {
                 id.display_name = username.clone();
             }
         }
@@ -2036,7 +2036,7 @@ impl IdentityHandler {
                 let blockchain = blockchain_arc.read().await;
                 let id_hash = lib_blockchain::Hash::from_slice(&identity_id.0);
                 blockchain
-                    .wallet_registry
+                    .wallet_registry()
                     .values()
                     .any(|w| w.owner_identity_id.as_ref() == Some(&id_hash))
             } else {

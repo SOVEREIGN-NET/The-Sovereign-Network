@@ -453,11 +453,11 @@ impl MarketplaceHandler {
 
         info!(
             " Scanning {} UTXOs for wallet pubkey: {}",
-            blockchain.utxo_set.len(),
+            blockchain.utxo_set().len(),
             hex::encode(&wallet_pubkey[..8.min(wallet_pubkey.len())])
         );
 
-        for (utxo_hash, output) in &blockchain.utxo_set {
+        for (utxo_hash, output) in blockchain.utxo_set() {
             // Check if this UTXO belongs to buyer's wallet by comparing public keys
             if output.recipient.as_bytes() == wallet_pubkey {
                 // NOTE: Amount is hidden in Pedersen commitment
@@ -542,7 +542,7 @@ impl MarketplaceHandler {
                 });
 
             let input = lib_blockchain::TransactionInput {
-                previous_output: *utxo_hash, //  CORRECT: Use actual UTXO hash from blockchain.utxo_set
+                previous_output: *utxo_hash, //  CORRECT: Use actual UTXO hash from blockchain.utxo_set()
                 output_index: *output_index,
                 nullifier,
                 zk_proof,

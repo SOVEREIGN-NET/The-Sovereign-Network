@@ -97,9 +97,9 @@ fn main() -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("No committed blocks in source sled"))?;
 
     let identities: Vec<IdentityTransactionData> =
-        bc.identity_registry.values().cloned().collect();
+        bc.identity_registry().values().cloned().collect();
     let wallets: Vec<WalletTransactionData> =
-        bc.wallet_registry.values().cloned().collect();
+        bc.wallet_registry().values().cloned().collect();
 
     println!("  Identities extracted:  {}", identities.len());
     println!("  Wallets extracted:     {}", wallets.len());

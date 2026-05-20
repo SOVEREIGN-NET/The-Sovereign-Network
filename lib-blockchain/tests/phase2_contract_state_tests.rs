@@ -217,7 +217,7 @@ mod tests {
 
         // New blockchain should have empty contract states
         assert_eq!(
-            blockchain.contract_states.len(),
+            blockchain.contract_states().len(),
             0,
             "Should start with empty contract states"
         );

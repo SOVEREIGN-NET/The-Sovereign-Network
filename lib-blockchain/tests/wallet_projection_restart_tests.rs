@@ -97,14 +97,14 @@ fn test_wallet_projection_loaded_state_matches_replay_rebuilt_state() -> Result<
 
     let wallet_id_hex = hex::encode(wallet_id);
     assert_eq!(
-        projection_loaded.wallet_registry.get(&wallet_id_hex),
-        replay_rebuilt.wallet_registry.get(&wallet_id_hex)
+        projection_loaded.wallet_registry().get(&wallet_id_hex),
+        replay_rebuilt.wallet_registry().get(&wallet_id_hex)
     );
     assert_eq!(
-        projection_loaded.wallet_blocks.get(&wallet_id_hex),
-        replay_rebuilt.wallet_blocks.get(&wallet_id_hex)
+        projection_loaded.wallet_blocks().get(&wallet_id_hex),
+        replay_rebuilt.wallet_blocks().get(&wallet_id_hex)
     );
-    assert_eq!(replay_rebuilt.wallet_blocks.get(&wallet_id_hex), Some(&0));
+    assert_eq!(replay_rebuilt.wallet_blocks().get(&wallet_id_hex), Some(&0));
     assert_eq!(store.get_wallet_projection(&wallet_id)?, Some(canonical_record));
 
     Ok(())
@@ -166,8 +166,8 @@ fn test_uncommitted_wallet_projection_update_does_not_leak_after_restart() -> Re
 
     let wallet_id_hex = hex::encode(wallet_id);
     assert_eq!(recovered.height, 0);
-    assert_eq!(recovered.wallet_registry.get(&wallet_id_hex), Some(&wallet));
-    assert_eq!(recovered.wallet_blocks.get(&wallet_id_hex), Some(&0));
+    assert_eq!(recovered.wallet_registry().get(&wallet_id_hex), Some(&wallet));
+    assert_eq!(recovered.wallet_blocks().get(&wallet_id_hex), Some(&0));
     assert_eq!(
         recovered_store.get_wallet_projection(&wallet_id)?,
         Some(committed_record)

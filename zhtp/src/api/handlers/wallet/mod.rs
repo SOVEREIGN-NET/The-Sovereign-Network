@@ -385,7 +385,7 @@ impl WalletHandler {
                     .as_ref()
                     .and_then(|bytes| {
                         blockchain
-                            .token_contracts
+                            .token_contracts()
                             .get(&sov_token_id)
                             .and_then(|token| {
                                 let mut key_id = [0u8; 32];
@@ -532,7 +532,7 @@ impl WalletHandler {
                 let wallet_id_hex = hex::encode(summary.id.0);
                 if let Some(wallet_data) = blockchain.query_wallet(&wallet_id_hex) {
                     if let Some(token) = blockchain
-                        .token_contracts
+                        .token_contracts()
                         .get(&lib_blockchain::contracts::utils::generate_lib_token_id())
                     {
                         let wallet_id_bytes = hex::decode(&wallet_id_hex).ok();
@@ -1599,7 +1599,7 @@ impl WalletHandler {
             let blockchain = blockchain_arc.read().await;
             let did = format!("did:zhtp:{}", owner_hex);
             blockchain
-                .identity_registry
+                .identity_registry()
                 .get(&did)
                 .map(|id| id.public_key.clone())
                 .unwrap_or_else(|| vec![0u8; 2592])
@@ -1683,9 +1683,9 @@ impl WalletHandler {
                 // bridges the gap until block commit. Note: identity_blocks height will
                 // be the current chain height (not the future block height where the tx
                 // lands), but this is acceptable for the handshake check.
-                blockchain.identity_registry.insert(did.clone(), identity_data);
+                blockchain.insert_identity_unchecked(did.clone(), identity_data);
                 let current_height = blockchain.get_height();
-                blockchain.identity_blocks.insert(did.clone(), current_height);
+                blockchain.set_identity_block_height_unchecked(did.clone(), current_height);
                 tracing::info!(
                     "📝 Identity registered: {} (system tx + in-memory)",
                     &did[..40.min(did.len())],
