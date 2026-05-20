@@ -36,6 +36,7 @@ pub mod zkp;
 pub use bearer_auth::BearerAuthMiddleware;
 pub use blockchain::BlockchainHandler;
 pub use cbe::CbeHandler;
+pub use credentials::CredentialsHandler;
 pub use crypto::CryptoHandler;
 pub use dao::DaoHandler;
 pub use dht::DhtHandler;
