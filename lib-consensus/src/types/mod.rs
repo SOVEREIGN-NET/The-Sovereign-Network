@@ -132,8 +132,17 @@ pub struct ConsensusRound {
     pub timed_out: bool,
     /// Locked proposal (if any)
     pub locked_proposal: Option<Hash>,
+    /// Round in which `locked_proposal` was locked (precommit quorum
+    /// observed). Tendermint `lockedRound` — paired with `locked_proposal`
+    /// it governs whether a conflicting proposal may be prevoted. Survives
+    /// round jumps; cleared only on commit / new height.
+    pub locked_round: Option<u32>,
     /// Valid proposal (if any)
     pub valid_proposal: Option<Hash>,
+    /// Round in which `valid_proposal` reached a prevote quorum.
+    /// Tendermint `validRound` — a re-proposing proposer advertises this
+    /// so locked peers can apply the unlock rule.
+    pub valid_round: Option<u32>,
 }
 
 // CONS-201 Scope B: ConsensusProposal / ConsensusVote / ConsensusProof

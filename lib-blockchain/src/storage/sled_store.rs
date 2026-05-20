@@ -50,6 +50,21 @@ const TREE_QUORUM_PROOFS: &str = "quorum_proofs"; // BFT quorum proofs by height
 const TREE_DAO_STAKES: &str = "dao_stakes"; // SOV stakes to sector DAOs: dao_key_id||staker → DaoStakeRecord
 const TREE_OBSERVER_REGISTRY: &str = "observer_registry"; // Observer admission records: did_hash → ObserverAdmissionRecord
 const TREE_META: &str = "meta";
+const TREE_WAL: &str = "wal_block_commit"; // Write-ahead log for crash-safe block commits
+const TREE_FORK_POINTS: &str = "fork_points"; // Fork audit log — direct durable writes
+const TREE_RECEIPTS: &str = "receipts"; // Transaction receipts — direct writes, tx_hash → receipt
+
+/// The single key under which an in-progress block commit's post-image is
+/// staged in the `wal` tree. Only one block commits at a time, so one key
+/// suffices: present ⇒ a commit may be incomplete, absent ⇒ no commit pending.
+const WAL_PENDING_KEY: &[u8] = b"pending_block_commit";
+
+/// Upper bound on a serialized WAL record. A block-commit post-image is
+/// realistically well under a few MiB; this cap exists purely so a corrupted
+/// or maliciously crafted `wal` tree entry cannot drive an unbounded
+/// allocation when `recover_pending_commit` runs at startup. The same limit
+/// is applied on the write side so the two stay symmetric.
+const MAX_WAL_RECORD_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Sled-based implementation of BlockchainStore
 pub struct SledStore {
@@ -82,6 +97,9 @@ pub struct SledStore {
     utxo_merkle_meta: Tree,      // metadata: next_leaf_index, current_root
     utxo_merkle_nodes: Tree,     // level (u32 BE) || node_index (u64 BE) → [u8; 32]
     meta: Tree,
+    wal: Tree,                   // Write-ahead log: durable block-commit post-image
+    fork_points: Tree,           // Fork audit log: direct durable writes (non-batched)
+    receipts: Tree,              // Transaction receipts: tx_hash → TransactionReceipt
 
     // Transaction state
     tx_active: AtomicBool,
@@ -90,67 +108,119 @@ pub struct SledStore {
     tx_batch: Mutex<Option<PendingBatch>>,
 }
 
-/// Buffered changes for atomic commit
+/// One tree's worth of buffered key writes (insert-with-value, or remove).
+///
+/// Mirrors the `insert`/`remove` surface of sled's `Batch` so existing call
+/// sites are unchanged — but unlike sled's opaque `Batch`, the operations can
+/// be inspected and serialized. That is what makes the write-ahead log
+/// possible: the post-image can be staged durably before it is applied.
+#[derive(Default)]
+struct TreeBatch {
+    /// `(key, Some(value) = insert | None = remove)`, in insertion order.
+    ops: Vec<(IVec, Option<IVec>)>,
+}
+
+impl TreeBatch {
+    fn insert<K: Into<IVec>, V: Into<IVec>>(&mut self, key: K, value: V) {
+        self.ops.push((key.into(), Some(value.into())));
+    }
+
+    fn remove<K: Into<IVec>>(&mut self, key: K) {
+        self.ops.push((key.into(), None));
+    }
+
+    fn is_empty(&self) -> bool {
+        self.ops.is_empty()
+    }
+
+    /// Serializable post-image: `(key, op)` pairs as owned byte vectors.
+    fn to_post_image(&self) -> Vec<(Vec<u8>, Option<Vec<u8>>)> {
+        self.ops
+            .iter()
+            .map(|(k, v)| (k.to_vec(), v.as_ref().map(|val| val.to_vec())))
+            .collect()
+    }
+}
+
+/// Apply a serialized post-image of `(key, op)` pairs to a sled `Tree` as one
+/// atomic per-tree batch. Re-applying the same post-image is idempotent (blind
+/// key→value writes), which is what makes WAL roll-forward recovery safe.
+fn apply_tree_post_image(tree: &Tree, ops: &[(Vec<u8>, Option<Vec<u8>>)]) -> StorageResult<()> {
+    let mut batch = Batch::default();
+    for (key, value) in ops {
+        match value {
+            Some(val) => batch.insert(key.as_slice(), val.as_slice()),
+            None => batch.remove(key.as_slice()),
+        }
+    }
+    tree.apply_batch(batch)
+        .map_err(|e| StorageError::Database(e.to_string()))
+}
+
+/// Durable write-ahead record of a block commit's full post-image.
+///
+/// Written atomically to the `wal` tree (and flushed) *before* any per-tree
+/// batch is applied. sled commits each tree's batch atomically but provides no
+/// atomicity *across* trees, so a crash mid-commit can leave a block partially
+/// applied. If that happens, `recover_pending_commit` re-applies this record on
+/// the next open: replaying the recorded key→value post-image is idempotent, so
+/// rolling forward always reaches the fully-committed state. Recovery never
+/// re-executes transactions — that would not be idempotent.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct WalRecord {
+    /// Height of the block being committed.
+    height: u64,
+    /// Hash of the block being committed (diagnostic / cross-check).
+    block_hash: [u8; 32],
+    /// Per-tree post-image: `(tree_name, [(key, Some(value) | None)])`.
+    trees: Vec<(String, Vec<(Vec<u8>, Option<Vec<u8>>)>)>,
+}
+
+/// Buffered changes for one atomic commit.
+///
+/// Per-tree write batches are keyed by tree name in a single map, so adding a
+/// storage tree needs no new struct field, no `new()` initializer, and no
+/// `to_wal_record` line — the WAL path iterates the map generically.
 struct PendingBatch {
-    blocks_by_height: Batch,
-    blocks_by_hash: Batch,
-    utxos: Batch,
-    accounts: Batch,
-    wallets: Batch,
-    token_balances: Batch,
-    token_nonces: Batch, // Nonce for token transfers
-    token_contracts: Batch,
-    token_supply: Batch,     // Total supply tracking
-    contract_code: Batch,    // Contract code storage
-    contract_storage: Batch, // Contract key-value storage
-    identities: Batch,
-    identity_metadata: Batch,
-    identity_by_owner: Batch,
-    bonding_curves: Batch,
-    bonding_curve_symbols: Batch,
-    cbe_accounts: Batch,
-    dao_stakes: Batch,
-    observer_registry: Batch,
-    utxo_merkle_leaves: Batch,
-    utxo_merkle_index: Batch,
-    utxo_merkle_meta: Batch,
-    utxo_merkle_nodes: Batch,
+    /// Tree name → buffered key writes. Only touched trees get an entry.
+    trees: std::collections::BTreeMap<&'static str, TreeBatch>,
+    /// Hash of the block staged via `append_block` (recorded in the WAL).
+    block_hash: Option<[u8; 32]>,
     /// In-transaction cache of outpoints → leaf_index for the current block.
     utxo_merkle_indexed: std::collections::HashMap<[u8; 36], u64>,
     /// In-transaction cache of Merkle internal nodes for path updates.
     utxo_merkle_nodes_cache: std::collections::HashMap<[u8; 12], [u8; 32]>,
-    meta: Batch,
 }
 
 impl PendingBatch {
     fn new() -> Self {
         Self {
-            blocks_by_height: Batch::default(),
-            blocks_by_hash: Batch::default(),
-            utxos: Batch::default(),
-            accounts: Batch::default(),
-            wallets: Batch::default(),
-            token_balances: Batch::default(),
-            token_nonces: Batch::default(),
-            token_contracts: Batch::default(),
-            token_supply: Batch::default(),
-            contract_code: Batch::default(),
-            contract_storage: Batch::default(),
-            identities: Batch::default(),
-            identity_metadata: Batch::default(),
-            identity_by_owner: Batch::default(),
-            bonding_curves: Batch::default(),
-            bonding_curve_symbols: Batch::default(),
-            cbe_accounts: Batch::default(),
-            dao_stakes: Batch::default(),
-            observer_registry: Batch::default(),
-            utxo_merkle_leaves: Batch::default(),
-            utxo_merkle_index: Batch::default(),
-            utxo_merkle_meta: Batch::default(),
-            utxo_merkle_nodes: Batch::default(),
+            trees: std::collections::BTreeMap::new(),
+            block_hash: None,
             utxo_merkle_indexed: std::collections::HashMap::new(),
             utxo_merkle_nodes_cache: std::collections::HashMap::new(),
-            meta: Batch::default(),
+        }
+    }
+
+    /// Buffer for tree `name`, created empty on first use. `name` must be one
+    /// of the canonical `TREE_*` constants (`tree_by_name` maps it back).
+    fn tree(&mut self, name: &'static str) -> &mut TreeBatch {
+        self.trees.entry(name).or_default()
+    }
+
+    /// Build the durable WAL record for committing block `height`.
+    /// Empty per-tree batches are omitted to keep the record compact.
+    fn to_wal_record(&self, height: u64) -> WalRecord {
+        let trees = self
+            .trees
+            .iter()
+            .filter(|(_, b)| !b.is_empty())
+            .map(|(name, b)| (name.to_string(), b.to_post_image()))
+            .collect();
+        WalRecord {
+            height,
+            block_hash: self.block_hash.unwrap_or([0u8; 32]),
+            trees,
         }
     }
 }
@@ -265,8 +335,17 @@ impl SledStore {
         let utxo_merkle_nodes = db
             .open_tree(TREE_UTXO_MERKLE_NODES)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let wal = db
+            .open_tree(TREE_WAL)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let fork_points = db
+            .open_tree(TREE_FORK_POINTS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let receipts = db
+            .open_tree(TREE_RECEIPTS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
 
-        Ok(Self {
+        let store = Self {
             db,
             blocks_by_height,
             blocks_by_hash,
@@ -294,11 +373,21 @@ impl SledStore {
             utxo_merkle_meta,
             utxo_merkle_nodes,
             meta,
+            wal,
+            fork_points,
+            receipts,
             tx_active: AtomicBool::new(false),
             tx_height: AtomicU64::new(0),
             tx_utxo_merkle_next_index: AtomicU64::new(0),
             tx_batch: Mutex::new(None),
-        })
+        };
+
+        // Crash recovery: roll forward any block commit that was interrupted
+        // before it could clear its write-ahead marker. Safe to run on every
+        // open — a no-op when no commit is pending.
+        store.recover_pending_commit()?;
+
+        Ok(store)
     }
 
     /// Flush all pending writes to disk
@@ -359,7 +448,7 @@ impl SledStore {
         let value = Self::serialize(record)?;
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.wallets.insert(wallet_id.as_ref(), value);
+            batch.tree(TREE_WALLETS).insert(wallet_id.as_ref(), value);
         }
 
         Ok(())
@@ -371,7 +460,7 @@ impl SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.wallets.remove(wallet_id.as_ref());
+            batch.tree(TREE_WALLETS).remove(wallet_id.as_ref());
         }
 
         Ok(())
@@ -507,7 +596,7 @@ impl SledStore {
         for level in 0..lib_proofs::transaction::circuit::MERKLE_DEPTH as u32 {
             let key = Self::merkle_node_key(level, current_index);
             batch.utxo_merkle_nodes_cache.insert(key, current_hash);
-            batch.utxo_merkle_nodes.insert(key.as_ref(), current_hash.as_ref());
+            batch.tree(TREE_UTXO_MERKLE_NODES).insert(key.as_ref(), current_hash.as_ref());
 
             let sibling_index = current_index ^ 1;
             let sibling_hash = self.get_merkle_node(batch, level, sibling_index)?;
@@ -523,8 +612,8 @@ impl SledStore {
         let depth = lib_proofs::transaction::circuit::MERKLE_DEPTH as u32;
         let root_key = Self::merkle_node_key(depth, 0);
         batch.utxo_merkle_nodes_cache.insert(root_key, current_hash);
-        batch.utxo_merkle_nodes.insert(root_key.as_ref(), current_hash.as_ref());
-        batch.utxo_merkle_meta.insert(
+        batch.tree(TREE_UTXO_MERKLE_NODES).insert(root_key.as_ref(), current_hash.as_ref());
+        batch.tree(TREE_UTXO_MERKLE_META).insert(
             keys::meta::UTXO_MERKLE_ROOT,
             current_hash.as_ref(),
         );
@@ -550,6 +639,44 @@ impl SledStore {
         bincode::deserialize(bytes).map_err(|e| StorageError::Serialization(e.to_string()))
     }
 
+    /// Serialize a WAL record with an explicit byte limit.
+    ///
+    /// The limit is applied symmetrically with [`Self::deserialize_wal`]; both
+    /// use `bincode::DefaultOptions` (whose encoding differs from the bare
+    /// `bincode::serialize`), so WAL records MUST round-trip exclusively
+    /// through this pair.
+    fn serialize_wal<T: serde::Serialize>(value: &T) -> StorageResult<Vec<u8>> {
+        use bincode::Options;
+        bincode::DefaultOptions::new()
+            .with_limit(MAX_WAL_RECORD_BYTES)
+            .serialize(value)
+            .map_err(|e| StorageError::Serialization(e.to_string()))
+    }
+
+    /// Deserialize a WAL record, refusing anything that would read past
+    /// [`MAX_WAL_RECORD_BYTES`].
+    ///
+    /// `recover_pending_commit` runs this at startup against `wal` tree
+    /// contents that are not yet trusted: a corrupted entry could otherwise
+    /// encode enormous length prefixes and drive bincode into an unbounded
+    /// allocation. The explicit `bytes.len()` guard rejects an oversized
+    /// record outright; the `with_limit` config bounds allocation driven by
+    /// internal length prefixes within an otherwise small record.
+    fn deserialize_wal<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> StorageResult<T> {
+        use bincode::Options;
+        if bytes.len() as u64 > MAX_WAL_RECORD_BYTES {
+            return Err(StorageError::CorruptedData(format!(
+                "WAL record is {} bytes, exceeds the {}-byte maximum — refusing to deserialize",
+                bytes.len(),
+                MAX_WAL_RECORD_BYTES,
+            )));
+        }
+        bincode::DefaultOptions::new()
+            .with_limit(MAX_WAL_RECORD_BYTES)
+            .deserialize(bytes)
+            .map_err(|e| StorageError::Serialization(e.to_string()))
+    }
+
     /// Get the current latest height, or None if chain is empty
     fn get_latest_height_internal(&self) -> StorageResult<Option<u64>> {
         match self.meta.get(keys::meta::LATEST_HEIGHT) {
@@ -567,6 +694,164 @@ impl SledStore {
         }
     }
 
+    /// Map a canonical `TREE_*` name back to its live tree handle.
+    ///
+    /// Used to replay a WAL post-image onto the correct trees. Only the trees
+    /// that participate in a block commit are listed.
+    fn tree_by_name(&self, name: &str) -> Option<&Tree> {
+        Some(match name {
+            TREE_BLOCKS_BY_HEIGHT => &self.blocks_by_height,
+            TREE_BLOCKS_BY_HASH => &self.blocks_by_hash,
+            TREE_UTXOS => &self.utxos,
+            TREE_ACCOUNTS => &self.accounts,
+            TREE_WALLETS => &self.wallets,
+            TREE_TOKEN_BALANCES => &self.token_balances,
+            TREE_TOKEN_NONCES => &self.token_nonces,
+            TREE_TOKEN_CONTRACTS => &self.token_contracts,
+            TREE_TOKEN_SUPPLY => &self.token_supply,
+            TREE_CONTRACT_CODE => &self.contract_code,
+            TREE_CONTRACT_STORAGE => &self.contract_storage,
+            TREE_IDENTITIES => &self.identities,
+            TREE_IDENTITY_METADATA => &self.identity_metadata,
+            TREE_IDENTITY_BY_OWNER => &self.identity_by_owner,
+            TREE_BONDING_CURVES => &self.bonding_curves,
+            TREE_BONDING_CURVE_SYMBOLS => &self.bonding_curve_symbols,
+            TREE_CBE_ACCOUNTS => &self.cbe_accounts,
+            TREE_DAO_STAKES => &self.dao_stakes,
+            TREE_OBSERVER_REGISTRY => &self.observer_registry,
+            TREE_UTXO_MERKLE_LEAVES => &self.utxo_merkle_leaves,
+            TREE_UTXO_MERKLE_INDEX => &self.utxo_merkle_index,
+            TREE_UTXO_MERKLE_META => &self.utxo_merkle_meta,
+            TREE_UTXO_MERKLE_NODES => &self.utxo_merkle_nodes,
+            TREE_META => &self.meta,
+            _ => return None,
+        })
+    }
+
+    /// Apply a WAL post-image: every recorded tree's key writes, then
+    /// `latest_height`, then flush for durability.
+    ///
+    /// Each tree's batch is atomic; the WAL record guarantees the whole set is
+    /// re-applied together after a crash. This is idempotent — re-applying an
+    /// already-committed record rewrites identical bytes — which is what makes
+    /// roll-forward recovery safe. Shared by `commit_block` and
+    /// `recover_pending_commit`.
+    fn apply_post_image(&self, record: &WalRecord) -> StorageResult<()> {
+        for (tree_name, ops) in &record.trees {
+            let tree = self.tree_by_name(tree_name).ok_or_else(|| {
+                StorageError::CorruptedData(format!(
+                    "WAL record references unknown tree '{}'",
+                    tree_name
+                ))
+            })?;
+            apply_tree_post_image(tree, ops)?;
+        }
+
+        // `latest_height` is the logical commit point. Written from the WAL's
+        // authoritative height so a normal commit and a recovered commit agree.
+        self.meta
+            .insert(keys::meta::LATEST_HEIGHT, &record.height.to_be_bytes())
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        // Durability point: the block's state is on disk once this returns Ok.
+        self.db
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// On open, complete any block commit interrupted before it could clear its
+    /// WAL marker.
+    ///
+    /// Re-applies the recorded post-image (idempotent) and removes the marker.
+    /// A no-op when no commit is pending. Recovery rolls *forward* from the
+    /// recorded post-image — it never re-executes transactions, which would not
+    /// be idempotent.
+    fn recover_pending_commit(&self) -> StorageResult<()> {
+        let staged = self
+            .wal
+            .get(WAL_PENDING_KEY)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let Some(bytes) = staged else {
+            return Ok(());
+        };
+
+        let record: WalRecord = Self::deserialize_wal(&bytes)?;
+        tracing::warn!(
+            "SledStore: interrupted block commit detected at height {} (hash {}); \
+             rolling forward from the write-ahead log",
+            record.height,
+            hex::encode(record.block_hash),
+        );
+
+        self.apply_post_image(&record)?;
+
+        self.wal
+            .remove(WAL_PENDING_KEY)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        self.db
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        tracing::info!(
+            "SledStore: write-ahead recovery complete — block {} is fully committed",
+            record.height,
+        );
+        Ok(())
+    }
+
+    /// Test-only: run a block commit but stop partway, leaving the WAL marker
+    /// in place — simulating the process dying mid-commit.
+    ///
+    /// Stages the WAL record (as `commit_block` does), then applies only the
+    /// first `stop_after_trees` per-tree batches and, optionally, the
+    /// `latest_height` write. The WAL marker is intentionally NOT cleared, so a
+    /// subsequent `open()` exercises `recover_pending_commit`. Returns the total
+    /// number of per-tree batches in the staged record.
+    #[cfg(test)]
+    fn debug_interrupt_commit(
+        &self,
+        stop_after_trees: usize,
+        write_latest_height: bool,
+    ) -> StorageResult<usize> {
+        self.require_transaction()?;
+        let height = self.tx_height.load(Ordering::SeqCst);
+        let batch = {
+            let mut batch_guard = self.tx_batch.lock().unwrap();
+            batch_guard
+                .take()
+                .ok_or(StorageError::NoActiveTransaction)?
+        };
+        let record = batch.to_wal_record(height);
+        let total_trees = record.trees.len();
+
+        // Step 1 of commit_block: durably stage the WAL record.
+        self.wal
+            .insert(WAL_PENDING_KEY, Self::serialize_wal(&record)?)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        self.db
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        // Step 2, interrupted: apply only a prefix of the per-tree batches.
+        for (tree_name, ops) in record.trees.iter().take(stop_after_trees) {
+            let tree = self.tree_by_name(tree_name).expect("known tree");
+            apply_tree_post_image(tree, ops)?;
+        }
+        if write_latest_height {
+            self.meta
+                .insert(keys::meta::LATEST_HEIGHT, &height.to_be_bytes())
+                .map_err(|e| StorageError::Database(e.to_string()))?;
+        }
+        self.db
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        // The WAL marker is deliberately left in place — recovery must heal it.
+        self.tx_active.store(false, Ordering::SeqCst);
+        Ok(total_trees)
+    }
 }
 
 impl BlockchainStore for SledStore {
@@ -602,12 +887,14 @@ impl BlockchainStore for SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            // Batch::insert requires Into<IVec> for both K and V (unlike Tree::insert
-            // which accepts AsRef<[u8]> for K), so convert fixed-size arrays to slices.
+            // TreeBatch::insert mirrors sled Batch::insert (Into<IVec> for K and V),
+            // so fixed-size arrays are converted to slices.
             batch
-                .blocks_by_height
+                .tree(TREE_BLOCKS_BY_HEIGHT)
                 .insert(height_key.as_ref(), block_hash.as_bytes().as_ref());
-            batch.blocks_by_hash.insert(hash_key.as_ref(), block_bytes);
+            batch.tree(TREE_BLOCKS_BY_HASH).insert(hash_key.as_ref(), block_bytes);
+            // Record the block hash for the write-ahead commit record.
+            batch.block_hash = Some(hash_bytes);
         }
 
         Ok(())
@@ -677,7 +964,7 @@ impl BlockchainStore for SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.utxos.insert(key.as_ref(), value);
+            batch.tree(TREE_UTXOS).insert(key.as_ref(), value);
         }
 
         Ok(())
@@ -690,7 +977,7 @@ impl BlockchainStore for SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.utxos.remove(key.as_ref());
+            batch.tree(TREE_UTXOS).remove(key.as_ref());
         }
 
         Ok(())
@@ -722,9 +1009,9 @@ impl BlockchainStore for SledStore {
         let next_index = self.tx_utxo_merkle_next_index.fetch_add(1, Ordering::SeqCst);
         let index_bytes = next_index.to_be_bytes();
 
-        batch.utxo_merkle_leaves.insert(index_bytes.as_ref(), &leaf[..]);
-        batch.utxo_merkle_index.insert(op_key.as_ref(), index_bytes.as_ref());
-        batch.utxo_merkle_meta.insert(
+        batch.tree(TREE_UTXO_MERKLE_LEAVES).insert(index_bytes.as_ref(), &leaf[..]);
+        batch.tree(TREE_UTXO_MERKLE_INDEX).insert(op_key.as_ref(), index_bytes.as_ref());
+        batch.tree(TREE_UTXO_MERKLE_META).insert(
             keys::meta::UTXO_MERKLE_NEXT_INDEX,
             (next_index + 1).to_be_bytes().as_ref(),
         );
@@ -755,8 +1042,8 @@ impl BlockchainStore for SledStore {
         };
 
         if let Some(bytes) = index_bytes {
-            batch.utxo_merkle_leaves.insert(bytes.as_slice(), &[0u8; 32][..]);
-            batch.utxo_merkle_index.remove(op_key.as_ref());
+            batch.tree(TREE_UTXO_MERKLE_LEAVES).insert(bytes.as_slice(), &[0u8; 32][..]);
+            batch.tree(TREE_UTXO_MERKLE_INDEX).remove(op_key.as_ref());
             let idx = u64::from_be_bytes([
                 bytes[0], bytes[1], bytes[2], bytes[3],
                 bytes[4], bytes[5], bytes[6], bytes[7],
@@ -923,7 +1210,7 @@ impl BlockchainStore for SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.token_contracts.insert(key.as_ref(), value);
+            batch.tree(TREE_TOKEN_CONTRACTS).insert(key.as_ref(), value);
         }
 
         Ok(())
@@ -959,7 +1246,7 @@ impl BlockchainStore for SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.token_supply.insert(key.as_ref(), value.as_ref());
+            batch.tree(TREE_TOKEN_SUPPLY).insert(key.as_ref(), value.as_ref());
         }
 
         Ok(())
@@ -982,7 +1269,7 @@ impl BlockchainStore for SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.contract_code.insert(contract_id, code);
+            batch.tree(TREE_CONTRACT_CODE).insert(contract_id, code);
         }
 
         Ok(())
@@ -1019,7 +1306,7 @@ impl BlockchainStore for SledStore {
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
             batch
-                .contract_storage
+                .tree(TREE_CONTRACT_STORAGE)
                 .insert(IVec::from(composite_key), value);
         }
 
@@ -1035,7 +1322,7 @@ impl BlockchainStore for SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.contract_storage.remove(IVec::from(composite_key));
+            batch.tree(TREE_CONTRACT_STORAGE).remove(IVec::from(composite_key));
         }
 
         Ok(())
@@ -1058,7 +1345,7 @@ impl BlockchainStore for SledStore {
         let value = Self::serialize(snapshot)?;
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.meta.insert(keys::meta::TOKEN_STATE_SNAPSHOT, value);
+            batch.tree(TREE_META).insert(keys::meta::TOKEN_STATE_SNAPSHOT, value);
         }
 
         Ok(())
@@ -1181,7 +1468,7 @@ impl BlockchainStore for SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.accounts.insert(key.as_ref(), value);
+            batch.tree(TREE_ACCOUNTS).insert(key.as_ref(), value);
         }
 
         Ok(())
@@ -1217,9 +1504,9 @@ impl BlockchainStore for SledStore {
         if let Some(ref mut batch) = *batch_guard {
             if v == 0 {
                 // Optionally delete zero balances to save space
-                batch.token_balances.remove(key.as_ref());
+                batch.tree(TREE_TOKEN_BALANCES).remove(key.as_ref());
             } else {
-                batch.token_balances.insert(key.as_ref(), &v.to_be_bytes());
+                batch.tree(TREE_TOKEN_BALANCES).insert(key.as_ref(), &v.to_be_bytes());
             }
         }
 
@@ -1319,10 +1606,10 @@ impl BlockchainStore for SledStore {
         if let Some(ref mut batch) = *batch_guard {
             if nonce == 0 {
                 // Delete zero nonces to save space
-                batch.token_nonces.remove(key.as_ref());
+                batch.tree(TREE_TOKEN_NONCES).remove(key.as_ref());
             } else {
                 batch
-                    .token_nonces
+                    .tree(TREE_TOKEN_NONCES)
                     .insert(key.as_ref(), &nonce.to_be_bytes());
             }
         }
@@ -1352,7 +1639,7 @@ impl BlockchainStore for SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.identities.insert(did_hash.as_ref(), value);
+            batch.tree(TREE_IDENTITIES).insert(did_hash.as_ref(), value);
         }
 
         Ok(())
@@ -1363,7 +1650,7 @@ impl BlockchainStore for SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.identities.remove(did_hash.as_ref());
+            batch.tree(TREE_IDENTITIES).remove(did_hash.as_ref());
         }
 
         Ok(())
@@ -1395,7 +1682,7 @@ impl BlockchainStore for SledStore {
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
             batch
-                .identity_by_owner
+                .tree(TREE_IDENTITY_BY_OWNER)
                 .insert(key.as_ref(), did_hash.as_ref());
         }
 
@@ -1409,7 +1696,7 @@ impl BlockchainStore for SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.identity_by_owner.remove(key.as_ref());
+            batch.tree(TREE_IDENTITY_BY_OWNER).remove(key.as_ref());
         }
 
         Ok(())
@@ -1444,7 +1731,7 @@ impl BlockchainStore for SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.identity_metadata.insert(did_hash.as_ref(), value);
+            batch.tree(TREE_IDENTITY_METADATA).insert(did_hash.as_ref(), value);
         }
 
         Ok(())
@@ -1455,7 +1742,7 @@ impl BlockchainStore for SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.identity_metadata.remove(did_hash.as_ref());
+            batch.tree(TREE_IDENTITY_METADATA).remove(did_hash.as_ref());
         }
 
         Ok(())
@@ -1570,7 +1857,7 @@ impl BlockchainStore for SledStore {
         }
         let _guard = TxGuard(&self.tx_active);
 
-        // Take the batch
+        // Take the batch.
         let batch = {
             let mut batch_guard = self.tx_batch.lock().unwrap();
             batch_guard
@@ -1578,117 +1865,40 @@ impl BlockchainStore for SledStore {
                 .ok_or(StorageError::NoActiveTransaction)?
         };
 
-        // Apply all batches.
-        // Note: sled doesn't have true multi-tree transactions — batches are
-        // applied atomically per-tree but not across trees. A crash mid-commit
-        // can leave partial state. latest_height is updated last so a restart
-        // after partial commit will re-apply the block, overwriting partial state.
-        self.blocks_by_height
-            .apply_batch(batch.blocks_by_height)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
+        // sled commits each tree's batch atomically but gives NO atomicity
+        // across trees, so applying the ~24 per-tree batches directly can leave
+        // a block half-committed after a crash. A write-ahead log closes that
+        // gap:
+        //
+        //   1. Stage the full post-image (every tree's key writes plus the
+        //      height/hash) into the `wal` tree as a single atomic record, and
+        //      flush — the commit is now durably recoverable.
+        //   2. Apply the per-tree batches and `latest_height`.
+        //   3. Clear the WAL marker.
+        //
+        // A crash between (1) and (3) is healed on the next open by
+        // `recover_pending_commit`, which idempotently re-applies the
+        // post-image. A crash before (1) finishes leaves nothing applied. Block
+        // state is therefore never left partially committed.
+        let record = batch.to_wal_record(height);
 
-        self.blocks_by_hash
-            .apply_batch(batch.blocks_by_hash)
+        let record_bytes = Self::serialize_wal(&record)?;
+        self.wal
+            .insert(WAL_PENDING_KEY, record_bytes)
             .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        self.utxos
-            .apply_batch(batch.utxos)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        self.utxo_merkle_leaves
-            .apply_batch(batch.utxo_merkle_leaves)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        self.utxo_merkle_index
-            .apply_batch(batch.utxo_merkle_index)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        self.utxo_merkle_meta
-            .apply_batch(batch.utxo_merkle_meta)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        self.utxo_merkle_nodes
-            .apply_batch(batch.utxo_merkle_nodes)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        self.accounts
-            .apply_batch(batch.accounts)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        self.wallets
-            .apply_batch(batch.wallets)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        self.token_balances
-            .apply_batch(batch.token_balances)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        self.token_nonces
-            .apply_batch(batch.token_nonces)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        self.token_contracts
-            .apply_batch(batch.token_contracts)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        self.token_supply
-            .apply_batch(batch.token_supply)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        self.identities
-            .apply_batch(batch.identities)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        self.identity_metadata
-            .apply_batch(batch.identity_metadata)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        self.identity_by_owner
-            .apply_batch(batch.identity_by_owner)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        self.meta
-            .apply_batch(batch.meta)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        self.contract_code
-            .apply_batch(batch.contract_code)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        self.contract_storage
-            .apply_batch(batch.contract_storage)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        self.bonding_curves
-            .apply_batch(batch.bonding_curves)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        self.bonding_curve_symbols
-            .apply_batch(batch.bonding_curve_symbols)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        self.cbe_accounts
-            .apply_batch(batch.cbe_accounts)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        self.dao_stakes
-            .apply_batch(batch.dao_stakes)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        self.observer_registry
-            .apply_batch(batch.observer_registry)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        // Commit point: update latest_height last. If any batch above failed,
-        // latest_height stays at the previous value and the node will re-apply
-        // this block on next restart.
-        self.meta
-            .insert(keys::meta::LATEST_HEIGHT, &height.to_be_bytes())
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        // Flush to ensure durability
         self.db
             .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        // The WAL record is durable: apply the post-image. If this is
+        // interrupted, the next open rolls it forward from that record.
+        self.apply_post_image(&record)?;
+
+        // Commit complete — drop the WAL marker. Deliberately not flushed: a
+        // stale marker surviving a crash here only triggers an idempotent
+        // re-apply on the next open, which is harmless.
+        self.wal
+            .remove(WAL_PENDING_KEY)
             .map_err(|e| StorageError::Database(e.to_string()))?;
 
         Ok(())
@@ -1736,19 +1946,19 @@ impl BlockchainStore for SledStore {
                 .ok_or(StorageError::NoActiveTransaction)?
         };
 
-        // Apply supplementary index batches only — no block data, no latest_height update.
-        self.identities
-            .apply_batch(batch.identities)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-        self.identity_metadata
-            .apply_batch(batch.identity_metadata)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-        self.identity_by_owner
-            .apply_batch(batch.identity_by_owner)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-        self.accounts
-            .apply_batch(batch.accounts)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
+        // Apply whatever index trees were staged (identities/metadata/owner/
+        // accounts) — no block data, no latest_height update. This path is not
+        // WAL-protected: it writes rebuildable identity indexes, not
+        // block-commit consensus state.
+        for (name, tree_batch) in &batch.trees {
+            let tree = self.tree_by_name(name).ok_or_else(|| {
+                StorageError::CorruptedData(format!(
+                    "metadata write staged unknown tree '{}'",
+                    name
+                ))
+            })?;
+            apply_tree_post_image(tree, &tree_batch.to_post_image())?;
+        }
 
         // Flush to ensure identity writes are durable before the next block commit.
         self.db
@@ -1756,6 +1966,107 @@ impl BlockchainStore for SledStore {
             .map_err(|e| StorageError::Database(e.to_string()))?;
 
         Ok(())
+    }
+
+    // =========================================================================
+    // Generic Table Access (BST-101)
+    // =========================================================================
+
+    fn get_raw(&self, tree: &'static str, key: &[u8]) -> StorageResult<Option<Vec<u8>>> {
+        let t = self.tree_by_name(tree).ok_or_else(|| {
+            StorageError::Database(format!("unknown table keyspace '{}'", tree))
+        })?;
+        match t.get(key) {
+            Ok(Some(v)) => Ok(Some(v.to_vec())),
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn stage_raw(
+        &self,
+        tree: &'static str,
+        key: &[u8],
+        value: Option<&[u8]>,
+    ) -> StorageResult<()> {
+        self.require_transaction()?;
+        if self.tree_by_name(tree).is_none() {
+            return Err(StorageError::Database(format!(
+                "unknown table keyspace '{}'",
+                tree
+            )));
+        }
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            match value {
+                Some(v) => batch.tree(tree).insert(key, v),
+                None => batch.tree(tree).remove(key),
+            }
+        }
+        Ok(())
+    }
+
+    fn iter_raw(
+        &self,
+        tree: &'static str,
+    ) -> StorageResult<Box<dyn Iterator<Item = StorageResult<(Vec<u8>, Vec<u8>)>> + '_>> {
+        let t = self.tree_by_name(tree).ok_or_else(|| {
+            StorageError::Database(format!("unknown table keyspace '{}'", tree))
+        })?;
+        Ok(Box::new(t.iter().map(|r| {
+            r.map(|(k, v)| (k.to_vec(), v.to_vec()))
+                .map_err(|e| StorageError::Database(e.to_string()))
+        })))
+    }
+
+    // =========================================================================
+    // Fork audit log (BST-203) — direct durable writes
+    // =========================================================================
+
+    fn put_fork_point(
+        &self,
+        height: u64,
+        fork_point: &crate::fork_recovery::ForkPoint,
+    ) -> StorageResult<()> {
+        let value = Self::serialize(fork_point)?;
+        self.fork_points
+            .insert(height.to_be_bytes(), value)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        // Audit record — flush so a crash right after a reorg keeps it.
+        self.db
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    fn iter_fork_points(&self) -> StorageResult<Vec<crate::fork_recovery::ForkPoint>> {
+        // sled iterates keys in order; keys are big-endian heights, so the
+        // result is already ascending by height.
+        let mut out = Vec::new();
+        for item in self.fork_points.iter() {
+            let (_, value) = item.map_err(|e| StorageError::Database(e.to_string()))?;
+            out.push(Self::deserialize(&value)?);
+        }
+        Ok(out)
+    }
+
+    fn put_receipt(&self, receipt: &crate::receipts::TransactionReceipt) -> StorageResult<()> {
+        let value = Self::serialize(receipt)?;
+        self.receipts
+            .insert(receipt.tx_hash.as_array(), value)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    fn get_receipt(
+        &self,
+        tx_hash: &[u8; 32],
+    ) -> StorageResult<Option<crate::receipts::TransactionReceipt>> {
+        match self.receipts.get(tx_hash) {
+            Ok(Some(value)) => Ok(Some(Self::deserialize(&value)?)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
     }
 
     // =========================================================================
@@ -1789,7 +2100,7 @@ impl BlockchainStore for SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.bonding_curves.insert(key, value);
+            batch.tree(TREE_BONDING_CURVES).insert(key, value);
         }
 
         Ok(())
@@ -1800,7 +2111,7 @@ impl BlockchainStore for SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.bonding_curves.remove(token_id.as_ref());
+            batch.tree(TREE_BONDING_CURVES).remove(token_id.as_ref());
         }
 
         Ok(())
@@ -1869,7 +2180,7 @@ impl BlockchainStore for SledStore {
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
             batch
-                .bonding_curve_symbols
+                .tree(TREE_BONDING_CURVE_SYMBOLS)
                 .insert(symbol.as_bytes(), token_id.as_ref());
         }
 
@@ -1881,7 +2192,7 @@ impl BlockchainStore for SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.bonding_curve_symbols.remove(symbol.as_bytes());
+            batch.tree(TREE_BONDING_CURVE_SYMBOLS).remove(symbol.as_bytes());
         }
 
         Ok(())
@@ -1911,7 +2222,7 @@ impl BlockchainStore for SledStore {
         let value = Self::serialize(state)?;
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.meta.insert(keys::meta::CBE_ECONOMIC_STATE, value);
+            batch.tree(TREE_META).insert(keys::meta::CBE_ECONOMIC_STATE, value);
         }
 
         Ok(())
@@ -1944,7 +2255,7 @@ impl BlockchainStore for SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.cbe_accounts.insert(key.as_ref(), value);
+            batch.tree(TREE_CBE_ACCOUNTS).insert(key.as_ref(), value);
         }
 
         Ok(())
@@ -2005,7 +2316,7 @@ impl BlockchainStore for SledStore {
         let value = Self::serialize(record)?;
         let mut batch_guard = self.tx_batch.lock().unwrap();
         let batch = batch_guard.as_mut().ok_or(StorageError::NoActiveTransaction)?;
-        batch.dao_stakes.insert(key.as_ref(), value);
+        batch.tree(TREE_DAO_STAKES).insert(key.as_ref(), value);
         Ok(())
     }
 
@@ -2018,7 +2329,7 @@ impl BlockchainStore for SledStore {
         let key = keys::dao_stake_key(sector_dao_key_id, staker);
         let mut batch_guard = self.tx_batch.lock().unwrap();
         let batch = batch_guard.as_mut().ok_or(StorageError::NoActiveTransaction)?;
-        batch.dao_stakes.remove(key.as_ref());
+        batch.tree(TREE_DAO_STAKES).remove(key.as_ref());
         Ok(())
     }
 
@@ -2068,7 +2379,7 @@ impl BlockchainStore for SledStore {
             StorageError::Database(format!("lock poisoned in put_observer_record: {e}"))
         })?;
         if let Some(batch) = guard.as_mut() {
-            batch.observer_registry.insert(did_hash.as_slice(), bytes);
+            batch.tree(TREE_OBSERVER_REGISTRY).insert(did_hash.as_slice(), bytes);
             Ok(())
         } else {
             Err(StorageError::Database(
@@ -2082,7 +2393,7 @@ impl BlockchainStore for SledStore {
             StorageError::Database(format!("lock poisoned in delete_observer_record: {e}"))
         })?;
         if let Some(batch) = guard.as_mut() {
-            batch.observer_registry.remove(did_hash.as_slice());
+            batch.tree(TREE_OBSERVER_REGISTRY).remove(did_hash.as_slice());
             Ok(())
         } else {
             Err(StorageError::Database(
@@ -2919,5 +3230,273 @@ mod tests {
         let proof = store.get_utxo_merkle_proof(&outpoint).unwrap();
         #[cfg(not(feature = "real-proofs"))]
         assert!(proof.is_none());
+    }
+
+    // =========================================================================
+    // Write-ahead log crash-recovery tests
+    // =========================================================================
+
+    /// A block commit interrupted at *any* point — before any tree batch,
+    /// after each tree batch, and before/after the `latest_height` write —
+    /// must be rolled forward to a fully-committed block on the next open.
+    #[test]
+    fn test_wal_recovers_interrupted_block_commit() {
+        use tempfile::TempDir;
+
+        // Run one interruption scenario end-to-end and return the total
+        // number of per-tree batches in block 1's staged WAL record, so the
+        // caller can iterate exactly the data-dependent set of boundaries
+        // rather than a hard-coded range.
+        let run_scenario = |stop_after: usize, write_latest_height: bool| -> usize {
+            let dir = TempDir::new().unwrap();
+            let scenario =
+                format!("stop_after={stop_after}, write_latest_height={write_latest_height}");
+
+            let block0 = create_test_block(0, Hash::default());
+            let block1 = create_test_block(1, block0.header.block_hash);
+            let addr = Address([0x42; 32]);
+            let account = AccountState::new(addr).with_wallet(WalletState::new(7));
+            let outpoint = OutPoint::new(TxHash([0x99; 32]), 0);
+            let utxo = Utxo::native(555, addr, 1);
+
+            // --- session 1: commit genesis cleanly, then interrupt block 1 ---
+            let total = {
+                let store = SledStore::open(dir.path()).unwrap();
+
+                store.begin_block(0).unwrap();
+                store.append_block(&block0).unwrap();
+                store.commit_block().unwrap();
+
+                // Stage block 1 across several trees, then interrupt the
+                // commit partway with the WAL marker still in place.
+                store.begin_block(1).unwrap();
+                store.append_block(&block1).unwrap();
+                store.put_account(&addr, &account).unwrap();
+                store.put_utxo(&outpoint, &utxo).unwrap();
+                let total = store
+                    .debug_interrupt_commit(stop_after, write_latest_height)
+                    .unwrap();
+                assert!(total >= 4, "block 1 should touch several trees ({scenario})");
+
+                assert!(
+                    store.wal.get(WAL_PENDING_KEY).unwrap().is_some(),
+                    "interrupted commit must leave a WAL marker ({scenario})"
+                );
+                total
+            }; // store dropped — simulates the process dying mid-commit
+
+            // --- session 2: reopening MUST roll the commit forward ---
+            {
+                let store = SledStore::open(dir.path()).unwrap();
+
+                assert_eq!(
+                    store.latest_height().unwrap(),
+                    1,
+                    "recovery must finish block 1 ({scenario})"
+                );
+                let block = store.get_block_by_height(1).unwrap();
+                assert!(block.is_some(), "block 1 must be present after recovery ({scenario})");
+                assert_eq!(block.unwrap().header.height, 1);
+
+                let recovered_account = store
+                    .get_account(&addr)
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("account missing after recovery ({scenario})"));
+                assert_eq!(recovered_account.wallet.unwrap().nonce, 7, "{scenario}");
+
+                let recovered_utxo = store
+                    .get_utxo(&outpoint)
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("utxo missing after recovery ({scenario})"));
+                assert_eq!(recovered_utxo.amount, 555, "{scenario}");
+
+                assert!(
+                    store.wal.get(WAL_PENDING_KEY).unwrap().is_none(),
+                    "WAL marker must be cleared once recovery completes ({scenario})"
+                );
+            }
+
+            // --- session 3: a second reopen is a clean no-op ---
+            {
+                let store = SledStore::open(dir.path()).unwrap();
+                assert_eq!(store.latest_height().unwrap(), 1, "{scenario}");
+                assert!(
+                    store.wal.get(WAL_PENDING_KEY).unwrap().is_none(),
+                    "no recovery should be pending on a clean reopen ({scenario})"
+                );
+            }
+
+            total
+        };
+
+        // Probe once to learn how many per-tree batches block 1 actually
+        // produces, then exercise EVERY interruption boundary: `stop_after`
+        // 0 → interrupted before any tree, `total` → after all of them.
+        // Deriving the bound from the data keeps every tree boundary covered
+        // even as the set of trees a commit touches changes.
+        let total_trees = run_scenario(0, false);
+        for stop_after in 0..=total_trees {
+            for write_latest_height in [false, true] {
+                let total = run_scenario(stop_after, write_latest_height);
+                assert_eq!(
+                    total, total_trees,
+                    "per-tree batch count must be deterministic across scenarios"
+                );
+            }
+        }
+    }
+
+    /// A commit that runs to completion leaves no WAL marker, and reopening
+    /// such a store performs no recovery.
+    #[test]
+    fn test_clean_commit_leaves_no_wal_marker() {
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let block0 = create_test_block(0, Hash::default());
+
+        {
+            let store = SledStore::open(dir.path()).unwrap();
+            store.begin_block(0).unwrap();
+            store.append_block(&block0).unwrap();
+            store.commit_block().unwrap();
+            assert!(
+                store.wal.get(WAL_PENDING_KEY).unwrap().is_none(),
+                "a completed commit must leave no WAL marker"
+            );
+        }
+
+        // Reopen: recovery is a no-op and state is intact.
+        let store = SledStore::open(dir.path()).unwrap();
+        assert_eq!(store.latest_height().unwrap(), 0);
+        assert!(store.get_block_by_height(0).unwrap().is_some());
+        assert!(store.wal.get(WAL_PENDING_KEY).unwrap().is_none());
+    }
+
+    // =========================================================================
+    // Generic Table abstraction (BST-101)
+    // =========================================================================
+
+    /// A `Table` declared purely for the round-trip test, backed by the (empty
+    /// in a fresh store) `dao_stakes` keyspace.
+    struct TableProbe;
+    impl crate::storage::Table for TableProbe {
+        const NAME: &'static str = TREE_DAO_STAKES;
+        const VERSION: u32 = 1;
+        type Key = [u8; 8];
+        type Value = u64;
+        fn encode_key(key: &[u8; 8]) -> Vec<u8> {
+            key.to_vec()
+        }
+    }
+
+    /// One `impl Table` yields typed `get` / `stage` / `stage_delete` / `iter`
+    /// with no bespoke store methods — staged writes land atomically with the
+    /// block commit, exactly like every other tree.
+    #[test]
+    fn test_generic_table_round_trip() {
+        use crate::storage::TableAccess;
+
+        let store = SledStore::open_temporary().unwrap();
+        let block0 = create_test_block(0, Hash::default());
+
+        store.begin_block(0).unwrap();
+        store.append_block(&block0).unwrap();
+        store.stage::<TableProbe>(&1u64.to_be_bytes(), &111u64).unwrap();
+        store.stage::<TableProbe>(&2u64.to_be_bytes(), &222u64).unwrap();
+        // Staged writes are not visible until the block commits.
+        assert_eq!(store.get::<TableProbe>(&1u64.to_be_bytes()).unwrap(), None);
+        store.commit_block().unwrap();
+
+        assert_eq!(store.get::<TableProbe>(&1u64.to_be_bytes()).unwrap(), Some(111));
+        assert_eq!(store.get::<TableProbe>(&2u64.to_be_bytes()).unwrap(), Some(222));
+        assert_eq!(store.get::<TableProbe>(&9u64.to_be_bytes()).unwrap(), None);
+
+        let mut all = store.iter::<TableProbe>().unwrap();
+        all.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].1, 111);
+        assert_eq!(all[1].1, 222);
+
+        // stage_delete also lands with the block commit.
+        let block1 = create_test_block(1, block0.header.block_hash);
+        store.begin_block(1).unwrap();
+        store.append_block(&block1).unwrap();
+        store.stage_delete::<TableProbe>(&1u64.to_be_bytes()).unwrap();
+        store.commit_block().unwrap();
+        assert_eq!(store.get::<TableProbe>(&1u64.to_be_bytes()).unwrap(), None);
+        assert_eq!(store.get::<TableProbe>(&2u64.to_be_bytes()).unwrap(), Some(222));
+    }
+
+    /// Generic table writes outside `begin_block` are rejected, like every
+    /// other staged write.
+    #[test]
+    fn test_generic_table_stage_requires_transaction() {
+        use crate::storage::TableAccess;
+        let store = SledStore::open_temporary().unwrap();
+        assert!(matches!(
+            store.stage::<TableProbe>(&1u64.to_be_bytes(), &1u64),
+            Err(StorageError::NoActiveTransaction)
+        ));
+    }
+
+    /// Fork points are written directly (no `begin_block`) — reorgs are not
+    /// block commits — are returned ascending by height, and survive a reopen.
+    #[test]
+    fn test_fork_point_direct_durable_write() {
+        use crate::fork_recovery::{ForkPoint, ForkResolution};
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let mk = |h: u64| {
+            ForkPoint::new(
+                h,
+                1_000 + h,
+                Hash::new([h as u8; 32]),
+                Hash::new([(h + 100) as u8; 32]),
+                ForkResolution::SwitchedToFork,
+            )
+        };
+        {
+            let store = SledStore::open(dir.path()).unwrap();
+            // No begin_block: a reorg has no open block transaction.
+            store.put_fork_point(7, &mk(7)).unwrap();
+            store.put_fork_point(3, &mk(3)).unwrap();
+
+            let all = store.iter_fork_points().unwrap();
+            assert_eq!(all.len(), 2);
+            assert_eq!(all[0].height, 3, "ascending by height");
+            assert_eq!(all[1].height, 7);
+        }
+        // Durable across reopen.
+        let store = SledStore::open(dir.path()).unwrap();
+        assert_eq!(store.iter_fork_points().unwrap().len(), 2);
+    }
+
+    /// Receipts are written directly (created after the block commits), keyed
+    /// by tx hash, survive a reopen, and report finality derived from height.
+    #[test]
+    fn test_receipt_direct_durable_write() {
+        use crate::receipts::TransactionReceipt;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let tx_hash = Hash::new([7u8; 32]);
+        let receipt = TransactionReceipt::new(tx_hash, Hash::new([1u8; 32]), 42, 3, 100, 12345);
+        {
+            let store = SledStore::open(dir.path()).unwrap();
+            store.put_receipt(&receipt).unwrap();
+
+            let got = store.get_receipt(&tx_hash.as_array()).unwrap().unwrap();
+            assert_eq!(got.block_height, 42);
+            assert_eq!(got.tx_index, 3);
+            // Finality is derived from current height, not stored.
+            assert!(!got.is_finalized(50)); // 8 confirmations
+            assert!(got.is_finalized(54)); // 12 confirmations
+            assert!(store.get_receipt(&[0u8; 32]).unwrap().is_none());
+        }
+        // Durable across reopen.
+        let store = SledStore::open(dir.path()).unwrap();
+        assert!(store.get_receipt(&tx_hash.as_array()).unwrap().is_some());
     }
 }

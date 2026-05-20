@@ -79,6 +79,13 @@ rand = "0.8"  # Cryptographically secure random number generation
 keyring = "3.6"  # System keyring for secure seed storage
 argon2 = "0.5"  # Password hashing for seed encryption
 
+# Lobby auth: OPAQUE server side (RFC 9497). Cipher suite locked
+# Ristretto255 + Sha512 + TripleDh + Argon2id — must match lib-client.
+opaque-ke = { version = "4", default-features = false, features = ["ristretto255", "argon2", "serde"] }
+generic-array = "0.14"
+hmac = "0.12"
+subtle = "2.5"
+
 # System integration
 sysinfo = "0.31"
 chrono = { version = "0.4", features = ["serde"] }
