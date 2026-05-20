@@ -29,8 +29,22 @@ use tracing::info;
 /// receiver's TOFU path special-cases empty signatures, and Mainnet would
 /// reject — same conservative semantics as the rest of the broadcast path.
 fn wrap_propose(proposal: ConsensusProposal, keypair: Option<&KeyPair>) -> ValidatorMessage {
-    let message_id = proposal.id.clone();
+    // Per-broadcast message_id (matches wrap_vote): receiver-side dedup keys
+    // off message_id, so reusing `proposal.id` here meant a locked validator
+    // re-proposing the SAME proposal in every round produced an identical
+    // message_id, and every re-broadcast after the first was silently dropped
+    // network-wide as a duplicate — blocking the lock-recovery path.
     let proposer = proposal.proposer.clone();
+    let message_id = {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let nonce = lib_crypto::generate_nonce();
+        let mut data = format!("propose_bcast_{}", ts).into_bytes();
+        data.extend_from_slice(&nonce);
+        lib_crypto::Hash::from_bytes(&hash_blake3(&data))
+    };
     let mut msg = ProposeMessage {
         message_id,
         proposer,

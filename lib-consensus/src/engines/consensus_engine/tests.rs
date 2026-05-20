@@ -3093,3 +3093,47 @@ async fn test_round_sync_lagging_proposer_does_not_propose() {
         "a behind proposer must NOT enqueue a proposal artifact"
     );
 }
+
+/// Regression: `validate_no_fork_proposal` must not treat a `valid_proposal`
+/// carried over from an earlier round as a same-round fork.
+///
+/// Before this fix, the round-sync work that preserves `valid_proposal` /
+/// `valid_round` across round jumps (Tendermint unlock-rule semantics)
+/// caused every legitimate next-round proposal to be rejected as a fork
+/// against the stale `valid_proposal` — deadlocking the chain.
+#[tokio::test]
+async fn test_stale_valid_proposal_does_not_trigger_fork_reject() {
+    let (mut engine, _) = setup_bft_engine(5, 10).await;
+
+    let stale_id = Hash::from_bytes(&[1u8; 32]);
+    let fresh_id = Hash::from_bytes(&[2u8; 32]);
+
+    // Stale state: a prevote quorum was observed in an earlier round, so
+    // valid_proposal / valid_round persist (per Tendermint unlock rule) but
+    // they belong to round 5, not the current round 10.
+    engine.current_round.valid_proposal = Some(stale_id.clone());
+    engine.current_round.valid_round = Some(5);
+
+    let result = engine.validate_no_fork_proposal(5, 10, &fresh_id);
+    assert!(
+        result.is_ok(),
+        "stale valid_proposal (from an earlier round) must NOT trigger a \
+         same-round fork rejection of a new round's legitimate proposal"
+    );
+
+    // Real same-round conflict: valid_proposal was set IN the current round,
+    // and a different proposal_id arrives for that same round.
+    engine.current_round.valid_round = Some(10);
+    let result = engine.validate_no_fork_proposal(5, 10, &fresh_id);
+    assert!(
+        result.is_err(),
+        "same-round conflicting proposal must still trigger a fork rejection"
+    );
+
+    // Same-round, same proposal_id: no conflict, no rejection.
+    let result = engine.validate_no_fork_proposal(5, 10, &stale_id);
+    assert!(
+        result.is_ok(),
+        "same proposal_id at same round must not trigger fork rejection"
+    );
+}
