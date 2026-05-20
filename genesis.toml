@@ -35,6 +35,19 @@ genesis_time = "2026-05-01T00:00:00Z"
 # v1 supply is NOT carried over: cutover is a clean slate per CONS-606.
 initial_supply = 0
 
+[opaque]
+# OPAQUE lobby-auth server setup (ristretto255-sha512-argon2id-v1).
+# Generated once via `cargo run --example gen_opaque_server_setup -p lib-client --release`.
+# Loaded by `GenesisConfig::load_opaque_setup` on every node start; can be
+# rotated by regenerating and redeploying genesis (does NOT require a fork —
+# affects runtime auth state only, not block content).
+#
+# SECURITY: the serialized bytes contain the OPRF *private* seed. Anyone
+# holding these can offline-attack every credential ever registered. This
+# value is a throwaway testnet setup; replace with a fresh ceremony-generated
+# blob before mainnet and treat the production value as out-of-band material.
+server_setup_b64 = "cFfUtYcxbZD0BCFKPkbQN3tqMQRYsoCpRgoE3RcGIO44FnudtsdfrqSvUk/psxregbEG18pR8PdhBt5cLL3/2t1meFa920chRxaZ4oiRSQDDVhb9+IprqbCSJademegOSAQWEnNrL3dL3IH5kBsezgjkxs5QzSLD7L73JefTcTM="
+
 # [cbe_token] section intentionally absent — EPIC-001 Phase 1E.
 # CBE economic parameters live in
 #   lib-blockchain/src/contracts/bonding_curve/canonical.rs
