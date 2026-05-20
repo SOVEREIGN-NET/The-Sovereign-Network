@@ -316,6 +316,26 @@ pub(crate) fn spawn_commit_executor(
                         "Commit executor: BFT finalized block + quorum proof committed"
                     );
                 }
+                Err(e) if is_already_applied_error(&*e) => {
+                    // CE-S2: benign duplicate. The engine produced a second
+                    // CommitEnvelope for a height that's already been applied —
+                    // typically a race between the engine sending the envelope
+                    // and the blockchain layer's in-memory cursor / persisted
+                    // store catching up.  The BlockCommitCallback contract is
+                    // documented as "idempotent handling required", and even
+                    // when the callback can't fully honour that (e.g. it
+                    // bottoms out in BlockExecutor::validate_header which
+                    // raises HeightMismatch), the runtime must treat the
+                    // duplicate as a no-op — not weaponize it into a halt.
+                    //
+                    // Pre-fix this aborted the chain on every validator
+                    // simultaneously after 2–3 fast back-to-back commits.
+                    tracing::info!(
+                        error = %e,
+                        height = height,
+                        "Commit executor: block at this height already applied; skipping duplicate envelope"
+                    );
+                }
                 Err(e) => {
                     tracing::error!(
                         error = ?e,
@@ -338,6 +358,47 @@ pub(crate) fn spawn_commit_executor(
         }
         tracing::debug!("Commit executor exited — engine sender dropped");
     })
+}
+
+/// Distinguishes a "block at this height already applied" error from a real
+/// commit failure.
+///
+/// The production callback (zhtp's `ConsensusBlockCommitter`) bottoms out in
+/// `lib_blockchain::execution::executor::BlockExecutor::validate_header`,
+/// which raises `BlockApplyError::HeightMismatch { expected, actual }` when
+/// `actual < expected`. There is no shared error type across the
+/// `lib-consensus-runtime` → `lib-consensus` → callback boundary (the trait
+/// returns `Box<dyn Error + Send + Sync>`), so we identify the case by the
+/// Display string the executor emits.
+///
+/// The check is conservative: it matches both phrasings the codebase emits
+/// for this condition. A real divergence (different block at the same height
+/// — chain fork) is logged as `Chain divergence at height ...` in
+/// `ConsensusBlockCommitter` and surfaces a *different* error string that
+/// does NOT match here, so this guard cannot suppress a real fork signal.
+fn is_already_applied_error(err: &(dyn std::error::Error + 'static)) -> bool {
+    let msg = err.to_string();
+    // BlockExecutor::validate_header — "Block height mismatch: expected X, got Y" where Y < X.
+    // Or wrapping at the boundary — "BlockExecutor failed to apply block: Block height mismatch: ..."
+    if let Some(idx) = msg.find("Block height mismatch: expected ") {
+        // Parse "expected N, got M" and confirm M < N (i.e. actual is in the past).
+        let tail = &msg[idx + "Block height mismatch: expected ".len()..];
+        if let Some(comma) = tail.find(',') {
+            let expected_str = tail[..comma].trim();
+            if let Some(got_idx) = tail.find("got ") {
+                let actual_str = tail[got_idx + 4..]
+                    .split(|c: char| !c.is_ascii_digit())
+                    .next()
+                    .unwrap_or("");
+                if let (Ok(expected), Ok(actual)) =
+                    (expected_str.parse::<u64>(), actual_str.parse::<u64>())
+                {
+                    return actual < expected;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Derive the watchdog threshold from the engine's per-phase timeouts.
@@ -943,6 +1004,7 @@ mod tests {
                     lib_types::consensus::ConsensusType::ByzantineFaultTolerance,
                     0,
                 ),
+                valid_round: None,
             },
             quorum_proof: lib_types::consensus::BftQuorumProof {
                 height,
@@ -973,5 +1035,103 @@ mod tests {
         // Give the task a tick to observe the closed channel.
         let _ = tokio::time::timeout(Duration::from_secs(1), handle).await;
         // If we got here without panicking the join completed.
+    }
+
+    // ---------------- duplicate commit-envelope (CE-S2) ----------------
+
+    /// Callback that simulates the BlockExecutor "already at this height"
+    /// behavior: succeeds the first time it sees `target_height`, then on any
+    /// subsequent commit at `target_height` returns the exact error string the
+    /// production `BlockExecutor::validate_header` raises when its `expected =
+    /// store.latest_height() + 1` is already past the incoming block's height.
+    ///
+    /// The race this models: engine emits a CommitEnvelope for height H, the
+    /// executor applies it, then a second CommitEnvelope for H arrives before
+    /// the engine's local view advances. Pre-fix, the runtime treated this as
+    /// a fatal storage error and halted consensus on every validator.
+    struct DoubleCommitCallback {
+        committed: std::sync::Arc<std::sync::Mutex<u64>>,
+    }
+
+    #[async_trait::async_trait]
+    impl lib_consensus::types::BlockCommitCallback for DoubleCommitCallback {
+        async fn commit_finalized_block(
+            &self,
+            proposal: &lib_consensus::types::ConsensusProposal,
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            let mut committed = self.committed.lock().unwrap();
+            if proposal.height <= *committed {
+                // BlockExecutor::validate_header HeightMismatch: incoming
+                // block's height isn't `store.latest_height() + 1`.
+                return Err(format!(
+                    "BlockExecutor failed to apply block: Block height mismatch: \
+                     expected {}, got {}",
+                    *committed + 1,
+                    proposal.height,
+                )
+                .into());
+            }
+            *committed = proposal.height;
+            Ok(())
+        }
+
+        async fn get_active_validator_count(
+            &self,
+        ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(5)
+        }
+    }
+
+    /// CE-S2: a duplicate CommitEnvelope for an already-applied height MUST NOT
+    /// halt the runtime. The BlockCommitCallback contract is documented as
+    /// "idempotent handling required" — and even when the callback itself
+    /// can't fully honor that (due to in-memory/store cursor drift in the
+    /// production blockchain), the commit executor must not weaponize the
+    /// resulting height-mismatch into a chain-wide halt.
+    #[tokio::test]
+    async fn duplicate_commit_envelope_does_not_halt() {
+        let committed = std::sync::Arc::new(std::sync::Mutex::new(0u64));
+        let cb: Arc<dyn lib_consensus::types::BlockCommitCallback> =
+            Arc::new(DoubleCommitCallback {
+                committed: committed.clone(),
+            });
+
+        let (tx, rx) = mpsc::unbounded_channel::<CommitEnvelope>();
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Event>();
+        let handle = spawn_commit_executor(rx, cb, event_tx);
+
+        // First envelope: applies cleanly, committed = 1.
+        tx.send(test_commit_envelope(1)).expect("send first");
+        // Second envelope at the same height: the callback returns
+        // HeightMismatch.  The executor must treat this as benign (already
+        // applied) and continue draining — not inject HaltScheduled.
+        tx.send(test_commit_envelope(1)).expect("send dup");
+        // Third envelope at the next height: must still apply.
+        tx.send(test_commit_envelope(2)).expect("send next");
+
+        drop(tx);
+
+        // Executor should drain all three and exit cleanly.
+        let _ = tokio::time::timeout(Duration::from_secs(1), handle).await;
+
+        // No halt event must have been published. (We `try_recv` to avoid
+        // sleeping; if a Halt was emitted, it would be immediately available.)
+        match event_rx.try_recv() {
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+            | Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                // expected: no halt scheduled
+            }
+            Ok(evt) => panic!(
+                "duplicate commit envelope must NOT inject Halt; got event: {:?}",
+                evt
+            ),
+        }
+
+        // The non-duplicate height 2 must have been applied.
+        assert_eq!(
+            *committed.lock().unwrap(),
+            2,
+            "post-duplicate envelopes for fresh heights must still apply"
+        );
     }
 }
