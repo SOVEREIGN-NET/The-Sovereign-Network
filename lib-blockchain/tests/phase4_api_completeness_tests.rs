@@ -10,8 +10,17 @@ mod tests {
     fn test_identity_registry_structure() {
         let blockchain = Blockchain::new().expect("Failed to create blockchain");
 
-        // Verify identity registry is initialized
-        assert_eq!(blockchain.identity_registry.len(), 0);
+        // Fresh v2 genesis seeds identity allocations for API/query surfaces
+        // (mirrors test_wallet_registry_structure below).
+        assert!(!blockchain.identity_registry.is_empty());
+
+        let identity = blockchain
+            .identity_registry
+            .values()
+            .next()
+            .expect("Expected seeded identity allocation");
+        assert!(!identity.did.is_empty());
+        assert!(!identity.identity_type.is_empty());
     }
 
     #[test]
@@ -100,8 +109,16 @@ mod tests {
         // - controlled_nodes
         // - owned_wallets
 
-        // These checks are structural - actual data querying happens in API layer
-        assert_eq!(blockchain.identity_registry.len(), 0);
+        // Fresh v2 genesis seeds identities; verify a seeded record carries
+        // the fields the API/query layer depends on. Structural check only —
+        // actual data querying happens in the API layer.
+        let identity = blockchain
+            .identity_registry
+            .values()
+            .next()
+            .expect("Expected seeded identity allocation");
+        assert!(!identity.did.is_empty());
+        assert!(!identity.identity_type.is_empty());
     }
 
     #[test]

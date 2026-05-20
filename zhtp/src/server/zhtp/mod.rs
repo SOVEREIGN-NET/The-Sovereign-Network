@@ -3,6 +3,8 @@
 //! This module implements the native ZHTP protocol directly over QUIC streams,
 //! replacing the HTTP layer entirely for Web4 communications.
 
+pub mod lobby_acl;
+pub mod lobby_mac;
 pub mod router;
 pub mod serialization;
 

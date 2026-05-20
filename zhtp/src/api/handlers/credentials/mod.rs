@@ -6,6 +6,13 @@
 //!   POST /api/v1/auth/credentials/register — set username + password (requires existing DID)
 //!   POST /api/v1/auth/credentials/signin   — username + password → session token
 //!   POST /api/v1/auth/credentials/recover  — seed phrase → prove DID → new password
+//!   POST /api/v1/auth/opaque/register/start  — OPAQUE register step 1 (S3 of epic #2554)
+//!   POST /api/v1/auth/opaque/register/finish — OPAQUE register step 2
+//!   POST /api/v1/auth/opaque/login/start     — OPAQUE login step 1
+//!   POST /api/v1/auth/opaque/login/finish    — OPAQUE login step 2 + session token
+
+pub mod opaque;
+pub mod rate_limit;
 
 use anyhow::Result;
 use serde::Deserialize;
@@ -23,6 +30,11 @@ use crate::session_manager::SessionManager;
 pub struct CredentialsHandler {
     blockchain: Arc<RwLock<Blockchain>>,
     session_manager: Arc<SessionManager>,
+    /// OPAQUE handler state — None when the network has no [opaque] section
+    /// in genesis (lobby auth disabled), populated when present.
+    opaque: tokio::sync::OnceCell<Option<Arc<opaque::OpaqueAuthState>>>,
+    /// Rate limiter for OPAQUE login flow (S4 #2558).
+    rate_limiter: Arc<rate_limit::LobbyRateLimiter>,
 }
 
 #[derive(Deserialize)]
@@ -61,11 +73,70 @@ fn error_resp(status: ZhtpStatus, msg: &str) -> ZhtpResponse {
     ZhtpResponse::error(status, msg.to_string())
 }
 
+/// S7 #2561: 409 response steering a legacy argon2id user through OPAQUE
+/// registration to migrate their credential in place.
+fn upgrade_required_resp(did: &str, username: &str) -> ZhtpResponse {
+    let body = serde_json::to_vec(&json!({
+        "status": "upgrade_required",
+        "did": did,
+        "username": username,
+        "hint": "call /api/v1/auth/opaque/register/start to upgrade"
+    }))
+    .unwrap_or_default();
+    let mut resp =
+        ZhtpResponse::success_with_content_type(body, "application/json".to_string(), None);
+    resp.status = ZhtpStatus::Conflict;
+    resp.status_message = ZhtpStatus::Conflict.reason_phrase().to_string();
+    resp
+}
+
 impl CredentialsHandler {
     pub fn new(blockchain: Arc<RwLock<Blockchain>>, session_manager: Arc<SessionManager>) -> Self {
+        let rate_limiter = Arc::new(rate_limit::LobbyRateLimiter::new());
+        rate_limiter.clone().spawn_sweep();
         Self {
             blockchain,
             session_manager,
+            opaque: tokio::sync::OnceCell::new(),
+            rate_limiter,
+        }
+    }
+
+    /// Lazily initialise the OPAQUE handler state from the genesis-loaded
+    /// server setup bytes. Returns None when the network has no `[opaque]`
+    /// section (lobby auth disabled — endpoints return 503).
+    async fn opaque_state(&self) -> Option<Arc<opaque::OpaqueAuthState>> {
+        self.opaque
+            .get_or_init(|| async {
+                let bc = self.blockchain.read().await;
+                let bytes = bc.opaque_server_setup.as_ref()?.as_slice().to_vec();
+                drop(bc);
+                match opaque::OpaqueAuthState::from_setup_bytes(&bytes) {
+                    Ok(state) => {
+                        let arc = Arc::new(state);
+                        // Kick off the TTL sweep task.
+                        arc.clone().spawn_sweep();
+                        Some(arc)
+                    }
+                    Err(e) => {
+                        warn!("OPAQUE state init failed: {}", e);
+                        None
+                    }
+                }
+            })
+            .await
+            .clone()
+    }
+
+    fn opaque_handlers(
+        &self,
+        state: Arc<opaque::OpaqueAuthState>,
+    ) -> opaque::OpaqueHandlers {
+        opaque::OpaqueHandlers {
+            blockchain: self.blockchain.clone(),
+            state,
+            session_manager: self.session_manager.clone(),
+            rate_limiter: self.rate_limiter.clone(),
         }
     }
 
@@ -125,11 +196,14 @@ impl CredentialsHandler {
             }
         }
 
-        // Submit transaction + cache warmup
+        // Submit transaction + cache warmup. Legacy endpoint emits an
+        // Argon2idPhc record; opaque_record stays empty.
         let credential_data = lib_blockchain::transaction::RegisterCredentialData {
             username: req.username.clone(),
             owner_did: req.did.clone(),
             password_hash: req.password_hash.clone(),
+            opaque_record: Vec::new(),
+            auth_method: lib_blockchain::transaction::credentials::AuthMethod::Argon2idPhc,
         };
 
         let tx = self.build_system_tx(
@@ -156,6 +230,8 @@ impl CredentialsHandler {
                     registered_at_height: height,
                     registered_at: now,
                     password_changed_at_height: 0,
+                    opaque_record: Vec::new(),
+                    auth_method: lib_blockchain::transaction::credentials::AuthMethod::Argon2idPhc,
                 },
             );
             blockchain
@@ -197,6 +273,19 @@ impl CredentialsHandler {
             }
         };
 
+        // S7 #2561: once a credential has been migrated to OPAQUE, the legacy
+        // signin endpoint refuses to authenticate it at all — the client must
+        // use the OPAQUE login flow. Reply 401 (same shape as bad-password)
+        // to avoid leaking that this username has migrated.
+        if credential.auth_method
+            == lib_blockchain::transaction::credentials::AuthMethod::Opaque
+        {
+            return Ok(error_resp(
+                ZhtpStatus::Unauthorized,
+                "Invalid username or password",
+            ));
+        }
+
         if credential.password_hash != req.password_hash {
             return Ok(error_resp(
                 ZhtpStatus::Unauthorized,
@@ -204,43 +293,20 @@ impl CredentialsHandler {
             ));
         }
 
-        let client_ip = request
-            .headers
-            .get("X-Real-IP")
-            .unwrap_or_else(|| "unknown".to_string());
-        let user_agent = request
-            .headers
-            .get("User-Agent")
-            .unwrap_or_else(|| "unknown".to_string());
-
-        let identity_hash = {
-            let did_hex = credential
-                .owner_did
-                .strip_prefix("did:zhtp:")
-                .unwrap_or(&credential.owner_did);
-            let mut h = [0u8; 32];
-            if let Ok(bytes) = hex::decode(did_hex) {
-                let len = bytes.len().min(32);
-                h[..len].copy_from_slice(&bytes[..len]);
-            }
-            lib_crypto::Hash(h)
-        };
-
-        let session_token = self
-            .session_manager
-            .create_password_session(identity_hash, &client_ip, &user_agent)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to create session: {}", e))?;
-
-        info!("Password signin: '{}' from {}", req.username, client_ip);
-
-        create_json_response(json!({
-            "status": "success",
-            "session_token": session_token,
-            "did": credential.owner_did,
-            "username": credential.username,
-            "access_zone": "public"
-        }))
+        // S7 #2561: argon2id credential, password verified. Don't mint a
+        // session — instead instruct the client to upgrade to OPAQUE.
+        // After the OPAQUE register flow lands the new record on-chain,
+        // the same user signs in via /opaque/login. The 409 + hint is the
+        // wire signal to mobile to walk that flow now.
+        let _ = request; // unused once we stop minting sessions here
+        info!(
+            "Legacy signin attempted for '{}' — returning 409 upgrade_required",
+            req.username
+        );
+        Ok(upgrade_required_resp(
+            &credential.owner_did,
+            &credential.username,
+        ))
     }
 
     async fn handle_recover(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
@@ -393,6 +459,37 @@ impl ZhtpRequestHandler for CredentialsHandler {
             (ZhtpMethod::Post, "/api/v1/auth/credentials/recover") => {
                 Ok(self.handle_recover(&request).await?)
             }
+            // OPAQUE flow (S3 of epic #2554)
+            (ZhtpMethod::Post, "/api/v1/auth/opaque/register/start")
+            | (ZhtpMethod::Post, "/api/v1/auth/opaque/register/finish")
+            | (ZhtpMethod::Post, "/api/v1/auth/opaque/login/start")
+            | (ZhtpMethod::Post, "/api/v1/auth/opaque/login/finish") => {
+                let state = match self.opaque_state().await {
+                    Some(s) => s,
+                    None => {
+                        return Ok(error_resp(
+                            ZhtpStatus::ServiceUnavailable,
+                            "Lobby auth not configured (no [opaque] in genesis)",
+                        ));
+                    }
+                };
+                let h = self.opaque_handlers(state);
+                match path {
+                    "/api/v1/auth/opaque/register/start" => {
+                        Ok(h.handle_register_start(&request).await?)
+                    }
+                    "/api/v1/auth/opaque/register/finish" => {
+                        Ok(h.handle_register_finish(&request).await?)
+                    }
+                    "/api/v1/auth/opaque/login/start" => {
+                        Ok(h.handle_login_start(&request).await?)
+                    }
+                    "/api/v1/auth/opaque/login/finish" => {
+                        Ok(h.handle_login_finish(&request).await?)
+                    }
+                    _ => unreachable!(),
+                }
+            }
             _ => Ok(error_resp(ZhtpStatus::NotFound, "Not found")),
         }
     }
@@ -400,5 +497,6 @@ impl ZhtpRequestHandler for CredentialsHandler {
     fn can_handle(&self, request: &ZhtpRequest) -> bool {
         let path = request.uri.split('?').next().unwrap_or("");
         path.starts_with("/api/v1/auth/credentials/")
+            || path.starts_with("/api/v1/auth/opaque/")
     }
 }

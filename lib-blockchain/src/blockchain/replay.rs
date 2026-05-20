@@ -148,6 +148,12 @@ impl Blockchain {
         bc.store = Some(store);
         bc.executor = Some(executor);
 
+        // Rebuild the PoUW mint index from the replayed blocks so
+        // /api/v1/pouw/rewards reports the full on-chain history. (The
+        // per-block hook in process_token_transactions also populates it
+        // during replay; this is an idempotent, authoritative re-scan.)
+        bc.rebuild_pouw_mint_index();
+
         // Backfill genesis-only identities into the sled store. Genesis
         // populates bc.identity_registry directly without going through
         // transactions, so identities created at genesis are absent from

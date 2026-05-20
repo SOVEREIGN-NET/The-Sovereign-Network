@@ -135,7 +135,7 @@ async fn dispatch_request(
         // ── Lookup queries ──────────────────────────────────────────
         IpcRequest::QueryBlock { height } => {
             let bc = blockchain.read().await;
-            IpcResponse::Block(bc.query_block(*height).cloned())
+            IpcResponse::Block(bc.query_block(*height))
         }
         IpcRequest::QueryLatestBlock => {
             let bc = blockchain.read().await;

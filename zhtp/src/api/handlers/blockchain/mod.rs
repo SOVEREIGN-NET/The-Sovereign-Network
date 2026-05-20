@@ -1471,10 +1471,9 @@ impl BlockchainHandler {
         let block = if let Ok(height) = block_id.parse::<u64>() {
             blockchain.get_block(height)
         } else {
-            // For hash lookup, we'll need to search through blocks manually
+            // Hash lookup: full-chain scan (window + store-backed cold blocks).
             blockchain
-                .blocks
-                .iter()
+                .iter_blocks()
                 .find(|b| b.header.block_hash.to_string() == *block_id)
         };
 
@@ -2263,28 +2262,38 @@ impl BlockchainHandler {
             }
         };
 
-        // First, try to get the receipt from the receipt storage (if available)
-        if let Some(receipt) = blockchain.get_receipt(&tx_hash) {
-            let response_data = serde_json::json!({
-                "status": "receipt_found",
-                "transaction_hash": hex::encode(receipt.tx_hash.as_bytes()),
-                "block_height": receipt.block_height,
-                "block_hash": hex::encode(receipt.block_hash.as_bytes()),
-                "transaction_index": receipt.tx_index,
-                "fee_paid": receipt.fee_paid,
-                "confirmations": receipt.confirmations,
-                "timestamp": receipt.timestamp,
-                "status_text": format!("{}", receipt.status),
-                "is_finalized": receipt.is_finalized(),
-                "logs": receipt.logs,
-            });
+        // First, try to get the receipt from the receipt storage (if available).
+        // A store error must surface as 500, not be confused with "not found".
+        match blockchain.get_receipt(&tx_hash) {
+            Err(e) => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("Receipt lookup failed: {}", e),
+                ));
+            }
+            Ok(Some(receipt)) => {
+                let response_data = serde_json::json!({
+                    "status": "receipt_found",
+                    "transaction_hash": hex::encode(receipt.tx_hash.as_bytes()),
+                    "block_height": receipt.block_height,
+                    "block_hash": hex::encode(receipt.block_hash.as_bytes()),
+                    "transaction_index": receipt.tx_index,
+                    "fee_paid": receipt.fee_paid,
+                    "confirmations": receipt.confirmations(blockchain.height),
+                    "timestamp": receipt.timestamp,
+                    "status_text": format!("{}", receipt.status(blockchain.height)),
+                    "is_finalized": receipt.is_finalized(blockchain.height),
+                    "logs": receipt.logs,
+                });
 
-            let json_response = serde_json::to_vec(&response_data)?;
-            return Ok(ZhtpResponse::success_with_content_type(
-                json_response,
-                "application/json".to_string(),
-                None,
-            ));
+                let json_response = serde_json::to_vec(&response_data)?;
+                return Ok(ZhtpResponse::success_with_content_type(
+                    json_response,
+                    "application/json".to_string(),
+                    None,
+                ));
+            }
+            Ok(None) => {}
         }
 
         // Fallback: Search through all blocks for the transaction (for backward compatibility)

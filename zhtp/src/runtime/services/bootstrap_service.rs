@@ -245,11 +245,24 @@ impl BootstrapService {
 
         info!("Appending {} new blocks to local chain", new_blocks.len());
 
-        // Append blocks to local chain
+        // Apply blocks through the verified sync path. `apply_block_trusted_for_sync`
+        // checks chain continuity (prev-hash linkage) and derives all state from
+        // each block — a malicious peer cannot inject forked or fabricated state.
+        // A raw `blocks.push()` would have skipped both verification AND state
+        // derivation, leaving registries/UTXO stale and the chain unguarded.
         let mut blockchain_guard = blockchain.write().await;
         for block in new_blocks {
-            blockchain_guard.blocks.push(block);
-            blockchain_guard.height += 1;
+            let block_height = block.header.height;
+            blockchain_guard
+                .apply_block_trusted_for_sync(block)
+                .await
+                .with_context(|| {
+                    format!(
+                        "rejecting block {} during incremental sync from {} — \
+                         verification failed",
+                        block_height, peer_label
+                    )
+                })?;
         }
 
         info!(

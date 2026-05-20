@@ -81,6 +81,15 @@ pub const DEFAULT_TLS_CERT_PATH: &str = "./data/tls/server.crt";
 /// Default path for TLS private key
 pub const DEFAULT_TLS_KEY_PATH: &str = "./data/tls/server.key";
 
+/// Max bytes a single mesh UNI message is allowed to occupy on the wire.
+/// Sized to fit a consensus proposal carrying a full block (MAX_BLOCK_SIZE = 4 MiB)
+/// plus encryption/framing overhead. Both receive paths (`spawn_receive_loop`
+/// and the inbound-acceptor in `start_receiving`) must agree on this value —
+/// any divergence causes silent truncation of large messages on whichever path
+/// uses the smaller limit, which manifests as proposals being dropped while
+/// smaller messages (votes, heartbeats) pass through.
+pub const MAX_MESH_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
+
 /// Trust policy for QUIC TLS verification.
 #[derive(Clone, Debug)]
 pub enum QuicTrustMode {
@@ -1138,8 +1147,7 @@ impl QuicMeshProtocol {
             loop {
                 match conn.accept_uni().await {
                     Ok(mut stream) => {
-                        match stream.read_to_end(4 * 1024 * 1024).await {
-                            // 4MB max (consensus proposals include block data up to MAX_BLOCK_SIZE + overhead)
+                        match stream.read_to_end(MAX_MESH_MESSAGE_BYTES).await {
                             Ok(encrypted) => {
                                 match decrypt_data(&encrypted, &session_key) {
                                     Ok(decrypted) => {
@@ -1395,7 +1403,7 @@ impl QuicMeshProtocol {
                                         loop {
                                             match quic_conn_clone.accept_uni().await {
                                                 Ok(mut stream) => {
-                                                    match stream.read_to_end(1024 * 1024).await {
+                                                    match stream.read_to_end(MAX_MESH_MESSAGE_BYTES).await {
                                                         Ok(encrypted) => {
                                                             match decrypt_data(
                                                                 &encrypted,
@@ -1439,9 +1447,11 @@ impl QuicMeshProtocol {
                                                                 ),
                                                             }
                                                         }
-                                                        Err(e) => debug!(
-                                                            "Failed to read UNI stream: {}",
-                                                            e
+                                                        Err(e) => warn!(
+                                                            peer = %node_id_hex,
+                                                            error = %e,
+                                                            "Failed to read UNI stream (message dropped); \
+                                                             if this is `TooLong`, raise MAX_MESH_MESSAGE_BYTES"
                                                         ),
                                                     }
                                                 }
@@ -1939,7 +1949,7 @@ impl PqcQuicConnection {
 
         // Receive from QUIC (TLS 1.3 decryption automatic)
         let mut stream = self.quic_conn.accept_uni().await?;
-        let encrypted = stream.read_to_end(1024 * 1024).await?; // 1MB max message size
+        let encrypted = stream.read_to_end(MAX_MESH_MESSAGE_BYTES).await?;
 
         // Decrypt using master key (nonce is embedded in encrypted data by lib-crypto)
         let decrypted = decrypt_data(&encrypted, &session_key)?;

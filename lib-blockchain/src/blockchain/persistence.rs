@@ -206,7 +206,6 @@ impl BlockchainV1 {
             identity_blocks: self.identity_blocks,
             wallet_registry: migrate_legacy_wallet_registry(self.wallet_registry),
             wallet_blocks: self.wallet_blocks,
-            economics_transactions: self.economics_transactions,
             token_contracts: self.token_contracts,
             web4_contracts: self.web4_contracts,
             contract_blocks: self.contract_blocks,
@@ -229,13 +228,11 @@ impl BlockchainV1 {
             blocks_since_last_persist: self.blocks_since_last_persist,
             broadcast_sender: None,
             executed_dao_proposals: HashSet::new(),
-            receipts: HashMap::new(),
             finality_depth: default_finality_depth(),
             finalized_blocks: HashSet::new(),
             contract_states: HashMap::new(),
             contract_state_history: std::collections::BTreeMap::new(),
             utxo_snapshots: std::collections::BTreeMap::new(),
-            fork_points: HashMap::new(),
             reorg_count: 0,
             fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig::default(),
             event_publisher: crate::events::BlockchainEventPublisher::new(),
@@ -290,6 +287,8 @@ impl BlockchainV1 {
             observer_blocks: HashMap::new(),
             credential_registry: HashMap::new(),
             did_to_username: HashMap::new(),
+            opaque_server_setup: None,
+            pouw_mint_index: HashMap::new(),
         }
     }
 }
@@ -458,7 +457,9 @@ impl BlockchainStorageV3 {
                 })
             }).collect(),
             wallet_blocks: bc.wallet_blocks.clone(),
-            economics_transactions: bc.economics_transactions.clone(),
+            // economics_transactions removed from Blockchain — V3 keeps the
+            // field only to read pre-existing .dat files; new saves write empty.
+            economics_transactions: Vec::new(),
             token_contracts: bc.token_contracts.clone(),
             web4_contracts: bc.web4_contracts.clone(),
             contract_blocks: bc.contract_blocks.clone(),
@@ -476,13 +477,17 @@ impl BlockchainStorageV3 {
             auto_persist_enabled: bc.auto_persist_enabled,
             blocks_since_last_persist: bc.blocks_since_last_persist,
             executed_dao_proposals: bc.executed_dao_proposals.clone(),
-            receipts: bc.receipts.clone(),
+            // receipts removed from Blockchain (now a direct-write store tree).
+            // V3 keeps the field for old .dat reads; new saves write empty.
+            receipts: HashMap::new(),
             finality_depth: bc.finality_depth,
             finalized_blocks: bc.finalized_blocks.clone(),
             contract_states: bc.contract_states.clone(),
             contract_state_history: bc.contract_state_history.clone(),
             utxo_snapshots: bc.utxo_snapshots.clone(),
-            fork_points: bc.fork_points.clone(),
+            // fork_points removed from Blockchain (now a direct-write store
+            // tree). V3 keeps the field for old .dat reads; new saves: empty.
+            fork_points: HashMap::new(),
             reorg_count: bc.reorg_count,
             fork_recovery_config: bc.fork_recovery_config.clone(),
             ubi_registry: bc.ubi_registry.clone(),
@@ -518,6 +523,20 @@ impl BlockchainStorageV3 {
     }
 
     pub(super) fn to_blockchain(self) -> Blockchain {
+        // Legacy `.dat` files carried `receipts` and `fork_points` inline.
+        // Those datasets now live behind `BlockchainStore`; a `.dat` load is a
+        // one-time migration that does not repopulate them — receipts are
+        // reconstructible from block replay, fork points are historical audit
+        // data. Warn loudly rather than drop them silently.
+        if !self.receipts.is_empty() || !self.fork_points.is_empty() {
+            tracing::warn!(
+                "Legacy .dat migration: {} receipt(s) and {} fork point(s) are \
+                 NOT carried into the store-backed model (receipts rebuild from \
+                 blocks; fork history is audit-only).",
+                self.receipts.len(),
+                self.fork_points.len(),
+            );
+        }
         Blockchain {
             blocks: self.blocks,
             height: self.height,
@@ -533,7 +552,6 @@ impl BlockchainStorageV3 {
             identity_blocks: self.identity_blocks,
             wallet_registry: migrate_legacy_wallet_registry(self.wallet_registry),
             wallet_blocks: self.wallet_blocks,
-            economics_transactions: self.economics_transactions,
             token_contracts: self.token_contracts,
             web4_contracts: self.web4_contracts,
             contract_blocks: self.contract_blocks,
@@ -557,13 +575,11 @@ impl BlockchainStorageV3 {
             auto_persist_enabled: self.auto_persist_enabled,
             blocks_since_last_persist: self.blocks_since_last_persist,
             executed_dao_proposals: self.executed_dao_proposals,
-            receipts: self.receipts,
             finality_depth: self.finality_depth,
             finalized_blocks: self.finalized_blocks,
             contract_states: self.contract_states,
             contract_state_history: self.contract_state_history,
             utxo_snapshots: self.utxo_snapshots,
-            fork_points: self.fork_points,
             reorg_count: self.reorg_count,
             fork_recovery_config: self.fork_recovery_config,
             ubi_registry: self.ubi_registry,
@@ -615,8 +631,10 @@ impl BlockchainStorageV3 {
             nft_collections: HashMap::new(),
             credential_registry: HashMap::new(),
             did_to_username: HashMap::new(),
+            opaque_server_setup: None,
             observer_registry: HashMap::new(),
             observer_blocks: HashMap::new(),
+            pouw_mint_index: HashMap::new(),
         }
     }
 }
@@ -941,7 +959,10 @@ impl Blockchain {
         }
 
         let storage = BlockchainStorageV11::from_blockchain(self);
-        let serialized = bincode::serialize(&storage)
+        // Serialize on a large-stack thread — the nested BlockchainStorageV11
+        // wrapper chain overflows a default 2 MiB worker/test thread stack.
+        let serialized = with_large_stack(move || bincode::serialize(&storage))
+            .map_err(|e| anyhow::anyhow!("Blockchain serialization thread failed: {}", e))?
             .map_err(|e| anyhow::anyhow!("Failed to serialize blockchain: {}", e))?;
 
         let mut file_data = Vec::with_capacity(6 + serialized.len());
@@ -1321,12 +1342,49 @@ impl Blockchain {
     }
 }
 
+/// Run `f` on a freshly-spawned thread with a large stack.
+///
+/// `save_to_file` / `load_from_file` (de)serialize `BlockchainStorageV11` — a
+/// chain of nine nested wrapper structs (`V11 → V10 → … → V3`) over the full
+/// `Blockchain`. serde's derived (de)serializers for those large structs have
+/// big stack frames; nested, they exceed the 2 MiB default stack of a tokio
+/// worker thread or a Rust test thread and overflow it. Doing the work on a
+/// thread with a generous stack makes this path robust regardless of the
+/// stack size of whichever thread the caller happens to run on.
+///
+/// Returns `Err` when the OS refuses to create the thread, or when the worker
+/// panics — both are surfaced to the caller (`save_to_file` / `load_from_file`
+/// return `Result`) instead of crashing the process via `expect`.
+fn with_large_stack<T, F>(f: F) -> Result<T>
+where
+    T: Send,
+    F: FnOnce() -> T + Send,
+{
+    const LARGE_STACK: usize = 32 * 1024 * 1024;
+    std::thread::scope(|scope| {
+        let handle = std::thread::Builder::new()
+            .name("blockchain-serde".to_string())
+            .stack_size(LARGE_STACK)
+            .spawn_scoped(scope, f)
+            .map_err(|e| {
+                anyhow::anyhow!("failed to spawn large-stack (de)serialization thread: {}", e)
+            })?;
+        handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("large-stack (de)serialization thread panicked"))
+    })
+}
+
 fn deserialize_or_err<T, U, F>(data: &[u8], label: &str, on_success: F) -> Result<U>
 where
-    T: serde::de::DeserializeOwned,
+    T: serde::de::DeserializeOwned + Send,
     F: FnOnce(T) -> U,
 {
-    match bincode::deserialize::<T>(data) {
+    let decoded = with_large_stack(|| bincode::deserialize::<T>(data)).map_err(|e| {
+        error!("❌ {} (de)serialization thread failed: {}", label, e);
+        anyhow::anyhow!("{} (de)serialization thread failed: {}", label, e)
+    })?;
+    match decoded {
         Ok(storage) => Ok(on_success(storage)),
         Err(storage_err) => {
             error!("❌ Failed to deserialize {}: {}", label, storage_err);

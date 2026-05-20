@@ -540,9 +540,12 @@ async fn test_gap4_message_relevance_invariant() {
     let keypair = create_test_keypair();
     register_local_validator(&mut engine, validator1.clone(), &keypair, true).await;
 
-    // Set engine to height=2, round=1
+    // Set engine to height=2, round=300. The round is deliberately past
+    // the ROUND_ACCEPTANCE_WINDOW (200) so the round-0 vote below is
+    // genuinely stale — within the window a past-round vote is relevant
+    // by design (cross-continent latency tolerance).
     engine.current_round.height = 2;
-    engine.current_round.round = 1;
+    engine.current_round.round = 300;
     engine.current_round.step = ConsensusStep::PreVote;
     engine.snapshot_validator_set(2);
 
@@ -584,7 +587,7 @@ async fn test_gap4_message_relevance_invariant() {
         Hash::from_bytes(&[13u8; 32]),
         VoteType::PreVote,
         2,
-        1,
+        300,
     );
 
     // Process irrelevant votes
@@ -2303,7 +2306,15 @@ fn stage_stub_proposal(
     let block_data: Vec<u8> = vec![];
 
     let proposal_data = engine
-        .serialize_proposal_data(&proposal_id, proposer, height, round, &previous_hash, &block_data)
+        .serialize_proposal_data(
+            &proposal_id,
+            proposer,
+            height,
+            round,
+            &previous_hash,
+            &block_data,
+            None,
+        )
         .expect("serialize_proposal_data");
     let signature = sign_bytes(keypair, &proposal_data);
 
@@ -2326,6 +2337,7 @@ fn stage_stub_proposal(
             zk_did_proof: None,
             timestamp: 0,
         },
+        valid_round: None,
     });
 }
 
@@ -2353,7 +2365,15 @@ fn make_signed_proposal(
     ));
 
     let proposal_data = engine
-        .serialize_proposal_data(&proposal_id, proposer, height, round, &previous_hash, &block_data)
+        .serialize_proposal_data(
+            &proposal_id,
+            proposer,
+            height,
+            round,
+            &previous_hash,
+            &block_data,
+            None,
+        )
         .expect("serialize_proposal_data");
 
     let signature = sign_bytes(keypair, &proposal_data);
@@ -2379,6 +2399,7 @@ fn make_signed_proposal(
             zk_did_proof: None,
             timestamp: 0,
         },
+        valid_round: None,
     }
 }
 
@@ -2620,34 +2641,43 @@ async fn test_proposal_admission_valid_proposal_accepted() {
     );
 }
 
+/// Round-sync Test 2 — a valid higher-round proposal advances the local
+/// round (Trigger A). Supersedes the pre-round-sync
+/// `test_future_round_proposal_does_not_advance_local_round`, which
+/// enshrined the old behavior that caused the height-59117 livelock.
 #[tokio::test]
-async fn test_future_round_proposal_does_not_advance_local_round() {
+async fn test_higher_round_proposal_advances_round() {
     let (mut engine, validators) = setup_bft_engine(1, 0).await;
-    let expected = engine.compute_proposer_for_round(1, 2).unwrap();
+    attach_test_blockchain_provider(&mut engine);
+
+    let expected = engine.compute_proposer_for_round(1, 3).unwrap();
     let (proposer_id, proposer_kp) = validators
         .iter()
         .find(|(id, _)| *id == expected)
-        .expect("future-round proposer must exist");
+        .expect("round-3 proposer must exist");
 
     let proposal = make_signed_proposal(
         &engine,
         proposer_id,
         proposer_kp,
         1,
-        2,
+        3,
         Hash([0u8; 32]),
-        b"future-round-block".to_vec(),
+        b"higher-round-block".to_vec(),
     );
 
     engine
         .on_proposal(proposal.clone())
         .await
-        .expect("future-round proposal should be processed");
+        .expect("higher-round proposal should be processed");
 
-    assert_eq!(engine.current_round.round, 0, "proposal must not advance local round");
+    assert_eq!(
+        engine.current_round.round, 3,
+        "a valid higher-round proposal must pull the local round forward (Trigger A)"
+    );
     assert!(
-        engine.pending_proposals.iter().any(|p| p.id == proposal.id),
-        "future-round proposal should still be tracked"
+        engine.proposal_for_round.contains_key(&3),
+        "the higher-round proposal must be buffered for its round"
     );
 }
 
@@ -2794,5 +2824,609 @@ async fn test_validator_snapshot_is_write_once() {
     assert!(
         next.contains(&new_id),
         "new validator must appear in height-2 snapshot"
+    );
+}
+
+// ============================================================================
+// Round-synchronization tests (Tendermint-style round sync).
+//
+// These reproduce the height-59117 livelock — validators stranded across
+// divergent rounds, unable to form quorum — and prove evidence-driven
+// recovery. n = 4 validators ⇒ f = 1, round-sync threshold f+1 = 2,
+// commit quorum = 3.
+// ============================================================================
+
+/// Test 1 — round-drift convergence (Trigger B). A validator stranded at a
+/// low round jumps forward once it observes f+1 distinct validators
+/// prevoting in a higher round.
+#[tokio::test]
+async fn test_round_sync_higher_round_prevote_evidence_jumps() {
+    let (mut engine, validators) = setup_bft_engine(5, 1).await;
+    attach_test_blockchain_provider(&mut engine);
+    engine.current_round.step = ConsensusStep::PreVote;
+
+    let proposal_id = Hash::from_bytes(&[7u8; 32]);
+
+    // First higher-round prevote: 1 distinct prevoter < f+1 ⇒ no jump.
+    let vote1 = make_signed_vote(
+        &engine,
+        &validators[1].1,
+        validators[1].0.clone(),
+        proposal_id.clone(),
+        VoteType::PreVote,
+        5,
+        6,
+    );
+    engine.on_prevote(vote1).await.expect("prevote 1 processed");
+    assert_eq!(
+        engine.current_round.round, 1,
+        "one higher-round prevote (< f+1) must NOT advance the round"
+    );
+
+    // Second higher-round prevote: f+1 distinct prevoters ⇒ jump to round 6.
+    let vote2 = make_signed_vote(
+        &engine,
+        &validators[2].1,
+        validators[2].0.clone(),
+        proposal_id.clone(),
+        VoteType::PreVote,
+        5,
+        6,
+    );
+    engine.on_prevote(vote2).await.expect("prevote 2 processed");
+    assert_eq!(
+        engine.current_round.round, 6,
+        "f+1 distinct higher-round prevoters must round-sync the node forward (Trigger B)"
+    );
+}
+
+/// Test 3 — higher-round precommit evidence jumps the round (Trigger C),
+/// but f+1 (below quorum) must never finalize a block.
+#[tokio::test]
+async fn test_round_sync_higher_round_precommit_jumps_without_commit() {
+    let (mut engine, validators) = setup_bft_engine(5, 1).await;
+    attach_test_blockchain_provider(&mut engine);
+    engine.current_round.step = ConsensusStep::PreCommit;
+
+    let proposal_id = Hash::from_bytes(&[9u8; 32]);
+    for v in 1..=2usize {
+        let vote = make_signed_vote(
+            &engine,
+            &validators[v].1,
+            validators[v].0.clone(),
+            proposal_id.clone(),
+            VoteType::PreCommit,
+            5,
+            7,
+        );
+        engine.on_precommit(vote).await.expect("precommit processed");
+    }
+
+    assert_eq!(
+        engine.current_round.round, 7,
+        "f+1 distinct higher-round precommitters must round-sync forward (Trigger C)"
+    );
+    // f+1 = 2 precommits is below the commit quorum of 3 — nothing commits.
+    assert_eq!(
+        engine.current_round.height, 5,
+        "round sync must not advance the height — f+1 is not a commit quorum"
+    );
+    assert_eq!(
+        engine.current_round.step,
+        ConsensusStep::Propose,
+        "after the jump the node is in a fresh Propose step, not Commit"
+    );
+}
+
+/// Test 4 — round state never moves backward. Stale lower-round proposals
+/// and prevotes are accepted for accounting but do not rewind the round.
+#[tokio::test]
+async fn test_round_sync_no_backward_jump() {
+    let (mut engine, validators) = setup_bft_engine(5, 10).await;
+    attach_test_blockchain_provider(&mut engine);
+    engine.current_round.step = ConsensusStep::PreVote;
+
+    // A valid proposal for a LOWER round (4) must not rewind round 10.
+    let expected = engine.compute_proposer_for_round(5, 4).unwrap();
+    let (proposer_id, proposer_kp) = validators
+        .iter()
+        .find(|(id, _)| *id == expected)
+        .expect("round-4 proposer must exist");
+    let stale_proposal = make_signed_proposal(
+        &engine,
+        proposer_id,
+        proposer_kp,
+        5,
+        4,
+        Hash([0u8; 32]),
+        b"stale-round-block".to_vec(),
+    );
+    engine
+        .on_proposal(stale_proposal)
+        .await
+        .expect("stale proposal processed");
+    assert_eq!(
+        engine.current_round.round, 10,
+        "a lower-round proposal must never move the round backward"
+    );
+
+    // Even f+1 lower-round prevotes must not rewind the round.
+    let stale_id = Hash::from_bytes(&[3u8; 32]);
+    for v in 1..=2usize {
+        let vote = make_signed_vote(
+            &engine,
+            &validators[v].1,
+            validators[v].0.clone(),
+            stale_id.clone(),
+            VoteType::PreVote,
+            5,
+            4,
+        );
+        engine.on_prevote(vote).await.expect("stale prevote processed");
+    }
+    assert_eq!(
+        engine.current_round.round, 10,
+        "lower-round prevotes must never move the round backward"
+    );
+}
+
+/// Test 5 — lock safety. A locked validator may prevote only its locked
+/// value, or a conflicting value whose `valid_round >= locked_round`.
+#[tokio::test]
+async fn test_round_sync_lock_rule_safety() {
+    let (mut engine, validators) = setup_bft_engine(5, 6).await;
+
+    let locked_id = Hash::from_bytes(&[1u8; 32]);
+    let other_id = Hash::from_bytes(&[2u8; 32]);
+
+    // Not locked — any prevote is permitted.
+    assert!(
+        engine.prevote_permitted_by_lock(None, &other_id),
+        "an unlocked validator may prevote any value"
+    );
+
+    // Lock on `locked_id` at round 5.
+    engine.current_round.locked_proposal = Some(locked_id.clone());
+    engine.current_round.locked_round = Some(5);
+
+    // The locked value itself is always prevotable.
+    assert!(
+        engine.prevote_permitted_by_lock(None, &locked_id),
+        "a locked validator may always re-prevote its locked value"
+    );
+
+    let proposer = engine.compute_proposer_for_round(5, 6).unwrap();
+    let (pid, pkp) = validators
+        .iter()
+        .find(|(id, _)| *id == proposer)
+        .expect("proposer exists");
+
+    // Conflicting proposal, no valid_round ⇒ must abstain.
+    let mut conflicting = make_signed_proposal(
+        &engine, pid, pkp, 5, 6, Hash([0u8; 32]), b"conflict".to_vec(),
+    );
+    conflicting.valid_round = None;
+    assert!(
+        !engine.prevote_permitted_by_lock(Some(&conflicting), &other_id),
+        "a locked validator must NOT prevote a conflicting value with no valid_round"
+    );
+
+    // Conflicting proposal with valid_round < locked_round ⇒ still abstain.
+    conflicting.valid_round = Some(4);
+    assert!(
+        !engine.prevote_permitted_by_lock(Some(&conflicting), &other_id),
+        "valid_round below the lock round does not unlock"
+    );
+
+    // Conflicting proposal with valid_round >= locked_round ⇒ unlock allowed.
+    conflicting.valid_round = Some(5);
+    assert!(
+        engine.prevote_permitted_by_lock(Some(&conflicting), &other_id),
+        "valid_round >= lock round permits prevoting the conflicting value"
+    );
+}
+
+/// Test 6 — timer generation safety. A timer armed for one (height, round,
+/// step) is neutralized once any of those change: `run_consensus_loop`
+/// discards a fired timer whose token no longer matches current state, so
+/// a stale round-10 timer cannot mutate a node that has jumped to round 15.
+#[tokio::test]
+async fn test_round_sync_stale_timer_token_rejected() {
+    let token = TimerToken::new(1, 10, &ConsensusStep::PreVote);
+
+    assert!(
+        token.matches(1, 10, &ConsensusStep::PreVote),
+        "a timer token matches its own (height, round, step)"
+    );
+    assert!(
+        !token.matches(1, 15, &ConsensusStep::Propose),
+        "after a jump to round 15 the round-10 timer token must not match"
+    );
+    assert!(
+        !token.matches(1, 10, &ConsensusStep::Propose),
+        "a step change alone invalidates the timer token"
+    );
+    assert!(
+        !token.matches(1, 11, &ConsensusStep::PreVote),
+        "a round change alone invalidates the timer token"
+    );
+}
+
+/// Test 7 — a lagging proposer cannot poison a round. When this node is the
+/// elected proposer but its blockchain is behind the consensus height, it
+/// must abstain from proposing (and trigger catch-up) rather than broadcast
+/// a stale-tip proposal that peers would reject as a fork.
+#[tokio::test]
+async fn test_round_sync_lagging_proposer_does_not_propose() {
+    let (mut engine, validators) = setup_bft_engine(5, 0).await;
+    // ReadyProvider reports blockchain height 0; consensus is at height 5,
+    // so this node is ~4 blocks behind.
+    attach_test_blockchain_provider(&mut engine);
+
+    // Find a round for which the local validator (validators[0]) is the
+    // elected proposer, and drive the propose step for it.
+    let local = validators[0].0.clone();
+    let round = (0..8u32)
+        .find(|r| engine.compute_proposer_for_round(5, *r).as_ref() == Some(&local))
+        .expect("local node must be proposer for some round");
+
+    engine.current_round.round = round;
+    engine.current_round.step = ConsensusStep::Propose;
+    engine.current_round.proposer = None;
+
+    assert!(
+        engine.proposer_blockchain_is_behind().await,
+        "node with blockchain height 0 and consensus height 5 must read as behind"
+    );
+
+    engine
+        .enter_propose_step()
+        .await
+        .expect("enter_propose_step must not error for a behind proposer");
+
+    assert!(
+        engine.current_round.proposals.is_empty(),
+        "a behind proposer must NOT create a proposal"
+    );
+    assert!(
+        engine.pending_proposals.is_empty(),
+        "a behind proposer must NOT enqueue a proposal artifact"
+    );
+}
+
+/// Regression: `validate_no_fork_proposal` must not treat a `valid_proposal`
+/// carried over from an earlier round as a same-round fork.
+///
+/// Before this fix, the round-sync work that preserves `valid_proposal` /
+/// `valid_round` across round jumps (Tendermint unlock-rule semantics)
+/// caused every legitimate next-round proposal to be rejected as a fork
+/// against the stale `valid_proposal` — deadlocking the chain.
+#[tokio::test]
+async fn test_stale_valid_proposal_does_not_trigger_fork_reject() {
+    let (mut engine, _) = setup_bft_engine(5, 10).await;
+
+    let stale_id = Hash::from_bytes(&[1u8; 32]);
+    let fresh_id = Hash::from_bytes(&[2u8; 32]);
+
+    // Stale state: a prevote quorum was observed in an earlier round, so
+    // valid_proposal / valid_round persist (per Tendermint unlock rule) but
+    // they belong to round 5, not the current round 10.
+    engine.current_round.valid_proposal = Some(stale_id.clone());
+    engine.current_round.valid_round = Some(5);
+
+    let result = engine.validate_no_fork_proposal(5, 10, &fresh_id);
+    assert!(
+        result.is_ok(),
+        "stale valid_proposal (from an earlier round) must NOT trigger a \
+         same-round fork rejection of a new round's legitimate proposal"
+    );
+
+    // Real same-round conflict: valid_proposal was set IN the current round,
+    // and a different proposal_id arrives for that same round.
+    engine.current_round.valid_round = Some(10);
+    let result = engine.validate_no_fork_proposal(5, 10, &fresh_id);
+    assert!(
+        result.is_err(),
+        "same-round conflicting proposal must still trigger a fork rejection"
+    );
+
+    // Same-round, same proposal_id: no conflict, no rejection.
+    let result = engine.validate_no_fork_proposal(5, 10, &stale_id);
+    assert!(
+        result.is_ok(),
+        "same proposal_id at same round must not trigger fork rejection"
+    );
+}
+
+// ─── Cross-round valid-state tracking (CE-S2) ────────────────────────────────
+//
+// Background: `on_prevote` previously gated the 2f+1 prevote-quorum check on
+// `vote.round == current_round.round`. With round drift the quorum-completing
+// 4th-of-5 prevote routinely arrives after the local engine has already
+// advanced past that round (via Trigger B or LocalPrevoteTimeout). The check
+// then never fires, `valid_proposal`/`valid_round` are never set for that
+// round, and subsequent re-proposers fail to thread `valid_round` into their
+// proposal — leaving locked peers locked across rounds indefinitely.
+//
+// The fix decouples valid-state tracking (which must happen regardless of
+// local round) from the precommit transition (which stays current-round-only,
+// because casting a precommit is a local action against a local step). These
+// tests pin the structural contract.
+
+/// Helper: inject a remote prevote for (height, round, proposal_id) into the
+/// engine's pool and run the live `on_prevote` handler so all of its side
+/// effects (validation, dedup, relay, Trigger B, quorum check) actually run.
+async fn deliver_remote_prevote(
+    engine: &mut ConsensusEngine,
+    voter: &IdentityId,
+    voter_kp: &KeyPair,
+    proposal_id: Hash,
+    height: u64,
+    round: u32,
+) {
+    let vote = make_signed_vote(
+        engine,
+        voter_kp,
+        voter.clone(),
+        proposal_id,
+        VoteType::PreVote,
+        height,
+        round,
+    );
+    engine
+        .on_prevote(vote)
+        .await
+        .expect("on_prevote must accept a well-formed remote prevote");
+}
+
+#[tokio::test]
+async fn test_ce_s2_prevote_quorum_records_valid_state_across_rounds() {
+    // 5-validator setup. Local is validator[0]. Drift the local engine forward
+    // to round 7 while the rest of the network has been voting on a proposal P
+    // at round 5. Three remote prevotes arrive — the local engine pools them
+    // and (combined with the local prevote we inject for P at round 5) the
+    // quorum threshold (4/5) is reached.
+    //
+    // CONTRACT: `valid_proposal = P` and `valid_round = 5` MUST be set even
+    // though `current_round.round = 7`. Future re-proposers depend on this to
+    // thread `valid_round` and unlock locked peers.
+    let (mut engine, validators) = setup_bft_engine(1, 0).await;
+
+    // Register a fifth validator so the quorum threshold is 4/5 (a clean
+    // BFT-quorum test). `setup_bft_engine` registers 4; add one more.
+    let v5_id = test_validator_id(5);
+    let v5_kp = create_test_keypair();
+    register_validator_with_keypair(&mut engine, v5_id.clone(), &v5_kp, false).await;
+    engine.snapshot_validator_set(1);
+
+    // Drift local forward to round 7. The earlier-round prevotes arriving now
+    // are exactly the case the bug stranded.
+    engine.current_round.round = 7;
+    engine.current_round.step = ConsensusStep::Propose;
+    assert!(
+        engine.current_round.valid_proposal.is_none(),
+        "precondition: valid_proposal starts empty"
+    );
+
+    // Stage a proposal artifact for round 5 so signature/proposer checks pass.
+    // The on_prevote validator-set check is height-scoped, not round-scoped, so
+    // votes for a past round in the current height are accepted.
+    let proposal_id = Hash::from_bytes(&[0xC5u8; 32]);
+    let (ref proposer_id, ref proposer_kp) = validators[0];
+    stage_stub_proposal(
+        &mut engine,
+        proposal_id.clone(),
+        1,
+        5,
+        proposer_id,
+        proposer_kp,
+    );
+
+    // Pool a prevote for round 5 from validators[0] (the local validator).
+    // We insert directly so we can tag (height, round) explicitly — cast_vote
+    // uses current_round which is now at 7, but the quorum we care about is
+    // for round 5.
+    {
+        let (vid, kp) = &validators[0];
+        let vote = make_signed_vote(
+            &engine,
+            kp,
+            vid.clone(),
+            proposal_id.clone(),
+            VoteType::PreVote,
+            1,
+            5,
+        );
+        let key = VotePoolKey {
+            height: 1,
+            round: 5,
+            vote_type: VoteType::PreVote,
+            validator_id: vid.clone(),
+        };
+        engine.vote_pool.insert(key, (vote, proposal_id.clone()));
+    }
+
+    // Deliver three remote prevotes via the live on_prevote handler so the
+    // bug surface (its quorum check) is what we're actually exercising.
+    for i in 1..=3usize {
+        let (vid, kp) = &validators[i];
+        deliver_remote_prevote(&mut engine, vid, kp, proposal_id.clone(), 1, 5).await;
+    }
+
+    // Total prevotes for (1, 5, P) is now 4-of-5 — supermajority.
+    let count = engine.count_prevotes_for(1, 5, &proposal_id);
+    assert_eq!(
+        count, 4,
+        "test setup: 4 prevotes should be pooled for round 5"
+    );
+
+    // CONTRACT: valid_proposal/valid_round MUST be set, despite current_round.round = 7.
+    assert_eq!(
+        engine.current_round.valid_proposal.as_ref(),
+        Some(&proposal_id),
+        "cross-round prevote quorum must update valid_proposal"
+    );
+    assert_eq!(
+        engine.current_round.valid_round,
+        Some(5),
+        "cross-round prevote quorum must update valid_round"
+    );
+
+    // And the local engine must NOT have transitioned to PreCommit at round 7,
+    // because the precommit transition is a local-action arm and the quorum is
+    // for a past round. (Precommitting at round 7 against a round-5 quorum
+    // would violate BFT safety — the precommit must be tagged with its own
+    // round, and the round-5 quorum doesn't authorize a round-7 precommit.)
+    assert_ne!(
+        engine.current_round.step,
+        ConsensusStep::PreCommit,
+        "cross-round quorum must NOT cause a local PreCommit transition"
+    );
+}
+
+#[tokio::test]
+async fn test_ce_s2_locked_peer_unlocks_on_advertised_valid_round() {
+    // Setup: local validator was locked at round 2 on proposal `LOCKED`. Then a
+    // fresh proposer at round 9 re-proposes a *different* value `NEW`, but
+    // advertises `valid_round = 5` to certify that round 5 saw a prevote
+    // quorum on `NEW`.
+    //
+    // CONTRACT: `prevote_permitted_by_lock` must return true (unlock allowed),
+    // because the advertised valid_round (5) ≥ locked_round (2). This is the
+    // mechanism by which `valid_round` tracking (CE-S2) actually unsticks the
+    // chain — without it the validator would abstain forever.
+    let (mut engine, _validators) = setup_bft_engine(1, 0).await;
+
+    let locked_id = Hash::from_bytes(&[0xAAu8; 32]);
+    let new_id = Hash::from_bytes(&[0xBBu8; 32]);
+
+    engine.current_round.locked_proposal = Some(locked_id.clone());
+    engine.current_round.locked_round = Some(2);
+    engine.current_round.round = 9;
+
+    // Build a fake "new" proposal with valid_round = 5 (≥ locked_round = 2).
+    let proposal = ConsensusProposal {
+        id: new_id.clone(),
+        proposer: test_validator_id(2),
+        height: 1,
+        round: 9,
+        protocol_version: super::CONSENSUS_PROTOCOL_VERSION,
+        previous_hash: Hash([0u8; 32]),
+        block_data: vec![],
+        timestamp: 0,
+        signature: PostQuantumSignature::default(),
+        consensus_proof: crate::types::ConsensusProof {
+            consensus_type: crate::types::ConsensusType::ByzantineFaultTolerance,
+            stake_proof: None,
+            storage_proof: None,
+            work_proof: None,
+            zk_did_proof: None,
+            timestamp: 0,
+        },
+        valid_round: Some(5),
+    };
+
+    let allowed = engine.prevote_permitted_by_lock(Some(&proposal), &new_id);
+    assert!(
+        allowed,
+        "lock-rule unlock: proposal.valid_round (5) >= locked_round (2) must allow prevoting NEW"
+    );
+
+    // Negative control: valid_round = 1 (< locked_round = 2) must still abstain.
+    let mut stale = proposal.clone();
+    stale.valid_round = Some(1);
+    let denied = engine.prevote_permitted_by_lock(Some(&stale), &new_id);
+    assert!(
+        !denied,
+        "lock-rule must REFUSE unlock when proposal.valid_round < locked_round"
+    );
+
+    // Negative control: missing valid_round must abstain (no proof of unlock).
+    let mut no_vr = proposal.clone();
+    no_vr.valid_round = None;
+    let denied2 = engine.prevote_permitted_by_lock(Some(&no_vr), &new_id);
+    assert!(
+        !denied2,
+        "lock-rule must REFUSE unlock when proposal advertises no valid_round"
+    );
+}
+
+#[tokio::test]
+async fn test_ce_s2_quorum_for_current_round_still_transitions_to_precommit() {
+    // Regression guard: the fix must NOT break the normal-case path where the
+    // 4th prevote arrives WHILE the engine is at the same round. Local must
+    // still set valid_proposal/valid_round AND transition to PreCommit.
+    let (mut engine, validators) = setup_bft_engine(1, 0).await;
+
+    // Register a fifth so quorum is 4/5 again.
+    let v5_id = test_validator_id(5);
+    let v5_kp = create_test_keypair();
+    register_validator_with_keypair(&mut engine, v5_id.clone(), &v5_kp, false).await;
+    engine.snapshot_validator_set(1);
+
+    // Engine at round 3, in PreVote step (we've already cast our prevote).
+    // FSM must be in Prevoting so the PrevoteThresholdReached transition rule
+    // (Prevoting, PrevoteThresholdReached) → (Precommitting, SendPrecommit) is
+    // actually armed — see fsm/transition.rs.
+    engine.current_round.round = 3;
+    engine.current_round.step = ConsensusStep::PreVote;
+    engine.fsm_state = lib_consensus_core::fsm::ValidatorState::Prevoting;
+
+    let proposal_id = Hash::from_bytes(&[0xC3u8; 32]);
+    let (ref proposer_id, ref proposer_kp) = validators[0];
+    stage_stub_proposal(
+        &mut engine,
+        proposal_id.clone(),
+        1,
+        3,
+        proposer_id,
+        proposer_kp,
+    );
+
+    // Pool the local prevote at round 3.
+    {
+        let (vid, kp) = &validators[0];
+        let vote = make_signed_vote(
+            &engine,
+            kp,
+            vid.clone(),
+            proposal_id.clone(),
+            VoteType::PreVote,
+            1,
+            3,
+        );
+        let key = VotePoolKey {
+            height: 1,
+            round: 3,
+            vote_type: VoteType::PreVote,
+            validator_id: vid.clone(),
+        };
+        engine.vote_pool.insert(key, (vote, proposal_id.clone()));
+    }
+
+    // Deliver three remote prevotes at round 3 — these complete the quorum.
+    for i in 1..=3usize {
+        let (vid, kp) = &validators[i];
+        deliver_remote_prevote(&mut engine, vid, kp, proposal_id.clone(), 1, 3).await;
+    }
+
+    // Valid state must be set.
+    assert_eq!(
+        engine.current_round.valid_proposal.as_ref(),
+        Some(&proposal_id),
+        "same-round quorum still sets valid_proposal"
+    );
+    assert_eq!(
+        engine.current_round.valid_round,
+        Some(3),
+        "same-round quorum still sets valid_round"
+    );
+
+    // And the local engine MUST have moved to PreCommit (the current-round
+    // local-action arm of the rule).
+    assert!(
+        engine.current_round.step >= ConsensusStep::PreCommit,
+        "same-round quorum must transition to PreCommit, got {:?}",
+        engine.current_round.step
     );
 }

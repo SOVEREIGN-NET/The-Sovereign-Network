@@ -202,7 +202,8 @@ impl ZhtpRequestHandler for ObserverHandler {
                 crate::api::handlers::observer_admission::handle_admission_challenge(request).await
             }
             (ZhtpMethod::Post, path)
-                if path == "/api/v1/observer/admission/register"
+                if path == "/api/v1/observer/admission/prepare"
+                    || path == "/api/v1/observer/admission/register"
                     || path == "/api/v1/observer/admission/update"
                     || path == "/api/v1/observer/admission/suspend"
                     || path == "/api/v1/observer/admission/revoke"

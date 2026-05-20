@@ -449,6 +449,7 @@ impl ConsensusEngine {
             proposal.round,
             &proposal.previous_hash,
             &proposal.block_data,
+            proposal.valid_round,
         )?;
 
         if !self
@@ -589,25 +590,24 @@ impl ConsensusEngine {
             )));
         }
 
-        // If the proposal targets the current round height but there is already an
-        // agreed-upon proposal (valid_proposal) at this height with a different hash,
-        // reject it as a fork.
+        // Same-round fork check: if this proposal is for the current round AND
+        // a conflicting proposal was already agreed upon in THIS round (a prevote
+        // quorum observed this round), reject it as a Byzantine same-round fork.
         //
-        // This can happen if consensus committed a block in a prior round but the
-        // engine has not yet advanced to the next height. Any conflicting proposal
-        // at the same height is a fork and MUST be rejected.
-        // Same-round fork check: if this proposal is for the current round and a
-        // conflicting proposal was already agreed upon in this round, reject it.
+        // `valid_proposal` and `valid_round` PERSIST across rounds — that is the
+        // Tendermint unlock-rule contract (`validValue`/`validRound`). A stale
+        // `valid_proposal` from an earlier round is NOT a same-round conflict:
+        // the elected proposer for the current round may legitimately propose a
+        // different value. The `valid_round == Some(current.round)` gate scopes
+        // the fork check to genuine same-round agreement.
         //
-        // This check is scoped to SAME-ROUND proposals only. A proposal for a different
-        // round is not a fork — each round has its own designated proposer and legitimately
-        // produces a different block. Different-round proposals may arrive while
-        // `valid_proposal` is still set from the local node's current round; treating those
-        // as same-round forks would deadlock timeout-driven round progression.
+        // Without this gate, the check spuriously rejects every legitimate
+        // next-round proposal once `valid_proposal` is set in any round —
+        // deadlocking the chain.
         if proposal_height == self.current_round.height
             && proposal_round == self.current_round.round
+            && self.current_round.valid_round == Some(self.current_round.round)
         {
-            // Two different proposals for the same (height, round) — genuine Byzantine fork.
             if let Some(committed_id) = &self.current_round.valid_proposal {
                 if committed_id != proposal_id {
                     return Err(ConsensusError::ByzantineFault(format!(

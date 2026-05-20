@@ -53,9 +53,9 @@ const QUIC_PORT: u16 = 9334;
 
 // Import our comprehensive API handlers
 use crate::api::handlers::{
-    BearerAuthMiddleware, BlockchainHandler, CbeHandler, DaoHandler, DhtHandler, DnsHandler,
-    IdentityHandler, MobileAuthHandler, ProtocolHandler, StorageHandler, TokenHandler,
-    WalletHandler, Web4Handler,
+    BearerAuthMiddleware, BlockchainHandler, CbeHandler, CredentialsHandler, DaoHandler,
+    DhtHandler, DnsHandler, IdentityHandler, MobileAuthHandler, ProtocolHandler, StorageHandler,
+    TokenHandler, WalletHandler, Web4Handler,
 };
 use crate::config::environment::detect_environment;
 use crate::session_manager::SessionManager;
@@ -1219,6 +1219,22 @@ impl ZhtpUnifiedServer {
         );
         // Transaction delegation endpoints (#2153, #2154) — auth handled internally
         zhtp_router.register_handler("/api/v1/tx".to_string(), mobile_auth_handler);
+
+        // Credentials + OPAQUE lobby-auth endpoints (epic #2554).
+        // Serves /api/v1/auth/credentials/{register,signin,recover} and
+        // /api/v1/auth/opaque/{register,login}/{start,finish}.
+        let credentials_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(CredentialsHandler::new(
+            blockchain.clone(),
+            _session_manager.clone(),
+        ));
+        zhtp_router.register_handler(
+            "/api/v1/auth/credentials".to_string(),
+            credentials_handler.clone(),
+        );
+        zhtp_router.register_handler(
+            "/api/v1/auth/opaque".to_string(),
+            credentials_handler,
+        );
 
         info!("✅ All API handlers registered successfully on ZHTP router");
         Ok((pouw_validator_arc, pouw_calculator))

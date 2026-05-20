@@ -28,7 +28,7 @@ pub trait BlockchainQuery {
     fn query_block_count(&self) -> usize;
 
     /// Get a block by height.
-    fn query_block(&self, height: u64) -> Option<&Block>;
+    fn query_block(&self, height: u64) -> Option<Block>;
 
     /// Get the most recent block.
     fn query_latest_block(&self) -> Option<&Block>;

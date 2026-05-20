@@ -45,7 +45,9 @@ fn test_fix_10_systemtime_panic_handling() {
         votes: HashMap::new(),
         timed_out: false,
         locked_proposal: None,
+        locked_round: None,
         valid_proposal: None,
+        valid_round: None,
     };
 
     // start_time is 0 (deterministic, wall-clock removed per CONSENSUS-NET fix)
