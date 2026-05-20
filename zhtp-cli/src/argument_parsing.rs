@@ -2246,188 +2246,120 @@ mod tests {
         }
     }
 
-    // =========================================================================
-    // Observer subcommand parsing tests
-    // =========================================================================
-
-    #[test]
-    fn parse_observer_generate_command() {
-        let parsed = ZhtpCli::try_parse_from(["zhtp-cli", "observer", "generate"])
-            .expect("observer generate should parse");
-        match parsed.command {
-            ZhtpCommand::Observer(ObserverArgs {
-                action: ObserverAction::Generate,
-            }) => {} // expected
-            other => panic!("unexpected command parsed: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parse_observer_qr_payload_command() {
-        let parsed = ZhtpCli::try_parse_from([
-            "zhtp-cli",
-            "observer",
-            "qr-payload",
-            "--did",
-            "did:zhtp:abc123",
-            "--sponsor",
-            "did:zhtp:sponsor123",
-        ])
-        .expect("observer qr-payload should parse");
-        match parsed.command {
-            ZhtpCommand::Observer(ObserverArgs {
-                action: ObserverAction::QrPayload { did, sponsor },
-            }) => {
-                assert_eq!(did, "did:zhtp:abc123");
-                assert_eq!(sponsor, "did:zhtp:sponsor123");
-            }
-            other => panic!("unexpected command parsed: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parse_observer_qr_render_command() {
-        let parsed = ZhtpCli::try_parse_from([
-            "zhtp-cli",
-            "observer",
-            "qr-render",
-            "--did",
-            "did:zhtp:xyz789",
-            "--sponsor",
-            "did:zhtp:sponsor456",
-        ])
-        .expect("observer qr-render should parse");
-        match parsed.command {
-            ZhtpCommand::Observer(ObserverArgs {
-                action: ObserverAction::QrRender { did, sponsor },
-            }) => {
-                assert_eq!(did, "did:zhtp:xyz789");
-                assert_eq!(sponsor, "did:zhtp:sponsor456");
-            }
-            other => panic!("unexpected command parsed: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parse_observer_status_command() {
-        let parsed = ZhtpCli::try_parse_from([
-            "zhtp-cli",
-            "observer",
-            "status",
-            "--did",
-            "did:zhtp:abc123",
-        ])
-        .expect("observer status should parse");
-        match parsed.command {
-            ZhtpCommand::Observer(ObserverArgs {
-                action: ObserverAction::Status { did },
-            }) => {
-                assert_eq!(did, "did:zhtp:abc123");
-            }
-            other => panic!("unexpected command parsed: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parse_observer_wait_command() {
-        let parsed = ZhtpCli::try_parse_from([
-            "zhtp-cli",
-            "observer",
-            "wait",
-            "--did",
-            "did:zhtp:abc123",
-            "--timeout",
-            "120",
-        ])
-        .expect("observer wait should parse");
-        match parsed.command {
-            ZhtpCommand::Observer(ObserverArgs {
-                action: ObserverAction::Wait { did, timeout },
-            }) => {
-                assert_eq!(did, "did:zhtp:abc123");
-                assert_eq!(timeout, 120);
-            }
-            other => panic!("unexpected command parsed: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parse_observer_wait_default_timeout() {
-        let parsed = ZhtpCli::try_parse_from([
-            "zhtp-cli",
-            "observer",
-            "wait",
-            "--did",
-            "did:zhtp:abc123",
-        ])
-        .expect("observer wait should parse with default timeout");
-        match parsed.command {
-            ZhtpCommand::Observer(ObserverArgs {
-                action: ObserverAction::Wait { did, timeout },
-            }) => {
-                assert_eq!(did, "did:zhtp:abc123");
-                assert_eq!(timeout, 300, "default timeout must be 300");
-            }
-            other => panic!("unexpected command parsed: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parse_observer_start_command() {
-        let parsed = ZhtpCli::try_parse_from([
-            "zhtp-cli",
-            "observer",
-            "start",
-            "--did",
-            "did:zhtp:abc123",
-        ])
-        .expect("observer start should parse");
-        match parsed.command {
-            ZhtpCommand::Observer(ObserverArgs {
-                action: ObserverAction::Start { did },
-            }) => {
-                assert_eq!(did, "did:zhtp:abc123");
-            }
-            other => panic!("unexpected command parsed: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parse_observer_by_sponsor_command() {
-        let parsed = ZhtpCli::try_parse_from([
-            "zhtp-cli",
-            "observer",
-            "by-sponsor",
-            "--did",
-            "did:zhtp:sponsor-999",
-        ])
-        .expect("observer by-sponsor should parse");
-        match parsed.command {
-            ZhtpCommand::Observer(ObserverArgs {
-                action: ObserverAction::BySponsor { did },
-            }) => {
-                assert_eq!(did, "did:zhtp:sponsor-999");
-            }
-            other => panic!("unexpected command parsed: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parse_observer_with_server_flag() {
-        let parsed = ZhtpCli::try_parse_from([
-            "zhtp-cli",
-            "--server",
-            "77.42.37.161:9334",
-            "observer",
-            "generate",
-        ])
-        .expect("observer generate with --server flag should parse");
-        match &parsed.command {
-            ZhtpCommand::Observer(ObserverArgs {
-                action: ObserverAction::Generate,
-            }) => {}
-            other => panic!("unexpected command parsed: {other:?}"),
-        }
-        assert_eq!(parsed.server, "77.42.37.161:9334");
-    }
-}
+    2249    // =========================================================================
+2250    // Observer subcommand parsing tests
+2251    // =========================================================================
+2252
+2253    fn parse_observer_action<I, T>(args: I) -> ObserverAction 
+2254    where
+2255        I: IntoIterator<Item = T>,
+2256        T: IntoValue,
+2257    {
+2258        let parsed = ZhtpCli::try_parse_from(args).expect("observer command should parse successfully");
+2259        match parsed.command {
+2260            ZhtpCommand::Observer(ObserverArgs { action }) => action,
+2261            other => panic!("unexpected command parsed: {other:?}"),
+2262        }
+2263    }
+2264
+2265    #[test]
+2266    fn parse_observer_generate_command() {
+2267        let action = parse_observer_action(["zhtp-cli", "observer", "generate"]);
+2268        assert!(matches!(action, ObserverAction::Generate));
+2269    }
+2270
+2271    #[test]
+2272    fn parse_observer_qr_payload_command() {
+2273        let action = parse_observer_action([
+2274            "zhtp-cli",
+2275            "observer",
+2276            "qr-payload",
+2277            "--did",
+2278            "did:zhtp:abc123",
+2279            "--sponsor",
+2280            "did:zhtp:sponsor123",
+2281        ]);
+2282        if let ObserverAction::QrPayload { did, sponsor } = action {
+2283            assert_eq!(did, "did:zhtp:abc123");
+2284            assert_eq!(sponsor, "did:zhtp:sponsor123");
+2285        } else {
+2286            panic!("Expected ObserverAction::QrPayload");
+2287        }
+2288    }
+2289
+2290    #[test]
+2291    fn parse_observer_qr_render_command() {
+2292        let action = parse_observer_action(["zhtp-cli", "observer", "qr-render", "--did", "did:zhtp:xyz789"]);
+2293        if let ObserverAction::QrRender { did } = action {
+2294            assert_eq!(did, "did:zhtp:xyz789");
+2295        } else {
+2296            panic!("Expected ObserverAction::QrRender");
+2297        }
+2298    }
+2299
+2300    #[test]
+2301    fn parse_observer_status_command() {
+2302        let action = parse_observer_action(["zhtp-cli", "observer", "status", "--did", "did:zhtp:abc123"]);
+2303        if let ObserverAction::Status { did } = action {
+2304            assert_eq!(did, "did:zhtp:abc123");
+2305        } else {
+2306            panic!("Expected ObserverAction::Status");
+2307        }
+2308    }
+2309
+2310    #[test]
+2311    fn parse_observer_wait_command() {
+2312        let action = parse_observer_action(["zhtp-cli", "observer", "wait", "--did", "did:zhtp:abc123", "--timeout", "120"]);
+2313        if let ObserverAction::Wait { did, timeout } = action {
+2314            assert_eq!(did, "did:zhtp:abc123");
+2315            assert_eq!(timeout, 120);
+2316        } else {
+2317            panic!("Expected ObserverAction::Wait");
+2318        }
+2319    }
+2320
+2321    #[test]
+2322    fn parse_observer_wait_default_timeout() {
+2323        let action = parse_observer_action(["zhtp-cli", "observer", "wait", "--did", "did:zhtp:abc123"]);
+2324        if let ObserverAction::Wait { did, timeout } = action {
+2325            assert_eq!(did, "did:zhtp:abc123");
+2326            assert_eq!(timeout, 300, "default timeout must be 300");
+2327        } else {
+2328            panic!("Expected ObserverAction::Wait");
+2329        }
+2330    }
+2331
+2332    #[test]
+2333    fn parse_observer_start_command() {
+2334        let action = parse_observer_action(["zhtp-cli", "observer", "start", "--did", "did:zhtp:abc123"]);
+2335        if let ObserverAction::Start { did } = action {
+2336            assert_eq!(did, "did:zhtp:abc123");
+2337        } else {
+2338            panic!("Expected ObserverAction::Start");
+2339        }
+2434    }
+2335
+2336    #[test]
+2337    fn parse_observer_by_sponsor_command() {
+2338        let action = parse_observer_action(["zhtp-cli", "observer", "by-sponsor", "--did", "did:zhtp:sponsor-999"]);
+2339        if let ObserverAction::BySponsor { did } = action {
+2340            assert_eq!(did, "did:zhtp:sponsor-999");
+2341        } else {
+2342            panic!("Expected ObserverAction::BySponsor");
+2343        }
+2344    }
+2345
+2346    #[test]
+2347    fn parse_observer_with_server_flag() {
+2348        let parsed = ZhtpCli::try_parse_from([
+2349            "zhtp-cli",
+2350            "--server",
+2351            "77.42.37.161:9334",
+2352            "observer",
+2353            "generate",
+2354        ])
+2355        .expect("observer generate with --server flag should parse");
+2356        
+2357        assert!(matches!(parsed.command, ZhtpCommand::Observer(ObserverArgs { action: ObserverAction::Generate })));
+2358        assert_eq!(parsed.server, "77.42.37.161:9334");
+2359    }
