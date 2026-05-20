@@ -61,4 +61,33 @@ impl ConsensusEngine {
             })
             .count() as u64
     }
+
+    /// Count distinct validators that prevoted at `(height, round)`,
+    /// regardless of which proposal they voted for.
+    ///
+    /// Used for round-synchronization evidence (Trigger B): the vote-pool
+    /// key includes `validator_id` with the one-vote-per-(H,R,type,voter)
+    /// invariant, so counting matching keys yields distinct prevoters.
+    /// This is NOT a quorum check — it counts across proposals — so it is
+    /// only valid as round-jump evidence, never as a commit trigger.
+    pub(super) fn count_distinct_prevoters(&self, height: u64, round: u32) -> u64 {
+        self.vote_pool
+            .keys()
+            .filter(|k| {
+                k.height == height && k.round == round && k.vote_type == VoteType::PreVote
+            })
+            .count() as u64
+    }
+
+    /// Count distinct validators that precommitted at `(height, round)`,
+    /// regardless of which proposal they voted for. Round-jump evidence
+    /// only (Trigger C) — see [`Self::count_distinct_prevoters`].
+    pub(super) fn count_distinct_precommitters(&self, height: u64, round: u32) -> u64 {
+        self.vote_pool
+            .keys()
+            .filter(|k| {
+                k.height == height && k.round == round && k.vote_type == VoteType::PreCommit
+            })
+            .count() as u64
+    }
 }

@@ -30,6 +30,7 @@ pub mod mempool;
 pub mod mining;
 pub mod observer;
 pub mod onramp;
+pub mod opaque;
 pub mod oracle;
 pub mod pricing;
 pub mod protocol;

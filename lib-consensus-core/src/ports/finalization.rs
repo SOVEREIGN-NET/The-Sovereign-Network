@@ -128,6 +128,7 @@ mod tests {
             timestamp: 0,
             signature: PostQuantumSignature::default(),
             consensus_proof: ConsensusProof::empty(ConsensusType::ByzantineFaultTolerance, 0),
+            valid_round: None,
         }
     }
 

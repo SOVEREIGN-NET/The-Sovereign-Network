@@ -257,7 +257,13 @@ mod tests;
 ///       Bumping enforces a hard cutover boundary — mixed-version nodes
 ///       reject each other's proposals at admission time instead of
 ///       silently mis-decoding the wire format.
-pub const CONSENSUS_PROTOCOL_VERSION: u32 = 2;
+///   3 — Round synchronization: `ConsensusProposal` gains a signed
+///       `valid_round` field (Tendermint `validRound`) covered by the
+///       `ZHTP/PROPOSAL/SIG/v2` canonical payload. v2 nodes verify the
+///       proposal signature over a payload that omits `valid_round`, so
+///       they would reject v3 proposals; the bump makes that an explicit
+///       admission-time rejection rather than a signature-mismatch stall.
+pub const CONSENSUS_PROTOCOL_VERSION: u32 = 3;
 
 /// Human-readable name of the consensus algorithm variant implemented here.
 ///
@@ -473,6 +479,12 @@ pub struct ConsensusEngine {
     config: ConsensusConfig,
     /// Pending proposals queue
     pending_proposals: VecDeque<ConsensusProposal>,
+    /// Round-keyed proposal buffer for the current height. When a node
+    /// jumps rounds (timeout or f+1 evidence), `enter_round` consults
+    /// this so an already-received proposal for the destination round is
+    /// re-evaluated immediately instead of stalling until re-broadcast.
+    /// Cleared on commit / new height.
+    proposal_for_round: HashMap<u32, ConsensusProposal>,
     /// Vote pool using composite key (height, round, vote_type, validator_id)
     /// Prevents equivocation: one vote per (H,R,type,validator).
     /// Values are (ConsensusVote, value_hash) to detect conflicting votes from same validator.
@@ -659,7 +671,9 @@ impl ConsensusEngine {
             votes: HashMap::new(),
             timed_out: false,
             locked_proposal: None,
+            locked_round: None,
             valid_proposal: None,
+            valid_round: None,
         };
 
         let round_timer = RoundTimer::new(&config);
@@ -679,6 +693,7 @@ impl ConsensusEngine {
             fsm_state: lib_consensus_core::fsm::ValidatorState::Bootstrapping,
             config,
             pending_proposals: VecDeque::new(),
+            proposal_for_round: HashMap::new(),
             vote_pool: HashMap::new(), // Composite key prevents equivocation
             round_history: VecDeque::new(),
             validator_set_history: VecDeque::new(),
@@ -947,6 +962,20 @@ impl ConsensusEngine {
                                 return Err(ConsensusError::ValidatorError(msg));
                             }
                         }
+                    }
+
+                    // Crossing a height boundary retires the Tendermint
+                    // lock state (locks bind a value to a height) and the
+                    // round-keyed proposal buffer (its entries belong to
+                    // the height we just left). A round *jump* within a
+                    // height must not do this — only a height change.
+                    if new_height != old_height {
+                        self.current_round.round = 0;
+                        self.current_round.locked_proposal = None;
+                        self.current_round.locked_round = None;
+                        self.current_round.valid_proposal = None;
+                        self.current_round.valid_round = None;
+                        self.proposal_for_round.clear();
                     }
 
                     tracing::info!(

@@ -55,9 +55,12 @@ fn test_treasury_wallet_initialized_on_new_blockchain() {
     );
 
     let entry = &blockchain.wallet_registry[wallet_id];
+    // The treasury wallet is either created fresh by `ensure_treasury_wallet`
+    // ("DAO Treasury", initial_balance 0) OR pre-seeded by v2 genesis as a
+    // migrated, pre-funded allocation — `ensure_treasury_wallet`'s
+    // `if !contains_key` guard deliberately preserves a genesis-seeded entry.
+    // The stable invariant across both paths is the wallet_type.
     assert_eq!(entry.wallet_type, "treasury");
-    assert_eq!(entry.wallet_name, "DAO Treasury");
-    assert_eq!(entry.initial_balance, 0);
 }
 
 #[test]
@@ -188,11 +191,12 @@ fn test_block_fees_credited_to_treasury() {
         .entry(sov_token_id)
         .or_insert_with(TokenContract::new_sov_native);
 
-    // Initial balance must be zero.
+    // v2 genesis may pre-fund the treasury, so capture the starting balance
+    // rather than assuming zero — the invariant under test is that a credited
+    // fee is reflected by get_dao_treasury_balance(), not the absolute start.
     let balance_before = blockchain
         .get_dao_treasury_balance()
         .expect("get_dao_treasury_balance");
-    assert_eq!(balance_before, 0, "Treasury must start with zero balance");
 
     // Simulate what process_token_transactions does: credit fees via wallet_key_for_sov.
     let fee_amount: u128 = 42_000_000;
@@ -208,8 +212,8 @@ fn test_block_fees_credited_to_treasury() {
         .get_dao_treasury_balance()
         .expect("get_dao_treasury_balance");
     assert_eq!(
-        balance_after as u128, fee_amount,
-        "Treasury balance must equal credited fee amount ({} SOV)",
-        fee_amount
+        balance_after as u128,
+        balance_before as u128 + fee_amount,
+        "Treasury balance must increase by exactly the credited fee amount ({fee_amount} atoms)",
     );
 }

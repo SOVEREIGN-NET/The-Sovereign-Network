@@ -142,6 +142,7 @@ pub fn test_proposal(
             ConsensusProof::empty(ConsensusType::ByzantineFaultTolerance, timestamp)
                 .with_stake_proof(&stake_proof)
         },
+        valid_round: None,
     }
 }
 

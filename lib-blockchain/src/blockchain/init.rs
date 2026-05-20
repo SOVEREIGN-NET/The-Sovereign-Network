@@ -19,7 +19,6 @@ impl Blockchain {
             identity_blocks: HashMap::new(),
             wallet_registry: HashMap::new(),
             wallet_blocks: HashMap::new(),
-            economics_transactions: Vec::new(),
             token_contracts: HashMap::new(),
             web4_contracts: HashMap::new(),
             contract_blocks: HashMap::new(),
@@ -43,13 +42,11 @@ impl Blockchain {
             blocks_since_last_persist: 0,
             broadcast_sender: None,
             executed_dao_proposals: HashSet::new(),
-            receipts: HashMap::new(),
             finality_depth: 12,
             finalized_blocks: HashSet::new(),
             contract_states: HashMap::new(),
             contract_state_history: std::collections::BTreeMap::new(),
             utxo_snapshots: std::collections::BTreeMap::new(),
-            fork_points: HashMap::new(),
             reorg_count: 0,
             fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig::default(),
             event_publisher: crate::events::BlockchainEventPublisher::new(),
@@ -104,6 +101,7 @@ impl Blockchain {
             observer_blocks: HashMap::new(),
             credential_registry: HashMap::new(),
             did_to_username: HashMap::new(),
+            opaque_server_setup: None,
             pouw_mint_index: HashMap::new(),
         }
     }
@@ -361,6 +359,26 @@ impl Blockchain {
         blockchain.auto_persist_enabled = false;
         blockchain.blocks.clear();
         blockchain.height = 0;
+
+        // Reviewer #2569: `opaque_server_setup` is `#[serde(skip)]` so it
+        // would otherwise be lost across restart. Re-parse it from the
+        // embedded genesis on every load so validators that restart pick
+        // up the same OPRF setup they started with.
+        match crate::genesis::GenesisConfig::from_embedded() {
+            Ok(gen) => match gen.load_opaque_setup() {
+                Ok(setup) => blockchain.opaque_server_setup = setup,
+                Err(e) => warn!(
+                    "Embedded genesis [opaque] section invalid during load_from_store: {} \
+                     — lobby auth endpoints will return 503",
+                    e
+                ),
+            },
+            Err(e) => warn!(
+                "Embedded genesis unavailable during load_from_store: {} \
+                 — lobby auth setup not loaded",
+                e
+            ),
+        }
 
         for height in 0..=latest_height {
             match store.get_block_by_height(height)? {
@@ -688,6 +706,46 @@ impl Blockchain {
         // PoUW mint index is not built incrementally on this path. Rebuild it
         // from the loaded blocks so /api/v1/pouw/rewards has the full history.
         blockchain.rebuild_pouw_mint_index();
+
+        // The store's wallet-projection index is non-authoritative and
+        // rebuildable; it can be stale or empty after a wipe. We have just
+        // re-derived the canonical wallet state (`wallet_registry` /
+        // `wallet_blocks`) from full block replay, so re-persist the
+        // projection index from it — `replace_wallet_projections` is
+        // purpose-built for exactly this startup recovery. Without this, a
+        // wiped projection index is never repaired and `get_wallet_projection`
+        // diverges from the replayed truth.
+        {
+            let projections: Vec<([u8; 32], crate::storage::WalletProjectionRecord)> = blockchain
+                .wallet_registry
+                .iter()
+                .filter_map(|(wallet_id_hex, wallet_data)| {
+                    let wallet_id = Self::wallet_id_bytes(wallet_id_hex)?;
+                    let committed_at_height = blockchain
+                        .wallet_blocks
+                        .get(wallet_id_hex)
+                        .copied()
+                        .unwrap_or(0);
+                    Some((
+                        wallet_id,
+                        crate::storage::WalletProjectionRecord {
+                            wallet_data: wallet_data.clone(),
+                            committed_at_height,
+                        },
+                    ))
+                })
+                .collect();
+            match store.replace_wallet_projections(&projections) {
+                Ok(()) => debug!(
+                    "🔁 Rebuilt wallet-projection index from replay ({} entries)",
+                    projections.len()
+                ),
+                Err(e) => warn!(
+                    "⚠️ Failed to rebuild wallet-projection index during load_from_store: {}",
+                    e
+                ),
+            }
+        }
 
         Ok(Some(blockchain))
     }
