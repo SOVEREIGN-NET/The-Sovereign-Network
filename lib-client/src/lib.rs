@@ -52,6 +52,7 @@ pub mod handshake;
 pub mod nft_tx;
 pub mod identity;
 pub mod messaging;
+pub mod observer_admission;
 // `opaque` is gated off wasm32 in v1 because the FFI surface uses raw-pointer
 // `*mut ByteBuffer` out-params that don't translate cleanly to wasm-bindgen,
 // and `rand::rngs::OsRng` on wasm32 needs the `getrandom/js` feature which we
