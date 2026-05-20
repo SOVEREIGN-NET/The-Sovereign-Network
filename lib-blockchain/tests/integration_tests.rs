@@ -313,7 +313,16 @@ async fn test_blockchain_state_restart_equivalence_inner() -> Result<()> {
         assert_eq!(state.difficulty.bits(), blockchain.difficulty.bits());
         assert_eq!(state.total_work, blockchain.total_work);
         assert_eq!(state.finality_depth, blockchain.finality_depth);
-        assert_eq!(state.finalized_blocks, blockchain.finalized_blocks);
+        // BST-203: finalized heights live behind the BlockchainStore, not on
+        // the Blockchain struct. Reconstruct the expected set from the store
+        // (empty if no store is attached).
+        let expected: std::collections::HashSet<u64> = blockchain
+            .store()
+            .ok()
+            .and_then(|s| s.iter_finalized_heights().ok())
+            .map(|v| v.into_iter().collect())
+            .unwrap_or_default();
+        assert_eq!(state.finalized_blocks, expected);
     }
 
     Ok(())

@@ -466,15 +466,34 @@ impl Blockchain {
             None
         };
 
-        self.oracle_slash_events
-            .push(crate::oracle::OracleSlashEvent {
-                validator_key_id: key_id,
-                reason,
-                epoch_id,
-                slash_amount,
-                slashed_at_height: self.height,
-                committee_removal_at_epoch,
-            });
+        // BST-203: slash events are cold audit history — written directly to
+        // the store, not held on the Blockchain struct. A store error is
+        // logged but not propagated (slashing the stake and banning the
+        // validator must still take effect even if the audit log write fails).
+        let event = crate::oracle::OracleSlashEvent {
+            validator_key_id: key_id,
+            reason,
+            epoch_id,
+            slash_amount,
+            slashed_at_height: self.height,
+            committee_removal_at_epoch,
+        };
+        match self.store() {
+            Ok(store) => {
+                if let Err(e) = store.append_oracle_slash_event(&event) {
+                    warn!(
+                        "Failed to persist oracle slash event for {}: {}",
+                        hex::encode(&key_id[..8]),
+                        e
+                    );
+                }
+            }
+            Err(e) => warn!(
+                "Cannot persist oracle slash event for {} — no store attached: {}",
+                hex::encode(&key_id[..8]),
+                e
+            ),
+        }
 
         if slash_amount > 0 {
             warn!(

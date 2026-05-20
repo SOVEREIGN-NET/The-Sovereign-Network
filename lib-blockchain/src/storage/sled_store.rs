@@ -53,6 +53,9 @@ const TREE_META: &str = "meta";
 const TREE_WAL: &str = "wal_block_commit"; // Write-ahead log for crash-safe block commits
 const TREE_FORK_POINTS: &str = "fork_points"; // Fork audit log — direct durable writes
 const TREE_RECEIPTS: &str = "receipts"; // Transaction receipts — direct writes, tx_hash → receipt
+const TREE_FINALIZED_BLOCKS: &str = "finalized_blocks"; // BFT finalized block heights — direct writes
+const TREE_ORACLE_SLASH_EVENTS: &str = "oracle_slash_events"; // Oracle slashing audit log — direct writes
+const TREE_WELFARE_AUDIT: &str = "welfare_audit"; // Welfare distribution audit entries — direct writes
 
 /// The single key under which an in-progress block commit's post-image is
 /// staged in the `wal` tree. Only one block commits at a time, so one key
@@ -100,6 +103,9 @@ pub struct SledStore {
     wal: Tree,                   // Write-ahead log: durable block-commit post-image
     fork_points: Tree,           // Fork audit log: direct durable writes (non-batched)
     receipts: Tree,              // Transaction receipts: tx_hash → TransactionReceipt
+    finalized_blocks: Tree,      // BFT finalized heights: u64-BE → () (presence = finalized)
+    oracle_slash_events: Tree,   // Oracle slash audit log: (height-BE, key_id) → OracleSlashEvent
+    welfare_audit: Tree,         // Welfare audit trail: audit_id → WelfareAuditEntry
 
     // Transaction state
     tx_active: AtomicBool,
@@ -241,8 +247,11 @@ impl SledStore {
         Self::from_db(db)
     }
 
-    /// Open a temporary in-memory store (for testing)
-    #[cfg(test)]
+    /// Open a temporary in-memory store. Backed by a `sled::Config::temporary`
+    /// database (no on-disk artefact); the store evaporates when dropped.
+    /// Used by integration tests, harnesses, and BST-203 store-backed cold
+    /// datasets that need a `Blockchain` with an attached store but without
+    /// committing to a filesystem path.
     pub fn open_temporary() -> StorageResult<Self> {
         let db = sled::Config::new()
             .temporary(true)
@@ -344,6 +353,15 @@ impl SledStore {
         let receipts = db
             .open_tree(TREE_RECEIPTS)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let finalized_blocks = db
+            .open_tree(TREE_FINALIZED_BLOCKS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let oracle_slash_events = db
+            .open_tree(TREE_ORACLE_SLASH_EVENTS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let welfare_audit = db
+            .open_tree(TREE_WELFARE_AUDIT)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
 
         let store = Self {
             db,
@@ -376,6 +394,9 @@ impl SledStore {
             wal,
             fork_points,
             receipts,
+            finalized_blocks,
+            oracle_slash_events,
+            welfare_audit,
             tx_active: AtomicBool::new(false),
             tx_height: AtomicU64::new(0),
             tx_utxo_merkle_next_index: AtomicU64::new(0),
@@ -2070,6 +2091,134 @@ impl BlockchainStore for SledStore {
     }
 
     // =========================================================================
+    // Finalized block history (BST-203) — direct durable writes
+    // =========================================================================
+    // Big-endian height keys keep sled's natural ordering ascending by height,
+    // so `max_finalized_height` is a single `last()` and `iter_finalized_heights`
+    // already returns ascending. Value is empty — presence of the key means
+    // finalized. Idempotent: re-finalizing the same height is a no-op.
+
+    fn put_finalized_height(&self, height: u64) -> StorageResult<()> {
+        self.finalized_blocks
+            .insert(height.to_be_bytes(), &[][..])
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        // Audit record — flush so a crash right after finalization keeps it.
+        self.db
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    fn is_height_finalized(&self, height: u64) -> StorageResult<bool> {
+        self.finalized_blocks
+            .contains_key(height.to_be_bytes())
+            .map_err(|e| StorageError::Database(e.to_string()))
+    }
+
+    fn max_finalized_height(&self) -> StorageResult<Option<u64>> {
+        match self
+            .finalized_blocks
+            .last()
+            .map_err(|e| StorageError::Database(e.to_string()))?
+        {
+            Some((key, _)) => {
+                let bytes: [u8; 8] = key.as_ref().try_into().map_err(|_| {
+                    StorageError::CorruptedData(format!(
+                        "finalized_blocks key has unexpected length: {}",
+                        key.len()
+                    ))
+                })?;
+                Ok(Some(u64::from_be_bytes(bytes)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn iter_finalized_heights(&self) -> StorageResult<Vec<u64>> {
+        let mut out = Vec::new();
+        for item in self.finalized_blocks.iter() {
+            let (key, _) = item.map_err(|e| StorageError::Database(e.to_string()))?;
+            let bytes: [u8; 8] = key.as_ref().try_into().map_err(|_| {
+                StorageError::CorruptedData(format!(
+                    "finalized_blocks key has unexpected length: {}",
+                    key.len()
+                ))
+            })?;
+            out.push(u64::from_be_bytes(bytes));
+        }
+        Ok(out)
+    }
+
+    // =========================================================================
+    // Oracle slash events (BST-203) — direct durable writes
+    // =========================================================================
+    // Key: `slashed_at_height (u64 BE) || validator_key_id (32) || epoch_id (u64 BE)`.
+    // Big-endian height first gives ascending-by-height scan; the key_id +
+    // epoch_id suffix disambiguates multiple slashes at the same height for
+    // different validators / epochs without dropping duplicates.
+
+    fn append_oracle_slash_event(
+        &self,
+        event: &crate::oracle::OracleSlashEvent,
+    ) -> StorageResult<()> {
+        let mut key = [0u8; 8 + 32 + 8];
+        key[..8].copy_from_slice(&event.slashed_at_height.to_be_bytes());
+        key[8..40].copy_from_slice(&event.validator_key_id);
+        key[40..].copy_from_slice(&event.epoch_id.to_be_bytes());
+
+        let value = Self::serialize(event)?;
+        self.oracle_slash_events
+            .insert(key, value)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        self.db
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    fn iter_oracle_slash_events(&self) -> StorageResult<Vec<crate::oracle::OracleSlashEvent>> {
+        let mut out = Vec::new();
+        for item in self.oracle_slash_events.iter() {
+            let (_, value) = item.map_err(|e| StorageError::Database(e.to_string()))?;
+            out.push(Self::deserialize(&value)?);
+        }
+        Ok(out)
+    }
+
+    // =========================================================================
+    // Welfare audit trail (BST-203) — direct durable writes
+    // =========================================================================
+    // Key is the 32-byte audit_id (the entry's `Hash`). Ordering on disk is
+    // therefore by hash, which is uncorrelated with distribution_block — callers
+    // that need chronological order must sort the returned Vec.
+
+    fn put_welfare_audit_entry(
+        &self,
+        audit_id: &[u8; 32],
+        entry: &lib_consensus::WelfareAuditEntry,
+    ) -> StorageResult<()> {
+        let value = Self::serialize(entry)?;
+        self.welfare_audit
+            .insert(audit_id, value)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        self.db
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    fn iter_welfare_audit_entries(
+        &self,
+    ) -> StorageResult<Vec<lib_consensus::WelfareAuditEntry>> {
+        let mut out = Vec::new();
+        for item in self.welfare_audit.iter() {
+            let (_, value) = item.map_err(|e| StorageError::Database(e.to_string()))?;
+            out.push(Self::deserialize(&value)?);
+        }
+        Ok(out)
+    }
+
+    // =========================================================================
     // Bonding Curve Operations
     // =========================================================================
 
@@ -3498,5 +3647,129 @@ mod tests {
         // Durable across reopen.
         let store = SledStore::open(dir.path()).unwrap();
         assert!(store.get_receipt(&tx_hash.as_array()).unwrap().is_some());
+    }
+
+    /// Finalized heights are written directly (no `begin_block`) — finality
+    /// processing runs after `commit_block` — ascend on iteration, expose the
+    /// max, and survive a reopen (BST-203).
+    #[test]
+    fn test_finalized_height_direct_durable_write() {
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        {
+            let store = SledStore::open(dir.path()).unwrap();
+            // No begin_block: finalization is not a block commit.
+            store.put_finalized_height(7).unwrap();
+            store.put_finalized_height(3).unwrap();
+            store.put_finalized_height(11).unwrap();
+            // Re-marking is idempotent.
+            store.put_finalized_height(7).unwrap();
+
+            assert!(store.is_height_finalized(3).unwrap());
+            assert!(store.is_height_finalized(7).unwrap());
+            assert!(store.is_height_finalized(11).unwrap());
+            assert!(!store.is_height_finalized(99).unwrap());
+
+            let all = store.iter_finalized_heights().unwrap();
+            assert_eq!(all, vec![3, 7, 11], "ascending by height");
+            assert_eq!(store.max_finalized_height().unwrap(), Some(11));
+        }
+        // Durable across reopen.
+        let store = SledStore::open(dir.path()).unwrap();
+        assert_eq!(store.iter_finalized_heights().unwrap(), vec![3, 7, 11]);
+        assert_eq!(store.max_finalized_height().unwrap(), Some(11));
+    }
+
+    /// Empty finalized-heights store returns None for max and an empty vec.
+    #[test]
+    fn test_finalized_height_empty() {
+        let store = SledStore::open_temporary().unwrap();
+        assert_eq!(store.max_finalized_height().unwrap(), None);
+        assert!(store.iter_finalized_heights().unwrap().is_empty());
+        assert!(!store.is_height_finalized(42).unwrap());
+    }
+
+    /// Oracle slash events are written directly (slashing decisions outside
+    /// block batches), ordered by (height, key_id, epoch), and survive a
+    /// reopen (BST-203).
+    #[test]
+    fn test_oracle_slash_event_direct_durable_write() {
+        use crate::oracle::{OracleSlashEvent, OracleSlashReason};
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let mk = |height: u64, key: [u8; 32], epoch: u64| OracleSlashEvent {
+            validator_key_id: key,
+            reason: OracleSlashReason::ConflictingAttestation,
+            epoch_id: epoch,
+            slash_amount: 1_000,
+            slashed_at_height: height,
+            committee_removal_at_epoch: None,
+        };
+        let key_a = [0xAAu8; 32];
+        let key_b = [0xBBu8; 32];
+        {
+            let store = SledStore::open(dir.path()).unwrap();
+            // Insert out of order; iteration should still be ascending by
+            // (height, key_id, epoch).
+            store.append_oracle_slash_event(&mk(5, key_b, 100)).unwrap();
+            store.append_oracle_slash_event(&mk(3, key_a, 50)).unwrap();
+            store.append_oracle_slash_event(&mk(5, key_a, 100)).unwrap();
+
+            let all = store.iter_oracle_slash_events().unwrap();
+            assert_eq!(all.len(), 3);
+            assert_eq!(all[0].slashed_at_height, 3);
+            assert_eq!(all[1].slashed_at_height, 5);
+            assert_eq!(all[1].validator_key_id, key_a, "key_a sorts before key_b");
+            assert_eq!(all[2].slashed_at_height, 5);
+            assert_eq!(all[2].validator_key_id, key_b);
+        }
+        // Durable across reopen.
+        let store = SledStore::open(dir.path()).unwrap();
+        assert_eq!(store.iter_oracle_slash_events().unwrap().len(), 3);
+    }
+
+    /// Welfare audit entries are keyed by audit_id, survive a reopen, and the
+    /// default trait method on a non-implementing store returns empty.
+    #[test]
+    fn test_welfare_audit_direct_durable_write() {
+        use lib_consensus::{
+            VerificationStatus, WelfareAuditEntry, WelfareServiceType,
+        };
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let audit_id_bytes = [1u8; 32];
+        let audit_id = lib_crypto::Hash(audit_id_bytes);
+        let entry = WelfareAuditEntry {
+            audit_id,
+            service_id: "svc-1".to_string(),
+            service_type: WelfareServiceType::Healthcare,
+            proposal_id: lib_crypto::Hash([2u8; 32]),
+            amount_distributed: 1_000,
+            transaction_hash: lib_crypto::Hash([3u8; 32]),
+            distribution_timestamp: 12345,
+            distribution_block: 42,
+            beneficiary_count: 7,
+            verification_proof: None,
+            service_report: None,
+            verification_status: VerificationStatus::Pending,
+            auditor_notes: None,
+        };
+        {
+            let store = SledStore::open(dir.path()).unwrap();
+            store.put_welfare_audit_entry(&audit_id_bytes, &entry).unwrap();
+
+            let all = store.iter_welfare_audit_entries().unwrap();
+            assert_eq!(all.len(), 1);
+            assert_eq!(all[0].service_id, "svc-1");
+            assert_eq!(all[0].amount_distributed, 1_000);
+        }
+        // Durable across reopen.
+        let store = SledStore::open(dir.path()).unwrap();
+        let all = store.iter_welfare_audit_entries().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].distribution_block, 42);
     }
 }

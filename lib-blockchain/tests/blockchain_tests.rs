@@ -495,6 +495,11 @@ async fn test_blockchain_serialization() -> Result<()> {
 #[tokio::test]
 async fn test_finality_tracking_basic() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
+    // BST-203: finalized heights live in the BlockchainStore.
+    let store: std::sync::Arc<dyn lib_blockchain::storage::BlockchainStore> = std::sync::Arc::new(
+        lib_blockchain::storage::SledStore::open_temporary().expect("open_temporary"),
+    );
+    blockchain.store = Some(store);
 
     // Initially, block should not be finalized
     assert!(
@@ -548,6 +553,11 @@ async fn test_finality_depth_calculation() -> Result<()> {
 #[tokio::test]
 async fn test_finalize_blocks_tracking() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
+    // BST-203: attach a store for finalized-height persistence.
+    let store: std::sync::Arc<dyn lib_blockchain::storage::BlockchainStore> = std::sync::Arc::new(
+        lib_blockchain::storage::SledStore::open_temporary().expect("open_temporary"),
+    );
+    blockchain.store = Some(store);
 
     // Manually mark blocks as finalized
     blockchain.mark_block_finalized(1);
@@ -572,6 +582,11 @@ async fn test_finalize_blocks_tracking() -> Result<()> {
 #[tokio::test]
 async fn test_finalized_blocks_set_operations() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
+    // BST-203: attach a store for finalized-height persistence.
+    let store: std::sync::Arc<dyn lib_blockchain::storage::BlockchainStore> = std::sync::Arc::new(
+        lib_blockchain::storage::SledStore::open_temporary().expect("open_temporary"),
+    );
+    blockchain.store = Some(store);
 
     // Finalize a few blocks
     blockchain.mark_block_finalized(5);

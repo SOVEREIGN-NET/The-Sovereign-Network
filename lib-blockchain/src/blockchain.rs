@@ -201,9 +201,6 @@ pub struct Blockchain {
     /// Welfare service registration block heights (service_id -> block_height)
     #[serde(default)]
     pub welfare_service_blocks: HashMap<String, u64>,
-    /// Welfare audit trail (audit_id -> WelfareAuditEntry)
-    #[serde(default)]
-    pub welfare_audit_trail: HashMap<lib_crypto::Hash, lib_consensus::WelfareAuditEntry>,
     /// Service performance metrics (service_id -> ServicePerformanceMetrics)
     #[serde(default)]
     pub service_performance: HashMap<String, lib_consensus::ServicePerformanceMetrics>,
@@ -244,9 +241,6 @@ pub struct Blockchain {
     /// Finality depth (number of confirmations required for finality)
     #[serde(default = "default_finality_depth")]
     pub finality_depth: u64,
-    /// Track finalized block heights to avoid reprocessing
-    #[serde(default)]
-    pub finalized_blocks: HashSet<u64>,
     /// Per-contract state storage (contract_id -> state bytes)
     #[serde(default)]
     pub contract_states: HashMap<[u8; 32], Vec<u8>>,
@@ -448,9 +442,6 @@ pub struct Blockchain {
     /// Spec: CBE/SOV/USD Pricing Model v1.0 §4
     #[serde(default)]
     pub onramp_state: crate::onramp::OnRampState,
-    /// Oracle slashing events log.
-    #[serde(default)]
-    pub oracle_slash_events: Vec<crate::oracle::OracleSlashEvent>,
     /// Oracle slashing configuration.
     #[serde(default)]
     pub oracle_slashing_config: crate::oracle::OracleSlashingConfig,
@@ -839,13 +830,22 @@ impl Blockchain {
         if let Some(ref storage_manager_arc) = self.storage_manager {
             let storage_manager = storage_manager_arc.read().await;
 
+            // BST-203: finalized heights live behind the store. Read them
+            // back so the legacy BlockchainStorageManager snapshot stays a
+            // faithful mirror.
+            let finalized_blocks: HashSet<u64> = self
+                .store()
+                .ok()
+                .and_then(|s| s.iter_finalized_heights().ok())
+                .map(|v| v.into_iter().collect())
+                .unwrap_or_default();
             let state = crate::integration::storage_integration::BlockchainState {
                 height: self.height,
                 difficulty: self.difficulty.clone(),
                 nullifier_set: self.nullifier_set.clone(),
                 total_work: self.total_work,
                 finality_depth: self.finality_depth,
-                finalized_blocks: self.finalized_blocks.clone(),
+                finalized_blocks,
             };
 
             storage_manager
@@ -3544,8 +3544,27 @@ impl Blockchain {
             service.proposal_count = service.proposal_count.saturating_add(1);
         }
 
-        // Store audit entry
-        self.welfare_audit_trail.insert(audit_id, audit_entry);
+        // BST-203: welfare audit entries are cold query data — written
+        // directly to the store, not held on the Blockchain struct. A store
+        // error is logged but not propagated (the underlying welfare service
+        // counters above have already been updated; failing to persist the
+        // audit record should not undo that).
+        match self.store() {
+            Ok(store) => {
+                if let Err(e) =
+                    store.put_welfare_audit_entry(&audit_id.0, &audit_entry)
+                {
+                    warn!(
+                        "Failed to persist welfare audit entry {}: {}",
+                        audit_id, e
+                    );
+                }
+            }
+            Err(e) => warn!(
+                "Cannot persist welfare audit entry {} — no store attached: {}",
+                audit_id, e
+            ),
+        }
 
         info!(
             "📝 Recorded welfare distribution of {} SOV to service {}",
@@ -3596,15 +3615,35 @@ impl Blockchain {
         self.service_performance.get(service_id)
     }
 
-    /// Get audit trail for a service
+    /// Get audit trail for a service.
+    ///
+    /// BST-203: entries are loaded from the store. Returns owned entries
+    /// because store reads do not hand out references. An empty vec is
+    /// returned if no store is attached or the store errors (audit data is
+    /// best-effort and a query-side store failure should never panic).
     pub fn get_service_audit_trail(
         &self,
         service_id: &str,
-    ) -> Vec<&lib_consensus::WelfareAuditEntry> {
-        self.welfare_audit_trail
-            .values()
+    ) -> Vec<lib_consensus::WelfareAuditEntry> {
+        self.iter_welfare_audit_entries_for_query()
+            .into_iter()
             .filter(|entry| entry.service_id == service_id)
             .collect()
+    }
+
+    /// Internal helper: read the welfare audit trail from the store,
+    /// returning an empty vec on store error / store-less chain.
+    fn iter_welfare_audit_entries_for_query(&self) -> Vec<lib_consensus::WelfareAuditEntry> {
+        match self.store() {
+            Ok(store) => match store.iter_welfare_audit_entries() {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!("welfare_audit query failed: {}", e);
+                    Vec::new()
+                }
+            },
+            Err(_) => Vec::new(),
+        }
     }
 
     /// Get outcome reports for a service
@@ -3627,9 +3666,12 @@ impl Blockchain {
             .filter(|s| s.is_active)
             .count() as u64;
 
-        let total_distributed = self
-            .welfare_audit_trail
-            .values()
+        // BST-203: scan the welfare audit trail once from the store rather
+        // than iterating an in-struct HashMap multiple times.
+        let audit_entries = self.iter_welfare_audit_entries_for_query();
+
+        let total_distributed = audit_entries
+            .iter()
             .map(|entry| entry.amount_distributed)
             .sum::<u64>();
 
@@ -3640,7 +3682,7 @@ impl Blockchain {
             .sum::<u64>();
 
         let mut distribution_by_type = std::collections::HashMap::new();
-        for entry in self.welfare_audit_trail.values() {
+        for entry in &audit_entries {
             *distribution_by_type
                 .entry(entry.service_type.clone())
                 .or_insert(0u64) += entry.amount_distributed;
@@ -3652,15 +3694,13 @@ impl Blockchain {
             0
         };
 
-        let pending_audits = self
-            .welfare_audit_trail
-            .values()
+        let pending_audits = audit_entries
+            .iter()
             .filter(|entry| entry.verification_status == lib_consensus::VerificationStatus::Pending)
             .count() as u64;
 
-        let last_distribution_timestamp = self
-            .welfare_audit_trail
-            .values()
+        let last_distribution_timestamp = audit_entries
+            .iter()
             .map(|entry| entry.distribution_timestamp)
             .max()
             .unwrap_or(0);
@@ -3692,8 +3732,8 @@ impl Blockchain {
         &self,
         service_id: &str,
     ) -> Vec<lib_consensus::FundingHistoryEntry> {
-        self.welfare_audit_trail
-            .values()
+        self.iter_welfare_audit_entries_for_query()
+            .into_iter()
             .filter(|entry| entry.service_id == service_id)
             .map(|entry| lib_consensus::FundingHistoryEntry {
                 timestamp: entry.distribution_timestamp,
@@ -4328,7 +4368,16 @@ impl Blockchain {
         &mut self,
         data: Vec<u8>,
     ) -> Result<crate::ChainMergeResult> {
-        if !self.finalized_blocks.is_empty() {
+        // BST-203: finalized heights live in the store, not on the struct.
+        // A store-less Blockchain (legacy/test path) has no finalized history,
+        // so the guard treats that as "no commits yet" — same observable
+        // behaviour as before.
+        let has_finalized = self
+            .store()
+            .ok()
+            .and_then(|s| s.max_finalized_height().ok().flatten())
+            .is_some();
+        if has_finalized {
             return Err(anyhow::anyhow!(
                 "Post-commit reorg forbidden: local chain contains finalized blocks"
             ));
@@ -5685,14 +5734,50 @@ impl Blockchain {
             .collect()
     }
 
-    /// Check if a block has already been finalized
+    /// Check if a block has already been finalized.
+    ///
+    /// Reads from the store (BST-203). If no store is attached (legacy/test
+    /// paths) or the store errors, returns `false` — finalization is best-
+    /// effort audit data, and silently treating an unknown height as
+    /// non-finalized is the conservative choice (the caller will then attempt
+    /// to mark it again, which is idempotent).
     pub fn is_block_finalized(&self, block_height: u64) -> bool {
-        self.finalized_blocks.contains(&block_height)
+        match self.store() {
+            Ok(store) => match store.is_height_finalized(block_height) {
+                Ok(b) => b,
+                Err(e) => {
+                    warn!(
+                        "is_block_finalized({}) store read failed: {}",
+                        block_height, e
+                    );
+                    false
+                }
+            },
+            Err(_) => false,
+        }
     }
 
-    /// Mark a block as finalized
+    /// Mark a block as finalized.
+    ///
+    /// Writes directly to the store (BST-203 — finalization runs after
+    /// `commit_block`, so there is no open block transaction). A store error
+    /// is logged but not propagated: finalization is an audit-trail concept
+    /// and consensus must keep advancing even if the audit log write fails.
     pub fn mark_block_finalized(&mut self, block_height: u64) {
-        self.finalized_blocks.insert(block_height);
+        match self.store() {
+            Ok(store) => {
+                if let Err(e) = store.put_finalized_height(block_height) {
+                    warn!(
+                        "Failed to persist finalized height {}: {}",
+                        block_height, e
+                    );
+                }
+            }
+            Err(e) => warn!(
+                "Cannot mark block {} finalized — no store attached: {}",
+                block_height, e
+            ),
+        }
     }
 
     /// Trigger finalization for blocks that have reached 12+ confirmations
@@ -5826,8 +5911,22 @@ impl Blockchain {
 
     /// Prevent reorg below finalized blocks
     pub fn can_reorg_to_height(&self, target_height: u64) -> Result<(), String> {
-        // Find the highest finalized block
-        if let Some(&max_finalized) = self.finalized_blocks.iter().max() {
+        // BST-203: query the store for the max finalized height. A store-less
+        // chain has no finalized history, so no finality constraint applies —
+        // matches prior `finalized_blocks.iter().max()` returning `None`.
+        let max_finalized = self
+            .store()
+            .map_err(|e| format!("Cannot read finalized height: {}", e))
+            .and_then(|store| {
+                store
+                    .max_finalized_height()
+                    .map_err(|e| format!("Store error reading max finalized height: {}", e))
+            });
+        let max_finalized = match max_finalized {
+            Ok(m) => m,
+            Err(_) => None, // No store attached → no finality history
+        };
+        if let Some(max_finalized) = max_finalized {
             if target_height <= max_finalized {
                 return Err(format!(
                     "Cannot reorg below finality threshold. Finalized height: {}, Target: {}",

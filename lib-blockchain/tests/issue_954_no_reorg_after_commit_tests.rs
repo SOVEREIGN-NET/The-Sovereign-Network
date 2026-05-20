@@ -110,6 +110,16 @@ async fn test_no_reorg_after_commit_with_four_validators() -> Result<()> {
     local_chain.add_block(block_h1).await?;
     assert_eq!(local_chain.height, 1, "Local chain should be at height 1");
 
+    // BST-203: attach a store *after* the in-memory genesis/H=1 are built —
+    // `add_block` on a store-less chain stays in memory, which is what these
+    // tests want (no genesis migration needed). The store is only used here
+    // as the durable backing for `mark_block_finalized` and the reorg guard
+    // that reads `max_finalized_height`.
+    let store: std::sync::Arc<dyn lib_blockchain::storage::BlockchainStore> = std::sync::Arc::new(
+        lib_blockchain::storage::SledStore::open_temporary().expect("open_temporary"),
+    );
+    local_chain.store = Some(store);
+
     // Simulate BFT commit: mark block at H=1 as finalized.
     // In production this is triggered after ≥2f+1 (≥3 of 4) commit votes.
     local_chain.mark_block_finalized(1);
@@ -201,6 +211,14 @@ async fn test_reorg_rejected_regardless_of_imported_chain_length() -> Result<()>
     let genesis = local_chain.latest_block().unwrap().clone();
     let block_h1 = build_next_block(&genesis, 0);
     local_chain.add_block(block_h1).await?;
+
+    // BST-203: attach the store *after* the in-memory block is appended (see
+    // sibling test). Only needed so `mark_block_finalized` and the reorg
+    // guard's `max_finalized_height` read have a durable backing.
+    let store: std::sync::Arc<dyn lib_blockchain::storage::BlockchainStore> = std::sync::Arc::new(
+        lib_blockchain::storage::SledStore::open_temporary().expect("open_temporary"),
+    );
+    local_chain.store = Some(store);
     local_chain.mark_block_finalized(1);
 
     // Alternate chain: two blocks (longer than local).  This would normally
@@ -241,8 +259,16 @@ async fn test_import_succeeds_before_any_commit() -> Result<()> {
     // Local chain: height 0 (only genesis), no finalized blocks.
     let mut local_chain = Blockchain::new()?;
     register_n_validators(&mut local_chain, 4);
+    // BST-203: finalized heights live behind the BlockchainStore. With no
+    // store attached, the chain has no finalized history by definition; with
+    // a store attached, max_finalized_height() returns None on a fresh chain.
+    let has_finalized = local_chain
+        .store()
+        .ok()
+        .and_then(|s| s.max_finalized_height().ok().flatten())
+        .is_some();
     assert!(
-        local_chain.finalized_blocks.is_empty(),
+        !has_finalized,
         "Precondition: no blocks should be finalized yet"
     );
 

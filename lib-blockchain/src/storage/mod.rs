@@ -1682,4 +1682,88 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     ) -> StorageResult<Option<crate::receipts::TransactionReceipt>> {
         Ok(None)
     }
+
+    // =========================================================================
+    // Finalized block history (BST-203) — direct durable writes
+    // =========================================================================
+    // `finalized_blocks` is consensus-audit history: which heights have crossed
+    // finality. Block `H+1` is validated from the tip, validator state,
+    // fork-choice, and the current finality frontier — never from the full set
+    // of historical finalized heights. So this is cold data and lives behind
+    // the store. Writes happen outside the block transaction (finalization runs
+    // after `commit_block`).
+
+    /// Durably mark a block height as finalized.
+    fn put_finalized_height(&self, _height: u64) -> StorageResult<()> {
+        Err(StorageError::Database(
+            "finalized-block persistence not supported by this store".to_string(),
+        ))
+    }
+
+    /// True iff `height` has been recorded as finalized.
+    fn is_height_finalized(&self, _height: u64) -> StorageResult<bool> {
+        Ok(false)
+    }
+
+    /// The highest finalized block height, or None when none have been finalized.
+    /// Default implementation iterates `iter_finalized_heights`.
+    fn max_finalized_height(&self) -> StorageResult<Option<u64>> {
+        Ok(self.iter_finalized_heights()?.last().copied())
+    }
+
+    /// All recorded finalized block heights, ascending.
+    fn iter_finalized_heights(&self) -> StorageResult<Vec<u64>> {
+        Ok(Vec::new())
+    }
+
+    // =========================================================================
+    // Oracle slash events (BST-203) — direct durable writes
+    // =========================================================================
+    // Append-only audit log of oracle committee slashings. Grows monotonically
+    // with chain length but is never read to validate `H+1`, so it is cold.
+    // Each event is a self-contained record; we key by (slashed_at_height,
+    // validator_key_id) for deterministic ordering across restarts.
+
+    /// Append an oracle slash event to the audit log.
+    fn append_oracle_slash_event(
+        &self,
+        _event: &crate::oracle::OracleSlashEvent,
+    ) -> StorageResult<()> {
+        Err(StorageError::Database(
+            "oracle slash event persistence not supported by this store".to_string(),
+        ))
+    }
+
+    /// All oracle slash events, ordered by (slashed_at_height, validator_key_id).
+    fn iter_oracle_slash_events(&self) -> StorageResult<Vec<crate::oracle::OracleSlashEvent>> {
+        Ok(Vec::new())
+    }
+
+    // =========================================================================
+    // Welfare audit trail (BST-203) — direct durable writes
+    // =========================================================================
+    // Welfare distribution audit entries: monotonically-growing history of
+    // service payouts. Keyed by `audit_id` (the entry's `Hash`). Read by query
+    // endpoints (service audit trail, welfare statistics, funding history),
+    // never by block validation, so cold.
+
+    /// Persist a welfare audit entry, keyed by its `audit_id`.
+    fn put_welfare_audit_entry(
+        &self,
+        _audit_id: &[u8; 32],
+        _entry: &lib_consensus::WelfareAuditEntry,
+    ) -> StorageResult<()> {
+        Err(StorageError::Database(
+            "welfare audit trail persistence not supported by this store".to_string(),
+        ))
+    }
+
+    /// All welfare audit entries (insertion order is undefined; callers that
+    /// need ordering should sort by `distribution_block` or
+    /// `distribution_timestamp`).
+    fn iter_welfare_audit_entries(
+        &self,
+    ) -> StorageResult<Vec<lib_consensus::WelfareAuditEntry>> {
+        Ok(Vec::new())
+    }
 }

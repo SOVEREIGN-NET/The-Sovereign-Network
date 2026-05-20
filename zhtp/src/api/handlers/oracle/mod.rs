@@ -997,9 +997,24 @@ impl OracleHandler {
 
         let bc = bc_arc.read().await;
 
-        // Get last 100 events (or fewer if less exist)
-        let events: Vec<_> = bc
-            .oracle_slash_events
+        // BST-203: slash events live behind the BlockchainStore now. Pull them
+        // once, then paginate in memory (the iterator is already ascending by
+        // height; we reverse for "most recent first" and take 100).
+        let all_events = match bc.store() {
+            Ok(store) => match store.iter_oracle_slash_events() {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!("Oracle slashing-events API: store iter failed: {}", e);
+                    return Ok(ZhtpResponse::error(
+                        ZhtpStatus::InternalServerError,
+                        format!("Failed to read slash events: {}", e),
+                    ));
+                }
+            },
+            Err(_) => Vec::new(),
+        };
+        let total_events = all_events.len();
+        let events: Vec<_> = all_events
             .iter()
             .rev()
             .take(100)
@@ -1021,7 +1036,7 @@ impl OracleHandler {
 
         let body = json!({
             "events": events,
-            "total_events": bc.oracle_slash_events.len(),
+            "total_events": total_events,
             "banned_validator_count": bc.oracle_banned_validators.len(),
         });
 

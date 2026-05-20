@@ -191,6 +191,17 @@ impl BlockchainV1 {
             pending_transactions.len()
         );
 
+        // V1 also carried welfare_audit_trail inline. That dataset now lives
+        // behind the BlockchainStore (BST-203); the V1→current migration does
+        // not repopulate it (audit-only history, query-path data).
+        if !self.welfare_audit_trail.is_empty() {
+            tracing::warn!(
+                "Legacy V1 migration: {} welfare audit entry/entries are NOT \
+                 carried into the store-backed model (audit-only history).",
+                self.welfare_audit_trail.len(),
+            );
+        }
+
         Blockchain {
             blocks,
             height: self.height,
@@ -217,7 +228,6 @@ impl BlockchainV1 {
             dao_treasury_wallet_id: self.dao_treasury_wallet_id,
             welfare_services: self.welfare_services,
             welfare_service_blocks: self.welfare_service_blocks,
-            welfare_audit_trail: self.welfare_audit_trail,
             service_performance: self.service_performance,
             outcome_reports: self.outcome_reports,
             economic_processor: Some(EconomicTransactionProcessor::new()),
@@ -229,7 +239,6 @@ impl BlockchainV1 {
             broadcast_sender: None,
             executed_dao_proposals: HashSet::new(),
             finality_depth: default_finality_depth(),
-            finalized_blocks: HashSet::new(),
             contract_states: HashMap::new(),
             contract_state_history: std::collections::BTreeMap::new(),
             utxo_snapshots: std::collections::BTreeMap::new(),
@@ -270,7 +279,6 @@ impl BlockchainV1 {
             token_pricing_state: crate::pricing::TokenPricingState::new(),
             exchange_state: crate::exchange::ExchangeState::new(),
             onramp_state: crate::onramp::OnRampState::new(),
-            oracle_slash_events: Vec::new(),
             oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
             oracle_banned_validators: std::collections::HashSet::new(),
             last_oracle_epoch_processed: 0,
@@ -471,7 +479,10 @@ impl BlockchainStorageV3 {
             dao_treasury_wallet_id: bc.dao_treasury_wallet_id.clone(),
             welfare_services: bc.welfare_services.clone(),
             welfare_service_blocks: bc.welfare_service_blocks.clone(),
-            welfare_audit_trail: bc.welfare_audit_trail.clone(),
+            // welfare_audit_trail removed from Blockchain (now a direct-write
+            // store tree, BST-203). V3 keeps the field for old .dat reads; new
+            // saves write empty.
+            welfare_audit_trail: HashMap::new(),
             service_performance: bc.service_performance.clone(),
             outcome_reports: bc.outcome_reports.clone(),
             auto_persist_enabled: bc.auto_persist_enabled,
@@ -481,7 +492,10 @@ impl BlockchainStorageV3 {
             // V3 keeps the field for old .dat reads; new saves write empty.
             receipts: HashMap::new(),
             finality_depth: bc.finality_depth,
-            finalized_blocks: bc.finalized_blocks.clone(),
+            // finalized_blocks removed from Blockchain (now a direct-write
+            // store tree, BST-203). V3 keeps the field for old .dat reads;
+            // new saves write empty.
+            finalized_blocks: HashSet::new(),
             contract_states: bc.contract_states.clone(),
             contract_state_history: bc.contract_state_history.clone(),
             utxo_snapshots: bc.utxo_snapshots.clone(),
@@ -523,18 +537,28 @@ impl BlockchainStorageV3 {
     }
 
     pub(super) fn to_blockchain(self) -> Blockchain {
-        // Legacy `.dat` files carried `receipts` and `fork_points` inline.
-        // Those datasets now live behind `BlockchainStore`; a `.dat` load is a
-        // one-time migration that does not repopulate them — receipts are
-        // reconstructible from block replay, fork points are historical audit
-        // data. Warn loudly rather than drop them silently.
-        if !self.receipts.is_empty() || !self.fork_points.is_empty() {
+        // Legacy `.dat` files carried `receipts`, `fork_points`,
+        // `finalized_blocks`, and `welfare_audit_trail` inline. Those datasets
+        // now live behind `BlockchainStore` (BST-201, BST-203); a `.dat` load
+        // is a one-time migration that does not repopulate them — receipts
+        // rebuild from block replay, fork history is audit-only, finalized
+        // heights are re-derived from finality processing on the live chain,
+        // and welfare audit trail is query-only. Warn loudly rather than drop
+        // them silently.
+        if !self.receipts.is_empty()
+            || !self.fork_points.is_empty()
+            || !self.finalized_blocks.is_empty()
+            || !self.welfare_audit_trail.is_empty()
+        {
             tracing::warn!(
-                "Legacy .dat migration: {} receipt(s) and {} fork point(s) are \
-                 NOT carried into the store-backed model (receipts rebuild from \
-                 blocks; fork history is audit-only).",
+                "Legacy .dat migration: {} receipt(s), {} fork point(s), {} \
+                 finalized block height(s), and {} welfare audit entry/entries \
+                 are NOT carried into the store-backed model (receipts rebuild \
+                 from blocks; fork/finalization/welfare history is audit-only).",
                 self.receipts.len(),
                 self.fork_points.len(),
+                self.finalized_blocks.len(),
+                self.welfare_audit_trail.len(),
             );
         }
         Blockchain {
@@ -563,7 +587,6 @@ impl BlockchainStorageV3 {
             dao_treasury_wallet_id: self.dao_treasury_wallet_id,
             welfare_services: self.welfare_services,
             welfare_service_blocks: self.welfare_service_blocks,
-            welfare_audit_trail: self.welfare_audit_trail,
             service_performance: self.service_performance,
             outcome_reports: self.outcome_reports,
             economic_processor: None,
@@ -576,7 +599,6 @@ impl BlockchainStorageV3 {
             blocks_since_last_persist: self.blocks_since_last_persist,
             executed_dao_proposals: self.executed_dao_proposals,
             finality_depth: self.finality_depth,
-            finalized_blocks: self.finalized_blocks,
             contract_states: self.contract_states,
             contract_state_history: self.contract_state_history,
             utxo_snapshots: self.utxo_snapshots,
@@ -616,7 +638,6 @@ impl BlockchainStorageV3 {
             token_pricing_state: crate::pricing::TokenPricingState::new(),
             exchange_state: crate::exchange::ExchangeState::new(),
             onramp_state: crate::onramp::OnRampState::new(),
-            oracle_slash_events: Vec::new(),
             oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
             oracle_banned_validators: std::collections::HashSet::new(),
             last_oracle_epoch_processed: 0,
@@ -661,7 +682,17 @@ impl BlockchainStorageV4 {
         let mut blockchain = self.v3.to_blockchain();
         blockchain.oracle_state = self.oracle_state;
         blockchain.exchange_state = self.exchange_state;
-        blockchain.oracle_slash_events = self.oracle_slash_events;
+        // oracle_slash_events removed from Blockchain (BST-203 — direct-write
+        // store tree). V4/V6 keep the field for old .dat reads, but the data
+        // is not carried into the store-backed model; it is audit-only history
+        // not needed to validate `H+1`.
+        if !self.oracle_slash_events.is_empty() {
+            tracing::warn!(
+                "Legacy .dat migration: {} oracle slash event(s) are NOT carried \
+                 into the store-backed model (audit-only history).",
+                self.oracle_slash_events.len(),
+            );
+        }
         blockchain.oracle_slashing_config = self.oracle_slashing_config;
         blockchain.oracle_banned_validators = self.oracle_banned_validators;
         blockchain.last_oracle_epoch_processed = self.last_oracle_epoch_processed;
@@ -711,7 +742,17 @@ impl BlockchainStorageV6 {
         blockchain.oracle_state = self.oracle_state;
         blockchain.exchange_state = self.exchange_state;
         blockchain.onramp_state = self.onramp_state;
-        blockchain.oracle_slash_events = self.oracle_slash_events;
+        // oracle_slash_events removed from Blockchain (BST-203 — direct-write
+        // store tree). V4/V6 keep the field for old .dat reads, but the data
+        // is not carried into the store-backed model; it is audit-only history
+        // not needed to validate `H+1`.
+        if !self.oracle_slash_events.is_empty() {
+            tracing::warn!(
+                "Legacy .dat migration: {} oracle slash event(s) are NOT carried \
+                 into the store-backed model (audit-only history).",
+                self.oracle_slash_events.len(),
+            );
+        }
         blockchain.oracle_slashing_config = self.oracle_slashing_config;
         blockchain.oracle_banned_validators = self.oracle_banned_validators;
         blockchain.last_oracle_epoch_processed = self.last_oracle_epoch_processed;
@@ -806,7 +847,10 @@ impl BlockchainStorageV7 {
                 oracle_state: bc.oracle_state.clone(),
                 exchange_state: bc.exchange_state.clone(),
                 onramp_state: bc.onramp_state.clone(),
-                oracle_slash_events: bc.oracle_slash_events.clone(),
+                // oracle_slash_events removed from Blockchain (BST-203). Field
+                // kept on V6 for backward-compatible .dat reads; new saves emit
+                // empty (data lives in the store).
+                oracle_slash_events: Vec::new(),
                 oracle_slashing_config: bc.oracle_slashing_config.clone(),
                 oracle_banned_validators: bc.oracle_banned_validators.clone(),
                 last_oracle_epoch_processed: bc.last_oracle_epoch_processed,

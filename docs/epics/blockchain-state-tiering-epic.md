@@ -121,6 +121,11 @@ Short term: they stay in memory with the existing bounded-retention pruning (`pr
 
 `fork_points` (~4 sites), `economics_transactions` (~9 sites), `finalized_blocks`, `oracle_slash_events`, and `welfare_audit_trail` become append/scan tables — they share one shape: monotonically-growing audit history. `finalized_blocks` is historical consensus-audit material — block `H+1` is validated from the tip, validator state, fork-choice, and the current finality frontier, never from ancient finalized metadata, so it belongs cold.
 
+**Status (2026-05-20):**
+- `fork_points` and `economics_transactions` landed in PR #2593.
+- `finalized_blocks`, `oracle_slash_events`, and `welfare_audit_trail` landed in PR-TBD (this branch): three direct-write store trees (`finalized_blocks`, `oracle_slash_events`, `welfare_audit`), four new sled-store unit tests, V3/V6 `.dat` migration warns loudly on dropped audit data. The four trait methods on each new keyspace match the fork-points/receipts shape: write outside `begin_block`, idempotent re-marks, ascending iteration by key.
+- `oracle_slashing_config` and `oracle_banned_validators` stay hot (mutated during slash decisions, queried for committee admission; not pure audit history).
+
 ## BST-204 · Drain legacy `.dat` cold fields into the store on load
 
 `load_from_file` currently rehydrates these fields into the struct. Instead, on load, drain them into the store, then leave the struct fields gone. `BlockchainStorageV3` keeps the fields for *reading* old files; `to_blockchain` writes them to the store. New saves no longer carry them.

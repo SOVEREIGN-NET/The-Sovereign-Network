@@ -66,6 +66,15 @@ impl OracleTestHarness {
     /// Create a new test harness with N validators, all in the oracle committee
     pub fn new(validator_count: usize) -> Self {
         let mut blockchain = Blockchain::default();
+        // BST-203: oracle slash events live behind the BlockchainStore. Attach
+        // an in-memory sled store so writes have somewhere to land and the
+        // assertions in these tests can read them back.
+        let store: std::sync::Arc<dyn lib_blockchain::storage::BlockchainStore> =
+            std::sync::Arc::new(
+                lib_blockchain::storage::SledStore::open_temporary()
+                    .expect("open temporary sled store for harness"),
+            );
+        blockchain.store = Some(store);
         let mut validators = Vec::with_capacity(validator_count);
         let mut committee_members = Vec::with_capacity(validator_count);
 

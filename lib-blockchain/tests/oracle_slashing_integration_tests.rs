@@ -157,8 +157,15 @@ fn test_slash_event_contains_correct_metadata() {
     let epoch = harness.current_epoch();
     let validator_key = harness.validators[0].key_id;
 
-    // Get initial event count
-    let initial_events = harness.blockchain.oracle_slash_events.len();
+    // BST-203: oracle slash events live behind the BlockchainStore. Take a
+    // count first (separate borrow scope), then slash, then re-read events.
+    fn store_events(bc: &lib_blockchain::Blockchain) -> Vec<lib_blockchain::oracle::OracleSlashEvent> {
+        bc.store()
+            .expect("harness attaches a store")
+            .iter_oracle_slash_events()
+            .expect("iter_oracle_slash_events")
+    }
+    let initial_events = store_events(&harness.blockchain).len();
 
     // Manually slash the validator (simulating what blockchain would do after detecting conflict)
     harness.blockchain.slash_oracle_validator(
@@ -168,11 +175,9 @@ fn test_slash_event_contains_correct_metadata() {
     );
 
     // Verify event metadata
-    assert_eq!(
-        harness.blockchain.oracle_slash_events.len(),
-        initial_events + 1
-    );
-    let event = harness.blockchain.oracle_slash_events.last().unwrap();
+    let events = store_events(&harness.blockchain);
+    assert_eq!(events.len(), initial_events + 1);
+    let event = events.last().unwrap();
 
     assert_eq!(event.validator_key_id, validator_key);
     assert!(matches!(
