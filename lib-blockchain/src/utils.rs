@@ -325,6 +325,7 @@ pub mod testing {
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
             kyber_public_key: Vec::new(),
+            device_node_ids: Vec::new(),
         }
     }
 }

@@ -561,6 +561,7 @@ async fn auto_create_identity_from_seed(
                     controlled_nodes: vec![],
                     owned_wallets: vec![],
                     kyber_public_key: vec![],
+                    device_node_ids: vec![],
                 };
                 let reg_tx = lib_blockchain::transaction::Transaction::new_identity_registration(
                     identity_data.clone(),
@@ -1780,6 +1781,7 @@ pub async fn handle_migrate_identity(
                     controlled_nodes: vec![],
                     owned_wallets: wallet_ids_all.iter().cloned().collect(),
                     kyber_public_key: vec![],
+                    device_node_ids: vec![],
                 };
 
                 if let Err(e) = blockchain.register_identity(identity_tx) {

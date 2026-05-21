@@ -1658,6 +1658,7 @@ impl WalletHandler {
                     controlled_nodes: vec![],
                     owned_wallets: vec![],
                     kyber_public_key: vec![],
+                    device_node_ids: vec![],
                 };
 
                 // Create IdentityRegistration system transaction for block persistence
