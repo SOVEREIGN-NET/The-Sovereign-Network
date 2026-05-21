@@ -3648,3 +3648,209 @@ fn test_ce_s3_bft_quorum_count_values() {
     assert_eq!(bft_quorum_count(10), 7);
     assert_eq!(bft_quorum_count(100), 67);
 }
+
+// ─── Cross-round precommit-quorum detection (CE-S2 part 2) ──────────────────
+//
+// Symmetric to the prevote fix shipped in PR #2620: on_precommit's quorum
+// check was current-round-only. With drift, 2f+1 precommits accumulate
+// across different rounds but no single engine ever sees them all at its
+// CURRENT round, so the Commit-step transition never fires, no Commit vote
+// is cast, and the chain stalls AFTER prevote-quorum was reached.
+//
+// Observable on the testnet at height 61615 (2026-05-21): all 5 validators
+// entered PreCommit step 87 times in 10 minutes via the CE-S2 prevote path,
+// but 0 ever transitioned to Commit step — precommit-quorum detection was
+// still gated to current_round.
+
+/// Helper: insert a Commit-step vote (PreCommit) into the pool at a specific
+/// (height, round) with a valid signature.
+fn pool_precommit(
+    engine: &mut ConsensusEngine,
+    validator_id: IdentityId,
+    keypair: &KeyPair,
+    proposal_id: Hash,
+    height: u64,
+    round: u32,
+) {
+    let vote = make_signed_vote(
+        engine,
+        keypair,
+        validator_id.clone(),
+        proposal_id.clone(),
+        VoteType::PreCommit,
+        height,
+        round,
+    );
+    let key = VotePoolKey {
+        height,
+        round,
+        vote_type: VoteType::PreCommit,
+        validator_id,
+    };
+    engine.vote_pool.insert(key, (vote, proposal_id));
+}
+
+/// Helper: build a 5-validator engine where the validator set snapshot
+/// includes all 5 at the given height (setup_bft_engine seals the snapshot
+/// with only 4, and snapshot_validator_set is write-once per height).
+async fn setup_bft_engine_5(
+    height: u64,
+    round: u32,
+) -> (ConsensusEngine, Vec<(IdentityId, KeyPair)>) {
+    let config = ConsensusConfig {
+        development_mode: true,
+        ..Default::default()
+    };
+    let broadcaster: Arc<dyn MessageBroadcaster> = Arc::new(MockMessageBroadcaster::new());
+    let mut engine = ConsensusEngine::new(config, broadcaster).expect("create engine");
+
+    let mut validators = Vec::new();
+    for i in 1..=5u8 {
+        let vid = test_validator_id(i);
+        let kp = create_test_keypair();
+        register_validator_with_keypair(&mut engine, vid.clone(), &kp, i == 1).await;
+        validators.push((vid, kp));
+    }
+
+    engine.validator_identity = Some(validators[0].0.clone());
+    engine
+        .set_validator_keypair(validators[0].1.clone())
+        .expect("set keypair");
+
+    engine.current_round.height = height;
+    engine.current_round.round = round;
+    engine.current_round.step = ConsensusStep::Propose;
+    engine.snapshot_validator_set(height);
+
+    if let Some(proposer) = engine.compute_proposer_for_round(height, round) {
+        engine.current_round.proposer = Some(proposer);
+    }
+
+    (engine, validators)
+}
+
+#[tokio::test]
+async fn test_ce_s2p2_precommit_quorum_detected_across_rounds() {
+    // 5-validator engine. Local is validators[0] at round 7. Pool precommits
+    // from validators[1..4] at round 5 (different from local round). Engine
+    // delivers a fresh precommit from validator 5 at round 5 via on_precommit
+    // and must detect a cross-round quorum: 4 distinct validators have
+    // precommitted for the same proposal at height H.
+    //
+    // CONTRACT: the engine MUST transition into the Commit step (or set the
+    // step to >= Commit / set locked_proposal) once 2f+1 precommits exist
+    // for (height, proposal_id), regardless of which rounds individual
+    // precommits came from. Otherwise the chain cannot commit when rounds
+    // drift between validators.
+    let (mut engine, validators) = setup_bft_engine_5(1, 7).await;
+
+    let proposal_id = Hash::from_bytes(&[0xE5u8; 32]);
+    let (ref proposer_id, ref proposer_kp) = validators[0];
+    stage_stub_proposal(
+        &mut engine,
+        proposal_id.clone(),
+        1,
+        7,
+        proposer_id,
+        proposer_kp,
+    );
+
+    // Local validator's perspective: it has cast its own prevote and is in
+    // PreCommit step at round 7 (where it would cast a precommit), but the
+    // network reached precommit-quorum a couple of rounds earlier.
+    engine.current_round.step = ConsensusStep::PreCommit;
+    engine.fsm_state = lib_consensus_core::fsm::ValidatorState::Precommitting;
+
+    // Pool 3 remote precommits at round 5 (the "early" quorum window).
+    for i in 1..=3usize {
+        let (vid, kp) = &validators[i];
+        pool_precommit(&mut engine, vid.clone(), kp, proposal_id.clone(), 1, 5);
+    }
+
+    // Deliver the 4th precommit at round 5 via the live handler — completes
+    // the quorum at round 5, but the local engine is at round 7.
+    let (ref v5_id, ref v5_kp) = validators[4];
+    let v5_vote = make_signed_vote(
+        &engine,
+        v5_kp,
+        v5_id.clone(),
+        proposal_id.clone(),
+        VoteType::PreCommit,
+        1,
+        5,
+    );
+    engine
+        .on_precommit(v5_vote)
+        .await
+        .expect("on_precommit must accept the 4th remote precommit");
+
+    let precommits_at_round_5 =
+        engine.count_precommits_for(1, 5, &proposal_id);
+    assert_eq!(
+        precommits_at_round_5, 4,
+        "test setup: 4 precommits should be pooled for round 5"
+    );
+
+    // CONTRACT: cross-round precommit-quorum must move the local step toward
+    // Commit AND/OR record the lock. Without the fix this stays at PreCommit
+    // forever because the current-round-only gate skips the quorum check
+    // (vote.round=5 vs current_round.round=7).
+    assert!(
+        engine.current_round.step >= ConsensusStep::Commit
+            || engine.current_round.locked_proposal.as_ref() == Some(&proposal_id),
+        "cross-round precommit quorum must record the lock and/or advance \
+         to Commit step. got step={:?}, locked={:?}",
+        engine.current_round.step, engine.current_round.locked_proposal,
+    );
+}
+
+#[tokio::test]
+async fn test_ce_s2p2_same_round_precommit_quorum_still_advances() {
+    // Regression guard: the fix must NOT break the normal-case path where
+    // 2f+1 precommits arrive at the engine's CURRENT round. Local should
+    // still set locked state and transition to Commit step.
+    let (mut engine, validators) = setup_bft_engine_5(1, 4).await;
+
+    let proposal_id = Hash::from_bytes(&[0xE6u8; 32]);
+    let (ref proposer_id, ref proposer_kp) = validators[0];
+    stage_stub_proposal(
+        &mut engine,
+        proposal_id.clone(),
+        1,
+        4,
+        proposer_id,
+        proposer_kp,
+    );
+
+    engine.current_round.step = ConsensusStep::PreCommit;
+    engine.fsm_state = lib_consensus_core::fsm::ValidatorState::Precommitting;
+
+    // Pool 3 same-round precommits.
+    for i in 1..=3usize {
+        let (vid, kp) = &validators[i];
+        pool_precommit(&mut engine, vid.clone(), kp, proposal_id.clone(), 1, 4);
+    }
+
+    // Deliver the 4th — completes quorum at current round.
+    let (ref v5_id, ref v5_kp) = validators[4];
+    let v5_vote = make_signed_vote(
+        &engine,
+        v5_kp,
+        v5_id.clone(),
+        proposal_id.clone(),
+        VoteType::PreCommit,
+        1,
+        4,
+    );
+    engine.on_precommit(v5_vote).await.expect("on_precommit");
+
+    assert_eq!(
+        engine.current_round.locked_proposal.as_ref(),
+        Some(&proposal_id),
+        "same-round precommit quorum must set locked_proposal"
+    );
+    assert!(
+        engine.current_round.step >= ConsensusStep::Commit,
+        "same-round precommit quorum must advance to Commit step"
+    );
+}
