@@ -401,7 +401,6 @@ impl GenesisFundingService {
                 controlled_nodes: controlled_node_ids,
                 owned_wallets: vec![hex::encode(&user_primary_wallet_id.as_ref().unwrap().0 .0)],
                 kyber_public_key: vec![],
-                    device_node_ids: vec![],
             };
 
             if blockchain.identity_registry.contains_key(&user_did) {
@@ -496,7 +495,6 @@ impl GenesisFundingService {
                             .unwrap_or_default(),
                         owned_wallets: Vec::new(),
                         kyber_public_key: Vec::new(),
-                    device_node_ids: Vec::new(),
                     },
                 );
                 blockchain.identity_blocks.insert(validator_did.clone(), 0);

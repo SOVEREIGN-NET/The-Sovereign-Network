@@ -252,60 +252,32 @@ impl MessagingHandler {
             ));
         }
 
-        // Resolve the requester's QUIC identity to the canonical chain DID the
-        // deposit was keyed under. Three independent matches are tried; the
-        // first hit wins:
-        //
-        // 1. **Direct DID match.** A registry entry keyed by
-        //    `did:zhtp:<requester_key_id>` (rare — happens when the QUIC key
-        //    coincides with the canonical DID derivation).
-        // 2. **`device_node_ids` match.** The polling device's QUIC key_id is
-        //    in some identity's `device_node_ids` list — set by the OPAQUE
-        //    login auto-bind (handle_login_finish). This is the path that
-        //    handles ephemeral per-device QUIC keypairs: mobiles generate a
-        //    fresh QUIC key each session, OPAQUE login proves password, and
-        //    the server records the key under the canonical DID. Subsequent
-        //    msg/receive polls from the same QUIC session resolve here.
-        // 3. **Public-key hash match.** Legacy / non-OPAQUE flow: scan all
-        //    identity_registry entries, hash `dilithium_pk` and
-        //    `dilithium_pk||kyber_pk`, see if either matches the requester
-        //    key_id. Genesis identities and identities registered before
-        //    OPAQUE existed land here.
-        //
-        // Fallback: derive a stub DID from the key_id itself. The deposit
-        // store will return empty for unknown DIDs — better than 500-ing.
+        // Try multiple DID derivations to find the canonical DID the deposit was keyed under.
+        // QUIC identity_id = blake3(dilithium_pk || kyber_pk) — that's what request.requester.0 is.
+        // Canonical DID = "did:zhtp:" + blake3(dilithium_pk) — that's what envelopes use.
+        // The registry stores entries keyed by the canonical DID. To match the polling phone's
+        // authenticated identity to the canonical DID, we scan the registry trying all
+        // derivations (dil-only, dil||kyber). Genesis identities may have kyber_pk empty,
+        // mobile-registered identities have a real kyber_pk.
         let key_id_did = format!("did:zhtp:{}", requester_key_id);
         let recipient_did = {
             let blockchain = self.blockchain.read().await;
-
-            // (1) Direct match.
             if blockchain.identity_registry.contains_key(&key_id_did) {
                 key_id_did.clone()
             } else {
-                // Parse requester_key_id back into bytes for the device_node_ids
-                // comparison; the field stores raw [u8; 32] bytes.
-                let requester_key_id_bytes: Option<[u8; 32]> = hex::decode(&requester_key_id)
-                    .ok()
-                    .and_then(|v| v.try_into().ok());
-
                 blockchain
                     .identity_registry
                     .iter()
                     .find(|(_, id)| {
-                        // (2) device_node_ids match — populated by OPAQUE login auto-bind.
-                        if let Some(ref key_bytes) = requester_key_id_bytes {
-                            if id.device_node_ids.iter().any(|d| d == key_bytes) {
-                                return true;
-                            }
-                        }
-                        // (3) Public-key hash match (legacy / non-OPAQUE flow).
                         if id.public_key.len() < 32 {
                             return false;
                         }
+                        // Match against dilithium-only hash (canonical DID derivation).
                         let dil_hash = hex::encode(lib_crypto::hash_blake3(&id.public_key));
                         if dil_hash == requester_key_id {
                             return true;
                         }
+                        // Match against dilithium||kyber hash (QUIC identity_id derivation).
                         if !id.kyber_public_key.is_empty() {
                             let combined =
                                 [&id.public_key[..], &id.kyber_public_key[..]].concat();
