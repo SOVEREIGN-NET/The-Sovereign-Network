@@ -2159,43 +2159,76 @@ impl ConsensusEngine {
             }
         }
 
-        // **CE-S1**: precommit-quorum check — proposal-scoped, current-round
-        // only. A higher-round quorum is reached via the Trigger C jump
-        // above; a stale-round quorum is not actionable for locking.
-        if vote.round == self.current_round.round
-            && vote.height == self.current_round.height
-        {
-            let precommit_count =
-                self.count_precommits_for(vote.height, vote.round, &proposal_id);
+        // **CE-S2 part 2**: precommit-quorum detection must run against the
+        // vote's own (height, round, proposal_id) and ALSO across all rounds
+        // at this height — not be gated on `vote.round == current_round`.
+        //
+        // Symmetric to the prevote fix (CE-S2) shipped in PR #2620. The
+        // previous current-round-only gate left precommits in the same
+        // drift-induced limbo: with each validator advancing rounds on its
+        // own clock, the 4th-of-5 precommit at round R routinely landed at
+        // peers whose `current_round.round` had moved past R, skipping the
+        // quorum check, never transitioning to Commit step, never casting a
+        // Commit vote, and never letting `maybe_finalize`'s commit-quorum
+        // path run (it needs Commit votes, which depend on this transition).
+        //
+        // The 2f+1 precommit count is taken across ALL rounds at this height
+        // (same as count_commits_for) — BFT safety holds because two
+        // proposals cannot each receive 2f+1 distinct precommits at the same
+        // height without f+1 Byzantine validators (counting argument with
+        // n=5, f=1: 4+4 ≤ 5 distinct + Byzantine doubles would require
+        // f+1 = 2 Byzantine validators).
+        if vote.height == self.current_round.height {
+            // Cross-round count for (height, proposal_id) — proposal-scoped.
+            let precommit_count: u64 = self
+                .vote_pool
+                .iter()
+                .filter(|(k, (_, voted_id))| {
+                    k.height == vote.height
+                        && k.vote_type == VoteType::PreCommit
+                        && voted_id == &proposal_id
+                })
+                .count() as u64;
             let total_validators =
                 self.validator_manager.get_active_validators().len() as u64;
 
             if check_supermajority(precommit_count, total_validators)
                 && self.current_round.step <= ConsensusStep::Commit
             {
-                // **CE-S1**: only lock if this proposal can BE the lock. A
-                // conflicting locked_proposal means two precommit quorums —
-                // refuse, to preserve BFT safety.
+                // Conflicting-quorum guard (CE-S1 / CE-S2):
+                // - same-locked-proposal: idempotent, no overwrite.
+                // - different locked_proposal: in honest operation with n=5
+                //   f=1 this is unreachable (see counting argument above);
+                //   if observed, prefer the FIRST lock seen and log loudly.
                 if let Some(existing) = self.current_round.locked_proposal.as_ref() {
                     if existing != &proposal_id {
                         tracing::warn!(
-                            "Conflicting precommit quorum detected: proposal {:?} has quorum but locked_proposal is already {:?}",
-                            proposal_id, existing
+                            "Conflicting precommit quorum: proposal {:?} reached quorum \
+                             at height {} but locked_proposal is already {:?} — refusing \
+                             overwrite (possible Byzantine evidence)",
+                            proposal_id, vote.height, existing
                         );
                         return Ok(());
                     }
+                    // Same proposal — idempotent, fall through to FSM
+                    // transition so a late-arriving precommit can still
+                    // drive the Commit step on a node that previously
+                    // observed the quorum but had not yet stepped to Commit.
                 } else {
-                    // First proposal to reach a precommit quorum this round.
-                    // Record locked_proposal AND locked_round — the prevote
-                    // lock rule needs both to decide whether a conflicting
-                    // proposal in a later round may be prevoted.
                     self.current_round.locked_proposal = Some(proposal_id.clone());
-                    self.current_round.locked_round = Some(self.current_round.round);
+                    // Record locked_round as the round the QUORUM was observed
+                    // at (vote.round) — that is the round whose precommit set
+                    // formed the lock. Tendermint's lock-unlock rule reads
+                    // locked_round to decide if a later proposal's
+                    // `valid_round >= locked_round` is sufficient to unlock.
+                    self.current_round.locked_round = Some(vote.round);
                 }
 
-                // CONS-305c: route the precommit-quorum threshold through
-                // the FSM. `enter_commit_step` (via SendCommit) casts the
-                // commit vote.
+                // CONS-305c: drive the Commit-step transition via FSM.
+                // `enter_commit_step` (via SendCommit) casts the Commit vote
+                // tagged with the LOCAL current_round, which the cross-round
+                // commit count then aggregates with peers' Commit votes
+                // (also tagged with each peer's own round).
                 let prior_fsm = self.fsm_state.clone();
                 let (next_fsm, actions) = lib_consensus_core::fsm::transition(
                     prior_fsm,
