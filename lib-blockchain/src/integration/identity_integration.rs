@@ -377,7 +377,6 @@ mod tests {
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
             kyber_public_key: Vec::new(),
-            device_node_ids: Vec::new(),
         };
 
         assert!(validate_identity_data(&identity_data)?);
@@ -401,7 +400,6 @@ mod tests {
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
             kyber_public_key: Vec::new(),
-            device_node_ids: Vec::new(),
         };
 
         let registration_id = process_identity_registration(&identity_data)?;

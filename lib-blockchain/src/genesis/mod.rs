@@ -604,7 +604,6 @@ impl GenesisConfig {
                     controlled_nodes: vec![],
                     owned_wallets: vec![],
                     kyber_public_key: vec![],
-                    device_node_ids: vec![],
                 },
             );
             bc.identity_blocks.insert(id.did.clone(), 0u64);
@@ -724,7 +723,6 @@ impl GenesisConfig {
                             controlled_nodes: vec![],
                             owned_wallets: vec![],
                             kyber_public_key: vec![],
-                    device_node_ids: vec![],
                         },
                     );
                     bc.identity_blocks.insert(id.did.clone(), 0u64);

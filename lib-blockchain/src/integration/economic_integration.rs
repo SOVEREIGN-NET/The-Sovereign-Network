@@ -480,7 +480,6 @@ impl EconomicTransactionProcessor {
                     controlled_nodes: Vec::new(),
                     owned_wallets: Vec::new(),
                     kyber_public_key: Vec::new(),
-                    device_node_ids: Vec::new(),
                 })
             }
             EconomyTransactionType::ProposalVote | EconomyTransactionType::ProposalExecution => {
@@ -501,7 +500,6 @@ impl EconomicTransactionProcessor {
                     controlled_nodes: Vec::new(),
                     owned_wallets: Vec::new(),
                     kyber_public_key: Vec::new(),
-                    device_node_ids: Vec::new(),
                 })
             }
             _ => None, // Regular payments don't require identity verification

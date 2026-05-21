@@ -535,30 +535,6 @@ pub struct IdentityTransactionData {
     /// 1568 bytes when present. Empty for identities registered before this field was added.
     #[serde(default)]
     pub kyber_public_key: Vec<u8>,
-    /// QUIC key_ids of devices bound to this canonical chain identity.
-    ///
-    /// Each entry is the `blake3(dilithium_pk || kyber_pk)` of a device's
-    /// QUIC handshake keypair — the value the server sees as
-    /// `request.requester.0` for control-plane v2 authenticated requests
-    /// from that device.
-    ///
-    /// Mobiles generate an ephemeral QUIC keypair per device/session that
-    /// does NOT match the identity's chain-registered keys. Without an
-    /// explicit binding, the server's msg/receive resolver cannot map an
-    /// incoming QUIC key_id back to the user's canonical DID, so messages
-    /// addressed to the canonical DID never reach the polling device.
-    ///
-    /// New devices are appended (set semantics; no duplicates) by an
-    /// `IdentityUpdate` transaction. The OPAQUE login flow self-bootstraps
-    /// this binding: after a password-authenticated session is established,
-    /// the server submits a system `IdentityUpdate` adding the request's
-    /// QUIC key_id if absent. Mobiles do not need to call any new
-    /// endpoint — existing OPAQUE login is the trigger.
-    ///
-    /// Empty for identities registered before this field was added
-    /// (`#[serde(default)]`).
-    #[serde(default)]
-    pub device_node_ids: Vec<[u8; 32]>,
 }
 
 /// Wallet registration transaction data (processed by lib-identity package)
@@ -803,7 +779,6 @@ impl Transaction {
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
                     kyber_public_key: Vec::new(),
-                    device_node_ids: Vec::new(),
         };
 
         Transaction {
@@ -2068,7 +2043,6 @@ impl IdentityTransactionData {
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
             kyber_public_key: Vec::new(),
-                    device_node_ids: Vec::new(),
         }
     }
 
@@ -2107,7 +2081,6 @@ impl IdentityTransactionData {
             controlled_nodes,
             owned_wallets,
             kyber_public_key: Vec::new(),
-                    device_node_ids: Vec::new(),
         }
     }
 
