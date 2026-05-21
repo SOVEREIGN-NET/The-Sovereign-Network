@@ -2496,9 +2496,12 @@ pub extern "C" fn zhtp_msg_seal_key_exchange(
 
 // ── Opening ─────────────────────────────────────────────────────────
 
-/// Decrypt a sealed envelope. `chain_key` must point to the 32-byte
-/// chain key for the relevant session; `envelope_bytes` is bincode bytes
-/// (the same shape `zhtp_msg_seal_*` produces). Returns plaintext bytes.
+/// Decrypt a sealed envelope **statelessly**. `chain_key` must already
+/// be ratcheted to the position matching `envelope.sequence`; this call
+/// does not advance any state and is intended for KeyExchange envelopes
+/// or callers that manage chain key advancement out-of-band. For normal
+/// in-session traffic use `zhtp_msg_envelope_open_with_session` which
+/// advances the receive ratchet in lockstep with the sender.
 #[no_mangle]
 pub extern "C" fn zhtp_msg_envelope_open(
     envelope_bytes: *const u8,
@@ -2519,6 +2522,111 @@ pub extern "C" fn zhtp_msg_envelope_open(
     key_arr.copy_from_slice(key_slice);
     match msg_mod::open_envelope(&envelope, &key_arr) {
         Ok(body) => vec_to_buffer(body),
+        Err(_) => empty_buffer(),
+    }
+}
+
+/// Decrypt a sealed envelope using a `MessagingSessionHandle`, advancing
+/// the receive ratchet in lockstep with the sender's send ratchet.
+/// Mirrors `zhtp_msg_seal_text` on the receive side.
+///
+/// Behaviour:
+/// - In-order (`envelope.sequence == session.counter`): decrypts and
+///   advances the chain key + counter.
+/// - Skip-forward (`envelope.sequence > session.counter`): buffers
+///   per-message keys for the skipped range in the session's
+///   `skipped_keys` map (bounded; over-limit skips are rejected) so
+///   they can still be opened if they arrive later, then decrypts the
+///   target and advances.
+/// - Out-of-order (`envelope.sequence < session.counter`): looks the
+///   key up in the skipped buffer and consumes it on success.
+///
+/// On any failure (epoch mismatch, replay outside the buffer, decrypt
+/// error, payload deserialize error) the session is left untouched.
+/// Returns plaintext on success; empty buffer on failure.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_envelope_open_with_session(
+    handle: *mut MessagingSessionHandle,
+    envelope_bytes: *const u8,
+    envelope_len: usize,
+) -> ByteBuffer {
+    if handle.is_null() || envelope_bytes.is_null() {
+        return empty_buffer();
+    }
+    if envelope_len > 10 * 1024 * 1024 {
+        return empty_buffer();
+    }
+    let env_bytes = unsafe { borrow_slice(envelope_bytes, envelope_len) };
+    let envelope: msg_mod::MessageEnvelope = match bincode::deserialize(env_bytes) {
+        Ok(e) => e,
+        Err(_) => return empty_buffer(),
+    };
+    let session = unsafe { &mut (*handle).inner };
+
+    // Clone-then-commit so partial state changes don't leak on failure.
+    let mut session_copy = session.clone();
+    match msg_mod::open_envelope_with_session(&mut session_copy, &envelope) {
+        Ok(body) => {
+            *session = session_copy;
+            vec_to_buffer(body)
+        }
+        Err(_) => empty_buffer(),
+    }
+}
+
+/// Stateful + verified counterpart of `zhtp_msg_envelope_open_verified`.
+/// Verifies the Dilithium signature and the `sender_did` ↔ `peer_pk`
+/// binding, then decrypts via `zhtp_msg_envelope_open_with_session`'s
+/// ratchet semantics. `peer_dilithium_pk` is the sender's public key
+/// (2592 bytes). On any failure the session is left untouched.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_envelope_open_verified_with_session(
+    handle: *mut MessagingSessionHandle,
+    envelope_bytes: *const u8,
+    envelope_len: usize,
+    peer_dilithium_pk: *const u8,
+    peer_dilithium_pk_len: usize,
+) -> ByteBuffer {
+    if handle.is_null() || envelope_bytes.is_null() || peer_dilithium_pk.is_null() {
+        return empty_buffer();
+    }
+    if peer_dilithium_pk_len != crypto::Dilithium5::PUBLIC_KEY_SIZE {
+        return empty_buffer();
+    }
+    if envelope_len > 10 * 1024 * 1024 {
+        return empty_buffer();
+    }
+
+    let env_bytes = unsafe { borrow_slice(envelope_bytes, envelope_len) };
+    let pk = unsafe { borrow_slice(peer_dilithium_pk, peer_dilithium_pk_len) };
+
+    let envelope: msg_mod::MessageEnvelope = match bincode::deserialize(env_bytes) {
+        Ok(e) => e,
+        Err(_) => return empty_buffer(),
+    };
+
+    // sender_did must equal `did:zhtp:` + blake3(pk)
+    let expected_did = format!(
+        "did:zhtp:{}",
+        hex::encode(crypto::Blake3::hash(pk))
+    );
+    if envelope.sender_did != expected_did {
+        return empty_buffer();
+    }
+
+    // Dilithium signature
+    match msg_mod::verify_envelope(&envelope, pk) {
+        Ok(true) => {}
+        _ => return empty_buffer(),
+    }
+
+    let session = unsafe { &mut (*handle).inner };
+    let mut session_copy = session.clone();
+    match msg_mod::open_envelope_with_session(&mut session_copy, &envelope) {
+        Ok(body) => {
+            *session = session_copy;
+            vec_to_buffer(body)
+        }
         Err(_) => empty_buffer(),
     }
 }
