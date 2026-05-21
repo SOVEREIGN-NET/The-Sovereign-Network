@@ -13,6 +13,38 @@ use std::path::{Path, PathBuf};
 // Re-export KeystorePrivateKey from zhtp for local use and external consumers
 pub use zhtp::keyfile_names::KeystorePrivateKey;
 
+/// Load identity and keypair from explicit file paths (no fallback logic).
+/// Shared by `load_identity_from_keystore` and observer identity loading.
+pub fn load_identity_from_files(
+    identity_file: &Path,
+    private_key_file: &Path,
+) -> CliResult<(ZhtpIdentity, KeyPair)> {
+    let identity_json = std::fs::read_to_string(identity_file)
+        .map_err(|e| CliError::IdentityError(format!("Failed to read identity: {}", e)))?;
+    let private_key_json = std::fs::read_to_string(private_key_file)
+        .map_err(|e| CliError::IdentityError(format!("Failed to read private key: {}", e)))?;
+
+    let keystore_key: KeystorePrivateKey = serde_json::from_str(&private_key_json)
+        .map_err(|e| CliError::IdentityError(format!("Failed to parse private key: {}", e)))?;
+
+    let private_key = PrivateKey {
+        dilithium_sk: keystore_key.dilithium_sk,
+        dilithium_pk: keystore_key.dilithium_pk,
+        kyber_sk: keystore_key.kyber_sk,
+        master_seed: keystore_key.master_seed,
+    };
+
+    let identity = ZhtpIdentity::from_serialized(&identity_json, &private_key)
+        .map_err(|e| CliError::IdentityError(format!("Failed to restore identity: {}", e)))?;
+
+    let keypair = KeyPair {
+        public_key: identity.public_key.clone(),
+        private_key,
+    };
+
+    Ok((identity, keypair))
+}
+
 #[derive(Debug, Clone)]
 pub struct LoadedIdentity {
     pub identity: ZhtpIdentity,
@@ -56,29 +88,7 @@ pub fn load_identity_from_keystore(keystore_path: &Path) -> CliResult<LoadedIden
         )));
     }
 
-    let identity_json = std::fs::read_to_string(&identity_file)
-        .map_err(|e| CliError::IdentityError(format!("Failed to read identity: {}", e)))?;
-    let private_key_json = std::fs::read_to_string(&private_key_file)
-        .map_err(|e| CliError::IdentityError(format!("Failed to read private key: {}", e)))?;
-
-    let keystore_key: KeystorePrivateKey = serde_json::from_str(&private_key_json)
-        .map_err(|e| CliError::IdentityError(format!("Failed to parse private key: {}", e)))?;
-
-    let private_key = PrivateKey {
-        dilithium_sk: keystore_key.dilithium_sk,
-        dilithium_pk: keystore_key.dilithium_pk,
-        kyber_sk: keystore_key.kyber_sk,
-        master_seed: keystore_key.master_seed,
-    };
-
-    let identity = ZhtpIdentity::from_serialized(&identity_json, &private_key)
-        .map_err(|e| CliError::IdentityError(format!("Failed to restore identity: {}", e)))?;
-
-    let keypair = KeyPair {
-        public_key: identity.public_key.clone(),
-        private_key,
-    };
-
+    let (identity, keypair) = load_identity_from_files(&identity_file, &private_key_file)?;
     Ok(LoadedIdentity { identity, keypair })
 }
 

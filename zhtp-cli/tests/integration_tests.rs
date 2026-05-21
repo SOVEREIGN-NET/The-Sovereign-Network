@@ -70,6 +70,7 @@ mod tests {
             ("version", "Version information"),
             ("config", "Configuration"),
             ("backup", "Backup/restore"),
+            ("observer", "Observer node admission and lifecycle commands"),
         ];
 
         for (cmd, description) in commands {
@@ -118,6 +119,7 @@ mod tests {
             "identity",
             "node",
             "reward",
+            "observer",
         ];
 
         for cmd in commands_with_help {
