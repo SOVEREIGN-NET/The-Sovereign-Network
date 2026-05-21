@@ -3430,3 +3430,221 @@ async fn test_ce_s2_quorum_for_current_round_still_transitions_to_precommit() {
         engine.current_round.step
     );
 }
+
+// ─── Quorum-proof determinism (CE-S3) ────────────────────────────────────────
+//
+// Background: the block header commits to `bft_quorum_root = compute_bft_quorum_root(&proof)`,
+// which is part of `block.hash()` via `BlockHeader::hash`. For all validators
+// finalizing the same logical block to compute identical block hashes — and
+// therefore for height H+1's `previous_hash` check to pass — every validator
+// must construct an IDENTICAL `BftQuorumProof.attestations` vec.
+//
+// Pre-fix, each validator built the proof from whatever commit votes it had
+// locally observed at finalization time. A validator that observed one extra
+// attestation produced a different attestation SET, a different root, and
+// therefore a different block hash. After a network restart from a unanimous
+// height-H state, three groups of validators independently committed three
+// distinct versions of block H+1 — exactly because their local observations
+// of the commit quorum differed by one or two attestations.
+//
+// The fix: after sort_by_key + dedup_by_key, truncate to exactly the
+// `bft_quorum_count(n)` lowest-`validator_id` attestations. Every validator
+// that has at least `bft_quorum_count(n)` distinct observations now produces
+// the same prefix → same root → same block hash.
+
+/// Helper: build a CommitAttestation-bearing signed commit vote and insert it
+/// into the engine's vote_pool at the given (height, round) for the given
+/// proposal. Uses a fresh keypair per validator_id so signatures are length-
+/// correct (the proof helper skips zero-length / stub signatures).
+fn pool_commit(
+    engine: &mut ConsensusEngine,
+    validator_id: IdentityId,
+    keypair: &KeyPair,
+    proposal_id: Hash,
+    height: u64,
+    round: u32,
+) {
+    let vote = make_signed_vote(
+        engine,
+        keypair,
+        validator_id.clone(),
+        proposal_id.clone(),
+        VoteType::Commit,
+        height,
+        round,
+    );
+    let key = VotePoolKey {
+        height,
+        round,
+        vote_type: VoteType::Commit,
+        validator_id,
+    };
+    engine.vote_pool.insert(key, (vote, proposal_id));
+}
+
+#[tokio::test]
+async fn test_ce_s3_quorum_proof_root_identical_with_extra_observations() {
+    // Two engines A and B at the same height with 5 validators registered.
+    // A observed 4 commit attestations (the BFT threshold). B observed all 5
+    // (one extra — modeling normal late-arriving commits). Both must produce
+    // the SAME quorum proof attestations and therefore the SAME quorum_root.
+    use lib_types::consensus::compute_bft_quorum_root;
+
+    let (mut engine_a, validators) = setup_bft_engine(1, 0).await;
+    let v5_id = test_validator_id(5);
+    let v5_kp = create_test_keypair();
+    register_validator_with_keypair(&mut engine_a, v5_id.clone(), &v5_kp, false).await;
+    engine_a.snapshot_validator_set(1);
+
+    let (mut engine_b, _) = setup_bft_engine(1, 0).await;
+    register_validator_with_keypair(&mut engine_b, v5_id.clone(), &v5_kp, false).await;
+    engine_b.snapshot_validator_set(1);
+
+    let proposal_id = Hash::from_bytes(&[0xC5u8; 32]);
+
+    // A: 4 commits (validators 1..=4) — exactly the BFT threshold for n=5.
+    for i in 0..4 {
+        let (vid, kp) = &validators[i];
+        pool_commit(&mut engine_a, vid.clone(), kp, proposal_id.clone(), 1, 0);
+    }
+    // B: same 4 commits PLUS validator 5 — superset.
+    for i in 0..4 {
+        let (vid, kp) = &validators[i];
+        pool_commit(&mut engine_b, vid.clone(), kp, proposal_id.clone(), 1, 0);
+    }
+    pool_commit(&mut engine_b, v5_id, &v5_kp, proposal_id.clone(), 1, 0);
+
+    // Build proofs via the same module helper the engine uses internally.
+    let proof_a = super::state_machine::build_quorum_proof(
+        &engine_a.vote_pool,
+        1,
+        &proposal_id,
+        5,
+    );
+    let proof_b = super::state_machine::build_quorum_proof(
+        &engine_b.vote_pool,
+        1,
+        &proposal_id,
+        5,
+    );
+
+    assert_eq!(
+        proof_a.attestations.len(),
+        proof_b.attestations.len(),
+        "attestation count must match across subset/superset observations \
+         (both must truncate to bft_quorum_count(5) = 4)"
+    );
+    let a_ids: Vec<_> = proof_a.attestations.iter().map(|a| a.validator_id).collect();
+    let b_ids: Vec<_> = proof_b.attestations.iter().map(|a| a.validator_id).collect();
+    assert_eq!(
+        a_ids, b_ids,
+        "attestation validator_id sets must match — both must include the \
+         same lowest-validator_id prefix"
+    );
+
+    let root_a = compute_bft_quorum_root(&proof_a);
+    let root_b = compute_bft_quorum_root(&proof_b);
+    assert_eq!(
+        root_a, root_b,
+        "bft_quorum_root MUST be identical across validators that observed \
+         different numbers of attestations (this is the fork-after-restart bug)"
+    );
+}
+
+#[tokio::test]
+async fn test_ce_s3_quorum_proof_root_dedups_double_commits_to_lowest_round() {
+    // Upgrade-race scenario: with `enter_commit_step`'s `already_committed`
+    // guard in place, validators cast exactly ONE commit per (height,
+    // proposal). But the network may still hold redundant double-commits
+    // from before the guard shipped, or from a peer running a legacy build.
+    // build_quorum_proof must deterministically pick ONE attestation per
+    // validator_id — specifically the lowest-round one — so an "upgraded"
+    // peer and a peer who only observed the legacy double-commit still
+    // converge on the same quorum_root.
+    use lib_types::consensus::compute_bft_quorum_root;
+
+    let (mut engine_clean, validators) = setup_bft_engine(1, 5).await;
+    let v5_id = test_validator_id(5);
+    let v5_kp = create_test_keypair();
+    register_validator_with_keypair(&mut engine_clean, v5_id.clone(), &v5_kp, false).await;
+    engine_clean.snapshot_validator_set(1);
+
+    let (mut engine_with_dup, _) = setup_bft_engine(1, 5).await;
+    register_validator_with_keypair(&mut engine_with_dup, v5_id.clone(), &v5_kp, false).await;
+    engine_with_dup.snapshot_validator_set(1);
+
+    let proposal_id = Hash::from_bytes(&[0xD5u8; 32]);
+
+    // Clean view: each of the first 4 validators committed once, at round 4.
+    for i in 0..4 {
+        let (vid, kp) = &validators[i];
+        pool_commit(&mut engine_with_dup, vid.clone(), kp, proposal_id.clone(), 1, 4);
+        pool_commit(&mut engine_clean, vid.clone(), kp, proposal_id.clone(), 1, 4);
+    }
+    // engine_with_dup also holds REDUNDANT commits at round 5 from g1 and g2 —
+    // modeling commits that landed in the pool before the
+    // `already_committed`-across-rounds guard was deployed. After dedup these
+    // must vanish in favour of the round-4 entries.
+    pool_commit(
+        &mut engine_with_dup,
+        validators[0].0.clone(),
+        &validators[0].1,
+        proposal_id.clone(),
+        1,
+        5,
+    );
+    pool_commit(
+        &mut engine_with_dup,
+        validators[1].0.clone(),
+        &validators[1].1,
+        proposal_id.clone(),
+        1,
+        5,
+    );
+
+    let proof_clean = super::state_machine::build_quorum_proof(
+        &engine_clean.vote_pool,
+        1,
+        &proposal_id,
+        5,
+    );
+    let proof_with_dup = super::state_machine::build_quorum_proof(
+        &engine_with_dup.vote_pool,
+        1,
+        &proposal_id,
+        5,
+    );
+
+    let root_clean = compute_bft_quorum_root(&proof_clean);
+    let root_with_dup = compute_bft_quorum_root(&proof_with_dup);
+    assert_eq!(
+        root_clean, root_with_dup,
+        "build_quorum_proof must dedup double-commits by keeping the LOWEST \
+         round per validator, so an upgraded peer (clean) and a peer with \
+         redundant pre-fix commits (with_dup) compute the same quorum_root"
+    );
+    // And the chosen rounds must indeed be the lowest-per-validator (round 4).
+    for att in proof_with_dup.attestations.iter() {
+        assert_eq!(
+            att.round, 4,
+            "with_dup: dedup must pick lowest-round attestation per validator"
+        );
+    }
+}
+
+#[test]
+fn test_ce_s3_bft_quorum_count_values() {
+    // Pin the threshold function. These are the (n, k) pairs the BFT protocol
+    // requires; any change here is a wire-format / safety change.
+    use super::state_machine::bft_quorum_count;
+    assert_eq!(bft_quorum_count(0), 0);
+    assert_eq!(bft_quorum_count(1), 1);
+    assert_eq!(bft_quorum_count(2), 2);
+    assert_eq!(bft_quorum_count(3), 3);
+    assert_eq!(bft_quorum_count(4), 3);
+    assert_eq!(bft_quorum_count(5), 4);
+    assert_eq!(bft_quorum_count(6), 5);
+    assert_eq!(bft_quorum_count(7), 5);
+    assert_eq!(bft_quorum_count(10), 7);
+    assert_eq!(bft_quorum_count(100), 67);
+}
