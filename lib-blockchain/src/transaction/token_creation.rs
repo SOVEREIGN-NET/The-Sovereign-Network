@@ -18,14 +18,27 @@ pub const MAX_TOKEN_CREATION_MEMO_BYTES: usize = 4096;
 pub const TOKEN_CREATION_TREASURY_ALLOCATION_BPS: u16 = 2_000;
 
 /// Canonical token creation payload for `TransactionType::TokenCreation`.
+///
+/// `initial_supply` is `u128` to match the rest of the EPIC-001 decimals
+/// unification: `TokenContract.{total_supply, max_supply}` are `u128`, CBE
+/// uses 18-decimal atoms whose totals are `u128`, and `lib-client`'s public
+/// builder accepts `u128`. The widening completes the chain-side leg of
+/// the migration started in #2098/#2105/#2133. Safe because no
+/// `TokenCreation` transaction has ever been processed on chain (verified
+/// via 30-day journal sweep) and the payload is tx-resident only — it is
+/// not persisted in sled, so no historical blob deserialisation breaks.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TokenCreationPayloadV1 {
     /// Human-readable token name.
     pub name: String,
     /// Token ticker symbol.
     pub symbol: String,
-    /// Total initial supply minted at deployment (split across creator/treasury per policy).
-    pub initial_supply: u64,
+    /// Total initial supply minted at deployment in atomic units (i.e.
+    /// `whole_tokens * 10^decimals`). Split across creator/treasury per
+    /// policy. `u128` to support 18-decimal tokens with whole-token
+    /// supplies past the `u64` ceiling of ~18.4 (e.g. CBE's 100B @ 18 dec
+    /// = `10^29` atoms).
+    pub initial_supply: u128,
     /// Display decimals for client formatting.
     pub decimals: u8,
     /// Treasury allocation in basis points. Canonical value is fixed at 2_000 (20%).
@@ -75,11 +88,27 @@ impl TokenCreationPayloadV1 {
     }
 
     /// Deterministically split initial supply into (creator, treasury) allocation.
-    pub fn split_initial_supply(&self) -> (u64, u64) {
-        let treasury_u128 =
-            (self.initial_supply as u128 * self.treasury_allocation_bps as u128) / 10_000u128;
-        let treasury = u64::try_from(treasury_u128)
-            .expect("treasury split must fit in u64 because initial_supply is u64");
+    ///
+    /// Treasury share is `floor(initial_supply * treasury_allocation_bps / 10_000)`
+    /// in atomic units; creator receives the remainder. Both halves are
+    /// `u128` to match `initial_supply`. The intermediate multiply is
+    /// performed in `u256` semantics via two `u128` operands; with
+    /// `treasury_allocation_bps <= 10_000` (enforced by `validate`), the
+    /// product fits in `u128` for any `initial_supply <= u128::MAX / 10_000`
+    /// — which is well past every realistic token economy, but checked
+    /// defensively below.
+    pub fn split_initial_supply(&self) -> (u128, u128) {
+        let bps = self.treasury_allocation_bps as u128;
+        // `initial_supply * bps` could overflow only if
+        // `initial_supply > u128::MAX / bps`. With bps <= 10_000 (enforced
+        // upstream), the threshold is u128::MAX / 10_000 ≈ 3.4e34 — an
+        // economically unreachable supply. Use checked math anyway so a
+        // bogus payload that bypasses `validate` can't panic here.
+        let treasury = self
+            .initial_supply
+            .checked_mul(bps)
+            .map(|p| p / 10_000u128)
+            .unwrap_or(0);
         let creator = self.initial_supply.saturating_sub(treasury);
         (creator, treasury)
     }

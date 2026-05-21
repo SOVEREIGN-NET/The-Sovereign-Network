@@ -1674,9 +1674,11 @@ pub enum TokenAction {
         /// Token symbol (e.g., "MTK")
         #[arg(short, long)]
         symbol: String,
-        /// Initial supply
+        /// Initial supply in atomic units (whole_tokens * 10^decimals).
+        /// u128 to support 18-decimal supplies past the u64 ceiling
+        /// (e.g. 100B @ 18 dec = 10^29 atoms).
         #[arg(long)]
-        supply: u64,
+        supply: u128,
         /// Treasury recipient DID or key (receives canonical 20% allocation)
         #[arg(long)]
         treasury_recipient: String,

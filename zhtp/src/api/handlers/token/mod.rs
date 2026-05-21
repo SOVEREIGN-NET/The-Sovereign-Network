@@ -231,17 +231,21 @@ impl TokenHandler {
 
         info!("Token creation submitted: {} ({})", name, symbol);
 
+        // u128 amount fields are serialised as decimal strings — serde_json
+        // cannot represent u128 numerically (max safe is i64), and the
+        // earlier u128/JSON panics fixed elsewhere in the codebase set the
+        // precedent.
         create_json_response(json!({
             "success": true,
             "token_id": hex::encode(token_id),
             "name": name,
             "symbol": symbol,
-            "initial_supply": initial_supply,
+            "initial_supply": initial_supply.to_string(),
             "decimals": decimals,
             "treasury_allocation_bps": treasury_allocation_bps,
             "treasury_recipient": treasury_recipient_hex,
-            "creator_allocation": creator_allocation,
-            "treasury_allocation": treasury_allocation,
+            "creator_allocation": creator_allocation.to_string(),
+            "treasury_allocation": treasury_allocation.to_string(),
             "tx_status": "submitted_to_mempool"
         }))
     }

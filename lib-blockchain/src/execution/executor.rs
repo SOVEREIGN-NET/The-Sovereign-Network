@@ -3179,8 +3179,8 @@ impl BlockExecutor {
                 } else {
                     payload.decimals
                 };
-                token.max_supply = payload.initial_supply as u128;
-                token.mint(&creator, creator_allocation as u128).map_err(|e| {
+                token.max_supply = payload.initial_supply;
+                token.mint(&creator, creator_allocation).map_err(|e| {
                     TxApplyError::Internal(format!("TokenCreation mint failed: {e}"))
                 })?;
                 let treasury_pk = lib_crypto::PublicKey {
@@ -3188,7 +3188,7 @@ impl BlockExecutor {
                     kyber_pk: [0u8; 1568],
                     key_id: payload.treasury_recipient,
                 };
-                token.mint(&treasury_pk, treasury_allocation as u128).map_err(|e| {
+                token.mint(&treasury_pk, treasury_allocation).map_err(|e| {
                     TxApplyError::Internal(format!("TokenCreation treasury mint failed: {e}"))
                 })?;
 
@@ -4232,7 +4232,7 @@ mod tests {
     fn create_token_creation_tx_with_fee(
         name: &str,
         symbol: &str,
-        initial_supply: u64,
+        initial_supply: u128,
         treasury_recipient: [u8; 32],
         fee: u64,
     ) -> Transaction {
@@ -4261,7 +4261,7 @@ mod tests {
     fn create_token_creation_tx(
         name: &str,
         symbol: &str,
-        initial_supply: u64,
+        initial_supply: u128,
         treasury_recipient: [u8; 32],
     ) -> Transaction {
         create_token_creation_tx_with_fee(

@@ -681,16 +681,16 @@ impl Blockchain {
                     } else {
                         payload.decimals
                     };
-                    token.max_supply = payload.initial_supply as u128;
+                    token.max_supply = payload.initial_supply;
                     token
-                        .mint(&creator, creator_allocation as u128)
+                        .mint(&creator, creator_allocation)
                         .map_err(|e| anyhow::anyhow!("TokenCreation mint failed: {}", e))?;
                     let treasury_pk = lib_crypto::types::keys::PublicKey {
                         dilithium_pk: [0u8; 2592],
                         kyber_pk: [0u8; 1568],
                         key_id: payload.treasury_recipient,
                     };
-                    token.mint(&treasury_pk, treasury_allocation as u128).map_err(|e| {
+                    token.mint(&treasury_pk, treasury_allocation).map_err(|e| {
                         anyhow::anyhow!("TokenCreation treasury mint failed: {}", e)
                     })?;
 

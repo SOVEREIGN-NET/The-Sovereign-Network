@@ -268,7 +268,7 @@ async fn handle_create<O: Output>(
     output: &O,
     name: &str,
     symbol: &str,
-    supply: u64,
+    supply: u128,
     treasury_recipient: &str,
 ) -> CliResult<()> {
     output.info(&format!("Creating token: {} ({})", name, symbol))?;
