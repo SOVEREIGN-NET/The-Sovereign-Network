@@ -257,6 +257,21 @@ impl Blockchain {
                             {
                                 updated_identity_data.controlled_nodes =
                                     existing_identity.controlled_nodes.clone();
+
+                                // Merge device_node_ids — union semantics, no
+                                // duplicates. A device-binding update appends
+                                // new QUIC key_ids to the list; we never
+                                // remove existing ones here. Devices are
+                                // permanent until an explicit revocation tx
+                                // (out of scope for this fix).
+                                let mut merged: Vec<[u8; 32]> =
+                                    existing_identity.device_node_ids.clone();
+                                for incoming in &updated_identity_data.device_node_ids {
+                                    if !merged.iter().any(|d| d == incoming) {
+                                        merged.push(*incoming);
+                                    }
+                                }
+                                updated_identity_data.device_node_ids = merged;
                             }
 
                             if let Some(existing_identity) =
@@ -530,6 +545,7 @@ impl Blockchain {
             controlled_nodes: Vec::new(),
             owned_wallets: vec![wallet_id.to_string()],
             kyber_public_key: Vec::new(),
+                    device_node_ids: Vec::new(),
         };
 
         let registration_tx = Transaction::new_identity_registration(

@@ -84,6 +84,7 @@ impl Blockchain {
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
                     kyber_public_key: Vec::new(),
+                    device_node_ids: Vec::new(),
         };
 
         let registration_tx = Transaction::new_identity_registration(
@@ -170,6 +171,7 @@ impl Blockchain {
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
                     kyber_public_key: Vec::new(),
+                    device_node_ids: Vec::new(),
         };
 
         let update_tx = Transaction::new_identity_update(

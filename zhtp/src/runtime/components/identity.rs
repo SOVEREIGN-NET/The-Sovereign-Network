@@ -632,6 +632,7 @@ async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
             controlled_nodes: vec![],
             owned_wallets: vec![],
             kyber_public_key: vec![],
+                    device_node_ids: vec![],
         };
 
         // Register on blockchain
@@ -1276,6 +1277,7 @@ mod tests {
                 controlled_nodes: vec![],
                 owned_wallets: vec![],
                 kyber_public_key: vec![],
+                    device_node_ids: vec![],
             },
         );
 
@@ -1334,6 +1336,7 @@ mod tests {
                 controlled_nodes: vec![],
                 owned_wallets: vec![],
                 kyber_public_key: vec![],
+                    device_node_ids: vec![],
             },
         );
 
