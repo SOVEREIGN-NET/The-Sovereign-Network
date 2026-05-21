@@ -759,6 +759,30 @@ impl OpaqueHandlers {
 
         info!("OPAQUE login: '{}' from {}", pending.username, client_ip);
 
+        // Bind this device's QUIC key_id to the canonical chain DID.
+        //
+        // Mobiles generate an ephemeral QUIC keypair per session that does
+        // NOT match the chain-registered identity's keys. Without an
+        // explicit binding, msg/receive cannot map the polling device's
+        // incoming key_id back to the user's canonical DID, so messages
+        // addressed to the canonical DID never reach the polling device.
+        //
+        // OPAQUE login proves possession of the password — sufficient
+        // authority to attach this connection's QUIC key under the canonical
+        // DID. Recorded per-server, in-memory only; cleared on restart and
+        // re-established on the next login. No chain transaction or schema
+        // change is required.
+        if let Some(req_id) = request.requester.as_ref() {
+            self.session_manager
+                .bind_device_to_canonical_did(req_id.0, did.clone())
+                .await;
+            tracing::debug!(
+                "OPAQUE device-bind: key_id {} → {}",
+                hex::encode(&req_id.0[..8]),
+                &did[..20.min(did.len())]
+            );
+        }
+
         json_ok(&LoginFinishResponse {
             status: "ok",
             session_token,
