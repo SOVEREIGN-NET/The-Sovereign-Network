@@ -2833,19 +2833,40 @@ impl BlockchainHandler {
             .map_err(|e| anyhow::anyhow!("Failed to get blockchain: {}", e))?;
         let blockchain = blockchain_arc.read().await;
 
-        if start as usize >= blockchain.query_block_count() {
+        // Use chain height for bounds, not `query_block_count` — the latter
+        // returns only the in-memory hot window (`self.blocks.len()`, capped
+        // around `block_window_size()` ≈ 128 by default). Past the hot
+        // window's lower edge, cold blocks live in the durable store and
+        // must be fetched via `get_block(h)` which has the sled fallback.
+        //
+        // Pre-fix: a chain past ~128 blocks rejected EVERY observer_sync
+        // range request below the hot window with 404 "Start block X beyond
+        // chain height Y" (where Y was reported as the actual height but
+        // the gate was checking against the window size). Gateways could
+        // never catch up because nearly every range they needed was cold.
+        let chain_height = blockchain.query_height();
+        if start > chain_height {
             return Ok(Err(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
                 format!(
                     "Start block {} beyond chain height {}",
-                    start, blockchain.query_height()
+                    start, chain_height
                 ),
             )));
         }
 
-        let actual_end = std::cmp::min(end as usize, blockchain.query_block_count() - 1);
-        let blocks = blockchain.query_block_range(start, actual_end as u64);
-        Ok(Ok((actual_end as u64, blocks)))
+        let actual_end = std::cmp::min(end, chain_height);
+        // Per-height fetch through `get_block`, which serves hot blocks from
+        // the window and cold blocks from the store. Missing blocks (e.g.,
+        // pruned gaps) silently skip — the response stays well-formed and
+        // any gap surfaces on the receiver's `previous_hash` check.
+        let mut blocks = Vec::with_capacity((actual_end - start + 1) as usize);
+        for h in start..=actual_end {
+            if let Some(b) = blockchain.get_block(h) {
+                blocks.push(b);
+            }
+        }
+        Ok(Ok((actual_end, blocks)))
     }
 
     /// Get block range for incremental sync (e.g., /blocks/10/20 returns blocks 10-20)
