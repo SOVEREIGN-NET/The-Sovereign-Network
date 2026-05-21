@@ -297,20 +297,20 @@ impl OracleHandler {
         // Use block timestamp for epoch derivation (Oracle Spec v1 §4.1)
         // Wall clock MUST NOT be used to determine epoch_id.
         let block_timestamp = bc.last_committed_timestamp();
-        let current_epoch = bc.oracle_state.epoch_id(block_timestamp);
+        let current_epoch = bc.oracle_state().epoch_id(block_timestamp);
 
         match pair {
             OraclePair::SovUsd => {
                 let latest = bc
-                    .oracle_state
+                    .oracle_state()
                     .latest_finalized_price_at_or_before(current_epoch);
                 match latest {
                     Some(finalized) => {
                         let epochs_since = current_epoch.saturating_sub(finalized.epoch_id);
-                        let max_staleness = bc.oracle_state.config.max_price_staleness_epochs;
+                        let max_staleness = bc.oracle_state().config.max_price_staleness_epochs;
                         let is_fresh = epochs_since <= max_staleness;
                         let current_block = bc.get_height();
-                        let pricing_mode = bc.onramp_state.oracle_mode(current_block);
+                        let pricing_mode = bc.onramp_state().oracle_mode(current_block);
                         let pricing_mode_str = match pricing_mode {
                             lib_blockchain::onramp::OraclePricingMode::LiveDerived => "Mode B (Live Derived)",
                             lib_blockchain::onramp::OraclePricingMode::GenesisReference => "Mode A (Genesis Reference)",
@@ -357,7 +357,7 @@ impl OracleHandler {
                 let cbe_symbol = lib_blockchain::contracts::tokens::CBE_SYMBOL;
                 // Prefer bonding curve token (has live price); fall back to regular token contract.
                 let bonding_token = bc
-                    .bonding_curve_registry
+                    .bonding_curve_registry()
                     .get_all()
                     .into_iter()
                     .find(|t| t.symbol == cbe_symbol);
@@ -494,16 +494,16 @@ impl OracleHandler {
         };
         let bc = bc_arc.read().await;
         let block_timestamp = bc.last_committed_timestamp();
-        let current_epoch = bc.oracle_state.epoch_id(block_timestamp);
+        let current_epoch = bc.oracle_state().epoch_id(block_timestamp);
 
         match pair {
             OraclePair::SovUsd => {
-                let epoch_duration = bc.oracle_state.config.epoch_duration_secs.max(1);
+                let epoch_duration = bc.oracle_state().config.epoch_duration_secs.max(1);
                 let epochs_span = period_secs.saturating_add(epoch_duration - 1) / epoch_duration;
                 let start_epoch = current_epoch.saturating_sub(epochs_span);
 
                 let latest = match bc
-                    .oracle_state
+                    .oracle_state()
                     .latest_finalized_price_at_or_before(current_epoch)
                 {
                     Some(p) => p,
@@ -515,7 +515,7 @@ impl OracleHandler {
                     }
                 };
                 let reference = match bc
-                    .oracle_state
+                    .oracle_state()
                     .latest_finalized_price_at_or_before(start_epoch)
                 {
                     Some(p) => p,
@@ -523,7 +523,7 @@ impl OracleHandler {
                 };
 
                 let mut prices: Vec<f64> = bc
-                    .oracle_state
+                    .oracle_state()
                     .all_finalized_prices()
                     .iter()
                     .filter(|(epoch, _)| **epoch >= start_epoch && **epoch <= current_epoch)
@@ -586,7 +586,7 @@ impl OracleHandler {
             OraclePair::CbeUsd => {
                 let cbe_symbol = lib_blockchain::contracts::tokens::CBE_SYMBOL;
                 let bonding_token = bc
-                    .bonding_curve_registry
+                    .bonding_curve_registry()
                     .get_all()
                     .into_iter()
                     .find(|t| t.symbol == cbe_symbol);
@@ -688,30 +688,30 @@ impl OracleHandler {
         // Use block timestamp for epoch derivation (Oracle Spec v1 §4.1)
         // Wall clock MUST NOT be used to determine epoch_id.
         let block_timestamp = bc.last_committed_timestamp();
-        let current_epoch = bc.oracle_state.epoch_id(block_timestamp);
-        let committee = bc.oracle_state.committee.members();
-        let finalized_count = bc.oracle_state.finalized_prices_len();
-        let threshold = bc.oracle_state.committee.threshold();
+        let current_epoch = bc.oracle_state().epoch_id(block_timestamp);
+        let committee = bc.oracle_state().committee.members();
+        let finalized_count = bc.oracle_state().finalized_prices_len();
+        let threshold = bc.oracle_state().committee.threshold();
 
         let current_block = bc.get_height();
-        let pricing_mode = bc.onramp_state.oracle_mode(current_block);
+        let pricing_mode = bc.onramp_state().oracle_mode(current_block);
         let pricing_mode_str = match pricing_mode {
             lib_blockchain::onramp::OraclePricingMode::LiveDerived => "Mode B (Live Derived)",
             lib_blockchain::onramp::OraclePricingMode::GenesisReference => {
                 "Mode A (Genesis Reference)"
             }
         };
-        let cbe_usd_vwap = bc.onramp_state.cbe_usd_vwap(current_block);
+        let cbe_usd_vwap = bc.onramp_state().cbe_usd_vwap(current_block);
         // Count trades in the VWAP window for status reporting.
         let window_start = current_block.saturating_sub(lib_blockchain::onramp::VWAP_WINDOW_BLOCKS);
         let onramp_window_trade_count = bc
-            .onramp_state
+            .onramp_state()
             .trades
             .iter()
             .filter(|t| t.block_height >= window_start)
             .count();
         let onramp_window_usdc_volume: u128 = bc
-            .onramp_state
+            .onramp_state()
             .trades
             .iter()
             .filter(|t| t.block_height >= window_start)
@@ -719,12 +719,12 @@ impl OracleHandler {
             .sum();
 
         let latest_price = bc
-            .oracle_state
+            .oracle_state()
             .latest_finalized_price_at_or_before(current_epoch)
             .map(|p| {
                 let price_usd = p.sov_usd_price as f64 / ORACLE_PRICE_SCALE as f64;
                 let epochs_since = current_epoch.saturating_sub(p.epoch_id);
-                let max_staleness = bc.oracle_state.config.max_price_staleness_epochs;
+                let max_staleness = bc.oracle_state().config.max_price_staleness_epochs;
                 json!({
                     "epoch_id": p.epoch_id,
                     "sov_usd_price_atomic": p.sov_usd_price.to_string(),
@@ -738,14 +738,14 @@ impl OracleHandler {
 
         let body = json!({
             "current_epoch": current_epoch,
-            "epoch_duration_secs": bc.oracle_state.config.epoch_duration_secs,
+            "epoch_duration_secs": bc.oracle_state().config.epoch_duration_secs,
             "committee_size": committee.len(),
             "committee_threshold": threshold,
             "committee_members": committee.iter().map(hex::encode).collect::<Vec<_>>(),
             "finalized_prices_count": finalized_count,
             "latest_finalized_price": latest_price,
             "oracle_price_scale": ORACLE_PRICE_SCALE.to_string(),
-            "max_price_staleness_epochs": bc.oracle_state.config.max_price_staleness_epochs,
+            "max_price_staleness_epochs": bc.oracle_state().config.max_price_staleness_epochs,
             "pricing_mode": pricing_mode_str,
             "onramp_vwap_cbe_usd_atomic": cbe_usd_vwap.map(|v| v.to_string()),
             "onramp_vwap_cbe_usd": cbe_usd_vwap.map(Self::price_f64_from_atomic),
@@ -790,11 +790,11 @@ impl OracleHandler {
         };
 
         let bc = bc_arc.read().await;
-        let cfg = &bc.oracle_state.config;
-        let committee = bc.oracle_state.committee.members();
-        let threshold = bc.oracle_state.committee.threshold();
+        let cfg = &bc.oracle_state().config;
+        let committee = bc.oracle_state().committee.members();
+        let threshold = bc.oracle_state().committee.threshold();
 
-        let pending_committee = bc.oracle_state.committee.pending_update().map(|u| {
+        let pending_committee = bc.oracle_state().committee.pending_update().map(|u| {
             let n = u.members.len() as u64;
             let new_threshold = (2 * n) / 3 + 1;
             json!({
@@ -805,7 +805,7 @@ impl OracleHandler {
             })
         });
 
-        let pending_config = bc.oracle_state.pending_config_update.as_ref().map(|u| {
+        let pending_config = bc.oracle_state().pending_config_update.as_ref().map(|u| {
             json!({
                 "activate_at_epoch": u.activate_at_epoch,
                 "epoch_duration_secs": u.config.epoch_duration_secs,
@@ -863,10 +863,10 @@ impl OracleHandler {
         };
 
         let bc = bc_arc.read().await;
-        let protocol_config = &bc.oracle_state.protocol_config;
+        let protocol_config = &bc.oracle_state().protocol_config;
 
         let current_version = protocol_config.current_version();
-        let feature_flags = bc.oracle_state.feature_flags();
+        let feature_flags = bc.oracle_state().feature_flags();
 
         let pending_upgrade = protocol_config.pending_activation().map(|p| {
             json!({
@@ -929,11 +929,11 @@ impl OracleHandler {
 
         let bc = bc_arc.read().await;
         let block_timestamp = bc.last_committed_timestamp();
-        let current_epoch = bc.oracle_state.epoch_id(block_timestamp);
-        let _config = &bc.oracle_state.config;
+        let current_epoch = bc.oracle_state().epoch_id(block_timestamp);
+        let _config = &bc.oracle_state().config;
 
         // Return only fields that are actually tracked in oracle state
-        let pending_committee = bc.oracle_state.committee.pending_update().map(|u| {
+        let pending_committee = bc.oracle_state().committee.pending_update().map(|u| {
             let n = u.members.len() as u64;
             let new_threshold = (2 * n) / 3 + 1;
             json!({
@@ -944,7 +944,7 @@ impl OracleHandler {
             })
         });
 
-        let pending_config = bc.oracle_state.pending_config_update.as_ref().map(|u| {
+        let pending_config = bc.oracle_state().pending_config_update.as_ref().map(|u| {
             json!({
                 "activate_at_epoch": u.activate_at_epoch,
                 "epoch_duration_secs": u.config.epoch_duration_secs,
@@ -1037,7 +1037,7 @@ impl OracleHandler {
         let body = json!({
             "events": events,
             "total_events": total_events,
-            "banned_validator_count": bc.oracle_banned_validators.len(),
+            "banned_validator_count": bc.oracle_banned_validators().len(),
         });
 
         let bytes = match serde_json::to_vec(&body) {
@@ -1078,7 +1078,7 @@ impl OracleHandler {
         let bc = bc_arc.read().await;
 
         let banned: Vec<_> = bc
-            .oracle_banned_validators
+            .oracle_banned_validators()
             .iter()
             .map(hex::encode)
             .collect();
@@ -1134,15 +1134,15 @@ impl OracleHandler {
         };
 
         let bc = bc_arc.read().await;
-        let committee_size = bc.oracle_state.committee.members().len();
-        let threshold = bc.oracle_state.committee.threshold();
+        let committee_size = bc.oracle_state().committee.members().len();
+        let threshold = bc.oracle_state().committee.threshold();
 
         // Check if epoch is finalized
-        let finalized = bc.oracle_state.finalized_price(epoch_id);
+        let finalized = bc.oracle_state().finalized_price(epoch_id);
 
         // Get current epoch to calculate attestations needed
         let block_timestamp = bc.last_committed_timestamp();
-        let current_epoch = bc.oracle_state.epoch_id(block_timestamp);
+        let current_epoch = bc.oracle_state().epoch_id(block_timestamp);
 
         // Per-epoch attestation tracking is not yet implemented.
         // We can only report whether the epoch is finalized or not.
@@ -1259,9 +1259,9 @@ impl OracleHandler {
                         e
                     );
                 }
-                let threshold = bc.oracle_state.committee.threshold();
+                let threshold = bc.oracle_state().committee.threshold();
                 let members_hex: Vec<String> = bc
-                    .oracle_state
+                    .oracle_state()
                     .committee
                     .members()
                     .iter()
@@ -1315,7 +1315,7 @@ impl OracleHandler {
         };
 
         let bc = bc_arc.read().await;
-        let current_config = &bc.oracle_state.config;
+        let current_config = &bc.oracle_state().config;
 
         // Build proposed config by modifying current config fields
         let mut proposed_config = current_config.clone();
@@ -1413,7 +1413,7 @@ impl OracleHandler {
         // ORACLE-R9: Strict spec mode disables direct attestation API
         {
             let bc = bc_arc.read().await;
-            if bc.oracle_state.is_strict_spec_active() {
+            if bc.oracle_state().is_strict_spec_active() {
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::Forbidden,
                     "Direct attestation API is disabled in strict spec mode. \

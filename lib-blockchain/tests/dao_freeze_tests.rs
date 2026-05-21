@@ -31,10 +31,10 @@ fn add_validator(bc: &mut Blockchain, did: &str) {
 #[test]
 fn test_freeze_defaults() {
     let bc = Blockchain::new().expect("genesis");
-    assert!(!bc.treasury_frozen);
-    assert!(bc.treasury_frozen_at.is_none());
-    assert!(bc.treasury_freeze_expiry.is_none());
-    assert!(bc.treasury_freeze_signatures.is_empty());
+    assert!(!bc.treasury_frozen());
+    assert!(bc.treasury_frozen_at().is_none());
+    assert!(bc.treasury_freeze_expiry().is_none());
+    assert!(bc.treasury_freeze_signatures().is_empty());
 }
 
 // ── activate_treasury_freeze ──────────────────────────────────────────────────
@@ -78,8 +78,8 @@ fn test_freeze_succeeds_with_80pct_validators() {
         "suspicious activity".to_string(),
     );
     assert!(result.is_ok(), "{:?}", result);
-    assert!(bc.treasury_frozen);
-    assert!(bc.treasury_freeze_expiry.is_some());
+    assert!(bc.treasury_frozen());
+    assert!(bc.treasury_freeze_expiry().is_some());
 }
 
 #[test]
@@ -132,7 +132,7 @@ fn test_freeze_blocks_treasury_spending() {
         "block all spending".to_string(),
     )
     .expect("single validator should suffice for 100% >= 80%");
-    assert!(bc.treasury_frozen);
+    assert!(bc.treasury_frozen());
 
     let fake_id = Hash::new([1u8; 32]);
     let result = bc.execute_dao_proposal(
@@ -159,14 +159,14 @@ fn test_freeze_auto_expires_at_height() -> Result<()> {
     let mut bc = Blockchain::new()?;
     add_validator(&mut bc, "did:zhtp:val1");
     bc.activate_treasury_freeze(vec!["did:zhtp:val1".to_string()], "test expire".to_string())?;
-    assert!(bc.treasury_frozen);
+    assert!(bc.treasury_frozen());
 
-    let expiry = bc.treasury_freeze_expiry.unwrap();
+    let expiry = bc.treasury_freeze_expiry().unwrap();
     bc.height = expiry;
     bc.process_approved_governance_proposals()?;
-    assert!(!bc.treasury_frozen, "freeze should have auto-expired");
+    assert!(!bc.treasury_frozen(), "freeze should have auto-expired");
     assert!(
-        bc.treasury_freeze_signatures.is_empty(),
+        bc.treasury_freeze_signatures().is_empty(),
         "signatures should be cleared"
     );
 
@@ -190,11 +190,11 @@ fn test_freeze_fields_survive_dat_round_trip() -> Result<()> {
     bc.save_to_file(tmp.path())?;
     let loaded = Blockchain::load_from_file(tmp.path())?;
 
-    assert!(loaded.treasury_frozen);
-    assert!(loaded.treasury_frozen_at.is_some());
-    assert!(loaded.treasury_freeze_expiry.is_some());
+    assert!(loaded.treasury_frozen());
+    assert!(loaded.treasury_frozen_at().is_some());
+    assert!(loaded.treasury_freeze_expiry().is_some());
     assert_eq!(
-        loaded.treasury_freeze_signatures,
+        loaded.treasury_freeze_signatures(),
         vec![("did:zhtp:val1".to_string(), vec![0u8; 0])]
     );
 

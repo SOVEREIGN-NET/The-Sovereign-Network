@@ -64,7 +64,7 @@ fn slashing_reduces_stake_by_one_percent() {
         .insert_validator_unchecked(hex::encode(key_id), validator);
 
     // Default config is 1%
-    assert_eq!(blockchain.oracle_slashing_config.slash_fraction_bps, 100);
+    assert_eq!(blockchain.oracle_slashing_config().slash_fraction_bps, 100);
 
     // Slash the validator
     let slashed =
@@ -93,7 +93,7 @@ fn custom_slash_fraction() {
         .insert_validator_unchecked(hex::encode(key_id), validator);
 
     // Use 5% slash fraction
-    blockchain.oracle_slashing_config = OracleSlashingConfig::with_slash_fraction(500);
+    blockchain.set_oracle_slashing_config_unchecked(OracleSlashingConfig::with_slash_fraction(500));
 
     let slashed = blockchain.slash_oracle_validator(key_id, OracleSlashReason::WrongEpoch, 50);
 
@@ -144,12 +144,12 @@ fn slashing_bans_validator() {
         .insert_validator_unchecked(hex::encode(key_id), validator);
 
     // Initially not banned
-    assert!(!blockchain.oracle_banned_validators.contains(&key_id));
+    assert!(!blockchain.oracle_banned_validators().contains(&key_id));
 
     blockchain.slash_oracle_validator(key_id, OracleSlashReason::WrongEpoch, 100);
 
     // Now banned
-    assert!(blockchain.oracle_banned_validators.contains(&key_id));
+    assert!(blockchain.oracle_banned_validators().contains(&key_id));
 }
 
 /// Test that slashing removes validator from committee.
@@ -164,11 +164,11 @@ fn slashing_removes_from_committee() {
         .insert_validator_unchecked(hex::encode(key_id), validator);
 
     // Setup committee with validator
-    blockchain.oracle_state = OracleState::default();
-    blockchain.oracle_state.committee = OracleCommitteeState::new(vec![key_id], None);
+    blockchain.replace_oracle_state_unchecked(OracleState::default());
+    blockchain.oracle_state_mut().committee = OracleCommitteeState::new(vec![key_id], None);
 
     assert!(blockchain
-        .oracle_state
+        .oracle_state()
         .committee
         .members()
         .contains(&key_id));
@@ -178,11 +178,11 @@ fn slashing_removes_from_committee() {
 
     // No longer in committee
     assert!(!blockchain
-        .oracle_state
+        .oracle_state()
         .committee
         .members()
         .contains(&key_id));
-    assert!(blockchain.oracle_state.committee.members().is_empty());
+    assert!(blockchain.oracle_state().committee.members().is_empty());
 }
 
 /// Test that slashing events survive a store handle restart.
@@ -213,8 +213,8 @@ fn slashing_events_survive_restart() {
     // Banned-validator state is still in-struct → survives a bincode round-trip.
     let serialized = bincode::serialize(&blockchain).unwrap();
     let restored: Blockchain = bincode::deserialize(&serialized).unwrap();
-    assert_eq!(restored.oracle_banned_validators.len(), 1);
-    assert!(restored.oracle_banned_validators.contains(&key_id));
+    assert_eq!(restored.oracle_banned_validators().len(), 1);
+    assert!(restored.oracle_banned_validators().contains(&key_id));
 
     // Slash events: read directly from the shared store handle (the "restart"
     // analogue — a new Blockchain over the same store can see the events).
@@ -264,7 +264,7 @@ fn slashing_zero_stake() {
     assert_eq!(slashed, 0);
 
     // But still banned and recorded (event via store — BST-203)
-    assert!(blockchain.oracle_banned_validators.contains(&key_id));
+    assert!(blockchain.oracle_banned_validators().contains(&key_id));
     let events = store_slash_events(&blockchain);
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].slash_amount, 0);
@@ -307,6 +307,6 @@ fn multiple_slashes_recorded() {
     assert_eq!(event2.reason, OracleSlashReason::WrongEpoch);
 
     // Both banned
-    assert!(blockchain.oracle_banned_validators.contains(&key_id1));
-    assert!(blockchain.oracle_banned_validators.contains(&key_id2));
+    assert!(blockchain.oracle_banned_validators().contains(&key_id1));
+    assert!(blockchain.oracle_banned_validators().contains(&key_id2));
 }

@@ -84,9 +84,9 @@ fn test_slashing_preserved_across_restart() {
     let reloaded = lib_blockchain::Blockchain::load_from_file(&path).unwrap();
 
     // Verify slashing preserved
-    assert!(reloaded.oracle_banned_validators.contains(&validator_key));
+    assert!(reloaded.oracle_banned_validators().contains(&validator_key));
     assert!(!reloaded
-        .oracle_state
+        .oracle_state()
         .committee
         .members()
         .contains(&validator_key));
@@ -97,7 +97,7 @@ fn test_committee_threshold_adjusts_after_slashing() {
     let mut harness = OracleTestHarness::new(4);
 
     // Initial threshold with 4 members: floor(2*4/3)+1 = 3
-    let initial_threshold = harness.blockchain.oracle_state.committee.threshold();
+    let initial_threshold = harness.blockchain.oracle_state().committee.threshold();
     assert_eq!(initial_threshold, 3);
 
     // Slash one validator
@@ -109,7 +109,7 @@ fn test_committee_threshold_adjusts_after_slashing() {
     );
 
     // New threshold with 3 members: floor(2*3/3)+1 = 3
-    let new_threshold = harness.blockchain.oracle_state.committee.threshold();
+    let new_threshold = harness.blockchain.oracle_state().committee.threshold();
     assert_eq!(new_threshold, 3);
 }
 
@@ -119,7 +119,7 @@ fn test_multiple_validators_can_finalize_after_slashing() {
     let epoch = harness.current_epoch();
 
     // Initial threshold with 5 members: floor(2*5/3)+1 = 4
-    assert_eq!(harness.blockchain.oracle_state.committee.threshold(), 4);
+    assert_eq!(harness.blockchain.oracle_state().committee.threshold(), 4);
 
     // Slash validator 0
     harness.blockchain.slash_oracle_validator(

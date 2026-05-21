@@ -27,11 +27,11 @@ fn council_config() -> CouncilBootstrapConfig {
 #[test]
 fn test_hybrid_fields_default() {
     let bc = Blockchain::new().expect("genesis");
-    assert!(bc.pending_cosigns.is_empty());
-    assert!(bc.pending_vetoes.is_empty());
-    assert_eq!(bc.veto_window_blocks, 8_640);
-    assert!(bc.treasury_epoch_execution_count.is_empty());
-    assert_eq!(bc.max_executions_per_epoch, 10);
+    assert!(bc.pending_cosigns().is_empty());
+    assert!(bc.pending_vetoes().is_empty());
+    assert_eq!(bc.veto_window_blocks(), 8_640);
+    assert!(bc.treasury_epoch_execution_count().is_empty());
+    assert_eq!(bc.max_executions_per_epoch(), 10);
 }
 
 // ── council_cosign_proposal ───────────────────────────────────────────────────
@@ -58,7 +58,7 @@ fn test_cosign_accepted_for_council_member() {
         .expect("alice is a council member");
 
     let count = bc
-        .pending_cosigns
+        .pending_cosigns()
         .get(&proposal_id.as_array())
         .map(|v| v.len())
         .unwrap_or(0);
@@ -78,7 +78,7 @@ fn test_cosign_deduplicates_same_did() {
         .unwrap();
 
     let count = bc
-        .pending_cosigns
+        .pending_cosigns()
         .get(&proposal_id.as_array())
         .map(|v| v.len())
         .unwrap_or(0);
@@ -113,7 +113,7 @@ fn test_veto_accepted_for_council_member() {
     .expect("bob is a council member");
 
     let count = bc
-        .pending_vetoes
+        .pending_vetoes()
         .get(&proposal_id.as_array())
         .map(|v| v.len())
         .unwrap_or(0);
@@ -133,7 +133,7 @@ fn test_veto_deduplicates_same_did() {
         .unwrap();
 
     let count = bc
-        .pending_vetoes
+        .pending_vetoes()
         .get(&proposal_id.as_array())
         .map(|v| v.len())
         .unwrap_or(0);
@@ -160,27 +160,27 @@ fn test_hybrid_fields_survive_dat_round_trip() -> Result<()> {
         "security".to_string(),
     )
     .unwrap();
-    bc.treasury_epoch_execution_count.insert(1, 2);
-    bc.max_executions_per_epoch = 5;
-    bc.veto_window_blocks = 288;
+    bc.set_treasury_epoch_execution_count_unchecked(1, 2);
+    bc.set_max_executions_per_epoch_unchecked(5);
+    bc.set_veto_window_blocks_unchecked(288);
 
     let tmp = NamedTempFile::new()?;
     bc.save_to_file(tmp.path())?;
     let loaded = Blockchain::load_from_file(tmp.path())?;
 
-    assert_eq!(loaded.max_executions_per_epoch, 5);
-    assert_eq!(loaded.veto_window_blocks, 288);
-    assert_eq!(loaded.treasury_epoch_execution_count.get(&1), Some(&2));
+    assert_eq!(loaded.max_executions_per_epoch(), 5);
+    assert_eq!(loaded.veto_window_blocks(), 288);
+    assert_eq!(loaded.treasury_epoch_execution_count().get(&1), Some(&2));
 
     let cosigns = loaded
-        .pending_cosigns
+        .pending_cosigns()
         .get(&proposal_id.as_array())
         .map(|v| v.len())
         .unwrap_or(0);
     assert_eq!(cosigns, 1);
 
     let vetoes = loaded
-        .pending_vetoes
+        .pending_vetoes()
         .get(&proposal_id.as_array())
         .map(|v| v.len())
         .unwrap_or(0);
@@ -196,11 +196,11 @@ fn test_hybrid_phase_blocks_bootstrap_council_check() {
     let mut bc = Blockchain::new().expect("genesis");
     bc.ensure_council_bootstrap(&council_config());
     // Advance to Hybrid phase via time condition
-    bc.phase_transition_config.phase0_max_duration_blocks = Some(0);
+    bc.phase_transition_config_mut().phase0_max_duration_blocks = Some(0);
     bc.try_advance_governance_phase();
     assert_eq!(
-        bc.governance_phase,
-        GovernancePhase::Hybrid,
+        bc.governance_phase(),
+        &GovernancePhase::Hybrid,
         "should be in Hybrid phase now"
     );
 }

@@ -145,7 +145,7 @@ impl OracleComponent {
             // transactions only, not direct gossip processing
             {
                 let bc = blockchain.read().await;
-                if bc.oracle_state.is_strict_spec_active() {
+                if bc.oracle_state().is_strict_spec_active() {
                     // In strict spec mode, reject direct gossip attestations
                     // Validators must submit attestations via transactions
                     debug!(
@@ -161,7 +161,7 @@ impl OracleComponent {
             // Wall clock MUST NOT be used to determine epoch_id.
             let mut bc = blockchain.write().await;
             let block_timestamp = bc.last_committed_timestamp();
-            let current_epoch = bc.oracle_state.epoch_id(block_timestamp);
+            let current_epoch = bc.oracle_state().epoch_id(block_timestamp);
 
             // Guard: reject attestations from future epochs (more than 1 epoch ahead)
             if attestation.epoch_id > current_epoch + 1 {
@@ -174,7 +174,7 @@ impl OracleComponent {
 
             // Build key lookup: oracle_signing_pubkeys (from bootstrap) takes priority,
             // then validator_registry consensus keys as fallback.
-            let oracle_pubkeys = bc.oracle_state.oracle_signing_pubkeys.clone();
+            let oracle_pubkeys = bc.oracle_state().oracle_signing_pubkeys.clone();
             let key_map: Vec<([u8; 32], [u8; 2592])> = bc
                 .validator_registry()
                 .values()
@@ -185,7 +185,7 @@ impl OracleComponent {
                 })
                 .collect();
 
-            let result = bc.oracle_state.process_attestation(
+            let result = bc.oracle_state_mut().process_attestation(
                 &attestation,
                 current_epoch,
                 |key_id: [u8; 32]| {
@@ -351,12 +351,12 @@ impl OracleComponent {
                 is_strict_spec,
             ) = {
                 let bc = blockchain.read().await;
-                let config = bc.oracle_state.config.clone();
+                let config = bc.oracle_state().config.clone();
                 let epoch_duration = config.epoch_duration_secs.max(60);
-                let members = bc.oracle_state.committee.members().to_vec();
+                let members = bc.oracle_state().committee.members().to_vec();
                 let ts = bc.last_committed_timestamp();
-                let epoch = bc.oracle_state.epoch_id(ts);
-                let strict_spec = bc.oracle_state.is_strict_spec_active();
+                let epoch = bc.oracle_state().epoch_id(ts);
+                let strict_spec = bc.oracle_state().is_strict_spec_active();
                 (config, epoch_duration, members, epoch, strict_spec)
             };
             producer.update_config(&on_chain_config);
@@ -384,8 +384,8 @@ impl OracleComponent {
                 let bc = blockchain.read().await;
                 let current_block = bc.get_height();
                 let cbe_sov_curve = bc.get_cbe_curve_price_atomic();
-                let mode = bc.onramp_state.oracle_mode(current_block);
-                let cbe_usd_vwap = bc.onramp_state.cbe_usd_vwap(current_block);
+                let mode = bc.onramp_state().oracle_mode(current_block);
+                let cbe_usd_vwap = bc.onramp_state().cbe_usd_vwap(current_block);
 
                 match (mode, cbe_usd_vwap, cbe_sov_curve) {
                     (OraclePricingMode::LiveDerived, Some(cbe_usd), Some(cbe_sov))
@@ -474,7 +474,7 @@ impl OracleComponent {
             // Re-check epoch after price derivation.
             let epoch_after_fetch = {
                 let bc = blockchain.read().await;
-                bc.oracle_state.epoch_id(bc.last_committed_timestamp())
+                bc.oracle_state().epoch_id(bc.last_committed_timestamp())
             };
             if epoch_after_fetch != current_epoch {
                 warn!(
@@ -518,8 +518,8 @@ impl OracleComponent {
 
                         // Process locally (our own vote counts).
                         let mut bc = blockchain.write().await;
-                        let epoch2 = bc.oracle_state.epoch_id(bc.last_committed_timestamp());
-                        let oracle_pubkeys2 = bc.oracle_state.oracle_signing_pubkeys.clone();
+                        let epoch2 = bc.oracle_state().epoch_id(bc.last_committed_timestamp());
+                        let oracle_pubkeys2 = bc.oracle_state().oracle_signing_pubkeys.clone();
                         let key_map: Vec<([u8; 32], [u8; 2592])> = bc
                             .validator_registry()
                             .values()
@@ -530,7 +530,7 @@ impl OracleComponent {
                             })
                             .collect();
 
-                        match bc.oracle_state.process_attestation(
+                        match bc.oracle_state_mut().process_attestation(
                             &attestation,
                             epoch2,
                             |key_id: [u8; 32]| {
@@ -789,9 +789,9 @@ mod tests {
         let (blockchain, kp, validator_pubkey) = setup_blockchain_with_oracle_validator();
 
         // Use a timestamp in the middle of epoch 0 so epoch_id(timestamp) == 0
-        let epoch_duration = blockchain.oracle_state.config().epoch_duration_secs;
+        let epoch_duration = blockchain.oracle_state().config().epoch_duration_secs;
         let timestamp = epoch_duration / 2;
-        let epoch_id = blockchain.oracle_state.epoch_id(timestamp);
+        let epoch_id = blockchain.oracle_state().epoch_id(timestamp);
         assert_eq!(epoch_id, 0, "timestamp should fall in epoch 0");
 
         let attestation = build_signed_attestation(&kp, validator_pubkey, epoch_id, timestamp);
@@ -837,9 +837,9 @@ mod tests {
         std::env::remove_var("ZHTP_CHAIN_ID");
 
         let (blockchain, kp, validator_pubkey) = setup_blockchain_with_oracle_validator();
-        let epoch_duration = blockchain.oracle_state.config().epoch_duration_secs;
+        let epoch_duration = blockchain.oracle_state().config().epoch_duration_secs;
         let timestamp = epoch_duration / 2;
-        let epoch_id = blockchain.oracle_state.epoch_id(timestamp);
+        let epoch_id = blockchain.oracle_state().epoch_id(timestamp);
         let attestation = build_signed_attestation(&kp, validator_pubkey, epoch_id, timestamp);
 
         let blockchain_arc = Arc::new(RwLock::new(blockchain));

@@ -322,7 +322,7 @@ impl OpaqueHandlers {
         // worst case the finish step rejects with conflict).
         {
             let bc = self.blockchain.read().await;
-            if bc.credential_registry.contains_key(&username) {
+            if bc.credential_registry().contains_key(&username) {
                 return Ok(json_err(ZhtpStatus::Conflict, "Username already taken"));
             }
         }
@@ -494,7 +494,7 @@ impl OpaqueHandlers {
             // Cache-warmup so login_start sees the credential before the
             // block commits.
             let height = bc.height;
-            bc.credential_registry.insert(
+            bc.insert_credential_unchecked(
                 pending.username.clone(),
                 UserCredential {
                     username: pending.username.clone(),
@@ -507,8 +507,7 @@ impl OpaqueHandlers {
                     auth_method: AuthMethod::Opaque,
                 },
             );
-            bc.did_to_username
-                .insert(req.did.clone(), pending.username.clone());
+            bc.set_username_for_did_unchecked(req.did.clone(), pending.username.clone());
         }
 
         info!(
@@ -541,7 +540,7 @@ impl OpaqueHandlers {
 
         let credential = {
             let bc = self.blockchain.read().await;
-            bc.credential_registry.get(&username).cloned()
+            bc.credential_registry().get(&username).cloned()
         };
         let credential = match credential {
             Some(c) => c,
@@ -711,7 +710,7 @@ impl OpaqueHandlers {
         // Resolve DID for the username.
         let did = {
             let bc = self.blockchain.read().await;
-            bc.credential_registry
+            bc.credential_registry()
                 .get(&pending.username)
                 .map(|c| c.owner_did.clone())
                 .unwrap_or_default()

@@ -66,20 +66,18 @@ fn test_entity_registry_persists_after_save_load() -> Result<()> {
     use tempfile::NamedTempFile;
 
     let mut blockchain = Blockchain::new()?;
-    blockchain.entity_registry = Some(lib_blockchain::contracts::governance::EntityRegistry::new());
-    blockchain
-        .entity_registry
-        .as_mut()
-        .unwrap()
+    let mut registry = lib_blockchain::contracts::governance::EntityRegistry::new();
+    registry
         .init(test_public_key(6), test_public_key(7))
         .expect("entity registry init should succeed");
+    blockchain.set_entity_registry_unchecked(Some(registry));
 
     let tmp = NamedTempFile::new()?;
     blockchain.save_to_file(tmp.path())?;
 
     let loaded = Blockchain::load_from_file(tmp.path())?;
     let registry = loaded
-        .entity_registry
+        .entity_registry()
         .expect("entity registry should persist");
     assert!(registry.is_initialized());
     assert_eq!(

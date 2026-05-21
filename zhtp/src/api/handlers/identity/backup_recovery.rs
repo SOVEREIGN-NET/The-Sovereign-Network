@@ -438,7 +438,7 @@ pub async fn handle_recover_identity(
         if let Ok(blockchain_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
             let blockchain = blockchain_arc.read().await;
             let dn = blockchain.identity_registry().get(&did).map(|id| id.display_name.clone());
-            let un = blockchain.did_to_username.get(&did).cloned();
+            let un = blockchain.did_to_username().get(&did).cloned();
             (dn, un)
         } else {
             (None, None)

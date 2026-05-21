@@ -1195,7 +1195,7 @@ impl BlockchainHandler {
             .unwrap_or(0);
 
         let total_ubi_distributed: u128 = blockchain
-            .ubi_registry
+            .ubi_registry()
             .values()
             .map(|entry| entry.total_received)
             .sum();

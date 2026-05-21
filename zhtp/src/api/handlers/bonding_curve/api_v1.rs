@@ -413,8 +413,7 @@ impl BondingCurveApiHandler {
 
         let token_id = self.get_cbe_token_id(&blockchain).await?;
         let token = blockchain
-            .bonding_curve_registry
-            .get_mut(&token_id)
+            .bonding_curve_registry_mut().get_mut(&token_id)
             .ok_or_else(|| anyhow::anyhow!("CBE token not found"))?;
 
         // Verify token is in Curve phase
@@ -480,8 +479,7 @@ impl BondingCurveApiHandler {
 
         let token_id = self.get_cbe_token_id(&blockchain).await?;
         let token = blockchain
-            .bonding_curve_registry
-            .get_mut(&token_id)
+            .bonding_curve_registry_mut().get_mut(&token_id)
             .ok_or_else(|| anyhow::anyhow!("CBE token not found"))?;
 
         // Verify token is in Curve phase
@@ -559,7 +557,7 @@ impl BondingCurveApiHandler {
                 // Token has graduated to AMM
                 if let Some(pool_id) = cbe_token.amm_pool_id {
                     // Get pool from blockchain storage
-                    match blockchain.amm_pools.get(&pool_id) {
+                    match blockchain.amm_pools().get(&pool_id) {
                         Some(pool) => {
                             let state = pool.state();
                             let price = if state.token_reserve > 0 {
@@ -616,7 +614,7 @@ impl BondingCurveApiHandler {
         let cbe_symbol = lib_blockchain::contracts::tokens::CBE_SYMBOL;
 
         blockchain
-            .bonding_curve_registry
+            .bonding_curve_registry()
             .get_all()
             .into_iter()
             .find(|t| t.symbol == cbe_symbol)

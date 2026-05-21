@@ -91,7 +91,7 @@ impl OracleTestHarness {
             .expect("committee init should succeed");
 
         // Set initial timestamp to be in epoch 0
-        let epoch_duration = blockchain.oracle_state.config().epoch_duration_secs;
+        let epoch_duration = blockchain.oracle_state().config().epoch_duration_secs;
         let current_timestamp = epoch_duration / 2; // Middle of epoch 0
 
         Self {
@@ -106,18 +106,18 @@ impl OracleTestHarness {
     /// Get the current oracle epoch
     pub fn current_epoch(&self) -> u64 {
         self.blockchain
-            .oracle_state
+            .oracle_state()
             .epoch_id(self.current_timestamp)
     }
 
     /// Get the epoch duration from config
     pub fn epoch_duration(&self) -> u64 {
-        self.blockchain.oracle_state.config().epoch_duration_secs
+        self.blockchain.oracle_state().config().epoch_duration_secs
     }
 
     /// Get the committee threshold
     pub fn threshold(&self) -> usize {
-        self.blockchain.oracle_state.committee.threshold() as usize
+        self.blockchain.oracle_state().committee.threshold() as usize
     }
 
     /// Advance blockchain by N blocks with timestamp advancement
@@ -133,9 +133,9 @@ impl OracleTestHarness {
             // Apply pending updates at the new epoch
             let epoch = self
                 .blockchain
-                .oracle_state
+                .oracle_state()
                 .epoch_id(self.current_timestamp);
-            self.blockchain.oracle_state.apply_pending_updates(epoch);
+            self.blockchain.oracle_state_mut().apply_pending_updates(epoch);
 
             // Note: In a real test we'd create and process actual blocks
             // For harness purposes, we just advance timestamps and apply updates
@@ -231,7 +231,7 @@ impl OracleTestHarness {
 
         // Process the attestation
         self.blockchain
-            .oracle_state
+            .oracle_state_mut()
             .process_attestation(&attestation, current_epoch, resolver)
     }
 
@@ -290,7 +290,7 @@ impl OracleTestHarness {
     /// Get the finalized price for an epoch
     pub fn get_finalized_price(&self, epoch_id: u64) -> Option<u128> {
         self.blockchain
-            .oracle_state
+            .oracle_state()
             .finalized_price(epoch_id)
             .map(|p| p.sov_usd_price)
     }
@@ -298,7 +298,7 @@ impl OracleTestHarness {
     /// Check if a validator is in the current committee
     pub fn is_committee_member(&self, key_id: [u8; 32]) -> bool {
         self.blockchain
-            .oracle_state
+            .oracle_state()
             .committee
             .members()
             .contains(&key_id)
@@ -312,9 +312,9 @@ impl OracleTestHarness {
     ) -> Result<(), String> {
         let current_epoch = self
             .blockchain
-            .oracle_state
+            .oracle_state()
             .epoch_id(self.current_timestamp);
-        self.blockchain.oracle_state.schedule_committee_update(
+        self.blockchain.oracle_state_mut().schedule_committee_update(
             members,
             activate_at_epoch,
             current_epoch,
@@ -330,10 +330,10 @@ impl OracleTestHarness {
     ) -> Result<(), String> {
         let current_epoch = self
             .blockchain
-            .oracle_state
+            .oracle_state()
             .epoch_id(self.current_timestamp);
         self.blockchain
-            .oracle_state
+            .oracle_state_mut()
             .schedule_config_update(config, activate_at_epoch, current_epoch, None)
             .map_err(|e| e.to_string())
     }
@@ -346,7 +346,7 @@ mod tests {
     #[test]
     fn harness_creates_validators_in_committee() {
         let harness = OracleTestHarness::new(4);
-        assert_eq!(harness.blockchain.oracle_state.committee.members().len(), 4);
+        assert_eq!(harness.blockchain.oracle_state().committee.members().len(), 4);
         assert_eq!(harness.validators.len(), 4);
     }
 

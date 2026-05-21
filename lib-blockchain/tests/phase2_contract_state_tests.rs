@@ -182,7 +182,7 @@ mod tests {
 
         // History should have 20 entries
         assert_eq!(
-            blockchain.contract_state_history.len(),
+            blockchain.contract_state_history().len(),
             20,
             "Should have 20 historical entries"
         );
@@ -193,20 +193,20 @@ mod tests {
 
         // Should only keep blocks 15-19 (5 blocks)
         assert_eq!(
-            blockchain.contract_state_history.len(),
+            blockchain.contract_state_history().len(),
             5,
             "Should prune to keep only 5 recent blocks"
         );
 
         // Verify recent blocks are kept
         assert!(
-            blockchain.contract_state_history.contains_key(&19),
+            blockchain.contract_state_history().contains_key(&19),
             "Most recent block should be kept"
         );
 
         // Verify old blocks are removed
         assert!(
-            !blockchain.contract_state_history.contains_key(&5),
+            !blockchain.contract_state_history().contains_key(&5),
             "Old blocks should be pruned"
         );
     }
@@ -222,7 +222,7 @@ mod tests {
             "Should start with empty contract states"
         );
         assert_eq!(
-            blockchain.contract_state_history.len(),
+            blockchain.contract_state_history().len(),
             0,
             "Should start with empty history"
         );

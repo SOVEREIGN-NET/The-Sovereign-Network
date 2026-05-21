@@ -18,11 +18,12 @@ fn test_oracle_state_survives_blockchain_restart() {
     harness.finalize_epoch(epoch, 100_000_000);
 
     // Verify state before save
-    assert_eq!(harness.blockchain.oracle_state.finalized_prices_len(), 1);
-    let committee_before = harness.blockchain.oracle_state.committee.members().to_vec();
+    assert_eq!(harness.blockchain.oracle_state().finalized_prices_len(), 1);
+    let committee_before = harness.blockchain.oracle_state().committee.members().to_vec();
 
     // Set last_oracle_epoch_processed to prevent apply_pending_updates during load
-    harness.blockchain.last_oracle_epoch_processed = harness.blockchain.last_committed_timestamp();
+    let ts = harness.blockchain.last_committed_timestamp();
+    harness.blockchain.set_last_oracle_epoch_processed_unchecked(ts);
 
     // Save to temp file
     let dir = tempdir().unwrap();
@@ -36,19 +37,19 @@ fn test_oracle_state_survives_blockchain_restart() {
 
     // Verify oracle state survived
     assert_eq!(
-        reloaded.oracle_state.finalized_prices_len(),
-        harness.blockchain.oracle_state.finalized_prices_len(),
+        reloaded.oracle_state().finalized_prices_len(),
+        harness.blockchain.oracle_state().finalized_prices_len(),
         "finalized prices count should match after reload"
     );
 
     assert_eq!(
-        reloaded.oracle_state.committee.members(),
+        reloaded.oracle_state().committee.members(),
         committee_before,
         "committee members should match after reload"
     );
 
     // Verify the finalized price is accessible
-    let price = reloaded.oracle_state.finalized_price(epoch);
+    let price = reloaded.oracle_state().finalized_price(epoch);
     assert!(
         price.is_some(),
         "finalized price should be accessible after reload"
@@ -71,7 +72,7 @@ fn test_oracle_state_in_blockchain_import() {
 
     // Verify prices are finalized
     assert_eq!(
-        harness.blockchain.oracle_state.finalized_prices_len(),
+        harness.blockchain.oracle_state().finalized_prices_len(),
         2,
         "should have 2 finalized prices before export"
     );
@@ -127,12 +128,12 @@ fn test_oracle_config_persists_across_restart() {
     // Apply the update at the target epoch
     harness
         .blockchain
-        .oracle_state
+        .oracle_state_mut()
         .apply_pending_updates(current_epoch + 1);
 
     // Verify config changed
     assert_eq!(
-        harness.blockchain.oracle_state.config().epoch_duration_secs,
+        harness.blockchain.oracle_state().config().epoch_duration_secs,
         600
     );
 
@@ -146,9 +147,9 @@ fn test_oracle_config_persists_across_restart() {
     let reloaded = Blockchain::load_from_file(&path).unwrap();
 
     // Verify config persisted
-    assert_eq!(reloaded.oracle_state.config().epoch_duration_secs, 600);
-    assert_eq!(reloaded.oracle_state.config().max_source_age_secs, 300);
-    assert_eq!(reloaded.oracle_state.config().max_deviation_bps, 500);
+    assert_eq!(reloaded.oracle_state().config().epoch_duration_secs, 600);
+    assert_eq!(reloaded.oracle_state().config().max_source_age_secs, 300);
+    assert_eq!(reloaded.oracle_state().config().max_deviation_bps, 500);
 }
 
 #[test]
@@ -173,14 +174,15 @@ fn test_pending_updates_persist_across_restart() {
     // Verify pending update exists
     assert!(harness
         .blockchain
-        .oracle_state
+        .oracle_state()
         .committee
         .pending_update()
         .is_some());
 
     // Set last_oracle_epoch_processed to prevent apply_pending_updates during load
     // (the genesis timestamp creates a large epoch, which would auto-activate pending updates)
-    harness.blockchain.last_oracle_epoch_processed = harness.blockchain.last_committed_timestamp();
+    let ts = harness.blockchain.last_committed_timestamp();
+    harness.blockchain.set_last_oracle_epoch_processed_unchecked(ts);
 
     // Save and reload
     let dir = tempdir().unwrap();
@@ -192,11 +194,11 @@ fn test_pending_updates_persist_across_restart() {
     let mut reloaded = Blockchain::load_from_file(&path).unwrap();
 
     // Verify pending update survived
-    assert!(reloaded.oracle_state.committee.pending_update().is_some());
+    assert!(reloaded.oracle_state().committee.pending_update().is_some());
 
     // Apply the update at target epoch
-    reloaded.oracle_state.apply_pending_updates(target_epoch);
+    reloaded.oracle_state_mut().apply_pending_updates(target_epoch);
 
     // Verify committee changed
-    assert_eq!(reloaded.oracle_state.committee.members().len(), 3);
+    assert_eq!(reloaded.oracle_state().committee.members().len(), 3);
 }

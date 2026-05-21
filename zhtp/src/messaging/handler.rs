@@ -90,7 +90,7 @@ impl MessagingHandler {
         // Resolve recipient: @username, full DID, or raw hex identity ID
         let recipient_did = if req.recipient.starts_with('@') {
             let username = &req.recipient[1..];
-            match blockchain.did_to_username.iter().find(|(_, u)| u.as_str() == username) {
+            match blockchain.did_to_username().iter().find(|(_, u)| u.as_str() == username) {
                 Some((did, _)) => did.clone(),
                 None => return Ok(error_resp(ZhtpStatus::NotFound, "Username not found")),
             }
@@ -115,7 +115,7 @@ impl MessagingHandler {
         }
 
         // Get username if available
-        let username = blockchain.did_to_username.get(&recipient_did).cloned();
+        let username = blockchain.did_to_username().get(&recipient_did).cloned();
 
         json_response(json!({
             "status": "success",

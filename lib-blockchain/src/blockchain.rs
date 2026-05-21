@@ -200,19 +200,19 @@ pub struct Blockchain {
     pub(crate) gateway_blocks: HashMap<String, u64>,
     /// DAO treasury wallet ID (stores collected fees for governance)
     #[serde(default)]
-    pub dao_treasury_wallet_id: Option<String>,
+    pub(crate) dao_treasury_wallet_id: Option<String>,
     /// Welfare service registry (service_id -> WelfareService)
     #[serde(default)]
-    pub welfare_services: HashMap<String, lib_consensus::WelfareService>,
+    pub(crate) welfare_services: HashMap<String, lib_consensus::WelfareService>,
     /// Welfare service registration block heights (service_id -> block_height)
     #[serde(default)]
-    pub welfare_service_blocks: HashMap<String, u64>,
+    pub(crate) welfare_service_blocks: HashMap<String, u64>,
     /// Service performance metrics (service_id -> ServicePerformanceMetrics)
     #[serde(default)]
-    pub service_performance: HashMap<String, lib_consensus::ServicePerformanceMetrics>,
+    pub(crate) service_performance: HashMap<String, lib_consensus::ServicePerformanceMetrics>,
     /// Outcome reports (report_id -> OutcomeReport)
     #[serde(default)]
-    pub outcome_reports: HashMap<lib_crypto::Hash, lib_consensus::OutcomeReport>,
+    pub(crate) outcome_reports: HashMap<lib_crypto::Hash, lib_consensus::OutcomeReport>,
     /// Economic transaction processor for lib-economy integration
     #[serde(skip)]
     pub economic_processor: Option<EconomicTransactionProcessor>,
@@ -243,10 +243,10 @@ pub struct Blockchain {
     pub broadcast_sender: Option<tokio::sync::mpsc::UnboundedSender<BlockchainBroadcastMessage>>,
     /// Track executed DAO proposals to prevent double-execution
     #[serde(default)]
-    pub executed_dao_proposals: HashSet<Hash>,
+    pub(crate) executed_dao_proposals: HashSet<Hash>,
     /// Finality depth (number of confirmations required for finality)
     #[serde(default = "default_finality_depth")]
-    pub finality_depth: u64,
+    pub(crate) finality_depth: u64,
     /// Per-contract state storage (contract_id -> state bytes)
     #[serde(default)]
     pub(crate) contract_states: HashMap<[u8; 32], Vec<u8>>,
@@ -256,16 +256,16 @@ pub struct Blockchain {
     pub treasury_kernel: Option<TreasuryKernel>,
     /// Contract state snapshots per block height for historical queries
     #[serde(default)]
-    pub contract_state_history: std::collections::BTreeMap<u64, HashMap<[u8; 32], Vec<u8>>>,
+    pub(crate) contract_state_history: std::collections::BTreeMap<u64, HashMap<[u8; 32], Vec<u8>>>,
     /// UTXO set snapshots per block height for state recovery and reorg support
     #[serde(default)]
-    pub utxo_snapshots: std::collections::BTreeMap<u64, HashMap<Hash, TransactionOutput>>,
+    pub(crate) utxo_snapshots: std::collections::BTreeMap<u64, HashMap<Hash, TransactionOutput>>,
     /// Count of reorganizations for monitoring
     #[serde(default)]
-    pub reorg_count: u64,
+    pub(crate) reorg_count: u64,
     /// Fork recovery configuration
     #[serde(default)]
-    pub fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig,
+    pub(crate) fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig,
     /// Event publisher for blockchain state changes (Issue #11).
     ///
     /// NOTE: This field is marked with `#[serde(skip)]` and is **not** serialized.
@@ -278,14 +278,14 @@ pub struct Blockchain {
     /// UBI (Universal Basic Income) registry - tracks eligible citizens and their payout status
     /// Key: identity_id (hex string), Value: UBI registration data
     #[serde(default)]
-    pub ubi_registry: HashMap<String, UbiRegistryEntry>,
+    pub(crate) ubi_registry: HashMap<String, UbiRegistryEntry>,
     /// UBI registration block heights (identity_id -> block_height)
     #[serde(default)]
-    pub ubi_blocks: HashMap<String, u64>,
+    pub(crate) ubi_blocks: HashMap<String, u64>,
     /// Per-token, per-address nonce for token transfer replay protection
     /// Key: (token_id, sender address) where address is wallet_id for SOV or key_id for custom tokens
     #[serde(default)]
-    pub token_nonces: HashMap<([u8; 32], [u8; 32]), u64>,
+    pub(crate) token_nonces: HashMap<([u8; 32], [u8; 32]), u64>,
     /// Block executor for state changes
     /// When present, this is the SINGLE SOURCE OF TRUTH for state mutations.
     /// All block applications should go through this executor.
@@ -295,23 +295,23 @@ pub struct Blockchain {
     /// Bonding curve token registry
     /// Tracks all bonding curve tokens from deployment through AMM graduation
     #[serde(default)]
-    pub bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry,
+    pub(crate) bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry,
     /// AMM liquidity pools for graduated bonding curve tokens
     /// Pool ID -> persisted AMM pool mapping
     #[serde(default)]
-    pub amm_pools: HashMap<[u8; 32], crate::contracts::bonding_curve::AmmPool>,
+    pub(crate) amm_pools: HashMap<[u8; 32], crate::contracts::bonding_curve::AmmPool>,
     // =========================================================================
     // DAO Bootstrap Council (dao-1)
     // =========================================================================
     /// Current governance phase (Bootstrap → Hybrid → FullDao)
     #[serde(default)]
-    pub governance_phase: crate::dao::GovernancePhase,
+    pub(crate) governance_phase: crate::dao::GovernancePhase,
     /// Active Bootstrap Council members
     #[serde(default)]
-    pub council_members: Vec<crate::dao::CouncilMember>,
+    pub(crate) council_members: Vec<crate::dao::CouncilMember>,
     /// Minimum council yes-votes required for Phase 0 execution
     #[serde(default = "default_council_threshold")]
-    pub council_threshold: u8,
+    pub(crate) council_threshold: u8,
 
     // =========================================================================
     // Entity Registry (TSR — Treasury Signer Registration)
@@ -320,14 +320,14 @@ pub struct Blockchain {
     /// None until initialized via InitEntityRegistry transaction.
     /// Immutable after initialization.
     #[serde(default)]
-    pub entity_registry: Option<crate::contracts::governance::EntityRegistry>,
+    pub(crate) entity_registry: Option<crate::contracts::governance::EntityRegistry>,
 
     // =========================================================================
     // CBE Employment & DAO (CBE epic)
     // =========================================================================
     /// On-chain employment contract registry — populated by CreateEmploymentContract txs.
     #[serde(default)]
-    pub employment_registry: crate::contracts::employment::EmploymentRegistry,
+    pub(crate) employment_registry: crate::contracts::employment::EmploymentRegistry,
 
     // =========================================================================
     // Observer Admission Registry (observer-admission-3)
@@ -344,19 +344,19 @@ pub struct Blockchain {
     /// Do not use this field for eligibility checks during execution — query the
     /// store instead.
     #[serde(default)]
-    pub observer_registry: HashMap<String, lib_types::ObserverAdmissionRecord>,
+    pub(crate) observer_registry: HashMap<String, lib_types::ObserverAdmissionRecord>,
     /// Observer node DID → block height at which the record was first committed.
     #[serde(default)]
-    pub observer_blocks: HashMap<String, u64>,
+    pub(crate) observer_blocks: HashMap<String, u64>,
     // =========================================================================
     // User Credentials (username + password for public-zone access)
     // =========================================================================
     /// User credentials registry: username → credential record.
     #[serde(default)]
-    pub credential_registry: HashMap<String, crate::transaction::UserCredential>,
+    pub(crate) credential_registry: HashMap<String, crate::transaction::UserCredential>,
     /// Reverse index: DID → username (one credential per DID).
     #[serde(default)]
-    pub did_to_username: HashMap<String, String>,
+    pub(crate) did_to_username: HashMap<String, String>,
     /// Lobby-auth OPAQUE server setup bytes loaded from `genesis.toml`.
     /// `None` if no `[opaque]` section was present at genesis. Never mutated
     /// at runtime. Treat as opaque by lib-blockchain — the typed
@@ -368,113 +368,113 @@ pub struct Blockchain {
     // =========================================================================
     /// SOV spent per epoch: epoch_number → cumulative_amount
     #[serde(default)]
-    pub treasury_epoch_spend: HashMap<u64, u64>,
+    pub(crate) treasury_epoch_spend: HashMap<u64, u64>,
     /// Number of blocks per epoch for spend-cap accounting
     #[serde(default = "default_treasury_epoch_length")]
-    pub treasury_epoch_length_blocks: u64,
+    pub(crate) treasury_epoch_length_blocks: u64,
     /// Whether the treasury is in emergency mode (unlocks Emergency proposals)
     #[serde(default)]
-    pub emergency_state: bool,
+    pub(crate) emergency_state: bool,
     /// Block height when emergency state was activated
     #[serde(default)]
-    pub emergency_activated_at: Option<u64>,
+    pub(crate) emergency_activated_at: Option<u64>,
     /// DID of the council member who activated emergency state
     #[serde(default)]
-    pub emergency_activated_by: Option<String>,
+    pub(crate) emergency_activated_by: Option<String>,
     /// Block height at which emergency state auto-expires
     #[serde(default)]
-    pub emergency_expires_at: Option<u64>,
+    pub(crate) emergency_expires_at: Option<u64>,
     /// Treasury balance recorded at the start of each epoch, used for spend-cap calculation.
     /// Prevents gaming the 5% cap by making multiple small proposals as balance depletes.
     #[serde(default)]
-    pub treasury_epoch_start_balance: HashMap<u64, u64>,
+    pub(crate) treasury_epoch_start_balance: HashMap<u64, u64>,
 
     // =========================================================================
     // DAO Emergency Treasury Freeze (dao-7)
     // =========================================================================
     /// Whether the treasury is frozen (emergency freeze by 80% validators)
     #[serde(default)]
-    pub treasury_frozen: bool,
+    pub(crate) treasury_frozen: bool,
     /// Block height when treasury was frozen
     #[serde(default)]
-    pub treasury_frozen_at: Option<u64>,
+    pub(crate) treasury_frozen_at: Option<u64>,
     /// Block height at which treasury freeze expires
     #[serde(default)]
-    pub treasury_freeze_expiry: Option<u64>,
+    pub(crate) treasury_freeze_expiry: Option<u64>,
     /// Signatures from validators who signed the freeze
     #[serde(default)]
-    pub treasury_freeze_signatures: Vec<(String, Vec<u8>)>, // (validator_did, signature)
+    pub(crate) treasury_freeze_signatures: Vec<(String, Vec<u8>)>, // (validator_did, signature)
 
     // =========================================================================
     // DAO Voting Power (dao-5)
     // =========================================================================
     /// How token balances translate to voting weight
     #[serde(default)]
-    pub voting_power_mode: crate::dao::VotingPowerMode,
+    pub(crate) voting_power_mode: crate::dao::VotingPowerMode,
     /// Vote delegation map: delegator_id_hex → delegate_id_hex
     ///
     /// Both keys and values are 64-char hex-encoded 32-byte identity IDs
     /// (the raw bytes of `lib_identity::IdentityId`, NOT "did:zhtp:…" strings).
     /// Delegation is **non-transitive**: if A→B and B→C, C does not receive A's power.
     #[serde(default)]
-    pub vote_delegations: HashMap<String, String>,
+    pub(crate) vote_delegations: HashMap<String, String>,
     /// Council co-signatures collected for a proposal (proposal_id → [(did, sig_bytes)]).
     #[serde(default)]
-    pub pending_cosigns: HashMap<[u8; 32], Vec<(String, Vec<u8>)>>,
+    pub(crate) pending_cosigns: HashMap<[u8; 32], Vec<(String, Vec<u8>)>>,
     /// Council vetoes for a proposal (proposal_id → [(did, reason)]).
     #[serde(default)]
-    pub pending_vetoes: HashMap<[u8; 32], Vec<(String, String)>>,
+    pub(crate) pending_vetoes: HashMap<[u8; 32], Vec<(String, String)>>,
     /// Window (blocks) during which the council can veto/cosign after a vote closes.
     #[serde(default = "default_veto_window")]
-    pub veto_window_blocks: u64,
+    pub(crate) veto_window_blocks: u64,
     /// Number of executions that occurred per treasury epoch (epoch → count).
     #[serde(default)]
-    pub treasury_epoch_execution_count: HashMap<u64, u32>,
+    pub(crate) treasury_epoch_execution_count: HashMap<u64, u32>,
     /// Maximum treasury executions allowed per epoch.
     #[serde(default = "default_max_executions")]
-    pub max_executions_per_epoch: u32,
+    pub(crate) max_executions_per_epoch: u32,
     /// Oracle protocol v1 consensus state (committee/config/finalized prices).
     #[serde(default)]
-    pub oracle_state: crate::oracle::OracleState,
+    pub(crate) oracle_state: crate::oracle::OracleState,
     /// Unified token pricing state for SOV and CBE tokens (Issue #1819).
     #[serde(default)]
-    pub token_pricing_state: crate::pricing::TokenPricingState,
+    pub(crate) token_pricing_state: crate::pricing::TokenPricingState,
     /// On-chain exchange state for SOV/USDC and other trading pairs.
     /// Provides price feeds to the oracle protocol.
     #[serde(default)]
-    pub exchange_state: crate::exchange::ExchangeState,
+    pub(crate) exchange_state: crate::exchange::ExchangeState,
     /// On-ramp trade log: fiat->CBE purchases attested by gateway + oracle committee.
     /// Source of CBE/USD VWAP for oracle Mode B SOV/USD derivation.
     /// Spec: CBE/SOV/USD Pricing Model v1.0 §4
     #[serde(default)]
-    pub onramp_state: crate::onramp::OnRampState,
+    pub(crate) onramp_state: crate::onramp::OnRampState,
     /// Oracle slashing configuration.
     #[serde(default)]
-    pub oracle_slashing_config: crate::oracle::OracleSlashingConfig,
+    pub(crate) oracle_slashing_config: crate::oracle::OracleSlashingConfig,
     /// Validators banned from oracle committee (key_id).
     #[serde(default)]
-    pub oracle_banned_validators: std::collections::HashSet<[u8; 32]>,
+    pub(crate) oracle_banned_validators: std::collections::HashSet<[u8; 32]>,
     /// Last oracle timestamp for which apply_pending_updates() was called.
     /// Prevents double-application within the same epoch.
     ///
     /// ORACLE-R4: This field always stores a Unix timestamp (seconds), not an epoch ID.
     /// Legacy data may have epoch IDs - migration happens on load.
     #[serde(default)]
-    pub last_oracle_epoch_processed: u64,
+    pub(crate) last_oracle_epoch_processed: u64,
 
     // ── DAO Phase Transitions (dao-3) ─────────────────────────────────────
     /// Most recently computed decentralization snapshot.
     #[serde(default)]
-    pub last_decentralization_snapshot: Option<crate::dao::DecentralizationSnapshot>,
+    pub(crate) last_decentralization_snapshot: Option<crate::dao::DecentralizationSnapshot>,
     /// Configurable thresholds governing phase advancement.
     #[serde(default)]
-    pub phase_transition_config: crate::dao::PhaseTransitionConfig,
+    pub(crate) phase_transition_config: crate::dao::PhaseTransitionConfig,
     /// Number of consecutive governance epochs that met quorum (for Phase 2 gate).
     #[serde(default)]
-    pub governance_cycles_with_quorum: u32,
+    pub(crate) governance_cycles_with_quorum: u32,
     /// Block height of the last governance cycle check.
     #[serde(default)]
-    pub last_governance_cycle_height: u64,
+    pub(crate) last_governance_cycle_height: u64,
 
     // =========================================================================
     // Fee Router — sector DAO fee distribution (45/30/15/10 split)
@@ -483,14 +483,14 @@ pub struct Blockchain {
     /// Initialized at startup with the well-known sector DAO wallet addresses from
     /// keys/dao-wallets.json (registered 2026-04-10).
     #[serde(default)]
-    pub fee_router: crate::contracts::economics::fee_router::FeeRouter,
+    pub(crate) fee_router: crate::contracts::economics::fee_router::FeeRouter,
     /// PoUW reward payouts observed on-chain, keyed by recipient key_id.
     /// Rebuilt deterministically from block replay (`process_token_transactions`),
     /// so it is identical on every node — the consensus-derived backing for the
     /// `/api/v1/pouw/rewards` query. `#[serde(skip)]`: never persisted, always
     /// derived from blocks.
     #[serde(skip)]
-    pub pouw_mint_index: HashMap<[u8; 32], Vec<PouwMintRecord>>,
+    pub(crate) pouw_mint_index: HashMap<[u8; 32], Vec<PouwMintRecord>>,
 }
 
 /// Validator information stored on-chain.
@@ -2567,6 +2567,466 @@ impl Blockchain {
         registry: HashMap<String, ValidatorInfo>,
     ) {
         self.validator_registry = registry;
+    }
+
+    // =========================================================================
+    // Phase 4b — Governance / treasury / oracle / fee / DAO accessors
+    // =========================================================================
+    // Same shape as Phase 4a: read accessors return `&T`, mutators that bypass
+    // the executor are named `_unchecked` so the bypass is grep-able.
+    // Internal lib-blockchain code keeps direct mutable access; external
+    // crates must go through these methods.
+    // =========================================================================
+
+    /// Oracle protocol v1 consensus state.
+    pub fn oracle_state(&self) -> &crate::oracle::OracleState {
+        &self.oracle_state
+    }
+
+    /// Mutable borrow of oracle state (governance/admin write path).
+    /// Used by handlers that adjust committee/config from cross-crate code.
+    pub fn oracle_state_mut(&mut self) -> &mut crate::oracle::OracleState {
+        &mut self.oracle_state
+    }
+
+    /// Oracle slashing configuration.
+    pub fn oracle_slashing_config(&self) -> &crate::oracle::OracleSlashingConfig {
+        &self.oracle_slashing_config
+    }
+
+    /// Validators banned from oracle committee (by key_id).
+    pub fn oracle_banned_validators(&self) -> &std::collections::HashSet<[u8; 32]> {
+        &self.oracle_banned_validators
+    }
+
+    /// Unix timestamp (seconds) of the last oracle epoch processed.
+    pub fn last_oracle_epoch_processed(&self) -> u64 {
+        self.last_oracle_epoch_processed
+    }
+
+    /// Unified token pricing state (SOV / CBE).
+    pub fn token_pricing_state(&self) -> &crate::pricing::TokenPricingState {
+        &self.token_pricing_state
+    }
+
+    /// On-chain exchange state.
+    pub fn exchange_state(&self) -> &crate::exchange::ExchangeState {
+        &self.exchange_state
+    }
+
+    /// On-ramp trade log.
+    pub fn onramp_state(&self) -> &crate::onramp::OnRampState {
+        &self.onramp_state
+    }
+
+    /// Sector DAO fee router.
+    pub fn fee_router(&self) -> &crate::contracts::economics::fee_router::FeeRouter {
+        &self.fee_router
+    }
+
+    /// Current governance phase (Bootstrap / Hybrid / FullDao).
+    pub fn governance_phase(&self) -> &crate::dao::GovernancePhase {
+        &self.governance_phase
+    }
+
+    /// Active bootstrap council members.
+    pub fn council_members(&self) -> &[crate::dao::CouncilMember] {
+        &self.council_members
+    }
+
+    /// Council yes-vote threshold for Phase 0 execution.
+    pub fn council_threshold(&self) -> u8 {
+        self.council_threshold
+    }
+
+    /// CBE / Nonprofit treasury address registry (`None` until initialized).
+    pub fn entity_registry(&self) -> Option<&crate::contracts::governance::EntityRegistry> {
+        self.entity_registry.as_ref()
+    }
+
+    /// On-chain employment contract registry.
+    pub fn employment_registry(&self) -> &crate::contracts::employment::EmploymentRegistry {
+        &self.employment_registry
+    }
+
+    // -- Treasury epoch / spend caps -----------------------------------------
+
+    pub fn treasury_epoch_spend(&self) -> &HashMap<u64, u64> {
+        &self.treasury_epoch_spend
+    }
+    pub fn treasury_epoch_length_blocks(&self) -> u64 {
+        self.treasury_epoch_length_blocks
+    }
+    pub fn treasury_epoch_start_balance(&self) -> &HashMap<u64, u64> {
+        &self.treasury_epoch_start_balance
+    }
+    pub fn treasury_epoch_execution_count(&self) -> &HashMap<u64, u32> {
+        &self.treasury_epoch_execution_count
+    }
+    pub fn max_executions_per_epoch(&self) -> u32 {
+        self.max_executions_per_epoch
+    }
+
+    // -- Emergency state -----------------------------------------------------
+
+    pub fn emergency_state(&self) -> bool {
+        self.emergency_state
+    }
+    pub fn emergency_activated_at(&self) -> Option<u64> {
+        self.emergency_activated_at
+    }
+    pub fn emergency_activated_by(&self) -> Option<&str> {
+        self.emergency_activated_by.as_deref()
+    }
+    pub fn emergency_expires_at(&self) -> Option<u64> {
+        self.emergency_expires_at
+    }
+
+    // -- Treasury freeze -----------------------------------------------------
+
+    pub fn treasury_frozen(&self) -> bool {
+        self.treasury_frozen
+    }
+    pub fn treasury_frozen_at(&self) -> Option<u64> {
+        self.treasury_frozen_at
+    }
+    pub fn treasury_freeze_expiry(&self) -> Option<u64> {
+        self.treasury_freeze_expiry
+    }
+    pub fn treasury_freeze_signatures(&self) -> &[(String, Vec<u8>)] {
+        &self.treasury_freeze_signatures
+    }
+
+    // -- Voting power / delegation / vetoes ----------------------------------
+
+    pub fn voting_power_mode(&self) -> &crate::dao::VotingPowerMode {
+        &self.voting_power_mode
+    }
+    pub fn vote_delegations(&self) -> &HashMap<String, String> {
+        &self.vote_delegations
+    }
+    pub fn pending_cosigns(&self) -> &HashMap<[u8; 32], Vec<(String, Vec<u8>)>> {
+        &self.pending_cosigns
+    }
+    pub fn pending_vetoes(&self) -> &HashMap<[u8; 32], Vec<(String, String)>> {
+        &self.pending_vetoes
+    }
+    pub fn veto_window_blocks(&self) -> u64 {
+        self.veto_window_blocks
+    }
+
+    // -- DAO phase transition snapshot ---------------------------------------
+
+    pub fn last_decentralization_snapshot(
+        &self,
+    ) -> Option<&crate::dao::DecentralizationSnapshot> {
+        self.last_decentralization_snapshot.as_ref()
+    }
+    pub fn phase_transition_config(&self) -> &crate::dao::PhaseTransitionConfig {
+        &self.phase_transition_config
+    }
+    pub fn governance_cycles_with_quorum(&self) -> u32 {
+        self.governance_cycles_with_quorum
+    }
+    pub fn last_governance_cycle_height(&self) -> u64 {
+        self.last_governance_cycle_height
+    }
+
+    // -- Executed DAO proposals (replay protection) --------------------------
+
+    pub fn executed_dao_proposals(&self) -> &HashSet<Hash> {
+        &self.executed_dao_proposals
+    }
+
+    /// True iff a DAO proposal has already been executed.
+    pub fn dao_proposal_executed(&self, id: &Hash) -> bool {
+        self.executed_dao_proposals.contains(id)
+    }
+
+    // -- UBI registry / payout tracking --------------------------------------
+
+    pub fn ubi_registry(&self) -> &HashMap<String, UbiRegistryEntry> {
+        &self.ubi_registry
+    }
+    pub fn ubi_blocks(&self) -> &HashMap<String, u64> {
+        &self.ubi_blocks
+    }
+
+    // -- Token transfer nonces -----------------------------------------------
+
+    /// All token transfer nonces (read-only). Internal callers use
+    /// `get_token_nonce` / `increment_token_nonce` for per-(token,sender)
+    /// access; this accessor exposes the whole map for snapshots / diagnostics.
+    pub fn token_nonces(&self) -> &HashMap<([u8; 32], [u8; 32]), u64> {
+        &self.token_nonces
+    }
+
+    // -- Bonding curve / AMM -------------------------------------------------
+
+    pub fn bonding_curve_registry(&self) -> &crate::contracts::bonding_curve::BondingCurveRegistry {
+        &self.bonding_curve_registry
+    }
+    pub fn amm_pools(&self) -> &HashMap<[u8; 32], crate::contracts::bonding_curve::AmmPool> {
+        &self.amm_pools
+    }
+
+    // -- Welfare services / performance / outcome ----------------------------
+
+    pub fn welfare_services(&self) -> &HashMap<String, lib_consensus::WelfareService> {
+        &self.welfare_services
+    }
+    pub fn welfare_service_blocks(&self) -> &HashMap<String, u64> {
+        &self.welfare_service_blocks
+    }
+    pub fn service_performance(
+        &self,
+    ) -> &HashMap<String, lib_consensus::ServicePerformanceMetrics> {
+        &self.service_performance
+    }
+    pub fn outcome_reports(&self) -> &HashMap<lib_crypto::Hash, lib_consensus::OutcomeReport> {
+        &self.outcome_reports
+    }
+
+    // -- DAO treasury wallet -------------------------------------------------
+
+    pub fn dao_treasury_wallet_id(&self) -> Option<&str> {
+        self.dao_treasury_wallet_id.as_deref()
+    }
+
+    // -- Observer admission --------------------------------------------------
+
+    pub fn observer_registry(
+        &self,
+    ) -> &HashMap<String, lib_types::ObserverAdmissionRecord> {
+        &self.observer_registry
+    }
+    pub fn observer_blocks(&self) -> &HashMap<String, u64> {
+        &self.observer_blocks
+    }
+
+    // -- User credentials ----------------------------------------------------
+
+    pub fn credential_registry(&self) -> &HashMap<String, crate::transaction::UserCredential> {
+        &self.credential_registry
+    }
+
+    /// Look up a credential by username.
+    pub fn get_credential(&self, username: &str) -> Option<&crate::transaction::UserCredential> {
+        self.credential_registry.get(username)
+    }
+
+    /// True iff a credential exists for this username.
+    pub fn has_credential(&self, username: &str) -> bool {
+        self.credential_registry.contains_key(username)
+    }
+
+    /// DID → username reverse index (one credential per DID).
+    pub fn did_to_username(&self) -> &HashMap<String, String> {
+        &self.did_to_username
+    }
+
+    /// Look up the username for a DID, if registered.
+    pub fn username_for_did(&self, did: &str) -> Option<&str> {
+        self.did_to_username.get(did).map(|s| s.as_str())
+    }
+
+    // -- PoUW rewards index --------------------------------------------------
+
+    pub fn pouw_mint_index(&self) -> &HashMap<[u8; 32], Vec<PouwMintRecord>> {
+        &self.pouw_mint_index
+    }
+
+    // -- Per-height snapshots (still in-memory, BST-202 deferred) ------------
+
+    pub fn contract_state_history(
+        &self,
+    ) -> &std::collections::BTreeMap<u64, HashMap<[u8; 32], Vec<u8>>> {
+        &self.contract_state_history
+    }
+    pub fn utxo_snapshots(
+        &self,
+    ) -> &std::collections::BTreeMap<u64, HashMap<Hash, TransactionOutput>> {
+        &self.utxo_snapshots
+    }
+
+    // -- Chain-level counters / config ---------------------------------------
+
+    pub fn finality_depth(&self) -> u64 {
+        self.finality_depth
+    }
+    pub fn reorg_count(&self) -> u64 {
+        self.reorg_count
+    }
+    pub fn fork_recovery_config(&self) -> &crate::fork_recovery::ForkRecoveryConfig {
+        &self.fork_recovery_config
+    }
+    pub fn total_work(&self) -> u128 {
+        self.total_work
+    }
+    pub fn difficulty(&self) -> &Difficulty {
+        &self.difficulty
+    }
+
+    // =========================================================================
+    // Phase 4b — _unchecked mutators for governance/treasury fields
+    // =========================================================================
+
+    /// Insert a credential record directly. Used by API handlers creating
+    /// user credentials during account setup.
+    pub fn insert_credential_unchecked(
+        &mut self,
+        username: String,
+        credential: crate::transaction::UserCredential,
+    ) {
+        self.credential_registry.insert(username, credential);
+    }
+
+    /// Mutable borrow of a credential record. Used by credential-update API
+    /// handlers (password change, etc.).
+    pub fn get_credential_mut(
+        &mut self,
+        username: &str,
+    ) -> Option<&mut crate::transaction::UserCredential> {
+        self.credential_registry.get_mut(username)
+    }
+
+    /// Record a DID → username mapping. Used during credential creation.
+    pub fn set_username_for_did_unchecked(&mut self, did: String, username: String) {
+        self.did_to_username.insert(did, username);
+    }
+
+    /// Mark a DAO proposal as executed (idempotent). Used by the governance
+    /// execution path.
+    pub fn mark_dao_proposal_executed(&mut self, id: Hash) {
+        self.executed_dao_proposals.insert(id);
+    }
+
+    /// Append a council member directly. Used by the bootstrap-council-add
+    /// flow (first council member is admitted without signatures); subsequent
+    /// admissions go through the signed-registration path.
+    pub fn add_council_member_unchecked(&mut self, member: crate::dao::CouncilMember) {
+        self.council_members.push(member);
+    }
+
+    /// Wholesale-replace oracle state. Used by the emergency `.dat` restore
+    /// path that re-injects oracle state from a known-good snapshot, mirroring
+    /// `replace_validator_registry_unchecked`. Not for normal operation.
+    pub fn replace_oracle_state_unchecked(&mut self, state: crate::oracle::OracleState) {
+        self.oracle_state = state;
+    }
+
+    /// Mutable borrow of did→username index. Used by API handlers that update
+    /// the reverse-index together with `insert_credential_unchecked`.
+    pub fn did_to_username_mut(&mut self) -> &mut HashMap<String, String> {
+        &mut self.did_to_username
+    }
+
+    /// Mutable borrow of the bonding-curve registry. Used by API handlers that
+    /// mutate token phase transitions / curve state in place.
+    pub fn bonding_curve_registry_mut(
+        &mut self,
+    ) -> &mut crate::contracts::bonding_curve::BondingCurveRegistry {
+        &mut self.bonding_curve_registry
+    }
+
+    /// Set a vote delegation directly. Used by the DAO vote-delegation API.
+    pub fn set_vote_delegation_unchecked(&mut self, delegator: String, delegate: String) {
+        self.vote_delegations.insert(delegator, delegate);
+    }
+
+    /// Set the DAO treasury wallet ID directly. Used by tests that bootstrap
+    /// the treasury state. `None` resets the field.
+    pub fn set_dao_treasury_wallet_id_unchecked(&mut self, wallet_id: Option<String>) {
+        self.dao_treasury_wallet_id = wallet_id;
+    }
+
+    /// Set the entity registry directly. Used by genesis / test bootstrap.
+    pub fn set_entity_registry_unchecked(
+        &mut self,
+        registry: Option<crate::contracts::governance::EntityRegistry>,
+    ) {
+        self.entity_registry = registry;
+    }
+
+    /// Set the last-oracle-epoch-processed timestamp directly. Used by tests
+    /// that wind chain time to specific oracle epochs.
+    pub fn set_last_oracle_epoch_processed_unchecked(&mut self, ts: u64) {
+        self.last_oracle_epoch_processed = ts;
+    }
+
+    /// Set the DAO phase-transition config directly. Used by governance and by
+    /// tests that exercise phase advancement under custom thresholds.
+    pub fn set_phase_transition_config_unchecked(
+        &mut self,
+        config: crate::dao::PhaseTransitionConfig,
+    ) {
+        self.phase_transition_config = config;
+    }
+
+    /// Set the oracle slashing config directly. Used by governance / tests.
+    pub fn set_oracle_slashing_config_unchecked(
+        &mut self,
+        config: crate::oracle::OracleSlashingConfig,
+    ) {
+        self.oracle_slashing_config = config;
+    }
+
+    /// Set the voting-power mode directly. Used by governance / tests.
+    pub fn set_voting_power_mode_unchecked(&mut self, mode: crate::dao::VotingPowerMode) {
+        self.voting_power_mode = mode;
+    }
+
+    /// Set the finality depth (number of confirmations required for finality).
+    /// Governance-tunable; tests also use this to exercise finality windows.
+    pub fn set_finality_depth(&mut self, depth: u64) {
+        self.finality_depth = depth;
+    }
+
+    /// Set the max treasury executions per epoch. Governance-tunable.
+    pub fn set_max_executions_per_epoch_unchecked(&mut self, n: u32) {
+        self.max_executions_per_epoch = n;
+    }
+
+    /// Set the council veto/cosign window (blocks). Governance-tunable.
+    pub fn set_veto_window_blocks_unchecked(&mut self, blocks: u64) {
+        self.veto_window_blocks = blocks;
+    }
+
+    /// Record a treasury-epoch execution count entry directly. Used by tests
+    /// that pre-seed spend-cap accounting state.
+    pub fn set_treasury_epoch_execution_count_unchecked(&mut self, epoch: u64, count: u32) {
+        self.treasury_epoch_execution_count.insert(epoch, count);
+    }
+
+    /// Mutable borrow of the DAO phase-transition config. Used by tests that
+    /// tweak individual thresholds in place.
+    pub fn phase_transition_config_mut(&mut self) -> &mut crate::dao::PhaseTransitionConfig {
+        &mut self.phase_transition_config
+    }
+
+    /// Set the governance phase directly. Used by tests that need to place the
+    /// chain in a specific phase; production advances phases via
+    /// `try_advance_governance_phase`.
+    pub fn set_governance_phase_unchecked(&mut self, phase: crate::dao::GovernancePhase) {
+        self.governance_phase = phase;
+    }
+
+    /// Set the count of consecutive quorum-passing governance cycles directly.
+    pub fn set_governance_cycles_with_quorum_unchecked(&mut self, n: u32) {
+        self.governance_cycles_with_quorum = n;
+    }
+
+    /// Set the block height of the last governance-cycle check directly.
+    pub fn set_last_governance_cycle_height_unchecked(&mut self, height: u64) {
+        self.last_governance_cycle_height = height;
+    }
+
+    /// Set the cached decentralization snapshot directly.
+    pub fn set_last_decentralization_snapshot_unchecked(
+        &mut self,
+        snapshot: Option<crate::dao::DecentralizationSnapshot>,
+    ) {
+        self.last_decentralization_snapshot = snapshot;
     }
 
     /// Check whether a transaction's nonce is still valid against committed chain state.

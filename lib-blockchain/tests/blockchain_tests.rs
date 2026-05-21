@@ -513,7 +513,7 @@ async fn test_finality_depth_calculation() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
 
     // Set finality depth to 12
-    blockchain.finality_depth = 12;
+    blockchain.set_finality_depth(12);
 
     // Simulate blockchain with height 15 by manually checking
     // Mock blocks exist up to height 15

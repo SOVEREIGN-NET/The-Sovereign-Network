@@ -16,7 +16,7 @@ fn test_oracle_committee_update_pipeline() {
 
     // Get current state
     let initial_epoch = harness.current_epoch();
-    assert_eq!(harness.blockchain.oracle_state.committee.members().len(), 4);
+    assert_eq!(harness.blockchain.oracle_state().committee.members().len(), 4);
 
     // Add a 5th validator (but not to committee yet)
     let new_validator_key = {
@@ -36,19 +36,19 @@ fn test_oracle_committee_update_pipeline() {
     // Verify pending update exists
     assert!(harness
         .blockchain
-        .oracle_state
+        .oracle_state()
         .committee
         .pending_update()
         .is_some());
 
     // Still 4 members before epoch advance
-    assert_eq!(harness.blockchain.oracle_state.committee.members().len(), 4);
+    assert_eq!(harness.blockchain.oracle_state().committee.members().len(), 4);
 
     // Advance to target epoch
     harness.advance_oracle_epoch();
 
     // Now 5 members
-    assert_eq!(harness.blockchain.oracle_state.committee.members().len(), 5);
+    assert_eq!(harness.blockchain.oracle_state().committee.members().len(), 5);
 
     // Verify new validator is in committee
     assert!(harness.is_committee_member(new_validator_key));
@@ -85,13 +85,13 @@ fn test_oracle_config_update_through_governance_pipeline() {
     // Verify pending config exists
     assert!(harness
         .blockchain
-        .oracle_state
+        .oracle_state()
         .pending_config_update
         .is_some());
 
     // Config unchanged before activation
     assert_eq!(
-        harness.blockchain.oracle_state.config().epoch_duration_secs,
+        harness.blockchain.oracle_state().config().epoch_duration_secs,
         initial_duration
     );
 
@@ -100,18 +100,18 @@ fn test_oracle_config_update_through_governance_pipeline() {
 
     // Config should be updated
     assert_eq!(
-        harness.blockchain.oracle_state.config().epoch_duration_secs,
+        harness.blockchain.oracle_state().config().epoch_duration_secs,
         initial_duration * 2
     );
     assert_eq!(
-        harness.blockchain.oracle_state.config().max_source_age_secs,
+        harness.blockchain.oracle_state().config().max_source_age_secs,
         300
     );
 
     // New epoch duration should affect epoch calculation
     let epoch_at_time = harness
         .blockchain
-        .oracle_state
+        .oracle_state()
         .epoch_id(harness.current_timestamp + initial_duration * 3);
     // With doubled duration, fewer epochs should have passed
     assert!(epoch_at_time <= harness.current_epoch() + 2);
@@ -159,9 +159,9 @@ fn test_multiple_governance_updates_queue_correctly() {
     harness.advance_oracle_epoch();
 
     // Both updates should be applied
-    assert_eq!(harness.blockchain.oracle_state.committee.members().len(), 2);
+    assert_eq!(harness.blockchain.oracle_state().committee.members().len(), 2);
     assert_eq!(
-        harness.blockchain.oracle_state.config().epoch_duration_secs,
+        harness.blockchain.oracle_state().config().epoch_duration_secs,
         600
     );
 }
@@ -207,7 +207,7 @@ fn test_threshold_recalculation_after_committee_change() {
     let initial_epoch = harness.current_epoch();
 
     // Initial threshold with 5 members: floor(2*5/3)+1 = 4
-    let initial_threshold = harness.blockchain.oracle_state.committee.threshold();
+    let initial_threshold = harness.blockchain.oracle_state().committee.threshold();
     assert_eq!(initial_threshold, 4);
 
     // Schedule reduction to 3 members
@@ -224,7 +224,7 @@ fn test_threshold_recalculation_after_committee_change() {
     harness.advance_oracle_epoch();
 
     // New threshold with 3 members: floor(2*3/3)+1 = 3
-    let new_threshold = harness.blockchain.oracle_state.committee.threshold();
+    let new_threshold = harness.blockchain.oracle_state().committee.threshold();
     assert_eq!(new_threshold, 3);
 
     // Verify finalization works with new threshold

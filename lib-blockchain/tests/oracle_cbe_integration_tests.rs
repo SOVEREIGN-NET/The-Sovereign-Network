@@ -51,7 +51,7 @@ fn test_cbe_graduation_blocked_without_fresh_oracle_price() {
     let token = create_test_cbe_token(token_id, 3_000_000_000_000); // $300K
     harness
         .blockchain
-        .bonding_curve_registry
+        .bonding_curve_registry_mut()
         .register(token)
         .unwrap();
 
@@ -78,7 +78,7 @@ fn test_cbe_graduation_rejected_with_stale_oracle_price() {
     let token = create_test_cbe_token(token_id, 3_000_000_000_000);
     harness
         .blockchain
-        .bonding_curve_registry
+        .bonding_curve_registry_mut()
         .register(token)
         .unwrap();
 
@@ -89,7 +89,7 @@ fn test_cbe_graduation_rejected_with_stale_oracle_price() {
     // Advance many epochs to make price stale
     let max_staleness = harness
         .blockchain
-        .oracle_state
+        .oracle_state()
         .config()
         .max_price_staleness_epochs;
     for _ in 0..max_staleness + 2 {
@@ -113,7 +113,7 @@ fn test_cbe_graduation_accepted_with_fresh_oracle_price() {
     let token = create_test_cbe_token(token_id, 3_000_000_000_000);
     harness
         .blockchain
-        .bonding_curve_registry
+        .bonding_curve_registry_mut()
         .register(token)
         .unwrap();
 
@@ -142,7 +142,7 @@ fn test_cbe_graduation_accepts_price_at_staleness_boundary() {
     let token = create_test_cbe_token(token_id, 3_000_000_000_000);
     harness
         .blockchain
-        .bonding_curve_registry
+        .bonding_curve_registry_mut()
         .register(token)
         .unwrap();
 
@@ -150,12 +150,12 @@ fn test_cbe_graduation_accepts_price_at_staleness_boundary() {
     let epoch_duration = harness.epoch_duration();
     let max_staleness = harness
         .blockchain
-        .oracle_state
+        .oracle_state()
         .config()
         .max_price_staleness_epochs;
 
     // Set up blockchain to be at epoch 10
-    harness.blockchain.oracle_state.try_finalize_price(
+    harness.blockchain.oracle_state_mut().try_finalize_price(
         lib_blockchain::oracle::FinalizedOraclePrice {
             epoch_id: 10,
             sov_usd_price: 100_000_000,
@@ -191,7 +191,7 @@ fn test_non_cbe_token_skips_oracle_gate() {
     token.symbol = "NOTCBE".to_string(); // Not CBE symbol
     harness
         .blockchain
-        .bonding_curve_registry
+        .bonding_curve_registry_mut()
         .register(token)
         .unwrap();
 
@@ -213,7 +213,7 @@ fn test_already_graduated_token_skips_oracle_gate() {
     token.phase = Phase::Graduated; // Already graduated
     harness
         .blockchain
-        .bonding_curve_registry
+        .bonding_curve_registry_mut()
         .register(token)
         .unwrap();
 

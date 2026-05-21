@@ -93,11 +93,11 @@ fn cbe_graduation_blocked_with_stale_price() {
         last_oracle_price_timestamp: None,
     };
 
-    blockchain.bonding_curve_registry.register(token).unwrap();
+    blockchain.bonding_curve_registry_mut().register(token).unwrap();
 
     // Set a finalized price at epoch 0
     blockchain
-        .oracle_state
+        .oracle_state_mut()
         .try_finalize_price(FinalizedOraclePrice {
             epoch_id: 0,
             sov_usd_price: 100_000_000, // $1.00
@@ -105,8 +105,8 @@ fn cbe_graduation_blocked_with_stale_price() {
         });
 
     // Configure short staleness window
-    blockchain.oracle_state.config.max_price_staleness_epochs = 5;
-    blockchain.oracle_state.config.epoch_duration_secs = 300;
+    blockchain.oracle_state_mut().config.max_price_staleness_epochs = 5;
+    blockchain.oracle_state_mut().config.epoch_duration_secs = 300;
 
     // Try to graduate at epoch 10 (stale: age = 10 > 5)
     let block_timestamp = 10 * 300;
@@ -154,19 +154,19 @@ fn cbe_graduation_proceeds_with_fresh_price() {
         last_oracle_price_timestamp: None,
     };
 
-    blockchain.bonding_curve_registry.register(token).unwrap();
+    blockchain.bonding_curve_registry_mut().register(token).unwrap();
 
     // Set finalized price at epoch 8
     blockchain
-        .oracle_state
+        .oracle_state_mut()
         .try_finalize_price(FinalizedOraclePrice {
             epoch_id: 8,
             sov_usd_price: 100_000_000,
             cbe_usd_price: None,
         });
 
-    blockchain.oracle_state.config.max_price_staleness_epochs = 5;
-    blockchain.oracle_state.config.epoch_duration_secs = 300;
+    blockchain.oracle_state_mut().config.max_price_staleness_epochs = 5;
+    blockchain.oracle_state_mut().config.epoch_duration_secs = 300;
 
     // Try to graduate at epoch 10 (fresh: age = 2 <= 5)
     let block_timestamp = 10 * 300;

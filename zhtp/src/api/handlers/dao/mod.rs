@@ -759,7 +759,7 @@ impl DaoHandler {
             .latest_block()
             .map(|b| b.header.timestamp)
             .unwrap_or(0);
-        blockchain.oracle_state.epoch_id(reference_timestamp)
+        blockchain.oracle_state().epoch_id(reference_timestamp)
     }
 
     fn parse_oracle_members(members: &[String]) -> Result<Vec<[u8; 32]>> {
@@ -1466,7 +1466,7 @@ impl DaoHandler {
 
             let voting_power = {
                 let raw = blockchain.calculate_user_voting_power(&authenticated_identity_id);
-                match blockchain.voting_power_mode {
+                match blockchain.voting_power_mode() {
                     lib_blockchain::dao::VotingPowerMode::Identity => 1,
                     lib_blockchain::dao::VotingPowerMode::Linear => raw.max(1),
                     lib_blockchain::dao::VotingPowerMode::Quadratic => {
@@ -2083,7 +2083,7 @@ impl DaoHandler {
         create_json_response(json!({
             "status": "success",
             "governance_phase": phase_str,
-            "council_threshold": blockchain.council_threshold,
+            "council_threshold": blockchain.council_threshold(),
             "members": members,
         }))
     }
@@ -2125,8 +2125,7 @@ impl DaoHandler {
         // First bootstrap: accept without signatures
         if blockchain.query_council_members().is_empty() {
             blockchain
-                .council_members
-                .push(lib_blockchain::dao::CouncilMember {
+                .add_council_member_unchecked(lib_blockchain::dao::CouncilMember {
                     identity_id: req.identity_id.clone(),
                     wallet_id: req.wallet_id.clone(),
                     stake_amount: req.stake_amount,
@@ -2141,7 +2140,7 @@ impl DaoHandler {
         }
 
         // Subsequent registrations require threshold council signatures
-        let threshold = blockchain.council_threshold as usize;
+        let threshold = blockchain.council_threshold() as usize;
         let valid_sig_count = req
             .council_signatures
             .iter()
@@ -2159,8 +2158,7 @@ impl DaoHandler {
         }
 
         blockchain
-            .council_members
-            .push(lib_blockchain::dao::CouncilMember {
+            .add_council_member_unchecked(lib_blockchain::dao::CouncilMember {
                 identity_id: req.identity_id.clone(),
                 wallet_id: req.wallet_id.clone(),
                 stake_amount: req.stake_amount,
@@ -2255,7 +2253,7 @@ impl DaoHandler {
         let blockchain = blockchain_arc.read().await;
 
         let (initialized, cbe_treasury, nonprofit_treasury) =
-            if let Some(ref registry) = blockchain.entity_registry {
+            if let Some(ref registry) = blockchain.entity_registry() {
                 let initialized = registry.is_initialized();
                 let cbe = registry
                     .cbe_treasury()
@@ -2271,7 +2269,7 @@ impl DaoHandler {
             };
 
         let init_metadata = blockchain
-            .entity_registry
+            .entity_registry()
             .as_ref()
             .map(|registry| (registry.initialized_at(), registry.initialized_at_height()))
             .unwrap_or((None, None));
@@ -2300,7 +2298,7 @@ impl DaoHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let mut blockchain = blockchain_arc.write().await;
 
-        if blockchain.emergency_state {
+        if blockchain.emergency_state() {
             return Ok(create_error_response(
                 ZhtpStatus::Conflict,
                 "Emergency state is already active".to_string(),
@@ -2315,7 +2313,7 @@ impl DaoHandler {
             "status": "success",
             "message": "Emergency state activated",
             "activated_by": req.activated_by,
-            "expires_at_height": blockchain.emergency_expires_at,
+            "expires_at_height": blockchain.emergency_expires_at(),
         }))
     }
 
@@ -2326,10 +2324,10 @@ impl DaoHandler {
 
         create_json_response(json!({
             "status": "success",
-            "emergency_state": blockchain.emergency_state,
-            "activated_at": blockchain.emergency_activated_at,
-            "activated_by": blockchain.emergency_activated_by,
-            "expires_at": blockchain.emergency_expires_at,
+            "emergency_state": blockchain.emergency_state(),
+            "activated_at": blockchain.emergency_activated_at(),
+            "activated_by": blockchain.emergency_activated_by(),
+            "expires_at": blockchain.emergency_expires_at(),
             "current_height": blockchain.height,
         }))
     }
@@ -2352,10 +2350,10 @@ impl DaoHandler {
             Ok(()) => create_json_response(json!({
                 "status": "success",
                 "message": "Treasury freeze activated",
-                "treasury_frozen": blockchain.treasury_frozen,
-                "frozen_at": blockchain.treasury_frozen_at,
-                "freeze_expiry": blockchain.treasury_freeze_expiry,
-                "signer_count": blockchain.treasury_freeze_signatures.len(),
+                "treasury_frozen": blockchain.treasury_frozen(),
+                "frozen_at": blockchain.treasury_frozen_at(),
+                "freeze_expiry": blockchain.treasury_freeze_expiry(),
+                "signer_count": blockchain.treasury_freeze_signatures().len(),
             })),
             Err(e) => Ok(create_error_response(
                 ZhtpStatus::BadRequest,
@@ -2374,14 +2372,14 @@ impl DaoHandler {
 
         create_json_response(json!({
             "status": "success",
-            "treasury_frozen": blockchain.treasury_frozen,
-            "frozen_at": blockchain.treasury_frozen_at,
-            "freeze_expiry": blockchain.treasury_freeze_expiry,
+            "treasury_frozen": blockchain.treasury_frozen(),
+            "frozen_at": blockchain.treasury_frozen_at(),
+            "freeze_expiry": blockchain.treasury_freeze_expiry(),
             "current_height": blockchain.height,
-            "signer_count": blockchain.treasury_freeze_signatures.len(),
+            "signer_count": blockchain.treasury_freeze_signatures().len(),
             "validator_count": validator_count,
             "threshold": threshold,
-            "signatures": blockchain.treasury_freeze_signatures,
+            "signatures": blockchain.treasury_freeze_signatures(),
         }))
     }
 
@@ -2421,8 +2419,7 @@ impl DaoHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let mut blockchain = blockchain_arc.write().await;
         blockchain
-            .vote_delegations
-            .insert(delegator_hex.clone(), req.delegate_did.clone());
+            .set_vote_delegation_unchecked(delegator_hex.clone(), req.delegate_did.clone());
 
         create_json_response(json!({
             "status": "success",
@@ -2459,7 +2456,7 @@ impl DaoHandler {
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         let cosign_count = blockchain
-            .pending_cosigns
+            .pending_cosigns()
             .get(&proposal_id.as_array())
             .map(|v| v.len())
             .unwrap_or(0);
@@ -2468,7 +2465,7 @@ impl DaoHandler {
             "status": "success",
             "signer": req.signer_did,
             "cosign_count": cosign_count,
-            "threshold": blockchain.council_threshold,
+            "threshold": blockchain.council_threshold(),
         }))
     }
 
@@ -2497,7 +2494,7 @@ impl DaoHandler {
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         let veto_count = blockchain
-            .pending_vetoes
+            .pending_vetoes()
             .get(&proposal_id.as_array())
             .map(|v| v.len())
             .unwrap_or(0);
@@ -2506,8 +2503,8 @@ impl DaoHandler {
             "status": "success",
             "signer": req.signer_did,
             "veto_count": veto_count,
-            "threshold": blockchain.council_threshold,
-            "vetoed": veto_count >= blockchain.council_threshold as usize,
+            "threshold": blockchain.council_threshold(),
+            "vetoed": veto_count >= blockchain.council_threshold() as usize,
         }))
     }
 

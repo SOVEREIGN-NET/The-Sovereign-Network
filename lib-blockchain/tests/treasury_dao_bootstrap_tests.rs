@@ -38,12 +38,11 @@ fn test_treasury_wallet_initialized_on_new_blockchain() {
     let blockchain = Blockchain::default();
 
     let wallet_id = blockchain
-        .dao_treasury_wallet_id
-        .as_ref()
+        .dao_treasury_wallet_id()
         .expect("dao_treasury_wallet_id must be set after Blockchain::default()");
 
     assert_eq!(
-        *wallet_id,
+        wallet_id,
         expected_treasury_id_hex(),
         "Treasury wallet ID must be the deterministic blake3 hash"
     );
@@ -72,13 +71,13 @@ fn test_treasury_wallet_deterministic_id() {
     let bc2 = Blockchain::default();
 
     assert_eq!(
-        bc1.dao_treasury_wallet_id, bc2.dao_treasury_wallet_id,
+        bc1.dao_treasury_wallet_id(), bc2.dao_treasury_wallet_id(),
         "Treasury wallet ID must be identical across independent blockchain instances"
     );
 
     let expected = expected_treasury_id_hex();
     assert_eq!(
-        bc1.dao_treasury_wallet_id.as_deref(),
+        bc1.dao_treasury_wallet_id().as_deref(),
         Some(expected.as_str()),
         "Treasury wallet ID must equal blake3(\"SOV_DAO_TREASURY_V1\")"
     );
@@ -89,7 +88,10 @@ fn test_treasury_wallet_idempotent() {
     // Initial bootstrap: exactly one entry.
     let blockchain = Blockchain::default();
 
-    let wallet_id = blockchain.dao_treasury_wallet_id.as_ref().unwrap().clone();
+    let wallet_id = blockchain
+        .dao_treasury_wallet_id()
+        .expect("dao_treasury_wallet_id must be set")
+        .to_string();
 
     let count = blockchain
         .wallet_registry()
@@ -101,7 +103,7 @@ fn test_treasury_wallet_idempotent() {
         "There must be exactly one treasury wallet registry entry after initial bootstrap"
     );
     assert_eq!(
-        blockchain.dao_treasury_wallet_id.as_deref(),
+        blockchain.dao_treasury_wallet_id(),
         Some(wallet_id.as_str())
     );
 
@@ -127,7 +129,7 @@ fn test_treasury_wallet_idempotent() {
     );
 
     assert_eq!(
-        loaded.dao_treasury_wallet_id.as_deref(),
+        loaded.dao_treasury_wallet_id(),
         Some(wallet_id.as_str()),
         "dao_treasury_wallet_id must remain unchanged after reconstruction"
     );
@@ -144,7 +146,10 @@ fn test_treasury_wallet_survives_round_trip() {
             .insert_token_contract_unchecked(sov_token_id, TokenContract::new_sov_native());
     }
 
-    let original_id = blockchain.dao_treasury_wallet_id.clone().unwrap();
+    let original_id = blockchain
+        .dao_treasury_wallet_id()
+        .expect("dao_treasury_wallet_id")
+        .to_string();
 
     // Persist to a temp file and reload.
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -158,7 +163,7 @@ fn test_treasury_wallet_survives_round_trip() {
 
     // Treasury wallet ID must survive the round-trip.
     assert_eq!(
-        loaded.dao_treasury_wallet_id.as_deref(),
+        loaded.dao_treasury_wallet_id(),
         Some(original_id.as_str()),
         "dao_treasury_wallet_id must survive save_to_file / load_from_file"
     );
@@ -177,9 +182,9 @@ fn test_block_fees_credited_to_treasury() {
     let mut blockchain = Blockchain::default();
 
     let treasury_id_hex = blockchain
-        .dao_treasury_wallet_id
-        .clone()
-        .expect("treasury must be initialized");
+        .dao_treasury_wallet_id()
+        .expect("treasury must be initialized")
+        .to_string();
 
     let treasury_id_bytes = hex::decode(&treasury_id_hex).expect("valid hex");
     let mut treasury_id = [0u8; 32];

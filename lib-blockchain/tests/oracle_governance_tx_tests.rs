@@ -383,7 +383,7 @@ fn config_update_data_for_governance() {
 #[test]
 fn process_approved_oracle_committee_proposal_schedules_pending_update() {
     let mut blockchain = Blockchain::new().expect("genesis");
-    let current_epoch = blockchain.oracle_state.epoch_id(
+    let current_epoch = blockchain.oracle_state().epoch_id(
         blockchain
             .latest_block()
             .expect("genesis block")
@@ -457,19 +457,19 @@ fn process_approved_oracle_committee_proposal_schedules_pending_update() {
         .expect("governance processing");
 
     let pending = blockchain
-        .oracle_state
+        .oracle_state()
         .committee
         .pending_update()
         .expect("pending committee update should be scheduled");
     assert_eq!(pending.activate_at_epoch, activate_at_epoch);
     assert_eq!(pending.members, vec![member_a, member_b]);
-    assert!(blockchain.executed_dao_proposals.contains(&proposal_id));
+    assert!(blockchain.executed_dao_proposals().contains(&proposal_id));
 }
 
 #[test]
 fn process_approved_oracle_config_proposal_schedules_pending_update() {
     let mut blockchain = Blockchain::new().expect("genesis");
-    let current_epoch = blockchain.oracle_state.epoch_id(
+    let current_epoch = blockchain.oracle_state().epoch_id(
         blockchain
             .latest_block()
             .expect("genesis block")
@@ -539,7 +539,7 @@ fn process_approved_oracle_config_proposal_schedules_pending_update() {
         .expect("governance processing");
 
     let pending = blockchain
-        .oracle_state
+        .oracle_state()
         .pending_config_update
         .as_ref()
         .expect("pending config update should be scheduled");
@@ -548,13 +548,13 @@ fn process_approved_oracle_config_proposal_schedules_pending_update() {
     assert_eq!(pending.config.max_source_age_secs, 120);
     assert_eq!(pending.config.max_deviation_bps, 1_000);
     assert_eq!(pending.config.max_price_staleness_epochs, 8);
-    assert!(blockchain.executed_dao_proposals.contains(&proposal_id));
+    assert!(blockchain.executed_dao_proposals().contains(&proposal_id));
 }
 
 #[test]
 fn stateful_validation_rejects_oracle_committee_with_non_validator_member() {
     let mut blockchain = Blockchain::new().expect("genesis");
-    let current_epoch = blockchain.oracle_state.epoch_id(
+    let current_epoch = blockchain.oracle_state().epoch_id(
         blockchain
             .latest_block()
             .expect("genesis block")

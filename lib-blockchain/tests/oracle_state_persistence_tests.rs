@@ -5,7 +5,7 @@ fn oracle_state_round_trip_persists_finalized_prices() {
     let mut blockchain = Blockchain::default();
     // Use the public try_finalize_price API to insert a finalized price.
     blockchain
-        .oracle_state
+        .oracle_state_mut()
         .try_finalize_price(FinalizedOraclePrice {
             epoch_id: 7,
             sov_usd_price: 218_000_000,
@@ -22,7 +22,7 @@ fn oracle_state_round_trip_persists_finalized_prices() {
     let loaded = Blockchain::load_from_file(&path).expect("load_from_file");
 
     let price = loaded
-        .oracle_state
+        .oracle_state()
         .finalized_price(7)
         .expect("epoch 7 finalized price must persist");
     assert_eq!(price.epoch_id, 7);

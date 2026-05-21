@@ -675,7 +675,7 @@ impl PouwHandler {
         let mut records = match crate::runtime::blockchain_provider::get_global_blockchain().await {
             Ok(bc_arc) => {
                 let bc = bc_arc.read().await;
-                bc.pouw_mint_index.get(&key_id).cloned().unwrap_or_default()
+                bc.pouw_mint_index().get(&key_id).cloned().unwrap_or_default()
             }
             Err(_) => Vec::new(),
         };

@@ -312,7 +312,7 @@ async fn test_blockchain_state_restart_equivalence_inner() -> Result<()> {
         assert_eq!(state.height, blockchain.height);
         assert_eq!(state.difficulty.bits(), blockchain.difficulty.bits());
         assert_eq!(state.total_work, blockchain.total_work);
-        assert_eq!(state.finality_depth, blockchain.finality_depth);
+        assert_eq!(state.finality_depth, blockchain.finality_depth());
         // BST-203: finalized heights live behind the BlockchainStore, not on
         // the Blockchain struct. Reconstruct the expected set from the store
         // (empty if no store is attached).

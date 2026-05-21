@@ -62,7 +62,7 @@ fn test_snapshot_max_wallet_pct_bps_is_bounded() {
 fn test_phase0_to_phase1_time_window_trigger() {
     let mut bc = Blockchain::new().expect("genesis");
     // Set a small duration so it triggers immediately at height 0
-    bc.phase_transition_config.phase0_max_duration_blocks = Some(0);
+    bc.phase_transition_config_mut().phase0_max_duration_blocks = Some(0);
 
     assert!(
         bc.check_phase0_to_phase1(),
@@ -86,11 +86,11 @@ fn test_phase0_to_phase1_no_trigger_when_conditions_not_met() {
 fn test_try_advance_phase_bootstrap_to_hybrid_via_time() {
     let mut bc = Blockchain::new().expect("genesis");
     bc.ensure_council_bootstrap(&two_member_council());
-    bc.phase_transition_config.phase0_max_duration_blocks = Some(0);
+    bc.phase_transition_config_mut().phase0_max_duration_blocks = Some(0);
 
-    assert_eq!(bc.governance_phase, GovernancePhase::Bootstrap);
+    assert_eq!(bc.governance_phase(), &GovernancePhase::Bootstrap);
     bc.try_advance_governance_phase();
-    assert_eq!(bc.governance_phase, GovernancePhase::Hybrid);
+    assert_eq!(bc.governance_phase(), &GovernancePhase::Hybrid);
 }
 
 #[test]
@@ -99,16 +99,16 @@ fn test_try_advance_phase_hybrid_to_full_dao_requires_all_conditions() {
     bc.ensure_council_bootstrap(&two_member_council());
 
     // Advance to Hybrid first
-    bc.phase_transition_config.phase0_max_duration_blocks = Some(0);
+    bc.phase_transition_config_mut().phase0_max_duration_blocks = Some(0);
     bc.try_advance_governance_phase();
-    assert_eq!(bc.governance_phase, GovernancePhase::Hybrid);
+    assert_eq!(bc.governance_phase(), &GovernancePhase::Hybrid);
 
     // Default Phase 2 requires 50_000 citizens + low concentration + 3 quorum cycles.
     // None of these are met at genesis, so it should NOT advance.
     bc.try_advance_governance_phase();
     assert_eq!(
-        bc.governance_phase,
-        GovernancePhase::Hybrid,
+        bc.governance_phase(),
+        &GovernancePhase::Hybrid,
         "should stay Hybrid"
     );
 }
@@ -116,9 +116,9 @@ fn test_try_advance_phase_hybrid_to_full_dao_requires_all_conditions() {
 #[test]
 fn test_full_dao_phase_is_terminal() {
     let mut bc = Blockchain::new().expect("genesis");
-    bc.governance_phase = GovernancePhase::FullDao;
+    bc.set_governance_phase_unchecked(GovernancePhase::FullDao);
     bc.try_advance_governance_phase(); // should be a no-op
-    assert_eq!(bc.governance_phase, GovernancePhase::FullDao);
+    assert_eq!(bc.governance_phase(), &GovernancePhase::FullDao);
 }
 
 // ── persistence round-trip ───────────────────────────────────────────────────
@@ -128,17 +128,17 @@ fn test_phase_transition_fields_survive_dat_round_trip() -> Result<()> {
     use tempfile::NamedTempFile;
 
     let mut bc = Blockchain::new()?;
-    bc.phase_transition_config.min_citizens_for_phase1 = 999;
-    bc.governance_cycles_with_quorum = 7;
-    bc.last_governance_cycle_height = 42_000;
+    bc.phase_transition_config_mut().min_citizens_for_phase1 = 999;
+    bc.set_governance_cycles_with_quorum_unchecked(7);
+    bc.set_last_governance_cycle_height_unchecked(42_000);
 
     let tmp = NamedTempFile::new()?;
     bc.save_to_file(tmp.path())?;
     let loaded = Blockchain::load_from_file(tmp.path())?;
 
-    assert_eq!(loaded.phase_transition_config.min_citizens_for_phase1, 999);
-    assert_eq!(loaded.governance_cycles_with_quorum, 7);
-    assert_eq!(loaded.last_governance_cycle_height, 42_000);
+    assert_eq!(loaded.phase_transition_config().min_citizens_for_phase1, 999);
+    assert_eq!(loaded.governance_cycles_with_quorum(), 7);
+    assert_eq!(loaded.last_governance_cycle_height(), 42_000);
     Ok(())
 }
 
@@ -148,14 +148,14 @@ fn test_decentralization_snapshot_persists() -> Result<()> {
 
     let mut bc = Blockchain::new()?;
     let snap = bc.compute_decentralization_snapshot();
-    bc.last_decentralization_snapshot = Some(snap.clone());
+    bc.set_last_decentralization_snapshot_unchecked(Some(snap.clone()));
 
     let tmp = NamedTempFile::new()?;
     bc.save_to_file(tmp.path())?;
     let loaded = Blockchain::load_from_file(tmp.path())?;
 
     let saved = loaded
-        .last_decentralization_snapshot
+        .last_decentralization_snapshot()
         .expect("snapshot should persist");
     assert_eq!(saved.snapshot_height, snap.snapshot_height);
     Ok(())

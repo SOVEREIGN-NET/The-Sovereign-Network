@@ -99,10 +99,10 @@ fn test_epoch_duration_configurable() {
 fn test_epoch_derivation_from_timestamp() {
     let harness = OracleTestHarness::new(3);
     let timestamp = 1_700_000_000u64;
-    let epoch = harness.blockchain.oracle_state.epoch_id(timestamp);
+    let epoch = harness.blockchain.oracle_state().epoch_id(timestamp);
 
     // Epoch 0: timestamps 0..epoch_duration_secs-1, Epoch 1: epoch_duration_secs..(2*epoch_duration_secs)-1, etc.
-    let epoch_duration = harness.blockchain.oracle_state.config.epoch_duration_secs;
+    let epoch_duration = harness.blockchain.oracle_state().config.epoch_duration_secs;
     let expected_epoch = timestamp / epoch_duration;
     assert_eq!(
         epoch, expected_epoch,
@@ -128,7 +128,7 @@ fn test_committee_update_governance_path() {
     // Verify pending update exists
     assert!(harness
         .blockchain
-        .oracle_state
+        .oracle_state()
         .committee
         .pending_update()
         .is_some());
@@ -145,14 +145,14 @@ fn test_config_update_governance_path() {
     let current_epoch = harness.current_epoch();
     harness
         .blockchain
-        .oracle_state
+        .oracle_state_mut()
         .schedule_config_update(new_config, 1, current_epoch, None)
         .expect("Governance path should allow config update");
 
     // Verify pending update exists
     assert!(harness
         .blockchain
-        .oracle_state
+        .oracle_state()
         .pending_config_update
         .is_some());
 }
@@ -219,7 +219,7 @@ fn test_committee_membership_verification() {
     attestation.signature = sig.signature;
 
     // Try to process - should fail because not in committee
-    let result = harness.blockchain.oracle_state.process_attestation(
+    let result = harness.blockchain.oracle_state_mut().process_attestation(
         &attestation,
         current_epoch,
         |_key_id| {
@@ -252,12 +252,12 @@ fn test_restart_preserves_oracle_state() {
     let harness = OracleTestHarness::new(5);
 
     // Get original state values
-    let original_epoch_duration = harness.blockchain.oracle_state.config.epoch_duration_secs;
-    let original_max_deviation = harness.blockchain.oracle_state.config.max_deviation_bps;
-    let original_committee_size = harness.blockchain.oracle_state.committee.members().len();
+    let original_epoch_duration = harness.blockchain.oracle_state().config.epoch_duration_secs;
+    let original_max_deviation = harness.blockchain.oracle_state().config.max_deviation_bps;
+    let original_committee_size = harness.blockchain.oracle_state().committee.members().len();
 
     // Simulate restart by serializing and deserializing state
-    let state_bytes = bincode::serialize(&harness.blockchain.oracle_state).expect("serialize");
+    let state_bytes = bincode::serialize(&harness.blockchain.oracle_state()).expect("serialize");
     let restored_state: OracleState = bincode::deserialize(&state_bytes).expect("deserialize");
 
     // Verify config is preserved
@@ -316,8 +316,8 @@ fn test_committee_configuration_determinism() {
     let node2 = OracleTestHarness::new(5);
 
     // Both should calculate same threshold for same committee size
-    let threshold1 = node1.blockchain.oracle_state.committee.threshold();
-    let threshold2 = node2.blockchain.oracle_state.committee.threshold();
+    let threshold1 = node1.blockchain.oracle_state().committee.threshold();
+    let threshold2 = node2.blockchain.oracle_state().committee.threshold();
 
     assert_eq!(
         threshold1, threshold2,
@@ -326,8 +326,8 @@ fn test_committee_configuration_determinism() {
 
     // Committee sizes should match
     assert_eq!(
-        node1.blockchain.oracle_state.committee.members().len(),
-        node2.blockchain.oracle_state.committee.members().len(),
+        node1.blockchain.oracle_state().committee.members().len(),
+        node2.blockchain.oracle_state().committee.members().len(),
         "Committee sizes should match"
     );
 }
@@ -370,7 +370,7 @@ fn test_protocol_upgrade_scheduling() {
     // Schedule upgrade to V1
     harness
         .blockchain
-        .oracle_state
+        .oracle_state_mut()
         .protocol_config
         .schedule_activation(
             OracleProtocolVersion::V1StrictSpec,
@@ -380,7 +380,7 @@ fn test_protocol_upgrade_scheduling() {
         )
         .expect("Should be able to schedule protocol upgrade");
 
-    let config = &harness.blockchain.oracle_state.protocol_config;
+    let config = &harness.blockchain.oracle_state().protocol_config;
     assert!(
         config.pending_activation.is_some(),
         "Upgrade should be pending"
@@ -395,17 +395,17 @@ fn test_strict_mode_flag() {
     let mut harness = OracleTestHarness::new(3);
 
     // Initially should be V0 (legacy)
-    assert!(!harness.blockchain.oracle_state.is_strict_spec_active());
+    assert!(!harness.blockchain.oracle_state().is_strict_spec_active());
 
     // Activate strict spec mode
     harness
         .blockchain
-        .oracle_state
+        .oracle_state_mut()
         .protocol_config
         .current_version = OracleProtocolVersion::V1StrictSpec;
 
     assert!(
-        harness.blockchain.oracle_state.is_strict_spec_active(),
+        harness.blockchain.oracle_state().is_strict_spec_active(),
         "Strict mode should be active after activation"
     );
 }

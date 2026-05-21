@@ -1148,7 +1148,7 @@ impl IdentityHandler {
             if let Ok(bc_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
                 let bc = bc_arc.read().await;
                 let dn = bc.identity_registry().get(&did).map(|id| id.display_name.clone());
-                let un = bc.did_to_username.get(&did).cloned();
+                let un = bc.did_to_username().get(&did).cloned();
                 (dn, un)
             } else {
                 (None, None)
@@ -1752,13 +1752,13 @@ impl IdentityHandler {
         // Conflict checks (caller-friendly errors before the chain rejects).
         {
             let blockchain = blockchain_arc.read().await;
-            if blockchain.credential_registry.contains_key(&username) {
+            if blockchain.credential_registry().contains_key(&username) {
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::Conflict,
                     "Username already taken".to_string(),
                 ));
             }
-            if blockchain.did_to_username.contains_key(&did) {
+            if blockchain.did_to_username().contains_key(&did) {
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::Conflict,
                     "Identity already has a username".to_string(),
@@ -1812,7 +1812,7 @@ impl IdentityHandler {
             }
             // Cache warmup so subsequent reads see the username before the block commits.
             let height = blockchain.height;
-            blockchain.credential_registry.insert(
+            blockchain.insert_credential_unchecked(
                 username.clone(),
                 lib_blockchain::transaction::UserCredential {
                     username: username.clone(),
@@ -1826,8 +1826,7 @@ impl IdentityHandler {
                 },
             );
             blockchain
-                .did_to_username
-                .insert(did.clone(), username.clone());
+                .set_username_for_did_unchecked(did.clone(), username.clone());
             if let Some(id) = blockchain.get_identity_mut(&did) {
                 id.display_name = username.clone();
             }

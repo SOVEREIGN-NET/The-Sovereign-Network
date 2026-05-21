@@ -185,10 +185,10 @@ impl CredentialsHandler {
                     "DID not found — register identity first",
                 ));
             }
-            if blockchain.credential_registry.contains_key(&req.username) {
+            if blockchain.credential_registry().contains_key(&req.username) {
                 return Ok(error_resp(ZhtpStatus::Conflict, "Username already taken"));
             }
-            if blockchain.did_to_username.contains_key(&req.did) {
+            if blockchain.did_to_username().contains_key(&req.did) {
                 return Ok(error_resp(
                     ZhtpStatus::Conflict,
                     "DID already has registered credentials",
@@ -221,7 +221,7 @@ impl CredentialsHandler {
 
             // Cache warmup so signin works before block commit
             let height = blockchain.query_height();
-            blockchain.credential_registry.insert(
+            blockchain.insert_credential_unchecked(
                 req.username.clone(),
                 lib_blockchain::transaction::UserCredential {
                     username: req.username.clone(),
@@ -235,8 +235,7 @@ impl CredentialsHandler {
                 },
             );
             blockchain
-                .did_to_username
-                .insert(req.did.clone(), req.username.clone());
+                .set_username_for_did_unchecked(req.did.clone(), req.username.clone());
         }
 
         info!(
@@ -259,7 +258,7 @@ impl CredentialsHandler {
 
         let credential = {
             let blockchain = self.blockchain.read().await;
-            blockchain.credential_registry.get(&req.username).cloned()
+            blockchain.credential_registry().get(&req.username).cloned()
         };
 
         let credential = match credential {
@@ -323,7 +322,7 @@ impl CredentialsHandler {
 
         let credential = {
             let blockchain = self.blockchain.read().await;
-            blockchain.credential_registry.get(&req.username).cloned()
+            blockchain.credential_registry().get(&req.username).cloned()
         };
 
         let credential = match credential {
@@ -368,7 +367,7 @@ impl CredentialsHandler {
                 .map_err(|e| anyhow::anyhow!("Failed to submit password update tx: {}", e))?;
 
             let height = blockchain.query_height();
-            if let Some(cred) = blockchain.credential_registry.get_mut(&req.username) {
+            if let Some(cred) = blockchain.get_credential_mut(&req.username) {
                 cred.password_hash = req.new_password_hash;
                 cred.password_changed_at_height = height;
             }

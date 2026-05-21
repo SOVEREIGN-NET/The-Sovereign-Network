@@ -212,7 +212,7 @@ fn test_cross_node_loads_converge_to_identical_token_state() -> Result<()> {
     assert_eq!(token_b.balance_of(&wallet_key(&recipient_wallet)), 2_500);
     assert_eq!(node_a.get_token_nonce(&sov_token_id, &sender_wallet), 1);
     assert_eq!(node_b.get_token_nonce(&sov_token_id, &sender_wallet), 1);
-    assert_eq!(node_a.token_nonces, node_b.token_nonces);
+    assert_eq!(node_a.token_nonces(), node_b.token_nonces());
     assert_eq!(node_a.token_contracts().len(), node_b.token_contracts().len());
 
     Ok(())

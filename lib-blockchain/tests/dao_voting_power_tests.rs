@@ -9,7 +9,7 @@ use lib_blockchain::Blockchain;
 #[test]
 fn test_voting_power_mode_default_is_identity() {
     let bc = Blockchain::new().expect("genesis");
-    assert_eq!(bc.voting_power_mode, VotingPowerMode::Identity);
+    assert_eq!(bc.voting_power_mode(), &VotingPowerMode::Identity);
 }
 
 #[test]
@@ -18,13 +18,13 @@ fn test_voting_power_mode_survives_dat_round_trip() -> Result<()> {
     use tempfile::NamedTempFile;
 
     let mut bc = Blockchain::new()?;
-    bc.voting_power_mode = VotingPowerMode::Quadratic;
+    bc.set_voting_power_mode_unchecked(VotingPowerMode::Quadratic);
 
     let tmp = NamedTempFile::new()?;
     bc.save_to_file(tmp.path())?;
     let loaded = Blockchain::load_from_file(tmp.path())?;
 
-    assert_eq!(loaded.voting_power_mode, VotingPowerMode::Quadratic);
+    assert_eq!(loaded.voting_power_mode(), &VotingPowerMode::Quadratic);
     Ok(())
 }
 
@@ -67,7 +67,7 @@ fn test_quorum_method_returns_false_when_no_votes() -> Result<()> {
 #[test]
 fn test_vote_delegations_default_empty() {
     let bc = Blockchain::new().expect("genesis");
-    assert!(bc.vote_delegations.is_empty());
+    assert!(bc.vote_delegations().is_empty());
 }
 
 #[test]
@@ -76,15 +76,14 @@ fn test_vote_delegations_survive_dat_round_trip() -> Result<()> {
     use tempfile::NamedTempFile;
 
     let mut bc = Blockchain::new()?;
-    bc.vote_delegations
-        .insert("aabbccdd".to_string(), "11223344".to_string());
+    bc.set_vote_delegation_unchecked("aabbccdd".to_string(), "11223344".to_string());
 
     let tmp = NamedTempFile::new()?;
     bc.save_to_file(tmp.path())?;
     let loaded = Blockchain::load_from_file(tmp.path())?;
 
     assert_eq!(
-        loaded.vote_delegations.get("aabbccdd").map(|s| s.as_str()),
+        loaded.vote_delegations().get("aabbccdd").map(|s| s.as_str()),
         Some("11223344"),
     );
     Ok(())
@@ -99,8 +98,7 @@ fn test_voting_power_delegation_aggregates_correctly() -> Result<()> {
     let mut bc = Blockchain::new()?;
     let delegate_bytes = [0xABu8; 32];
     let delegator_bytes = [0xCDu8; 32];
-    bc.vote_delegations
-        .insert(hex::encode(delegator_bytes), hex::encode(delegate_bytes));
+    bc.set_vote_delegation_unchecked(hex::encode(delegator_bytes), hex::encode(delegate_bytes));
 
     let delegate_id = lib_crypto::Hash(delegate_bytes);
     let power = bc.calculate_user_voting_power(&delegate_id);

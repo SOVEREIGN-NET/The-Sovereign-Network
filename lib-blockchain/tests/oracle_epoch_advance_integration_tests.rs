@@ -16,7 +16,7 @@ fn test_pending_committee_activates_at_epoch_boundary() {
 
     // Get current state
     let initial_epoch = harness.current_epoch();
-    assert_eq!(harness.blockchain.oracle_state.committee.members().len(), 4);
+    assert_eq!(harness.blockchain.oracle_state().committee.members().len(), 4);
 
     // Schedule update for epoch N+1 with 3 members instead of 4
     let target_epoch = initial_epoch + 1;
@@ -31,18 +31,18 @@ fn test_pending_committee_activates_at_epoch_boundary() {
         .expect("schedule should succeed");
 
     // Still 4 members before advancing
-    assert_eq!(harness.blockchain.oracle_state.committee.members().len(), 4);
+    assert_eq!(harness.blockchain.oracle_state().committee.members().len(), 4);
 
     // Advance to next epoch
     harness.advance_oracle_epoch();
 
     // Now 3 members after epoch boundary
-    assert_eq!(harness.blockchain.oracle_state.committee.members().len(), 3);
+    assert_eq!(harness.blockchain.oracle_state().committee.members().len(), 3);
 
     // Verify pending update is cleared
     assert!(harness
         .blockchain
-        .oracle_state
+        .oracle_state()
         .committee
         .pending_update()
         .is_none());
@@ -71,7 +71,7 @@ fn test_pending_config_activates_at_epoch_boundary() {
 
     // Config unchanged before epoch
     assert_eq!(
-        harness.blockchain.oracle_state.config().epoch_duration_secs,
+        harness.blockchain.oracle_state().config().epoch_duration_secs,
         initial_duration
     );
 
@@ -80,14 +80,14 @@ fn test_pending_config_activates_at_epoch_boundary() {
 
     // Config changed after epoch boundary
     assert_eq!(
-        harness.blockchain.oracle_state.config().epoch_duration_secs,
+        harness.blockchain.oracle_state().config().epoch_duration_secs,
         initial_duration * 2
     );
 
     // Verify pending config update is cleared
     assert!(harness
         .blockchain
-        .oracle_state
+        .oracle_state()
         .pending_config_update
         .is_none());
 }
@@ -117,9 +117,9 @@ fn test_multiple_pending_updates_activate_correctly() {
     harness.advance_oracle_epoch();
 
     // Both updates should be applied
-    assert_eq!(harness.blockchain.oracle_state.committee.members().len(), 2);
+    assert_eq!(harness.blockchain.oracle_state().committee.members().len(), 2);
     assert_eq!(
-        harness.blockchain.oracle_state.config().epoch_duration_secs,
+        harness.blockchain.oracle_state().config().epoch_duration_secs,
         600
     );
 }
@@ -196,7 +196,7 @@ fn test_stale_price_detection_after_epoch_advance() {
     // Advance many epochs to make price stale
     let max_staleness = harness
         .blockchain
-        .oracle_state
+        .oracle_state()
         .config()
         .max_price_staleness_epochs;
     for _ in 0..max_staleness + 2 {
@@ -207,7 +207,7 @@ fn test_stale_price_detection_after_epoch_advance() {
     let current_epoch = harness.current_epoch();
     let fresh_price = harness
         .blockchain
-        .oracle_state
+        .oracle_state()
         .latest_fresh_price(current_epoch);
     assert!(
         fresh_price.is_none(),

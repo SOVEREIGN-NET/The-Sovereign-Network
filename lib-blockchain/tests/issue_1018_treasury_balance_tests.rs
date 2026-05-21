@@ -39,7 +39,7 @@ fn setup_blockchain_with_treasury() -> (Blockchain, PublicKey) {
     // Register the treasury wallet
     blockchain
         .insert_wallet_unchecked("dao_treasury".to_string(), treasury_wallet);
-    blockchain.dao_treasury_wallet_id = Some("dao_treasury".to_string());
+    blockchain.set_dao_treasury_wallet_id_unchecked(Some("dao_treasury".to_string()));
 
     // Create SOV token with kernel authority
     let kernel_pubkey = create_test_pubkey(99);
@@ -127,7 +127,7 @@ fn test_treasury_balance_returns_zero_without_token_contract() {
 
     blockchain
         .insert_wallet_unchecked("dao_treasury".to_string(), treasury_wallet);
-    blockchain.dao_treasury_wallet_id = Some("dao_treasury".to_string());
+    blockchain.set_dao_treasury_wallet_id_unchecked(Some("dao_treasury".to_string()));
 
     // No SOV token contract registered - should return 0 (not panic)
     let balance = blockchain.get_dao_treasury_balance().unwrap();

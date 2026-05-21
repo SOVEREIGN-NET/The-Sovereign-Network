@@ -1184,7 +1184,7 @@ impl RuntimeOrchestrator {
                             bc.identity_registry().len(),
                             bc.validator_registry().len(),
                             bc.domain_registry().len(),
-                            bc.credential_registry.len(),
+                            bc.credential_registry().len(),
                         );
                     }
                 }
@@ -2175,7 +2175,7 @@ impl RuntimeOrchestrator {
                     info!("🪙 SOV token contract initialized (persistence deferred to next block commit): {}", hex::encode(&sov_token_id[..8]));
                 }
 
-                if bc.oracle_state.committee.members().is_empty() {
+                if bc.oracle_state().committee.members().is_empty() {
                     if emergency_restore_enabled {
                         let restored = try_restore_oracle_from_dat(
                             &mut bc,
@@ -3496,7 +3496,7 @@ impl RuntimeOrchestrator {
         let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain().await?;
         let mut blockchain = blockchain_arc.write().await;
 
-        if !blockchain.oracle_state.committee.members().is_empty() {
+        if !blockchain.oracle_state().committee.members().is_empty() {
             return Ok(()); // already populated — nothing to do
         }
 
@@ -3523,7 +3523,7 @@ impl RuntimeOrchestrator {
                 Ok(()) => {
                     info!(
                         "🔮 Bootstrapped oracle committee from validator registry (members={})",
-                        blockchain.oracle_state.committee.members().len()
+                        blockchain.oracle_state().committee.members().len()
                     );
                 }
                 Err(e) => {
@@ -5475,15 +5475,15 @@ pub(super) fn try_restore_oracle_from_dat(
     allow_genesis_mismatch: bool,
 ) -> Result<bool> {
     match load_validated_blockchain_dat(dat_path, allow_genesis_mismatch)? {
-        Some(dat_bc) if !dat_bc.oracle_state.committee.members().is_empty() => {
-            let count = dat_bc.oracle_state.committee.members().len();
-            bc.oracle_state = dat_bc.oracle_state;
+        Some(dat_bc) if !dat_bc.oracle_state().committee.members().is_empty() => {
+            let count = dat_bc.oracle_state().committee.members().len();
+            bc.replace_oracle_state_unchecked(dat_bc.oracle_state().clone());
             warn!(
                 "⚠️  Emergency restore loaded oracle committee from blockchain.dat ({} members)",
                 count
             );
             if let Some(store_ref) = bc.store.as_ref() {
-                if let Err(e) = store_ref.save_oracle_state(&bc.oracle_state) {
+                if let Err(e) = store_ref.save_oracle_state(&bc.oracle_state()) {
                     warn!("⚠️ Failed to persist restored oracle_state to Sled: {}", e);
                 }
             }
@@ -6275,14 +6275,14 @@ mod oracle_startup_tests {
 
         // Target blockchain loaded from Sled with empty oracle committee.
         let mut target = Blockchain::new().expect("Blockchain::new");
-        assert!(target.oracle_state.committee.members().is_empty());
+        assert!(target.oracle_state().committee.members().is_empty());
 
         let restored = try_restore_oracle_from_dat(&mut target, &dat_path, false)
             .expect("try_restore_oracle_from_dat");
 
         assert!(restored, "expected restoration to succeed");
         assert_eq!(
-            target.oracle_state.committee.members().len(),
+            target.oracle_state().committee.members().len(),
             2,
             "committee should have been restored from dat"
         );
@@ -6307,7 +6307,7 @@ mod oracle_startup_tests {
             "should not restore when dat also has empty committee"
         );
         assert!(
-            target.oracle_state.committee.members().is_empty(),
+            target.oracle_state().committee.members().is_empty(),
             "committee should remain empty"
         );
     }
@@ -6322,7 +6322,7 @@ mod oracle_startup_tests {
             .expect("try_restore_oracle_from_dat");
 
         assert!(!restored, "should not restore when dat file does not exist");
-        assert!(target.oracle_state.committee.members().is_empty());
+        assert!(target.oracle_state().committee.members().is_empty());
     }
 
     #[test]
@@ -6357,7 +6357,7 @@ mod oracle_startup_tests {
     #[test]
     fn bootstrap_from_validator_registry_populates_committee() {
         let mut bc = Blockchain::new().expect("Blockchain::new");
-        assert!(bc.oracle_state.committee.members().is_empty());
+        assert!(bc.oracle_state().committee.members().is_empty());
 
         // Insert an active validator with a Dilithium5-sized consensus key.
         let consensus_key = [0xABu8; 2592];
@@ -6401,8 +6401,8 @@ mod oracle_startup_tests {
         bc.bootstrap_oracle_committee(committee_members)
             .expect("bootstrap_oracle_committee");
 
-        assert_eq!(bc.oracle_state.committee.members().len(), 1);
-        assert!(bc.oracle_state.committee.members().contains(&key_id));
+        assert_eq!(bc.oracle_state().committee.members().len(), 1);
+        assert!(bc.oracle_state().committee.members().contains(&key_id));
     }
 
     #[test]
@@ -6450,7 +6450,7 @@ mod oracle_startup_tests {
             committee_members.is_empty(),
             "all-zeros keys should be filtered out"
         );
-        assert!(bc.oracle_state.committee.members().is_empty());
+        assert!(bc.oracle_state().committee.members().is_empty());
     }
 }
 

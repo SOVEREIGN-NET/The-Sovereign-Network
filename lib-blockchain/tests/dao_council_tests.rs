@@ -26,7 +26,7 @@ fn three_member_config() -> CouncilBootstrapConfig {
 #[test]
 fn test_governance_phase_default_is_bootstrap() {
     let bc = Blockchain::new().expect("genesis");
-    assert_eq!(bc.governance_phase, GovernancePhase::Bootstrap);
+    assert_eq!(bc.governance_phase(), &GovernancePhase::Bootstrap);
 }
 
 #[test]
@@ -35,8 +35,8 @@ fn test_ensure_council_bootstrap_populates_members() {
     let cfg = three_member_config();
     bc.ensure_council_bootstrap(&cfg);
 
-    assert_eq!(bc.council_members.len(), 3);
-    assert_eq!(bc.council_threshold, 2);
+    assert_eq!(bc.council_members().len(), 3);
+    assert_eq!(bc.council_threshold(), 2);
     assert!(bc.is_council_member("did:zhtp:alice"));
     assert!(bc.is_council_member("did:zhtp:bob"));
     assert!(bc.is_council_member("did:zhtp:carol"));
@@ -48,11 +48,11 @@ fn test_ensure_council_bootstrap_idempotent() {
     let mut bc = Blockchain::new().expect("genesis");
     let cfg = three_member_config();
     bc.ensure_council_bootstrap(&cfg);
-    let first_count = bc.council_members.len();
+    let first_count = bc.council_members().len();
 
     // Call again — must be no-op
     bc.ensure_council_bootstrap(&cfg);
-    assert_eq!(bc.council_members.len(), first_count);
+    assert_eq!(bc.council_members().len(), first_count);
 }
 
 #[test]
@@ -86,10 +86,10 @@ fn test_council_bootstrap_survives_dat_round_trip() -> Result<()> {
 
     // Reload and verify
     let loaded = Blockchain::load_from_file(tmp.path())?;
-    assert_eq!(loaded.council_members.len(), 3);
-    assert_eq!(loaded.council_threshold, 2);
+    assert_eq!(loaded.council_members().len(), 3);
+    assert_eq!(loaded.council_threshold(), 2);
     assert!(loaded.is_council_member("did:zhtp:alice"));
-    assert_eq!(loaded.governance_phase, GovernancePhase::Bootstrap);
+    assert_eq!(loaded.governance_phase(), &GovernancePhase::Bootstrap);
 
     Ok(())
 }
@@ -99,7 +99,7 @@ fn test_empty_config_leaves_council_empty() {
     let mut bc = Blockchain::new().expect("genesis");
     let empty_cfg = CouncilBootstrapConfig::default();
     bc.ensure_council_bootstrap(&empty_cfg);
-    assert!(bc.council_members.is_empty());
+    assert!(bc.council_members().is_empty());
 }
 
 #[test]
@@ -110,5 +110,5 @@ fn test_council_threshold_defaults_to_four_in_config() {
     };
     let mut bc = Blockchain::new().expect("genesis");
     bc.ensure_council_bootstrap(&cfg);
-    assert_eq!(bc.council_threshold, 4);
+    assert_eq!(bc.council_threshold(), 4);
 }
