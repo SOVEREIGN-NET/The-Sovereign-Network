@@ -161,6 +161,125 @@ fn now_secs() -> u64 {
         .as_secs()
 }
 
+/// Assemble the canonical, **deterministic** `BftQuorumProof` for a finalized
+/// proposal.
+///
+/// ## Why this exists
+///
+/// The block header commits to `bft_quorum_root = compute_bft_quorum_root(&proof)`,
+/// which feeds into `block.hash()` (header serialization). For all validators
+/// finalizing the same logical block to produce the same `block.hash()`, they
+/// must each construct an **identical** `BftQuorumProof.attestations` vec.
+///
+/// `compute_bft_quorum_root` already sorts + dedups by `validator_id`, so
+/// ordering is not the risk — set membership is. Without this helper's
+/// truncation step, each validator's proof contained every commit attestation
+/// it had locally observed. A peer that observed one extra attestation
+/// produced a different set, and therefore a different root, and therefore
+/// a different `block.hash()`, and therefore the next height's `previous_hash`
+/// check rejected the rest of the network's proposals. That was the testnet
+/// fork-after-restart bug observed at heights 59118–59123 on 2026-05-20.
+///
+/// ## Contract
+///
+/// 1. `process_committed_block` only reaches this helper after verifying that
+///    `count_commits_for(height, _, proposal_id) >= quorum_count(n)`. So this
+///    helper can assume the pool contains at least `quorum_count(n)` distinct
+///    commit attestations for `proposal_id` at `height`.
+/// 2. The attestations included in the returned proof are the
+///    `quorum_count(n)` **lowest-`validator_id`** distinct commit attestations
+///    for `proposal_id` at `height`. Any extras observed only by some
+///    validators are excluded.
+/// 3. Determinism: given any two `vote_pool` snapshots that both satisfy
+///    contract (1) for the same `proposal_id` and `height`, this helper
+///    returns proofs whose `attestations` vecs compare equal — and therefore
+///    `compute_bft_quorum_root` returns identical roots.
+pub(super) fn build_quorum_proof(
+    vote_pool: &HashMap<VotePoolKey, (ConsensusVote, Hash)>,
+    height: u64,
+    proposal_id: &Hash,
+    total_validators: u64,
+) -> lib_types::consensus::BftQuorumProof {
+    let mut attestations: Vec<lib_types::consensus::CommitAttestation> = vote_pool
+        .iter()
+        .filter(|(k, (_, voted_id))| {
+            k.height == height
+                && k.vote_type == VoteType::Commit
+                && voted_id == proposal_id
+        })
+        .filter_map(|(_, (vote, _))| {
+            // Convert Vec<u8> signature to fixed-size Dilithium5 array.
+            // Skip votes with wrong-sized signatures (e.g. test stubs).
+            let signature: [u8; 4595] =
+                vote.signature.signature.as_slice().try_into().ok()?;
+            Some(lib_types::consensus::CommitAttestation {
+                validator_id: vote.voter.0,
+                vote_id: vote.id.0,
+                proposal_id: vote.proposal_id.0,
+                round: vote.round,
+                signature,
+                public_key: vote.signature.public_key.dilithium_pk,
+            })
+        })
+        .collect();
+
+    // Sort by (validator_id, round) so that within each validator_id group
+    // the LOWEST-round attestation comes first. `sort_by` is stable; ties
+    // (same validator_id and same round) keep insertion order, but in normal
+    // operation a validator never produces two commits at the same round
+    // (`enter_commit_step`'s `already_committed` guard at L2882+ now blocks
+    // double-commit cross-round too).
+    //
+    // The secondary `round` sort matters because peers can transiently hold
+    // commit attestations from a validator at multiple rounds — e.g. when a
+    // peer was on the wire before this node's `already_committed` fix
+    // shipped, or during an in-flight upgrade. Picking the lowest-round
+    // attestation deterministically ensures all upgraded peers agree even
+    // when they have different supersets in their pools.
+    attestations.sort_by(|a, b| {
+        a.validator_id
+            .cmp(&b.validator_id)
+            .then_with(|| a.round.cmp(&b.round))
+    });
+
+    // Dedup: keep the FIRST entry per validator_id, which after the sort above
+    // is the lowest-round attestation. All upgraded peers converge on the
+    // same choice for each validator_id.
+    attestations.dedup_by_key(|a| a.validator_id);
+
+    // Truncate to exactly `quorum_count(n)` so the attestation SET is identical
+    // on every validator that has at least quorum_count observations. Extra
+    // attestations from validators with lexicographically-higher `validator_id`
+    // are excluded uniformly. See "Contract" note above.
+    let threshold = bft_quorum_count(total_validators) as usize;
+    if attestations.len() > threshold {
+        attestations.truncate(threshold);
+    }
+
+    lib_types::consensus::BftQuorumProof {
+        height,
+        proposal_id: proposal_id.0,
+        total_validators: total_validators as u32,
+        attestations,
+    }
+}
+
+/// Smallest `k` such that `has_supermajority(k, n)` holds.
+///
+/// `has_supermajority` is a `>= 6667 bps` predicate; this returns the integer
+/// vote count that satisfies it. For n=5 → 4, n=4 → 3, n=3 → 3.
+///
+/// Used by `build_quorum_proof` to truncate the attestation set to a
+/// deterministic subset.
+pub(super) fn bft_quorum_count(total_validators: u64) -> u64 {
+    if total_validators == 0 {
+        return 0;
+    }
+    // ceil(n * 6667 / 10000). Integer math.
+    const BPS: u64 = lib_types::consensus::threshold::BFT_SUPERMAJORITY_BPS;
+    ((total_validators * BPS) + 9_999) / 10_000
+}
+
 /// Why the engine is entering a new round.
 ///
 /// Round progress is network-evidence-driven (Tendermint-style round
@@ -1128,55 +1247,16 @@ impl ConsensusEngine {
         self.validate_committed_block(&proposal).await?;
 
         // Build the BFT quorum proof from the commit votes in the vote pool.
-        // Collect across ALL rounds: validators may cast commit votes in different rounds
-        // (due to timing skew) but they all agree on the same proposal_id, which is what
-        // matters for safety. Round-scoped filtering was the root cause of commit quorum
-        // never being reached when validators entered the Commit step at different times.
-        //
-        // DETERMINISM: attestations must be sorted and deduplicated by validator_id so that
-        // all nodes compute the same quorum_root, which is embedded in the block header.
-        // A non-deterministic quorum_root causes each node to store a different block hash,
-        // breaking the previous_hash chain validation for the next height.
-        let quorum_proof = {
-            let mut attestations: Vec<lib_types::consensus::CommitAttestation> = self
-                .vote_pool
-                .iter()
-                .filter(|(k, (_, voted_id))| {
-                    k.height == self.current_round.height
-                        && k.vote_type == VoteType::Commit
-                        && voted_id == proposal_id
-                })
-                .filter_map(|(_, (vote, _))| {
-                    // Convert Vec<u8> signature to fixed-size Dilithium5 array.
-                    // Skip votes with wrong-sized signatures (e.g. test stubs).
-                    let signature: [u8; 4595] = vote.signature.signature.as_slice()
-                        .try_into().ok()?;
-                    Some(lib_types::consensus::CommitAttestation {
-                        validator_id: vote.voter.0,
-                        vote_id: vote.id.0,
-                        proposal_id: vote.proposal_id.0,
-                        round: vote.round,
-                        signature,
-                        public_key: vote.signature.public_key.dilithium_pk,
-                    })
-                })
-                .collect();
-
-            // Sort by validator_id for deterministic ordering across all nodes.
-            attestations.sort_by_key(|a| a.validator_id);
-            // Deduplicate: keep only the first (lowest-round, since pool was round-sorted) entry
-            // per validator. A validator may have cast commit votes at multiple rounds if the
-            // local round advanced after the initial cast; only one attestation per validator
-            // should contribute to the quorum root so the hash is identical on all nodes.
-            attestations.dedup_by_key(|a| a.validator_id);
-
-            lib_types::consensus::BftQuorumProof {
-                height: self.current_round.height,
-                proposal_id: proposal_id.0,
-                total_validators: total_validators as u32,
-                attestations,
-            }
-        };
+        // See `build_quorum_proof` for the determinism contract — the
+        // attestation set must be identical on every node that finalizes
+        // this block, or the `bft_quorum_root` (and therefore `block.hash()`)
+        // diverges and the chain forks at the next height.
+        let quorum_proof = build_quorum_proof(
+            &self.vote_pool,
+            self.current_round.height,
+            proposal_id,
+            total_validators,
+        );
 
         // Apply block to state with its quorum proof.
         // The callback persists the proof alongside the block so catch-up sync
@@ -2814,16 +2894,29 @@ impl ConsensusEngine {
             .cloned();
 
         if let Some(proposal_id) = commit_target {
-            // Skip if we already cast a commit vote for this round.
+            // Skip if we already cast a commit vote for this proposal at this
+            // height — **at any round**, not just the current one.
+            //
+            // CE-S3: the previous "current-round-only" guard let a single
+            // validator emit MULTIPLE commit votes across rounds (one per
+            // round in which precommit-quorum was observed). Each commit's
+            // signature is bound to its round (see serialize_vote_data L412),
+            // so peers received distinct g3-at-r5 and g3-at-r6 attestations.
+            // When validator A's vote_pool happened to hold g3@r5 and
+            // validator B's held g3@r6, their quorum proofs differed and the
+            // `bft_quorum_root` (which feeds block.hash) diverged → fork at
+            // the next height. The investigation that produced this fix
+            // traced exactly that mechanism through the testnet stall at
+            // heights 59118–59123 on 2026-05-20.
             let already_committed = self
                 .validator_identity
                 .as_ref()
                 .map(|id| {
-                    self.vote_pool.contains_key(&VotePoolKey {
-                        height: self.current_round.height,
-                        round: self.current_round.round,
-                        vote_type: VoteType::Commit,
-                        validator_id: id.clone(),
+                    self.vote_pool.iter().any(|(k, (_, voted_id))| {
+                        k.height == self.current_round.height
+                            && k.vote_type == VoteType::Commit
+                            && k.validator_id == *id
+                            && voted_id == &proposal_id
                     })
                 })
                 .unwrap_or(false);
