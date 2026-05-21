@@ -722,7 +722,7 @@ pub fn build_create_token_tx(
     let payload = TokenCreationPayloadV1 {
         name: name.to_string(),
         symbol: symbol.to_string(),
-        initial_supply: initial_supply as u64, // TODO: widen TokenCreationPayloadV1 to u128
+        initial_supply,
         decimals,
         treasury_allocation_bps: 2_000,
         treasury_recipient,
