@@ -11,7 +11,9 @@ use crate::argument_parsing::{format_output, TokenAction, TokenArgs, ZhtpCli};
 use crate::commands::web4_utils::{connect_default, load_identity_from_keystore};
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
-use lib_blockchain::transaction::{TokenCreationPayloadV1, TokenMintData, TokenTransferData};
+use lib_blockchain::transaction::{
+    TokenCreationPayloadV1, TokenMintData, TokenTransferData, DEFAULT_TOKEN_CREATION_FEE,
+};
 use lib_blockchain::types::TransactionType;
 use lib_blockchain::{
     ContractCall, ContractTransactionBuilder, Hash, Transaction, TransactionOutput,
@@ -240,8 +242,20 @@ pub async fn handle_token_command_with_output<O: Output>(
             name,
             symbol,
             supply,
+            decimals,
             treasury_recipient,
-        } => handle_create(cli, output, &name, &symbol, supply, &treasury_recipient).await,
+        } => {
+            handle_create(
+                cli,
+                output,
+                &name,
+                &symbol,
+                supply,
+                decimals,
+                &treasury_recipient,
+            )
+            .await
+        }
         TokenAction::Mint {
             token_id,
             amount,
@@ -269,10 +283,17 @@ async fn handle_create<O: Output>(
     name: &str,
     symbol: &str,
     supply: u128,
+    decimals: u8,
     treasury_recipient: &str,
 ) -> CliResult<()> {
+    if decimals == 0 || decimals > 18 {
+        return Err(CliError::ConfigError(format!(
+            "decimals must be in 1..=18 (got {})",
+            decimals
+        )));
+    }
     output.info(&format!("Creating token: {} ({})", name, symbol))?;
-    output.info(&format!("Initial supply: {}", supply))?;
+    output.info(&format!("Initial supply: {} atoms ({} decimals)", supply, decimals))?;
     output.info("Signing token creation transaction with local keypair")?;
 
     let keypair = load_default_keypair()?;
@@ -287,7 +308,7 @@ async fn handle_create<O: Output>(
         name: name.to_string(),
         symbol: symbol.to_string(),
         initial_supply: supply,
-        decimals: 8,
+        decimals,
         treasury_allocation_bps: 2_000,
         treasury_recipient: treasury_key.key_id,
     };
@@ -298,8 +319,11 @@ async fn handle_create<O: Output>(
     // before we overwrite it with the actual signature below.
     let mut tx =
         Transaction::new_token_creation_with_chain_id(0x03, lib_crypto::Signature::default(), memo);
-    // TokenCreation is validated as a system transaction on the node and must carry zero fee.
-    tx.fee = 0;
+    // TokenCreation carries the canonical fixed fee from `TxFeeConfig.token_creation_fee`
+    // (see `validation.rs:1348-1356` — validator rejects any other amount). The
+    // earlier `tx.fee = 0` comment was a stale invariant from before the
+    // canonical fee was introduced.
+    tx.fee = DEFAULT_TOKEN_CREATION_FEE;
     tx.signature = keypair
         .sign(tx.signing_hash().as_bytes())
         .map_err(|e| CliError::ConfigError(format!("Failed to sign token creation tx: {e}")))?;
