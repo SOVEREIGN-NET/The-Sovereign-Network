@@ -10,7 +10,7 @@
 //!   by-sponsor   — GET  /api/v1/observer/admission/by-sponsor?did=<did>
 
 use crate::argument_parsing::{ObserverAction, ObserverArgs, ZhtpCli};
-use crate::commands::web4_utils::{self, connect_default, save_private_key_to_file};
+use crate::commands::web4_utils::{self, connect_default, save_private_key_to_file, spawn_crypto};
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
 use lib_crypto::keypair::KeyPair;
@@ -102,11 +102,19 @@ fn parse_json(response: &lib_protocols::types::ZhtpResponse) -> CliResult<serde_
 // ---------------------------------------------------------------------------
 
 /// `observer generate` — create keypair, save to observer keystore.
+///
+/// Key generation runs on a dedicated thread with 128 MB stack to prevent
+/// stack overflow. Writes are atomic (write to .tmp, then rename) so a crash
+/// mid-write never leaves corrupt files.
 async fn cmd_generate(output: &dyn Output) -> CliResult<()> {
     output.header("Generate Observer Identity")?;
 
     let keystore = observer_keystore_path()?;
     let identity_file = keystore.join(NODE_IDENTITY_FILENAME);
+
+    // Clean up any stale .tmp files from previous crashed attempts
+    let _ = std::fs::remove_file(identity_file.with_extension("json.tmp"));
+    let _ = std::fs::remove_file(keystore.join(NODE_PRIVATE_KEY_FILENAME).with_extension("json.tmp"));
 
     if identity_file.exists() {
         // Load and display existing identity (silently)
@@ -131,28 +139,46 @@ async fn cmd_generate(output: &dyn Output) -> CliResult<()> {
 
     output.info("Generating post-quantum keypair (Dilithium5 + Kyber1024)...")?;
 
-    let identity = ZhtpIdentity::new_unified(
-        lib_identity::IdentityType::Device,
-        None,
-        None,
-        "observer-node",
-        None,
-    )
-    .map_err(|e| CliError::IdentityError(format!("Key generation failed: {}", e)))?;
+    // Run key generation on a dedicated thread with explicit 128 MB stack.
+    // The tokio runtime also has a large stack (set in main.rs), but this
+    // provides belt-and-suspenders protection for the heaviest operation.
+    let identity = spawn_crypto(move || {
+        ZhtpIdentity::new_unified(
+            lib_identity::IdentityType::Device,
+            None,
+            None,
+            "observer-node",
+            None,
+        )
+        .map_err(|e| format!("Key generation failed: {}", e))
+    })
+    .await
+    .map_err(|e| CliError::IdentityError(e))?;
 
     let private_key = identity.private_key.as_ref().ok_or_else(|| {
         CliError::IdentityError("Generated identity missing private key".to_string())
     })?;
 
-    // Save private key
     let private_key_file = keystore.join(NODE_PRIVATE_KEY_FILENAME);
-    save_private_key_to_file(private_key, &private_key_file)?;
+    let tmp_private_key = private_key_file.with_extension("json.tmp");
 
-    // Save identity JSON
+    // Save private key to .tmp first
+    save_private_key_to_file(private_key, &tmp_private_key)?;
+
+    // Save identity JSON to .tmp first
     let identity_json = serde_json::to_string_pretty(&identity)
         .map_err(|e| CliError::IdentityError(format!("Serialization failed: {}", e)))?;
-    std::fs::write(&identity_file, &identity_json).map_err(|e| {
+    let tmp_identity = identity_file.with_extension("json.tmp");
+    std::fs::write(&tmp_identity, &identity_json).map_err(|e| {
         CliError::IdentityError(format!("Failed to write identity file: {}", e))
+    })?;
+
+    // Atomically rename .tmp -> final (either both succeed or neither exists)
+    std::fs::rename(&tmp_identity, &identity_file).map_err(|e| {
+        CliError::IdentityError(format!("Failed to finalize identity file: {}", e))
+    })?;
+    std::fs::rename(&tmp_private_key, &private_key_file).map_err(|e| {
+        CliError::IdentityError(format!("Failed to finalize private key: {}", e))
     })?;
 
     #[cfg(unix)]

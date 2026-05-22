@@ -411,7 +411,8 @@ button,input{font:inherit}
   padding:24px;background:rgba(255,255,255,.6);border-radius:18px;
   border:1px solid var(--line);margin-bottom:16px;
 }
-.obs-qr-wrap canvas,.obs-qr-wrap img{border-radius:8px;display:block;margin:0 auto}
+.obs-qr-wrap canvas,.obs-qr-wrap img,.obs-qr-wrap svg{border-radius:8px;display:block;margin:0 auto}
+.obs-qr-wrap svg{max-width:300px;height:auto;background:#fff;padding:8px}
 .obs-qr-status{
   display:flex;align-items:center;gap:10px;
   margin-top:16px;font-family:var(--mono);font-size:13px;color:var(--muted);
@@ -556,6 +557,13 @@ button,input{font:inherit}
                 <div class="choice-code">node://bootstrap</div>
               </div>
               <p>Generate a fresh post-quantum identity and prepare this machine as a new operating surface on the network.</p>
+            </button>
+            <button class="choice" type="button" onclick="showObserverSetup()">
+              <div class="choice-head">
+                <div class="choice-title">Observer Node</div>
+                <div class="choice-code">observer://onboard</div>
+              </div>
+              <p>Onboard an observer node using your phone as the sole signer. No private key or seed phrase is ever entered on this desktop.</p>
             </button>
           </div>
 
@@ -774,7 +782,7 @@ button,input{font:inherit}
       </section>
 
       <!-- ── Observer Admission Panel (hidden by default) ── -->
-      <section id="view-observer" class="hidden" style="display:none">
+      <section id="view-observer" class="hidden">
         <div class="obs-hero panel"style="padding:22px">
           <div class="panel-header">
             <div>
@@ -1711,6 +1719,13 @@ let obsPayload = null;
 let obsPollTimer = null;
 let obsRunningPollTimer = null;
 
+/** Called from the "Observer Node" choice button on the setup page. */
+function showObserverSetup() {
+  stopPolling();
+  setView("observer");
+  showObserverState("generate");
+}
+
 function enterObserverMode() {
   document.title = "Sovereign Network — Observer Setup";
   setView("observer");
@@ -1776,20 +1791,20 @@ async function loadQrPayload() {
 function renderQr(payload) {
   const container = els["obs-qr-container"];
   container.innerHTML = "";
-  var payloadStr = JSON.stringify(payload);
   try {
-    // Use the qrcode-generator factory: QRCode(typeNumber, errorCorrectLevel)
-    // typeNumber=0 for auto, errorCorrectLevel=2 (Q ~25%) for good balance
-    var qr = QRCode(0, 2);
-    qr.addData(payloadStr);
-    qr.make();
-    // Render as SVG tag inside the container
-    container.innerHTML = qr.createSvgTag(256, 4);
-    // Pre-compute ASCII QR for the "Show ASCII QR" button
-    try {
-      var ascii = qr.createASCII();
-      els["obs-ascii-qr-container"].textContent = ascii;
-    } catch (_) { }
+    // datalog/qrcode-svg API:
+    //   QRCode({ msg, dim, pad, mtx, ecl, ecb, pal, vrb }) → SVG DOM node
+    var svgNode = QRCode({
+      msg: JSON.stringify(payload),
+      dim: 300,
+      pad: 4,
+      mtx: -1,
+      ecl: "M",
+      ecb: 1,
+      pal: ["#000000", "#ffffff"],
+      vrb: 1
+    });
+    container.appendChild(svgNode);
   } catch (e) {
     container.textContent = "QR unavailable";
     container.style.fontSize = "11px";
@@ -1890,6 +1905,12 @@ function copyObserverDid() {
 
 async function cancelObserverAdmission() {
   stopObserverPolling();
+  // Attempt to clean up the observer keystore so the user can start fresh.
+  try {
+    await postControl("reset_observer_identity");
+  } catch (_) {
+    // Best-effort — UI still resets even if the call fails.
+  }
   obsDid = null;
   obsPayload = null;
   showObserverState("generate");
@@ -1907,6 +1928,12 @@ function retryObserverAdmission() {
 function resetObserverFlow() {
   stopObserverPolling();
   if (obsRunningPollTimer) window.clearInterval(obsRunningPollTimer);
+  // Clean up the server-side keystore so user can start fresh
+  fetch(API + "/api/control", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({action: "reset_observer_identity"})
+  }).catch(function(){});
   obsDid = null;
   obsPayload = null;
   showObserverState("generate");

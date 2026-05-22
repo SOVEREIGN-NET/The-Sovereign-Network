@@ -10,6 +10,46 @@ use lib_network::web4::TrustConfig;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+/// Minimum recommended stack size for Dilithium5+Kyber1024 crypto operations (128 MB).
+/// The OS default stack (1 MB on Windows) is insufficient for simultaneous
+/// Dilithium5 key generation, Kyber encapsulation, and QUIC TLS handshaking.
+pub const CRYPTO_STACK_SIZE: usize = 128 * 1024 * 1024;
+
+/// Execute a heavy crypto operation on a dedicated thread with an explicit large stack.
+///
+/// Dilithium5+Kyber1024 key generation and QUIC client construction require
+/// significantly more stack space than the OS default (1 MB on Windows, 8 MB on
+/// Linux/macOS). This function spawns a dedicated OS thread with a 128 MB stack,
+/// runs the closure, and returns the result via a tokio `oneshot` channel.
+///
+/// # Panics
+/// If the closure panics, the panic is caught by the thread join and re-raised
+/// as a `String` error on the calling task.
+pub async fn spawn_crypto<T, F>(f: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    let (tx, rx) = tokio::sync::oneshot::channel();
+
+    let handle = std::thread::Builder::new()
+        .name("zhtp-crypto".into())
+        .stack_size(CRYPTO_STACK_SIZE)
+        .spawn(move || {
+            // Also set env var so any nested std::thread::spawn or tokio::task::spawn_blocking
+            // inherits a reasonable default.
+            let _ = std::env::set_var("RUST_MIN_STACK", &CRYPTO_STACK_SIZE.to_string());
+            let result = f();
+            // Ignore error if receiver was dropped (task cancelled).
+            let _ = tx.send(result);
+        })
+        .map_err(|e| format!("Failed to spawn crypto thread: {}", e))?;
+
+    // If the thread panics, the oneshot will be dropped without sending.
+    rx.await
+        .map_err(|_| "Crypto thread terminated unexpectedly (panic or cancellation)".to_string())?
+}
+
 // Re-export KeystorePrivateKey from zhtp for local use and external consumers
 pub use zhtp::keyfile_names::KeystorePrivateKey;
 

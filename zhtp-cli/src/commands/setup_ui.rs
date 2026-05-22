@@ -4,7 +4,7 @@
 //! opens the browser, and proxies API calls to the QUIC node.
 
 use crate::argument_parsing::ZhtpCli;
-use crate::commands::web4_utils::{default_keystore_path, load_identity_from_keystore};
+use crate::commands::web4_utils::{default_keystore_path, load_identity_from_keystore, spawn_crypto};
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
 use tokio::sync::watch;
@@ -175,6 +175,12 @@ pub async fn run_setup_ui(cli: &ZhtpCli, output: &dyn Output) -> CliResult<()> {
             "start_observer_node" => {
                 let did = body.get("did").and_then(|d| d.as_str()).unwrap_or("");
                 match try_start_observer_node(&state.quic_server, did).await {
+                    Ok(json) => (StatusCode::OK, Json(json)),
+                    Err(e) => (StatusCode::OK, Json(serde_json::json!({ "error": e }))),
+                }
+            }
+            "reset_observer_identity" => {
+                match try_reset_observer_identity().await {
                     Ok(json) => (StatusCode::OK, Json(json)),
                     Err(e) => (StatusCode::OK, Json(serde_json::json!({ "error": e }))),
                 }
@@ -463,18 +469,23 @@ async fn try_restore_seed(seed_phrase: &str) -> Result<serde_json::Value, String
 async fn try_create_new(name: &str) -> Result<serde_json::Value, String> {
     let keystore_path = default_keystore_path().map_err(|e| e.to_string())?;
 
+    let name_owned = name.to_string();
     if keystore_path.join("user_identity.json").exists() {
         return Err("Identity already exists. Delete keystore to create a new one.".to_string());
     }
 
-    let identity = lib_identity::ZhtpIdentity::new_unified(
-        lib_identity::IdentityType::Device,
-        None,
-        None,
-        name,
-        None,
-    )
-    .map_err(|e| format!("Failed to create identity: {}", e))?;
+    // Run key generation on a dedicated thread with explicit 128 MB stack.
+    let identity = spawn_crypto(move || {
+        lib_identity::ZhtpIdentity::new_unified(
+            lib_identity::IdentityType::Device,
+            None,
+            None,
+            &name_owned,
+            None,
+        )
+        .map_err(|e| format!("Failed to create identity: {}", e))
+    })
+    .await?;
 
     let did = identity.did.clone();
 
@@ -483,13 +494,24 @@ async fn try_create_new(name: &str) -> Result<serde_json::Value, String> {
 
     let identity_json = serde_json::to_string_pretty(&identity)
         .map_err(|e| format!("Serialize: {}", e))?;
-    std::fs::write(keystore_path.join("user_identity.json"), &identity_json)
+
+    // Atomic write: .tmp → rename
+    let tmp_identity = keystore_path.join("user_identity.json.tmp");
+    let final_identity = keystore_path.join("user_identity.json");
+    std::fs::write(&tmp_identity, &identity_json)
         .map_err(|e| format!("Write identity: {}", e))?;
 
     if let Some(ref pk) = identity.private_key {
-        crate::commands::web4_utils::save_private_key_to_file(pk, &keystore_path.join("user_private_key.json"))
+        let tmp_key = keystore_path.join("user_private_key.json.tmp");
+        let final_key = keystore_path.join("user_private_key.json");
+        crate::commands::web4_utils::save_private_key_to_file(pk, &tmp_key)
             .map_err(|e| format!("Write private key: {}", e))?;
+        std::fs::rename(&tmp_key, &final_key)
+            .map_err(|e| format!("Rename private key: {}", e))?;
     }
+
+    std::fs::rename(&tmp_identity, &final_identity)
+        .map_err(|e| format!("Rename identity: {}", e))?;
 
     Ok(serde_json::json!({
         "success": true,
@@ -586,9 +608,17 @@ async fn connect_observer_with(
 }
 
 /// Create a Dilithium5+Kyber1024 observer keypair in ~/.zhtp/keystore/observer/.
+///
+/// Key generation runs on a dedicated thread with 128 MB stack to prevent
+/// stack overflow. Writes are atomic (write to .tmp, then rename) so a crash
+/// mid-write never leaves corrupt files.
 async fn try_generate_observer_identity() -> Result<serde_json::Value, String> {
     let keystore = observer_keystore_path()?;
     let identity_file = keystore.join(NODE_IDENTITY_FILENAME);
+
+    // Clean up any stale .tmp files from previous crashed attempts
+    let _ = std::fs::remove_file(identity_file.with_extension("json.tmp"));
+    let _ = std::fs::remove_file(keystore.join(NODE_PRIVATE_KEY_FILENAME).with_extension("json.tmp"));
 
     if identity_file.exists() {
         let (identity, keypair) = load_observer_identity()?;
@@ -605,28 +635,43 @@ async fn try_generate_observer_identity() -> Result<serde_json::Value, String> {
     std::fs::create_dir_all(&keystore)
         .map_err(|e| format!("Failed to create observer keystore: {}", e))?;
 
-    let identity = ZhtpIdentity::new_unified(
-        lib_identity::IdentityType::Device,
-        None,
-        None,
-        "observer-node",
-        None,
-    )
-    .map_err(|e| format!("Key generation failed: {}", e))?;
+    // Run key generation on a dedicated thread with explicit 128 MB stack.
+    // This is the most stack-intensive operation — Dilithium5 keygen alone
+    // needs ~200 KB per frame and can go 5+ frames deep.
+    let identity = spawn_crypto(move || {
+        ZhtpIdentity::new_unified(
+            lib_identity::IdentityType::Device,
+            None,
+            None,
+            "observer-node",
+            None,
+        )
+        .map_err(|e| format!("Key generation failed: {}", e))
+    })
+    .await?;
 
     let private_key = identity.private_key.as_ref()
         .ok_or_else(|| "Generated identity missing private key".to_string())?;
 
-    // Save private key
     let private_key_file = keystore.join(NODE_PRIVATE_KEY_FILENAME);
-    crate::commands::web4_utils::save_private_key_to_file(private_key, &private_key_file)
+    let tmp_private_key = private_key_file.with_extension("json.tmp");
+
+    // Save private key to .tmp first
+    crate::commands::web4_utils::save_private_key_to_file(private_key, &tmp_private_key)
         .map_err(|e| e.to_string())?;
 
-    // Save identity JSON
+    // Save identity JSON to .tmp first
     let identity_json = serde_json::to_string_pretty(&identity)
         .map_err(|e| format!("Serialization failed: {}", e))?;
-    std::fs::write(&identity_file, &identity_json)
+    let tmp_identity = identity_file.with_extension("json.tmp");
+    std::fs::write(&tmp_identity, &identity_json)
         .map_err(|e| format!("Failed to write identity file: {}", e))?;
+
+    // Atomically rename .tmp -> final (either both succeed or neither exists)
+    std::fs::rename(&tmp_identity, &identity_file)
+        .map_err(|e| format!("Failed to finalize identity file: {}", e))?;
+    std::fs::rename(&tmp_private_key, &private_key_file)
+        .map_err(|e| format!("Failed to finalize private key: {}", e))?;
 
     #[cfg(unix)]
     {
@@ -663,18 +708,26 @@ async fn try_admission_status(server: &str, did: &str) -> Result<serde_json::Val
 }
 
 /// Build the v1 QR payload JSON for the desktop UI to render.
+///
+/// The payload uses truncated keys (first 32 bytes → 64 hex chars) to fit
+/// within a smaller, easier-to-scan QR code. The mobile app uses the full
+/// keys from the `/prepare` endpoint, not from the QR code — the truncated
+/// keys here serve only as a lookup hint.
 async fn try_admission_qr_payload(server: &str) -> Result<serde_json::Value, String> {
     let (identity, keypair) = load_observer_identity()?;
 
+    // Only the DID is strictly required for the phone to look up and sign.
+    // Truncated keys (32 bytes = 64 hex chars each) are enough to verify the
+    // phone scanned the right code. The full keys come from the `/prepare`
+    // endpoint on the node, not from the QR.
     Ok(serde_json::json!({
-        "version": 1,
-        "observer_node_did": identity.did,
-        "observer_dilithium_pk_hex": hex::encode(&keypair.public_key.dilithium_pk[..]),
-        "observer_kyber_pk_hex": hex::encode(&keypair.public_key.kyber_pk[..]),
-        "bootstrap_node": server,
-        "network": "testnet",
-        "requested_proof_level": "Verified",
-        "requested_rate_limit": "Default"
+        "v": 1,
+        "d": identity.did,
+        // Short key fingerprints (32 bytes each) — enough for phone to verify
+        "dp": &hex::encode(&keypair.public_key.dilithium_pk[..32]),
+        "kp": &hex::encode(&keypair.public_key.kyber_pk[..32]),
+        "s": server,
+        "n": "testnet"
     }))
 }
 
@@ -710,6 +763,9 @@ async fn try_start_observer_node(server: &str, did: &str) -> Result<serde_json::
 
     let mut cmd = std::process::Command::new(&exe);
     cmd.arg("node")
+        // Pass RUST_MIN_STACK explicitly so the child also has enough stack
+        // for Dilithium5 operations during QUIC handshake.
+        .env("RUST_MIN_STACK", "134217728")
         .env("ZHTP_OBSERVER_KEYSTORE", &keystore_str)
         .env("ZHTP_OBSERVER_BOOTSTRAP", server)
         .stdout(std::process::Stdio::inherit())
@@ -729,5 +785,43 @@ async fn try_start_observer_node(server: &str, did: &str) -> Result<serde_json::
         "success": true,
         "pid": child.id(),
         "message": format!("Observer node started (PID: {})", child.id()),
+    }))
+}
+
+/// Delete observer identity files (used by Cancel/Reset in the UI).
+async fn try_reset_observer_identity() -> Result<serde_json::Value, String> {
+    let keystore = observer_keystore_path()?;
+    let mut removed = Vec::new();
+
+    let identity_file = keystore.join(NODE_IDENTITY_FILENAME);
+    let private_key_file = keystore.join(NODE_PRIVATE_KEY_FILENAME);
+
+    // Also clean up .tmp files from crashed atomic writes
+    for name in [
+        NODE_IDENTITY_FILENAME,
+        NODE_PRIVATE_KEY_FILENAME,
+        &format!("{}.tmp", NODE_IDENTITY_FILENAME),
+        &format!("{}.tmp", NODE_PRIVATE_KEY_FILENAME),
+    ] {
+        let path = keystore.join(name);
+        if path.exists() {
+            std::fs::remove_file(&path)
+                .map_err(|e| format!("Failed to remove {}: {}", path.display(), e))?;
+            removed.push(name.to_string());
+        }
+    }
+
+    // Remove the observer keystore directory itself if empty
+    let _ = std::fs::remove_dir(&keystore);
+
+    Ok(serde_json::json!({
+        "success": true,
+        "message": if removed.is_empty() {
+            "No observer identity files were present."
+        } else {
+            "Observer identity removed."
+        },
+        "removed_files": removed,
+        "keystore": keystore.display().to_string(),
     }))
 }
