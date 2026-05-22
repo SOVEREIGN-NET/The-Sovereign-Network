@@ -155,29 +155,78 @@ impl Web4Handler {
             format!("did:zhtp:{}", simple_request.owner)
         };
 
-        // Look up owner identity using boundary-safe DID API
-        // This is the correct layer: accept DID, use get_identity_by_did()
-        let identity_mgr = self.identity_manager.read().await;
-        let view = identity_mgr.get_identity_view_by_did(principal, &owner_did);
-
-        // Domain registration requires at least device-owner level access.
-        match view {
-            Some(IdentityView::Public(_)) | None => {
-                return Ok(ZhtpResponse::error(
-                    ZhtpStatus::Forbidden,
-                    "Access denied: cannot register domain for this identity".to_string(),
-                ));
-            }
-            _ => {}
+        // Access gate: principal (the QUIC peer, resolved to its canonical
+        // chain DID by `extract_principal_from_request`) must be the owner
+        // of the identity it's registering for. We use a direct string
+        // match here rather than `IdentityManager::get_identity_view_by_did`
+        // because IdentityManager is only populated from QUIC handshakes
+        // for the *device* identity — chain identities loaded via
+        // `IdentityRegistration` txes never make it into that in-memory
+        // map, so the view-based check was 403'ing every legitimate mobile
+        // registration. The on-chain `DomainRegistration` tx verification
+        // path (`validation.rs:548` and `:2108`) is the real authz boundary
+        // — it checks the tx signature against the owner DID's chain pubkey
+        // — and is unaffected by this gate.
+        if principal.did != owner_did {
+            tracing::warn!(
+                "domain/register: principal {} attempted to register for owner {} — refused (chain still enforces sig at tx-apply time)",
+                &principal.did[..principal.did.len().min(28)],
+                &owner_did[..owner_did.len().min(28)]
+            );
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::Forbidden,
+                "Access denied: cannot register domain for this identity".to_string(),
+            ));
         }
 
-        let owner_identity = identity_mgr.get_identity_by_did(&owner_did)
-            .ok_or_else(|| anyhow!(
-                "Owner identity not found: {}. Please register this identity first using /api/v1/identity/create",
-                owner_did
-            ))?
-            .clone();
-        drop(identity_mgr);
+        // Try IdentityManager first (covers the rare case where the owner
+        // identity was also auto-registered from a QUIC handshake), then
+        // fall back to chain.identity_registry, which is the authoritative
+        // store for everything else.
+        let owner_identity = {
+            let identity_mgr = self.identity_manager.read().await;
+            if let Some(found) = identity_mgr.get_identity_by_did(&owner_did) {
+                found.clone()
+            } else {
+                drop(identity_mgr);
+                let bc_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+                    .await
+                    .map_err(|e| anyhow!("Blockchain unavailable: {}", e))?;
+                let bc = bc_arc.read().await;
+                let chain_id = bc.identity_registry.get(&owner_did).ok_or_else(|| {
+                    anyhow!(
+                        "Owner identity not found on chain: {}. Register this identity first.",
+                        owner_did
+                    )
+                })?;
+                let pk = chain_id.public_key.clone();
+                drop(bc);
+
+                let pubkey = lib_crypto::PublicKey::new(
+                    pk.as_slice().try_into().map_err(|_| {
+                        anyhow!("Chain identity public_key is not Dilithium5 size (2592)")
+                    })?,
+                );
+                // `IdentityTransactionData` doesn't carry device_id/node_id —
+                // those are local-only fields populated when we see a peer
+                // over QUIC. For a chain-loaded owner identity we hand in
+                // empty placeholders; the downstream domain-registration
+                // path only reads `did`, `public_key`, and (optionally)
+                // `wallet_manager.wallets`/`metadata`, none of which depend
+                // on device_id/node_id.
+                let identity = lib_identity::ZhtpIdentity::from_observed_handshake(
+                    owner_did.clone(),
+                    pubkey,
+                    String::new(),
+                    lib_identity::types::NodeId::default(),
+                )
+                .map_err(|e| anyhow!("Failed to construct owner identity from chain: {}", e))?;
+
+                let mut identity_mgr = self.identity_manager.write().await;
+                identity_mgr.add_identity(identity.clone());
+                identity
+            }
+        };
 
         // DEBUG: Check wallet state right after retrieval
         info!("  WALLET DEBUG (after IdentityManager retrieval):");

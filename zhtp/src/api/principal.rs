@@ -87,15 +87,69 @@ fn resolve_role_for_did(did: &str) -> Role {
 /// point (the request itself arrived through tokio), so the cost is
 /// bounded to a single map read.
 fn resolve_canonical_did(device_key: [u8; 32], raw_did: String) -> String {
-    let manager = match crate::session_manager::session_manager_handle() {
-        Some(m) => m,
-        None => return raw_did,
+    let device_key_hex = hex::encode(&device_key);
+
+    // (1) Session-bound device map (set by OPAQUE login_finish — only works
+    //     for flows that authenticate over an already-v2 session, which is
+    //     why OPAQUE itself can't populate it: login_finish runs on a
+    //     public read-only QUIC connection where request.requester is None).
+    if let Some(manager) = crate::session_manager::session_manager_handle() {
+        let lookup = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async move {
+                manager.canonical_did_for_quic_key(&device_key).await
+            })
+        });
+        if let Some(canonical) = lookup {
+            if !canonical.is_empty() {
+                tracing::debug!(
+                    "principal: device {} → canonical {} (via SessionManager binding)",
+                    &device_key_hex[..16],
+                    &canonical[..canonical.len().min(28)]
+                );
+                return canonical;
+            }
+        }
+    }
+
+    // (2) + (3) — chain identity_registry lookup. Same resolver
+    // `msg/receive` uses (messaging/handler.rs:279-326). This is the path
+    // that actually unblocks mobile after OPAQUE login because the
+    // SessionManager binding can never be populated by the OPAQUE flow
+    // itself (the public read-only QUIC connection has no peer_did).
+    let provider = match crate::runtime::blockchain_provider::get_global_blockchain_provider() {
+        Some(p) => p,
+        None => {
+            tracing::debug!(
+                "principal: no blockchain provider — using raw DID for device {}",
+                &device_key_hex[..16]
+            );
+            return raw_did;
+        }
     };
 
-    let lookup = tokio::task::block_in_place(|| {
-        tokio::runtime::Handle::current()
-            .block_on(async move { manager.canonical_did_for_quic_key(&device_key).await })
+    let resolved = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async move {
+            provider
+                .resolve_device_key_to_canonical_did(&device_key)
+                .await
+        })
     });
 
-    lookup.unwrap_or(raw_did)
+    match resolved {
+        Some(canonical) => {
+            tracing::info!(
+                "principal: device {} → canonical {} (via identity_registry)",
+                &device_key_hex[..16],
+                &canonical[..canonical.len().min(28)]
+            );
+            canonical
+        }
+        None => {
+            tracing::info!(
+                "principal: no chain identity binds device {} — using raw DID",
+                &device_key_hex[..16]
+            );
+            raw_did
+        }
+    }
 }
