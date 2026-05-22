@@ -215,7 +215,7 @@ pub struct Blockchain {
     pub(crate) outcome_reports: HashMap<lib_crypto::Hash, lib_consensus::OutcomeReport>,
     /// Economic transaction processor for lib-economy integration
     #[serde(skip)]
-    pub economic_processor: Option<EconomicTransactionProcessor>,
+    pub(crate) economic_processor: Option<EconomicTransactionProcessor>,
     // CONS-505: `consensus_coordinator: Option<Arc<RwLock<
     // BlockchainConsensusCoordinator>>>` was deleted along with the
     // parallel orchestrator. The single consensus driver is now
@@ -223,14 +223,14 @@ pub struct Blockchain {
     // through `BlockFinalizationSink` (CONS-402 / CONS-504).
     /// Storage manager for persistent data
     #[serde(skip)]
-    pub storage_manager: Option<std::sync::Arc<tokio::sync::RwLock<BlockchainStorageManager>>>,
+    pub(crate) storage_manager: Option<std::sync::Arc<tokio::sync::RwLock<BlockchainStorageManager>>>,
     /// Phase 2 incremental storage backend (replaces monolithic serialization)
     /// When present, this store is the authoritative source of state.
     #[serde(skip)]
-    pub store: Option<std::sync::Arc<dyn BlockchainStore>>,
+    pub(crate) store: Option<std::sync::Arc<dyn BlockchainStore>>,
     /// Recursive proof aggregator for O(1) state verification
     #[serde(skip)]
-    pub proof_aggregator:
+    pub(crate) proof_aggregator:
         Option<std::sync::Arc<tokio::sync::RwLock<lib_proofs::RecursiveProofAggregator>>>,
     /// Auto-persistence configuration
     #[serde(default)]
@@ -240,7 +240,7 @@ pub struct Blockchain {
     pub blocks_since_last_persist: u64,
     /// Broadcast channel for real-time block/transaction propagation
     #[serde(skip)]
-    pub broadcast_sender: Option<tokio::sync::mpsc::UnboundedSender<BlockchainBroadcastMessage>>,
+    pub(crate) broadcast_sender: Option<tokio::sync::mpsc::UnboundedSender<BlockchainBroadcastMessage>>,
     /// Track executed DAO proposals to prevent double-execution
     #[serde(default)]
     pub(crate) executed_dao_proposals: HashSet<Hash>,
@@ -253,7 +253,7 @@ pub struct Blockchain {
     /// Treasury Kernel - single authority for SOV and DAO token balance mutations
     /// Custom tokens (without kernel_mint_authority) bypass the kernel
     #[serde(skip)]
-    pub treasury_kernel: Option<TreasuryKernel>,
+    pub(crate) treasury_kernel: Option<TreasuryKernel>,
     /// Contract state snapshots per block height for historical queries
     #[serde(default)]
     pub(crate) contract_state_history: std::collections::BTreeMap<u64, HashMap<[u8; 32], Vec<u8>>>,
@@ -274,7 +274,7 @@ pub struct Blockchain {
     /// will be lost. Callers must re-create the publisher and re-subscribe all
     /// listeners after loading a blockchain from storage.
     #[serde(skip)]
-    pub event_publisher: crate::events::BlockchainEventPublisher,
+    pub(crate) event_publisher: crate::events::BlockchainEventPublisher,
     /// UBI (Universal Basic Income) registry - tracks eligible citizens and their payout status
     /// Key: identity_id (hex string), Value: UBI registration data
     #[serde(default)]
@@ -291,7 +291,7 @@ pub struct Blockchain {
     /// All block applications should go through this executor.
     #[serde(skip)]
     #[allow(clippy::redundant_closure_call)]
-    pub executor: Option<std::sync::Arc<crate::execution::executor::BlockExecutor>>,
+    pub(crate) executor: Option<std::sync::Arc<crate::execution::executor::BlockExecutor>>,
     /// Bonding curve token registry
     /// Tracks all bonding curve tokens from deployment through AMM graduation
     #[serde(default)]
@@ -362,7 +362,7 @@ pub struct Blockchain {
     /// at runtime. Treat as opaque by lib-blockchain — the typed
     /// `ServerSetup<CipherSuite>` is constructed in the server crate.
     #[serde(skip)]
-    pub opaque_server_setup: Option<crate::opaque::OpaqueServerSetupBytes>,
+    pub(crate) opaque_server_setup: Option<crate::opaque::OpaqueServerSetupBytes>,
     // =========================================================================
     // DAO Treasury Execution (dao-2)
     // =========================================================================
@@ -6648,6 +6648,81 @@ impl Blockchain {
         self.store
             .as_deref()
             .ok_or(crate::storage::StorageError::NotInitialized)
+    }
+
+    // =========================================================================
+    // Phase 4c — Runtime-handle accessors
+    // =========================================================================
+    // The `#[serde(skip)]` process-local handles (store, executor, event
+    // publisher, treasury kernel, …) are no longer public fields. They are
+    // wired at node startup through these setters and read through these
+    // getters. Unlike the consensus-state accessors, these are not a P0
+    // concern — the handles are not chain state — but closing them keeps the
+    // struct boundary uniform and prevents external code from swapping a
+    // live executor / store out from under a running node.
+    // =========================================================================
+
+    /// Replace the backing store handle (including clearing it with `None`).
+    ///
+    /// `set_store` is the normal startup path (it also flips
+    /// `auto_persist_enabled` off); this lower-level setter is for the block-
+    /// replay / restore path that moves an already-configured handle between
+    /// `Blockchain` values.
+    pub fn set_store_handle(
+        &mut self,
+        store: Option<std::sync::Arc<dyn BlockchainStore>>,
+    ) {
+        self.store = store;
+    }
+
+    /// The block executor handle, if one is attached.
+    pub fn executor(
+        &self,
+    ) -> Option<&std::sync::Arc<crate::execution::executor::BlockExecutor>> {
+        self.executor.as_ref()
+    }
+
+    /// Replace the executor handle (including clearing it with `None`).
+    /// Used by the block-replay / restore path; normal wiring uses
+    /// `set_executor`.
+    pub fn set_executor_handle(
+        &mut self,
+        executor: Option<std::sync::Arc<crate::execution::executor::BlockExecutor>>,
+    ) {
+        self.executor = executor;
+    }
+
+    /// The blockchain event publisher (subscribe to state-change events).
+    pub fn event_publisher(&self) -> &crate::events::BlockchainEventPublisher {
+        &self.event_publisher
+    }
+
+    /// Genesis OPAQUE server-setup bytes, if present in `genesis.toml`.
+    pub fn opaque_server_setup(&self) -> Option<&crate::opaque::OpaqueServerSetupBytes> {
+        self.opaque_server_setup.as_ref()
+    }
+
+    /// The legacy storage manager handle, if one is attached.
+    pub fn storage_manager(
+        &self,
+    ) -> Option<&std::sync::Arc<tokio::sync::RwLock<BlockchainStorageManager>>> {
+        self.storage_manager.as_ref()
+    }
+
+    /// The treasury kernel handle, if one is attached.
+    pub fn treasury_kernel(&self) -> Option<&TreasuryKernel> {
+        self.treasury_kernel.as_ref()
+    }
+
+    /// Whether automatic `.dat` persistence is enabled (legacy path; a
+    /// store-backed node turns this off — see `set_store`).
+    pub fn auto_persist_enabled(&self) -> bool {
+        self.auto_persist_enabled
+    }
+
+    /// Blocks applied since the last auto-persist checkpoint.
+    pub fn blocks_since_last_persist(&self) -> u64 {
+        self.blocks_since_last_persist
     }
 
     /// Record a fork point in the durable audit log.

@@ -1827,7 +1827,7 @@ impl BlockchainHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
-        let response = if let Some(ref store) = blockchain.store {
+        let response = if let Some(store) = blockchain.get_store() {
             match store.get_utxo_merkle_proof(&outpoint)? {
                 Some(proof) => UtxoMerkleProofResponse {
                     status: "ok".to_string(),
@@ -2949,7 +2949,7 @@ impl BlockchainHandler {
             .map_err(|e| anyhow::anyhow!("Failed to get blockchain: {}", e))?;
         let blockchain = blockchain_arc.read().await;
 
-        if let Some(ref store) = blockchain.store {
+        if let Some(store) = blockchain.get_store() {
             match store.get_quorum_proof(height) {
                 Ok(Some(proof)) => {
                     let serialized = bincode::serialize(&proof)

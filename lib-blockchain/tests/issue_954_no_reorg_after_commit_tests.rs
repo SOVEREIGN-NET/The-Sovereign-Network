@@ -118,7 +118,7 @@ async fn test_no_reorg_after_commit_with_four_validators() -> Result<()> {
     let store: std::sync::Arc<dyn lib_blockchain::storage::BlockchainStore> = std::sync::Arc::new(
         lib_blockchain::storage::SledStore::open_temporary().expect("open_temporary"),
     );
-    local_chain.store = Some(store);
+    local_chain.set_store_handle(Some(store));
 
     // Simulate BFT commit: mark block at H=1 as finalized.
     // In production this is triggered after ≥2f+1 (≥3 of 4) commit votes.
@@ -218,7 +218,7 @@ async fn test_reorg_rejected_regardless_of_imported_chain_length() -> Result<()>
     let store: std::sync::Arc<dyn lib_blockchain::storage::BlockchainStore> = std::sync::Arc::new(
         lib_blockchain::storage::SledStore::open_temporary().expect("open_temporary"),
     );
-    local_chain.store = Some(store);
+    local_chain.set_store_handle(Some(store));
     local_chain.mark_block_finalized(1);
 
     // Alternate chain: two blocks (longer than local).  This would normally

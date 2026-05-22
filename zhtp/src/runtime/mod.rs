@@ -1162,17 +1162,17 @@ impl RuntimeOrchestrator {
                     .map_err(|e| anyhow::anyhow!("Failed to get global blockchain: {}", e))?;
                 let store = {
                     let bc = blockchain_arc.read().await;
-                    bc.store.clone()
+                    bc.get_store().cloned()
                 };
                 if let Some(store) = store {
                     if let Some(replayed) = lib_blockchain::Blockchain::replay_from_store(store)? {
                         let mut bc = blockchain_arc.write().await;
                         // Preserve the store and executor from replayed blockchain
-                        let store = replayed.store.clone();
-                        let executor = replayed.executor.clone();
+                        let store = replayed.get_store().cloned();
+                        let executor = replayed.executor().cloned();
                         *bc = replayed;
-                        bc.store = store;
-                        bc.executor = executor;
+                        bc.set_store_handle(store);
+                        bc.set_executor_handle(executor);
                         // Seed validators from bootstrap config (not stored in blocks)
                         seed_validators_from_bootstrap_config(
                             &mut bc,
@@ -1347,7 +1347,7 @@ impl RuntimeOrchestrator {
             // those mints are NOT in any block transaction, so they are invisible to
             // load_from_store on the next restart. Writing them to token_balances here
             // (idempotent) ensures every restart finds the correct genesis balances.
-            if let Some(store) = blockchain.store.as_ref() {
+            if let Some(store) = blockchain.get_store() {
                 let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
                 if let Some(sov_contract) = blockchain.token_contracts().get(&sov_token_id) {
                     let entries: Vec<([u8; 32], u128)> = sov_contract
@@ -5482,7 +5482,7 @@ pub(super) fn try_restore_oracle_from_dat(
                 "⚠️  Emergency restore loaded oracle committee from blockchain.dat ({} members)",
                 count
             );
-            if let Some(store_ref) = bc.store.as_ref() {
+            if let Some(store_ref) = bc.get_store() {
                 if let Err(e) = store_ref.save_oracle_state(&bc.oracle_state()) {
                     warn!("⚠️ Failed to persist restored oracle_state to Sled: {}", e);
                 }

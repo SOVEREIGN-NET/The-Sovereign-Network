@@ -645,7 +645,7 @@ async fn migrate_wallets_for_identity(
         let to_migrate: Vec<_> = owned
             .into_iter()
             .filter(|w| {
-                let Some(store) = blockchain.store.as_ref() else {
+                let Some(store) = blockchain.get_store() else {
                     return false;
                 };
                 let addr = lib_blockchain::storage::Address::new(w.wallet_id.as_array());

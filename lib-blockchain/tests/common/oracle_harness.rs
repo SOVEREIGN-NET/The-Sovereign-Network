@@ -74,7 +74,7 @@ impl OracleTestHarness {
                 lib_blockchain::storage::SledStore::open_temporary()
                     .expect("open temporary sled store for harness"),
             );
-        blockchain.store = Some(store);
+        blockchain.set_store_handle(Some(store));
         let mut validators = Vec::with_capacity(validator_count);
         let mut committee_members = Vec::with_capacity(validator_count);
 

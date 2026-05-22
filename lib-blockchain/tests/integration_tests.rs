@@ -304,7 +304,7 @@ async fn test_blockchain_state_restart_equivalence_inner() -> Result<()> {
     blockchain.add_block_with_persistence(block).await?;
     blockchain.persist_blockchain_state().await?;
 
-    if let Some(ref storage_manager_arc) = blockchain.storage_manager {
+    if let Some(storage_manager_arc) = blockchain.storage_manager() {
         let storage_manager = storage_manager_arc.read().await;
         let latest_state = storage_manager.retrieve_latest_blockchain_state().await?;
 

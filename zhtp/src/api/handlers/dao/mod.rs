@@ -3189,7 +3189,7 @@ impl DaoHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
-        let store = match &blockchain.store {
+        let store = match blockchain.get_store() {
             Some(s) => s,
             None => {
                 return create_json_response(json!({
@@ -3279,7 +3279,7 @@ impl DaoHandler {
         let stake_amount = {
             let blockchain_arc = self.get_blockchain().await?;
             let blockchain = blockchain_arc.read().await;
-            let store = match blockchain.store.as_ref() {
+            let store = match blockchain.get_store() {
                 Some(store) => store,
                 None => {
                     return create_json_response(json!({

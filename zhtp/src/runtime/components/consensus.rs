@@ -707,8 +707,8 @@ async fn catchup_sync_from_peer(
     // This mirrors the logic in try_initial_sync_from_peer (runtime/mod.rs).
     let no_genesis_in_sled = {
         let bc = blockchain_arc.read().await;
-        bc.store
-            .as_ref()
+        bc.get_store()
+            
             .map(|s| s.get_block_by_height(0).ok().flatten().is_none())
             .unwrap_or(false)
     };
@@ -814,7 +814,7 @@ async fn catchup_sync_from_peer(
                     total_applied += 1;
                     // Persist the verified quorum proof alongside the block.
                     if let Some(ref proof) = verified_proof {
-                        if let Some(ref store) = bc.store {
+                        if let Some(store) = bc.get_store() {
                             let _ = store.put_quorum_proof(height, proof);
                         }
                     }
@@ -1012,7 +1012,7 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
                     anyhow::anyhow!("Failed to deserialize block for hash check: {}", e)
                 })?;
             let bft_hash = committed_block_for_check.hash().as_array();
-            if let Some(ref store) = blockchain.store {
+            if let Some(store) = blockchain.get_store() {
                 if let Ok(Some(stored_hash)) = store.get_block_hash_by_height(proposal.height) {
                     if stored_hash.0 != bft_hash {
                         // CRITICAL: Do NOT wipe sled or exit. The Apr 2 2026 incident
@@ -1231,7 +1231,7 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
         if blockchain.height > proposal.height {
             if let Some(existing_block) = blockchain.get_block(proposal.height) {
                 if existing_block.hash() == committed_block.hash() {
-                    if let Some(ref store) = blockchain.store {
+                    if let Some(store) = blockchain.get_store() {
                         let _ = store.put_quorum_proof(proposal.height, &quorum_proof);
                     }
                     return Ok(());
@@ -1259,7 +1259,7 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
         let slot = self.blockchain_slot.read().await;
         if let Some(bc_arc) = slot.as_ref() {
             let bc = bc_arc.read().await;
-            if let Some(ref store) = bc.store {
+            if let Some(store) = bc.get_store() {
                 if let Err(e) = store.put_quorum_proof(proposal.height, &quorum_proof) {
                     tracing::warn!(
                         "Failed to persist quorum proof for height {}: {} (non-fatal)",

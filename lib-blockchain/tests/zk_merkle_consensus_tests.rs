@@ -152,8 +152,8 @@ async fn test_dual_node_merkle_root_consensus_with_real_zk_proofs() -> Result<()
     );
 
     // Verify both nodes computed the exact same UTXO Merkle root.
-    let store_a = node_a.store.as_ref().expect("node_a has store");
-    let store_b = node_b.store.as_ref().expect("node_b has store");
+    let store_a = node_a.get_store().expect("node_a has store");
+    let store_b = node_b.get_store().expect("node_b has store");
 
     let root_a = store_a.get_utxo_merkle_root()?;
     let root_b = store_b.get_utxo_merkle_root()?;

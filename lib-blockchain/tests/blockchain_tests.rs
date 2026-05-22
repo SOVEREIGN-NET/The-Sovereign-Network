@@ -488,7 +488,7 @@ async fn test_finality_tracking_basic() -> Result<()> {
     let store: std::sync::Arc<dyn lib_blockchain::storage::BlockchainStore> = std::sync::Arc::new(
         lib_blockchain::storage::SledStore::open_temporary().expect("open_temporary"),
     );
-    blockchain.store = Some(store);
+    blockchain.set_store_handle(Some(store));
 
     // Initially, block should not be finalized
     assert!(
@@ -546,7 +546,7 @@ async fn test_finalize_blocks_tracking() -> Result<()> {
     let store: std::sync::Arc<dyn lib_blockchain::storage::BlockchainStore> = std::sync::Arc::new(
         lib_blockchain::storage::SledStore::open_temporary().expect("open_temporary"),
     );
-    blockchain.store = Some(store);
+    blockchain.set_store_handle(Some(store));
 
     // Manually mark blocks as finalized
     blockchain.mark_block_finalized(1);
@@ -575,7 +575,7 @@ async fn test_finalized_blocks_set_operations() -> Result<()> {
     let store: std::sync::Arc<dyn lib_blockchain::storage::BlockchainStore> = std::sync::Arc::new(
         lib_blockchain::storage::SledStore::open_temporary().expect("open_temporary"),
     );
-    blockchain.store = Some(store);
+    blockchain.set_store_handle(Some(store));
 
     // Finalize a few blocks
     blockchain.mark_block_finalized(5);

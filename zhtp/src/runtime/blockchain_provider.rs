@@ -375,7 +375,7 @@ async fn attach_projection_listener(blockchain: &Arc<RwLock<Blockchain>>) -> Res
 
     let rx = {
         let blockchain = blockchain.read().await;
-        blockchain.event_publisher.subscribe()
+        blockchain.event_publisher().subscribe()
     };
     spawn_projection_listener(rx);
     Ok(())

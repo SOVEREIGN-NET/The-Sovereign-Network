@@ -17,7 +17,7 @@ fn blockchain_with_store() -> Blockchain {
     let mut blockchain = Blockchain::default();
     let store: std::sync::Arc<dyn lib_blockchain::storage::BlockchainStore> =
         std::sync::Arc::new(SledStore::open_temporary().expect("open_temporary"));
-    blockchain.store = Some(store);
+    blockchain.set_store_handle(Some(store));
     blockchain
 }
 
@@ -200,7 +200,7 @@ fn slashing_events_survive_restart() {
         std::sync::Arc::new(SledStore::open_temporary().expect("open_temporary"));
 
     let mut blockchain = Blockchain::default();
-    blockchain.store = Some(std::sync::Arc::clone(&store));
+    blockchain.set_store_handle(Some(std::sync::Arc::clone(&store)));
 
     let consensus_key = [6u8; 2592];
     let (validator, key_id) = create_validator_info(consensus_key, 100_000);
@@ -219,7 +219,7 @@ fn slashing_events_survive_restart() {
     // Slash events: read directly from the shared store handle (the "restart"
     // analogue — a new Blockchain over the same store can see the events).
     let mut restarted = Blockchain::default();
-    restarted.store = Some(std::sync::Arc::clone(&store));
+    restarted.set_store_handle(Some(std::sync::Arc::clone(&store)));
     let events = store_slash_events(&restarted);
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].validator_key_id, key_id);

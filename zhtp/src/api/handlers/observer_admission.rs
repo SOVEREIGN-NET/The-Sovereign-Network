@@ -579,7 +579,7 @@ pub async fn handle_admission_status(request: ZhtpRequest) -> ZhtpResult<ZhtpRes
             Err(e) => return Ok(forbidden(format!("blockchain provider unavailable: {e}"))),
         };
     let blockchain = blockchain_arc.read().await;
-    let store = match blockchain.store.as_ref() {
+    let store = match blockchain.get_store() {
         Some(s) => s.clone(),
         None => return Ok(server_error("blockchain has no persistent store")),
     };
@@ -608,7 +608,7 @@ pub async fn handle_admission_by_sponsor(request: ZhtpRequest) -> ZhtpResult<Zht
             Err(e) => return Ok(forbidden(format!("blockchain provider unavailable: {e}"))),
         };
     let blockchain = blockchain_arc.read().await;
-    let store = match blockchain.store.as_ref() {
+    let store = match blockchain.get_store() {
         Some(s) => s.clone(),
         None => return Ok(server_error("blockchain has no persistent store")),
     };
@@ -674,7 +674,7 @@ pub async fn handle_admission_prepare(
             }
         };
     let blockchain = blockchain_arc.read().await;
-    let store = match blockchain.store.as_ref() {
+    let store = match blockchain.get_store() {
         Some(s) => s.clone(),
         None => return Ok(server_error("blockchain has no persistent store")),
     };
