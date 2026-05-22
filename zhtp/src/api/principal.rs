@@ -10,11 +10,22 @@ use lib_types::NodeType;
 /// Authenticated DIDs are checked against the on-chain council member list
 /// to assign `Role::Council` vs `Role::Citizen`. If the blockchain lock is
 /// contended, defaults to `Role::Citizen` (safe: never elevates on failure).
+///
+/// Mobile clients sign QUIC bytes with a per-device Dilithium key
+/// (`53c47662…`) which is *different by design* from the user's canonical
+/// chain DID (`e0b97576…`); the OPAQUE login flow binds the two in the
+/// in-memory `SessionManager` map (see PR #2626). The previous version of
+/// this function turned `request.requester.0` directly into
+/// `did:zhtp:<device-key-hex>` — the device-DID — which made every
+/// owner-gated endpoint 403 even immediately after a successful OPAQUE
+/// login. We now consult the binding first and only fall back to the raw
+/// device DID when no binding exists (i.e. pre-OPAQUE-login traffic).
 pub fn extract_principal_from_request(request: &ZhtpRequest) -> SecurityPrincipal {
     // If the transport/session layer has already authenticated the caller
     // and set request.requester, use that DID directly.
     if let Some(ref identity_id) = request.requester {
-        let did = format!("did:zhtp:{}", hex::encode(&identity_id.0));
+        let raw_did = format!("did:zhtp:{}", hex::encode(&identity_id.0));
+        let did = resolve_canonical_did(identity_id.0, raw_did);
         let role = resolve_role_for_did(&did);
         return SecurityPrincipal::new(&did, role, NodeType::FullNode);
     }
@@ -58,4 +69,33 @@ fn resolve_role_for_did(did: &str) -> Role {
         Some(true) => Role::Council,
         _ => Role::Citizen, // Not council, not initialized, or lock contended
     }
+}
+
+/// Resolve a 32-byte device QUIC key to the canonical chain DID it was
+/// bound to at OPAQUE login, falling back to `raw_did` (the stub
+/// `did:zhtp:<device-key-hex>`) when no binding exists.
+///
+/// The binding lives in `SessionManager.device_quic_key_canonical_did`
+/// (in-memory only, cleared on restart, populated by
+/// `handle_login_finish`). This is the same map `/msg/receive` already
+/// consults; surfacing it here means *every* owner-gated endpoint sees
+/// the canonical DID instead of the device-DID.
+///
+/// Performed in a `block_in_place` shim because the principal extractor
+/// is called from sync code paths but the binding map is guarded by an
+/// async `RwLock`. We've already paid for the async runtime at this
+/// point (the request itself arrived through tokio), so the cost is
+/// bounded to a single map read.
+fn resolve_canonical_did(device_key: [u8; 32], raw_did: String) -> String {
+    let manager = match crate::session_manager::session_manager_handle() {
+        Some(m) => m,
+        None => return raw_did,
+    };
+
+    let lookup = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current()
+            .block_on(async move { manager.canonical_did_for_quic_key(&device_key).await })
+    });
+
+    lookup.unwrap_or(raw_did)
 }
