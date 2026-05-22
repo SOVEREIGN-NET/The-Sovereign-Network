@@ -359,6 +359,15 @@ impl ZhtpUnifiedServer {
         // Initialize session manager first
         let _session_manager = Arc::new(SessionManager::new());
         _session_manager.start_cleanup_task();
+        // Publish the same instance as the global handle so consumers that
+        // can't easily take an `Arc<SessionManager>` constructor argument
+        // — `extract_principal_from_request` and the `/msg/receive`
+        // resolver among them — pick up the binding written by
+        // `handle_login_finish`. PR #2626 added `session_manager_handle()`
+        // but never wired this call, so the singleton stayed empty and
+        // every owner-gated endpoint silently fell back to the device DID
+        // and 403'd.
+        crate::session_manager::set_global_session_manager(_session_manager.clone());
 
         // Initialize discovery coordinator (Phase 3 consolidation)
         // Create DiscoveryConfig from runtime bootstrap peers (ARCHITECTURE: Runtime topology, not Environment defaults)
@@ -964,6 +973,41 @@ impl ZhtpUnifiedServer {
         // CBE token operations — UHP-authenticated
         let cbe_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(CbeHandler::new());
         zhtp_router.register_handler("/api/v1/cbe".to_string(), cbe_handler);
+
+        // BUBL rewards endpoints — inline-mint from the treasury identity to
+        // user wallets. Loads its treasury keystore from the env var
+        // `ZHTP_REWARDS_TREASURY_KEYSTORE`; without it, all /rewards/* return
+        // 503. We currently ship the keystore on g1 only so the treasury key
+        // has exactly one exposure surface.
+        match crate::api::handlers::RewardsHandler::new(blockchain.clone()) {
+            Ok(h) => {
+                let handler: Arc<dyn ZhtpRequestHandler> = Arc::new(h);
+                zhtp_router.register_handler("/api/v1/rewards".to_string(), handler);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to initialise RewardsHandler — endpoint will be unavailable: {}",
+                    e
+                );
+            }
+        }
+
+        // Notifications opt-in subscriber list (sled-backed, per-validator).
+        // POST /subscribe + /unsubscribe are open; GET /subscribers is
+        // Council-gated. See `api/handlers/notifications/mod.rs` for the
+        // full rationale on why this isn't a chain tx.
+        match crate::api::handlers::NotificationsHandler::new() {
+            Ok(h) => {
+                let handler: Arc<dyn ZhtpRequestHandler> = Arc::new(h);
+                zhtp_router.register_handler("/api/v1/notifications".to_string(), handler);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to initialise NotificationsHandler — endpoint will be unavailable: {}",
+                    e
+                );
+            }
+        }
 
         // Canonical bonding-curve REST API endpoints — UHP-authenticated
         let bonding_curve_api_handler: Arc<dyn ZhtpRequestHandler> =

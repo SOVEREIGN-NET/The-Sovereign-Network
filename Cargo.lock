@@ -9485,6 +9485,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2",
+ "sled",
  "socket2 0.5.10",
  "subtle",
  "sysinfo",
