@@ -26,7 +26,6 @@ pub mod fees;
 mod fork_recovery; // gutted in Issue #936; kept as private to avoid orphan module errors
 pub mod genesis;
 pub mod integration;
-pub mod mempool;
 pub mod mining;
 pub mod observer;
 pub mod onramp;
@@ -107,9 +106,6 @@ pub use blockchain::{
 pub use query::{BlockchainQuery, BlockchainMutate};
 #[cfg(feature = "contracts")]
 pub use contracts::AmmPool;
-
-// Mempool module
-pub use mempool::{Mempool, MempoolError, MempoolStats};
 
 // DHT Index module
 pub use dht_index::{IndexedBlockHeader, IndexedTransactionSummary};

@@ -64,7 +64,7 @@ impl RewardMinter {
         // Write lock only for mempool insertion
         {
             let mut bc = self.blockchain.write().await;
-            bc.add_system_transaction(mint_tx)?;
+            bc.add_system_transaction(mint_tx, "pouw_reward")?;
         }
 
         info!(

@@ -485,7 +485,7 @@ impl OpaqueHandlers {
         };
         {
             let mut bc = self.blockchain.write().await;
-            if let Err(e) = bc.add_system_transaction(tx) {
+            if let Err(e) = bc.add_system_transaction(tx, "opaque_credential_register") {
                 return Ok(json_err(
                     ZhtpStatus::InternalServerError,
                     &format!("failed to submit RegisterCredential tx: {}", e),

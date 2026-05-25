@@ -599,7 +599,7 @@ impl Web4Handler {
                 payload: lib_blockchain::transaction::TransactionPayload::None,
             };
             let mut blockchain = self.blockchain.write().await;
-            if let Err(e) = blockchain.add_system_transaction(domain_tx) {
+            if let Err(e) = blockchain.add_system_transaction(domain_tx, "web4_domain_register") {
                 warn!("Failed to submit domain {} tx: {}", if is_update { "update" } else { "registration" }, e);
             }
         }
@@ -897,7 +897,7 @@ impl Web4Handler {
                 payload: lib_blockchain::transaction::TransactionPayload::None,
             };
             let mut blockchain = self.blockchain.write().await;
-            if let Err(e) = blockchain.add_system_transaction(domain_tx) {
+            if let Err(e) = blockchain.add_system_transaction(domain_tx, "web4_domain_update") {
                 warn!("Failed to submit domain {} tx: {}", if is_update { "update" } else { "registration" }, e);
             }
         }

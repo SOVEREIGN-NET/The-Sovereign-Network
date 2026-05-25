@@ -71,6 +71,9 @@ pub struct ConsensusCheckpoint {
 // Import lib-proofs for recursive proof aggregation
 use lib_proofs::verifiers::transaction_verifier::{BatchMetadata, BatchedPrivateTransaction};
 
+// Mempool admission (#2647 — S2 wire-up).
+use lib_mempool::{admit, AdmitResult, AdmitResultExt, MempoolConfigExt, MempoolStateExt};
+
 /// Default finality depth (6 blocks like Bitcoin)
 fn default_finality_depth() -> u64 {
     6
@@ -494,6 +497,25 @@ pub struct Blockchain {
     /// derived from blocks.
     #[serde(skip)]
     pub pouw_mint_index: HashMap<[u8; 32], Vec<PouwMintRecord>>,
+    // =========================================================================
+    // Mempool admission state (#2647 — wired in S2)
+    // =========================================================================
+    /// DoS limits applied at mempool admission via `lib_mempool::admit`.
+    /// Initialised to `MempoolConfig::for_testing()` (maximally permissive) so
+    /// that wiring `admit()` produces zero behaviour change under current load.
+    /// Tune to real DoS-protective values in a follow-up config-tuning PR.
+    #[serde(skip)]
+    pub mempool_config: lib_mempool::MempoolConfig,
+    /// Current mempool admission state (byte/tx counts, per-sender tracking).
+    /// Mutated atomically with `pending_transactions` on push and remove.
+    /// Reset on fork-recovery via the existing reorg path.
+    #[serde(skip)]
+    pub mempool_state: lib_mempool::MempoolState,
+    /// Audit counter for `add_system_transaction`: how many txes each originator
+    /// has injected via the bypass path. Logged for observability; the bypass
+    /// is load-bearing (Pattern A/B in #2647) and won't disappear in S2.
+    #[serde(skip)]
+    pub system_tx_originators: HashMap<&'static str, u64>,
 }
 
 /// Validator information stored on-chain.
@@ -2356,6 +2378,29 @@ impl Blockchain {
             transaction.inputs.len(),
             transaction.outputs.len()
         );
+
+        // #2647 S2: DoS admission gate. Runs BEFORE expensive sig/zk verify so
+        // garbage txes don't burn proof-verification cycles. Config starts as
+        // `audit_only()` — all caps at MAX, fee gate disabled — so this is a
+        // zero-rejection observability path until the config is tuned.
+        let admit_tx = transaction.to_admit_tx();
+        let fee_params = lib_fees::FeeParams::default();
+        let admit_result = admit(
+            &admit_tx,
+            &fee_params,
+            &self.mempool_config,
+            &self.mempool_state,
+            self.height,
+        );
+        if admit_result.is_rejected() {
+            let tx_hash = hex::encode(transaction.hash().as_bytes());
+            return Err(anyhow::anyhow!(
+                "Transaction {} rejected by mempool admit: {:?}",
+                &tx_hash[..16],
+                admit_result
+            ));
+        }
+
         if !self.verify_transaction(&transaction)? {
             return Err(anyhow::anyhow!("Transaction verification failed"));
         }
@@ -2369,6 +2414,28 @@ impl Blockchain {
                 "Transaction {} rejected: stale or future nonce",
                 &tx_hash[..16]
             ));
+        }
+
+        // Atomic with the push: update admission state so subsequent admit()
+        // calls see this tx in the per-sender / total-bytes accounting.
+        let period_blocks = self.mempool_config.rate_limit_period_blocks;
+        self.mempool_state.add_tx(
+            admit_tx.sender,
+            admit_tx.tx_bytes as u64,
+            self.height,
+            period_blocks,
+        );
+
+        // #2647 S2: persist for restart recovery. Best-effort — a sled write
+        // failure does not roll back the in-memory enqueue, since the mempool
+        // is non-consensus state and the tx can still execute this session.
+        if let Some(store) = &self.store {
+            if let Err(e) = store.put_pending_transaction(&transaction) {
+                tracing::warn!(
+                    "pending tx persistence failed (tx will be lost on restart): {}",
+                    e
+                );
+            }
         }
 
         self.pending_transactions.push(transaction);
@@ -2395,9 +2462,42 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Add system transaction to pending pool without validation (for identity registration, etc.)
-    pub fn add_system_transaction(&mut self, transaction: Transaction) -> Result<()> {
-        tracing::info!("Adding system transaction to pending pool (bypassing validation)");
+    /// Add a system-originated transaction to the pending pool, bypassing
+    /// signature and admission checks.
+    ///
+    /// `originator` is a compile-time string naming the subsystem injecting
+    /// the tx (e.g. `"pouw_mint"`, `"auto_wallet_registration"`). It is
+    /// recorded in `system_tx_originators` for audit / metric purposes —
+    /// the bypass itself is load-bearing (see #2647 Patterns A and B). This
+    /// path does NOT run `lib_mempool::admit()` nor `verify_transaction`;
+    /// each caller is responsible for the trust it implicitly grants.
+    pub fn add_system_transaction(
+        &mut self,
+        transaction: Transaction,
+        originator: &'static str,
+    ) -> Result<()> {
+        tracing::info!(
+            originator = originator,
+            tx_hash = %hex::encode(&transaction.hash().as_bytes()[..8]),
+            "system tx (bypass admission + verify)",
+        );
+        *self
+            .system_tx_originators
+            .entry(originator)
+            .or_insert(0) += 1;
+
+        // #2647 S2: persist for restart recovery (same contract as
+        // verify_and_enqueue_transaction; best-effort).
+        if let Some(store) = &self.store {
+            if let Err(e) = store.put_pending_transaction(&transaction) {
+                tracing::warn!(
+                    originator = originator,
+                    "system tx persistence failed: {}",
+                    e
+                );
+            }
+        }
+
         self.pending_transactions.push(transaction);
         Ok(())
     }
@@ -2413,25 +2513,45 @@ impl Blockchain {
         let tx_hashes: HashSet<Hash> = transactions.iter().map(|tx| tx.hash()).collect();
 
         // Phase 1: remove the exact committed transactions by hash.
-        self.pending_transactions
-            .retain(|tx| !tx_hashes.contains(&tx.hash()));
+        // Drain matching txes so we can update mempool_state from the actual
+        // accepted-then-committed entries (sender + tx_bytes) rather than the
+        // generic `transactions` slice that may also include never-admitted ones.
+        let (committed, remaining): (Vec<_>, Vec<_>) = std::mem::take(&mut self.pending_transactions)
+            .into_iter()
+            .partition(|tx| tx_hashes.contains(&tx.hash()));
+        self.pending_transactions = remaining;
+        for tx in &committed {
+            let admit_tx = tx.to_admit_tx();
+            self.mempool_state
+                .remove_tx(&admit_tx.sender, admit_tx.tx_bytes as u64);
+            if let Some(store) = &self.store {
+                if let Err(e) = { let h = tx.hash().as_array(); store.delete_pending_transaction(&h) } {
+                    tracing::warn!("pending tx unpersist (commit) failed: {}", e);
+                }
+            }
+        }
 
         // Phase 2: evict remaining transactions with stale nonces.
-        // Collect stale tx hashes first to avoid borrow conflict.
-        let stale_hashes: Vec<Hash> = self
-            .pending_transactions
-            .iter()
-            .filter(|tx| !self.is_nonce_current(tx))
-            .map(|tx| tx.hash())
-            .collect();
-
-        if !stale_hashes.is_empty() {
-            let stale_set: HashSet<Hash> = stale_hashes.iter().cloned().collect();
-            self.pending_transactions
-                .retain(|tx| !stale_set.contains(&tx.hash()));
+        // Drain into a partition again so we can mirror admit-state shrinkage.
+        let (stale, remaining): (Vec<_>, Vec<_>) = std::mem::take(&mut self.pending_transactions)
+            .into_iter()
+            .partition(|tx| !self.is_nonce_current(tx));
+        self.pending_transactions = remaining;
+        let stale_len = stale.len();
+        for tx in &stale {
+            let admit_tx = tx.to_admit_tx();
+            self.mempool_state
+                .remove_tx(&admit_tx.sender, admit_tx.tx_bytes as u64);
+            if let Some(store) = &self.store {
+                if let Err(e) = { let h = tx.hash().as_array(); store.delete_pending_transaction(&h) } {
+                    tracing::warn!("pending tx unpersist (stale-nonce evict) failed: {}", e);
+                }
+            }
+        }
+        if stale_len > 0 {
             tracing::info!(
                 "Evicted {} pending transaction(s) with stale nonces after block commit",
-                stale_hashes.len(),
+                stale_len,
             );
         }
     }
@@ -2480,21 +2600,27 @@ impl Blockchain {
     /// TokenMint must have fee == 0. TokenTransfer may carry any fee value.
     pub fn evict_phase2_invalid_transactions(&mut self, context: &str) -> usize {
         use crate::types::transaction_type::TransactionType;
-        let before = self.pending_transactions.len();
-        self.pending_transactions.retain(|tx| {
-            if tx.transaction_type == TransactionType::TokenMint && tx.fee != 0 {
-                warn!(
-                    "{}: evicting invalid TokenMint pending tx hash={} fee={}",
-                    context,
-                    hex::encode(&tx.hash().as_bytes()[..8]),
-                    tx.fee,
-                );
-                false
-            } else {
-                true
+        let (invalid, remaining): (Vec<_>, Vec<_>) = std::mem::take(&mut self.pending_transactions)
+            .into_iter()
+            .partition(|tx| tx.transaction_type == TransactionType::TokenMint && tx.fee != 0);
+        self.pending_transactions = remaining;
+        for tx in &invalid {
+            warn!(
+                "{}: evicting invalid TokenMint pending tx hash={} fee={}",
+                context,
+                hex::encode(&tx.hash().as_bytes()[..8]),
+                tx.fee,
+            );
+            let admit_tx = tx.to_admit_tx();
+            self.mempool_state
+                .remove_tx(&admit_tx.sender, admit_tx.tx_bytes as u64);
+            if let Some(store) = &self.store {
+                if let Err(e) = { let h = tx.hash().as_array(); store.delete_pending_transaction(&h) } {
+                    tracing::warn!("pending tx unpersist (phase2 evict) failed: {}", e);
+                }
             }
-        });
-        let evicted = before - self.pending_transactions.len();
+        }
+        let evicted = invalid.len();
         if evicted > 0 {
             warn!(
                 "{}: evicted {} invalid pending transaction(s)",
@@ -6457,7 +6583,7 @@ impl Blockchain {
 
         let mint_tx = Transaction::new_token_mint(mint_data, signature, memo);
         let tx_hash = mint_tx.hash();
-        self.add_system_transaction(mint_tx)?;
+        self.add_system_transaction(mint_tx, "pouw_mint")?;
         Ok(tx_hash)
     }
 }

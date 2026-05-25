@@ -139,8 +139,11 @@ pub trait BlockchainMutate {
     fn submit_transaction(&mut self, tx: Transaction) -> anyhow::Result<()>;
 
     /// Submit a system-originated transaction (bypass signature validation).
-    /// Used for POUW minting and genesis bootstrap only.
-    ///
-    /// **Deprecated**: Prefer `submit_transaction()` with proper system authority signing.
-    fn submit_system_transaction(&mut self, tx: Transaction) -> anyhow::Result<()>;
+    /// `originator` is a compile-time tag identifying the calling subsystem
+    /// for audit / metric purposes (see #2647).
+    fn submit_system_transaction(
+        &mut self,
+        tx: Transaction,
+        originator: &'static str,
+    ) -> anyhow::Result<()>;
 }

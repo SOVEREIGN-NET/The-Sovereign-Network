@@ -32,7 +32,6 @@ use lib_storage::{
 use crate::{
     block::Block,
     blockchain::Blockchain,
-    mempool::Mempool,
     transaction::{IdentityTransactionData, Transaction, TransactionOutput},
     types::Hash,
 };
@@ -156,8 +155,6 @@ pub enum StorageOperationType {
     RetrieveIdentity,
     StoreUTXOSet,
     RetrieveUTXOSet,
-    StoreMempool,
-    RetrieveMempool,
     Backup,
     Restore,
 }
@@ -778,86 +775,6 @@ impl BlockchainStorageManager {
                 compressed: true,
                 encrypted: self.config.enable_encryption,
                 replica_count: 3,
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
-            },
-            error: None,
-        })
-    }
-
-    /// Store mempool state for recovery
-    pub async fn store_mempool(&mut self, mempool: &Mempool) -> Result<StorageOperationResult> {
-        debug!("Storing mempool state");
-
-        let serialized_mempool = bincode::serialize(mempool)
-            .map_err(|e| anyhow::anyhow!("Failed to serialize mempool: {}", e))?;
-
-        let upload_request = UploadRequest {
-            content: serialized_mempool.clone(),
-            filename: format!(
-                "mempool_{}.dat",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs()
-            ),
-            mime_type: "application/octet-stream".to_string(),
-            description: "Mempool state snapshot".to_string(),
-            tags: vec!["mempool".to_string(), "snapshot".to_string()],
-            encrypt: false, // Mempool can be unencrypted
-            compress: true,
-            access_control: AccessControlSettings {
-                public_read: false,
-                read_permissions: vec![],
-                write_permissions: vec![],
-                expires_at: Some(
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs()
-                        + 24 * 3600,
-                ), // Expire after 1 day
-            },
-            storage_requirements: ContentStorageRequirements {
-                duration_days: 1, // Very short duration
-                quality_requirements: QualityRequirements {
-                    min_uptime: 0.9,
-                    max_response_time: 100,
-                    min_replication: 1,
-                    geographic_distribution: Some(vec!["local".to_string()]),
-                    required_certifications: vec![],
-                },
-                budget_constraints: BudgetConstraints {
-                    max_total_cost: serialized_mempool.len() as u64 * 1, // 1 day storage budget
-                    max_cost_per_gb_day: 50, // Lower cost for temporary data
-                    payment_schedule: PaymentSchedule::Daily,
-                    max_price_volatility: 0.2,
-                },
-            },
-        };
-
-        let system_identity = self.create_system_identity().await?;
-        let content_hash = self
-            .storage_system
-            .write()
-            .await
-            .upload_content(upload_request, system_identity)
-            .await?;
-
-        debug!("Mempool stored successfully");
-
-        Ok(StorageOperationResult {
-            success: true,
-            content_hash: Some(content_hash),
-            metadata: StorageOperationMetadata {
-                operation_type: StorageOperationType::StoreMempool,
-                data_size: serialized_mempool.len(),
-                storage_tier: StorageTier::Hot,
-                compressed: true,
-                encrypted: false,
-                replica_count: 1,
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
@@ -1774,19 +1691,6 @@ mod tests {
         utxo_set.insert(test_hash, test_output);
 
         let store_result = manager.store_utxo_set(&utxo_set).await?;
-        assert!(store_result.success);
-        assert!(store_result.content_hash.is_some());
-
-        Ok::<(), anyhow::Error>(())
-    });
-
-    large_stack_test!(test_mempool_storage, async {
-        let config = BlockchainStorageConfig::default();
-        let mut manager = BlockchainStorageManager::new(config).await?;
-
-        let mempool = crate::mempool::Mempool::default();
-
-        let store_result = manager.store_mempool(&mempool).await?;
         assert!(store_result.success);
         assert!(store_result.content_hash.is_some());
 

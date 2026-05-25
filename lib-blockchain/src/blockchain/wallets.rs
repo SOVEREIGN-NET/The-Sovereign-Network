@@ -652,7 +652,7 @@ impl Blockchain {
             format!("Wallet registration for {}", wallet_data.wallet_name).into_bytes(),
         );
 
-        self.add_system_transaction(registration_tx.clone())?;
+        self.add_system_transaction(registration_tx.clone(), "auto_wallet_registration")?;
         self.wallet_registry
             .insert(wallet_id_str.clone(), wallet_data.clone());
         self.wallet_blocks
