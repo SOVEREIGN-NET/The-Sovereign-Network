@@ -1,11 +1,12 @@
-//! Key type definitions - preserving ZHTP key structures
+// ============================================================================
+// CRITICAL FIX C5: Timing Attack Resistance Tests
+// ============================================================================
 //!
 //! implementations from crypto.rs, lines 78-150
 
 use crate::hashing::hash_blake3;
 use crate::traits::ZeroizingKey;
-use crate::types::Signature;
-use crate::verification::verify_signature;
+use crate::types::Signature;use crate::verification::verify_signature;
 use anyhow::Result;
 use std::sync::atomic::{compiler_fence, Ordering};
 use subtle::ConstantTimeEq;
@@ -134,6 +135,68 @@ impl Ord for PublicKey {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::PublicKey;
+
+    fn make_public_key(key_id_byte: u8, dilithium_byte: u8, kyber_byte: u8) -> PublicKey {
+        let mut key_id = [0u8; 32];
+        key_id[0] = key_id_byte;
+
+        let mut dilithium_pk = [0u8; 2592];
+        dilithium_pk[0] = dilithium_byte;
+
+        let mut kyber_pk = [0u8; 1568];
+        kyber_pk[0] = kyber_byte;
+
+        PublicKey {
+            dilithium_pk,
+            kyber_pk,
+            key_id,
+        }
+    }
+
+    #[test]
+    fn public_key_ord_orders_by_key_id_first() {
+        let lower = make_public_key(1, 255, 255);
+        let higher = make_public_key(2, 0, 0);
+
+        assert!(lower < higher);
+        assert!(higher > lower);
+    }
+
+    #[test]
+    fn public_key_ord_uses_dilithium_as_tie_breaker() {
+        let lower = make_public_key(7, 1, 255);
+        let higher = make_public_key(7, 2, 0);
+
+        assert!(lower < higher);
+        assert!(higher > lower);
+    }
+
+    #[test]
+    fn public_key_ord_uses_kyber_as_final_tie_breaker() {
+        let lower = make_public_key(9, 3, 1);
+        let higher = make_public_key(9, 3, 2);
+
+        assert!(lower < higher);
+        assert!(higher > lower);
+    }
+
+    #[test]
+    fn public_key_ord_is_consistent_with_eq() {
+        let a = make_public_key(11, 22, 33);
+        let b = make_public_key(11, 22, 33);
+        let c = make_public_key(11, 22, 34);
+
+        assert_eq!(a, b);
+        assert_eq!(a.cmp(&b), std::cmp::Ordering::Equal);
+
+        assert_ne!(a, c);
+        assert_ne!(a.cmp(&c), std::cmp::Ordering::Equal);
+    }
+}
+// Manual Hash implementation to match manual PartialEq implementation
 impl std::hash::Hash for PublicKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         // Hash all fields used in PartialEq comparison
@@ -263,69 +326,6 @@ impl PrivateKey {
     pub fn size(&self) -> usize {
         self.dilithium_sk.len() + self.kyber_sk.len() + self.master_seed.len()
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-use super::PublicKey;
-
-fn make_public_key(key_id_byte: u8, dilithium_byte: u8, kyber_byte: u8) -> PublicKey {
-    let mut key_id = [0u8; 32];
-    key_id[0] = key_id_byte;
-
-    let mut dilithium_pk = [0u8; 2592];
-    dilithium_pk[0] = dilithium_byte;
-
-    let mut kyber_pk = [0u8; 1568];
-    kyber_pk[0] = kyber_byte;
-
-    PublicKey {
-        dilithium_pk,
-        kyber_pk,
-        key_id,
-    }
-}
-
-#[test]
-fn public_key_ord_orders_by_key_id_first() {
-    let lower = make_public_key(1, 255, 255);
-    let higher = make_public_key(2, 0, 0);
-
-    assert!(lower < higher);
-    assert!(higher > lower);
-}
-
-#[test]
-fn public_key_ord_uses_dilithium_as_tie_breaker() {
-    let lower = make_public_key(7, 1, 255);
-    let higher = make_public_key(7, 2, 0);
-
-    assert!(lower < higher);
-    assert!(higher > lower);
-}
-
-#[test]
-fn public_key_ord_uses_kyber_as_final_tie_breaker() {
-    let lower = make_public_key(9, 3, 1);
-    let higher = make_public_key(9, 3, 2);
-
-    assert!(lower < higher);
-    assert!(higher > lower);
-}
-
-#[test]
-fn public_key_ord_is_consistent_with_eq() {
-    let a = make_public_key(11, 22, 33);
-    let b = make_public_key(11, 22, 33);
-    let c = make_public_key(11, 22, 34);
-
-    assert_eq!(a, b);
-    assert_eq!(a.cmp(&b), std::cmp::Ordering::Equal);
-
-    assert_ne!(a, c);
-    assert_ne!(a.cmp(&c), std::cmp::Ordering::Equal);
 }
 
 // ============================================================================

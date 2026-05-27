@@ -135,12 +135,12 @@ mod tests {
         let amount = 5000u64;
 
         // Test all priority levels
-        let (net_low, dao_low, total_low) = model.calculate_fee(tx_size, amount, Priority::Low);
+        let (net_low, dao_low, total_low) = model.calculate_fee(tx_size, amount.into(), Priority::Low);
         let (net_normal, dao_normal, total_normal) =
-            model.calculate_fee(tx_size, amount, Priority::Normal);
-        let (net_high, dao_high, total_high) = model.calculate_fee(tx_size, amount, Priority::High);
+            model.calculate_fee(tx_size, amount.into(), Priority::Normal);
+        let (net_high, dao_high, total_high) = model.calculate_fee(tx_size, amount.into(), Priority::High);
         let (net_urgent, dao_urgent, total_urgent) =
-            model.calculate_fee(tx_size, amount, Priority::Urgent);
+            model.calculate_fee(tx_size, amount.into(), Priority::Urgent);
 
         // Network fees should scale with priority
         assert!(net_low < net_normal);

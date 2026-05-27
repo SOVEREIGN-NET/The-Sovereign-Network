@@ -31,17 +31,13 @@ pub mod real {
     use plonky2::{
         field::{
             goldilocks_field::GoldilocksField,
-            types::{Field, PrimeField64},
+            types::Field,
         },
         plonk::config::PoseidonGoldilocksConfig,
-        iop::{
-            target::Target,
-            witness::{PartialWitness, WitnessWrite},
-        },
+        iop::witness::{PartialWitness, WitnessWrite},
         plonk::{
             circuit_builder::CircuitBuilder,
             circuit_data::CircuitData,
-            config::GenericConfig,
             proof::{ProofWithPublicInputs, ProofWithPublicInputsTarget},
         },
     };

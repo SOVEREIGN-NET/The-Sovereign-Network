@@ -68,7 +68,3 @@ proptest = "1.0"
 criterion = "0.5"
 tracing-subscriber = "0.3"
 tempfile = "3.0"
-
-[[example]]
-name = "full_consensus_integration"
-path = "examples/full_consensus_integration.rs"

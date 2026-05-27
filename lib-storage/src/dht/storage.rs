@@ -909,7 +909,7 @@ impl<B: StorageBackend> DhtStorage<B> {
         };
 
         // Generate expected proof with cryptographic parameters
-        let expected_proof = zk_system.prove_storage_access(
+        let _expected_proof = zk_system.prove_storage_access(
             access_key_u64,
             requester_secret,
             data_hash_u64,
@@ -1329,7 +1329,7 @@ impl<B: StorageBackend> DhtStorage<B> {
         value: &[u8],
     ) -> Result<bool> {
         // Initialize ZK system for proof verification
-        let zk_system = lib_proofs::initialize_zk_system()
+        let _zk_system = lib_proofs::initialize_zk_system()
             .map_err(|e| anyhow!("Failed to initialize ZK system: {}", e))?;
 
         if proof.is_empty() {

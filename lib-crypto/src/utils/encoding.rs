@@ -90,3 +90,20 @@ mod tests {
         let _result = dilithium5_pk_from_bytes(&wrong_bytes);
     }
 }
+
+#[cfg(test)]
+mod panic_tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "invalid hex encoding")]
+    fn test_invalid_hex_panics() {
+        let _ = dilithium5_pk_from_hex("not-hex!!!");
+    }
+
+    #[test]
+    #[should_panic(expected = "must be exactly 2592 bytes")]
+    fn test_wrong_length_panics() {
+        let _ = dilithium5_pk_from_hex("aa");
+    }
+}

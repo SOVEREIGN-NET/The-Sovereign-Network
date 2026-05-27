@@ -50,10 +50,9 @@ pub mod real {
             types::{Field, PrimeField64},
         },
         hash::{
-            hash_types::{HashOut, HashOutTarget, NUM_HASH_OUT_ELTS},
+            hash_types::{HashOutTarget, NUM_HASH_OUT_ELTS},
             hashing::hash_n_to_hash_no_pad,
             merkle_proofs::MerkleProofTarget,
-            merkle_tree::MerkleTree,
             poseidon::{PoseidonHash, PoseidonPermutation},
         },
         iop::{

@@ -306,7 +306,6 @@ impl IdentityManager {
                 .contains(&lib_access_control::Capability::EmergencyOverride);
         if matches!(relation, SubjectRelation::Self_)
             || principal.role == lib_access_control::Role::System
-            || principal.role == lib_access_control::Role::Council
             || has_emergency_override
         {
             return Some(IdentityView::Full(FullIdentityView {

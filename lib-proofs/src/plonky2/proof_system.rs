@@ -237,7 +237,7 @@ impl ZkCircuit {
     ///
     /// In production builds (without `fake-proofs` feature), this returns an error
     /// because the stub proof generation has been disabled.
-    pub fn prove(&self, inputs: &[u64], private_inputs: &[u64]) -> Result<Plonky2Proof> {
+    pub fn prove(&self, _inputs: &[u64], _private_inputs: &[u64]) -> Result<Plonky2Proof> {
         #[cfg(not(any(test, feature = "fake-proofs")))]
         {
             return Err(anyhow::anyhow!(
@@ -271,7 +271,7 @@ impl ZkCircuit {
     ///
     /// In production builds (without `fake-proofs` feature), this returns an error
     /// because the stub verification has been disabled.
-    pub fn verify(&self, proof: &Plonky2Proof) -> Result<bool> {
+    pub fn verify(&self, _proof: &Plonky2Proof) -> Result<bool> {
         #[cfg(not(any(test, feature = "fake-proofs")))]
         {
             return Err(anyhow::anyhow!(
