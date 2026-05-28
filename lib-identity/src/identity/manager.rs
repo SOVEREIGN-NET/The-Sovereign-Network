@@ -352,6 +352,21 @@ impl IdentityManager {
     }
 
     /// Determine the relationship between a principal and a subject identity.
+    ///
+    /// Mobile clients authenticate to QUIC with a per-device Dilithium key
+    /// (e.g. `did:zhtp:53c47662…`) which is registered as its own identity
+    /// whose `owner_identity_id` points back at the user's primary identity
+    /// (e.g. `did:zhtp:e0b97576…`). Domain registration and any other
+    /// owner-gated endpoint must recognise that link so the device can act
+    /// on behalf of its owning user.
+    ///
+    /// We accept the `Owner` relation in **either** direction:
+    /// - `identity.owner_identity_id == principal_id`
+    ///   (legacy "this identity is owned by the principal" form — kept so
+    ///   existing tests and any single-identity setup keep working).
+    /// - `principal_identity.owner_identity_id == identity.id`
+    ///   (mobile device → user form: principal is a device identity whose
+    ///   owner is the subject identity).
     fn determine_relation(
         &self,
         principal: &SecurityPrincipal,
@@ -363,9 +378,25 @@ impl IdentityManager {
 
         // Parse principal DID to IdentityId for owner comparison.
         if let Ok(principal_id) = crate::did::parse_did_to_identity_id(&principal.did) {
+            // Direction 1 — subject identity declares the principal as its
+            // owner (e.g. principal is a user identity, subject is its
+            // owned device or wallet identity).
             if let Some(ref owner_id) = identity.owner_identity_id {
                 if principal_id == *owner_id {
                     return SubjectRelation::Owner;
+                }
+            }
+
+            // Direction 2 — principal identity declares the subject as its
+            // owner. This is the mobile-device → owning-user case: the
+            // QUIC transport key is the device identity, whose
+            // `owner_identity_id` field points at the user identity whose
+            // domain / wallet the request is operating on.
+            if let Some(principal_identity) = self.identities.get(&principal_id) {
+                if let Some(ref principal_owner_id) = principal_identity.owner_identity_id {
+                    if *principal_owner_id == identity.id {
+                        return SubjectRelation::Owner;
+                    }
                 }
             }
         }
@@ -1414,12 +1445,16 @@ mod access_control_tests {
     use lib_types::NodeType;
 
     fn test_identity() -> ZhtpIdentity {
+        test_identity_with_seed([0u8; 64])
+    }
+
+    fn test_identity_with_seed(seed: [u8; 64]) -> ZhtpIdentity {
         ZhtpIdentity::new_unified(
             IdentityType::Human,
             Some(30),
             Some("US".to_string()),
             "laptop",
-            Some([0u8; 64]),
+            Some(seed),
         )
         .unwrap()
     }
@@ -1541,6 +1576,90 @@ mod access_control_tests {
         assert!(
             matches!(view, Some(IdentityView::Full(_))),
             "Self DID lookup should return Full view"
+        );
+    }
+
+    #[test]
+    fn test_device_principal_acting_on_owning_user_gets_owner_view() {
+        // Mobile device authenticates QUIC as the device identity, but
+        // the request operates on the user identity whose
+        // `owner_identity_id` it carries. The view must come back at
+        // device-owner level (DeviceOwner) — never Public — or every
+        // owner-gated endpoint 403s.
+        //
+        // User and device need distinct seeds so they end up with
+        // distinct DIDs/ids — same seed collapses them into the same
+        // identity and the test would pass for the wrong reason (Self_
+        // relation instead of direction-2 Owner).
+        let mut manager = IdentityManager::new();
+
+        // User identity — the subject of the request (e.g. domain owner).
+        let user = test_identity_with_seed([0x11u8; 64]);
+        let user_id = user.id.clone();
+        let user_did = user.did.clone();
+        manager.add_identity(user);
+
+        // Device identity — the QUIC transport principal. Its
+        // `owner_identity_id` points back at the user identity.
+        let mut device = test_identity_with_seed([0x22u8; 64]);
+        device.owner_identity_id = Some(user_id.clone());
+        let device_did = device.did.clone();
+        manager.add_identity(device);
+        assert_ne!(user_did, device_did, "test setup: user/device DIDs must differ");
+
+        // Role::Device is the production role for mobile QUIC principals;
+        // get_identity_view's DeviceOwner branch is gated on it.
+        let device_principal =
+            SecurityPrincipal::new(&device_did, Role::Device, NodeType::FullNode);
+        let view = manager.get_identity_view_by_did(&device_principal, &user_did);
+
+        assert!(
+            matches!(view, Some(IdentityView::DeviceOwner(_))),
+            "Device principal acting on its owning user must get \
+             DeviceOwner view (got {view:?}). This is the exact case \
+             that 403s /api/v1/web4/domains/register from mobile clients."
+        );
+    }
+
+    #[test]
+    fn test_device_principal_acting_on_unrelated_identity_gets_public() {
+        // Sanity: the bidirectional check must not grant Owner to a
+        // device principal that doesn't actually own the subject.
+        let mut manager = IdentityManager::new();
+
+        let user = test_identity_with_seed([0x11u8; 64]);
+        let user_did = user.did.clone();
+        manager.add_identity(user);
+
+        // Device with NO owner link to user.
+        let device = test_identity_with_seed([0x22u8; 64]);
+        let device_did = device.did.clone();
+        manager.add_identity(device);
+
+        // A third, unrelated identity acts as the subject.
+        let other = test_identity_with_seed([0x33u8; 64]);
+        let other_did = other.did.clone();
+        manager.add_identity(other);
+
+        let device_principal =
+            SecurityPrincipal::new(&device_did, Role::Device, NodeType::FullNode);
+
+        let unrelated_view =
+            manager.get_identity_view_by_did(&device_principal, &other_did);
+        assert!(
+            matches!(unrelated_view, Some(IdentityView::Public(_))),
+            "Device principal with no owner link must only see Public \
+             view of an unrelated identity (got {unrelated_view:?})"
+        );
+
+        // And the user (subject from previous test) without the owner
+        // link wired up must also be Public.
+        let user_view =
+            manager.get_identity_view_by_did(&device_principal, &user_did);
+        assert!(
+            matches!(user_view, Some(IdentityView::Public(_))),
+            "Device principal without owner_identity_id wired to user \
+             must only see Public view (got {user_view:?})"
         );
     }
 }

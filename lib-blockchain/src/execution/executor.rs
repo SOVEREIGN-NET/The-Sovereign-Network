@@ -3387,6 +3387,15 @@ impl BlockExecutor {
             TransactionType::RegisterCredential
             | TransactionType::UpdateCredentialPassword => Ok(TxOutcome::LegacySystem),
 
+            // Domain lifecycle — state applied by process_domain_transactions()
+            // in finish_block_processing(). Same pattern as credentials above.
+            // Was missing this arm: when block 67027 (testnet 2026-05-22) carried
+            // a DomainRegistration the executor crashed at TxApplyError::UnsupportedType
+            // and all 4 validators halted to prevent a fork — even though the validator
+            // pre-check and Phase 2 allow-list both passed it.
+            TransactionType::DomainRegistration
+            | TransactionType::DomainUpdate => Ok(TxOutcome::LegacySystem),
+
             TransactionType::TreasuryAllocation => {
                 self.apply_treasury_allocation(mutator, tx)?;
                 Ok(TxOutcome::TreasuryAllocation)
