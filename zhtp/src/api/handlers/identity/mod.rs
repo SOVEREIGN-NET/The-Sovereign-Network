@@ -1638,7 +1638,7 @@ impl IdentityHandler {
                 },
                 format!("kyber-key-update:{}", &req.did[..20.min(req.did.len())]).into_bytes(),
             );
-            if let Err(e) = blockchain.add_system_transaction(update_tx) {
+            if let Err(e) = blockchain.add_system_transaction(update_tx, "kyber_key_update") {
                 tracing::warn!("Failed to submit Kyber key update tx: {}", e);
             }
         }
@@ -1804,7 +1804,7 @@ impl IdentityHandler {
 
         {
             let mut blockchain = blockchain_arc.write().await;
-            if let Err(e) = blockchain.add_system_transaction(tx) {
+            if let Err(e) = blockchain.add_system_transaction(tx, "credential_claim") {
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::InternalServerError,
                     format!("Failed to submit claim tx: {}", e),

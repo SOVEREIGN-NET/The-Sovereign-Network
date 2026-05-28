@@ -103,6 +103,10 @@ impl Blockchain {
             did_to_username: HashMap::new(),
             opaque_server_setup: None,
             pouw_mint_index: HashMap::new(),
+            // Mempool admission (#2647 — S2): permissive defaults, audit-only.
+            mempool_config: lib_mempool::MempoolConfig::audit_only(),
+            mempool_state: lib_mempool::MempoolState::default(),
+            system_tx_originators: HashMap::new(),
         }
     }
 
@@ -754,6 +758,59 @@ impl Blockchain {
         self.store = Some(store);
         self.auto_persist_enabled = false;
         info!("Phase 2 incremental store attached to blockchain");
+        // #2647 S2: replay pending txes persisted before restart.
+        self.recover_pending_transactions_from_store();
+    }
+
+    /// Reload pending transactions from sled into the in-memory `Vec` and
+    /// mempool admission state. Called automatically when a store is attached.
+    /// Stale-nonce / phase-2-invalid entries are dropped before serving.
+    fn recover_pending_transactions_from_store(&mut self) {
+        use lib_mempool::MempoolStateExt;
+
+        let store = match self.store.as_ref() {
+            Some(s) => s,
+            None => return,
+        };
+        let recovered: Vec<Transaction> = match store.iter_pending_transactions() {
+            Ok(it) => it.collect(),
+            Err(e) => {
+                warn!("Pending tx recovery: iter failed ({}); starting empty", e);
+                return;
+            }
+        };
+        let period_blocks = self.mempool_config.rate_limit_period_blocks;
+        let mut kept = 0_usize;
+        let mut dropped = 0_usize;
+        for tx in recovered {
+            // Drop entries that no longer satisfy nonce or phase-2 rules; this
+            // matches the eviction sweeps that run during normal block commit.
+            let phase2_invalid =
+                tx.transaction_type == TransactionType::TokenMint && tx.fee != 0;
+            if phase2_invalid || !self.is_nonce_current(&tx) {
+                let h = tx.hash().as_array();
+                if let Err(e) = store.delete_pending_transaction(&h) {
+                    warn!("Pending tx recovery: drop-unpersist failed: {}", e);
+                }
+                dropped += 1;
+                continue;
+            }
+            let admit_tx = tx.to_admit_tx();
+            self.mempool_state.add_tx(
+                admit_tx.sender,
+                admit_tx.tx_bytes as u64,
+                self.height,
+                period_blocks,
+            );
+            self.pending_transactions.push(tx);
+            kept += 1;
+        }
+        if kept + dropped > 0 {
+            info!(
+                "Pending tx recovery: kept={}, dropped={}",
+                kept, dropped
+            );
+        }
     }
 
     pub fn get_store(&self) -> Option<&std::sync::Arc<dyn BlockchainStore>> {

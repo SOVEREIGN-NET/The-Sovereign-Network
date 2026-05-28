@@ -3387,6 +3387,7 @@ dependencies = [
  "lib-economy",
  "lib-fees",
  "lib-identity",
+ "lib-mempool",
  "lib-proofs",
  "lib-storage",
  "lib-types",

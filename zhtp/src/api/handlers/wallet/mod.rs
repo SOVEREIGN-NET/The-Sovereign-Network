@@ -1674,7 +1674,7 @@ impl WalletHandler {
                     },
                     format!("Provisioned identity {}", &did[..40.min(did.len())]).into_bytes(),
                 );
-                if let Err(e) = blockchain.add_system_transaction(identity_tx) {
+                if let Err(e) = blockchain.add_system_transaction(identity_tx, "identity_provisioning") {
                     tracing::warn!("Failed to submit identity tx: {}", e);
                 }
                 // Cache warmup: identity must be visible immediately for QUIC handshake
@@ -1790,7 +1790,7 @@ impl WalletHandler {
             );
 
             let hash = mint_tx.hash();
-            blockchain.add_system_transaction(mint_tx)
+            blockchain.add_system_transaction(mint_tx, "admin_sov_mint")
                 .map_err(|e| anyhow::anyhow!("Failed to submit TokenMint transaction: {}", e))?;
 
             tracing::info!(

@@ -573,7 +573,7 @@ async fn auto_create_identity_from_seed(
                     },
                     b"seed-recovery-auto-register".to_vec(),
                 );
-                if let Err(e) = blockchain.add_system_transaction(reg_tx) {
+                if let Err(e) = blockchain.add_system_transaction(reg_tx, "seed_recovery_identity") {
                     tracing::warn!("Recovery: failed to queue identity registration tx: {}", e);
                 } else {
                     // Identity will be added to registry when the block containing
@@ -718,7 +718,7 @@ async fn migrate_wallets_for_identity(
 
         // add_system_transaction bypasses signature validation (correct for a
         // server-originated system tx where we hold no user private key).
-        match blockchain.add_system_transaction(reg_tx) {
+        match blockchain.add_system_transaction(reg_tx, "migration_wallet") {
             Ok(_) => tracing::info!(
                 "Migration: queued WalletRegistration for {} ({} SOV)",
                 &wallet_id_hex[..16.min(wallet_id_hex.len())],
@@ -789,7 +789,7 @@ async fn create_fallback_wallet(
         return;
     };
 
-    match blockchain.add_system_transaction(reg_tx) {
+    match blockchain.add_system_transaction(reg_tx, "recovery_fallback_wallet") {
         Ok(_) => {
             blockchain
                 .wallet_registry
@@ -1913,7 +1913,11 @@ pub async fn handle_migrate_identity(
                             .map_err(|e| anyhow::anyhow!("Failed to sign WalletUpdate: {}", e))?;
                     tx.signature = sig;
 
-                    if let Err(e) = blockchain.add_system_transaction(tx) {
+                    // #2647 Pattern C: the migration_authority_kp signature
+                    // above is real and verifiable, so this tx goes through
+                    // the normal admission path (sig verify + nonce gate +
+                    // mempool admit) rather than the system bypass.
+                    if let Err(e) = blockchain.add_pending_transaction(tx) {
                         tracing::warn!(
                             "🔄 Failed to enqueue wallet update tx for {} ({}): {}",
                             &wallet_id_str[..16.min(wallet_id_str.len())],
