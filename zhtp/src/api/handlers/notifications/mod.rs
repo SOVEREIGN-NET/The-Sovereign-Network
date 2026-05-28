@@ -82,6 +82,10 @@ impl NotificationsHandler {
         }
     }
 
+    /// Canonical ZHTP DIDs are `did:zhtp:<64-hex>` — a 32-byte identity hash
+    /// in lowercase hex. Anything else is malformed and would later fail to
+    /// decode in any consumer of this list; reject it here rather than
+    /// persisting garbage to sled.
     fn validate_did(did: &str) -> Result<(), String> {
         if did.is_empty() {
             return Err("did is required".to_string());
@@ -89,8 +93,16 @@ impl NotificationsHandler {
         if did.len() > MAX_DID_LEN {
             return Err(format!("did exceeds max length {}", MAX_DID_LEN));
         }
-        if !did.starts_with("did:zhtp:") {
-            return Err("did must start with 'did:zhtp:'".to_string());
+        let hex = did
+            .strip_prefix("did:zhtp:")
+            .ok_or_else(|| "did must start with 'did:zhtp:'".to_string())?;
+        if hex.len() != 64 {
+            return Err("did identity hash must be 64 hex characters".to_string());
+        }
+        if !hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+            return Err(
+                "did identity hash must be lowercase hex (0-9, a-f)".to_string()
+            );
         }
         Ok(())
     }

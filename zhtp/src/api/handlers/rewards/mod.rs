@@ -44,7 +44,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-use lib_access_control::Role;
 use lib_blockchain::transaction::{Transaction, TokenTransferData};
 use lib_blockchain::Blockchain;
 use lib_crypto::keypair::KeyPair;
@@ -54,7 +53,6 @@ use lib_identity::ZhtpIdentity;
 use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpRequestHandler;
 
-use crate::api::principal::extract_principal_from_request;
 use crate::keyfile_names::{KeystorePrivateKey, USER_IDENTITY_FILENAME, USER_PRIVATE_KEY_FILENAME};
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -86,6 +84,12 @@ const WEEKLY_PARTNER_CAP: u32 = 5;
 const HISTORY_DEFAULT_LIMIT: usize = 50;
 const HISTORY_MAX_LIMIT: usize = 200;
 const MAX_DID_LEN: usize = 256;
+
+/// Sentinel value written into a reservation slot via `compare_and_swap`
+/// before the mint, then either overwritten with the real marker on
+/// success or removed on mint failure. Any non-empty byte is sufficient —
+/// `compare_and_swap` distinguishes `None` from `Some(_)` only.
+const SLOT_PENDING: &[u8] = b"P";
 
 const TREE_WELCOMED: &str = "welcomed";
 const TREE_CHECKINS: &str = "checkins";
@@ -172,7 +176,10 @@ pub struct RewardsHandler {
 struct TreasuryConfig {
     keypair: Arc<KeyPair>,
     bubl_token_id: [u8; 32],
-    treasury_key_id: [u8; 32],
+    /// `keypair.public_key.key_id` — the combined-derivation key_id
+    /// (`blake3(dilithium || kyber)`) the chain stores BUBL balances under
+    /// for the creator allocation.
+    signer_key_id: [u8; 32],
 }
 
 impl RewardsHandler {
@@ -190,16 +197,24 @@ impl RewardsHandler {
         let history_seq = db.open_tree(TREE_HISTORY_SEQ)?;
         let lifetime = db.open_tree(TREE_LIFETIME)?;
 
-        let treasury = load_treasury();
+        // Startup-time lookup: read the BUBL token contract under a non-async
+        // borrow of the blockchain (RewardsHandler::new is sync). The
+        // blockchain Arc is shared; at startup no API traffic is yet
+        // dispatched, so `blocking_read` here is uncontended. Wrapped in
+        // `block_in_place` so the runtime can park the worker.
+        let treasury = tokio::task::block_in_place(|| {
+            let bc = blockchain.blocking_read();
+            load_treasury(&bc)
+        });
 
         if treasury.is_some() {
             info!(
-                "Rewards: treasury keystore loaded, endpoints active at {:?}",
+                "Rewards: signer keystore loaded with positive BUBL balance — endpoints active at {:?}",
                 path
             );
         } else {
             info!(
-                "Rewards: ZHTP_REWARDS_TREASURY_KEYSTORE unset or invalid — /api/v1/rewards/* will return 503 on this node"
+                "Rewards: ZHTP_REWARDS_TREASURY_KEYSTORE unset, invalid, or holds 0 BUBL — /api/v1/rewards/* will return 503 on this node"
             );
         }
 
@@ -423,48 +438,60 @@ impl RewardsHandler {
             .unwrap_or(0)
     }
 
-    /// Build, sign, and submit a TokenTransfer from treasury → recipient.
-    /// Returns the tx hash hex on success.
+    /// Build, sign, and submit a TokenTransfer from the BUBL creator
+    /// (= the loaded rewards keystore) → recipient. Returns the tx hash hex
+    /// on success.
+    ///
+    /// The keystore configured via `ZHTP_REWARDS_TREASURY_KEYSTORE` MUST be
+    /// the keypair that signed the original BUBL `TokenCreation` transaction.
+    /// At deploy time TokenCreation credits the creator's `creator_allocation`
+    /// to the creator's full `PublicKey`, so a normal TokenTransfer signed by
+    /// the same keypair can debit it. The "treasury" 20 % allocation is
+    /// minted to `PublicKey { dilithium_pk: [0; 2592], kyber_pk: [0; 1568],
+    /// key_id: treasury_recipient }` (an unsignable address — see
+    /// `lib-blockchain/src/blockchain/contracts.rs:688-692`) and is therefore
+    /// inaccessible by design. Rewards are funded out of the creator share.
     async fn mint_to_user(&self, recipient_key_id: [u8; 32], amount: u128) -> Result<String> {
         let treasury = self
             .treasury
             .as_ref()
-            .ok_or_else(|| anyhow!("treasury not configured"))?;
+            .ok_or_else(|| anyhow!("rewards treasury not configured"))?;
 
-        let nonce = Self::now_secs();
+        // Chain enforces strict per-(token, from) nonce equality via
+        // `is_nonce_current` (`blockchain.rs:2262-2290`). Read the expected
+        // nonce inside the same read-lock window we hold for submission. The
+        // write-lock during `add_pending_transaction` below serialises
+        // concurrent claims so this read-then-use is safe.
+        let nonce = {
+            let bc = self.blockchain.read().await;
+            bc.get_token_nonce(&treasury.bubl_token_id, &treasury.signer_key_id)
+        };
+
         let data = TokenTransferData {
             token_id: treasury.bubl_token_id,
-            from: treasury.treasury_key_id,
+            from: treasury.signer_key_id,
             to: recipient_key_id,
             amount,
             nonce,
         };
 
         let mut tx = Transaction::new_token_transfer_with_chain_id(
-            0x03,
+            chain_id_from_env(),
             data,
             Signature::default(),
             b"bubl:reward:v1".to_vec(),
         );
-        let mut sig = treasury
+        let sig = treasury
             .keypair
             .sign(tx.signing_hash().as_bytes())
-            .map_err(|e| anyhow!("treasury sign failed: {}", e))?;
-        // The chain validates TokenTransfer with
-        // `data.from == signature.public_key.key_id`
-        // (`validation.rs:741-743`). The identity has two equally-valid
-        // key_id derivations:
-        //   - DID-derived  = blake3(dilithium_pk)           = 6e98ee1e…
-        //   - "combined"   = blake3(dilithium_pk || kyber_pk) = b7fdd442…
-        // The keystore stores the second form on `public_key.key_id`,
-        // but the BUBL balance is keyed under the first form (the
-        // TokenCreation apply path used `treasury_recipient` = DID-bytes
-        // verbatim, not the keypair's key_id). Override the embedded
-        // public_key.key_id to the DID-derived value so the validator's
-        // equality check passes; signature verification itself reads
-        // `dilithium_pk` (not `key_id`) so the override doesn't weaken
-        // anything cryptographically.
-        sig.public_key.key_id = treasury.treasury_key_id;
+            .map_err(|e| anyhow!("rewards sign failed: {}", e))?;
+        // No PublicKey mutation: `data.from = signer_key_id =
+        // keypair.public_key.key_id`, kyber_pk is the keystore's real kyber,
+        // and the key_id binding check at `validation.rs:1170-1192` expects
+        // `blake3(dilithium || kyber)` when kyber is non-zero — which is how
+        // `KeyPair::new` derives `public_key.key_id` in the first place. The
+        // `balance_of(&sender_pk)` lookup at `contracts.rs:374` then matches
+        // the creator-allocation entry written by `TokenCreation`.
         tx.signature = sig;
 
         let tx_hash = hex::encode(tx.hash().as_bytes());
@@ -497,20 +524,41 @@ impl RewardsHandler {
     }
 
     async fn do_welcome(&self, did: &str, key_id: [u8; 32]) -> ZhtpResponse {
-        if matches!(self.welcomed.get(did.as_bytes()), Ok(Some(_))) {
-            return Self::ok_json(json!({
-                "awarded": false,
-                "amount": "0",
-                "reason": "welcome_already_claimed",
-            }));
+        // Atomically reserve the welcome slot BEFORE minting. The previous
+        // `get` → mint → `insert` sequence let two concurrent claims both
+        // pass the check and double-mint. CAS the slot from `None` to a
+        // pending sentinel; rivals see Some(_) and bail with
+        // `welcome_already_claimed`. If the mint fails afterwards we
+        // release the slot so retries succeed.
+        match self.welcomed.compare_and_swap(
+            did.as_bytes(),
+            None::<&[u8]>,
+            Some(SLOT_PENDING),
+        ) {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => {
+                return Self::ok_json(json!({
+                    "awarded": false,
+                    "amount": "0",
+                    "reason": "welcome_already_claimed",
+                }));
+            }
+            Err(e) => {
+                return ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("welcome reservation failed: {}", e),
+                );
+            }
         }
         let tx_hash = match self.mint_to_user(key_id, REWARD_WELCOME).await {
             Ok(h) => h,
             Err(e) => {
+                // Release the pending slot so the next attempt can retry.
+                let _ = self.welcomed.remove(did.as_bytes());
                 return ZhtpResponse::error(
                     ZhtpStatus::InternalServerError,
                     format!("mint failed: {}", e),
-                )
+                );
             }
         };
         let now = Self::now_secs();
@@ -538,13 +586,28 @@ impl RewardsHandler {
     async fn do_daily_checkin(&self, did: &str, key_id: [u8; 32]) -> ZhtpResponse {
         let date = Self::utc_date();
         let key = Self::day_compound_key(&date, did);
-        if matches!(self.checkins.get(&key), Ok(Some(_))) {
-            return Self::ok_json(json!({
-                "awarded": false,
-                "amount": "0",
-                "reason": "checkin_already_claimed_today",
-                "next_eligible_at": Self::next_utc_midnight_secs(),
-            }));
+
+        // CAS-reserve today's slot before doing any work. See `do_welcome`
+        // for rationale — same race fix.
+        match self
+            .checkins
+            .compare_and_swap(&key, None::<&[u8]>, Some(SLOT_PENDING))
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => {
+                return Self::ok_json(json!({
+                    "awarded": false,
+                    "amount": "0",
+                    "reason": "checkin_already_claimed_today",
+                    "next_eligible_at": Self::next_utc_midnight_secs(),
+                }));
+            }
+            Err(e) => {
+                return ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("checkin reservation failed: {}", e),
+                );
+            }
         }
 
         // Compute streak: consecutive if last_day == today-1, else reset to 1.
@@ -560,14 +623,15 @@ impl RewardsHandler {
         let tx_hash = match self.mint_to_user(key_id, amount).await {
             Ok(h) => h,
             Err(e) => {
+                let _ = self.checkins.remove(&key);
                 return ZhtpResponse::error(
                     ZhtpStatus::InternalServerError,
                     format!("mint failed: {}", e),
-                )
+                );
             }
         };
 
-        // Mark today claimed.
+        // Promote the pending slot to a permanent marker.
         let _ = self.checkins.insert(&key, &[1u8]);
 
         // Update streak state.
@@ -609,21 +673,37 @@ impl RewardsHandler {
     async fn do_active_session(&self, did: &str, key_id: [u8; 32]) -> ZhtpResponse {
         let date = Self::utc_date();
         let key = Self::day_compound_key(&date, did);
-        if matches!(self.sessions.get(&key), Ok(Some(_))) {
-            return Self::ok_json(json!({
-                "awarded": false,
-                "amount": "0",
-                "reason": "session_already_claimed_today",
-                "next_eligible_at": Self::next_utc_midnight_secs(),
-            }));
-        }
-        let tx_hash = match self.mint_to_user(key_id, REWARD_ACTIVE_SESSION).await {
-            Ok(h) => h,
+
+        // CAS-reserve today's slot (see `do_welcome` for the race rationale).
+        match self
+            .sessions
+            .compare_and_swap(&key, None::<&[u8]>, Some(SLOT_PENDING))
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => {
+                return Self::ok_json(json!({
+                    "awarded": false,
+                    "amount": "0",
+                    "reason": "session_already_claimed_today",
+                    "next_eligible_at": Self::next_utc_midnight_secs(),
+                }));
+            }
             Err(e) => {
                 return ZhtpResponse::error(
                     ZhtpStatus::InternalServerError,
+                    format!("session reservation failed: {}", e),
+                );
+            }
+        }
+
+        let tx_hash = match self.mint_to_user(key_id, REWARD_ACTIVE_SESSION).await {
+            Ok(h) => h,
+            Err(e) => {
+                let _ = self.sessions.remove(&key);
+                return ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
                     format!("mint failed: {}", e),
-                )
+                );
             }
         };
         let _ = self.sessions.insert(&key, &[1u8]);
@@ -672,40 +752,96 @@ impl RewardsHandler {
 
         let week = Self::iso_week();
         let already_key = Self::partner_compound_key(&week, &req.did, &req.peer_did);
-        if matches!(self.partners.get(&already_key), Ok(Some(_))) {
-            return Self::ok_json(json!({
-                "awarded": false,
-                "amount": "0",
-                "reason": "partner_already_counted_this_week",
-                "partners_this_week": self.count_partners_this_week(&req.did),
-            }));
+        let count_key = Self::partners_count_key(&week, &req.did);
+
+        // Atomically reserve the (week, did, peer) slot. Same-peer twice in
+        // the same week gets rejected here. Concurrent requests for two
+        // different peers will both pass this gate — the count CAS below
+        // handles the weekly cap.
+        match self
+            .partners
+            .compare_and_swap(&already_key, None::<&[u8]>, Some(SLOT_PENDING))
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => {
+                return Self::ok_json(json!({
+                    "awarded": false,
+                    "amount": "0",
+                    "reason": "partner_already_counted_this_week",
+                    "partners_this_week": self.count_partners_this_week(&req.did),
+                }));
+            }
+            Err(e) => {
+                return ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("partner reservation failed: {}", e),
+                );
+            }
         }
-        let current = self.count_partners_this_week(&req.did);
-        if current >= WEEKLY_PARTNER_CAP {
-            return Self::ok_json(json!({
-                "awarded": false,
-                "amount": "0",
-                "reason": "weekly_partner_cap_reached",
-                "partners_this_week": WEEKLY_PARTNER_CAP,
-            }));
-        }
+
+        // Spin-CAS the weekly count to enforce the cap atomically.
+        // `update_and_fetch` would also work but conflates "no change"
+        // with "delete" via its `Option` return.
+        let new_count = loop {
+            let current_iv = match self.partners_count.get(&count_key) {
+                Ok(v) => v,
+                Err(e) => {
+                    let _ = self.partners.remove(&already_key);
+                    return ZhtpResponse::error(
+                        ZhtpStatus::InternalServerError,
+                        format!("partner count read failed: {}", e),
+                    );
+                }
+            };
+            let current = current_iv
+                .as_ref()
+                .and_then(|v| <[u8; 4]>::try_from(v.as_ref()).ok())
+                .map(u32::from_le_bytes)
+                .unwrap_or(0);
+            if current >= WEEKLY_PARTNER_CAP {
+                let _ = self.partners.remove(&already_key);
+                return Self::ok_json(json!({
+                    "awarded": false,
+                    "amount": "0",
+                    "reason": "weekly_partner_cap_reached",
+                    "partners_this_week": WEEKLY_PARTNER_CAP,
+                }));
+            }
+            let next = current.saturating_add(1);
+            match self.partners_count.compare_and_swap(
+                &count_key,
+                current_iv.as_deref(),
+                Some(&next.to_le_bytes()),
+            ) {
+                Ok(Ok(())) => break next,
+                Ok(Err(_)) => continue, // racer mutated count; retry
+                Err(e) => {
+                    let _ = self.partners.remove(&already_key);
+                    return ZhtpResponse::error(
+                        ZhtpStatus::InternalServerError,
+                        format!("partner count CAS failed: {}", e),
+                    );
+                }
+            }
+        };
 
         let tx_hash = match self.mint_to_user(key_id, REWARD_NEW_PARTNER).await {
             Ok(h) => h,
             Err(e) => {
+                // Roll back both the slot reservation and the count.
+                let _ = self.partners.remove(&already_key);
+                let _ = self
+                    .partners_count
+                    .insert(&count_key, &new_count.saturating_sub(1).to_le_bytes());
                 return ZhtpResponse::error(
                     ZhtpStatus::InternalServerError,
                     format!("mint failed: {}", e),
-                )
+                );
             }
         };
 
+        // Promote the pending reservation to a permanent marker.
         let _ = self.partners.insert(&already_key, &[1u8]);
-        let new_count = current.saturating_add(1);
-        let count_key = Self::partners_count_key(&week, &req.did);
-        let _ = self
-            .partners_count
-            .insert(&count_key, &new_count.to_le_bytes());
 
         let now = Self::now_secs();
         let event = RewardEvent { seq: 0, // filled by record_event below
@@ -851,22 +987,35 @@ impl RewardsHandler {
         let mut prefix = did.as_bytes().to_vec();
         prefix.push(SEPARATOR);
 
-        let mut all: Vec<RewardEvent> = self
-            .history
-            .scan_prefix(&prefix)
-            .filter_map(|kv| kv.ok())
-            .filter_map(|(_k, v)| bincode::deserialize::<RewardEvent>(&v).ok())
-            .collect();
-        // Newest first by (at, seq).
-        all.sort_by(|a, b| b.at.cmp(&a.at).then(b.seq.cmp(&a.seq)));
+        // History keys are `<did>|<seq_be8>` and seq is allocated
+        // monotonically by `next_history_seq`, so reverse range iteration
+        // already yields events newest-first by seq. The page we want is
+        // the first `limit` events strictly below the cursor's seq —
+        // bound the range with an exclusive upper key built from the
+        // cursor so sled skips the newer entries instead of us loading
+        // and discarding them.
+        let cseq = cursor.map(|c| c.1).unwrap_or(u64::MAX);
+        let mut upper = prefix.clone();
+        upper.extend_from_slice(&cseq.to_be_bytes());
 
-        let cutoff = cursor.unwrap_or((u64::MAX, u64::MAX));
-        let filtered: Vec<&RewardEvent> = all
-            .iter()
-            .filter(|e| (e.at, e.seq) < cutoff)
-            .collect();
-        let page: Vec<&RewardEvent> = filtered.iter().copied().take(limit).collect();
-        let has_more = filtered.len() > page.len();
+        let mut page: Vec<RewardEvent> = Vec::with_capacity(limit);
+        let mut has_more = false;
+        for kv in self.history.range(prefix.clone()..upper).rev() {
+            let (_k, v) = match kv {
+                Ok(kv) => kv,
+                Err(_) => continue,
+            };
+            let event = match bincode::deserialize::<RewardEvent>(&v) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            if page.len() == limit {
+                has_more = true;
+                break;
+            }
+            page.push(event);
+        }
+
         let next_cursor = if has_more {
             page.last().map(|e| format!("{}:{}", e.at, e.seq))
         } else {
@@ -989,9 +1138,6 @@ impl ZhtpRequestHandler for RewardsHandler {
                 "Unknown rewards endpoint".to_string(),
             ),
         };
-        // Suppress an unused-import warning when nothing matches Council in this file.
-        let _ = Role::Council;
-        let _ = extract_principal_from_request;
         Ok(resp)
     }
 
@@ -1000,9 +1146,21 @@ impl ZhtpRequestHandler for RewardsHandler {
     }
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────
+
+/// Resolve the chain_id used to bind a TokenTransfer tx. Mirrors
+/// `runtime::token_utils::chain_id_from_env` so reward txes ride the same
+/// chain_id as every other server-built tx (testnet=0x02, mainnet=0x03).
+fn chain_id_from_env() -> u8 {
+    std::env::var("ZHTP_CHAIN_ID")
+        .ok()
+        .and_then(|v| v.parse::<u8>().ok())
+        .unwrap_or(0x03)
+}
+
 // ── Treasury loader ──────────────────────────────────────────────────
 
-fn load_treasury() -> Option<TreasuryConfig> {
+fn load_treasury(blockchain: &Blockchain) -> Option<TreasuryConfig> {
     let dir = std::env::var("ZHTP_REWARDS_TREASURY_KEYSTORE").ok()?;
     let path = PathBuf::from(&dir);
     if !path.is_dir() {
@@ -1031,53 +1189,51 @@ fn load_treasury() -> Option<TreasuryConfig> {
             return None;
         }
     };
-    // CRITICAL: the BUBL balance is stored under the **DID-derived** 32
-    // bytes (the hex portion of `did:zhtp:<…>`), not under
-    // `keypair.public_key.key_id` — those two values are derived differently
-    // and don't match. The `TokenCreation` apply path used the
-    // DID-bytes as the `treasury_recipient` key, so transfers FROM treasury
-    // must declare the same DID-derived value as `from` or the chain will
-    // see an insufficient-balance error.
-    let did = match read_identity_did(&identity_file) {
-        Ok(d) => d,
-        Err(e) => {
-            warn!("rewards: failed to read treasury DID from identity: {}", e);
-            return None;
-        }
-    };
-    let treasury_key_id = match did
-        .strip_prefix("did:zhtp:")
-        .and_then(|hex| hex::decode(hex).ok())
-        .and_then(|bytes| <[u8; 32]>::try_from(bytes.as_slice()).ok())
-    {
-        Some(id) => id,
+    let signer_key_id = keypair.public_key.key_id;
+
+    // Verify the keystore actually holds spendable BUBL. The BUBL token
+    // contract minted the 20 % "treasury" share to an unsignable PublicKey
+    // (zero dilithium + zero kyber) by design — see
+    // `lib-blockchain/src/blockchain/contracts.rs:688-692`. Only the BUBL
+    // creator (the entity that signed the original TokenCreation tx) holds
+    // a real PublicKey-backed BUBL balance and can debit it via
+    // TokenTransfer. If the loaded keystore lacks a positive balance, refuse
+    // to enable rewards rather than queue txes that will fail on every
+    // future replay.
+    let token = match blockchain.get_token_contract(&bubl_token_id) {
+        Some(t) => t,
         None => {
-            warn!("rewards: treasury DID is malformed: {}", did);
+            warn!(
+                "rewards: BUBL token contract {} not found on chain; \
+                 rewards endpoint disabled",
+                hex::encode(&bubl_token_id[..4]),
+            );
             return None;
         }
     };
+    let balance = token.balance_of(&keypair.public_key);
+    if balance == 0 {
+        warn!(
+            "rewards: keystore at {} holds 0 BUBL for signer key_id={}. \
+             This keystore is NOT the BUBL creator and cannot fund rewards. \
+             Point ZHTP_REWARDS_TREASURY_KEYSTORE at the keystore that \
+             signed the BUBL TokenCreation. Rewards endpoint disabled.",
+            dir,
+            hex::encode(&signer_key_id[..8]),
+        );
+        return None;
+    }
     info!(
-        "rewards: treasury loaded — did={} key_id_from_did={} (signing-pk key_id is {} but balance lives under did-derived key_id)",
-        did,
-        hex::encode(&treasury_key_id[..8]),
-        hex::encode(&keypair.public_key.key_id[..8]),
+        "rewards: signer loaded — key_id={} BUBL balance={} ({} BUBL)",
+        hex::encode(&signer_key_id[..8]),
+        balance,
+        balance / ATOM_18,
     );
     Some(TreasuryConfig {
         keypair: Arc::new(keypair),
         bubl_token_id,
-        treasury_key_id,
+        signer_key_id,
     })
-}
-
-fn read_identity_did(identity_file: &std::path::Path) -> Result<String> {
-    let json = std::fs::read_to_string(identity_file)
-        .map_err(|e| anyhow!("Failed to read {:?}: {}", identity_file, e))?;
-    let v: serde_json::Value =
-        serde_json::from_str(&json).map_err(|e| anyhow!("Failed to parse identity JSON: {}", e))?;
-    v.get("did")
-        .and_then(|d| d.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| anyhow!("identity JSON missing 'did' field"))
 }
 
 fn load_keypair(identity_file: &std::path::Path, priv_file: &std::path::Path) -> Result<KeyPair> {
