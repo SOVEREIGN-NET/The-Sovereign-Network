@@ -501,9 +501,11 @@ pub struct Blockchain {
     // Mempool admission state (#2647 — wired in S2)
     // =========================================================================
     /// DoS limits applied at mempool admission via `lib_mempool::admit`.
-    /// Initialised to `MempoolConfig::for_testing()` (maximally permissive) so
-    /// that wiring `admit()` produces zero behaviour change under current load.
-    /// Tune to real DoS-protective values in a follow-up config-tuning PR.
+    /// Initialised to `MempoolConfig::audit_only()` so that wiring `admit()`
+    /// produces zero behaviour change under current load — all real
+    /// admission decisions still flow through the legacy paths; this only
+    /// drives observability/state-tracking until a follow-up config-tuning
+    /// PR raises the limits to real DoS-protective values.
     #[serde(skip)]
     pub mempool_config: lib_mempool::MempoolConfig,
     /// Current mempool admission state (byte/tx counts, per-sender tracking).
@@ -2485,6 +2487,23 @@ impl Blockchain {
             .system_tx_originators
             .entry(originator)
             .or_insert(0) += 1;
+
+        // Keep `mempool_state` paired with the pending pool. We bypass
+        // `lib_mempool::admit()` here (no sig verify, no DoS caps for system
+        // injectors), but block-commit / stale-nonce / phase2-evict paths
+        // call `mempool_state.remove_tx` for every removed pending tx
+        // including these. Skipping `add_tx` here would let those removes
+        // decrement counts that were never incremented — state drift that
+        // under-enforces real-user caps later and behaves differently after
+        // restart recovery (which re-derives state from persisted pending).
+        let admit_tx = transaction.to_admit_tx();
+        let period_blocks = self.mempool_config.rate_limit_period_blocks;
+        self.mempool_state.add_tx(
+            admit_tx.sender,
+            admit_tx.tx_bytes as u64,
+            self.height,
+            period_blocks,
+        );
 
         // #2647 S2: persist for restart recovery (same contract as
         // verify_and_enqueue_transaction; best-effort).

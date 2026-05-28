@@ -1,8 +1,13 @@
 //! Build a `lib_types::mempool::AdmitTx` view of a `Transaction` for mempool
 //! admission via `lib_mempool::admit`.
 //!
-//! Mirrors `execution::executor::FeeModelV2::tx_to_fee_input` field-for-field
-//! so admission decisions are consistent with the executor's fee calculation.
+//! Mirrors `execution::executor::FeeModelV2::tx_to_fee_input` on the
+//! *effective* fee inputs the model uses, not strictly field-for-field:
+//! `witness_bytes` here is pre-capped to `kind.witness_cap()` to match the
+//! fee model's internal `FeeInputExt::witness_bytes_capped`, since the raw
+//! Dilithium5 signature size always exceeds every defined cap. Admission
+//! decisions therefore agree with the executor's fee calculation on the
+//! values the model actually sees.
 
 use lib_fees::model_v2::{SigSchemeExt, TxKindExt};
 use lib_fees::{SigScheme, TxKind};
