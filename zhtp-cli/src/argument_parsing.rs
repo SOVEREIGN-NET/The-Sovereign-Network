@@ -1679,6 +1679,11 @@ pub enum TokenAction {
         /// (e.g. 100B @ 18 dec = 10^29 atoms).
         #[arg(long)]
         supply: u128,
+        /// Token decimals (0..=18, matching on-chain `TokenContract::validate`).
+        /// Defaults to 8 to keep parity with the previous CLI behaviour; pass
+        /// 18 for CBE-style precision or 0 for whole-unit tokens.
+        #[arg(long, default_value_t = 8)]
+        decimals: u8,
         /// Treasury recipient DID or key (receives canonical 20% allocation)
         #[arg(long)]
         treasury_recipient: String,
