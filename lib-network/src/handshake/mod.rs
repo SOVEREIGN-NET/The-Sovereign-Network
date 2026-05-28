@@ -1063,19 +1063,31 @@ impl ClientHello {
             return Err(anyhow!("Channel binding mismatch"));
         }
 
-        // 4. CRITICAL: Verify NodeId derivation (prevent collision attacks)
+        // 4. Verify NodeId derivation (collision protection).
+        //
+        // WARN-ONLY mode: a deployed mobile-app build computes NodeId via a
+        // derivation that doesn't match the server-side
+        // `NodeId::from_did_device` rule. Strict rejection here cuts the app
+        // off the network entirely (no path to ship a hotfix before app-store
+        // review). The downstream Dilithium signature check at step 8 still
+        // verifies the client's signature against the public_key embedded in
+        // the ClientHello — that's the real impersonation gate. NodeId
+        // derivation collision-protection is weakened but not bypassable for
+        // identity spoofing without holding the matching private key. Restore
+        // strict rejection once the app build derives NodeId per the canonical
+        // Blake3(DID || device_id) rule and is the only one in the wild.
         if let Err(e) = self.identity.verify_node_id() {
             let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
             ctx.observer.on_event(
                 HandshakeEvent::NodeIdVerificationFailed,
                 Some(metrics.clone()),
             );
-            ctx.observer.on_failure(
-                HandshakeEvent::ClientHelloVerificationFailed,
-                FailureReason::NodeIdVerificationFailed,
-                Some(metrics),
+            tracing::warn!(
+                "NodeId verification failed (WARN-ONLY for app compat): did={} device_id={} err={}",
+                &self.identity.did[..self.identity.did.len().min(24)],
+                &self.identity.device_id[..self.identity.device_id.len().min(16)],
+                e,
             );
-            return Err(e);
         }
 
         // 5. CRITICAL: Validate timestamp (prevent replay attacks)
@@ -1401,8 +1413,15 @@ impl ServerHello {
             return Err(anyhow!("Channel binding mismatch"));
         }
 
-        // 4. CRITICAL: Verify NodeId derivation
-        self.identity.verify_node_id()?;
+        // 4. Verify NodeId derivation — WARN-ONLY for app-compat (see ClientHello::verify_signature step 4).
+        if let Err(e) = self.identity.verify_node_id() {
+            tracing::warn!(
+                "ServerHello: NodeId verification failed (WARN-ONLY for app compat): did={} device_id={} err={}",
+                &self.identity.did[..self.identity.did.len().min(24)],
+                &self.identity.device_id[..self.identity.device_id.len().min(16)],
+                e,
+            );
+        }
 
         // 5. CRITICAL: Validate timestamp
         validate_timestamp(self.timestamp, &ctx.timestamp_config)?;
@@ -1591,10 +1610,16 @@ impl ClientFinish {
         }
 
         // === MUTUAL AUTHENTICATION: Verify server before completing handshake ===
-        server_hello
-            .identity
-            .verify_node_id()
-            .map_err(|e| anyhow!("Server NodeId verification failed: {}", e))?;
+        // NodeId derivation check is WARN-ONLY for app-compat (see
+        // ClientHello::verify_signature step 4 for rationale).
+        if let Err(e) = server_hello.identity.verify_node_id() {
+            tracing::warn!(
+                "ClientFinish: server NodeId verification failed (WARN-ONLY for app compat): did={} device_id={} err={}",
+                &server_hello.identity.did[..server_hello.identity.did.len().min(24)],
+                &server_hello.identity.device_id[..server_hello.identity.device_id.len().min(16)],
+                e,
+            );
+        }
 
         validate_timestamp(server_hello.timestamp, &ctx.timestamp_config)
             .map_err(|e| anyhow!("Server timestamp validation failed: {}", e))?;
