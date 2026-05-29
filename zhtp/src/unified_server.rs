@@ -1145,9 +1145,10 @@ impl ZhtpUnifiedServer {
         };
         let pouw_genesis_timestamp = {
             let blockchain_guard = blockchain.read().await;
+            // #2636: get_block(0) is the facade for the genesis timestamp —
+            // correct even when the in-memory window no longer holds height 0.
             blockchain_guard
-                .blocks
-                .first()
+                .get_block(0)
                 .map(|b| b.header.timestamp)
                 .unwrap_or_else(|| {
                     SystemTime::now()
@@ -2125,7 +2126,8 @@ impl ZhtpUnifiedServer {
     pub async fn get_blockchain_stats(&self) -> Result<serde_json::Value> {
         let blockchain = self.blockchain.read().await;
         Ok(serde_json::json!({
-            "block_count": blockchain.blocks.len(),
+            // #2636: block_count() is the full chain length, not the window size.
+            "block_count": blockchain.block_count(),
             "pending_transactions": blockchain.pending_transactions.len(),
             "identity_count": blockchain.identity_registry.len(),
             "server_id": self.server_id

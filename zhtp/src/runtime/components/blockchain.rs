@@ -857,7 +857,7 @@ impl Component for BlockchainComponent {
         if let Ok(global) = global_blockchain {
             let blockchain = global.read().await;
             metrics.insert("chain_height".to_string(), blockchain.height as f64);
-            metrics.insert("total_blocks".to_string(), blockchain.blocks.len() as f64);
+            metrics.insert("total_blocks".to_string(), blockchain.block_count() as f64);
             metrics.insert(
                 "pending_transactions".to_string(),
                 blockchain.pending_transactions.len() as f64,
@@ -869,20 +869,25 @@ impl Component for BlockchainComponent {
             );
             metrics.insert("total_work".to_string(), blockchain.total_work as f64);
 
-            let avg_block_size = if blockchain.blocks.len() > 0 {
-                blockchain
-                    .blocks
-                    .iter()
-                    .map(|b| b.transactions.len())
-                    .sum::<usize>() as f64
-                    / blockchain.blocks.len() as f64
-            } else {
-                0.0
+            let avg_block_size = {
+                // #2636: full-chain average via iter_blocks() (hot window + sled).
+                // The previous `blocks.len()` only averaged the in-memory window;
+                // block_count() is the cheap full-chain denominator.
+                let total = blockchain.block_count();
+                if total > 0 {
+                    blockchain
+                        .iter_blocks()
+                        .map(|b| b.transactions.len())
+                        .sum::<usize>() as f64
+                        / total as f64
+                } else {
+                    0.0
+                }
             };
             metrics.insert("avg_transactions_per_block".to_string(), avg_block_size);
         } else if let Some(ref blockchain) = *self.blockchain.read().await {
             metrics.insert("chain_height".to_string(), blockchain.height as f64);
-            metrics.insert("total_blocks".to_string(), blockchain.blocks.len() as f64);
+            metrics.insert("total_blocks".to_string(), blockchain.block_count() as f64);
             metrics.insert(
                 "pending_transactions".to_string(),
                 blockchain.pending_transactions.len() as f64,
@@ -894,15 +899,20 @@ impl Component for BlockchainComponent {
             );
             metrics.insert("total_work".to_string(), blockchain.total_work as f64);
 
-            let avg_block_size = if blockchain.blocks.len() > 0 {
-                blockchain
-                    .blocks
-                    .iter()
-                    .map(|b| b.transactions.len())
-                    .sum::<usize>() as f64
-                    / blockchain.blocks.len() as f64
-            } else {
-                0.0
+            let avg_block_size = {
+                // #2636: full-chain average via iter_blocks() (hot window + sled).
+                // The previous `blocks.len()` only averaged the in-memory window;
+                // block_count() is the cheap full-chain denominator.
+                let total = blockchain.block_count();
+                if total > 0 {
+                    blockchain
+                        .iter_blocks()
+                        .map(|b| b.transactions.len())
+                        .sum::<usize>() as f64
+                        / total as f64
+                } else {
+                    0.0
+                }
             };
             metrics.insert("avg_transactions_per_block".to_string(), avg_block_size);
         } else {
