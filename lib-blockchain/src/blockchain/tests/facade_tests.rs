@@ -32,6 +32,27 @@ fn token_balance_reads_sled_when_store_attached() {
 }
 
 #[test]
+fn iter_token_contracts_reads_sled() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("facade_iter_store")).unwrap());
+
+    let sov = crate::contracts::TokenContract::new_sov_native();
+    let sov_symbol = sov.symbol.clone();
+    store.begin_block(0).unwrap();
+    store.put_token_contract(&sov).unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+
+    let contracts = bc.iter_token_contracts();
+    assert!(
+        contracts.iter().any(|c| c.symbol == sov_symbol),
+        "iter_token_contracts must surface the sled-stored SOV contract"
+    );
+}
+
+#[test]
 fn identity_consensus_by_did_none_without_store() {
     let bc = Blockchain::new().expect("blockchain construct");
     assert!(bc.get_store().is_none(), "test assumes no store attached");

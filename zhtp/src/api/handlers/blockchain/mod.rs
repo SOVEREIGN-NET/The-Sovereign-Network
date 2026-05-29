@@ -1188,9 +1188,9 @@ impl BlockchainHandler {
         };
 
         let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+        // #2637: get_token_contract() is the sled-first metadata facade.
         let total_supply = blockchain
-            .token_contracts
-            .get(&sov_token_id)
+            .get_token_contract(&sov_token_id)
             .map(|token| token.total_supply)
             .unwrap_or(0);
 
@@ -2445,14 +2445,16 @@ impl BlockchainHandler {
 
         let mut contracts = Vec::new();
         if contract_filter == "all" || contract_filter == "token" {
+            // #2637: iter_token_contracts() is the sled-first list facade.
+            // (contract_blocks is a separate metadata index, migrated later.)
             contracts.extend(
                 blockchain
-                    .token_contracts
-                    .keys()
-                    .map(|id| ContractListItem {
-                        contract_id: hex::encode(id),
+                    .iter_token_contracts()
+                    .into_iter()
+                    .map(|t| ContractListItem {
+                        contract_id: hex::encode(t.token_id),
                         contract_kind: "token".to_string(),
-                        block_height: blockchain.contract_blocks.get(id).copied(),
+                        block_height: blockchain.contract_blocks.get(&t.token_id).copied(),
                     }),
             );
         }

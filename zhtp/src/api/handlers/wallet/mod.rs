@@ -381,23 +381,16 @@ impl WalletHandler {
                 let blockchain = self.blockchain.read().await;
                 let wallet_id_bytes_opt =
                     hex::decode(&wallet_id_hex).ok().filter(|b| b.len() == 32);
+                // #2637: token_balance() is sled-first and keyed by key_id. This
+                // also fixes a latent bug — the old synthetic PublicKey (zeroed
+                // dilithium/kyber, key_id only) never matched balance_of's
+                // full-field key equality, so this path returned 0.
                 wallet_id_bytes_opt
                     .as_ref()
-                    .and_then(|bytes| {
-                        blockchain
-                            .token_contracts
-                            .get(&sov_token_id)
-                            .and_then(|token| {
-                                let mut key_id = [0u8; 32];
-                                key_id.copy_from_slice(bytes);
-                                let wallet_key =
-                                    lib_blockchain::integration::crypto_integration::PublicKey {
-                                        dilithium_pk: [0u8; 2592],
-                                        kyber_pk: [0u8; 1568],
-                                        key_id,
-                                    };
-                                Some(token.balance_of(&wallet_key))
-                            })
+                    .map(|bytes| {
+                        let mut key_id = [0u8; 32];
+                        key_id.copy_from_slice(bytes);
+                        blockchain.token_balance(&sov_token_id, &key_id)
                     })
                     .unwrap_or(0)
             };
@@ -531,34 +524,29 @@ impl WalletHandler {
                 let blockchain = self.blockchain.read().await;
                 let wallet_id_hex = hex::encode(summary.id.0);
                 if let Some(wallet_data) = blockchain.query_wallet(&wallet_id_hex) {
-                    if let Some(token) = blockchain
-                        .token_contracts
-                        .get(&lib_blockchain::contracts::utils::generate_lib_token_id())
-                    {
-                        let wallet_id_bytes = hex::decode(&wallet_id_hex).ok();
-                        let token_balance = if let Some(bytes) = wallet_id_bytes {
-                            if bytes.len() == 32 {
+                    // #2637: sled-first SOV balance. Gate on the contract existing
+                    // (preserves the prior "only override if SOV token present"
+                    // behavior) then read via token_balance(), keyed by key_id.
+                    // The SOV balance is keyed by wallet_id (the normal 32-byte
+                    // path); fall back to the wallet public key's key_id otherwise.
+                    // This also fixes the old synthetic-PublicKey bug that returned 0.
+                    let native_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+                    if blockchain.get_token_contract(&native_token_id).is_some() {
+                        let addr: [u8; 32] = match hex::decode(&wallet_id_hex)
+                            .ok()
+                            .filter(|b| b.len() == 32)
+                        {
+                            Some(bytes) => {
                                 let mut key_id = [0u8; 32];
                                 key_id.copy_from_slice(&bytes);
-                                let wallet_key =
-                                    lib_blockchain::integration::crypto_integration::PublicKey {
-                                        dilithium_pk: [0u8; 2592],
-                                        kyber_pk: [0u8; 1568],
-                                        key_id,
-                                    };
-                                token.balance_of(&wallet_key)
-                            } else {
-                                token.balance_of(&lib_blockchain::integration::crypto_integration::PublicKey::new(
-                                    wallet_data.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
-                                ))
+                                key_id
                             }
-                        } else {
-                            token.balance_of(
-                                &lib_blockchain::integration::crypto_integration::PublicKey::new(
-                                    wallet_data.public_key.as_slice().try_into().unwrap_or([0u8; 2592]),
-                                ),
+                            None => lib_blockchain::integration::crypto_integration::PublicKey::new(
+                                wallet_data.public_key.as_slice().try_into().unwrap_or([0u8; 2592]),
                             )
+                            .key_id,
                         };
+                        let token_balance = blockchain.token_balance(&native_token_id, &addr);
                         if token_balance != available_balance {
                             tracing::debug!(
                                 "Using SOV token balance for wallet {}: {} (was {})",

@@ -1032,6 +1032,22 @@ impl Blockchain {
             .unwrap_or(0)
     }
 
+    /// Sled-first iterator facade over all token contracts (#2637).
+    ///
+    /// Returns the authoritative set from the store when attached, falling back
+    /// to the in-memory map in store-less mode. Collected into a `Vec` so
+    /// callers get an owned, lifetime-free list to `.iter()` / `.len()` /
+    /// `.is_empty()` / `find()` over — the canonical replacement for direct
+    /// `token_contracts.values()` / `.keys()` / `.len()` reads.
+    pub fn iter_token_contracts(&self) -> Vec<crate::contracts::TokenContract> {
+        if let Some(store) = self.get_store() {
+            if let Ok(iter) = store.iter_token_contracts() {
+                return iter.map(|(_, c)| c).collect();
+            }
+        }
+        self.token_contracts.values().cloned().collect()
+    }
+
     pub fn register_web4_contract(
         &mut self,
         contract_id: [u8; 32],
