@@ -1012,24 +1012,39 @@ impl Blockchain {
     ///
     /// `token_id` and `address` are 32-byte ids (the address is a `key_id`, the
     /// same form the executor's `StateMutator` uses as the sled `Address`). When
-    /// a `BlockchainStore` is attached it is the authoritative source; the
-    /// in-memory `TokenContract` balances are consulted only in store-less mode
-    /// (unit tests, pre-Phase-2 paths). This mirrors `get_token_contract`'s
-    /// sled-first contract and is the canonical read for the #2637 migration —
-    /// callers must stop reaching into `token_contracts` balances directly.
-    pub fn token_balance(&self, token_id: &[u8; 32], address: &[u8; 32]) -> u128 {
+    /// a `BlockchainStore` is attached it is the authoritative source and a sled
+    /// failure is **propagated as an error** — we do NOT silently fall back to a
+    /// possibly-stale in-memory balance (that masks corrupt-tree / disk-full /
+    /// unmounted-store failures, exactly the class that leads to authorizing a
+    /// transfer on a wrong balance). The in-memory `TokenContract` map is read
+    /// only in store-less mode (unit tests, pre-store bootstrap).
+    ///
+    /// # Mid-block invariant (CR #2658 / blocks Phase 3)
+    ///
+    /// This reads **committed** sled state. Writes staged in the current block's
+    /// `tx_batch` (between `begin_block` and `commit_block`) are NOT visible
+    /// here. HTTP read handlers (the current callers) are never inside a block
+    /// boundary, so this is correct for them. **Before any consensus-path /
+    /// mid-`apply_block` caller uses this facade (Phase 3), a `tx_batch`-aware
+    /// read must be added to `SledStore::get_token_balance`** or that caller
+    /// will see the pre-block value and could authorize a double-spend.
+    pub fn token_balance(
+        &self,
+        token_id: &[u8; 32],
+        address: &[u8; 32],
+    ) -> crate::storage::StorageResult<u128> {
         if let Some(store) = self.get_store() {
             let token = crate::storage::TokenId::new(*token_id);
             let addr = crate::storage::Address::new(*address);
-            if let Ok(balance) = store.get_token_balance(&token, &addr) {
-                return balance;
-            }
+            // sled is authoritative — propagate errors instead of serving stale in-mem.
+            return store.get_token_balance(&token, &addr);
         }
-        self.token_contracts
+        Ok(self
+            .token_contracts
             .get(token_id)
             .and_then(|c| c.find_balance_by_key_id(address))
             .map(|(_, balance)| balance)
-            .unwrap_or(0)
+            .unwrap_or(0))
     }
 
     pub fn register_web4_contract(

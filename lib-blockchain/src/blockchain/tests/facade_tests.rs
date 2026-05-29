@@ -23,12 +23,12 @@ fn token_balance_reads_sled_when_store_attached() {
     bc.set_store(store);
 
     assert_eq!(
-        bc.token_balance(&[7u8; 32], &[0xAB; 32]),
+        bc.token_balance(&[7u8; 32], &[0xAB; 32]).unwrap(),
         4_242,
         "facade must return the sled balance"
     );
     // Unknown address under an attached store reads sled's authoritative zero.
-    assert_eq!(bc.token_balance(&[7u8; 32], &[0x01; 32]), 0);
+    assert_eq!(bc.token_balance(&[7u8; 32], &[0x01; 32]).unwrap(), 0);
 }
 
 #[test]

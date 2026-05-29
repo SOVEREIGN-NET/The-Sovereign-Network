@@ -111,6 +111,8 @@ impl DivergenceConfig {
 pub struct DivergenceMetrics {
     /// Token-balance mismatches detected (`divergence_total{field="token_balance"}`).
     pub token_balance: AtomicU64,
+    /// Token-contract metadata mismatches (`divergence_total{field="token_contract"}`).
+    pub token_contract: AtomicU64,
     /// Token-nonce mismatches detected (`divergence_total{field="token_nonce"}`).
     pub token_nonce: AtomicU64,
     /// Identity mismatches detected (`divergence_total{field="identity"}`).
@@ -132,6 +134,9 @@ impl DivergenceMetrics {
         match field {
             DivergenceField::TokenBalance => {
                 self.token_balance.fetch_add(1, Ordering::Relaxed);
+            }
+            DivergenceField::TokenContract => {
+                self.token_contract.fetch_add(1, Ordering::Relaxed);
             }
             DivergenceField::TokenNonce => {
                 self.token_nonce.fetch_add(1, Ordering::Relaxed);
@@ -159,6 +164,10 @@ impl DivergenceMetrics {
         out.push_str(&format!(
             "divergence_total{{field=\"token_balance\"}} {}\n",
             self.token_balance.load(Ordering::Relaxed)
+        ));
+        out.push_str(&format!(
+            "divergence_total{{field=\"token_contract\"}} {}\n",
+            self.token_contract.load(Ordering::Relaxed)
         ));
         out.push_str(&format!(
             "divergence_total{{field=\"token_nonce\"}} {}\n",
@@ -193,6 +202,12 @@ impl DivergenceMetrics {
 pub enum DivergenceField {
     /// Per-(token, address) balance (catalog row 2).
     TokenBalance,
+    /// Token-contract metadata: name / symbol / decimals / missing contract
+    /// (catalog row 7). Split from `TokenBalance` (CR #2658) so a contract that
+    /// is in-memory but not yet in sled — normal during bootstrap before
+    /// `put_token_contract` fires — does not raise spurious `token_balance`
+    /// alerts when balances are perfectly in sync.
+    TokenContract,
     /// Per-(token, sender) replay nonce (catalog row 3).
     TokenNonce,
     /// Identity registry record (catalog row 5).
@@ -206,6 +221,7 @@ impl DivergenceField {
     pub fn label(&self) -> &'static str {
         match self {
             DivergenceField::TokenBalance => "token_balance",
+            DivergenceField::TokenContract => "token_contract",
             DivergenceField::TokenNonce => "token_nonce",
             DivergenceField::Identity => "identity",
             DivergenceField::Block => "block",
@@ -334,10 +350,9 @@ fn detect_token_balances(
         };
         let token = TokenId::new(token_bytes);
 
-        // --- Metadata comparison (DivergenceField::Block? no — TokenBalance) ---
-        // Metadata divergence is reported under the token_balance field bucket
-        // since both belong to the token_contracts pair; a missing sled
-        // contract is a divergence on its own.
+        // --- Metadata comparison (CR #2658: tagged TokenContract, not
+        // TokenBalance, so a contract present in-mem but not yet in sled —
+        // normal during bootstrap — doesn't raise spurious balance alerts). ---
         match store.get_token_contract(&token) {
             Ok(Some(sled_contract)) => {
                 if contract.name != sled_contract.name
@@ -345,7 +360,7 @@ fn detect_token_balances(
                     || contract.decimals != sled_contract.decimals
                 {
                     out.push(Divergence {
-                        field: DivergenceField::TokenBalance,
+                        field: DivergenceField::TokenContract,
                         key: format!("{}:meta", hex::encode(token_bytes)),
                         in_mem: format!(
                             "name={} symbol={} decimals={}",
@@ -361,7 +376,7 @@ fn detect_token_balances(
             }
             Ok(None) => {
                 out.push(Divergence {
-                    field: DivergenceField::TokenBalance,
+                    field: DivergenceField::TokenContract,
                     key: format!("{}:meta", hex::encode(token_bytes)),
                     in_mem: format!("name={} symbol={}", contract.name, contract.symbol),
                     sled: ABSENT.to_string(),
@@ -502,10 +517,13 @@ fn detect_blocks(
     };
 
     // Build the in-memory height → block-hash index for the hot window.
+    // Use the stored header hash (not a recomputed b.hash()) so this matches
+    // what store.get_block_hash_by_height returns (it reads header.block_hash) —
+    // avoids a spurious computed-vs-stored mismatch (CR #2658).
     let in_mem_index: std::collections::HashMap<u64, [u8; 32]> = bc
         .blocks
         .iter()
-        .map(|b| (b.header.height, b.hash().as_array()))
+        .map(|b| (b.header.height, b.header.block_hash.as_array()))
         .collect();
 
     if in_mem_index.is_empty() {
@@ -531,8 +549,10 @@ fn detect_blocks(
 
     for h in heights {
         let in_mem_hash = in_mem_index.get(&h).copied();
-        let sled_hash = match store.get_block_by_height(h) {
-            Ok(Some(b)) => Some(b.hash().as_array()),
+        // CR #2658: compare via the stored block hash, not a full block
+        // deserialization + rehash per sampled height.
+        let sled_hash = match store.get_block_hash_by_height(h) {
+            Ok(Some(bh)) => Some(bh.0),
             Ok(None) => None,
             Err(_) => continue,
         };
