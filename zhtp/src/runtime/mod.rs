@@ -86,6 +86,7 @@ pub mod shared_blockchain;
 pub mod shared_dht;
 pub mod storage_provider; // Global access to storage for component sharing
 pub mod validator_ip;
+pub mod divergence_service;
 pub mod storage_rewards;
 #[cfg(test)]
 pub mod test_api_integration;
@@ -3303,6 +3304,15 @@ impl RuntimeOrchestrator {
             };
             // Initial discovery + periodic re-check, all in background
             crate::runtime::validator_ip::spawn_periodic_ip_update(own_did, 300);
+        }
+
+        // ====================================================================
+        // State-divergence detector (#2635, Phase 1). No-op unless
+        // ZHTP_DIVERGENCE_DETECT is set. Samples in-memory vs sled state and
+        // reports drift before the read-migration phases flip to sled-first.
+        // ====================================================================
+        if let Ok(blockchain_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
+            crate::runtime::divergence_service::spawn_divergence_detector(blockchain_arc);
         }
 
         // ====================================================================

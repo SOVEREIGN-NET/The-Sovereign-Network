@@ -55,6 +55,27 @@ impl Blockchain {
         self.identity_registry.get(did)
     }
 
+    /// Sled-first identity facade (state-unification #2635 / #2639).
+    ///
+    /// Reads the authoritative `IdentityConsensus` projection the executor's
+    /// `StateMutator::register_identity` writes to sled (keyed by DID hash via
+    /// `did_to_hash`). Returns `None` when no store is attached (store-less
+    /// mode) or the DID is unknown to the store.
+    ///
+    /// This is the canonical sled read for the #2639 migration. It deliberately
+    /// returns the sled `IdentityConsensus` type rather than the in-memory
+    /// `IdentityTransactionData`: the two carry different fields, so callers
+    /// migrate field-by-field. The legacy `get_identity` (in-memory) is left in
+    /// place until #2639 retires each caller.
+    pub fn identity_consensus_by_did(
+        &self,
+        did: &str,
+    ) -> Option<crate::storage::IdentityConsensus> {
+        let store = self.get_store()?;
+        let did_hash = crate::storage::did_to_hash(did);
+        store.get_identity(&did_hash).ok().flatten()
+    }
+
     pub fn identity_exists(&self, did: &str) -> bool {
         self.identity_registry.contains_key(did)
     }
