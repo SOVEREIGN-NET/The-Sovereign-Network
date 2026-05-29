@@ -32,13 +32,10 @@ where
 {
     let (tx, rx) = tokio::sync::oneshot::channel();
 
-    let handle = std::thread::Builder::new()
+    let _handle = std::thread::Builder::new()
         .name("zhtp-crypto".into())
         .stack_size(CRYPTO_STACK_SIZE)
         .spawn(move || {
-            // Also set env var so any nested std::thread::spawn or tokio::task::spawn_blocking
-            // inherits a reasonable default.
-            let _ = std::env::set_var("RUST_MIN_STACK", &CRYPTO_STACK_SIZE.to_string());
             let result = f();
             // Ignore error if receiver was dropped (task cancelled).
             let _ = tx.send(result);

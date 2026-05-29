@@ -495,7 +495,8 @@ async fn try_create_new(name: &str) -> Result<serde_json::Value, String> {
     let identity_json = serde_json::to_string_pretty(&identity)
         .map_err(|e| format!("Serialize: {}", e))?;
 
-    // Atomic write: .tmp → rename
+    // Atomic write with backup: .tmp → rename, old file → .bak
+    // Per CLAUDE.md keystore safety rule: never overwrite without backup.
     let tmp_identity = keystore_path.join("user_identity.json.tmp");
     let final_identity = keystore_path.join("user_identity.json");
     std::fs::write(&tmp_identity, &identity_json)
@@ -506,10 +507,18 @@ async fn try_create_new(name: &str) -> Result<serde_json::Value, String> {
         let final_key = keystore_path.join("user_private_key.json");
         crate::commands::web4_utils::save_private_key_to_file(pk, &tmp_key)
             .map_err(|e| format!("Write private key: {}", e))?;
+        // Best-effort backup of existing private key before overwrite
+        if final_key.exists() {
+            let _ = std::fs::rename(&final_key, final_key.with_extension("json.bak"));
+        }
         std::fs::rename(&tmp_key, &final_key)
             .map_err(|e| format!("Rename private key: {}", e))?;
     }
 
+    // Best-effort backup of existing identity before overwrite
+    if final_identity.exists() {
+        let _ = std::fs::rename(&final_identity, final_identity.with_extension("json.bak"));
+    }
     std::fs::rename(&tmp_identity, &final_identity)
         .map_err(|e| format!("Rename identity: {}", e))?;
 
@@ -667,7 +676,15 @@ async fn try_generate_observer_identity() -> Result<serde_json::Value, String> {
     std::fs::write(&tmp_identity, &identity_json)
         .map_err(|e| format!("Failed to write identity file: {}", e))?;
 
-    // Atomically rename .tmp -> final (either both succeed or neither exists)
+    // Atomically rename .tmp -> final with best-effort backup of existing file
+    // Per CLAUDE.md keystore safety rule: preserve old keys so observers can
+    // be re-admitted with a previous key if the user changes their mind.
+    if identity_file.exists() {
+        let _ = std::fs::rename(&identity_file, identity_file.with_extension("json.bak"));
+    }
+    if private_key_file.exists() {
+        let _ = std::fs::rename(&private_key_file, private_key_file.with_extension("json.bak"));
+    }
     std::fs::rename(&tmp_identity, &identity_file)
         .map_err(|e| format!("Failed to finalize identity file: {}", e))?;
     std::fs::rename(&tmp_private_key, &private_key_file)
