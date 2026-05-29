@@ -1,0 +1,229 @@
+file,line,field,class,sub_issue,target_facade,snippet
+zhtp-cli/src/commands/genesis.rs,32,blocks,Recent,#2636,Blockchain::iter_blocks() / latest_block() / block_by_height(h),"let block0 = bc.blocks.first().context(""No genesis block"")?;"
+zhtp/src/api/server.rs,303,blocks,Aggregate,#2636,Blockchain::iter_blocks() / latest_block() / block_by_height(h),let block_count = blockchain.blocks.len();
+zhtp/src/runtime/components/blockchain.rs,860,blocks,Aggregate,#2636,Blockchain::iter_blocks() / latest_block() / block_by_height(h),"metrics.insert(""total_blocks"".to_string(); blockchain.blocks.len() as f64);"
+zhtp/src/runtime/components/blockchain.rs,872,blocks,Aggregate,#2636,Blockchain::iter_blocks() / latest_block() / block_by_height(h),let avg_block_size = if blockchain.blocks.len() > 0 {
+zhtp/src/runtime/components/blockchain.rs,878,blocks,Aggregate,#2636,Blockchain::iter_blocks() / latest_block() / block_by_height(h),/ blockchain.blocks.len() as f64
+zhtp/src/runtime/components/blockchain.rs,885,blocks,Aggregate,#2636,Blockchain::iter_blocks() / latest_block() / block_by_height(h),"metrics.insert(""total_blocks"".to_string(); blockchain.blocks.len() as f64);"
+zhtp/src/runtime/components/blockchain.rs,897,blocks,Aggregate,#2636,Blockchain::iter_blocks() / latest_block() / block_by_height(h),let avg_block_size = if blockchain.blocks.len() > 0 {
+zhtp/src/runtime/components/blockchain.rs,903,blocks,Aggregate,#2636,Blockchain::iter_blocks() / latest_block() / block_by_height(h),/ blockchain.blocks.len() as f64
+zhtp/src/runtime/components/consensus.rs,1412,blocks,Aggregate,#2636,Blockchain::iter_blocks() / latest_block() / block_by_height(h),if blockchain.blocks.is_empty() {
+zhtp/src/runtime/components/consensus.rs,1416,blocks,Recent,#2636,Blockchain::iter_blocks() / latest_block() / block_by_height(h),let latest_block = blockchain.blocks.last().unwrap();
+zhtp/src/runtime/components/consensus.rs,1514,blocks,Aggregate,#2636,Blockchain::iter_blocks() / latest_block() / block_by_height(h),return !blockchain.blocks.is_empty() || blockchain.height == 0;
+zhtp/src/runtime/mod.rs,2242,blocks,Aggregate,#2636,Blockchain::iter_blocks() / latest_block() / block_by_height(h),for block in &bc.blocks {
+zhtp/src/runtime/mod.rs,2270,blocks,Aggregate,#2636,Blockchain::iter_blocks() / latest_block() / block_by_height(h),bc.blocks.len()
+zhtp/src/runtime/mod.rs,2466,blocks,Recent,#2636,Blockchain::iter_blocks() / latest_block() / block_by_height(h),if let Some(genesis_block) = bc.blocks.first() {
+zhtp/src/runtime/mod.rs,6261,blocks,Lookup,#2636,Blockchain::iter_blocks() / latest_block() / block_by_height(h),bc.blocks[0].header.version = bc.blocks[0].header.version.saturating_add(1);
+zhtp/src/runtime/services/genesis_funding.rs,123,blocks,Aggregate,#2636,Blockchain::iter_blocks() / latest_block() / block_by_height(h),if blockchain.blocks.is_empty() {
+zhtp/src/runtime/services/genesis_funding.rs,127,blocks,Lookup,#2636,Blockchain::iter_blocks() / latest_block() / block_by_height(h),let genesis_block = &mut blockchain.blocks[0];
+zhtp/src/runtime/shared_blockchain.rs,103,blocks,Aggregate,#2636,Blockchain::iter_blocks() / latest_block() / block_by_height(h),if height < blockchain.blocks.len() as u64 {
+zhtp/src/runtime/shared_blockchain.rs,104,blocks,Lookup,#2636,Blockchain::iter_blocks() / latest_block() / block_by_height(h),Ok(Some(blockchain.blocks[height as usize].clone()))
+zhtp/src/runtime/shared_blockchain.rs,117,blocks,Aggregate,#2636,Blockchain::iter_blocks() / latest_block() / block_by_height(h),for block in &blockchain.blocks {
+zhtp/src/unified_server.rs,2128,blocks,Aggregate,#2636,Blockchain::iter_blocks() / latest_block() / block_by_height(h),block_count: blockchain.blocks.len();
+tools/chain_audit.rs,161,token_contracts,Reference,#2637,"Blockchain::token_balance(token,addr) [bal] | token_contract(token) [meta]",let sov_balance_count = bc.token_contracts
+tools/chain_audit.rs,165,token_contracts,Reference,#2637,"Blockchain::token_balance(token,addr) [bal] | token_contract(token) [meta]",let sov_total: u128 = bc.token_contracts
+zhtp/src/api/handlers/oracle/mod.rs,434,token_contracts,Aggregate,#2637,"Blockchain::token_balance(token,addr) [bal] | token_contract(token) [meta]",bc.token_contracts.values().find(|t| t.symbol == cbe_symbol)
+zhtp/src/api/handlers/oracle/mod.rs,627,token_contracts,Aggregate,#2637,"Blockchain::token_balance(token,addr) [bal] | token_contract(token) [meta]",bc.token_contracts.values().find(|t| t.symbol == cbe_symbol)
+zhtp/src/api/handlers/web4/domains.rs,2415,token_contracts,Lookup,#2637,"Blockchain::token_balance(token,addr) [bal] | token_contract(token) [meta]",let token = bc.token_contracts.get(&sov_token_id).unwrap();
+zhtp/src/api/handlers/web4/domains.rs,2444,token_contracts,Mutate,#2637,"Blockchain::token_balance(token,addr) [bal] | token_contract(token) [meta]",let token = bc.token_contracts.get_mut(&sov_token_id).unwrap();
+zhtp/src/runtime/mod.rs,1140,token_contracts,Aggregate,#2637,"Blockchain::token_balance(token,addr) [bal] | token_contract(token) [meta]",|| !blockchain.token_contracts.is_empty();
+zhtp/src/runtime/mod.rs,1146,token_contracts,Aggregate,#2637,"Blockchain::token_balance(token,addr) [bal] | token_contract(token) [meta]",blockchain.token_contracts.len()
+zhtp/src/runtime/mod.rs,1202,token_contracts,Lookup,#2637,"Blockchain::token_balance(token,addr) [bal] | token_contract(token) [meta]",if !blockchain.token_contracts.contains_key(&sov_token_id) {
+zhtp/src/runtime/mod.rs,1204,token_contracts,Mutate,#2637,"Blockchain::token_balance(token,addr) [bal] | token_contract(token) [meta]",blockchain.token_contracts.insert(sov_token_id; sov_token);
+zhtp/src/runtime/mod.rs,1352,token_contracts,Lookup,#2637,"Blockchain::token_balance(token,addr) [bal] | token_contract(token) [meta]",if let Some(sov_contract) = blockchain.token_contracts.get(&sov_token_id) {
+zhtp/src/runtime/mod.rs,2165,token_contracts,Aggregate,#2637,"Blockchain::token_balance(token,addr) [bal] | token_contract(token) [meta]",bc.token_contracts.len()
+zhtp/src/runtime/mod.rs,2171,token_contracts,Lookup,#2637,"Blockchain::token_balance(token,addr) [bal] | token_contract(token) [meta]",if !bc.token_contracts.contains_key(&sov_token_id) {
+zhtp/src/runtime/mod.rs,2173,token_contracts,Mutate,#2637,"Blockchain::token_balance(token,addr) [bal] | token_contract(token) [meta]",bc.token_contracts.insert(sov_token_id; sov_token.clone());
+zhtp/src/runtime/services/genesis_funding.rs,59,token_contracts,Lookup,#2637,"Blockchain::token_balance(token,addr) [bal] | token_contract(token) [meta]",if !blockchain.token_contracts.contains_key(&sov_token_id) {
+zhtp/src/runtime/services/genesis_funding.rs,61,token_contracts,Mutate,#2637,"Blockchain::token_balance(token,addr) [bal] | token_contract(token) [meta]",blockchain.token_contracts.insert(sov_token_id; sov_token);
+zhtp/src/runtime/services/genesis_funding.rs,225,token_contracts,Mutate,#2637,"Blockchain::token_balance(token,addr) [bal] | token_contract(token) [meta]",if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+zhtp/src/api/handlers/blockchain/mod.rs,3030,utxo_set,Aggregate,#2637+,Blockchain::utxo(outpoint),let utxos_tracked = blockchain.utxo_set.len();
+zhtp/src/api/handlers/marketplace/mod.rs,456,utxo_set,Aggregate,#2637+,Blockchain::utxo(outpoint),blockchain.utxo_set.len();
+zhtp/src/api/handlers/marketplace/mod.rs,460,utxo_set,Reference,#2637+,Blockchain::utxo(outpoint),for (utxo_hash; output) in &blockchain.utxo_set {
+zhtp/src/api/handlers/marketplace/mod.rs,545,utxo_set,Reference,#2637+,Blockchain::utxo(outpoint),previous_output: *utxo_hash; //  CORRECT: Use actual UTXO hash from blockchain.utxo_set
+zhtp/src/runtime/components/blockchain.rs,865,utxo_set,Aggregate,#2637+,Blockchain::utxo(outpoint),"metrics.insert(""utxo_count"".to_string(); blockchain.utxo_set.len() as f64);"
+zhtp/src/runtime/components/blockchain.rs,890,utxo_set,Aggregate,#2637+,Blockchain::utxo(outpoint),"metrics.insert(""utxo_count"".to_string(); blockchain.utxo_set.len() as f64);"
+zhtp/src/runtime/mod.rs,1139,utxo_set,Aggregate,#2637+,Blockchain::utxo(outpoint),|| !blockchain.utxo_set.is_empty()
+zhtp/src/runtime/mod.rs,1145,utxo_set,Aggregate,#2637+,Blockchain::utxo(outpoint),blockchain.utxo_set.len();
+zhtp/src/runtime/mod.rs,4673,utxo_set,Aggregate,#2637+,Blockchain::utxo(outpoint),blockchain.utxo_set.len();
+zhtp/src/runtime/mod.rs,4677,utxo_set,Reference,#2637+,Blockchain::utxo(outpoint),for (utxo_hash; output) in &blockchain.utxo_set {
+zhtp/src/runtime/services/genesis_funding.rs,302,utxo_set,Mutate,#2637+,Blockchain::utxo(outpoint),blockchain.utxo_set.insert(utxo_hash; output.clone());
+zhtp/src/runtime/services/genesis_funding.rs,323,utxo_set,Aggregate,#2637+,Blockchain::utxo(outpoint),"info!(""   - Total UTXO entries: {}""; blockchain.utxo_set.len());"
+zhtp/src/runtime/services/genesis_funding.rs,342,utxo_set,Aggregate,#2637+,Blockchain::utxo(outpoint),blockchain.utxo_set.len();
+zhtp/src/runtime/services/mining_service.rs,188,utxo_set,Aggregate,#2637+,Blockchain::utxo(outpoint),"info!(""Total UTXOs: {}""; blockchain.utxo_set.len());"
+tools/chain_audit.rs,144,identity_registry,Aggregate,#2639,Blockchain::identity_by_did(did) / iter_identities(),"println!(""  identity_registry entries:  {}""; bc.identity_registry.len());"
+tools/chain_audit.rs,149,identity_registry,Aggregate,#2639,Blockchain::identity_by_did(did) / iter_identities(),let mut sorted_ids: Vec<_> = bc.identity_registry.values().collect();
+tools/chain_audit.rs,174,identity_registry,Aggregate,#2639,Blockchain::identity_by_did(did) / iter_identities(),let identity_divergence = bc.identity_registry.len() as i64 - identity_dids_in_blocks.len() as i64;
+tools/chain_audit.rs,179,identity_registry,Aggregate,#2639,Blockchain::identity_by_did(did) / iter_identities(),bc.identity_registry.len(); identity_dids_in_blocks.len(); identity_divergence);
+tools/chain_audit.rs,198,identity_registry,Reference,#2639,Blockchain::identity_by_did(did) / iter_identities(),for (did; _) in &bc.identity_registry {
+tools/testnet_reset.rs,100,identity_registry,Aggregate,#2639,Blockchain::identity_by_did(did) / iter_identities(),bc.identity_registry.values().cloned().collect();
+tools/wallet_probe.rs,41,identity_registry,Aggregate,#2639,Blockchain::identity_by_did(did) / iter_identities(),blockchain.identity_registry.len();
+tools/wallet_probe.rs,58,identity_registry,Aggregate,#2639,Blockchain::identity_by_did(did) / iter_identities(),"println!(""identity_registry entries: {}""; blockchain.identity_registry.len());"
+tools/wallet_probe.rs,64,identity_registry,Aggregate,#2639,Blockchain::identity_by_did(did) / iter_identities(),for (did; id) in blockchain.identity_registry.iter() {
+zhtp-cli/src/commands/genesis.rs,75,identity_registry,Aggregate,#2639,Blockchain::identity_by_did(did) / iter_identities(),bc.identity_registry.len();
+zhtp/src/api/handlers/identity/backup_recovery.rs,440,identity_registry,Lookup,#2639,Blockchain::identity_by_did(did) / iter_identities(),let dn = blockchain.identity_registry.get(&did).map(|id| id.display_name.clone());
+zhtp/src/api/handlers/identity/backup_recovery.rs,502,identity_registry,Lookup,#2639,Blockchain::identity_by_did(did) / iter_identities(),bc.identity_registry.get(&did).map(|id| id.display_name.clone())
+zhtp/src/api/handlers/identity/mod.rs,1150,identity_registry,Lookup,#2639,Blockchain::identity_by_did(did) / iter_identities(),let dn = bc.identity_registry.get(&did).map(|id| id.display_name.clone());
+zhtp/src/api/handlers/identity/mod.rs,1558,identity_registry,Lookup,#2639,Blockchain::identity_by_did(did) / iter_identities(),match blockchain.identity_registry.get(&req.did) {
+zhtp/src/api/handlers/identity/mod.rs,1608,identity_registry,Mutate,#2639,Blockchain::identity_by_did(did) / iter_identities(),if let Some(id) = blockchain.identity_registry.get_mut(&req.did) {
+zhtp/src/api/handlers/identity/mod.rs,1715,identity_registry,Lookup,#2639,Blockchain::identity_by_did(did) / iter_identities(),if blockchain.identity_registry.contains_key(&key_id_did) {
+zhtp/src/api/handlers/identity/mod.rs,1831,identity_registry,Mutate,#2639,Blockchain::identity_by_did(did) / iter_identities(),if let Some(id) = blockchain.identity_registry.get_mut(&did) {
+zhtp/src/api/handlers/pouw/mod.rs,287,identity_registry,Lookup,#2639,Blockchain::identity_by_did(did) / iter_identities(),if blockchain.identity_registry.contains_key(&key_id_did) {
+zhtp/src/api/handlers/wallet/mod.rs,1686,identity_registry,Mutate,#2639,Blockchain::identity_by_did(did) / iter_identities(),blockchain.identity_registry.insert(did.clone(); identity_data);
+zhtp/src/api/handlers/web4/domains.rs,196,identity_registry,Lookup,#2639,Blockchain::identity_by_did(did) / iter_identities(),let chain_id = bc.identity_registry.get(&owner_did).ok_or_else(|| {
+zhtp/src/messaging/handler.rs,296,identity_registry,Lookup,#2639,Blockchain::identity_by_did(did) / iter_identities(),if blockchain.identity_registry.contains_key(&key_id_did) {
+zhtp/src/messaging/inbound_stream.rs,38,identity_registry,Lookup,#2639,Blockchain::identity_by_did(did) / iter_identities(),if blockchain.identity_registry.contains_key(&key_id_did) {
+zhtp/src/messaging/inbound_stream.rs,42,identity_registry,Aggregate,#2639,Blockchain::identity_by_did(did) / iter_identities(),for (did; id) in blockchain.identity_registry.iter() {
+zhtp/src/monitoring/metrics.rs,460,identity_registry,Aggregate,#2639,Blockchain::identity_by_did(did) / iter_identities(),metrics.active_citizens = blockchain.identity_registry.len() as u64; // Active identities as citizens
+zhtp/src/runtime/blockchain_provider.rs,93,identity_registry,Lookup,#2639,Blockchain::identity_by_did(did) / iter_identities(),if bc.identity_registry.contains_key(&key_id_did) {
+zhtp/src/runtime/blockchain_provider.rs,98,identity_registry,Aggregate,#2639,Blockchain::identity_by_did(did) / iter_identities(),for (canonical_did; identity) in bc.identity_registry.iter() {
+zhtp/src/runtime/components/blockchain.rs,169,identity_registry,Mutate,#2639,Blockchain::identity_by_did(did) / iter_identities(),if let Some(identity_data) = blockchain.identity_registry.get_mut(&user_did) {
+zhtp/src/runtime/components/blockchain.rs,868,identity_registry,Aggregate,#2639,Blockchain::identity_by_did(did) / iter_identities(),blockchain.identity_registry.len() as f64;
+zhtp/src/runtime/components/blockchain.rs,893,identity_registry,Aggregate,#2639,Blockchain::identity_by_did(did) / iter_identities(),blockchain.identity_registry.len() as f64;
+zhtp/src/runtime/components/consensus.rs,344,identity_registry,Aggregate,#2639,Blockchain::identity_by_did(did) / iter_identities(),for (did; identity_data) in blockchain.identity_registry.iter() {
+zhtp/src/runtime/components/identity.rs,571,identity_registry,Lookup,#2639,Blockchain::identity_by_did(did) / iter_identities(),if bc.identity_registry.contains_key(did) {
+zhtp/src/runtime/components/identity.rs,1226,identity_registry,Lookup,#2639,Blockchain::identity_by_did(did) / iter_identities(),let identity_registry = bc.identity_registry.clone();
+zhtp/src/runtime/mod.rs,1184,identity_registry,Aggregate,#2639,Blockchain::identity_by_did(did) / iter_identities(),bc.identity_registry.len();
+zhtp/src/runtime/services/genesis_funding.rs,343,identity_registry,Aggregate,#2639,Blockchain::identity_by_did(did) / iter_identities(),blockchain.identity_registry.len();
+zhtp/src/runtime/services/genesis_funding.rs,406,identity_registry,Lookup,#2639,Blockchain::identity_by_did(did) / iter_identities(),if blockchain.identity_registry.contains_key(&user_did) {
+zhtp/src/runtime/services/genesis_funding.rs,476,identity_registry,Lookup,#2639,Blockchain::identity_by_did(did) / iter_identities(),if !blockchain.identity_registry.contains_key(&validator_did) {
+zhtp/src/runtime/services/genesis_funding.rs,477,identity_registry,Mutate,#2639,Blockchain::identity_by_did(did) / iter_identities(),blockchain.identity_registry.insert(
+zhtp/src/runtime/services/genesis_funding.rs,532,identity_registry,Aggregate,#2639,Blockchain::identity_by_did(did) / iter_identities(),blockchain.identity_registry.len()
+zhtp/src/runtime/services/mining_service.rs,191,identity_registry,Aggregate,#2639,Blockchain::identity_by_did(did) / iter_identities(),blockchain.identity_registry.len()
+zhtp/src/unified_server.rs,2130,identity_registry,Aggregate,#2639,Blockchain::identity_by_did(did) / iter_identities(),identity_count: blockchain.identity_registry.len();
+zhtp/src/unified_server.rs,2175,identity_registry,Lookup,#2639,Blockchain::identity_by_did(did) / iter_identities(),Ok(bc.identity_registry.contains_key(did) || bc.validator_registry.contains_key(did))
+zhtp/src/api/handlers/dao/mod.rs,3754,validator_registry,Mutate,#2639,Blockchain::validator(id) / iter_validators(),blockchain.validator_registry.insert(
+zhtp/src/api/handlers/identity/backup_recovery.rs,2598,validator_registry,Mutate,#2639,Blockchain::validator(id) / iter_validators(),bc.validator_registry.insert(
+zhtp/src/runtime/components/oracle.rs,87,validator_registry,Reference,#2639,Blockchain::validator(id) / iter_validators(),b.validator_registry
+zhtp/src/runtime/components/protocols.rs,465,validator_registry,Reference,#2639,Blockchain::validator(id) / iter_validators(),let ips: Vec<std::net::Ipv4Addr> = bc.validator_registry
+zhtp/src/runtime/mod.rs,1185,validator_registry,Aggregate,#2639,Blockchain::validator(id) / iter_validators(),bc.validator_registry.len();
+zhtp/src/runtime/mod.rs,3584,validator_registry,Lookup,#2639,Blockchain::validator(id) / iter_validators(),if blockchain.validator_registry.contains_key(&node_did) {
+zhtp/src/runtime/mod.rs,5563,validator_registry,Mutate,#2639,Blockchain::validator(id) / iter_validators(),bc.validator_registry.insert(bv.identity_id.clone(); vi);
+zhtp/src/runtime/mod.rs,5583,validator_registry,Mutate,#2639,Blockchain::validator(id) / iter_validators(),bc.validator_registry = dat_bc.validator_registry;
+zhtp/src/runtime/mod.rs,6369,validator_registry,Mutate,#2639,Blockchain::validator(id) / iter_validators(),bc.validator_registry.insert(
+zhtp/src/runtime/mod.rs,6418,validator_registry,Mutate,#2639,Blockchain::validator(id) / iter_validators(),bc.validator_registry.insert(
+zhtp/src/runtime/mod.rs,6494,validator_registry,Reference,#2639,Blockchain::validator(id) / iter_validators(),src.validator_registry
+zhtp/src/runtime/mod.rs,6496,validator_registry,Reference,#2639,Blockchain::validator(id) / iter_validators(),src.validator_registry
+zhtp/src/runtime/validator_ip.rs,77,validator_registry,Lookup,#2639,Blockchain::validator(id) / iter_validators(),if let Some(validator) = blockchain.validator_registry.get(did) {
+zhtp/src/unified_server.rs,2175,validator_registry,Lookup,#2639,Blockchain::validator(id) / iter_validators(),Ok(bc.identity_registry.contains_key(did) || bc.validator_registry.contains_key(did))
+tools/chain_audit.rs,145,wallet_registry,Aggregate,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],"println!(""  wallet_registry entries:    {}""; bc.wallet_registry.len());"
+tools/chain_audit.rs,175,wallet_registry,Aggregate,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],let wallet_divergence = bc.wallet_registry.len() as i64 - wallet_ids_in_blocks.len() as i64;
+tools/chain_audit.rs,181,wallet_registry,Aggregate,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],bc.wallet_registry.len(); wallet_ids_in_blocks.len(); wallet_divergence);
+tools/chain_audit.rs,209,wallet_registry,Reference,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],for (wallet_id; wallet) in &bc.wallet_registry {
+tools/testnet_reset.rs,102,wallet_registry,Aggregate,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],bc.wallet_registry.values().cloned().collect();
+tools/wallet_probe.rs,42,wallet_registry,Aggregate,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],blockchain.wallet_registry.len()
+tools/wallet_probe.rs,59,wallet_registry,Aggregate,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],"println!(""wallet_registry   entries: {}""; blockchain.wallet_registry.len());"
+tools/wallet_probe.rs,108,wallet_registry,Aggregate,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],for (wallet_id_hex; w) in blockchain.wallet_registry.iter() {
+tools/wallet_probe.rs,140,wallet_registry,Aggregate,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],for (wid; w) in blockchain.wallet_registry.iter().take(10) {
+zhtp-cli/src/commands/blockchain.rs,225,wallet_registry,Aggregate,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],total_wallets_in_local_state: blockchain.wallet_registry.len();
+zhtp-cli/src/commands/genesis.rs,74,wallet_registry,Aggregate,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],bc.wallet_registry.len();
+zhtp/src/api/handlers/identity/backup_recovery.rs,2631,wallet_registry,Mutate,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],bc.wallet_registry.insert(
+zhtp/src/api/handlers/web4/domains.rs,2304,wallet_registry,Mutate,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],blockchain.wallet_registry.insert(
+zhtp/src/api/handlers/web4/domains.rs,2314,wallet_registry,Mutate,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],blockchain.wallet_registry.insert(
+zhtp/src/runtime/components/identity.rs,973,wallet_registry,Lookup,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],if !bc.wallet_registry.contains_key(wid) {
+zhtp/src/runtime/components/identity.rs,1015,wallet_registry,Lookup,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],if !bc.wallet_registry.contains_key(wid) {
+zhtp/src/runtime/components/identity.rs,1048,wallet_registry,Lookup,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],if !bc.wallet_registry.contains_key(wid) {
+zhtp/src/runtime/components/identity.rs,1090,wallet_registry,Lookup,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],if let Some(wallet_data) = bc.wallet_registry.get(wid) {
+zhtp/src/runtime/components/identity.rs,1109,wallet_registry,Lookup,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],if let Some(wallet_data) = bc.wallet_registry.get(wid) {
+zhtp/src/runtime/components/identity.rs,1127,wallet_registry,Lookup,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],if let Some(wallet_data) = bc.wallet_registry.get(wid) {
+zhtp/src/runtime/components/identity.rs,1227,wallet_registry,Lookup,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],let wallet_registry = bc.wallet_registry.clone();
+zhtp/src/runtime/mod.rs,4568,wallet_registry,Aggregate,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],blockchain.wallet_registry.len()
+zhtp/src/runtime/mod.rs,4571,wallet_registry,Aggregate,#2639*,Blockchain::wallet_projection(addr) [needs sled wiring first],for (wallet_id_hex; wallet_data) in blockchain.wallet_registry.iter() {
+zhtp/src/api/handlers/dao/mod.rs,1536,pending_transactions,Aggregate,#2641,Blockchain::iter_pending_transactions() (post-S2),|| blockchain.pending_transactions.iter().any(|tx| {
+zhtp/src/api/handlers/observer_admission.rs,1281,pending_transactions,Reference,#2641,Blockchain::iter_pending_transactions() (post-S2),bc.pending_transactions
+zhtp/src/monitoring/metrics.rs,461,pending_transactions,Aggregate,#2641,Blockchain::iter_pending_transactions() (post-S2),metrics.dao_proposals = blockchain.pending_transactions.len() as u64 / 10; // Estimate proposals
+zhtp/src/monitoring/metrics.rs,462,pending_transactions,Aggregate,#2641,Blockchain::iter_pending_transactions() (post-S2),metrics.dao_votes = blockchain.pending_transactions.len() as u64 / 5; // Estimate votes
+zhtp/src/runtime/components/blockchain.rs,863,pending_transactions,Aggregate,#2641,Blockchain::iter_pending_transactions() (post-S2),blockchain.pending_transactions.len() as f64;
+zhtp/src/runtime/components/blockchain.rs,888,pending_transactions,Aggregate,#2641,Blockchain::iter_pending_transactions() (post-S2),blockchain.pending_transactions.len() as f64;
+zhtp/src/runtime/components/consensus.rs,1435,pending_transactions,Lookup,#2641,Blockchain::iter_pending_transactions() (post-S2),let pending = blockchain.pending_transactions.clone();
+zhtp/src/runtime/components/identity.rs,660,pending_transactions,Aggregate,#2641,Blockchain::iter_pending_transactions() (post-S2),let pending_count = bc.pending_transactions.len();
+zhtp/src/runtime/components/identity.rs,676,pending_transactions,Lookup,#2641,Blockchain::iter_pending_transactions() (post-S2),let transactions = bc.pending_transactions.clone();
+zhtp/src/runtime/services/genesis_funding.rs,344,pending_transactions,Aggregate,#2641,Blockchain::iter_pending_transactions() (post-S2),blockchain.pending_transactions.len()
+zhtp/src/runtime/services/genesis_funding.rs,528,pending_transactions,Aggregate,#2641,Blockchain::iter_pending_transactions() (post-S2),blockchain.pending_transactions.len()
+zhtp/src/runtime/services/mining_service.rs,106,pending_transactions,Aggregate,#2641,Blockchain::iter_pending_transactions() (post-S2),if blockchain.pending_transactions.is_empty() && ubi_txs.is_empty() {
+zhtp/src/runtime/services/mining_service.rs,112,pending_transactions,Aggregate,#2641,Blockchain::iter_pending_transactions() (post-S2),blockchain.pending_transactions.len();
+zhtp/src/runtime/shared_blockchain.rs,131,pending_transactions,Aggregate,#2641,Blockchain::iter_pending_transactions() (post-S2),for tx in &blockchain.pending_transactions {
+zhtp/src/runtime/shared_blockchain.rs,149,pending_transactions,Lookup,#2641,Blockchain::iter_pending_transactions() (post-S2),Ok(blockchain.pending_transactions.clone())
+zhtp/src/runtime/shared_blockchain.rs,166,pending_transactions,Aggregate,#2641,Blockchain::iter_pending_transactions() (post-S2),if !blockchain.pending_transactions.is_empty() {
+zhtp/src/runtime/shared_blockchain.rs,169,pending_transactions,Aggregate,#2641,Blockchain::iter_pending_transactions() (post-S2),blockchain.pending_transactions.len()
+zhtp/src/runtime/shared_blockchain.rs,174,pending_transactions,Lookup,#2641,Blockchain::iter_pending_transactions() (post-S2),let transactions = blockchain.pending_transactions.clone();
+zhtp/src/runtime/shared_blockchain.rs,175,pending_transactions,Mutate,#2641,Blockchain::iter_pending_transactions() (post-S2),blockchain.pending_transactions.clear();
+zhtp/src/unified_server.rs,2129,pending_transactions,Aggregate,#2641,Blockchain::iter_pending_transactions() (post-S2),pending_transactions: blockchain.pending_transactions.len();
+zhtp/src/api/handlers/credentials/mod.rs,188,credential_registry,Lookup,DEFER,no sled tree — separate epic,if blockchain.credential_registry.contains_key(&req.username) {
+zhtp/src/api/handlers/credentials/mod.rs,224,credential_registry,Mutate,DEFER,no sled tree — separate epic,blockchain.credential_registry.insert(
+zhtp/src/api/handlers/credentials/mod.rs,262,credential_registry,Lookup,DEFER,no sled tree — separate epic,blockchain.credential_registry.get(&req.username).cloned()
+zhtp/src/api/handlers/credentials/mod.rs,326,credential_registry,Lookup,DEFER,no sled tree — separate epic,blockchain.credential_registry.get(&req.username).cloned()
+zhtp/src/api/handlers/credentials/mod.rs,371,credential_registry,Mutate,DEFER,no sled tree — separate epic,if let Some(cred) = blockchain.credential_registry.get_mut(&req.username) {
+zhtp/src/api/handlers/credentials/opaque.rs,325,credential_registry,Lookup,DEFER,no sled tree — separate epic,if bc.credential_registry.contains_key(&username) {
+zhtp/src/api/handlers/credentials/opaque.rs,497,credential_registry,Mutate,DEFER,no sled tree — separate epic,bc.credential_registry.insert(
+zhtp/src/api/handlers/credentials/opaque.rs,544,credential_registry,Lookup,DEFER,no sled tree — separate epic,bc.credential_registry.get(&username).cloned()
+zhtp/src/api/handlers/credentials/opaque.rs,714,credential_registry,Reference,DEFER,no sled tree — separate epic,bc.credential_registry
+zhtp/src/api/handlers/identity/mod.rs,1755,credential_registry,Lookup,DEFER,no sled tree — separate epic,if blockchain.credential_registry.contains_key(&username) {
+zhtp/src/api/handlers/identity/mod.rs,1815,credential_registry,Mutate,DEFER,no sled tree — separate epic,blockchain.credential_registry.insert(
+zhtp/src/runtime/mod.rs,1187,credential_registry,Aggregate,DEFER,no sled tree — separate epic,bc.credential_registry.len();
+zhtp/src/api/handlers/web4/domains.rs,598,domain_registry,Lookup,DEFER,no sled tree — separate epic,blockchain.domain_registry.contains_key(&simple_request.domain)
+zhtp/src/api/handlers/web4/domains.rs,893,domain_registry,Lookup,DEFER,no sled tree — separate epic,blockchain.domain_registry.contains_key(&request.domain)
+zhtp/src/runtime/mod.rs,1186,domain_registry,Aggregate,DEFER,no sled tree — separate epic,bc.domain_registry.len();
+zhtp/src/runtime/components/protocols.rs,488,gateway_registry,Reference,DEFER,no sled tree — separate epic,bc.gateway_registry
+zhtp/src/api/handlers/nft/mod.rs,70,nft_collections,Lookup,DEFER,no sled tree — separate epic,match bc.nft_collections.get(&arr) {
+zhtp/src/api/handlers/nft/mod.rs,121,nft_collections,Lookup,DEFER,no sled tree — separate epic,match bc.nft_collections.get(&arr) {
+zhtp/src/api/handlers/nft/mod.rs,161,nft_collections,Reference,DEFER,no sled tree — separate epic,for (col_id; collection) in &bc.nft_collections {
+zhtp/src/api/handlers/dao/mod.rs,762,oracle_state,Lookup,DEFER,no sled durability — separate epic,blockchain.oracle_state.epoch_id(reference_timestamp)
+zhtp/src/api/handlers/oracle/mod.rs,300,oracle_state,Lookup,DEFER,no sled durability — separate epic,let current_epoch = bc.oracle_state.epoch_id(block_timestamp);
+zhtp/src/api/handlers/oracle/mod.rs,310,oracle_state,Lookup,DEFER,no sled durability — separate epic,let max_staleness = bc.oracle_state.config.max_price_staleness_epochs;
+zhtp/src/api/handlers/oracle/mod.rs,497,oracle_state,Lookup,DEFER,no sled durability — separate epic,let current_epoch = bc.oracle_state.epoch_id(block_timestamp);
+zhtp/src/api/handlers/oracle/mod.rs,501,oracle_state,Lookup,DEFER,no sled durability — separate epic,let epoch_duration = bc.oracle_state.config.epoch_duration_secs.max(1);
+zhtp/src/api/handlers/oracle/mod.rs,691,oracle_state,Lookup,DEFER,no sled durability — separate epic,let current_epoch = bc.oracle_state.epoch_id(block_timestamp);
+zhtp/src/api/handlers/oracle/mod.rs,692,oracle_state,Lookup,DEFER,no sled durability — separate epic,let committee = bc.oracle_state.committee.members();
+zhtp/src/api/handlers/oracle/mod.rs,693,oracle_state,Lookup,DEFER,no sled durability — separate epic,let finalized_count = bc.oracle_state.finalized_prices_len();
+zhtp/src/api/handlers/oracle/mod.rs,694,oracle_state,Lookup,DEFER,no sled durability — separate epic,let threshold = bc.oracle_state.committee.threshold();
+zhtp/src/api/handlers/oracle/mod.rs,727,oracle_state,Lookup,DEFER,no sled durability — separate epic,let max_staleness = bc.oracle_state.config.max_price_staleness_epochs;
+zhtp/src/api/handlers/oracle/mod.rs,741,oracle_state,Lookup,DEFER,no sled durability — separate epic,epoch_duration_secs: bc.oracle_state.config.epoch_duration_secs;
+zhtp/src/api/handlers/oracle/mod.rs,748,oracle_state,Lookup,DEFER,no sled durability — separate epic,max_price_staleness_epochs: bc.oracle_state.config.max_price_staleness_epochs;
+zhtp/src/api/handlers/oracle/mod.rs,793,oracle_state,Lookup,DEFER,no sled durability — separate epic,let cfg = &bc.oracle_state.config;
+zhtp/src/api/handlers/oracle/mod.rs,794,oracle_state,Lookup,DEFER,no sled durability — separate epic,let committee = bc.oracle_state.committee.members();
+zhtp/src/api/handlers/oracle/mod.rs,795,oracle_state,Lookup,DEFER,no sled durability — separate epic,let threshold = bc.oracle_state.committee.threshold();
+zhtp/src/api/handlers/oracle/mod.rs,797,oracle_state,Lookup,DEFER,no sled durability — separate epic,let pending_committee = bc.oracle_state.committee.pending_update().map(|u| {
+zhtp/src/api/handlers/oracle/mod.rs,808,oracle_state,Lookup,DEFER,no sled durability — separate epic,let pending_config = bc.oracle_state.pending_config_update.as_ref().map(|u| {
+zhtp/src/api/handlers/oracle/mod.rs,866,oracle_state,Lookup,DEFER,no sled durability — separate epic,let protocol_config = &bc.oracle_state.protocol_config;
+zhtp/src/api/handlers/oracle/mod.rs,869,oracle_state,Lookup,DEFER,no sled durability — separate epic,let feature_flags = bc.oracle_state.feature_flags();
+zhtp/src/api/handlers/oracle/mod.rs,932,oracle_state,Lookup,DEFER,no sled durability — separate epic,let current_epoch = bc.oracle_state.epoch_id(block_timestamp);
+zhtp/src/api/handlers/oracle/mod.rs,933,oracle_state,Lookup,DEFER,no sled durability — separate epic,let _config = &bc.oracle_state.config;
+zhtp/src/api/handlers/oracle/mod.rs,936,oracle_state,Lookup,DEFER,no sled durability — separate epic,let pending_committee = bc.oracle_state.committee.pending_update().map(|u| {
+zhtp/src/api/handlers/oracle/mod.rs,947,oracle_state,Lookup,DEFER,no sled durability — separate epic,let pending_config = bc.oracle_state.pending_config_update.as_ref().map(|u| {
+zhtp/src/api/handlers/oracle/mod.rs,1122,oracle_state,Lookup,DEFER,no sled durability — separate epic,let committee_size = bc.oracle_state.committee.members().len();
+zhtp/src/api/handlers/oracle/mod.rs,1123,oracle_state,Lookup,DEFER,no sled durability — separate epic,let threshold = bc.oracle_state.committee.threshold();
+zhtp/src/api/handlers/oracle/mod.rs,1126,oracle_state,Lookup,DEFER,no sled durability — separate epic,let finalized = bc.oracle_state.finalized_price(epoch_id);
+zhtp/src/api/handlers/oracle/mod.rs,1130,oracle_state,Lookup,DEFER,no sled durability — separate epic,let current_epoch = bc.oracle_state.epoch_id(block_timestamp);
+zhtp/src/api/handlers/oracle/mod.rs,1247,oracle_state,Lookup,DEFER,no sled durability — separate epic,let threshold = bc.oracle_state.committee.threshold();
+zhtp/src/api/handlers/oracle/mod.rs,1303,oracle_state,Lookup,DEFER,no sled durability — separate epic,let current_config = &bc.oracle_state.config;
+zhtp/src/api/handlers/oracle/mod.rs,1401,oracle_state,Lookup,DEFER,no sled durability — separate epic,if bc.oracle_state.is_strict_spec_active() {
+zhtp/src/runtime/components/oracle.rs,148,oracle_state,Lookup,DEFER,no sled durability — separate epic,if bc.oracle_state.is_strict_spec_active() {
+zhtp/src/runtime/components/oracle.rs,164,oracle_state,Lookup,DEFER,no sled durability — separate epic,let current_epoch = bc.oracle_state.epoch_id(block_timestamp);
+zhtp/src/runtime/components/oracle.rs,177,oracle_state,Lookup,DEFER,no sled durability — separate epic,let oracle_pubkeys = bc.oracle_state.oracle_signing_pubkeys.clone();
+zhtp/src/runtime/components/oracle.rs,188,oracle_state,Mutate,DEFER,no sled durability — separate epic,let result = bc.oracle_state.process_attestation(
+zhtp/src/runtime/components/oracle.rs,354,oracle_state,Lookup,DEFER,no sled durability — separate epic,let config = bc.oracle_state.config.clone();
+zhtp/src/runtime/components/oracle.rs,356,oracle_state,Lookup,DEFER,no sled durability — separate epic,let members = bc.oracle_state.committee.members().to_vec();
+zhtp/src/runtime/components/oracle.rs,358,oracle_state,Lookup,DEFER,no sled durability — separate epic,let epoch = bc.oracle_state.epoch_id(ts);
+zhtp/src/runtime/components/oracle.rs,359,oracle_state,Lookup,DEFER,no sled durability — separate epic,let strict_spec = bc.oracle_state.is_strict_spec_active();
+zhtp/src/runtime/components/oracle.rs,477,oracle_state,Lookup,DEFER,no sled durability — separate epic,bc.oracle_state.epoch_id(bc.last_committed_timestamp())
+zhtp/src/runtime/components/oracle.rs,521,oracle_state,Lookup,DEFER,no sled durability — separate epic,let epoch2 = bc.oracle_state.epoch_id(bc.last_committed_timestamp());
+zhtp/src/runtime/components/oracle.rs,522,oracle_state,Lookup,DEFER,no sled durability — separate epic,let oracle_pubkeys2 = bc.oracle_state.oracle_signing_pubkeys.clone();
+zhtp/src/runtime/components/oracle.rs,533,oracle_state,Mutate,DEFER,no sled durability — separate epic,match bc.oracle_state.process_attestation(
+zhtp/src/runtime/components/oracle.rs,793,oracle_state,Lookup,DEFER,no sled durability — separate epic,let epoch_duration = blockchain.oracle_state.config().epoch_duration_secs;
+zhtp/src/runtime/components/oracle.rs,795,oracle_state,Lookup,DEFER,no sled durability — separate epic,let epoch_id = blockchain.oracle_state.epoch_id(timestamp);
+zhtp/src/runtime/components/oracle.rs,841,oracle_state,Lookup,DEFER,no sled durability — separate epic,let epoch_duration = blockchain.oracle_state.config().epoch_duration_secs;
+zhtp/src/runtime/components/oracle.rs,843,oracle_state,Lookup,DEFER,no sled durability — separate epic,let epoch_id = blockchain.oracle_state.epoch_id(timestamp);
+zhtp/src/runtime/mod.rs,2178,oracle_state,Lookup,DEFER,no sled durability — separate epic,if bc.oracle_state.committee.members().is_empty() {
+zhtp/src/runtime/mod.rs,3503,oracle_state,Lookup,DEFER,no sled durability — separate epic,if !blockchain.oracle_state.committee.members().is_empty() {
+zhtp/src/runtime/mod.rs,3530,oracle_state,Lookup,DEFER,no sled durability — separate epic,blockchain.oracle_state.committee.members().len()
+zhtp/src/runtime/mod.rs,5484,oracle_state,Mutate,DEFER,no sled durability — separate epic,bc.oracle_state = dat_bc.oracle_state;
+zhtp/src/runtime/mod.rs,5490,oracle_state,Reference,DEFER,no sled durability — separate epic,if let Err(e) = store_ref.save_oracle_state(&bc.oracle_state) {
+zhtp/src/runtime/mod.rs,6364,oracle_state,Lookup,DEFER,no sled durability — separate epic,assert!(bc.oracle_state.committee.members().is_empty());
+zhtp/src/runtime/mod.rs,6408,oracle_state,Lookup,DEFER,no sled durability — separate epic,assert_eq!(bc.oracle_state.committee.members().len(); 1);
+zhtp/src/runtime/mod.rs,6409,oracle_state,Lookup,DEFER,no sled durability — separate epic,assert!(bc.oracle_state.committee.members().contains(&key_id));
+zhtp/src/runtime/mod.rs,6457,oracle_state,Lookup,DEFER,no sled durability — separate epic,assert!(bc.oracle_state.committee.members().is_empty());
+zhtp-cli/src/commands/genesis.rs,76,web4_contracts,Aggregate,DEFER,no sled tree — separate epic,bc.web4_contracts.len();
+zhtp/src/api/handlers/blockchain/mod.rs,2460,web4_contracts,Aggregate,DEFER,no sled tree — separate epic,contracts.extend(blockchain.web4_contracts.keys().map(|id| ContractListItem {
+zhtp/src/api/handlers/blockchain/mod.rs,2533,web4_contracts,Lookup,DEFER,no sled tree — separate epic,} else if let Some(web4) = blockchain.web4_contracts.get(&contract_id) {
+zhtp/src/api/handlers/blockchain/mod.rs,2597,web4_contracts,Lookup,DEFER,no sled tree — separate epic,} else if let Some(web4) = blockchain.web4_contracts.get(&contract_id) {
