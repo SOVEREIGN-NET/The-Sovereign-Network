@@ -485,7 +485,7 @@ impl OpaqueHandlers {
         };
         {
             let mut bc = self.blockchain.write().await;
-            if let Err(e) = bc.add_system_transaction(tx) {
+            if let Err(e) = bc.add_system_transaction(tx, "opaque_credential_register") {
                 return Ok(json_err(
                     ZhtpStatus::InternalServerError,
                     &format!("failed to submit RegisterCredential tx: {}", e),
@@ -773,13 +773,26 @@ impl OpaqueHandlers {
         // re-established on the next login. No chain transaction or schema
         // change is required.
         if let Some(req_id) = request.requester.as_ref() {
-            self.session_manager
-                .bind_device_to_canonical_did(req_id.0, did.clone())
-                .await;
-            tracing::debug!(
-                "OPAQUE device-bind: key_id {} → {}",
-                hex::encode(&req_id.0[..8]),
-                &did[..20.min(did.len())]
+            if did.is_empty() {
+                tracing::warn!(
+                    "OPAQUE login_finish: cannot bind device {} — canonical DID resolved to empty string (credential_registry lookup failed for username '{}')",
+                    hex::encode(&req_id.0[..8]),
+                    pending.username
+                );
+            } else {
+                self.session_manager
+                    .bind_device_to_canonical_did(req_id.0, did.clone())
+                    .await;
+                tracing::info!(
+                    "OPAQUE device-bind: key_id {} → {}",
+                    hex::encode(&req_id.0[..8]),
+                    &did[..did.len().min(28)]
+                );
+            }
+        } else {
+            tracing::warn!(
+                "OPAQUE login_finish for '{}' completed but request.requester is None — no device→canonical DID binding written",
+                pending.username
             );
         }
 

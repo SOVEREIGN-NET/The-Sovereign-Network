@@ -11,7 +11,9 @@ use crate::argument_parsing::{format_output, TokenAction, TokenArgs, ZhtpCli};
 use crate::commands::web4_utils::{connect_default, load_identity_from_keystore};
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
-use lib_blockchain::transaction::{TokenCreationPayloadV1, TokenMintData, TokenTransferData};
+use lib_blockchain::transaction::{
+    TokenCreationPayloadV1, TokenMintData, TokenTransferData, DEFAULT_TOKEN_CREATION_FEE,
+};
 use lib_blockchain::types::TransactionType;
 use lib_blockchain::{
     ContractCall, ContractTransactionBuilder, Hash, Transaction, TransactionOutput,
@@ -240,8 +242,20 @@ pub async fn handle_token_command_with_output<O: Output>(
             name,
             symbol,
             supply,
+            decimals,
             treasury_recipient,
-        } => handle_create(cli, output, &name, &symbol, supply, &treasury_recipient).await,
+        } => {
+            handle_create(
+                cli,
+                output,
+                &name,
+                &symbol,
+                supply,
+                decimals,
+                &treasury_recipient,
+            )
+            .await
+        }
         TokenAction::Mint {
             token_id,
             amount,
@@ -269,10 +283,12 @@ async fn handle_create<O: Output>(
     name: &str,
     symbol: &str,
     supply: u128,
+    decimals: u8,
     treasury_recipient: &str,
 ) -> CliResult<()> {
+    validate_decimals(decimals)?;
     output.info(&format!("Creating token: {} ({})", name, symbol))?;
-    output.info(&format!("Initial supply: {}", supply))?;
+    output.info(&format!("Initial supply: {} atoms ({} decimals)", supply, decimals))?;
     output.info("Signing token creation transaction with local keypair")?;
 
     let keypair = load_default_keypair()?;
@@ -287,7 +303,7 @@ async fn handle_create<O: Output>(
         name: name.to_string(),
         symbol: symbol.to_string(),
         initial_supply: supply,
-        decimals: 8,
+        decimals,
         treasury_allocation_bps: 2_000,
         treasury_recipient: treasury_key.key_id,
     };
@@ -298,8 +314,25 @@ async fn handle_create<O: Output>(
     // before we overwrite it with the actual signature below.
     let mut tx =
         Transaction::new_token_creation_with_chain_id(0x03, lib_crypto::Signature::default(), memo);
-    // TokenCreation is validated as a system transaction on the node and must carry zero fee.
-    tx.fee = 0;
+    // TokenCreation carries the canonical fixed fee from `TxFeeConfig.token_creation_fee`
+    // (see `validation.rs:1348-1356` — validator rejects any other amount). The
+    // earlier `tx.fee = 0` comment was a stale invariant from before the
+    // canonical fee was introduced. Governance can update the fee on-chain via
+    // `TxFeeConfig`, so fetch the live value from the node we're submitting to
+    // and fall back to the compiled-in default if the endpoint is unreachable
+    // (e.g. older node, transient lookup failure) — better to attempt the tx
+    // with the default and surface an `InvalidFee` rejection than to block CLI
+    // usage on a side-channel call.
+    let client = connect_default(&cli.server).await?;
+    tx.fee = match fetch_token_creation_fee(&client).await {
+        Ok(fee) => fee,
+        Err(e) => {
+            output.warning(&format!(
+                "Could not fetch live token_creation_fee from node ({e}); falling back to compiled-in DEFAULT_TOKEN_CREATION_FEE={DEFAULT_TOKEN_CREATION_FEE}",
+            ))?;
+            DEFAULT_TOKEN_CREATION_FEE
+        }
+    };
     tx.signature = keypair
         .sign(tx.signing_hash().as_bytes())
         .map_err(|e| CliError::ConfigError(format!("Failed to sign token creation tx: {e}")))?;
@@ -312,8 +345,7 @@ async fn handle_create<O: Output>(
         .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {}", e)))?;
     let request_body = json!({ "signed_tx": hex::encode(tx_bytes) });
 
-    let client = connect_default(&cli.server).await?;
-
+    // Reuse the QUIC client already opened above for the fee lookup.
     let response = client
         .post_json("/api/v1/token/create", &request_body)
         .await
@@ -604,9 +636,81 @@ async fn handle_list<O: Output>(cli: &ZhtpCli, output: &O) -> CliResult<()> {
     Ok(())
 }
 
+/// Decimals validation for `handle_create`.
+///
+/// Matches the on-chain rule in `lib-blockchain` (`TokenContract::validate`)
+/// which accepts the closed range `0..=18`. Zero-decimal tokens are valid —
+/// they're whole-unit tokens without a fractional part. Rejecting at the CLI
+/// boundary keeps the round-trip (`zhtp-cli token create --decimals 19`)
+/// from constructing a transaction the validator will reject with a less
+/// helpful `InvalidPayload`.
+fn validate_decimals(decimals: u8) -> CliResult<()> {
+    if decimals > 18 {
+        return Err(CliError::ConfigError(format!(
+            "decimals must be in 0..=18 (got {})",
+            decimals
+        )));
+    }
+    Ok(())
+}
+
+/// Fetch the live `token_creation_fee` from the node's
+/// `/api/v1/blockchain/fee-config` endpoint. Returns the u64 value the
+/// validator's TxFeeConfig is currently enforcing so the signed transaction
+/// carries the amount that won't be rejected as `InvalidFee` by governance
+/// updates to the fee schedule.
+async fn fetch_token_creation_fee(client: &ZhtpClient) -> Result<u64, String> {
+    let response = client
+        .get("/api/v1/blockchain/fee-config")
+        .await
+        .map_err(|e| format!("GET /api/v1/blockchain/fee-config: {e}"))?;
+    if response.status != lib_protocols::types::ZhtpStatus::Ok {
+        return Err(format!("fee-config returned {:?}", response.status));
+    }
+    let body: serde_json::Value = ZhtpClient::parse_json(&response)
+        .map_err(|e| format!("parse fee-config response: {e}"))?;
+    // The server serialises u128 fee values as decimal strings to avoid
+    // JSON number-precision issues, so accept either string or number here.
+    let fee_value = body
+        .get("token_creation_fee")
+        .ok_or_else(|| "fee-config response missing `token_creation_fee`".to_string())?;
+    let parsed: u128 = match fee_value {
+        serde_json::Value::String(s) => s
+            .parse::<u128>()
+            .map_err(|e| format!("invalid token_creation_fee string `{s}`: {e}"))?,
+        serde_json::Value::Number(n) => n
+            .as_u64()
+            .map(|v| v as u128)
+            .ok_or_else(|| "token_creation_fee number is not a u64".to_string())?,
+        other => return Err(format!("unexpected token_creation_fee shape: {other}")),
+    };
+    u64::try_from(parsed).map_err(|_| format!(
+        "token_creation_fee {parsed} exceeds u64::MAX — chain schema drifted",
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_decimals_rejects_above_18() {
+        let err = validate_decimals(19).expect_err("decimals=19 must be rejected");
+        assert!(
+            format!("{err}").contains("decimals must be in 0..=18"),
+            "unexpected error: {err}",
+        );
+    }
+
+    #[test]
+    fn validate_decimals_accepts_zero() {
+        validate_decimals(0).expect("zero-decimal tokens are valid on-chain");
+    }
+
+    #[test]
+    fn validate_decimals_accepts_boundary() {
+        validate_decimals(18).expect("18 is the upper bound and must be accepted");
+    }
 
     #[test]
     fn test_build_info_path() {

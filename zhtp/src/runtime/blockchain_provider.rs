@@ -66,6 +66,55 @@ impl BlockchainProvider {
         Some(bc.is_council_member(did))
     }
 
+    /// Resolve a 32-byte QUIC device key (the `request.requester` blob set by
+    /// `quic_handler.rs:729` from `session.peer_did()`) to the canonical chain
+    /// DID it represents. Mirrors the resolver `/msg/receive` uses
+    /// (`messaging/handler.rs:279-326`) so every owner-gated endpoint sees the
+    /// same canonical DID instead of the per-device peer_did.
+    ///
+    /// Resolution order:
+    /// 1. Direct match — chain has identity registered under
+    ///    `did:zhtp:<device_key_hex>`.
+    /// 2. Public-key hash match — iterate identities, hash each public key
+    ///    (and combined Dilithium+Kyber bytes) and look for a match against
+    ///    the device key id.
+    ///
+    /// Returns the canonical DID on hit, `None` on miss.
+    pub async fn resolve_device_key_to_canonical_did(
+        &self,
+        device_key: &[u8; 32],
+    ) -> Option<String> {
+        let arc = self.blockchain.read().await.as_ref().cloned()?;
+        let bc = arc.read().await;
+        let key_id_hex = hex::encode(device_key);
+        let key_id_did = format!("did:zhtp:{}", key_id_hex);
+
+        // (1) Direct match — same DID is registered.
+        if bc.identity_registry.contains_key(&key_id_did) {
+            return Some(key_id_did);
+        }
+
+        // (2) Hash-of-public-key match (Dilithium alone, then Dilithium+Kyber).
+        for (canonical_did, identity) in bc.identity_registry.iter() {
+            if identity.public_key.len() < 32 {
+                continue;
+            }
+            let dil_hash = hex::encode(lib_crypto::hash_blake3(&identity.public_key));
+            if dil_hash == key_id_hex {
+                return Some(canonical_did.clone());
+            }
+            if !identity.kyber_public_key.is_empty() {
+                let combined = [&identity.public_key[..], &identity.kyber_public_key[..]].concat();
+                let combined_hash = hex::encode(lib_crypto::hash_blake3(&combined));
+                if combined_hash == key_id_hex {
+                    return Some(canonical_did.clone());
+                }
+            }
+        }
+
+        None
+    }
+
     /// Configure blockchain mutation access mode.
     pub async fn set_access_mode(&self, access_mode: BlockchainAccessMode) {
         *self.access_mode.write().await = access_mode;

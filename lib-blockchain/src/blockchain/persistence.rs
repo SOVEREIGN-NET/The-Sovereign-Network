@@ -289,6 +289,10 @@ impl BlockchainV1 {
             did_to_username: HashMap::new(),
             opaque_server_setup: None,
             pouw_mint_index: HashMap::new(),
+            // Mempool admission (#2647 — S2): permissive defaults, audit-only.
+            mempool_config: lib_mempool::MempoolConfig::audit_only(),
+            mempool_state: lib_mempool::MempoolState::default(),
+            system_tx_originators: HashMap::new(),
         }
     }
 }
@@ -635,6 +639,10 @@ impl BlockchainStorageV3 {
             observer_registry: HashMap::new(),
             observer_blocks: HashMap::new(),
             pouw_mint_index: HashMap::new(),
+            // Mempool admission (#2647 — S2): permissive defaults, audit-only.
+            mempool_config: lib_mempool::MempoolConfig::audit_only(),
+            mempool_state: lib_mempool::MempoolState::default(),
+            system_tx_originators: HashMap::new(),
         }
     }
 }

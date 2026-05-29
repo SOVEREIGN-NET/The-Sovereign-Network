@@ -376,19 +376,38 @@ pub fn open_envelope_with_session(
         return Ok(content.body);
     }
 
-    // In-order or skip-forward. Reject runaway skips before doing any work.
-    let skip = envelope.sequence.saturating_sub(session.counter);
-    if session.skipped_keys.len() as u64 + skip > MAX_SKIPPED_KEYS_PER_EPOCH as u64 {
+    // In-order or skip-forward. Reject runaway skips and counter overflow
+    // before doing any work. The previous form
+    //   `skipped_keys.len() as u64 + skip > MAX as u64`
+    // wraps silently in release builds when an attacker picks
+    // `envelope.sequence` near `u64::MAX`, which would (a) bypass the cap,
+    // (b) cause `Vec::with_capacity(skip as usize)` to abort with OOM, and
+    // (c) wrap `envelope.sequence + 1` back to 0 in the commit. Rewrite as
+    // a subtraction-direction comparison and require sequence < u64::MAX
+    // so the post-decrypt `+ 1` cannot overflow either.
+    if envelope.sequence == u64::MAX {
+        return Err(ClientError::CryptoError(
+            "envelope sequence u64::MAX is not allowed (counter would overflow)".into(),
+        ));
+    }
+    let skip = envelope.sequence - session.counter; // safe: seq >= counter on this branch
+    let buf_used = session.skipped_keys.len() as u64;
+    let max = MAX_SKIPPED_KEYS_PER_EPOCH as u64;
+    if skip > max.saturating_sub(buf_used) {
         return Err(ClientError::CryptoError(format!(
             "skip of {} sequences would exceed max skipped-key buffer ({})",
             skip, MAX_SKIPPED_KEYS_PER_EPOCH
         )));
     }
+    // At this point `skip <= MAX_SKIPPED_KEYS_PER_EPOCH` so the cast to
+    // usize cannot truncate on any platform we support, and the allocation
+    // is bounded by a small constant rather than by an attacker.
+    let skip_cap = skip as usize;
 
     // Walk a local copy forward so a decrypt failure leaves the session intact.
     let mut chain_key = session.chain_key;
     let mut ctr = session.counter;
-    let mut pending_skipped: Vec<(u64, [u8; 32], [u8; 12])> = Vec::with_capacity(skip as usize);
+    let mut pending_skipped: Vec<(u64, [u8; 32], [u8; 12])> = Vec::with_capacity(skip_cap);
     while ctr < envelope.sequence {
         let (msg_key, nonce, _epoch, leaf_counter) = derive_step(&chain_key, ctr);
         pending_skipped.push((leaf_counter, msg_key, nonce));
@@ -575,6 +594,47 @@ mod tests {
         let a = open_envelope(&env, &chain_key_at_zero).unwrap();
         let b = open_envelope_with_session(&mut recv, &env).unwrap();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn stateful_open_rejects_huge_sequence_without_wrap() {
+        // Regression: an attacker who controls `envelope.sequence` can
+        // pick `skip` near u64::MAX so the previous additive cap check
+        // (`skipped_keys.len() + skip > MAX`) wraps past 2^64 to a small
+        // number and bypasses the guard, then forces a multi-EB
+        // `Vec::with_capacity(skip as usize)` allocation. The exploit
+        // needs the buffer to be near its cap so `len + skip` actually
+        // crosses 2^64 — fill it to the cap to exercise the wrap path.
+        let (mut send, mut recv) = pair();
+        for i in 0..MAX_SKIPPED_KEYS_PER_EPOCH {
+            recv.skipped_keys
+                .insert(1_000_000 + i as u64, ([1u8; 32], [2u8; 12]));
+        }
+        assert_eq!(recv.skipped_keys.len(), MAX_SKIPPED_KEYS_PER_EPOCH);
+
+        let mut env = seal_text_message(&mut send, "x").unwrap();
+        // len = 1024, skip = u64::MAX - 1023 → 1024 + skip == 2^64 → wraps
+        // to 0 under the old check (0 > 1024 is false → bypass). New
+        // subtraction-direction check rejects.
+        env.sequence = u64::MAX - (MAX_SKIPPED_KEYS_PER_EPOCH as u64 - 1);
+
+        let err = open_envelope_with_session(&mut recv, &env).unwrap_err();
+        assert!(format!("{}", err).contains("max skipped-key buffer"));
+        // Session must be untouched — no partial advance, no allocation.
+        assert_eq!(recv.counter, 0);
+        assert_eq!(recv.skipped_keys.len(), MAX_SKIPPED_KEYS_PER_EPOCH);
+    }
+
+    #[test]
+    fn stateful_open_rejects_sequence_u64_max() {
+        // Regression: the success path sets `session.counter = sequence + 1`,
+        // which wraps to 0 when sequence == u64::MAX. Reject up front.
+        let (mut send, mut recv) = pair();
+        let mut env = seal_text_message(&mut send, "x").unwrap();
+        env.sequence = u64::MAX;
+        let err = open_envelope_with_session(&mut recv, &env).unwrap_err();
+        assert!(format!("{}", err).contains("u64::MAX"));
+        assert_eq!(recv.counter, 0);
     }
 
     #[test]

@@ -3,6 +3,7 @@
 //! Handles transaction structures, creation, validation, hashing, and signing.
 //! Identity transactions delegate processing to lib-identity package.
 
+pub mod admit;
 pub mod bonding_curve_codec;
 pub mod contract_deployment;
 pub mod contract_execution;

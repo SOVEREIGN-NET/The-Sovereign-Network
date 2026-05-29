@@ -952,10 +952,21 @@ impl NetworkHandler {
         let blocks_count = blockchain.query_block_count();
         let pending_count = blockchain.query_pending_count();
 
+        // A node DID may be present in `validator_registry` (seeded from
+        // bootstrap config at startup) without a corresponding entry in
+        // `identity_registry` (which is only populated by on-chain
+        // IdentityRegistration transactions). Validator/observer nodes that
+        // come from bootstrap config legitimately don't have an on-chain
+        // identity tx and shouldn't report themselves as
+        // `identity_not_registered` — that label is for fresh nodes that
+        // haven't completed their first-time setup yet.
+        let node_is_known_validator = blockchain.query_validator(&node_did).is_some();
+        let identity_known_to_chain = identity_registered || node_is_known_validator;
+
         // Determine detailed node state
         let state = if node_did == "not_initialized" {
             "setup_required"
-        } else if !identity_registered {
+        } else if !identity_known_to_chain {
             "identity_not_registered"
         } else if chain_height == 0 {
             "connecting"
