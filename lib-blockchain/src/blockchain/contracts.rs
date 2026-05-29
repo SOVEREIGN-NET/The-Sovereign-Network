@@ -1049,6 +1049,20 @@ impl Blockchain {
 
     /// Process DomainRegistration and DomainUpdate transactions from a block.
     /// Writes authoritative records into `self.domain_registry`.
+    ///
+    /// For V2 (`DOMREG2:`) payloads, debits `payload.fee_amount_atoms` from
+    /// the payer's SOV balance and credits the DAO treasury wallet BEFORE
+    /// inserting the domain record. If the debit fails (insufficient balance,
+    /// SOV contract missing, treasury wallet missing), the registration is
+    /// dropped and the record is NOT inserted — this is the consensus-level
+    /// gate that closes the "domains are free" hole. The balance check at
+    /// mempool admit also enforces this, so a non-malicious tx flow won't
+    /// hit the apply-time rejection; the apply-time check is a defense
+    /// against state drift between admit and apply.
+    ///
+    /// V1 (`DOMREG1:`) payloads — historical chain replay — carry zeroed
+    /// fee fields and the debit path is skipped entirely, preserving the
+    /// original semantics for old blocks.
     pub fn process_domain_transactions(&mut self, block: &Block) {
         let block_ts = block.header.timestamp;
         let block_height = block.height();
@@ -1057,6 +1071,21 @@ impl Blockchain {
             if tx.transaction_type == TransactionType::DomainRegistration {
                 match crate::transaction::DomainRegistrationPayload::decode_memo(&tx.memo) {
                     Ok(payload) => {
+                        // Apply the fee FIRST. If it fails, drop the registration —
+                        // the chain should not record a domain whose fee couldn't be
+                        // settled.
+                        if payload.fee_amount_atoms > 0 {
+                            if let Err(e) = self.apply_domain_registration_fee(
+                                &payload,
+                                block_height,
+                            ) {
+                                warn!(
+                                    "DomainRegistration at height {} rejected: {}",
+                                    block_height, e
+                                );
+                                continue;
+                            }
+                        }
                         let expires_at =
                             block_ts + payload.duration_days.saturating_mul(86_400);
                         let record = crate::transaction::OnChainDomainRecord {
@@ -1075,8 +1104,8 @@ impl Blockchain {
                             fee_tx_hash: payload.fee_tx_hash,
                         };
                         info!(
-                            "⛓️  Domain registered on-chain: {} at height {}",
-                            record.domain, block_height
+                            "⛓️  Domain registered on-chain: {} at height {} (fee {} atoms)",
+                            record.domain, block_height, payload.fee_amount_atoms
                         );
                         self.domain_registry.insert(payload.domain, record);
                     }
@@ -1269,5 +1298,57 @@ impl Blockchain {
 
     pub fn get_contract_block_height(&self, contract_id: &[u8; 32]) -> Option<u64> {
         self.contract_blocks.get(contract_id).copied()
+    }
+
+    /// Debit `payload.fee_amount_atoms` from the payer's SOV balance and credit
+    /// the DAO treasury wallet. Called from `process_domain_transactions` for
+    /// V2 (`DOMREG2:`) payloads. The mutation runs inside the executor's
+    /// `begin_block`/`commit_block` window so it's persisted to sled and survives
+    /// the post-block `sync_in_memory_from_sled` cycle.
+    fn apply_domain_registration_fee(
+        &mut self,
+        payload: &crate::transaction::domain::DomainRegistrationPayload,
+        block_height: u64,
+    ) -> Result<()> {
+        use anyhow::anyhow;
+
+        let treasury_wallet_id_hex = self
+            .get_dao_treasury_wallet_id()
+            .ok_or_else(|| anyhow!("DAO treasury wallet is not configured"))?
+            .clone();
+        let treasury_bytes = hex::decode(&treasury_wallet_id_hex)
+            .map_err(|_| anyhow!("DAO treasury wallet id is malformed hex"))?;
+        if treasury_bytes.len() != 32 {
+            return Err(anyhow!("DAO treasury wallet id must be 32 bytes"));
+        }
+        let mut treasury_wallet_id = [0u8; 32];
+        treasury_wallet_id.copy_from_slice(&treasury_bytes);
+
+        let sov_id = crate::contracts::utils::generate_lib_token_id();
+        let payer_key =
+            crate::contracts::utils::wallet_key_for_sov(payload.fee_payer_wallet_id);
+        let treasury_key =
+            crate::contracts::utils::wallet_key_for_sov(treasury_wallet_id);
+
+        let token = self
+            .token_contracts
+            .get_mut(&sov_id)
+            .ok_or_else(|| anyhow!("SOV token contract not initialised at height {}", block_height))?;
+
+        let payer_balance = token.balance_of(&payer_key);
+        if payer_balance < payload.fee_amount_atoms {
+            return Err(anyhow!(
+                "insufficient balance: payer has {} atoms, fee is {} atoms",
+                payer_balance,
+                payload.fee_amount_atoms
+            ));
+        }
+        let treasury_balance = token.balance_of(&treasury_key);
+        token.set_balance(&payer_key, payer_balance - payload.fee_amount_atoms);
+        token.set_balance(
+            &treasury_key,
+            treasury_balance + payload.fee_amount_atoms,
+        );
+        Ok(())
     }
 }

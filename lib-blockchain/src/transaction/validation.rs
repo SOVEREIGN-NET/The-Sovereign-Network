@@ -2125,6 +2125,81 @@ impl<'a> StatefulTransactionValidator<'a> {
                     );
                     return Err(ValidationError::InvalidTransaction);
                 }
+
+                // Canonical fee enforcement (V2 wire path).
+                //
+                // Legacy V1 txes deserialise with `fee_amount_atoms = 0` and
+                // `fee_payer_wallet_id = [0; 32]` — historical replay needs to
+                // pass cleanly, so we only enforce when those fields are
+                // populated.
+                //
+                // For V2 txes we check three things up-front, before the tx
+                // can enter the mempool:
+                //   1. The declared fee meets or exceeds the current
+                //      governance-set rate (`TxFeeConfig.domain_registration_fee_atoms`).
+                //   2. The declared payer wallet is the signer's Primary
+                //      wallet — prevents debiting someone else's balance.
+                //   3. The payer's SOV balance covers the declared fee.
+                //
+                // This is the gate that closes the "domains are free" hole:
+                // pre-fix, neither this validator nor `process_domain_transactions`
+                // looked at balance at all (see `feedback_*` writeup in the
+                // canonical-domain-registration-fee PR).
+                if payload.fee_amount_atoms > 0
+                    || payload.fee_payer_wallet_id != [0u8; 32]
+                {
+                    if let Some(bc) = self.blockchain {
+                        let required = bc.tx_fee_config.domain_registration_fee_atoms;
+                        if payload.fee_amount_atoms < required {
+                            tracing::warn!(
+                                "[DOMAIN_REG] underpaid: declared {} atoms, required {} atoms",
+                                payload.fee_amount_atoms,
+                                required
+                            );
+                            return Err(ValidationError::InvalidTransaction);
+                        }
+                        if payload.fee_payer_wallet_id == [0u8; 32] {
+                            tracing::warn!(
+                                "[DOMAIN_REG] V2 payload with zero fee_payer_wallet_id"
+                            );
+                            return Err(ValidationError::InvalidTransaction);
+                        }
+                        let signer_wallet_owned = bc
+                            .wallet_registry
+                            .get(&hex::encode(payload.fee_payer_wallet_id))
+                            .map(|w| {
+                                w.owner_identity_id.as_ref().map(|h| h.as_bytes())
+                                    == Some(&transaction.signature.public_key.key_id)
+                                    && w.wallet_type == "Primary"
+                            })
+                            .unwrap_or(false);
+                        if !signer_wallet_owned {
+                            tracing::warn!(
+                                "[DOMAIN_REG] fee_payer_wallet_id is not the signer's Primary wallet"
+                            );
+                            return Err(ValidationError::InvalidTransaction);
+                        }
+                        let sov_id =
+                            crate::contracts::utils::generate_lib_token_id();
+                        let payer_key =
+                            crate::contracts::utils::wallet_key_for_sov(
+                                payload.fee_payer_wallet_id,
+                            );
+                        let balance = bc
+                            .token_contracts
+                            .get(&sov_id)
+                            .map(|t| t.balance_of(&payer_key))
+                            .unwrap_or(0);
+                        if balance < payload.fee_amount_atoms {
+                            tracing::warn!(
+                                "[DOMAIN_REG] insufficient balance: have {} atoms, need {} atoms",
+                                balance,
+                                payload.fee_amount_atoms
+                            );
+                            return Err(ValidationError::InvalidTransaction);
+                        }
+                    }
+                }
             }
             TransactionType::DomainUpdate => {
                 if !transaction
