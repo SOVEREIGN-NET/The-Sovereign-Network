@@ -177,16 +177,26 @@ pub struct MemorySettings {
 }
 
 impl Environment {
-    /// Get network-specific data directory
+    /// Get network-specific data directory.
     ///
-    /// Returns the base data directory path for this environment.
-    /// Each environment uses a separate directory to prevent data contamination.
+    /// Anchored at `zhtp::node_data_dir()` via `node_data_path`, so the
+    /// result is absolute regardless of process CWD and the directory is
+    /// auto-created. Each environment uses a separate subdirectory to
+    /// prevent data contamination.
     pub fn data_directory(&self) -> String {
-        match self {
-            Environment::Development => "./data/dev".to_string(),
-            Environment::Testnet => "./data/testnet".to_string(),
-            Environment::Mainnet => "./data/mainnet".to_string(),
-        }
+        let subdir = match self {
+            Environment::Development => "data/dev",
+            Environment::Testnet => "data/testnet",
+            Environment::Mainnet => "data/mainnet",
+        };
+        // `node_data_path` only ensures the parent of the returned path
+        // exists; we want the directory itself to exist since callers
+        // append filenames to it. The leading sub-component (`data`)
+        // is materialised by node_data_path; the trailing one needs an
+        // explicit create.
+        let path = crate::node_data_path(subdir);
+        let _ = std::fs::create_dir_all(&path);
+        path.to_string_lossy().into_owned()
     }
 
     /// Get blockchain database path for this environment (legacy)

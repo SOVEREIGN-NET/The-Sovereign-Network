@@ -149,15 +149,17 @@ impl ConsensusEngine {
                             // Only transition from Bootstrapping to active consensus
                             // when the local chain is caught up (within 2 blocks of tip).
                             // Otherwise stay in Bootstrapping and let catch-up sync run.
+                            //
+                            // Require BOTH a confirmed observation of a peer's height
+                            // (`last_height_seen > 1`) AND local-within-2-of-tip. The old
+                            // `last_height_seen <= 1` short-circuit meant a freshly-restarted
+                            // node — having received zero proposals yet — would treat itself
+                            // as "caught up" and start proposing into a partition before any
+                            // sync. Now we wait until we've actually heard from peers.
                             if matches!(self.fsm_state, lib_consensus_core::fsm::ValidatorState::Bootstrapping) {
-                                // Check if we're caught up by comparing our height to
-                                // the highest height we've seen from peers (via proposals).
-                                let caught_up = last_height_seen <= 1 || {
-                                    // If blockchain height matches consensus height - 1,
-                                    // we're at the tip
-                                    let blockchain_height = self.current_round.height.saturating_sub(1);
-                                    blockchain_height + 2 >= last_height_seen
-                                };
+                                let blockchain_height = self.current_round.height.saturating_sub(1);
+                                let caught_up = last_height_seen > 1
+                                    && blockchain_height + 2 >= last_height_seen;
 
                                 if !caught_up {
                                     tracing::info!(

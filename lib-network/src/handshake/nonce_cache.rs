@@ -104,7 +104,7 @@ static INIT_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// use lib_network::handshake::{init_global_nonce_cache, NetworkEpoch};
 ///
 /// let epoch = NetworkEpoch::from_global_or_fail()?;
-/// init_global_nonce_cache("./data/nonce_cache", 3600, 100_000, epoch)?;
+/// init_global_nonce_cache(zhtp_data_dir.join("nonce_cache"), 3600, 100_000, epoch)?;
 /// ```
 pub fn init_global_nonce_cache<P: AsRef<Path>>(
     db_path: P,
@@ -212,21 +212,31 @@ pub fn get_or_init_global_nonce_cache(
     global_nonce_cache()
 }
 
-/// Get default path for nonce cache database
+/// Get default path for nonce cache database.
+///
+/// Resolution order:
+/// 1. Platform-specific data dir (`dirs::data_local_dir()`) — preferred.
+/// 2. `$HOME/.zhtp/nonce_cache` — works headless.
+/// 3. `/tmp/zhtp-nonce-cache-<uid>` — last resort, never CWD-relative.
+///
+/// A CWD-relative `./data/...` fallback used to live here and silently
+/// produced different cache locations depending on how the binary was
+/// invoked. Removed.
 fn default_nonce_cache_path() -> Result<PathBuf> {
-    // Try platform-specific data directory first
-    if let Some(data_dir) = dirs::data_local_dir() {
-        let path = data_dir.join("zhtp").join("nonce_cache");
-        // Ensure parent directory exists
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| anyhow!("Failed to create nonce cache directory: {}", e))?;
-        }
-        return Ok(path);
-    }
+    let path = if let Some(data_dir) = dirs::data_local_dir() {
+        data_dir.join("zhtp").join("nonce_cache")
+    } else if let Some(home) = dirs::home_dir() {
+        home.join(".zhtp").join("nonce_cache")
+    } else {
+        let uid = std::env::var("USER").unwrap_or_else(|_| "unknown".into());
+        PathBuf::from(format!("/tmp/zhtp-nonce-cache-{}", uid))
+    };
 
-    // Fallback to current directory
-    Ok(PathBuf::from("./data/nonce_cache"))
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow!("Failed to create nonce cache directory: {}", e))?;
+    }
+    Ok(path)
 }
 
 // ============================================================================

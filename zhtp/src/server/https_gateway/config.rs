@@ -94,7 +94,7 @@ impl Default for GatewayTlsConfig {
             cors_origins: vec!["*".to_string()],
             enable_http_redirect: true,
             hsts_max_age: 31536000, // 1 year
-            data_dir: PathBuf::from("./data/gateway"),
+            data_dir: crate::node_data_path("data/gateway"),
         }
     }
 }
@@ -142,7 +142,7 @@ impl GatewayTlsConfig {
             cors_origins: vec!["*".to_string()],
             enable_http_redirect: false,
             hsts_max_age: 0,
-            data_dir: PathBuf::from("./data/gateway"),
+            data_dir: crate::node_data_path("data/gateway"),
         }
     }
 

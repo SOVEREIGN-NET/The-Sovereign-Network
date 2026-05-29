@@ -1987,7 +1987,7 @@ impl RuntimeOrchestrator {
 
         // Create signing context for TLS certificate pinning (Issue #739)
         // This requires the TLS certificate to exist (created by QUIC server)
-        let signing_ctx = lib_network::protocols::quic_mesh::get_tls_spki_hash_from_default_cert()
+        let signing_ctx = lib_network::protocols::quic_mesh::tls_spki_hash_at_or_none(&crate::node_data_path("data/tls/server.crt"))
             .map(|tls_spki_sha256| {
                 lib_network::discovery::local_network::DiscoverySigningContext {
                     dilithium_sk: keypair.private_key.dilithium_sk.clone(),
@@ -5193,7 +5193,7 @@ impl RuntimeOrchestrator {
         };
 
         // Create signing context for TLS certificate pinning (Issue #739)
-        let signing_ctx = lib_network::protocols::quic_mesh::get_tls_spki_hash_from_default_cert()
+        let signing_ctx = lib_network::protocols::quic_mesh::tls_spki_hash_at_or_none(&crate::node_data_path("data/tls/server.crt"))
             .map(|tls_spki_sha256| {
                 lib_network::discovery::local_network::DiscoverySigningContext {
                     dilithium_sk: keypair.private_key.dilithium_sk.clone(),
@@ -5215,7 +5215,7 @@ impl RuntimeOrchestrator {
             warn!("      Failed to start local discovery: {}", e);
         } else {
             let signed =
-                lib_network::protocols::quic_mesh::get_tls_spki_hash_from_default_cert().is_some();
+                lib_network::protocols::quic_mesh::tls_spki_hash_at_or_none(&crate::node_data_path("data/tls/server.crt")).is_some();
             info!(
                 "      ✓ Multicast broadcasting started (224.0.1.75:37775, TLS pinning: {})",
                 signed

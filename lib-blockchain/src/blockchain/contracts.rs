@@ -125,11 +125,26 @@ impl Blockchain {
     }
 
     /// Process token transfer and mint transactions from a block.
+    ///
+    /// During boot-time block replay (`self.store.is_none()`), any error
+    /// inside a `TokenTransfer` arm is downgraded from fatal `Err` to a
+    /// warning and the offending transaction is skipped. The sled-backed
+    /// `BlockExecutor` is the source of truth for runtime token state and is
+    /// attached AFTER replay completes; the in-memory state rebuilt here is
+    /// approximate. Refusing to boot because a historical transfer can't be
+    /// reproduced against this approximate state would make any
+    /// live-committed edge case (unsignable mint address, amount > u64,
+    /// nonce skew, etc.) bring the node down on restart. Tolerance is scoped
+    /// to TokenTransfer; every other transaction type still propagates
+    /// errors and halts replay.
     pub fn process_token_transactions(&mut self, block: &Block) -> Result<()> {
+        let is_replay = self.store.is_none();
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
 
-        for transaction in &block.transactions {
-            match transaction.transaction_type {
+        'tx_loop: for transaction in &block.transactions {
+            let tx_type = transaction.transaction_type;
+            let arm_result: anyhow::Result<()> = (|| -> anyhow::Result<()> {
+            match tx_type {
                 TransactionType::TokenTransfer => {
                     let transfer = transaction
                         .token_transfer_data()
@@ -732,6 +747,20 @@ impl Blockchain {
                     ));
                 }
                 _ => {}
+            }
+            Ok(())
+            })();
+            if let Err(e) = arm_result {
+                if is_replay && tx_type == TransactionType::TokenTransfer {
+                    warn!(
+                        "Replay: skipping TokenTransfer at height={} tx={}: {}",
+                        block.height(),
+                        hex::encode(&transaction.hash().as_bytes()[..4]),
+                        e,
+                    );
+                    continue 'tx_loop;
+                }
+                return Err(e);
             }
         }
 

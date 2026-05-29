@@ -692,9 +692,9 @@ async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
                                 info!("⚠️  Failed to add migration block: {}", e);
                                 // Fallback: save to file (deprecated, for legacy mode only)
                                 #[allow(deprecated)]
-                                if let Err(e2) = bc.save_to_file(std::path::Path::new(
-                                    "./data/testnet/blockchain.dat",
-                                )) {
+                                if let Err(e2) = bc.save_to_file(
+                                    &crate::node_data_path("data/testnet/blockchain.dat"),
+                                ) {
                                     info!("⚠️  Fallback save also failed: {}", e2);
                                 }
                             } else {
@@ -706,9 +706,9 @@ async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
                             info!("⚠️  Failed to mine migration block: {}", e);
                             // Fallback: save to file (deprecated, for legacy mode only)
                             #[allow(deprecated)]
-                            if let Err(e2) = bc
-                                .save_to_file(std::path::Path::new("./data/testnet/blockchain.dat"))
-                            {
+                            if let Err(e2) = bc.save_to_file(
+                                &crate::node_data_path("data/testnet/blockchain.dat"),
+                            ) {
                                 info!("⚠️  Fallback save also failed: {}", e2);
                             }
                         }
