@@ -306,6 +306,9 @@ fn dao_registry_index_incremental_matches_rebuild() {
     }
 
     let mut rebuilt = Blockchain::default();
+    // Keep blocks/height consistent as production does — rebuild now walks the
+    // chain via iter_blocks() (0..=height), not the raw blocks Vec (#2636).
+    rebuilt.height = block2.header.height;
     rebuilt.blocks.push(block1);
     rebuilt.blocks.push(block2);
     rebuilt.rebuild_dao_registry_index();

@@ -2247,7 +2247,7 @@ impl<'a> StatefulTransactionValidator<'a> {
         if transaction.transaction_type == TransactionType::TokenMint {
             if let Some(blockchain) = self.blockchain {
                 if blockchain.height == 0
-                    && blockchain.blocks.is_empty()
+                    && blockchain.latest_block().is_none() // #2636: facade form of blocks.is_empty()
                     && transaction.signature.signature.is_empty()
                 {
                     skip_signature = true; // Allow genesis TokenMint without signature
