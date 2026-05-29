@@ -304,8 +304,8 @@ impl IdentityManager {
         // Council was previously in this branch under a "testnet:
         // council has full access" comment, which bypassed the
         // dedicated `CouncilView` and gave every council member
-        // unrestricted access to wallet manifests, credentials,
-        // attestations, and `owner_identity_id` — a privilege
+        // unrestricted access to private identity fields (metadata,
+        // device_node_ids, credentials, attestations, and `owner_identity_id`) — a privilege
         // escalation past the scoped investigation surface the access
         // policy documents. Council is now handled exclusively by the
         // `Council + Investigate` branch a few lines below, which
