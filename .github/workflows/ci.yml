@@ -170,6 +170,15 @@ jobs:
         run: bash .github/scripts/check-type-duplication.sh
         continue-on-error: true
 
+  data-path-check:
+    name: Forbid CWD-relative data paths
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run check-data-paths
+        run: bash .github/scripts/check-data-paths.sh
+
   # Deploy to production server (main branch)
   deploy-production:
     name: Deploy to Production Server

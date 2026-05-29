@@ -952,26 +952,34 @@ impl NetworkHandler {
         let blocks_count = blockchain.query_block_count();
         let pending_count = blockchain.query_pending_count();
 
-        // A node DID may be present in `validator_registry` (seeded from
-        // bootstrap config at startup) without a corresponding entry in
-        // `identity_registry` (which is only populated by on-chain
-        // IdentityRegistration transactions). Validator/observer nodes that
-        // come from bootstrap config legitimately don't have an on-chain
-        // identity tx and shouldn't report themselves as
-        // `identity_not_registered` — that label is for fresh nodes that
-        // haven't completed their first-time setup yet.
+        // `identity_not_registered` is reserved for nodes that genuinely
+        // have not finished first-time setup: no DID at all, or a DID that
+        // the chain has never seen *and* the node hasn't loaded any chain
+        // state yet (i.e. it can't possibly be serving clients).
+        //
+        // Observer-mode gateways and bootstrap-seeded validators
+        // legitimately have a DID that isn't present in `identity_registry`
+        // (which is only populated by on-chain `IdentityRegistration`
+        // transactions). Once such a node has loaded the chain and sees a
+        // healthy validator set, it is fully operational regardless of
+        // whether *its own* identity has a chain-side tx — and the mobile
+        // app reads this `state` field to decide whether the node is
+        // reachable.
         let node_is_known_validator = blockchain.query_validator(&node_did).is_some();
         let identity_known_to_chain = identity_registered || node_is_known_validator;
 
-        // Determine detailed node state
         let state = if node_did == "not_initialized" {
             "setup_required"
-        } else if !identity_known_to_chain {
-            "identity_not_registered"
         } else if chain_height == 0 {
             "connecting"
         } else if validator_count == 0 {
             "connecting"
+        } else if !identity_known_to_chain && chain_height == 0 {
+            // Only flag identity-not-registered if the node also has *no*
+            // chain state — that's the genuine first-boot scenario. A
+            // synced observer with a DID that hasn't been chain-registered
+            // is still fully operational.
+            "identity_not_registered"
         } else {
             "ready"
         };
@@ -1227,17 +1235,15 @@ impl NetworkHandler {
     }
 
     fn compute_local_spki() -> String {
-        let cert_paths = [
-            "./data/tls/server.crt",
-            "/opt/zhtp/data/tls/server.crt",
-            "/opt/zhtp/.zhtp/tls/server.crt",
-        ];
-        for path in &cert_paths {
-            if let Ok(pem) = std::fs::read(path) {
-                if let Some(Ok(cert_der)) = rustls_pemfile::certs(&mut pem.as_slice()).next() {
-                    if let Ok(hash) = lib_network::protocols::quic_mesh::QuicMeshProtocol::compute_spki_sha256(cert_der.as_ref()) {
-                        return hex::encode(hash);
-                    }
+        // Canonical location only — anchored at node_data_dir so it
+        // matches `Environment::data_directory()`. If the cert lives
+        // elsewhere the deployment is misconfigured; we don't want to
+        // silently swallow a stale cert by trying multiple legacy paths.
+        let cert_path = crate::node_data_path("data/tls/server.crt");
+        if let Ok(pem) = std::fs::read(&cert_path) {
+            if let Some(Ok(cert_der)) = rustls_pemfile::certs(&mut pem.as_slice()).next() {
+                if let Ok(hash) = lib_network::protocols::quic_mesh::QuicMeshProtocol::compute_spki_sha256(cert_der.as_ref()) {
+                    return hex::encode(hash);
                 }
             }
         }

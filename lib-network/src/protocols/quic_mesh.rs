@@ -76,11 +76,6 @@ use crate::discovery::global_pin_cache;
 #[allow(deprecated)]
 use crate::discovery::{PinnedCertVerifier, PinnedVerifierConfig};
 
-/// Default path for TLS certificate
-pub const DEFAULT_TLS_CERT_PATH: &str = "./data/tls/server.crt";
-/// Default path for TLS private key
-pub const DEFAULT_TLS_KEY_PATH: &str = "./data/tls/server.key";
-
 /// Max bytes a single mesh UNI message is allowed to occupy on the wire.
 /// Sized to fit a consensus proposal carrying a full block (MAX_BLOCK_SIZE = 4 MiB)
 /// plus encryption/framing overhead. Both receive paths (`spawn_receive_loop`
@@ -353,24 +348,18 @@ impl PeerConnection {
 }
 
 impl QuicMeshProtocol {
-    /// Create a new QUIC mesh protocol instance with default certificate paths
-    ///
-    /// # Arguments
-    ///
-    /// * `identity` - ZhtpIdentity for UHP authentication (must have private key)
-    /// * `bind_addr` - Local address to bind QUIC endpoint
-    ///
-    /// # Security
-    ///
-    /// The identity is used for UHP handshake authentication. All peers must verify
-    /// each other's Dilithium signatures before establishing encrypted channels.
+    /// Test-only ctor that materialises cert and key under a tempdir.
+    /// Production callers must use [`Self::new_with_cert_paths`] with an
+    /// absolute path chosen by the application.
+    #[cfg(test)]
     pub fn new(identity: Arc<ZhtpIdentity>, bind_addr: SocketAddr) -> Result<Self> {
-        Self::new_with_cert_paths(
-            identity,
-            bind_addr,
-            Path::new(DEFAULT_TLS_CERT_PATH),
-            Path::new(DEFAULT_TLS_KEY_PATH),
-        )
+        let tmp = std::env::temp_dir().join(format!(
+            "zhtp-test-tls-{}",
+            std::process::id()
+        ));
+        let cert_path = tmp.join("server.crt");
+        let key_path = tmp.join("server.key");
+        Self::new_with_cert_paths(identity, bind_addr, &cert_path, &key_path)
     }
 
     /// Create a new QUIC mesh protocol instance with custom certificate paths
@@ -425,8 +414,8 @@ impl QuicMeshProtocol {
         // Load or generate TLS certificate (persistent for Android Cronet compatibility)
         let cert = Self::load_or_generate_cert(cert_path, key_path)?;
 
-        // Configure QUIC server
-        let server_config = Self::configure_server(cert.cert, cert.key)?;
+        // Configure QUIC server (chain = leaf + intermediates so clients can build a path to a known root)
+        let server_config = Self::configure_server(cert.cert_chain, cert.key)?;
 
         // Create QUIC endpoint
         let endpoint =
@@ -1532,26 +1521,39 @@ impl QuicMeshProtocol {
             let cert_pem = std::fs::read(cert_path).context("Failed to read certificate file")?;
             let key_pem = std::fs::read(key_path).context("Failed to read key file")?;
 
-            // Parse PEM-encoded certificate
-            let cert_der = rustls_pemfile::certs(&mut cert_pem.as_slice())
-                .next()
-                .ok_or_else(|| anyhow!("No certificate found in PEM file"))?
-                .context("Failed to parse certificate PEM")?;
+            // Parse the full PEM-encoded certificate chain. `fullchain.pem`
+            // from certbot contains the leaf followed by the intermediate(s)
+            // — all of which must be sent to the client. Loading only the
+            // first cert produced `UnknownIssuer` on clients that didn't
+            // have the intermediate (Let's Encrypt E8 etc.) directly
+            // trusted.
+            let mut pem_reader = cert_pem.as_slice();
+            let mut cert_chain: Vec<CertificateDer<'static>> = Vec::new();
+            for item in rustls_pemfile::certs(&mut pem_reader) {
+                let der = item.context("Failed to parse a certificate in PEM file")?;
+                cert_chain.push(der);
+            }
+            if cert_chain.is_empty() {
+                return Err(anyhow!("No certificate found in PEM file"));
+            }
 
             // Parse PEM-encoded private key
             let key_der = rustls_pemfile::private_key(&mut key_pem.as_slice())
                 .context("Failed to parse private key PEM")?
                 .ok_or_else(|| anyhow!("No private key found in PEM file"))?;
 
-            info!("🔐 TLS certificate loaded successfully");
+            info!(
+                "🔐 TLS certificate loaded successfully ({} certs in chain)",
+                cert_chain.len()
+            );
 
             // Print SPKI pin for mobile app pinning
-            if let Ok(spki_hash) = Self::compute_spki_sha256(cert_der.as_ref()) {
+            if let Ok(spki_hash) = Self::compute_spki_sha256(cert_chain[0].as_ref()) {
                 info!("📌 SPKI SHA-256 pin (hex): {}", hex::encode(spki_hash));
             }
 
             return Ok(SelfSignedCert {
-                cert: cert_der,
+                cert_chain,
                 key: key_der,
             });
         }
@@ -1614,7 +1616,7 @@ impl QuicMeshProtocol {
         let key_der = PrivateKeyDer::Pkcs8(key_der_bytes.into());
 
         Ok(SelfSignedCert {
-            cert: cert_der,
+            cert_chain: vec![cert_der],
             key: key_der,
         })
     }
@@ -1649,27 +1651,25 @@ impl QuicMeshProtocol {
         Ok(result)
     }
 
-    /// Compute SPKI hash from this node's TLS certificate.
+    /// Compute SPKI SHA256 of the leaf certificate at `cert_path`.
     ///
-    /// Loads the certificate from disk and computes its SPKI SHA256 hash.
-    /// This hash should be included in signed discovery announcements.
-    pub fn get_tls_spki_hash(&self) -> Result<[u8; 32]> {
-        let cert_path = Path::new(DEFAULT_TLS_CERT_PATH);
-
+    /// Loads the cert from disk and computes its SPKI hash, used as the
+    /// pinning identifier in signed discovery announcements. The path is
+    /// passed by the caller so this works regardless of where the
+    /// embedding application stores its TLS material — the previous
+    /// `default-cert` form silently resolved against process CWD.
+    pub fn tls_spki_hash_at(cert_path: &Path) -> Result<[u8; 32]> {
         if !cert_path.exists() {
             return Err(anyhow!(
                 "TLS certificate not found at {}",
                 cert_path.display()
             ));
         }
-
         let cert_pem = std::fs::read(cert_path).context("Failed to read TLS certificate")?;
-
         let cert_der = rustls_pemfile::certs(&mut cert_pem.as_slice())
             .next()
             .ok_or_else(|| anyhow!("No certificate found in PEM file"))?
             .context("Failed to parse certificate PEM")?;
-
         Self::compute_spki_sha256(&cert_der)
     }
 
@@ -1687,13 +1687,17 @@ impl QuicMeshProtocol {
 
     /// Configure QUIC server
     fn configure_server(
-        cert: CertificateDer<'static>,
+        cert_chain: Vec<CertificateDer<'static>>,
         key: PrivateKeyDer<'static>,
     ) -> Result<ServerConfig> {
-        // Build rustls ServerConfig with ALPN support
+        // Build rustls ServerConfig with ALPN support. The full chain
+        // (leaf + intermediates) must be passed — `with_single_cert` sends
+        // every element to the client during the handshake, so a missing
+        // intermediate manifests as `UnknownIssuer` on clients that only
+        // trust well-known roots (the default rustls WebPKI verifier).
         let mut rustls_config = rustls::ServerConfig::builder()
             .with_no_client_auth()
-            .with_single_cert(vec![cert], key)
+            .with_single_cert(cert_chain, key)
             .context("Failed to configure TLS")?;
 
         // Configure ALPN protocols for protocol-based routing
@@ -1979,8 +1983,23 @@ impl PqcQuicConnection {
 
 /// Self-signed certificate for QUIC
 struct SelfSignedCert {
-    cert: CertificateDer<'static>,
+    /// Full certificate chain — leaf first, then any intermediates.
+    /// When loaded from a CA-issued `fullchain.pem` (e.g. Let's Encrypt
+    /// `certbot`), the intermediates MUST be sent to the client so the
+    /// client can chain the leaf to a known root in its trust store.
+    /// Previously this was a single `cert` field and only the leaf was
+    /// served, which produced `UnknownIssuer` on every client that
+    /// didn't already have the intermediate trusted directly.
+    cert_chain: Vec<CertificateDer<'static>>,
     key: PrivateKeyDer<'static>,
+}
+
+impl SelfSignedCert {
+    /// Leaf certificate — the first in the chain. Used wherever code
+    /// needs a single cert (SPKI hash, log lines, self-signed paths).
+    fn leaf(&self) -> &CertificateDer<'static> {
+        &self.cert_chain[0]
+    }
 }
 
 /// Skip TLS certificate verification (unsafe-bootstrap only)
@@ -2144,27 +2163,19 @@ impl super::Protocol for QuicMeshProtocol {
     }
 }
 
-/// Compute SPKI hash from the default TLS certificate path.
-///
-/// This standalone function can be called without a QuicMeshProtocol instance,
-/// useful for creating DiscoverySigningContext for signed announcements (Issue #739).
-///
-/// Returns None if the certificate doesn't exist yet (node hasn't started QUIC server).
-pub fn get_tls_spki_hash_from_default_cert() -> Option<[u8; 32]> {
-    use std::path::Path;
-
-    let cert_path = Path::new(DEFAULT_TLS_CERT_PATH);
-
+/// Compute SPKI hash of the leaf cert at `cert_path`. Standalone
+/// equivalent of [`QuicMeshProtocol::tls_spki_hash_at`] that returns
+/// `None` instead of `Err` so callers can treat "cert not yet
+/// materialised" as a soft state (useful at startup before the QUIC
+/// server runs).
+pub fn tls_spki_hash_at_or_none(cert_path: &std::path::Path) -> Option<[u8; 32]> {
     if !cert_path.exists() {
         return None;
     }
-
     let cert_pem = std::fs::read(cert_path).ok()?;
-
     let cert_der = rustls_pemfile::certs(&mut cert_pem.as_slice())
-        .next()? // Option<Result<CertificateDer>>
-        .ok()?; // Result -> Option
-
+        .next()?
+        .ok()?;
     QuicMeshProtocol::compute_spki_sha256(&cert_der).ok()
 }
 

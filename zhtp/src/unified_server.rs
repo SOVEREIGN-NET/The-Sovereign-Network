@@ -667,9 +667,24 @@ impl ZhtpUnifiedServer {
         info!(" [QUIC] Creating server identity");
         let identity = Self::create_server_identity(server_id)?;
 
-        // Initialize QUIC mesh protocol with UHP+Kyber authentication
+        // Initialize QUIC mesh protocol with UHP+Kyber authentication.
+        //
+        // `QuicMeshProtocol::new` falls back to library-default *subpaths*
+        // (`data/tls/server.crt` / `data/tls/server.key`) that resolve
+        // against the process CWD — historically reaching the right file
+        // only because systemd happened to set `WorkingDirectory=` to the
+        // node root. Pass absolute paths anchored at `node_data_dir()` so
+        // the cert is read from the canonical location regardless of how
+        // the binary is launched, and matches `Environment::data_directory()`.
         info!(" [QUIC] Creating QuicMeshProtocol instance");
-        let mut quic_mesh = match QuicMeshProtocol::new(identity, bind_addr) {
+        let tls_cert_path = crate::node_data_path("data/tls/server.crt");
+        let tls_key_path = crate::node_data_path("data/tls/server.key");
+        let mut quic_mesh = match QuicMeshProtocol::new_with_cert_paths(
+            identity,
+            bind_addr,
+            &tls_cert_path,
+            &tls_key_path,
+        ) {
             Ok(q) => {
                 info!(" [QUIC] ✅ QuicMeshProtocol created successfully");
                 q

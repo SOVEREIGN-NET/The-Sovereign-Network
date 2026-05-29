@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
@@ -352,6 +353,12 @@ pub struct NetworkConfig {
     /// When true, this node acts as a gateway/bootstrap and will steer
     /// incoming mesh routing traffic to relay peers.
     pub gateway_mode: bool,
+    /// Absolute paths to the TLS certificate (chain) and private key
+    /// for this node's QUIC mesh listener. The embedding application
+    /// chooses where these live (e.g. `node_data_dir/data/tls/server.crt`)
+    /// — `lib-network` no longer assumes a CWD-relative default.
+    pub tls_cert_path: PathBuf,
+    pub tls_key_path: PathBuf,
 }
 
 /// ZHTP Mesh Server - The New Internet
@@ -968,8 +975,15 @@ impl ZhtpMeshServer {
             .parse()
             .map_err(|e| anyhow!("Failed to parse QUIC bind address: {}", e))?;
 
-        // Initialize QUIC mesh protocol with UHP v2 authentication
-        let mut quic_protocol = QuicMeshProtocol::new(identity, bind_addr)?;
+        // Initialize QUIC mesh protocol with UHP v2 authentication. Cert
+        // paths come from NetworkConfig — never a CWD-relative library
+        // default.
+        let mut quic_protocol = QuicMeshProtocol::new_with_cert_paths(
+            identity,
+            bind_addr,
+            &self.config.tls_cert_path,
+            &self.config.tls_key_path,
+        )?;
 
         // If message handler is already initialized, set it
         if let Some(handler) = &self.message_handler {
@@ -1205,6 +1219,8 @@ impl ZhtpMeshServer {
         storage: UnifiedStorageSystem,
         protocols: Vec<NetworkProtocol>,
         bootstrap_peers: Vec<String>,
+        tls_cert_path: PathBuf,
+        tls_key_path: PathBuf,
     ) -> Result<Self> {
         let server_id = Uuid::new_v4();
 
@@ -1218,6 +1234,8 @@ impl ZhtpMeshServer {
             listen_addresses: vec![], // No IP addresses needed
             bootstrap_peers,
             gateway_mode: false,
+            tls_cert_path,
+            tls_key_path,
         };
 
         let mesh_node = Arc::new(RwLock::new(
