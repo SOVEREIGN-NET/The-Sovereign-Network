@@ -11,6 +11,10 @@ repository = "https://github.com/SOVEREIGN-NET/The-Sovereign-Network"
 name = "zhtp-cli"
 path = "src/main.rs"
 
+[[bin]]
+name = "zhtp-observer"
+path = "src/bin/observer.rs"
+
 [lib]
 name = "zhtp_cli"
 path = "src/lib.rs"

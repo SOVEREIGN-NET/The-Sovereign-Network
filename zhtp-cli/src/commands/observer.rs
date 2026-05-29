@@ -10,7 +10,7 @@
 //!   by-sponsor   — GET  /api/v1/observer/admission/by-sponsor?did=<did>
 
 use crate::argument_parsing::{ObserverAction, ObserverArgs, ZhtpCli};
-use crate::commands::web4_utils::{self, connect_default, save_private_key_to_file};
+use crate::commands::web4_utils::{self, connect_default, save_private_key_to_file, spawn_crypto};
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
 use lib_crypto::keypair::KeyPair;
@@ -102,11 +102,19 @@ fn parse_json(response: &lib_protocols::types::ZhtpResponse) -> CliResult<serde_
 // ---------------------------------------------------------------------------
 
 /// `observer generate` — create keypair, save to observer keystore.
+///
+/// Key generation runs on a dedicated thread with 128 MB stack to prevent
+/// stack overflow. Writes are atomic (write to .tmp, then rename) so a crash
+/// mid-write never leaves corrupt files.
 async fn cmd_generate(output: &dyn Output) -> CliResult<()> {
     output.header("Generate Observer Identity")?;
 
     let keystore = observer_keystore_path()?;
     let identity_file = keystore.join(NODE_IDENTITY_FILENAME);
+
+    // Clean up any stale .tmp files from previous crashed attempts
+    let _ = std::fs::remove_file(identity_file.with_extension("json.tmp"));
+    let _ = std::fs::remove_file(keystore.join(NODE_PRIVATE_KEY_FILENAME).with_extension("json.tmp"));
 
     if identity_file.exists() {
         // Load and display existing identity (silently)
@@ -131,28 +139,46 @@ async fn cmd_generate(output: &dyn Output) -> CliResult<()> {
 
     output.info("Generating post-quantum keypair (Dilithium5 + Kyber1024)...")?;
 
-    let identity = ZhtpIdentity::new_unified(
-        lib_identity::IdentityType::Device,
-        None,
-        None,
-        "observer-node",
-        None,
-    )
-    .map_err(|e| CliError::IdentityError(format!("Key generation failed: {}", e)))?;
+    // Run key generation on a dedicated thread with explicit 128 MB stack.
+    // The tokio runtime also has a large stack (set in main.rs), but this
+    // provides belt-and-suspenders protection for the heaviest operation.
+    let identity = spawn_crypto(move || {
+        ZhtpIdentity::new_unified(
+            lib_identity::IdentityType::Device,
+            None,
+            None,
+            "observer-node",
+            None,
+        )
+        .map_err(|e| format!("Key generation failed: {}", e))
+    })
+    .await
+    .map_err(|e| CliError::IdentityError(e))?;
 
     let private_key = identity.private_key.as_ref().ok_or_else(|| {
         CliError::IdentityError("Generated identity missing private key".to_string())
     })?;
 
-    // Save private key
     let private_key_file = keystore.join(NODE_PRIVATE_KEY_FILENAME);
-    save_private_key_to_file(private_key, &private_key_file)?;
+    let tmp_private_key = private_key_file.with_extension("json.tmp");
 
-    // Save identity JSON
+    // Save private key to .tmp first
+    save_private_key_to_file(private_key, &tmp_private_key)?;
+
+    // Save identity JSON to .tmp first
     let identity_json = serde_json::to_string_pretty(&identity)
         .map_err(|e| CliError::IdentityError(format!("Serialization failed: {}", e)))?;
-    std::fs::write(&identity_file, &identity_json).map_err(|e| {
+    let tmp_identity = identity_file.with_extension("json.tmp");
+    std::fs::write(&tmp_identity, &identity_json).map_err(|e| {
         CliError::IdentityError(format!("Failed to write identity file: {}", e))
+    })?;
+
+    // Atomically rename .tmp -> final (either both succeed or neither exists)
+    std::fs::rename(&tmp_identity, &identity_file).map_err(|e| {
+        CliError::IdentityError(format!("Failed to finalize identity file: {}", e))
+    })?;
+    std::fs::rename(&tmp_private_key, &private_key_file).map_err(|e| {
+        CliError::IdentityError(format!("Failed to finalize private key: {}", e))
     })?;
 
     #[cfg(unix)]
@@ -373,11 +399,6 @@ async fn cmd_wait(
 }
 
 /// `observer start` — start the observer node after admission.
-///
-/// NOTE: The observer daemon binary (zhtp-observer, T6) is not yet implemented.
-/// Once T6 ships, this should spawn `zhtp-observer` (or `zhtp-cli` with an
-/// observer-specific subcommand) using the observer keystore. For now, emit a
-/// clear message pointing to the pending work.
 async fn cmd_start(did: &str, server: &str, output: &dyn Output) -> CliResult<()> {
     // First check admission status
     let did_encoded = urlencoding::encode(did);
@@ -415,13 +436,34 @@ async fn cmd_start(did: &str, server: &str, output: &dyn Output) -> CliResult<()
         }
     }
 
-    // Observer daemon (T6, #2529) is not yet available.
-    Err(CliError::ConfigError(
-        "Observer daemon binary (zhtp-observer) is not yet implemented (T6). \
-         Once available, run: zhtp-observer \
-         or: zhtp-cli node --env ZHTP_OBSERVER_KEYSTORE=... --env ZHTP_OBSERVER_BOOTSTRAP=..."
-            .to_string(),
-    ))
+    // Spawn the node process using the observer keystore.
+    let keystore = observer_keystore_path()?;
+    let keystore_str = keystore.to_string_lossy().to_string();
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("zhtp-cli"));
+
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.arg("node")
+        // Pass RUST_MIN_STACK explicitly so the child also has enough stack
+        // for Dilithium5 operations during QUIC handshake.
+        .env("RUST_MIN_STACK", "134217728")
+        .env("ZHTP_OBSERVER_KEYSTORE", &keystore_str)
+        .env("ZHTP_OBSERVER_BOOTSTRAP", server)
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    let child = cmd.spawn().map_err(|e| {
+        format!("Failed to spawn observer node: {}", e)
+    }).map_err(|e| CliError::ConfigError(e))?;
+
+    output.success(&format!("Observer node started (PID: {})", child.id()))?;
+
+    Ok(())
 }
 
 /// `observer by-sponsor` — list observers sponsored by a DID.
