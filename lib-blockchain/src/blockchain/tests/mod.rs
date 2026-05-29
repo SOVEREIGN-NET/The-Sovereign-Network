@@ -6,6 +6,7 @@ pub(super) use super::persistence::{
 
 mod genesis_allocation_tests;
 mod cbe_graduation_oracle_gate_tests;
+mod facade_tests;
 mod mempool_admit_tests;
 mod oracle_storage_migration_tests;
 mod replay_contract_execution_tests;

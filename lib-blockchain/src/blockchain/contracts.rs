@@ -1008,6 +1008,30 @@ impl Blockchain {
         self.token_contracts.get_mut(contract_id)
     }
 
+    /// Sled-first balance facade (state-unification #2635 / #2637).
+    ///
+    /// `token_id` and `address` are 32-byte ids (the address is a `key_id`, the
+    /// same form the executor's `StateMutator` uses as the sled `Address`). When
+    /// a `BlockchainStore` is attached it is the authoritative source; the
+    /// in-memory `TokenContract` balances are consulted only in store-less mode
+    /// (unit tests, pre-Phase-2 paths). This mirrors `get_token_contract`'s
+    /// sled-first contract and is the canonical read for the #2637 migration —
+    /// callers must stop reaching into `token_contracts` balances directly.
+    pub fn token_balance(&self, token_id: &[u8; 32], address: &[u8; 32]) -> u128 {
+        if let Some(store) = self.get_store() {
+            let token = crate::storage::TokenId::new(*token_id);
+            let addr = crate::storage::Address::new(*address);
+            if let Ok(balance) = store.get_token_balance(&token, &addr) {
+                return balance;
+            }
+        }
+        self.token_contracts
+            .get(token_id)
+            .and_then(|c| c.find_balance_by_key_id(address))
+            .map(|(_, balance)| balance)
+            .unwrap_or(0)
+    }
+
     pub fn register_web4_contract(
         &mut self,
         contract_id: [u8; 32],
