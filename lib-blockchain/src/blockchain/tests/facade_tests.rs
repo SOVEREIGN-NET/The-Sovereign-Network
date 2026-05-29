@@ -8,6 +8,41 @@ use super::*;
 use crate::storage::{Address, IdentityConsensus, SledStore, TokenId};
 use std::sync::Arc;
 
+/// CR #2658 #2/#7: `token_balance` reads COMMITTED sled state. A write staged in
+/// an open block (`begin_block`..`commit_block`) is invisible until commit —
+/// `SledStore::set_token_balance` stages to `tx_batch` but `get_token_balance`
+/// reads the committed tree directly. This documents the invariant that a
+/// consensus-path / mid-`apply_block` caller must NOT rely on this facade.
+#[test]
+fn token_balance_mid_block_reads_committed_pre_block_value() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("midblock_store")).unwrap());
+    let token = TokenId::new([3u8; 32]);
+    let addr = Address::new([0x55; 32]);
+
+    // Commit an initial balance of 100.
+    store.begin_block(0).unwrap();
+    store.set_token_balance(&token, &addr, 100).unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store.clone());
+    assert_eq!(bc.token_balance(&[3u8; 32], &[0x55; 32]).unwrap(), 100);
+
+    // Open a new block, stage 999, do NOT commit.
+    store.begin_block(1).unwrap();
+    store.set_token_balance(&token, &addr, 999).unwrap();
+    assert_eq!(
+        bc.token_balance(&[3u8; 32], &[0x55; 32]).unwrap(),
+        100,
+        "mid-block: facade sees committed pre-block value; staged tx_batch write is invisible"
+    );
+
+    // After commit, the new value is visible.
+    store.commit_block().unwrap();
+    assert_eq!(bc.token_balance(&[3u8; 32], &[0x55; 32]).unwrap(), 999);
+}
+
 #[test]
 fn token_balance_reads_sled_when_store_attached() {
     let temp = tempfile::tempdir().unwrap();

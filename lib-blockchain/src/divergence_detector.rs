@@ -251,61 +251,183 @@ pub struct Divergence {
 const ABSENT: &str = "<absent>";
 
 // =============================================================================
-// Detection (pure)
+// Detection: snapshot (under lock) + compare (lock released)
 // =============================================================================
 
-/// Run ONE detection cycle.
+/// An owned, point-in-time sample of the in-memory state plus a cloned handle
+/// to the sled store, captured while the caller holds the blockchain read lock.
 ///
-/// Pure: samples the in-memory representation, reads the same keys from sled,
-/// and returns the mismatches. Performs NO logging, NO metrics mutation, and
-/// NEVER panics. If the blockchain has no store attached there is nothing to
-/// compare against and this returns an empty vec.
-///
-/// # Sampling determinism
-///
-/// Sampling is **deterministic**, not random, so the CI smoke test is
-/// reproducible: for each map-keyed field we sort the in-memory key set and
-/// take the first `sample_size` keys. For blocks we sample the heights
-/// `{0, latest, latest-1}` unioned with the first `sample_size` heights. A
-/// runtime caller could later randomize the selection; tests need determinism,
-/// hence the fixed ordering here.
-pub fn detect_divergences(bc: &Blockchain, sample_size: usize) -> Vec<Divergence> {
-    let store = match bc.get_store() {
-        Some(s) => s.as_ref(),
-        // No store attached → in-memory is the only representation; nothing to
-        // diverge from. (Matches the spec: store-less node returns empty.)
-        None => return Vec::new(),
-    };
+/// **Why this split exists (CR #2658).** The detector used to read the
+/// in-memory maps and do all sled I/O while holding `blockchain.read()`. A
+/// cycle does up to `sample_size` sled reads per field; under a held read lock
+/// that blocks every consensus `blockchain.write()` for the whole scan — at
+/// 100 keys × 4 fields × a few ms each that is seconds, during sled compaction,
+/// enough to miss a BFT round. So we now capture this cheap owned snapshot under
+/// the lock, the caller **releases the lock**, and [`compare_to_sled`] does all
+/// the slow sled I/O lock-free. The snapshot may be up to one block stale by the
+/// time we compare — fine for a background diagnostic.
+pub struct DivergenceSnapshot {
+    store: std::sync::Arc<dyn BlockchainStore>,
+    height: u64,
+    /// Sampled in-memory nonces.
+    nonces: Vec<(([u8; 32], [u8; 32]), u64)>,
+    /// Sampled in-memory token contracts (metadata + sampled per-address balances).
+    contracts: Vec<ContractSample>,
+    /// FULL in-memory token-id set, for the sled-side absence scan (CR #2658 #4).
+    all_token_ids: std::collections::HashSet<[u8; 32]>,
+    /// Sampled in-memory identities.
+    identities: Vec<IdentitySample>,
+    /// In-memory hot-window block hashes (stored header hash), by height.
+    window_block_hashes: Vec<(u64, [u8; 32])>,
+    /// Per-field sample cap.
+    sample_size: usize,
+    /// Approximate count of in-mem keys examined (for the samples metric).
+    sampled_count: usize,
+}
 
-    let height = bc.height;
+impl DivergenceSnapshot {
+    /// Number of in-memory keys this snapshot examined (feeds the samples
+    /// metric via [`report`]).
+    pub fn sampled_count(&self) -> usize {
+        self.sampled_count
+    }
+}
+
+struct ContractSample {
+    token: [u8; 32],
+    name: String,
+    symbol: String,
+    decimals: u8,
+    /// Sampled (key_id, balance) pairs — bounded by `sample_size`, NOT the whole map.
+    balances: Vec<([u8; 32], u128)>,
+}
+
+struct IdentitySample {
+    did: String,
+    did_document_hash: [u8; 32],
+    registration_fee: u64,
+    dao_fee: u64,
+}
+
+/// Capture the in-memory sample under the caller's read lock. Cheap: bounded
+/// clones, **no sled I/O**. Returns `None` if no store is attached (store-less
+/// node has nothing to diverge from).
+///
+/// Sampling is **deterministic** (sorted keys, take `sample_size`) so the CI
+/// smoke test is reproducible.
+pub fn snapshot_in_memory(bc: &Blockchain, sample_size: usize) -> Option<DivergenceSnapshot> {
+    let store = bc.get_store()?.clone();
+
+    // --- nonces ---
+    let mut nonce_keys: Vec<([u8; 32], [u8; 32])> = bc.token_nonces.keys().copied().collect();
+    nonce_keys.sort_unstable();
+    nonce_keys.truncate(sample_size);
+    let nonces = nonce_keys
+        .into_iter()
+        .map(|k| (k, *bc.token_nonces.get(&k).unwrap_or(&0)))
+        .collect();
+
+    // --- contracts (metadata + sampled balances) + full id set for the sled scan ---
+    let all_token_ids: std::collections::HashSet<[u8; 32]> =
+        bc.token_contracts.keys().copied().collect();
+    let mut token_keys: Vec<[u8; 32]> = bc.token_contracts.keys().copied().collect();
+    token_keys.sort_unstable();
+    token_keys.truncate(sample_size);
+    let contracts = token_keys
+        .into_iter()
+        .filter_map(|t| {
+            let c = bc.token_contracts.get(&t)?;
+            let mut balances: Vec<([u8; 32], u128)> =
+                c.balances_iter().map(|(pk, b)| (pk.key_id, *b)).collect();
+            balances.sort_unstable_by_key(|(k, _)| *k);
+            balances.truncate(sample_size);
+            Some(ContractSample {
+                token: t,
+                name: c.name.clone(),
+                symbol: c.symbol.clone(),
+                decimals: c.decimals,
+                balances,
+            })
+        })
+        .collect();
+
+    // --- identities ---
+    let mut dids: Vec<String> = bc.identity_registry.keys().cloned().collect();
+    dids.sort_unstable();
+    dids.truncate(sample_size);
+    let identities = dids
+        .into_iter()
+        .filter_map(|did| {
+            let d = bc.identity_registry.get(&did)?;
+            Some(IdentitySample {
+                did,
+                did_document_hash: d.did_document_hash.as_array(),
+                registration_fee: d.registration_fee,
+                dao_fee: d.dao_fee,
+            })
+        })
+        .collect();
+
+    // --- hot-window block hashes (stored header hash, matching get_block_hash_by_height) ---
+    let window_block_hashes: Vec<(u64, [u8; 32])> = bc
+        .blocks
+        .iter()
+        .map(|b| (b.header.height, b.header.block_hash.as_array()))
+        .collect();
+
+    let sampled_count = bc.token_nonces.len().min(sample_size)
+        + bc.token_contracts.len().min(sample_size)
+        + bc.identity_registry.len().min(sample_size);
+
+    Some(DivergenceSnapshot {
+        store,
+        height: bc.height,
+        nonces,
+        contracts,
+        all_token_ids,
+        identities,
+        window_block_hashes,
+        sample_size,
+        sampled_count,
+    })
+}
+
+/// Compare an in-memory [`DivergenceSnapshot`] against sled. Does ALL the sled
+/// I/O and is meant to be called **after the blockchain lock is released** — it
+/// never touches `Blockchain`, only the cloned store handle.
+pub fn compare_to_sled(snap: &DivergenceSnapshot) -> Vec<Divergence> {
+    let store = snap.store.as_ref();
+    let height = snap.height;
     let mut out = Vec::new();
 
-    detect_token_nonces(bc, store, sample_size, height, &mut out);
-    detect_token_balances(bc, store, sample_size, height, &mut out);
-    detect_identities(bc, store, sample_size, height, &mut out);
-    detect_blocks(bc, store, sample_size, height, &mut out);
+    compare_token_nonces(snap, store, height, &mut out);
+    compare_token_balances(snap, store, height, &mut out);
+    compare_identities(snap, store, height, &mut out);
+    compare_blocks(snap, store, height, &mut out);
 
     out
 }
 
-/// Token nonces: `bc.token_nonces: HashMap<([u8;32],[u8;32]), u64>` (in-mem)
-/// vs `store.get_token_nonce(&TokenId, &Address)` (sled). Catalog row 3.
-fn detect_token_nonces(
-    bc: &Blockchain,
+/// Test/convenience entry: snapshot + compare together (holds `bc` for the whole
+/// call — fine for tests). The runtime uses [`snapshot_in_memory`] then
+/// [`compare_to_sled`] with the lock released between, so it never blocks a
+/// consensus writer on sled I/O.
+pub fn detect_divergences(bc: &Blockchain, sample_size: usize) -> Vec<Divergence> {
+    snapshot_in_memory(bc, sample_size)
+        .as_ref()
+        .map(compare_to_sled)
+        .unwrap_or_default()
+}
+
+/// Token nonces: sampled in-mem `(token, addr) -> nonce` (snapshot) vs
+/// `store.get_token_nonce(&TokenId, &Address)` (sled). Catalog row 3.
+fn compare_token_nonces(
+    snap: &DivergenceSnapshot,
     store: &dyn BlockchainStore,
-    sample_size: usize,
     height: u64,
     out: &mut Vec<Divergence>,
 ) {
-    let mut keys: Vec<([u8; 32], [u8; 32])> = bc.token_nonces.keys().copied().collect();
-    keys.sort_unstable();
-    keys.truncate(sample_size);
-
-    for (token_bytes, addr_bytes) in keys {
-        let in_mem = *bc
-            .token_nonces
-            .get(&(token_bytes, addr_bytes))
-            .unwrap_or(&0);
+    for &((token_bytes, addr_bytes), in_mem) in &snap.nonces {
         let token = TokenId::new(token_bytes);
         let addr = Address::new(addr_bytes);
         // Raw sled read — no facade fallback.
@@ -324,47 +446,38 @@ fn detect_token_nonces(
 
 /// Token balances + token-contract metadata.
 ///
-/// In-mem: `bc.token_contracts: HashMap<[u8;32], TokenContract>` (catalog rows
-/// 2 + 7). Sled: `store.get_token_contract(&TokenId)` for metadata and
-/// `store.get_token_balance(&TokenId, &Address)` for per-address balances.
+/// In-mem (from the snapshot): sampled `ContractSample`s with metadata + sampled
+/// `(key_id, balance)` pairs. Sled: `store.get_token_contract` for metadata,
+/// `store.get_token_balance` for per-address balances. Balances are keyed by the
+/// 32-byte `key_id` address on both sides (the executor's reconciliation keeps
+/// `pk.key_id` ↔ `Address::new(pk.key_id)` aligned).
 ///
-/// Balances inside `TokenContract` are keyed by `PublicKey`; the sled store
-/// keys balances by the 32-byte `key_id` address — they match for both SOV and
-/// custom tokens (confirmed by the executor's seed-sled reconciliation in
-/// `blockchain.rs`). So we map `pk.key_id` → `Address::new(pk.key_id)`.
-fn detect_token_balances(
-    bc: &Blockchain,
+/// Also runs a **sled-side scan** (CR #2658 #4): the in-mem→sled checks above
+/// only catch divergence for keys present in memory; this scans sled contracts
+/// for any token **absent from the in-memory set** — the drift direction that
+/// matters most once sled is authoritative and in-mem is the stale side.
+fn compare_token_balances(
+    snap: &DivergenceSnapshot,
     store: &dyn BlockchainStore,
-    sample_size: usize,
     height: u64,
     out: &mut Vec<Divergence>,
 ) {
-    let mut token_keys: Vec<[u8; 32]> = bc.token_contracts.keys().copied().collect();
-    token_keys.sort_unstable();
-    token_keys.truncate(sample_size);
+    for c in &snap.contracts {
+        let token = TokenId::new(c.token);
 
-    for token_bytes in token_keys {
-        let contract = match bc.token_contracts.get(&token_bytes) {
-            Some(c) => c,
-            None => continue,
-        };
-        let token = TokenId::new(token_bytes);
-
-        // --- Metadata comparison (CR #2658: tagged TokenContract, not
-        // TokenBalance, so a contract present in-mem but not yet in sled —
-        // normal during bootstrap — doesn't raise spurious balance alerts). ---
+        // --- Metadata comparison (tagged TokenContract, not TokenBalance). ---
         match store.get_token_contract(&token) {
             Ok(Some(sled_contract)) => {
-                if contract.name != sled_contract.name
-                    || contract.symbol != sled_contract.symbol
-                    || contract.decimals != sled_contract.decimals
+                if c.name != sled_contract.name
+                    || c.symbol != sled_contract.symbol
+                    || c.decimals != sled_contract.decimals
                 {
                     out.push(Divergence {
                         field: DivergenceField::TokenContract,
-                        key: format!("{}:meta", hex::encode(token_bytes)),
+                        key: format!("{}:meta", hex::encode(c.token)),
                         in_mem: format!(
                             "name={} symbol={} decimals={}",
-                            contract.name, contract.symbol, contract.decimals
+                            c.name, c.symbol, c.decimals
                         ),
                         sled: format!(
                             "name={} symbol={} decimals={}",
@@ -377,8 +490,8 @@ fn detect_token_balances(
             Ok(None) => {
                 out.push(Divergence {
                     field: DivergenceField::TokenContract,
-                    key: format!("{}:meta", hex::encode(token_bytes)),
-                    in_mem: format!("name={} symbol={}", contract.name, contract.symbol),
+                    key: format!("{}:meta", hex::encode(c.token)),
+                    in_mem: format!("name={} symbol={}", c.name, c.symbol),
                     sled: ABSENT.to_string(),
                     height,
                 });
@@ -386,26 +499,36 @@ fn detect_token_balances(
             Err(_) => continue,
         }
 
-        // --- Per-address balance comparison ---
-        // Deterministic: collect + sort the balance key_ids, then sample.
-        let mut bal_keys: Vec<[u8; 32]> =
-            contract.balances_iter().map(|(pk, _)| pk.key_id).collect();
-        bal_keys.sort_unstable();
-        bal_keys.truncate(sample_size);
-
-        for key_id in bal_keys {
-            let in_mem = contract
-                .find_balance_by_key_id(&key_id)
-                .map(|(_, b)| b)
-                .unwrap_or(0);
+        // --- Per-address balance comparison (sampled, in-mem → sled) ---
+        for &(key_id, in_mem) in &c.balances {
             let addr = Address::new(key_id);
             let sled = store.get_token_balance(&token, &addr).unwrap_or(0);
             if in_mem != sled {
                 out.push(Divergence {
                     field: DivergenceField::TokenBalance,
-                    key: format!("{}:{}", hex::encode(token_bytes), hex::encode(key_id)),
+                    key: format!("{}:{}", hex::encode(c.token), hex::encode(key_id)),
                     in_mem: in_mem.to_string(),
                     sled: sled.to_string(),
+                    height,
+                });
+            }
+        }
+    }
+
+    // --- Sled-side scan: sled contracts absent from the in-memory set (#4). ---
+    // Bounded to `sample_size` in deterministic sled key order. NOTE: only
+    // implemented for contracts, where `iter_token_contracts` exists. The
+    // reverse scan for nonces / balances / identities needs sled iterators the
+    // trait does not yet expose — tracked as follow-up; until then those fields
+    // are covered only in the in-mem → sled direction.
+    if let Ok(iter) = store.iter_token_contracts() {
+        for (_token_id, sled_contract) in iter.take(snap.sample_size) {
+            if !snap.all_token_ids.contains(&sled_contract.token_id) {
+                out.push(Divergence {
+                    field: DivergenceField::TokenContract,
+                    key: format!("{}:meta", hex::encode(sled_contract.token_id)),
+                    in_mem: ABSENT.to_string(),
+                    sled: format!("name={} symbol={}", sled_contract.name, sled_contract.symbol),
                     height,
                 });
             }
@@ -427,23 +550,14 @@ fn detect_token_balances(
 ///   3. **`registration_fee`** and **`dao_fee`** — both carry these; note the
 ///      in-mem type is `u64` and the sled type is also `u64`, so they compare
 ///      directly.
-fn detect_identities(
-    bc: &Blockchain,
+fn compare_identities(
+    snap: &DivergenceSnapshot,
     store: &dyn BlockchainStore,
-    sample_size: usize,
     height: u64,
     out: &mut Vec<Divergence>,
 ) {
-    let mut dids: Vec<String> = bc.identity_registry.keys().cloned().collect();
-    dids.sort_unstable();
-    dids.truncate(sample_size);
-
-    for did in dids {
-        let in_mem = match bc.identity_registry.get(&did) {
-            Some(d) => d,
-            None => continue,
-        };
-        let did_hash = did_to_hash(&did);
+    for id in &snap.identities {
+        let did_hash = did_to_hash(&id.did);
         let sled = match store.get_identity(&did_hash) {
             Ok(s) => s,
             Err(_) => continue,
@@ -454,37 +568,39 @@ fn detect_identities(
                 // In-mem has the identity but sled does not.
                 out.push(Divergence {
                     field: DivergenceField::Identity,
-                    key: did.clone(),
-                    in_mem: format!("present did_document_hash={}", hex::encode(in_mem.did_document_hash.as_array())),
+                    key: id.did.clone(),
+                    in_mem: format!(
+                        "present did_document_hash={}",
+                        hex::encode(id.did_document_hash)
+                    ),
                     sled: ABSENT.to_string(),
                     height,
                 });
             }
             Some(consensus) => {
-                let in_mem_doc = in_mem.did_document_hash.as_array();
-                if in_mem_doc != consensus.did_document_hash {
+                if id.did_document_hash != consensus.did_document_hash {
                     out.push(Divergence {
                         field: DivergenceField::Identity,
-                        key: format!("{}:did_document_hash", did),
-                        in_mem: hex::encode(in_mem_doc),
+                        key: format!("{}:did_document_hash", id.did),
+                        in_mem: hex::encode(id.did_document_hash),
                         sled: hex::encode(consensus.did_document_hash),
                         height,
                     });
                 }
-                if in_mem.registration_fee != consensus.registration_fee {
+                if id.registration_fee != consensus.registration_fee {
                     out.push(Divergence {
                         field: DivergenceField::Identity,
-                        key: format!("{}:registration_fee", did),
-                        in_mem: in_mem.registration_fee.to_string(),
+                        key: format!("{}:registration_fee", id.did),
+                        in_mem: id.registration_fee.to_string(),
                         sled: consensus.registration_fee.to_string(),
                         height,
                     });
                 }
-                if in_mem.dao_fee != consensus.dao_fee {
+                if id.dao_fee != consensus.dao_fee {
                     out.push(Divergence {
                         field: DivergenceField::Identity,
-                        key: format!("{}:dao_fee", did),
-                        in_mem: in_mem.dao_fee.to_string(),
+                        key: format!("{}:dao_fee", id.did),
+                        in_mem: id.dao_fee.to_string(),
                         sled: consensus.dao_fee.to_string(),
                         height,
                     });
@@ -503,10 +619,9 @@ fn detect_identities(
 /// only a hot window, so we look up by height inside that window rather than
 /// indexing positionally. Sampled heights are deterministic:
 /// `{0, latest, latest-1} ∪ {0..sample_size}` (bounded by `latest`).
-fn detect_blocks(
-    bc: &Blockchain,
+fn compare_blocks(
+    snap: &DivergenceSnapshot,
     store: &dyn BlockchainStore,
-    sample_size: usize,
     height: u64,
     out: &mut Vec<Divergence>,
 ) {
@@ -516,22 +631,18 @@ fn detect_blocks(
         Err(_) => return,
     };
 
-    // Build the in-memory height → block-hash index for the hot window.
-    // Use the stored header hash (not a recomputed b.hash()) so this matches
-    // what store.get_block_hash_by_height returns (it reads header.block_hash) —
-    // avoids a spurious computed-vs-stored mismatch (CR #2658).
-    let in_mem_index: std::collections::HashMap<u64, [u8; 32]> = bc
-        .blocks
-        .iter()
-        .map(|b| (b.header.height, b.header.block_hash.as_array()))
-        .collect();
+    // In-memory height → stored-header-hash index for the hot window (captured
+    // in the snapshot, matching what store.get_block_hash_by_height returns).
+    let in_mem_index: std::collections::HashMap<u64, [u8; 32]> =
+        snap.window_block_hashes.iter().copied().collect();
 
     if in_mem_index.is_empty() {
         // No hot window to compare (e.g. fresh/pruned node) — nothing to do.
         return;
     }
 
-    let latest = bc.height.max(sled_latest);
+    let latest = snap.height.max(sled_latest);
+    let sample_size = snap.sample_size;
 
     // Deterministic sampled height set.
     let mut heights: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
@@ -588,26 +699,16 @@ fn detect_blocks(
 // Cycle wrapper (logging + metrics + optional panic)
 // =============================================================================
 
-/// Run one detection cycle and act on the result per the config.
-///
-/// 1. Calls [`detect_divergences`].
-/// 2. Bumps the samples counter (approximate: the number of in-mem keys we
-///    could have sampled, capped per field by `sample_size`).
-/// 3. For each mismatch: emits a structured `tracing::error!` (per §5.4) and
-///    increments the per-field counter.
-/// 4. If `cfg.panic_on_mismatch` and there is at least one mismatch, panics
-///    with the divergence details (testnet/CI enforcement).
-///
-/// Returns the number of mismatches detected.
-pub fn run_cycle(
-    bc: &Blockchain,
+/// Act on a completed comparison: meter samples, log each mismatch, optionally
+/// panic. Separated from detection so the runtime can call it **after releasing
+/// the blockchain lock** (it touches neither `Blockchain` nor sled). Returns the
+/// number of mismatches.
+pub fn report(
+    divergences: &[Divergence],
+    sampled: usize,
     cfg: &DivergenceConfig,
     metrics: &DivergenceMetrics,
 ) -> usize {
-    let divergences = detect_divergences(bc, cfg.sample_size);
-
-    // Approximate sample count: how many keys we examined this cycle.
-    let sampled = sampled_key_count(bc, cfg.sample_size);
     metrics.add_samples(sampled as u64);
 
     if divergences.is_empty() {
@@ -619,7 +720,7 @@ pub fn run_cycle(
         return 0;
     }
 
-    for d in &divergences {
+    for d in divergences {
         metrics.record_mismatch(d.field);
         tracing::error!(
             field = d.field.label(),
@@ -646,13 +747,17 @@ pub fn run_cycle(
     divergences.len()
 }
 
-/// Count of in-memory keys examined this cycle, capped per field by
-/// `sample_size`. Used only to feed the `divergence_samples_total` metric.
-fn sampled_key_count(bc: &Blockchain, sample_size: usize) -> usize {
-    let nonces = bc.token_nonces.len().min(sample_size);
-    let tokens = bc.token_contracts.len().min(sample_size);
-    let idents = bc.identity_registry.len().min(sample_size);
-    nonces + tokens + idents
+/// Run one detection cycle and act on the result per the config.
+///
+/// Test/convenience wrapper that holds `bc` across the whole cycle. The runtime
+/// instead splits this — `snapshot_in_memory` under the lock, then `compare_to_sled`
+/// + `report` with the lock released — so it never blocks a consensus writer on
+/// sled I/O (CR #2658). Returns the number of mismatches detected.
+pub fn run_cycle(bc: &Blockchain, cfg: &DivergenceConfig, metrics: &DivergenceMetrics) -> usize {
+    let snap = snapshot_in_memory(bc, cfg.sample_size);
+    let divergences = snap.as_ref().map(compare_to_sled).unwrap_or_default();
+    let sampled = snap.as_ref().map(|s| s.sampled_count).unwrap_or(0);
+    report(&divergences, sampled, cfg, metrics)
 }
 
 // =============================================================================
@@ -809,5 +914,72 @@ mod tests {
         assert!(count >= 1, "run_cycle should report the mismatch");
         assert!(metrics.token_nonce.load(Ordering::Relaxed) >= 1);
         assert!(metrics.samples_total.load(Ordering::Relaxed) >= 2);
+    }
+
+    /// CR #2658 #4: the sled-side scan catches a contract present in sled but
+    /// absent from the in-memory map — the drift direction that matters once
+    /// sled is authoritative and in-mem is the stale side.
+    #[test]
+    fn detects_sled_only_token_contract() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Arc::new(SledStore::open(&temp.path().join("sled_only_store")).unwrap());
+
+        // A custom (non-genesis) token: Blockchain::new() seeds SOV into the
+        // in-memory token_contracts, so we use a unique id that exists ONLY in
+        // sled to exercise the sled-side absence scan.
+        let custom = crate::contracts::TokenContract::new(
+            [0xEE; 32],
+            "Test".to_string(),
+            "TST".to_string(),
+            8,
+            1_000_000,
+            false,
+            0,
+            crate::integration::crypto_integration::PublicKey::new([0u8; 2592]),
+        );
+        store.begin_block(0).unwrap();
+        store.put_token_contract(&custom).unwrap();
+        store.commit_block().unwrap();
+
+        let mut bc = Blockchain::new().expect("blockchain construct");
+        bc.set_store(store);
+        // bc.token_contracts has only the genesis SOV token; sled additionally
+        // holds the [0xEE..] custom contract.
+
+        let divs = detect_divergences(&bc, DEFAULT_SAMPLE_SIZE);
+        assert!(
+            divs.iter().any(|d| d.field == DivergenceField::TokenContract
+                && d.in_mem == ABSENT
+                && d.key.starts_with(&hex::encode([0xEE; 32]))),
+            "sled-only [0xEE..] contract must be flagged by the sled-side scan; got: {:?}",
+            divs
+        );
+    }
+
+    /// CR #2658 #3: snapshot is captured under the (caller's) lock and compared
+    /// lock-free; the split must produce the same result as the combined entry.
+    #[test]
+    fn snapshot_then_compare_equals_detect() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Arc::new(SledStore::open(&temp.path().join("split_store")).unwrap());
+        let token = TokenId::new([4u8; 32]);
+        let addr = Address::new([0xCD; 32]);
+        store.begin_block(0).unwrap();
+        store.set_token_nonce(&token, &addr, 7).unwrap();
+        store.commit_block().unwrap();
+
+        let mut bc = Blockchain::new().expect("blockchain construct");
+        bc.set_store(store);
+        bc.token_nonces.insert(([4u8; 32], [0xCD; 32]), 2); // mismatch: in-mem 2 vs sled 7
+
+        let combined = detect_divergences(&bc, DEFAULT_SAMPLE_SIZE);
+        let snap = snapshot_in_memory(&bc, DEFAULT_SAMPLE_SIZE).expect("store attached");
+        let split = compare_to_sled(&snap);
+
+        assert_eq!(
+            combined, split,
+            "snapshot+compare must equal the combined detect_divergences"
+        );
+        assert!(split.iter().any(|d| d.field == DivergenceField::TokenNonce));
     }
 }

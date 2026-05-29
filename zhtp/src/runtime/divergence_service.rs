@@ -21,7 +21,7 @@
 
 use std::sync::Arc;
 
-use lib_blockchain::divergence_detector::{DivergenceConfig, DivergenceMetrics};
+use lib_blockchain::divergence_detector::{self, DivergenceConfig, DivergenceMetrics};
 use lib_blockchain::Blockchain;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
@@ -53,15 +53,36 @@ pub fn spawn_divergence_detector(blockchain: Arc<RwLock<Blockchain>>) {
 
         loop {
             ticker.tick().await;
-            // run_cycle is sync + cheap; hold the read lock only for the cycle.
-            let mismatches = {
+
+            // CR #2658: snapshot the in-memory sample while holding the read
+            // lock (cheap — bounded clones, NO sled I/O), then RELEASE the lock
+            // before doing the slow sled comparison. Holding the read lock
+            // across sled I/O would block every consensus `blockchain.write()`
+            // for the duration of the scan and could stall a BFT round.
+            let snapshot = {
                 let bc = blockchain.read().await;
-                lib_blockchain::divergence_detector::run_cycle(&bc, &cfg, &metrics)
+                divergence_detector::snapshot_in_memory(&bc, cfg.sample_size)
+            }; // <-- read lock dropped here
+
+            let mismatches = match snapshot {
+                Some(snap) => {
+                    // All sled I/O happens here, lock-free.
+                    let divergences = divergence_detector::compare_to_sled(&snap);
+                    divergence_detector::report(
+                        &divergences,
+                        snap.sampled_count(),
+                        &cfg,
+                        &metrics,
+                    )
+                }
+                // No store attached yet — nothing to compare.
+                None => 0,
             };
+
             if mismatches == 0 {
                 debug!("Divergence detector: clean cycle");
             } else {
-                // run_cycle already logged each mismatch at error! and bumped
+                // report() already logged each mismatch at error! and bumped
                 // metrics (and panicked if configured). Emit the rolling export
                 // so the counts are observable without a Prometheus endpoint.
                 info!(
