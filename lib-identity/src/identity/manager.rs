@@ -299,14 +299,26 @@ impl IdentityManager {
             dao_member_id: identity.dao_member_id.clone(),
         };
 
-        // Full view: self, system, emergency, or council (testnet: council has full access).
+        // Full view: self, system, or emergency override only.
+        //
+        // Council was previously in this branch under a "testnet:
+        // council has full access" comment, which bypassed the
+        // dedicated `CouncilView` and gave every council member
+        // unrestricted access to wallet manifests, credentials,
+        // attestations, and `owner_identity_id` — a privilege
+        // escalation past the scoped investigation surface the access
+        // policy documents. Council is now handled exclusively by the
+        // `Council + Investigate` branch a few lines below, which
+        // returns the intended `CouncilView`. The regression test
+        // `test_council_principal_gets_council_view` exercises this
+        // and was failing on `cargo test -p lib-identity` because of
+        // this bug.
         let has_emergency_override = principal.role == lib_access_control::Role::Emergency
             && principal
                 .capabilities
                 .contains(&lib_access_control::Capability::EmergencyOverride);
         if matches!(relation, SubjectRelation::Self_)
             || principal.role == lib_access_control::Role::System
-            || principal.role == lib_access_control::Role::Council
             || has_emergency_override
         {
             return Some(IdentityView::Full(FullIdentityView {
