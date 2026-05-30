@@ -48,7 +48,7 @@ impl Blockchain {
             Signature::default(),
             vec![],
         );
-        self.blocks.push(Self::make_minimal_test_block(vec![tx]));
+        self.push_test_block(vec![tx]);
     }
 
     /// Push a governance-parameter-update DAO proposal into `self.blocks` for test use.
@@ -89,7 +89,7 @@ impl Blockchain {
             Signature::default(),
             vec![],
         );
-        self.blocks.push(Self::make_minimal_test_block(vec![tx]));
+        self.push_test_block(vec![tx]);
     }
 
     /// Push a minimal DAO vote into `self.blocks` for test use.
@@ -112,7 +112,7 @@ impl Blockchain {
             Signature::default(),
             vec![],
         );
-        self.blocks.push(Self::make_minimal_test_block(vec![tx]));
+        self.push_test_block(vec![tx]);
     }
 
     /// Credit SOV directly to the DAO treasury wallet.
@@ -221,6 +221,19 @@ impl Blockchain {
             },
             transactions,
         }
+    }
+
+    /// Append a minimal test block at the next height AND bump `self.height`,
+    /// keeping the blocks/height invariant that production maintains. Required
+    /// because the facade scans (`get_dao_*`, etc.) now walk the chain via
+    /// `iter_blocks()` (`0..=height`) — pushing to `self.blocks` without
+    /// updating `height` leaves the block invisible to those scans (#2636).
+    fn push_test_block(&mut self, transactions: Vec<Transaction>) {
+        let next_height = self.height + 1;
+        let mut block = Self::make_minimal_test_block(transactions);
+        block.header.height = next_height;
+        self.blocks.push(block);
+        self.height = next_height;
     }
 
 }
