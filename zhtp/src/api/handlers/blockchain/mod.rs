@@ -1113,7 +1113,8 @@ impl BlockchainHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
-        let total: usize = blockchain.query_blocks().iter().map(|b| b.transactions.len()).sum();
+        // #2636: full chain via iter_blocks(); query_blocks() summed only the window.
+        let total: usize = blockchain.iter_blocks().map(|b| b.transactions.len()).sum();
         let total_pages = if total == 0 {
             0
         } else {
@@ -1124,7 +1125,9 @@ impl BlockchainHandler {
         let mut skipped = 0usize;
         let mut transactions = Vec::new();
 
-        for block in blockchain.query_blocks().iter().rev() {
+        // #2636: materialize the full chain (window + sled), then iterate newest-first.
+        let all_blocks: Vec<_> = blockchain.iter_blocks().collect();
+        for block in all_blocks.iter().rev() {
             for tx in block.transactions.iter().rev() {
                 if skipped < offset {
                     skipped += 1;
@@ -1177,7 +1180,9 @@ impl BlockchainHandler {
 
         let avg_block_time_secs = if blockchain.query_block_count() >= 2 {
             let mut total_delta = 0u64;
-            for window in blockchain.query_blocks().windows(2) {
+            // #2636: full chain (window + sled), materialized for windows(2).
+            let all_blocks: Vec<_> = blockchain.iter_blocks().collect();
+            for window in all_blocks.windows(2) {
                 let a = window[0].header.timestamp;
                 let b = window[1].header.timestamp;
                 total_delta = total_delta.saturating_add(b.saturating_sub(a));
@@ -1281,7 +1286,9 @@ impl BlockchainHandler {
                 }));
             }
 
-            for block in blockchain.query_blocks().iter().rev() {
+            // #2636: full chain (window + sled), newest-first.
+            let all_blocks: Vec<_> = blockchain.iter_blocks().collect();
+            for block in all_blocks.iter().rev() {
                 if let Some(tx) = block.transactions.iter().find(|tx| tx.hash() == tx_hash) {
                     let confirmations = latest_height.saturating_sub(block.header.height) + 1;
                     return Some(serde_json::json!({
@@ -1978,7 +1985,7 @@ impl BlockchainHandler {
         }
 
         // Search through all blocks for the transaction
-        for (_block_index, block) in blockchain.query_blocks().iter().enumerate() {
+        for (_block_index, block) in blockchain.iter_blocks().enumerate() {
             if let Some(confirmed_tx) = block.transactions.iter().find(|tx| tx.hash() == tx_hash) {
                 let transaction_info = Self::tx_to_info(confirmed_tx);
 
@@ -2297,7 +2304,7 @@ impl BlockchainHandler {
         }
 
         // Fallback: Search through all blocks for the transaction (for backward compatibility)
-        for (_block_index, block) in blockchain.query_blocks().iter().enumerate() {
+        for (_block_index, block) in blockchain.iter_blocks().enumerate() {
             if let Some((tx_index, confirmed_tx)) = block
                 .transactions
                 .iter()

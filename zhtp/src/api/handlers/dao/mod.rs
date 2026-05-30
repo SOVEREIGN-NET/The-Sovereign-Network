@@ -614,8 +614,10 @@ impl DaoHandler {
         }
 
         // Slow path: rebuild and cache
+        // #2636: iter_blocks() walks the full chain (window + sled); query_blocks()
+        // returned only the in-memory hot window, truncating DAO history.
         let mut registry = DAORegistry::new();
-        for block in blockchain.query_blocks() {
+        for block in blockchain.iter_blocks() {
             for tx in &block.transactions {
                 Self::apply_registry_registration_from_tx(&mut registry, tx, block.header.height);
             }
