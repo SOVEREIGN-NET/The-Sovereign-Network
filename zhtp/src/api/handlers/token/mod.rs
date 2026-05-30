@@ -564,11 +564,13 @@ impl TokenHandler {
     async fn handle_list_tokens(&self) -> Result<ZhtpResponse> {
         let blockchain = self.blockchain.read().await;
 
+        // #2637: iter_token_contract_metadata() is the sled-first list facade
+        // (metadata only — balances are not populated; this lists name/symbol/etc.).
         let mut tokens: Vec<TokenListItem> = blockchain
-            .token_contracts
-            .iter()
-            .map(|(id, token)| TokenListItem {
-                token_id: hex::encode(id),
+            .iter_token_contract_metadata()
+            .into_iter()
+            .map(|token| TokenListItem {
+                token_id: hex::encode(token.token_id),
                 name: token.name.clone(),
                 symbol: token.symbol.clone(),
                 decimals: token.decimals,
@@ -653,8 +655,8 @@ impl TokenHandler {
 
         // Check if any existing token uses this symbol (case-insensitive)
         let existing_token = blockchain
-            .token_contracts
-            .values()
+            .iter_token_contract_metadata()
+            .into_iter()
             .find(|token| token.symbol.to_uppercase() == symbol_upper);
 
         match existing_token {
@@ -779,9 +781,9 @@ impl TokenHandler {
             .iter()
             .any(|b| b.get("token_id").and_then(|v| v.as_str()) == Some(&native_token_id_hex));
         if !has_sov {
+            // #2637: get_token_contract() is the sled-first metadata facade.
             let (name, symbol, decimals) = blockchain
-                .token_contracts
-                .get(&native_token_id)
+                .get_token_contract(&native_token_id)
                 .map(|t| (t.name.clone(), t.symbol.clone(), t.decimals))
                 .unwrap_or_else(|| ("Sovereign".to_string(), "SOV".to_string(), 8));
 

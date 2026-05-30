@@ -1047,6 +1047,30 @@ impl Blockchain {
             .unwrap_or(0))
     }
 
+    /// Sled-first iterator facade over all token contracts — **METADATA ONLY**
+    /// (#2637).
+    ///
+    /// Returns the authoritative contract set from the store when attached,
+    /// falling back to the in-memory map in store-less mode. Use for listing /
+    /// counting / finding tokens by name/symbol/decimals/supply.
+    ///
+    /// # ⚠️ Balances are NOT populated on these results
+    ///
+    /// Per-address balances live in a **separate** sled tree (`token_balances`),
+    /// not inside the serialized `TokenContract`. A contract deserialized from
+    /// sled has an **empty** `balances` map, so `c.balance_of(addr)` on a result
+    /// of this method **always returns 0**. The name encodes the contract: this
+    /// is metadata only. For balances call [`Self::token_balance`]. (This is the
+    /// footgun the renamed-from-`iter_token_contracts` CR flagged.)
+    pub fn iter_token_contract_metadata(&self) -> Vec<crate::contracts::TokenContract> {
+        if let Some(store) = self.get_store() {
+            if let Ok(iter) = store.iter_token_contracts() {
+                return iter.map(|(_, c)| c).collect();
+            }
+        }
+        self.token_contracts.values().cloned().collect()
+    }
+
     pub fn register_web4_contract(
         &mut self,
         contract_id: [u8; 32],

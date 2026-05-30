@@ -925,12 +925,10 @@ impl NetworkHandler {
                         // because PublicKey's Hash/PartialEq compare all fields (dilithium_pk,
                         // kyber_pk, key_id), so a synthetic PublicKey with zeroed crypto keys
                         // would never match a real entry in the balances HashMap.
+                        // #2637: token_balance() is sled-first and keyed by key_id.
                         let wallet_key_id = w.wallet_id.as_array();
                         let balance = blockchain
-                            .token_contracts
-                            .get(&sov_token_id)
-                            .and_then(|t| t.find_balance_by_key_id(&wallet_key_id))
-                            .map(|(_, bal)| bal)
+                            .token_balance(&sov_token_id, &wallet_key_id)
                             .unwrap_or(0);
                         (Some(wallet_id_hex), balance)
                     } else {
