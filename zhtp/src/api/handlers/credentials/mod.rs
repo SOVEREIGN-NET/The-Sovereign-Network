@@ -216,7 +216,7 @@ impl CredentialsHandler {
         {
             let mut blockchain = self.blockchain.write().await;
             blockchain
-                .add_system_transaction(tx)
+                .add_system_transaction(tx, "credential_register")
                 .map_err(|e| anyhow::anyhow!("Failed to submit credential tx: {}", e))?;
 
             // Cache warmup so signin works before block commit
@@ -364,7 +364,7 @@ impl CredentialsHandler {
         {
             let mut blockchain = self.blockchain.write().await;
             blockchain
-                .add_system_transaction(tx)
+                .add_system_transaction(tx, "credential_password_update")
                 .map_err(|e| anyhow::anyhow!("Failed to submit password update tx: {}", e))?;
 
             let height = blockchain.query_height();

@@ -1674,9 +1674,16 @@ pub enum TokenAction {
         /// Token symbol (e.g., "MTK")
         #[arg(short, long)]
         symbol: String,
-        /// Initial supply
+        /// Initial supply in atomic units (whole_tokens * 10^decimals).
+        /// u128 to support 18-decimal supplies past the u64 ceiling
+        /// (e.g. 100B @ 18 dec = 10^29 atoms).
         #[arg(long)]
-        supply: u64,
+        supply: u128,
+        /// Token decimals (0..=18, matching on-chain `TokenContract::validate`).
+        /// Defaults to 8 to keep parity with the previous CLI behaviour; pass
+        /// 18 for CBE-style precision or 0 for whole-unit tokens.
+        #[arg(long, default_value_t = 8)]
+        decimals: u8,
         /// Treasury recipient DID or key (receives canonical 20% allocation)
         #[arg(long)]
         treasury_recipient: String,

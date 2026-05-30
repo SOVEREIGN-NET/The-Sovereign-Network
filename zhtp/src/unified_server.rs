@@ -53,9 +53,9 @@ const QUIC_PORT: u16 = 9334;
 
 // Import our comprehensive API handlers
 use crate::api::handlers::{
-    BearerAuthMiddleware, BlockchainHandler, CbeHandler, DaoHandler, DhtHandler, DnsHandler,
-    IdentityHandler, MobileAuthHandler, ProtocolHandler, StorageHandler, TokenHandler,
-    WalletHandler, Web4Handler,
+    BearerAuthMiddleware, BlockchainHandler, CbeHandler, CredentialsHandler, DaoHandler,
+    DhtHandler, DnsHandler, IdentityHandler, MobileAuthHandler, ProtocolHandler, StorageHandler,
+    TokenHandler, WalletHandler, Web4Handler,
 };
 use crate::config::environment::detect_environment;
 use crate::session_manager::SessionManager;
@@ -359,6 +359,15 @@ impl ZhtpUnifiedServer {
         // Initialize session manager first
         let _session_manager = Arc::new(SessionManager::new());
         _session_manager.start_cleanup_task();
+        // Publish the same instance as the global handle so consumers that
+        // can't easily take an `Arc<SessionManager>` constructor argument
+        // — `extract_principal_from_request` and the `/msg/receive`
+        // resolver among them — pick up the binding written by
+        // `handle_login_finish`. PR #2626 added `session_manager_handle()`
+        // but never wired this call, so the singleton stayed empty and
+        // every owner-gated endpoint silently fell back to the device DID
+        // and 403'd.
+        crate::session_manager::set_global_session_manager(_session_manager.clone());
 
         // Initialize discovery coordinator (Phase 3 consolidation)
         // Create DiscoveryConfig from runtime bootstrap peers (ARCHITECTURE: Runtime topology, not Environment defaults)
@@ -965,6 +974,41 @@ impl ZhtpUnifiedServer {
         let cbe_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(CbeHandler::new());
         zhtp_router.register_handler("/api/v1/cbe".to_string(), cbe_handler);
 
+        // BUBL rewards endpoints — inline-mint from the treasury identity to
+        // user wallets. Loads its treasury keystore from the env var
+        // `ZHTP_REWARDS_TREASURY_KEYSTORE`; without it, all /rewards/* return
+        // 503. We currently ship the keystore on g1 only so the treasury key
+        // has exactly one exposure surface.
+        match crate::api::handlers::RewardsHandler::new(blockchain.clone()) {
+            Ok(h) => {
+                let handler: Arc<dyn ZhtpRequestHandler> = Arc::new(h);
+                zhtp_router.register_handler("/api/v1/rewards".to_string(), handler);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to initialise RewardsHandler — endpoint will be unavailable: {}",
+                    e
+                );
+            }
+        }
+
+        // Notifications opt-in subscriber list (sled-backed, per-validator).
+        // POST /subscribe + /unsubscribe are open; GET /subscribers is
+        // Council-gated. See `api/handlers/notifications/mod.rs` for the
+        // full rationale on why this isn't a chain tx.
+        match crate::api::handlers::NotificationsHandler::new() {
+            Ok(h) => {
+                let handler: Arc<dyn ZhtpRequestHandler> = Arc::new(h);
+                zhtp_router.register_handler("/api/v1/notifications".to_string(), handler);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to initialise NotificationsHandler — endpoint will be unavailable: {}",
+                    e
+                );
+            }
+        }
+
         // Canonical bonding-curve REST API endpoints — UHP-authenticated
         let bonding_curve_api_handler: Arc<dyn ZhtpRequestHandler> =
             Arc::new(crate::api::handlers::bonding_curve::api_v1::BondingCurveApiHandler::new());
@@ -1219,6 +1263,22 @@ impl ZhtpUnifiedServer {
         );
         // Transaction delegation endpoints (#2153, #2154) — auth handled internally
         zhtp_router.register_handler("/api/v1/tx".to_string(), mobile_auth_handler);
+
+        // Credentials + OPAQUE lobby-auth endpoints (epic #2554).
+        // Serves /api/v1/auth/credentials/{register,signin,recover} and
+        // /api/v1/auth/opaque/{register,login}/{start,finish}.
+        let credentials_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(CredentialsHandler::new(
+            blockchain.clone(),
+            _session_manager.clone(),
+        ));
+        zhtp_router.register_handler(
+            "/api/v1/auth/credentials".to_string(),
+            credentials_handler.clone(),
+        );
+        zhtp_router.register_handler(
+            "/api/v1/auth/opaque".to_string(),
+            credentials_handler,
+        );
 
         info!("✅ All API handlers registered successfully on ZHTP router");
         Ok((pouw_validator_arc, pouw_calculator))

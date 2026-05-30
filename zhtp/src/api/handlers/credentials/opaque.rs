@@ -485,7 +485,7 @@ impl OpaqueHandlers {
         };
         {
             let mut bc = self.blockchain.write().await;
-            if let Err(e) = bc.add_system_transaction(tx) {
+            if let Err(e) = bc.add_system_transaction(tx, "opaque_credential_register") {
                 return Ok(json_err(
                     ZhtpStatus::InternalServerError,
                     &format!("failed to submit RegisterCredential tx: {}", e),
@@ -758,6 +758,43 @@ impl OpaqueHandlers {
         };
 
         info!("OPAQUE login: '{}' from {}", pending.username, client_ip);
+
+        // Bind this device's QUIC key_id to the canonical chain DID.
+        //
+        // Mobiles generate an ephemeral QUIC keypair per session that does
+        // NOT match the chain-registered identity's keys. Without an
+        // explicit binding, msg/receive cannot map the polling device's
+        // incoming key_id back to the user's canonical DID, so messages
+        // addressed to the canonical DID never reach the polling device.
+        //
+        // OPAQUE login proves possession of the password — sufficient
+        // authority to attach this connection's QUIC key under the canonical
+        // DID. Recorded per-server, in-memory only; cleared on restart and
+        // re-established on the next login. No chain transaction or schema
+        // change is required.
+        if let Some(req_id) = request.requester.as_ref() {
+            if did.is_empty() {
+                tracing::warn!(
+                    "OPAQUE login_finish: cannot bind device {} — canonical DID resolved to empty string (credential_registry lookup failed for username '{}')",
+                    hex::encode(&req_id.0[..8]),
+                    pending.username
+                );
+            } else {
+                self.session_manager
+                    .bind_device_to_canonical_did(req_id.0, did.clone())
+                    .await;
+                tracing::info!(
+                    "OPAQUE device-bind: key_id {} → {}",
+                    hex::encode(&req_id.0[..8]),
+                    &did[..did.len().min(28)]
+                );
+            }
+        } else {
+            tracing::warn!(
+                "OPAQUE login_finish for '{}' completed but request.requester is None — no device→canonical DID binding written",
+                pending.username
+            );
+        }
 
         json_ok(&LoginFinishResponse {
             status: "ok",

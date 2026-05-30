@@ -10,11 +10,22 @@ use lib_types::NodeType;
 /// Authenticated DIDs are checked against the on-chain council member list
 /// to assign `Role::Council` vs `Role::Citizen`. If the blockchain lock is
 /// contended, defaults to `Role::Citizen` (safe: never elevates on failure).
+///
+/// Mobile clients sign QUIC bytes with a per-device Dilithium key
+/// (`53c47662…`) which is *different by design* from the user's canonical
+/// chain DID (`e0b97576…`); the OPAQUE login flow binds the two in the
+/// in-memory `SessionManager` map (see PR #2626). The previous version of
+/// this function turned `request.requester.0` directly into
+/// `did:zhtp:<device-key-hex>` — the device-DID — which made every
+/// owner-gated endpoint 403 even immediately after a successful OPAQUE
+/// login. We now consult the binding first and only fall back to the raw
+/// device DID when no binding exists (i.e. pre-OPAQUE-login traffic).
 pub fn extract_principal_from_request(request: &ZhtpRequest) -> SecurityPrincipal {
     // If the transport/session layer has already authenticated the caller
     // and set request.requester, use that DID directly.
     if let Some(ref identity_id) = request.requester {
-        let did = format!("did:zhtp:{}", hex::encode(&identity_id.0));
+        let raw_did = format!("did:zhtp:{}", hex::encode(&identity_id.0));
+        let did = resolve_canonical_did(identity_id.0, raw_did);
         let role = resolve_role_for_did(&did);
         return SecurityPrincipal::new(&did, role, NodeType::FullNode);
     }
@@ -57,5 +68,88 @@ fn resolve_role_for_did(did: &str) -> Role {
     match provider.is_council_member_sync(did) {
         Some(true) => Role::Council,
         _ => Role::Citizen, // Not council, not initialized, or lock contended
+    }
+}
+
+/// Resolve a 32-byte device QUIC key to the canonical chain DID it was
+/// bound to at OPAQUE login, falling back to `raw_did` (the stub
+/// `did:zhtp:<device-key-hex>`) when no binding exists.
+///
+/// The binding lives in `SessionManager.device_quic_key_canonical_did`
+/// (in-memory only, cleared on restart, populated by
+/// `handle_login_finish`). This is the same map `/msg/receive` already
+/// consults; surfacing it here means *every* owner-gated endpoint sees
+/// the canonical DID instead of the device-DID.
+///
+/// Performed in a `block_in_place` shim because the principal extractor
+/// is called from sync code paths but the binding map is guarded by an
+/// async `RwLock`. We've already paid for the async runtime at this
+/// point (the request itself arrived through tokio), so the cost is
+/// bounded to a single map read.
+fn resolve_canonical_did(device_key: [u8; 32], raw_did: String) -> String {
+    let device_key_hex = hex::encode(&device_key);
+
+    // (1) Session-bound device map (set by OPAQUE login_finish — only works
+    //     for flows that authenticate over an already-v2 session, which is
+    //     why OPAQUE itself can't populate it: login_finish runs on a
+    //     public read-only QUIC connection where request.requester is None).
+    if let Some(manager) = crate::session_manager::session_manager_handle() {
+        let lookup = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async move {
+                manager.canonical_did_for_quic_key(&device_key).await
+            })
+        });
+        if let Some(canonical) = lookup {
+            if !canonical.is_empty() {
+                tracing::debug!(
+                    "principal: device {} → canonical {} (via SessionManager binding)",
+                    &device_key_hex[..16],
+                    &canonical[..canonical.len().min(28)]
+                );
+                return canonical;
+            }
+        }
+    }
+
+    // (2) + (3) — chain identity_registry lookup. Same resolver
+    // `msg/receive` uses (messaging/handler.rs:279-326). This is the path
+    // that actually unblocks mobile after OPAQUE login because the
+    // SessionManager binding can never be populated by the OPAQUE flow
+    // itself (the public read-only QUIC connection has no peer_did).
+    let provider = match crate::runtime::blockchain_provider::get_global_blockchain_provider() {
+        Some(p) => p,
+        None => {
+            tracing::debug!(
+                "principal: no blockchain provider — using raw DID for device {}",
+                &device_key_hex[..16]
+            );
+            return raw_did;
+        }
+    };
+
+    let resolved = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async move {
+            provider
+                .resolve_device_key_to_canonical_did(&device_key)
+                .await
+        })
+    });
+
+    match resolved {
+        Some(canonical) => {
+            tracing::info!(
+                "principal: device {} → canonical {} (via identity_registry)",
+                &device_key_hex[..16],
+                &canonical[..canonical.len().min(28)]
+            );
+            canonical
+        }
+        None => {
+            tracing::info!(
+                "principal: no chain identity binds device {} — using raw DID",
+                &device_key_hex[..16]
+            );
+            raw_did
+        }
     }
 }

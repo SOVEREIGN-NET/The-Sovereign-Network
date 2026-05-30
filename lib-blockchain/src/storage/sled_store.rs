@@ -51,6 +51,8 @@ const TREE_DAO_STAKES: &str = "dao_stakes"; // SOV stakes to sector DAOs: dao_ke
 const TREE_OBSERVER_REGISTRY: &str = "observer_registry"; // Observer admission records: did_hash → ObserverAdmissionRecord
 const TREE_META: &str = "meta";
 const TREE_WAL: &str = "wal_block_commit"; // Write-ahead log for crash-safe block commits
+const TREE_FORK_POINTS: &str = "fork_points"; // Fork audit log — direct durable writes
+const TREE_RECEIPTS: &str = "receipts"; // Transaction receipts — direct writes, tx_hash → receipt
 
 /// The single key under which an in-progress block commit's post-image is
 /// staged in the `wal` tree. Only one block commits at a time, so one key
@@ -96,6 +98,8 @@ pub struct SledStore {
     utxo_merkle_nodes: Tree,     // level (u32 BE) || node_index (u64 BE) → [u8; 32]
     meta: Tree,
     wal: Tree,                   // Write-ahead log: durable block-commit post-image
+    fork_points: Tree,           // Fork audit log: direct durable writes (non-batched)
+    receipts: Tree,              // Transaction receipts: tx_hash → TransactionReceipt
 
     // Transaction state
     tx_active: AtomicBool,
@@ -334,6 +338,12 @@ impl SledStore {
         let wal = db
             .open_tree(TREE_WAL)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let fork_points = db
+            .open_tree(TREE_FORK_POINTS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let receipts = db
+            .open_tree(TREE_RECEIPTS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
 
         let store = Self {
             db,
@@ -364,6 +374,8 @@ impl SledStore {
             utxo_merkle_nodes,
             meta,
             wal,
+            fork_points,
+            receipts,
             tx_active: AtomicBool::new(false),
             tx_height: AtomicU64::new(0),
             tx_utxo_merkle_next_index: AtomicU64::new(0),
@@ -2008,6 +2020,56 @@ impl BlockchainStore for SledStore {
     }
 
     // =========================================================================
+    // Fork audit log (BST-203) — direct durable writes
+    // =========================================================================
+
+    fn put_fork_point(
+        &self,
+        height: u64,
+        fork_point: &crate::fork_recovery::ForkPoint,
+    ) -> StorageResult<()> {
+        let value = Self::serialize(fork_point)?;
+        self.fork_points
+            .insert(height.to_be_bytes(), value)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        // Audit record — flush so a crash right after a reorg keeps it.
+        self.db
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    fn iter_fork_points(&self) -> StorageResult<Vec<crate::fork_recovery::ForkPoint>> {
+        // sled iterates keys in order; keys are big-endian heights, so the
+        // result is already ascending by height.
+        let mut out = Vec::new();
+        for item in self.fork_points.iter() {
+            let (_, value) = item.map_err(|e| StorageError::Database(e.to_string()))?;
+            out.push(Self::deserialize(&value)?);
+        }
+        Ok(out)
+    }
+
+    fn put_receipt(&self, receipt: &crate::receipts::TransactionReceipt) -> StorageResult<()> {
+        let value = Self::serialize(receipt)?;
+        self.receipts
+            .insert(receipt.tx_hash.as_array(), value)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    fn get_receipt(
+        &self,
+        tx_hash: &[u8; 32],
+    ) -> StorageResult<Option<crate::receipts::TransactionReceipt>> {
+        match self.receipts.get(tx_hash) {
+            Ok(Some(value)) => Ok(Some(Self::deserialize(&value)?)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    // =========================================================================
     // Bonding Curve Operations
     // =========================================================================
 
@@ -3376,5 +3438,65 @@ mod tests {
             store.stage::<TableProbe>(&1u64.to_be_bytes(), &1u64),
             Err(StorageError::NoActiveTransaction)
         ));
+    }
+
+    /// Fork points are written directly (no `begin_block`) — reorgs are not
+    /// block commits — are returned ascending by height, and survive a reopen.
+    #[test]
+    fn test_fork_point_direct_durable_write() {
+        use crate::fork_recovery::{ForkPoint, ForkResolution};
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let mk = |h: u64| {
+            ForkPoint::new(
+                h,
+                1_000 + h,
+                Hash::new([h as u8; 32]),
+                Hash::new([(h + 100) as u8; 32]),
+                ForkResolution::SwitchedToFork,
+            )
+        };
+        {
+            let store = SledStore::open(dir.path()).unwrap();
+            // No begin_block: a reorg has no open block transaction.
+            store.put_fork_point(7, &mk(7)).unwrap();
+            store.put_fork_point(3, &mk(3)).unwrap();
+
+            let all = store.iter_fork_points().unwrap();
+            assert_eq!(all.len(), 2);
+            assert_eq!(all[0].height, 3, "ascending by height");
+            assert_eq!(all[1].height, 7);
+        }
+        // Durable across reopen.
+        let store = SledStore::open(dir.path()).unwrap();
+        assert_eq!(store.iter_fork_points().unwrap().len(), 2);
+    }
+
+    /// Receipts are written directly (created after the block commits), keyed
+    /// by tx hash, survive a reopen, and report finality derived from height.
+    #[test]
+    fn test_receipt_direct_durable_write() {
+        use crate::receipts::TransactionReceipt;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let tx_hash = Hash::new([7u8; 32]);
+        let receipt = TransactionReceipt::new(tx_hash, Hash::new([1u8; 32]), 42, 3, 100, 12345);
+        {
+            let store = SledStore::open(dir.path()).unwrap();
+            store.put_receipt(&receipt).unwrap();
+
+            let got = store.get_receipt(&tx_hash.as_array()).unwrap().unwrap();
+            assert_eq!(got.block_height, 42);
+            assert_eq!(got.tx_index, 3);
+            // Finality is derived from current height, not stored.
+            assert!(!got.is_finalized(50)); // 8 confirmations
+            assert!(got.is_finalized(54)); // 12 confirmations
+            assert!(store.get_receipt(&[0u8; 32]).unwrap().is_none());
+        }
+        // Durable across reopen.
+        let store = SledStore::open(dir.path()).unwrap();
+        assert!(store.get_receipt(&tx_hash.as_array()).unwrap().is_some());
     }
 }

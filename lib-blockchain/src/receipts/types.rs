@@ -44,8 +44,6 @@ pub struct TransactionReceipt {
     pub block_height: u64,
     /// Index of transaction within block
     pub tx_index: u32,
-    /// Current status (Pending/Confirmed/Finalized/Failed)
-    pub status: TransactionStatus,
     /// Gas used by transaction (0 for now, reserved for future)
     pub gas_used: u64,
     /// Fee paid by sender
@@ -54,8 +52,6 @@ pub struct TransactionReceipt {
     pub logs: Vec<String>,
     /// Unix timestamp of block creation
     pub timestamp: u64,
-    /// Number of confirmations (blocks since inclusion)
-    pub confirmations: u64,
 }
 
 impl TransactionReceipt {
@@ -73,32 +69,39 @@ impl TransactionReceipt {
             block_hash,
             block_height,
             tx_index,
-            status: TransactionStatus::Confirmed,
             gas_used: 0,
             fee_paid,
             logs: Vec::new(),
             timestamp,
-            confirmations: 0,
         }
     }
 
-    /// Update confirmation count based on current blockchain height
-    pub fn update_confirmations(&mut self, current_height: u64) {
-        if current_height >= self.block_height {
-            self.confirmations = current_height - self.block_height;
+    /// Status as of `current_height`, derived from height.
+    ///
+    /// A stored receipt always belongs to an included transaction, so it is
+    /// `Confirmed` until it reaches finality depth, then `Finalized`. Status
+    /// is computed, not a stored field that must be rewritten on every tick.
+    pub fn status(&self, current_height: u64) -> TransactionStatus {
+        if self.is_finalized(current_height) {
+            TransactionStatus::Finalized
+        } else {
+            TransactionStatus::Confirmed
         }
     }
 
-    /// Check if transaction is finalized (12+ confirmations)
-    pub fn is_finalized(&self) -> bool {
-        self.confirmations >= 12
+    /// Confirmations as of `current_height`.
+    ///
+    /// Derived, never stored: `current_height − block_height`. Confirmation
+    /// counts must not be a stored, mutated field — that forced rewriting the
+    /// entire receipt history on every finality tick.
+    pub fn confirmations(&self, current_height: u64) -> u64 {
+        current_height.saturating_sub(self.block_height)
     }
 
-    /// Mark transaction as finalized and update status
-    pub fn finalize(&mut self) {
-        if self.is_finalized() {
-            self.status = TransactionStatus::Finalized;
-        }
+    /// Whether the transaction is finalized (12+ confirmations) as of
+    /// `current_height`. Derived from height — not stored mutable state.
+    pub fn is_finalized(&self, current_height: u64) -> bool {
+        self.confirmations(current_height) >= 12
     }
 }
 
@@ -114,32 +117,23 @@ mod tests {
         assert_eq!(receipt.tx_hash, hash);
         assert_eq!(receipt.block_height, 100);
         assert_eq!(receipt.fee_paid, 1000);
-        assert_eq!(receipt.status, TransactionStatus::Confirmed);
-        assert!(!receipt.is_finalized());
+        assert_eq!(receipt.status(100), TransactionStatus::Confirmed);
+        assert_eq!(receipt.status(120), TransactionStatus::Finalized);
+        assert!(!receipt.is_finalized(100));
     }
 
     #[test]
-    fn test_confirmation_counting() {
+    fn test_confirmations_are_derived() {
         let hash = Hash::from_slice(&[0u8; 32]);
-        let mut receipt = TransactionReceipt::new(hash, hash, 100, 0, 1000, 12345);
+        let receipt = TransactionReceipt::new(hash, hash, 100, 0, 1000, 12345);
 
-        receipt.update_confirmations(105);
-        assert_eq!(receipt.confirmations, 5);
-        assert!(!receipt.is_finalized());
+        assert_eq!(receipt.confirmations(105), 5);
+        assert!(!receipt.is_finalized(105));
 
-        receipt.update_confirmations(112);
-        assert_eq!(receipt.confirmations, 12);
-        assert!(receipt.is_finalized());
-    }
+        assert_eq!(receipt.confirmations(112), 12);
+        assert!(receipt.is_finalized(112));
 
-    #[test]
-    fn test_finalization() {
-        let hash = Hash::from_slice(&[0u8; 32]);
-        let mut receipt = TransactionReceipt::new(hash, hash, 100, 0, 1000, 12345);
-
-        assert_eq!(receipt.status, TransactionStatus::Confirmed);
-        receipt.confirmations = 12;
-        receipt.finalize();
-        assert_eq!(receipt.status, TransactionStatus::Finalized);
+        // Below inclusion height saturates to zero, never underflows.
+        assert_eq!(receipt.confirmations(50), 0);
     }
 }

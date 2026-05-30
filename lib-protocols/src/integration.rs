@@ -649,26 +649,6 @@ impl ZhtpIntegration {
                 ProtocolError::InternalError(format!("Transaction validation failed: {}", e))
             })?;
 
-        // Submit transaction to mempool using the mempool module
-        use lib_blockchain::mempool::Mempool;
-        let mut mempool = Mempool::new(1000, 100);
-        mempool
-            .add_transaction(transaction_with_dao.clone())
-            .map_err(|e| {
-                ProtocolError::InternalError(format!("Failed to add transaction to mempool: {}", e))
-            })?;
-
-        // Trigger block mining if mempool has enough transactions
-        let _demo_transaction_count = 5; // Simulate 5 pending transactions
-        if _demo_transaction_count >= 5 {
-            let _pending_transactions = mempool.get_transactions_for_block(100, 1024000);
-
-            tracing::info!(
-                " Processing {} demo transactions for blockchain integration",
-                _demo_transaction_count
-            );
-        }
-
         // Update blockchain state and statistics
         self.stats.blockchain_interactions += 1;
 

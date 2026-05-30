@@ -12,6 +12,11 @@ use lib_types::Amount;
 pub trait MempoolConfigExt {
     /// Create a permissive config for testing
     fn for_testing() -> Self;
+    /// Create the maximally permissive config used for initial `admit()` wire-up.
+    /// All count/byte caps at u32/u64::MAX; `min_fee_multiplier_bps = 0` so the
+    /// admission gate enforces no fee (BlockExecutor remains the fee authority).
+    /// Used before the per-deployment DoS config is tuned to real values.
+    fn audit_only() -> Self;
     /// Calculate the effective minimum fee given the computed fee
     fn effective_min_fee(&self, computed_fee: Amount) -> Amount;
 }
@@ -31,6 +36,12 @@ impl MempoolConfigExt for MempoolConfig {
             max_per_sender_per_period: u32::MAX,
             rate_limit_period_blocks: 1,
         }
+    }
+
+    fn audit_only() -> Self {
+        let mut cfg = Self::for_testing();
+        cfg.min_fee_multiplier_bps = 0;
+        cfg
     }
 
     fn effective_min_fee(&self, computed_fee: Amount) -> Amount {

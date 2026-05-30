@@ -18,7 +18,7 @@ impl BlockchainQuery for Blockchain {
         self.blocks.len()
     }
 
-    fn query_block(&self, height: u64) -> Option<&Block> {
+    fn query_block(&self, height: u64) -> Option<Block> {
         self.get_block(height)
     }
 
@@ -169,7 +169,11 @@ impl crate::query::BlockchainMutate for Blockchain {
         self.add_pending_transaction(tx)
     }
 
-    fn submit_system_transaction(&mut self, tx: Transaction) -> anyhow::Result<()> {
-        self.add_system_transaction(tx)
+    fn submit_system_transaction(
+        &mut self,
+        tx: Transaction,
+        originator: &'static str,
+    ) -> anyhow::Result<()> {
+        self.add_system_transaction(tx, originator)
     }
 }

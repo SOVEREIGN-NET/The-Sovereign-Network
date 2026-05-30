@@ -52,6 +52,7 @@ pub mod handshake;
 pub mod nft_tx;
 pub mod identity;
 pub mod messaging;
+pub mod observer_admission;
 // `opaque` is gated off wasm32 in v1 because the FFI surface uses raw-pointer
 // `*mut ByteBuffer` out-params that don't translate cleanly to wasm-bindgen,
 // and `rand::rngs::OsRng` on wasm32 needs the `getrandom/js` feature which we
@@ -2496,9 +2497,12 @@ pub extern "C" fn zhtp_msg_seal_key_exchange(
 
 // ── Opening ─────────────────────────────────────────────────────────
 
-/// Decrypt a sealed envelope. `chain_key` must point to the 32-byte
-/// chain key for the relevant session; `envelope_bytes` is bincode bytes
-/// (the same shape `zhtp_msg_seal_*` produces). Returns plaintext bytes.
+/// Decrypt a sealed envelope **statelessly**. `chain_key` must already
+/// be ratcheted to the position matching `envelope.sequence`; this call
+/// does not advance any state and is intended for KeyExchange envelopes
+/// or callers that manage chain key advancement out-of-band. For normal
+/// in-session traffic use `zhtp_msg_envelope_open_with_session` which
+/// advances the receive ratchet in lockstep with the sender.
 #[no_mangle]
 pub extern "C" fn zhtp_msg_envelope_open(
     envelope_bytes: *const u8,
@@ -2519,6 +2523,111 @@ pub extern "C" fn zhtp_msg_envelope_open(
     key_arr.copy_from_slice(key_slice);
     match msg_mod::open_envelope(&envelope, &key_arr) {
         Ok(body) => vec_to_buffer(body),
+        Err(_) => empty_buffer(),
+    }
+}
+
+/// Decrypt a sealed envelope using a `MessagingSessionHandle`, advancing
+/// the receive ratchet in lockstep with the sender's send ratchet.
+/// Mirrors `zhtp_msg_seal_text` on the receive side.
+///
+/// Behaviour:
+/// - In-order (`envelope.sequence == session.counter`): decrypts and
+///   advances the chain key + counter.
+/// - Skip-forward (`envelope.sequence > session.counter`): buffers
+///   per-message keys for the skipped range in the session's
+///   `skipped_keys` map (bounded; over-limit skips are rejected) so
+///   they can still be opened if they arrive later, then decrypts the
+///   target and advances.
+/// - Out-of-order (`envelope.sequence < session.counter`): looks the
+///   key up in the skipped buffer and consumes it on success.
+///
+/// On any failure (epoch mismatch, replay outside the buffer, decrypt
+/// error, payload deserialize error) the session is left untouched.
+/// Returns plaintext on success; empty buffer on failure.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_envelope_open_with_session(
+    handle: *mut MessagingSessionHandle,
+    envelope_bytes: *const u8,
+    envelope_len: usize,
+) -> ByteBuffer {
+    if handle.is_null() || envelope_bytes.is_null() {
+        return empty_buffer();
+    }
+    if envelope_len > 10 * 1024 * 1024 {
+        return empty_buffer();
+    }
+    let env_bytes = unsafe { borrow_slice(envelope_bytes, envelope_len) };
+    let envelope: msg_mod::MessageEnvelope = match bincode::deserialize(env_bytes) {
+        Ok(e) => e,
+        Err(_) => return empty_buffer(),
+    };
+    let session = unsafe { &mut (*handle).inner };
+
+    // Clone-then-commit so partial state changes don't leak on failure.
+    let mut session_copy = session.clone();
+    match msg_mod::open_envelope_with_session(&mut session_copy, &envelope) {
+        Ok(body) => {
+            *session = session_copy;
+            vec_to_buffer(body)
+        }
+        Err(_) => empty_buffer(),
+    }
+}
+
+/// Stateful + verified counterpart of `zhtp_msg_envelope_open_verified`.
+/// Verifies the Dilithium signature and the `sender_did` ↔ `peer_pk`
+/// binding, then decrypts via `zhtp_msg_envelope_open_with_session`'s
+/// ratchet semantics. `peer_dilithium_pk` is the sender's public key
+/// (2592 bytes). On any failure the session is left untouched.
+#[no_mangle]
+pub extern "C" fn zhtp_msg_envelope_open_verified_with_session(
+    handle: *mut MessagingSessionHandle,
+    envelope_bytes: *const u8,
+    envelope_len: usize,
+    peer_dilithium_pk: *const u8,
+    peer_dilithium_pk_len: usize,
+) -> ByteBuffer {
+    if handle.is_null() || envelope_bytes.is_null() || peer_dilithium_pk.is_null() {
+        return empty_buffer();
+    }
+    if peer_dilithium_pk_len != crypto::Dilithium5::PUBLIC_KEY_SIZE {
+        return empty_buffer();
+    }
+    if envelope_len > 10 * 1024 * 1024 {
+        return empty_buffer();
+    }
+
+    let env_bytes = unsafe { borrow_slice(envelope_bytes, envelope_len) };
+    let pk = unsafe { borrow_slice(peer_dilithium_pk, peer_dilithium_pk_len) };
+
+    let envelope: msg_mod::MessageEnvelope = match bincode::deserialize(env_bytes) {
+        Ok(e) => e,
+        Err(_) => return empty_buffer(),
+    };
+
+    // sender_did must equal `did:zhtp:` + blake3(pk)
+    let expected_did = format!(
+        "did:zhtp:{}",
+        hex::encode(crypto::Blake3::hash(pk))
+    );
+    if envelope.sender_did != expected_did {
+        return empty_buffer();
+    }
+
+    // Dilithium signature
+    match msg_mod::verify_envelope(&envelope, pk) {
+        Ok(true) => {}
+        _ => return empty_buffer(),
+    }
+
+    let session = unsafe { &mut (*handle).inner };
+    let mut session_copy = session.clone();
+    match msg_mod::open_envelope_with_session(&mut session_copy, &envelope) {
+        Ok(body) => {
+            *session = session_copy;
+            vec_to_buffer(body)
+        }
         Err(_) => empty_buffer(),
     }
 }
@@ -3015,4 +3124,76 @@ pub extern "C" fn zhtp_identity_build_kyber_key_update(
     });
 
     string_to_cstr(body.to_string())
+}
+
+// =============================================================================
+// C FFI Exports — Observer Admission
+// =============================================================================
+
+/// Build canonical signing bytes for observer registration.
+///
+/// `inputs_json`  — JSON-encoded `RegisterObserverInputs`
+/// Returns 32-byte buffer the sponsor signs with Dilithium.
+/// Caller must free with `zhtp_client_buffer_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_observer_build_payload(
+    inputs_json: *const std::ffi::c_char,
+) -> ByteBuffer {
+    if inputs_json.is_null() {
+        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+    }
+    let json_str = unsafe { std::ffi::CStr::from_ptr(inputs_json) }
+        .to_str()
+        .unwrap_or("");
+    let inputs: observer_admission::RegisterObserverInputs = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(_) => return ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+    };
+    let mut payload = match observer_admission::build_register_observer_payload(&inputs) {
+        Ok(v) => v,
+        Err(_) => return ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+    };
+    let buf = ByteBuffer { data: payload.as_mut_ptr(), len: payload.len() };
+    std::mem::forget(payload);
+    buf
+}
+
+/// Build the full JSON request body for `/admission/register`.
+///
+/// `inputs_json`        — JSON-encoded `RegisterObserverInputs`
+/// `sponsor_sig`        — Dilithium signature bytes (over payload from above)
+/// `sponsor_sig_len`    — length of signature
+/// `sponsor_dpk`        — sponsor raw Dilithium public key (2592 bytes)
+/// `sponsor_dpk_len`    — length
+/// `sponsor_kpk`        — sponsor raw Kyber public key (1568 bytes)
+/// `sponsor_kpk_len`    — length
+/// Returns null-terminated JSON string. Caller must free with `zhtp_client_string_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_observer_build_request(
+    inputs_json: *const std::ffi::c_char,
+    sponsor_sig: *const u8,
+    sponsor_sig_len: usize,
+    sponsor_dpk: *const u8,
+    sponsor_dpk_len: usize,
+    sponsor_kpk: *const u8,
+    sponsor_kpk_len: usize,
+) -> *mut std::ffi::c_char {
+    if inputs_json.is_null() || sponsor_sig.is_null() || sponsor_dpk.is_null() || sponsor_kpk.is_null() {
+        return std::ptr::null_mut();
+    }
+    let json_str = unsafe { std::ffi::CStr::from_ptr(inputs_json) }
+        .to_str()
+        .unwrap_or("");
+    let inputs: observer_admission::RegisterObserverInputs = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let sig = unsafe { std::slice::from_raw_parts(sponsor_sig, sponsor_sig_len) };
+    let dpk = unsafe { std::slice::from_raw_parts(sponsor_dpk, sponsor_dpk_len) };
+    let kpk = unsafe { std::slice::from_raw_parts(sponsor_kpk, sponsor_kpk_len) };
+    let json = match observer_admission::build_register_observer_request(&inputs, sig, dpk, kpk) {
+        Ok(v) => v,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    string_to_cstr(json.to_string())
 }

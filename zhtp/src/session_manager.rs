@@ -74,6 +74,28 @@ pub struct SessionManager {
     /// Highest `X-OPAQUE-Seq` value seen for each OPAQUE-bound session.
     /// Strict monotonic — server rejects seq ≤ last seen as replay (S6).
     opaque_last_seq: Arc<RwLock<HashMap<String, u64>>>,
+    /// Device QUIC key_id → canonical chain DID bindings.
+    ///
+    /// Mobiles generate an ephemeral QUIC keypair per device/session that
+    /// does NOT match the chain-registered identity's keys. The msg/receive
+    /// resolver scans identity_registry for entries whose
+    /// `blake3(dilithium_pk)` or `blake3(dilithium_pk||kyber_pk)` match the
+    /// requester's QUIC key_id — neither matches for ephemeral keys, so
+    /// messages addressed to the canonical DID never reach the polling
+    /// device.
+    ///
+    /// This map is populated on a successful OPAQUE login (password proves
+    /// authority over the canonical DID; the QUIC key_id of the login
+    /// connection is recorded as a device of that DID). The msg/receive
+    /// resolver consults this map BEFORE the existing hash-based scan, so
+    /// every subsequent /msg/* request on the same QUIC session (or any
+    /// future session whose key_id has been bound) resolves to the
+    /// canonical DID.
+    ///
+    /// Per-server state, in-memory only — cleared on restart. Mobile
+    /// re-logs in OPAQUE on next session start, which re-establishes the
+    /// binding. No chain transaction or schema change is needed.
+    device_quic_key_canonical_did: Arc<RwLock<HashMap<[u8; 32], String>>>,
 }
 
 impl SessionManager {
@@ -86,7 +108,40 @@ impl SessionManager {
             max_sessions_per_identity: 5,
             opaque_session_keys: Arc::new(RwLock::new(HashMap::new())),
             opaque_last_seq: Arc::new(RwLock::new(HashMap::new())),
+            device_quic_key_canonical_did: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Record that QUIC key_id `device_key` belongs to canonical chain DID
+    /// `canonical_did`. Called from `handle_login_finish` after a successful
+    /// OPAQUE login: the password proves authority, the QUIC key of the
+    /// login connection is recorded as a device of that DID. Idempotent;
+    /// repeat logins from the same device are no-ops.
+    pub async fn bind_device_to_canonical_did(
+        &self,
+        device_key: [u8; 32],
+        canonical_did: String,
+    ) {
+        let mut map = self.device_quic_key_canonical_did.write().await;
+        map.insert(device_key, canonical_did);
+    }
+
+    /// Look up the canonical chain DID for a given QUIC key_id. Returns
+    /// `None` if no OPAQUE login has bound this device key.
+    ///
+    /// Used by `/api/v1/msg/receive`'s recipient resolver to map an
+    /// incoming polling device's ephemeral QUIC identity to the user's
+    /// canonical DID, so messages addressed to the canonical DID reach the
+    /// device.
+    pub async fn canonical_did_for_quic_key(
+        &self,
+        device_key: &[u8; 32],
+    ) -> Option<String> {
+        self.device_quic_key_canonical_did
+            .read()
+            .await
+            .get(device_key)
+            .cloned()
     }
 
     /// S6: atomically verify and advance the per-session monotonic sequence
@@ -419,6 +474,7 @@ impl SessionManager {
             max_sessions_per_identity: self.max_sessions_per_identity,
             opaque_session_keys: Arc::clone(&self.opaque_session_keys),
             opaque_last_seq: Arc::clone(&self.opaque_last_seq),
+            device_quic_key_canonical_did: Arc::clone(&self.device_quic_key_canonical_did),
         };
 
         tokio::spawn(async move {

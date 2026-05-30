@@ -389,38 +389,6 @@ async fn test_add_block_with_persistence_updates_state() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_economics_transactions() -> Result<()> {
-    let mut blockchain = Blockchain::new()?;
-
-    // Create economics transaction with a specific address
-    let mut to_address = [0u8; 32];
-    let address_str = "test_address";
-    let addr_bytes = address_str.as_bytes();
-    to_address[..addr_bytes.len()].copy_from_slice(addr_bytes);
-
-    let economics_tx = EconomicsTransaction {
-        tx_id: Hash::from_hex("abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234")?,
-        from: [1u8; 32],
-        to: to_address,
-        amount: 1000,
-        tx_type: "transfer".to_string(),
-        timestamp: 12345,
-        block_height: 1,
-    };
-
-    // Store the transaction
-    blockchain.store_economics_transaction(economics_tx);
-    assert_eq!(blockchain.economics_transactions.len(), 1);
-
-    // Query transactions for address (use the 'to' address from our transaction)
-    let address = "test_address";
-    let transactions = blockchain.get_transactions_for_address(address);
-    assert_eq!(transactions.len(), 1);
-
-    Ok(())
-}
-
 #[tokio::test]
 async fn test_identity_confirmations() -> Result<()> {
     let mut blockchain = Blockchain::new()?;

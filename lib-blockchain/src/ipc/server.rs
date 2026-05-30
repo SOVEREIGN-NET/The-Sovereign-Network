@@ -135,7 +135,7 @@ async fn dispatch_request(
         // ── Lookup queries ──────────────────────────────────────────
         IpcRequest::QueryBlock { height } => {
             let bc = blockchain.read().await;
-            IpcResponse::Block(bc.query_block(*height).cloned())
+            IpcResponse::Block(bc.query_block(*height))
         }
         IpcRequest::QueryLatestBlock => {
             let bc = blockchain.read().await;
@@ -221,7 +221,11 @@ async fn dispatch_request(
         }
         IpcRequest::SubmitSystemTransaction { tx } => {
             let mut bc = blockchain.write().await;
-            match crate::query::BlockchainMutate::submit_system_transaction(&mut *bc, tx.clone()) {
+            match crate::query::BlockchainMutate::submit_system_transaction(
+                &mut *bc,
+                tx.clone(),
+                "ipc_external",
+            ) {
                 Ok(()) => IpcResponse::Ok,
                 Err(e) => IpcResponse::Error(e.to_string()),
             }

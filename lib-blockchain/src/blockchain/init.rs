@@ -19,7 +19,6 @@ impl Blockchain {
             identity_blocks: HashMap::new(),
             wallet_registry: HashMap::new(),
             wallet_blocks: HashMap::new(),
-            economics_transactions: Vec::new(),
             token_contracts: HashMap::new(),
             web4_contracts: HashMap::new(),
             contract_blocks: HashMap::new(),
@@ -43,13 +42,11 @@ impl Blockchain {
             blocks_since_last_persist: 0,
             broadcast_sender: None,
             executed_dao_proposals: HashSet::new(),
-            receipts: HashMap::new(),
             finality_depth: 12,
             finalized_blocks: HashSet::new(),
             contract_states: HashMap::new(),
             contract_state_history: std::collections::BTreeMap::new(),
             utxo_snapshots: std::collections::BTreeMap::new(),
-            fork_points: HashMap::new(),
             reorg_count: 0,
             fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig::default(),
             event_publisher: crate::events::BlockchainEventPublisher::new(),
@@ -106,6 +103,10 @@ impl Blockchain {
             did_to_username: HashMap::new(),
             opaque_server_setup: None,
             pouw_mint_index: HashMap::new(),
+            // Mempool admission (#2647 — S2): permissive defaults, audit-only.
+            mempool_config: lib_mempool::MempoolConfig::audit_only(),
+            mempool_state: lib_mempool::MempoolState::default(),
+            system_tx_originators: HashMap::new(),
         }
     }
 
@@ -710,6 +711,46 @@ impl Blockchain {
         // from the loaded blocks so /api/v1/pouw/rewards has the full history.
         blockchain.rebuild_pouw_mint_index();
 
+        // The store's wallet-projection index is non-authoritative and
+        // rebuildable; it can be stale or empty after a wipe. We have just
+        // re-derived the canonical wallet state (`wallet_registry` /
+        // `wallet_blocks`) from full block replay, so re-persist the
+        // projection index from it — `replace_wallet_projections` is
+        // purpose-built for exactly this startup recovery. Without this, a
+        // wiped projection index is never repaired and `get_wallet_projection`
+        // diverges from the replayed truth.
+        {
+            let projections: Vec<([u8; 32], crate::storage::WalletProjectionRecord)> = blockchain
+                .wallet_registry
+                .iter()
+                .filter_map(|(wallet_id_hex, wallet_data)| {
+                    let wallet_id = Self::wallet_id_bytes(wallet_id_hex)?;
+                    let committed_at_height = blockchain
+                        .wallet_blocks
+                        .get(wallet_id_hex)
+                        .copied()
+                        .unwrap_or(0);
+                    Some((
+                        wallet_id,
+                        crate::storage::WalletProjectionRecord {
+                            wallet_data: wallet_data.clone(),
+                            committed_at_height,
+                        },
+                    ))
+                })
+                .collect();
+            match store.replace_wallet_projections(&projections) {
+                Ok(()) => debug!(
+                    "🔁 Rebuilt wallet-projection index from replay ({} entries)",
+                    projections.len()
+                ),
+                Err(e) => warn!(
+                    "⚠️ Failed to rebuild wallet-projection index during load_from_store: {}",
+                    e
+                ),
+            }
+        }
+
         Ok(Some(blockchain))
     }
 
@@ -717,6 +758,59 @@ impl Blockchain {
         self.store = Some(store);
         self.auto_persist_enabled = false;
         info!("Phase 2 incremental store attached to blockchain");
+        // #2647 S2: replay pending txes persisted before restart.
+        self.recover_pending_transactions_from_store();
+    }
+
+    /// Reload pending transactions from sled into the in-memory `Vec` and
+    /// mempool admission state. Called automatically when a store is attached.
+    /// Stale-nonce / phase-2-invalid entries are dropped before serving.
+    fn recover_pending_transactions_from_store(&mut self) {
+        use lib_mempool::MempoolStateExt;
+
+        let store = match self.store.as_ref() {
+            Some(s) => s,
+            None => return,
+        };
+        let recovered: Vec<Transaction> = match store.iter_pending_transactions() {
+            Ok(it) => it.collect(),
+            Err(e) => {
+                warn!("Pending tx recovery: iter failed ({}); starting empty", e);
+                return;
+            }
+        };
+        let period_blocks = self.mempool_config.rate_limit_period_blocks;
+        let mut kept = 0_usize;
+        let mut dropped = 0_usize;
+        for tx in recovered {
+            // Drop entries that no longer satisfy nonce or phase-2 rules; this
+            // matches the eviction sweeps that run during normal block commit.
+            let phase2_invalid =
+                tx.transaction_type == TransactionType::TokenMint && tx.fee != 0;
+            if phase2_invalid || !self.is_nonce_current(&tx) {
+                let h = tx.hash().as_array();
+                if let Err(e) = store.delete_pending_transaction(&h) {
+                    warn!("Pending tx recovery: drop-unpersist failed: {}", e);
+                }
+                dropped += 1;
+                continue;
+            }
+            let admit_tx = tx.to_admit_tx();
+            self.mempool_state.add_tx(
+                admit_tx.sender,
+                admit_tx.tx_bytes as u64,
+                self.height,
+                period_blocks,
+            );
+            self.pending_transactions.push(tx);
+            kept += 1;
+        }
+        if kept + dropped > 0 {
+            info!(
+                "Pending tx recovery: kept={}, dropped={}",
+                kept, dropped
+            );
+        }
     }
 
     pub fn get_store(&self) -> Option<&std::sync::Arc<dyn BlockchainStore>> {

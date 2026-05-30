@@ -1471,10 +1471,9 @@ impl BlockchainHandler {
         let block = if let Ok(height) = block_id.parse::<u64>() {
             blockchain.get_block(height)
         } else {
-            // For hash lookup, we'll need to search through blocks manually
+            // Hash lookup: full-chain scan (window + store-backed cold blocks).
             blockchain
-                .blocks
-                .iter()
+                .iter_blocks()
                 .find(|b| b.header.block_hash.to_string() == *block_id)
         };
 
@@ -2263,28 +2262,38 @@ impl BlockchainHandler {
             }
         };
 
-        // First, try to get the receipt from the receipt storage (if available)
-        if let Some(receipt) = blockchain.get_receipt(&tx_hash) {
-            let response_data = serde_json::json!({
-                "status": "receipt_found",
-                "transaction_hash": hex::encode(receipt.tx_hash.as_bytes()),
-                "block_height": receipt.block_height,
-                "block_hash": hex::encode(receipt.block_hash.as_bytes()),
-                "transaction_index": receipt.tx_index,
-                "fee_paid": receipt.fee_paid,
-                "confirmations": receipt.confirmations,
-                "timestamp": receipt.timestamp,
-                "status_text": format!("{}", receipt.status),
-                "is_finalized": receipt.is_finalized(),
-                "logs": receipt.logs,
-            });
+        // First, try to get the receipt from the receipt storage (if available).
+        // A store error must surface as 500, not be confused with "not found".
+        match blockchain.get_receipt(&tx_hash) {
+            Err(e) => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("Receipt lookup failed: {}", e),
+                ));
+            }
+            Ok(Some(receipt)) => {
+                let response_data = serde_json::json!({
+                    "status": "receipt_found",
+                    "transaction_hash": hex::encode(receipt.tx_hash.as_bytes()),
+                    "block_height": receipt.block_height,
+                    "block_hash": hex::encode(receipt.block_hash.as_bytes()),
+                    "transaction_index": receipt.tx_index,
+                    "fee_paid": receipt.fee_paid,
+                    "confirmations": receipt.confirmations(blockchain.height),
+                    "timestamp": receipt.timestamp,
+                    "status_text": format!("{}", receipt.status(blockchain.height)),
+                    "is_finalized": receipt.is_finalized(blockchain.height),
+                    "logs": receipt.logs,
+                });
 
-            let json_response = serde_json::to_vec(&response_data)?;
-            return Ok(ZhtpResponse::success_with_content_type(
-                json_response,
-                "application/json".to_string(),
-                None,
-            ));
+                let json_response = serde_json::to_vec(&response_data)?;
+                return Ok(ZhtpResponse::success_with_content_type(
+                    json_response,
+                    "application/json".to_string(),
+                    None,
+                ));
+            }
+            Ok(None) => {}
         }
 
         // Fallback: Search through all blocks for the transaction (for backward compatibility)
@@ -2824,19 +2833,40 @@ impl BlockchainHandler {
             .map_err(|e| anyhow::anyhow!("Failed to get blockchain: {}", e))?;
         let blockchain = blockchain_arc.read().await;
 
-        if start as usize >= blockchain.query_block_count() {
+        // Use chain height for bounds, not `query_block_count` — the latter
+        // returns only the in-memory hot window (`self.blocks.len()`, capped
+        // around `block_window_size()` ≈ 128 by default). Past the hot
+        // window's lower edge, cold blocks live in the durable store and
+        // must be fetched via `get_block(h)` which has the sled fallback.
+        //
+        // Pre-fix: a chain past ~128 blocks rejected EVERY observer_sync
+        // range request below the hot window with 404 "Start block X beyond
+        // chain height Y" (where Y was reported as the actual height but
+        // the gate was checking against the window size). Gateways could
+        // never catch up because nearly every range they needed was cold.
+        let chain_height = blockchain.query_height();
+        if start > chain_height {
             return Ok(Err(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
                 format!(
                     "Start block {} beyond chain height {}",
-                    start, blockchain.query_height()
+                    start, chain_height
                 ),
             )));
         }
 
-        let actual_end = std::cmp::min(end as usize, blockchain.query_block_count() - 1);
-        let blocks = blockchain.query_block_range(start, actual_end as u64);
-        Ok(Ok((actual_end as u64, blocks)))
+        let actual_end = std::cmp::min(end, chain_height);
+        // Per-height fetch through `get_block`, which serves hot blocks from
+        // the window and cold blocks from the store. Missing blocks (e.g.,
+        // pruned gaps) silently skip — the response stays well-formed and
+        // any gap surfaces on the receiver's `previous_hash` check.
+        let mut blocks = Vec::with_capacity((actual_end - start + 1) as usize);
+        for h in start..=actual_end {
+            if let Some(b) = blockchain.get_block(h) {
+                blocks.push(b);
+            }
+        }
+        Ok(Ok((actual_end, blocks)))
     }
 
     /// Get block range for incremental sync (e.g., /blocks/10/20 returns blocks 10-20)

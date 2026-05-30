@@ -252,45 +252,76 @@ impl MessagingHandler {
             ));
         }
 
-        // Try multiple DID derivations to find the canonical DID the deposit was keyed under.
-        // QUIC identity_id = blake3(dilithium_pk || kyber_pk) — that's what request.requester.0 is.
-        // Canonical DID = "did:zhtp:" + blake3(dilithium_pk) — that's what envelopes use.
-        // The registry stores entries keyed by the canonical DID. To match the polling phone's
-        // authenticated identity to the canonical DID, we scan the registry trying all
-        // derivations (dil-only, dil||kyber). Genesis identities may have kyber_pk empty,
-        // mobile-registered identities have a real kyber_pk.
+        // Resolve the polling device's QUIC identity to the canonical chain
+        // DID the deposit was keyed under. Three paths, first hit wins:
+        //
+        // (1) **Session-bound device map.** OPAQUE login records
+        //     (quic_key_id → canonical_did) in SessionManager via
+        //     `bind_device_to_canonical_did`. Handles mobiles that generate
+        //     an ephemeral QUIC keypair per session (the dominant case):
+        //     mobile logs in with password → server binds this connection's
+        //     QUIC key under the user's canonical DID → /msg/receive on the
+        //     same connection (or any future connection whose key has been
+        //     bound) resolves correctly.
+        //
+        // (2) **Direct DID match.** A registry entry keyed by
+        //     `did:zhtp:<requester_key_id>` (rare — happens when the QUIC
+        //     key coincides with the canonical DID derivation).
+        //
+        // (3) **Public-key hash match.** Legacy / non-OPAQUE flow: scan all
+        //     identity_registry entries, hash `dilithium_pk` and
+        //     `dilithium_pk||kyber_pk`, see if either matches the requester
+        //     key_id. Genesis identities and identities registered before
+        //     OPAQUE existed land here.
+        //
+        // Fallback: derive a stub DID from the key_id itself. Deposit store
+        // returns empty for unknown DIDs — better than 500-ing.
         let key_id_did = format!("did:zhtp:{}", requester_key_id);
         let recipient_did = {
-            let blockchain = self.blockchain.read().await;
-            if blockchain.identity_registry.contains_key(&key_id_did) {
-                key_id_did.clone()
+            // (1) Session-bound device map.
+            let bound = match (
+                crate::session_manager::session_manager_handle(),
+                request.requester.as_ref(),
+            ) {
+                (Some(mgr), Some(req_id)) => {
+                    mgr.canonical_did_for_quic_key(&req_id.0).await
+                }
+                _ => None,
+            };
+            if let Some(did) = bound {
+                did
             } else {
-                blockchain
-                    .identity_registry
-                    .iter()
-                    .find(|(_, id)| {
-                        if id.public_key.len() < 32 {
-                            return false;
-                        }
-                        // Match against dilithium-only hash (canonical DID derivation).
-                        let dil_hash = hex::encode(lib_crypto::hash_blake3(&id.public_key));
-                        if dil_hash == requester_key_id {
-                            return true;
-                        }
-                        // Match against dilithium||kyber hash (QUIC identity_id derivation).
-                        if !id.kyber_public_key.is_empty() {
-                            let combined =
-                                [&id.public_key[..], &id.kyber_public_key[..]].concat();
-                            let combined_hash =
-                                hex::encode(lib_crypto::hash_blake3(&combined));
-                            if combined_hash == requester_key_id {
+                let blockchain = self.blockchain.read().await;
+                // (2) Direct match.
+                if blockchain.identity_registry.contains_key(&key_id_did) {
+                    key_id_did.clone()
+                } else {
+                    // (3) Public-key hash match.
+                    blockchain
+                        .identity_registry
+                        .iter()
+                        .find(|(_, id)| {
+                            if id.public_key.len() < 32 {
+                                return false;
+                            }
+                            let dil_hash = hex::encode(lib_crypto::hash_blake3(&id.public_key));
+                            if dil_hash == requester_key_id {
                                 return true;
                             }
-                        }
-                        false
-                    })
-                    .map(|(did, _)| did.clone())
-                    .unwrap_or(key_id_did)
+                            if !id.kyber_public_key.is_empty() {
+                                let combined =
+                                    [&id.public_key[..], &id.kyber_public_key[..]].concat();
+                                let combined_hash =
+                                    hex::encode(lib_crypto::hash_blake3(&combined));
+                                if combined_hash == requester_key_id {
+                                    return true;
+                                }
+                            }
+                            false
+                        })
+                        .map(|(did, _)| did.clone())
+                        .unwrap_or(key_id_did)
+                }
             }
         };
 

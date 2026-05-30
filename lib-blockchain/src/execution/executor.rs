@@ -3179,8 +3179,8 @@ impl BlockExecutor {
                 } else {
                     payload.decimals
                 };
-                token.max_supply = payload.initial_supply as u128;
-                token.mint(&creator, creator_allocation as u128).map_err(|e| {
+                token.max_supply = payload.initial_supply;
+                token.mint(&creator, creator_allocation).map_err(|e| {
                     TxApplyError::Internal(format!("TokenCreation mint failed: {e}"))
                 })?;
                 let treasury_pk = lib_crypto::PublicKey {
@@ -3188,7 +3188,7 @@ impl BlockExecutor {
                     kyber_pk: [0u8; 1568],
                     key_id: payload.treasury_recipient,
                 };
-                token.mint(&treasury_pk, treasury_allocation as u128).map_err(|e| {
+                token.mint(&treasury_pk, treasury_allocation).map_err(|e| {
                     TxApplyError::Internal(format!("TokenCreation treasury mint failed: {e}"))
                 })?;
 
@@ -3386,6 +3386,15 @@ impl BlockExecutor {
             // even though the validator and the pre-validation passthrough both admit it.
             TransactionType::RegisterCredential
             | TransactionType::UpdateCredentialPassword => Ok(TxOutcome::LegacySystem),
+
+            // Domain lifecycle — state applied by process_domain_transactions()
+            // in finish_block_processing(). Same pattern as credentials above.
+            // Was missing this arm: when block 67027 (testnet 2026-05-22) carried
+            // a DomainRegistration the executor crashed at TxApplyError::UnsupportedType
+            // and all 4 validators halted to prevent a fork — even though the validator
+            // pre-check and Phase 2 allow-list both passed it.
+            TransactionType::DomainRegistration
+            | TransactionType::DomainUpdate => Ok(TxOutcome::LegacySystem),
 
             TransactionType::TreasuryAllocation => {
                 self.apply_treasury_allocation(mutator, tx)?;
@@ -4232,7 +4241,7 @@ mod tests {
     fn create_token_creation_tx_with_fee(
         name: &str,
         symbol: &str,
-        initial_supply: u64,
+        initial_supply: u128,
         treasury_recipient: [u8; 32],
         fee: u64,
     ) -> Transaction {
@@ -4261,7 +4270,7 @@ mod tests {
     fn create_token_creation_tx(
         name: &str,
         symbol: &str,
-        initial_supply: u64,
+        initial_supply: u128,
         treasury_recipient: [u8; 32],
     ) -> Transaction {
         create_token_creation_tx_with_fee(

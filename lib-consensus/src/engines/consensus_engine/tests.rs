@@ -3093,3 +3093,764 @@ async fn test_round_sync_lagging_proposer_does_not_propose() {
         "a behind proposer must NOT enqueue a proposal artifact"
     );
 }
+
+/// Regression: `validate_no_fork_proposal` must not treat a `valid_proposal`
+/// carried over from an earlier round as a same-round fork.
+///
+/// Before this fix, the round-sync work that preserves `valid_proposal` /
+/// `valid_round` across round jumps (Tendermint unlock-rule semantics)
+/// caused every legitimate next-round proposal to be rejected as a fork
+/// against the stale `valid_proposal` — deadlocking the chain.
+#[tokio::test]
+async fn test_stale_valid_proposal_does_not_trigger_fork_reject() {
+    let (mut engine, _) = setup_bft_engine(5, 10).await;
+
+    let stale_id = Hash::from_bytes(&[1u8; 32]);
+    let fresh_id = Hash::from_bytes(&[2u8; 32]);
+
+    // Stale state: a prevote quorum was observed in an earlier round, so
+    // valid_proposal / valid_round persist (per Tendermint unlock rule) but
+    // they belong to round 5, not the current round 10.
+    engine.current_round.valid_proposal = Some(stale_id.clone());
+    engine.current_round.valid_round = Some(5);
+
+    let result = engine.validate_no_fork_proposal(5, 10, &fresh_id);
+    assert!(
+        result.is_ok(),
+        "stale valid_proposal (from an earlier round) must NOT trigger a \
+         same-round fork rejection of a new round's legitimate proposal"
+    );
+
+    // Real same-round conflict: valid_proposal was set IN the current round,
+    // and a different proposal_id arrives for that same round.
+    engine.current_round.valid_round = Some(10);
+    let result = engine.validate_no_fork_proposal(5, 10, &fresh_id);
+    assert!(
+        result.is_err(),
+        "same-round conflicting proposal must still trigger a fork rejection"
+    );
+
+    // Same-round, same proposal_id: no conflict, no rejection.
+    let result = engine.validate_no_fork_proposal(5, 10, &stale_id);
+    assert!(
+        result.is_ok(),
+        "same proposal_id at same round must not trigger fork rejection"
+    );
+}
+
+// ─── Cross-round valid-state tracking (CE-S2) ────────────────────────────────
+//
+// Background: `on_prevote` previously gated the 2f+1 prevote-quorum check on
+// `vote.round == current_round.round`. With round drift the quorum-completing
+// 4th-of-5 prevote routinely arrives after the local engine has already
+// advanced past that round (via Trigger B or LocalPrevoteTimeout). The check
+// then never fires, `valid_proposal`/`valid_round` are never set for that
+// round, and subsequent re-proposers fail to thread `valid_round` into their
+// proposal — leaving locked peers locked across rounds indefinitely.
+//
+// The fix decouples valid-state tracking (which must happen regardless of
+// local round) from the precommit transition (which stays current-round-only,
+// because casting a precommit is a local action against a local step). These
+// tests pin the structural contract.
+
+/// Helper: inject a remote prevote for (height, round, proposal_id) into the
+/// engine's pool and run the live `on_prevote` handler so all of its side
+/// effects (validation, dedup, relay, Trigger B, quorum check) actually run.
+async fn deliver_remote_prevote(
+    engine: &mut ConsensusEngine,
+    voter: &IdentityId,
+    voter_kp: &KeyPair,
+    proposal_id: Hash,
+    height: u64,
+    round: u32,
+) {
+    let vote = make_signed_vote(
+        engine,
+        voter_kp,
+        voter.clone(),
+        proposal_id,
+        VoteType::PreVote,
+        height,
+        round,
+    );
+    engine
+        .on_prevote(vote)
+        .await
+        .expect("on_prevote must accept a well-formed remote prevote");
+}
+
+#[tokio::test]
+async fn test_ce_s2_prevote_quorum_records_valid_state_across_rounds() {
+    // 5-validator setup. Local is validator[0]. Drift the local engine forward
+    // to round 7 while the rest of the network has been voting on a proposal P
+    // at round 5. Three remote prevotes arrive — the local engine pools them
+    // and (combined with the local prevote we inject for P at round 5) the
+    // quorum threshold (4/5) is reached.
+    //
+    // CONTRACT: `valid_proposal = P` and `valid_round = 5` MUST be set even
+    // though `current_round.round = 7`. Future re-proposers depend on this to
+    // thread `valid_round` and unlock locked peers.
+    let (mut engine, validators) = setup_bft_engine(1, 0).await;
+
+    // Register a fifth validator so the quorum threshold is 4/5 (a clean
+    // BFT-quorum test). `setup_bft_engine` registers 4; add one more.
+    let v5_id = test_validator_id(5);
+    let v5_kp = create_test_keypair();
+    register_validator_with_keypair(&mut engine, v5_id.clone(), &v5_kp, false).await;
+    engine.snapshot_validator_set(1);
+
+    // Drift local forward to round 7. The earlier-round prevotes arriving now
+    // are exactly the case the bug stranded.
+    engine.current_round.round = 7;
+    engine.current_round.step = ConsensusStep::Propose;
+    assert!(
+        engine.current_round.valid_proposal.is_none(),
+        "precondition: valid_proposal starts empty"
+    );
+
+    // Stage a proposal artifact for round 5 so signature/proposer checks pass.
+    // The on_prevote validator-set check is height-scoped, not round-scoped, so
+    // votes for a past round in the current height are accepted.
+    let proposal_id = Hash::from_bytes(&[0xC5u8; 32]);
+    let (ref proposer_id, ref proposer_kp) = validators[0];
+    stage_stub_proposal(
+        &mut engine,
+        proposal_id.clone(),
+        1,
+        5,
+        proposer_id,
+        proposer_kp,
+    );
+
+    // Pool a prevote for round 5 from validators[0] (the local validator).
+    // We insert directly so we can tag (height, round) explicitly — cast_vote
+    // uses current_round which is now at 7, but the quorum we care about is
+    // for round 5.
+    {
+        let (vid, kp) = &validators[0];
+        let vote = make_signed_vote(
+            &engine,
+            kp,
+            vid.clone(),
+            proposal_id.clone(),
+            VoteType::PreVote,
+            1,
+            5,
+        );
+        let key = VotePoolKey {
+            height: 1,
+            round: 5,
+            vote_type: VoteType::PreVote,
+            validator_id: vid.clone(),
+        };
+        engine.vote_pool.insert(key, (vote, proposal_id.clone()));
+    }
+
+    // Deliver three remote prevotes via the live on_prevote handler so the
+    // bug surface (its quorum check) is what we're actually exercising.
+    for i in 1..=3usize {
+        let (vid, kp) = &validators[i];
+        deliver_remote_prevote(&mut engine, vid, kp, proposal_id.clone(), 1, 5).await;
+    }
+
+    // Total prevotes for (1, 5, P) is now 4-of-5 — supermajority.
+    let count = engine.count_prevotes_for(1, 5, &proposal_id);
+    assert_eq!(
+        count, 4,
+        "test setup: 4 prevotes should be pooled for round 5"
+    );
+
+    // CONTRACT: valid_proposal/valid_round MUST be set, despite current_round.round = 7.
+    assert_eq!(
+        engine.current_round.valid_proposal.as_ref(),
+        Some(&proposal_id),
+        "cross-round prevote quorum must update valid_proposal"
+    );
+    assert_eq!(
+        engine.current_round.valid_round,
+        Some(5),
+        "cross-round prevote quorum must update valid_round"
+    );
+
+    // And the local engine must NOT have transitioned to PreCommit at round 7,
+    // because the precommit transition is a local-action arm and the quorum is
+    // for a past round. (Precommitting at round 7 against a round-5 quorum
+    // would violate BFT safety — the precommit must be tagged with its own
+    // round, and the round-5 quorum doesn't authorize a round-7 precommit.)
+    assert_ne!(
+        engine.current_round.step,
+        ConsensusStep::PreCommit,
+        "cross-round quorum must NOT cause a local PreCommit transition"
+    );
+}
+
+#[tokio::test]
+async fn test_ce_s2_locked_peer_unlocks_on_advertised_valid_round() {
+    // Setup: local validator was locked at round 2 on proposal `LOCKED`. Then a
+    // fresh proposer at round 9 re-proposes a *different* value `NEW`, but
+    // advertises `valid_round = 5` to certify that round 5 saw a prevote
+    // quorum on `NEW`.
+    //
+    // CONTRACT: `prevote_permitted_by_lock` must return true (unlock allowed),
+    // because the advertised valid_round (5) ≥ locked_round (2). This is the
+    // mechanism by which `valid_round` tracking (CE-S2) actually unsticks the
+    // chain — without it the validator would abstain forever.
+    let (mut engine, _validators) = setup_bft_engine(1, 0).await;
+
+    let locked_id = Hash::from_bytes(&[0xAAu8; 32]);
+    let new_id = Hash::from_bytes(&[0xBBu8; 32]);
+
+    engine.current_round.locked_proposal = Some(locked_id.clone());
+    engine.current_round.locked_round = Some(2);
+    engine.current_round.round = 9;
+
+    // Build a fake "new" proposal with valid_round = 5 (≥ locked_round = 2).
+    let proposal = ConsensusProposal {
+        id: new_id.clone(),
+        proposer: test_validator_id(2),
+        height: 1,
+        round: 9,
+        protocol_version: super::CONSENSUS_PROTOCOL_VERSION,
+        previous_hash: Hash([0u8; 32]),
+        block_data: vec![],
+        timestamp: 0,
+        signature: PostQuantumSignature::default(),
+        consensus_proof: crate::types::ConsensusProof {
+            consensus_type: crate::types::ConsensusType::ByzantineFaultTolerance,
+            stake_proof: None,
+            storage_proof: None,
+            work_proof: None,
+            zk_did_proof: None,
+            timestamp: 0,
+        },
+        valid_round: Some(5),
+    };
+
+    let allowed = engine.prevote_permitted_by_lock(Some(&proposal), &new_id);
+    assert!(
+        allowed,
+        "lock-rule unlock: proposal.valid_round (5) >= locked_round (2) must allow prevoting NEW"
+    );
+
+    // Negative control: valid_round = 1 (< locked_round = 2) must still abstain.
+    let mut stale = proposal.clone();
+    stale.valid_round = Some(1);
+    let denied = engine.prevote_permitted_by_lock(Some(&stale), &new_id);
+    assert!(
+        !denied,
+        "lock-rule must REFUSE unlock when proposal.valid_round < locked_round"
+    );
+
+    // Negative control: missing valid_round must abstain (no proof of unlock).
+    let mut no_vr = proposal.clone();
+    no_vr.valid_round = None;
+    let denied2 = engine.prevote_permitted_by_lock(Some(&no_vr), &new_id);
+    assert!(
+        !denied2,
+        "lock-rule must REFUSE unlock when proposal advertises no valid_round"
+    );
+}
+
+#[tokio::test]
+async fn test_ce_s2_quorum_for_current_round_still_transitions_to_precommit() {
+    // Regression guard: the fix must NOT break the normal-case path where the
+    // 4th prevote arrives WHILE the engine is at the same round. Local must
+    // still set valid_proposal/valid_round AND transition to PreCommit.
+    let (mut engine, validators) = setup_bft_engine(1, 0).await;
+
+    // Register a fifth so quorum is 4/5 again.
+    let v5_id = test_validator_id(5);
+    let v5_kp = create_test_keypair();
+    register_validator_with_keypair(&mut engine, v5_id.clone(), &v5_kp, false).await;
+    engine.snapshot_validator_set(1);
+
+    // Engine at round 3, in PreVote step (we've already cast our prevote).
+    // FSM must be in Prevoting so the PrevoteThresholdReached transition rule
+    // (Prevoting, PrevoteThresholdReached) → (Precommitting, SendPrecommit) is
+    // actually armed — see fsm/transition.rs.
+    engine.current_round.round = 3;
+    engine.current_round.step = ConsensusStep::PreVote;
+    engine.fsm_state = lib_consensus_core::fsm::ValidatorState::Prevoting;
+
+    let proposal_id = Hash::from_bytes(&[0xC3u8; 32]);
+    let (ref proposer_id, ref proposer_kp) = validators[0];
+    stage_stub_proposal(
+        &mut engine,
+        proposal_id.clone(),
+        1,
+        3,
+        proposer_id,
+        proposer_kp,
+    );
+
+    // Pool the local prevote at round 3.
+    {
+        let (vid, kp) = &validators[0];
+        let vote = make_signed_vote(
+            &engine,
+            kp,
+            vid.clone(),
+            proposal_id.clone(),
+            VoteType::PreVote,
+            1,
+            3,
+        );
+        let key = VotePoolKey {
+            height: 1,
+            round: 3,
+            vote_type: VoteType::PreVote,
+            validator_id: vid.clone(),
+        };
+        engine.vote_pool.insert(key, (vote, proposal_id.clone()));
+    }
+
+    // Deliver three remote prevotes at round 3 — these complete the quorum.
+    for i in 1..=3usize {
+        let (vid, kp) = &validators[i];
+        deliver_remote_prevote(&mut engine, vid, kp, proposal_id.clone(), 1, 3).await;
+    }
+
+    // Valid state must be set.
+    assert_eq!(
+        engine.current_round.valid_proposal.as_ref(),
+        Some(&proposal_id),
+        "same-round quorum still sets valid_proposal"
+    );
+    assert_eq!(
+        engine.current_round.valid_round,
+        Some(3),
+        "same-round quorum still sets valid_round"
+    );
+
+    // And the local engine MUST have moved to PreCommit (the current-round
+    // local-action arm of the rule).
+    assert!(
+        engine.current_round.step >= ConsensusStep::PreCommit,
+        "same-round quorum must transition to PreCommit, got {:?}",
+        engine.current_round.step
+    );
+}
+
+// ─── Quorum-proof determinism (CE-S3) ────────────────────────────────────────
+//
+// Background: the block header commits to `bft_quorum_root = compute_bft_quorum_root(&proof)`,
+// which is part of `block.hash()` via `BlockHeader::hash`. For all validators
+// finalizing the same logical block to compute identical block hashes — and
+// therefore for height H+1's `previous_hash` check to pass — every validator
+// must construct an IDENTICAL `BftQuorumProof.attestations` vec.
+//
+// Pre-fix, each validator built the proof from whatever commit votes it had
+// locally observed at finalization time. A validator that observed one extra
+// attestation produced a different attestation SET, a different root, and
+// therefore a different block hash. After a network restart from a unanimous
+// height-H state, three groups of validators independently committed three
+// distinct versions of block H+1 — exactly because their local observations
+// of the commit quorum differed by one or two attestations.
+//
+// The fix: after sort_by_key + dedup_by_key, truncate to exactly the
+// `bft_quorum_count(n)` lowest-`validator_id` attestations. Every validator
+// that has at least `bft_quorum_count(n)` distinct observations now produces
+// the same prefix → same root → same block hash.
+
+/// Helper: build a CommitAttestation-bearing signed commit vote and insert it
+/// into the engine's vote_pool at the given (height, round) for the given
+/// proposal. Uses a fresh keypair per validator_id so signatures are length-
+/// correct (the proof helper skips zero-length / stub signatures).
+fn pool_commit(
+    engine: &mut ConsensusEngine,
+    validator_id: IdentityId,
+    keypair: &KeyPair,
+    proposal_id: Hash,
+    height: u64,
+    round: u32,
+) {
+    let vote = make_signed_vote(
+        engine,
+        keypair,
+        validator_id.clone(),
+        proposal_id.clone(),
+        VoteType::Commit,
+        height,
+        round,
+    );
+    let key = VotePoolKey {
+        height,
+        round,
+        vote_type: VoteType::Commit,
+        validator_id,
+    };
+    engine.vote_pool.insert(key, (vote, proposal_id));
+}
+
+#[tokio::test]
+async fn test_ce_s3_quorum_proof_root_identical_with_extra_observations() {
+    // Two engines A and B at the same height with 5 validators registered.
+    // A observed 4 commit attestations (the BFT threshold). B observed all 5
+    // (one extra — modeling normal late-arriving commits). Both must produce
+    // the SAME quorum proof attestations and therefore the SAME quorum_root.
+    use lib_types::consensus::compute_bft_quorum_root;
+
+    let (mut engine_a, validators) = setup_bft_engine(1, 0).await;
+    let v5_id = test_validator_id(5);
+    let v5_kp = create_test_keypair();
+    register_validator_with_keypair(&mut engine_a, v5_id.clone(), &v5_kp, false).await;
+    engine_a.snapshot_validator_set(1);
+
+    let (mut engine_b, _) = setup_bft_engine(1, 0).await;
+    register_validator_with_keypair(&mut engine_b, v5_id.clone(), &v5_kp, false).await;
+    engine_b.snapshot_validator_set(1);
+
+    let proposal_id = Hash::from_bytes(&[0xC5u8; 32]);
+
+    // A: 4 commits (validators 1..=4) — exactly the BFT threshold for n=5.
+    for i in 0..4 {
+        let (vid, kp) = &validators[i];
+        pool_commit(&mut engine_a, vid.clone(), kp, proposal_id.clone(), 1, 0);
+    }
+    // B: same 4 commits PLUS validator 5 — superset.
+    for i in 0..4 {
+        let (vid, kp) = &validators[i];
+        pool_commit(&mut engine_b, vid.clone(), kp, proposal_id.clone(), 1, 0);
+    }
+    pool_commit(&mut engine_b, v5_id, &v5_kp, proposal_id.clone(), 1, 0);
+
+    // Build proofs via the same module helper the engine uses internally.
+    let proof_a = super::state_machine::build_quorum_proof(
+        &engine_a.vote_pool,
+        1,
+        &proposal_id,
+        5,
+    );
+    let proof_b = super::state_machine::build_quorum_proof(
+        &engine_b.vote_pool,
+        1,
+        &proposal_id,
+        5,
+    );
+
+    assert_eq!(
+        proof_a.attestations.len(),
+        proof_b.attestations.len(),
+        "attestation count must match across subset/superset observations \
+         (both must truncate to bft_quorum_count(5) = 4)"
+    );
+    let a_ids: Vec<_> = proof_a.attestations.iter().map(|a| a.validator_id).collect();
+    let b_ids: Vec<_> = proof_b.attestations.iter().map(|a| a.validator_id).collect();
+    assert_eq!(
+        a_ids, b_ids,
+        "attestation validator_id sets must match — both must include the \
+         same lowest-validator_id prefix"
+    );
+
+    let root_a = compute_bft_quorum_root(&proof_a);
+    let root_b = compute_bft_quorum_root(&proof_b);
+    assert_eq!(
+        root_a, root_b,
+        "bft_quorum_root MUST be identical across validators that observed \
+         different numbers of attestations (this is the fork-after-restart bug)"
+    );
+}
+
+#[tokio::test]
+async fn test_ce_s3_quorum_proof_root_dedups_double_commits_to_lowest_round() {
+    // Upgrade-race scenario: with `enter_commit_step`'s `already_committed`
+    // guard in place, validators cast exactly ONE commit per (height,
+    // proposal). But the network may still hold redundant double-commits
+    // from before the guard shipped, or from a peer running a legacy build.
+    // build_quorum_proof must deterministically pick ONE attestation per
+    // validator_id — specifically the lowest-round one — so an "upgraded"
+    // peer and a peer who only observed the legacy double-commit still
+    // converge on the same quorum_root.
+    use lib_types::consensus::compute_bft_quorum_root;
+
+    let (mut engine_clean, validators) = setup_bft_engine(1, 5).await;
+    let v5_id = test_validator_id(5);
+    let v5_kp = create_test_keypair();
+    register_validator_with_keypair(&mut engine_clean, v5_id.clone(), &v5_kp, false).await;
+    engine_clean.snapshot_validator_set(1);
+
+    let (mut engine_with_dup, _) = setup_bft_engine(1, 5).await;
+    register_validator_with_keypair(&mut engine_with_dup, v5_id.clone(), &v5_kp, false).await;
+    engine_with_dup.snapshot_validator_set(1);
+
+    let proposal_id = Hash::from_bytes(&[0xD5u8; 32]);
+
+    // Clean view: each of the first 4 validators committed once, at round 4.
+    for i in 0..4 {
+        let (vid, kp) = &validators[i];
+        pool_commit(&mut engine_with_dup, vid.clone(), kp, proposal_id.clone(), 1, 4);
+        pool_commit(&mut engine_clean, vid.clone(), kp, proposal_id.clone(), 1, 4);
+    }
+    // engine_with_dup also holds REDUNDANT commits at round 5 from g1 and g2 —
+    // modeling commits that landed in the pool before the
+    // `already_committed`-across-rounds guard was deployed. After dedup these
+    // must vanish in favour of the round-4 entries.
+    pool_commit(
+        &mut engine_with_dup,
+        validators[0].0.clone(),
+        &validators[0].1,
+        proposal_id.clone(),
+        1,
+        5,
+    );
+    pool_commit(
+        &mut engine_with_dup,
+        validators[1].0.clone(),
+        &validators[1].1,
+        proposal_id.clone(),
+        1,
+        5,
+    );
+
+    let proof_clean = super::state_machine::build_quorum_proof(
+        &engine_clean.vote_pool,
+        1,
+        &proposal_id,
+        5,
+    );
+    let proof_with_dup = super::state_machine::build_quorum_proof(
+        &engine_with_dup.vote_pool,
+        1,
+        &proposal_id,
+        5,
+    );
+
+    let root_clean = compute_bft_quorum_root(&proof_clean);
+    let root_with_dup = compute_bft_quorum_root(&proof_with_dup);
+    assert_eq!(
+        root_clean, root_with_dup,
+        "build_quorum_proof must dedup double-commits by keeping the LOWEST \
+         round per validator, so an upgraded peer (clean) and a peer with \
+         redundant pre-fix commits (with_dup) compute the same quorum_root"
+    );
+    // And the chosen rounds must indeed be the lowest-per-validator (round 4).
+    for att in proof_with_dup.attestations.iter() {
+        assert_eq!(
+            att.round, 4,
+            "with_dup: dedup must pick lowest-round attestation per validator"
+        );
+    }
+}
+
+#[test]
+fn test_ce_s3_bft_quorum_count_values() {
+    // Pin the threshold function. These are the (n, k) pairs the BFT protocol
+    // requires; any change here is a wire-format / safety change.
+    use super::state_machine::bft_quorum_count;
+    assert_eq!(bft_quorum_count(0), 0);
+    assert_eq!(bft_quorum_count(1), 1);
+    assert_eq!(bft_quorum_count(2), 2);
+    assert_eq!(bft_quorum_count(3), 3);
+    assert_eq!(bft_quorum_count(4), 3);
+    assert_eq!(bft_quorum_count(5), 4);
+    assert_eq!(bft_quorum_count(6), 5);
+    assert_eq!(bft_quorum_count(7), 5);
+    assert_eq!(bft_quorum_count(10), 7);
+    assert_eq!(bft_quorum_count(100), 67);
+}
+
+// ─── Cross-round precommit-quorum detection (CE-S2 part 2) ──────────────────
+//
+// Symmetric to the prevote fix shipped in PR #2620: on_precommit's quorum
+// check was current-round-only. With drift, 2f+1 precommits accumulate
+// across different rounds but no single engine ever sees them all at its
+// CURRENT round, so the Commit-step transition never fires, no Commit vote
+// is cast, and the chain stalls AFTER prevote-quorum was reached.
+//
+// Observable on the testnet at height 61615 (2026-05-21): all 5 validators
+// entered PreCommit step 87 times in 10 minutes via the CE-S2 prevote path,
+// but 0 ever transitioned to Commit step — precommit-quorum detection was
+// still gated to current_round.
+
+/// Helper: insert a Commit-step vote (PreCommit) into the pool at a specific
+/// (height, round) with a valid signature.
+fn pool_precommit(
+    engine: &mut ConsensusEngine,
+    validator_id: IdentityId,
+    keypair: &KeyPair,
+    proposal_id: Hash,
+    height: u64,
+    round: u32,
+) {
+    let vote = make_signed_vote(
+        engine,
+        keypair,
+        validator_id.clone(),
+        proposal_id.clone(),
+        VoteType::PreCommit,
+        height,
+        round,
+    );
+    let key = VotePoolKey {
+        height,
+        round,
+        vote_type: VoteType::PreCommit,
+        validator_id,
+    };
+    engine.vote_pool.insert(key, (vote, proposal_id));
+}
+
+/// Helper: build a 5-validator engine where the validator set snapshot
+/// includes all 5 at the given height (setup_bft_engine seals the snapshot
+/// with only 4, and snapshot_validator_set is write-once per height).
+async fn setup_bft_engine_5(
+    height: u64,
+    round: u32,
+) -> (ConsensusEngine, Vec<(IdentityId, KeyPair)>) {
+    let config = ConsensusConfig {
+        development_mode: true,
+        ..Default::default()
+    };
+    let broadcaster: Arc<dyn MessageBroadcaster> = Arc::new(MockMessageBroadcaster::new());
+    let mut engine = ConsensusEngine::new(config, broadcaster).expect("create engine");
+
+    let mut validators = Vec::new();
+    for i in 1..=5u8 {
+        let vid = test_validator_id(i);
+        let kp = create_test_keypair();
+        register_validator_with_keypair(&mut engine, vid.clone(), &kp, i == 1).await;
+        validators.push((vid, kp));
+    }
+
+    engine.validator_identity = Some(validators[0].0.clone());
+    engine
+        .set_validator_keypair(validators[0].1.clone())
+        .expect("set keypair");
+
+    engine.current_round.height = height;
+    engine.current_round.round = round;
+    engine.current_round.step = ConsensusStep::Propose;
+    engine.snapshot_validator_set(height);
+
+    if let Some(proposer) = engine.compute_proposer_for_round(height, round) {
+        engine.current_round.proposer = Some(proposer);
+    }
+
+    (engine, validators)
+}
+
+#[tokio::test]
+async fn test_ce_s2p2_precommit_quorum_detected_across_rounds() {
+    // 5-validator engine. Local is validators[0] at round 7. Pool precommits
+    // from validators[1..4] at round 5 (different from local round). Engine
+    // delivers a fresh precommit from validator 5 at round 5 via on_precommit
+    // and must detect a cross-round quorum: 4 distinct validators have
+    // precommitted for the same proposal at height H.
+    //
+    // CONTRACT: the engine MUST transition into the Commit step (or set the
+    // step to >= Commit / set locked_proposal) once 2f+1 precommits exist
+    // for (height, proposal_id), regardless of which rounds individual
+    // precommits came from. Otherwise the chain cannot commit when rounds
+    // drift between validators.
+    let (mut engine, validators) = setup_bft_engine_5(1, 7).await;
+
+    let proposal_id = Hash::from_bytes(&[0xE5u8; 32]);
+    let (ref proposer_id, ref proposer_kp) = validators[0];
+    stage_stub_proposal(
+        &mut engine,
+        proposal_id.clone(),
+        1,
+        7,
+        proposer_id,
+        proposer_kp,
+    );
+
+    // Local validator's perspective: it has cast its own prevote and is in
+    // PreCommit step at round 7 (where it would cast a precommit), but the
+    // network reached precommit-quorum a couple of rounds earlier.
+    engine.current_round.step = ConsensusStep::PreCommit;
+    engine.fsm_state = lib_consensus_core::fsm::ValidatorState::Precommitting;
+
+    // Pool 3 remote precommits at round 5 (the "early" quorum window).
+    for i in 1..=3usize {
+        let (vid, kp) = &validators[i];
+        pool_precommit(&mut engine, vid.clone(), kp, proposal_id.clone(), 1, 5);
+    }
+
+    // Deliver the 4th precommit at round 5 via the live handler — completes
+    // the quorum at round 5, but the local engine is at round 7.
+    let (ref v5_id, ref v5_kp) = validators[4];
+    let v5_vote = make_signed_vote(
+        &engine,
+        v5_kp,
+        v5_id.clone(),
+        proposal_id.clone(),
+        VoteType::PreCommit,
+        1,
+        5,
+    );
+    engine
+        .on_precommit(v5_vote)
+        .await
+        .expect("on_precommit must accept the 4th remote precommit");
+
+    let precommits_at_round_5 =
+        engine.count_precommits_for(1, 5, &proposal_id);
+    assert_eq!(
+        precommits_at_round_5, 4,
+        "test setup: 4 precommits should be pooled for round 5"
+    );
+
+    // CONTRACT: cross-round precommit-quorum must move the local step toward
+    // Commit AND/OR record the lock. Without the fix this stays at PreCommit
+    // forever because the current-round-only gate skips the quorum check
+    // (vote.round=5 vs current_round.round=7).
+    assert!(
+        engine.current_round.step >= ConsensusStep::Commit
+            || engine.current_round.locked_proposal.as_ref() == Some(&proposal_id),
+        "cross-round precommit quorum must record the lock and/or advance \
+         to Commit step. got step={:?}, locked={:?}",
+        engine.current_round.step, engine.current_round.locked_proposal,
+    );
+}
+
+#[tokio::test]
+async fn test_ce_s2p2_same_round_precommit_quorum_still_advances() {
+    // Regression guard: the fix must NOT break the normal-case path where
+    // 2f+1 precommits arrive at the engine's CURRENT round. Local should
+    // still set locked state and transition to Commit step.
+    let (mut engine, validators) = setup_bft_engine_5(1, 4).await;
+
+    let proposal_id = Hash::from_bytes(&[0xE6u8; 32]);
+    let (ref proposer_id, ref proposer_kp) = validators[0];
+    stage_stub_proposal(
+        &mut engine,
+        proposal_id.clone(),
+        1,
+        4,
+        proposer_id,
+        proposer_kp,
+    );
+
+    engine.current_round.step = ConsensusStep::PreCommit;
+    engine.fsm_state = lib_consensus_core::fsm::ValidatorState::Precommitting;
+
+    // Pool 3 same-round precommits.
+    for i in 1..=3usize {
+        let (vid, kp) = &validators[i];
+        pool_precommit(&mut engine, vid.clone(), kp, proposal_id.clone(), 1, 4);
+    }
+
+    // Deliver the 4th — completes quorum at current round.
+    let (ref v5_id, ref v5_kp) = validators[4];
+    let v5_vote = make_signed_vote(
+        &engine,
+        v5_kp,
+        v5_id.clone(),
+        proposal_id.clone(),
+        VoteType::PreCommit,
+        1,
+        4,
+    );
+    engine.on_precommit(v5_vote).await.expect("on_precommit");
+
+    assert_eq!(
+        engine.current_round.locked_proposal.as_ref(),
+        Some(&proposal_id),
+        "same-round precommit quorum must set locked_proposal"
+    );
+    assert!(
+        engine.current_round.step >= ConsensusStep::Commit,
+        "same-round precommit quorum must advance to Commit step"
+    );
+}

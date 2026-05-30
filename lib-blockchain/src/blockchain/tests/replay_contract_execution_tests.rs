@@ -204,7 +204,7 @@ fn token_creation_tx(
     signer: &PublicKey,
     name: &str,
     symbol: &str,
-    supply: u64,
+    supply: u128,
     treasury_recipient: [u8; 32],
 ) -> Transaction {
     let payload = TokenCreationPayloadV1 {

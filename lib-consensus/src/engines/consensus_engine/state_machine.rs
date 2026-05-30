@@ -10,7 +10,7 @@ use crate::validators::ValidatorManager;
 use lib_consensus_core::ports::ValidatorRewardInput;
 use lib_crypto::{hash_blake3, KeyPair, PostQuantumSignature};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::info;
 
@@ -29,8 +29,22 @@ use tracing::info;
 /// receiver's TOFU path special-cases empty signatures, and Mainnet would
 /// reject — same conservative semantics as the rest of the broadcast path.
 fn wrap_propose(proposal: ConsensusProposal, keypair: Option<&KeyPair>) -> ValidatorMessage {
-    let message_id = proposal.id.clone();
+    // Per-broadcast message_id (matches wrap_vote): receiver-side dedup keys
+    // off message_id, so reusing `proposal.id` here meant a locked validator
+    // re-proposing the SAME proposal in every round produced an identical
+    // message_id, and every re-broadcast after the first was silently dropped
+    // network-wide as a duplicate — blocking the lock-recovery path.
     let proposer = proposal.proposer.clone();
+    let message_id = {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let nonce = lib_crypto::generate_nonce();
+        let mut data = format!("propose_bcast_{}", ts).into_bytes();
+        data.extend_from_slice(&nonce);
+        lib_crypto::Hash::from_bytes(&hash_blake3(&data))
+    };
     let mut msg = ProposeMessage {
         message_id,
         proposer,
@@ -145,6 +159,125 @@ fn now_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+/// Assemble the canonical, **deterministic** `BftQuorumProof` for a finalized
+/// proposal.
+///
+/// ## Why this exists
+///
+/// The block header commits to `bft_quorum_root = compute_bft_quorum_root(&proof)`,
+/// which feeds into `block.hash()` (header serialization). For all validators
+/// finalizing the same logical block to produce the same `block.hash()`, they
+/// must each construct an **identical** `BftQuorumProof.attestations` vec.
+///
+/// `compute_bft_quorum_root` already sorts + dedups by `validator_id`, so
+/// ordering is not the risk — set membership is. Without this helper's
+/// truncation step, each validator's proof contained every commit attestation
+/// it had locally observed. A peer that observed one extra attestation
+/// produced a different set, and therefore a different root, and therefore
+/// a different `block.hash()`, and therefore the next height's `previous_hash`
+/// check rejected the rest of the network's proposals. That was the testnet
+/// fork-after-restart bug observed at heights 59118–59123 on 2026-05-20.
+///
+/// ## Contract
+///
+/// 1. `process_committed_block` only reaches this helper after verifying that
+///    `count_commits_for(height, _, proposal_id) >= quorum_count(n)`. So this
+///    helper can assume the pool contains at least `quorum_count(n)` distinct
+///    commit attestations for `proposal_id` at `height`.
+/// 2. The attestations included in the returned proof are the
+///    `quorum_count(n)` **lowest-`validator_id`** distinct commit attestations
+///    for `proposal_id` at `height`. Any extras observed only by some
+///    validators are excluded.
+/// 3. Determinism: given any two `vote_pool` snapshots that both satisfy
+///    contract (1) for the same `proposal_id` and `height`, this helper
+///    returns proofs whose `attestations` vecs compare equal — and therefore
+///    `compute_bft_quorum_root` returns identical roots.
+pub(super) fn build_quorum_proof(
+    vote_pool: &HashMap<VotePoolKey, (ConsensusVote, Hash)>,
+    height: u64,
+    proposal_id: &Hash,
+    total_validators: u64,
+) -> lib_types::consensus::BftQuorumProof {
+    let mut attestations: Vec<lib_types::consensus::CommitAttestation> = vote_pool
+        .iter()
+        .filter(|(k, (_, voted_id))| {
+            k.height == height
+                && k.vote_type == VoteType::Commit
+                && voted_id == proposal_id
+        })
+        .filter_map(|(_, (vote, _))| {
+            // Convert Vec<u8> signature to fixed-size Dilithium5 array.
+            // Skip votes with wrong-sized signatures (e.g. test stubs).
+            let signature: [u8; 4595] =
+                vote.signature.signature.as_slice().try_into().ok()?;
+            Some(lib_types::consensus::CommitAttestation {
+                validator_id: vote.voter.0,
+                vote_id: vote.id.0,
+                proposal_id: vote.proposal_id.0,
+                round: vote.round,
+                signature,
+                public_key: vote.signature.public_key.dilithium_pk,
+            })
+        })
+        .collect();
+
+    // Sort by (validator_id, round) so that within each validator_id group
+    // the LOWEST-round attestation comes first. `sort_by` is stable; ties
+    // (same validator_id and same round) keep insertion order, but in normal
+    // operation a validator never produces two commits at the same round
+    // (`enter_commit_step`'s `already_committed` guard at L2882+ now blocks
+    // double-commit cross-round too).
+    //
+    // The secondary `round` sort matters because peers can transiently hold
+    // commit attestations from a validator at multiple rounds — e.g. when a
+    // peer was on the wire before this node's `already_committed` fix
+    // shipped, or during an in-flight upgrade. Picking the lowest-round
+    // attestation deterministically ensures all upgraded peers agree even
+    // when they have different supersets in their pools.
+    attestations.sort_by(|a, b| {
+        a.validator_id
+            .cmp(&b.validator_id)
+            .then_with(|| a.round.cmp(&b.round))
+    });
+
+    // Dedup: keep the FIRST entry per validator_id, which after the sort above
+    // is the lowest-round attestation. All upgraded peers converge on the
+    // same choice for each validator_id.
+    attestations.dedup_by_key(|a| a.validator_id);
+
+    // Truncate to exactly `quorum_count(n)` so the attestation SET is identical
+    // on every validator that has at least quorum_count observations. Extra
+    // attestations from validators with lexicographically-higher `validator_id`
+    // are excluded uniformly. See "Contract" note above.
+    let threshold = bft_quorum_count(total_validators) as usize;
+    if attestations.len() > threshold {
+        attestations.truncate(threshold);
+    }
+
+    lib_types::consensus::BftQuorumProof {
+        height,
+        proposal_id: proposal_id.0,
+        total_validators: total_validators as u32,
+        attestations,
+    }
+}
+
+/// Smallest `k` such that `has_supermajority(k, n)` holds.
+///
+/// `has_supermajority` is a `>= 6667 bps` predicate; this returns the integer
+/// vote count that satisfies it. For n=5 → 4, n=4 → 3, n=3 → 3.
+///
+/// Used by `build_quorum_proof` to truncate the attestation set to a
+/// deterministic subset.
+pub(super) fn bft_quorum_count(total_validators: u64) -> u64 {
+    if total_validators == 0 {
+        return 0;
+    }
+    // ceil(n * 6667 / 10000). Integer math.
+    const BPS: u64 = lib_types::consensus::threshold::BFT_SUPERMAJORITY_BPS;
+    ((total_validators * BPS) + 9_999) / 10_000
 }
 
 /// Why the engine is entering a new round.
@@ -1114,55 +1247,16 @@ impl ConsensusEngine {
         self.validate_committed_block(&proposal).await?;
 
         // Build the BFT quorum proof from the commit votes in the vote pool.
-        // Collect across ALL rounds: validators may cast commit votes in different rounds
-        // (due to timing skew) but they all agree on the same proposal_id, which is what
-        // matters for safety. Round-scoped filtering was the root cause of commit quorum
-        // never being reached when validators entered the Commit step at different times.
-        //
-        // DETERMINISM: attestations must be sorted and deduplicated by validator_id so that
-        // all nodes compute the same quorum_root, which is embedded in the block header.
-        // A non-deterministic quorum_root causes each node to store a different block hash,
-        // breaking the previous_hash chain validation for the next height.
-        let quorum_proof = {
-            let mut attestations: Vec<lib_types::consensus::CommitAttestation> = self
-                .vote_pool
-                .iter()
-                .filter(|(k, (_, voted_id))| {
-                    k.height == self.current_round.height
-                        && k.vote_type == VoteType::Commit
-                        && voted_id == proposal_id
-                })
-                .filter_map(|(_, (vote, _))| {
-                    // Convert Vec<u8> signature to fixed-size Dilithium5 array.
-                    // Skip votes with wrong-sized signatures (e.g. test stubs).
-                    let signature: [u8; 4595] = vote.signature.signature.as_slice()
-                        .try_into().ok()?;
-                    Some(lib_types::consensus::CommitAttestation {
-                        validator_id: vote.voter.0,
-                        vote_id: vote.id.0,
-                        proposal_id: vote.proposal_id.0,
-                        round: vote.round,
-                        signature,
-                        public_key: vote.signature.public_key.dilithium_pk,
-                    })
-                })
-                .collect();
-
-            // Sort by validator_id for deterministic ordering across all nodes.
-            attestations.sort_by_key(|a| a.validator_id);
-            // Deduplicate: keep only the first (lowest-round, since pool was round-sorted) entry
-            // per validator. A validator may have cast commit votes at multiple rounds if the
-            // local round advanced after the initial cast; only one attestation per validator
-            // should contribute to the quorum root so the hash is identical on all nodes.
-            attestations.dedup_by_key(|a| a.validator_id);
-
-            lib_types::consensus::BftQuorumProof {
-                height: self.current_round.height,
-                proposal_id: proposal_id.0,
-                total_validators: total_validators as u32,
-                attestations,
-            }
-        };
+        // See `build_quorum_proof` for the determinism contract — the
+        // attestation set must be identical on every node that finalizes
+        // this block, or the `bft_quorum_root` (and therefore `block.hash()`)
+        // diverges and the chain forks at the next height.
+        let quorum_proof = build_quorum_proof(
+            &self.vote_pool,
+            self.current_round.height,
+            proposal_id,
+            total_validators,
+        );
 
         // Apply block to state with its quorum proof.
         // The callback persists the proof alongside the block so catch-up sync
@@ -1540,25 +1634,73 @@ impl ConsensusEngine {
             }
         }
 
-        // Re-check quorums for the round against the existing vote pool —
-        // prevotes/precommits that arrived before the jump never fired an
-        // on_prevote/on_precommit quorum check from this round's vantage.
-        if let Some(proposal_id) = self.current_round.proposals.first().cloned() {
-            let total = self.validator_manager.get_active_validators().len() as u64;
-            let prevotes = self.count_prevotes_for(height, round, &proposal_id);
-            if check_supermajority(prevotes, total)
-                && self.current_round.step <= ConsensusStep::PreCommit
-            {
-                if self.current_round.valid_proposal.is_none() {
-                    self.current_round.valid_proposal = Some(proposal_id.clone());
-                    self.current_round.valid_round = Some(round);
+        // Re-check quorums against the existing vote pool — prevotes /
+        // precommits that arrived before the jump never fired an
+        // on_prevote / on_precommit quorum check from this round's vantage.
+        //
+        // CE-S2: scan the pool for *any* (height, round, proposal_id) at-or-
+        // below this round that has reached supermajority. We must not gate on
+        // `proposals.first()` — the proposal artifact may not yet have arrived
+        // at this node even though the network already reached a quorum on it.
+        let total = self.validator_manager.get_active_validators().len() as u64;
+        let quorum_candidates: Vec<(u32, Hash)> = {
+            let mut counts: HashMap<(u32, Hash), u64> = HashMap::new();
+            for (key, (_vote, prop_id)) in self.vote_pool.iter() {
+                if key.height != height
+                    || key.vote_type != VoteType::PreVote
+                    || key.round > round
+                {
+                    continue;
                 }
-                if let Err(e) = self.enter_precommit_step().await {
-                    tracing::warn!(error = ?e, "reevaluate: enter_precommit_step failed");
-                }
+                *counts.entry((key.round, prop_id.clone())).or_insert(0) += 1;
             }
-            if let Err(e) = self.maybe_finalize(height, round, &proposal_id).await {
-                tracing::warn!(error = ?e, "reevaluate: maybe_finalize failed");
+            counts
+                .into_iter()
+                .filter(|(_, n)| check_supermajority(*n, total))
+                .map(|((r, id), _)| (r, id))
+                .collect()
+        };
+
+        // Apply each observed quorum to valid_proposal/valid_round using the
+        // same rules as on_prevote: track the *latest* round at which a
+        // quorum was seen, refuse to overwrite a same-round conflict.
+        for (qround, qid) in &quorum_candidates {
+            let should_update = match self.current_round.valid_round {
+                None => true,
+                Some(vr) if *qround > vr => true,
+                Some(vr) if *qround == vr => match self.current_round.valid_proposal.as_ref() {
+                    Some(existing) if existing != qid => {
+                        tracing::warn!(
+                            "reevaluate: conflicting prevote quorum at (h={}, r={}); \
+                             refusing overwrite",
+                            height, qround
+                        );
+                        continue;
+                    }
+                    _ => false,
+                },
+                Some(_) => false,
+            };
+            if should_update {
+                self.current_round.valid_proposal = Some(qid.clone());
+                self.current_round.valid_round = Some(*qround);
+            }
+        }
+
+        // If the current round has a quorum AND we're still able to act on it
+        // locally, transition to PreCommit.  This is the local-action arm —
+        // tied to current_round, exactly like on_prevote.
+        if self.current_round.step <= ConsensusStep::PreCommit {
+            if let Some(proposal_id) = self.current_round.proposals.first().cloned() {
+                let prevotes = self.count_prevotes_for(height, round, &proposal_id);
+                if check_supermajority(prevotes, total) {
+                    if let Err(e) = self.enter_precommit_step().await {
+                        tracing::warn!(error = ?e, "reevaluate: enter_precommit_step failed");
+                    }
+                }
+                if let Err(e) = self.maybe_finalize(height, round, &proposal_id).await {
+                    tracing::warn!(error = ?e, "reevaluate: maybe_finalize failed");
+                }
             }
         }
     }
@@ -1827,54 +1969,96 @@ impl ConsensusEngine {
             }
         }
 
-        // **CE-S1**: prevote-quorum check, proposal-scoped (never the round
-        // aggregate) and CURRENT-round-only. A quorum in a stale round is
-        // not actionable; a quorum in a higher round is handled by the
-        // Trigger B jump above, after which enter_round re-checks quorum.
-        if vote.round == self.current_round.round
-            && vote.height == self.current_round.height
-        {
+        // **CE-S2**: prevote-quorum detection runs against the vote's own
+        // (height, round, proposal_id) — independent of `current_round.round`.
+        //
+        // Previously the entire arm was gated on `vote.round == current_round`,
+        // which conflated two distinct concerns: (a) recording the fact that
+        // 2f+1 prevotes for proposal P exist at round R, and (b) the local
+        // action of casting a precommit at round R. Concern (a) is round-
+        // agnostic — `valid_proposal/valid_round` is Tendermint's mechanism
+        // for a *future* proposer to certify "round R already had a quorum
+        // for P" so locked peers can apply the unlock rule. With drift the
+        // 4th-of-5 prevote routinely arrives at a peer whose `current_round`
+        // has already advanced past R; under the old gate, `valid_proposal`
+        // was never set, future proposals omitted `valid_round`, and locked
+        // peers stayed locked across rounds forever.
+        //
+        // The PreCommit local-action arm (b) keeps the current-round guard:
+        // the precommit message is tagged with the *local* round, and a
+        // precommit at round R+1 derived from a round-R prevote quorum would
+        // be unsound.
+        if vote.height == self.current_round.height {
             let prevote_count =
                 self.count_prevotes_for(vote.height, vote.round, &proposal_id);
             let total_validators =
                 self.validator_manager.get_active_validators().len() as u64;
 
-            if check_supermajority(prevote_count, total_validators)
-                && self.current_round.step <= ConsensusStep::PreCommit
-            {
-                // **CE-S1**: only transition if this proposal can be THE
-                // valid proposal. A conflicting valid_proposal already set
-                // means two quorums — refuse, to preserve BFT safety.
-                if let Some(existing) = self.current_round.valid_proposal.as_ref() {
-                    if existing != &proposal_id {
-                        tracing::warn!(
-                            "Conflicting quorum detected: proposal {:?} has quorum but valid_proposal is already {:?}",
-                            proposal_id, existing
-                        );
-                        return Ok(());
+            if check_supermajority(prevote_count, total_validators) {
+                // (a) Record/refresh valid_proposal/valid_round.
+                //
+                // The conflicting-quorum guard rejects a second distinct
+                // proposal claiming a quorum at the *same* (height, round).
+                // With n=5, f=1, two disjoint quorums of 4 at the same
+                // (h, r) require ≥6 honest votes from ≥4 honest validators —
+                // impossible without f+1 Byzantines. So if `valid_round`
+                // already matches `vote.round` and `valid_proposal` differs,
+                // we treat it as evidence of Byzantine behaviour (or our own
+                // bug) and refuse to overwrite.
+                //
+                // For a newer round's quorum (vote.round > valid_round) we
+                // overwrite: Tendermint's `validValue` should always track
+                // the *latest* round at which a quorum was observed.
+                let should_update = match self.current_round.valid_round {
+                    None => true,
+                    Some(vr) if vote.round > vr => true,
+                    Some(vr) if vote.round == vr => {
+                        // Same round — must be the same proposal, else conflicting quorum.
+                        match self.current_round.valid_proposal.as_ref() {
+                            Some(existing) if existing != &proposal_id => {
+                                tracing::warn!(
+                                    "Conflicting prevote quorum: proposal {:?} reached quorum \
+                                     at (h={}, r={}) but valid_proposal already {:?} at same \
+                                     round — refusing overwrite (possible Byzantine evidence)",
+                                    proposal_id, vote.height, vote.round, existing
+                                );
+                                return Ok(());
+                            }
+                            _ => false, // already recorded, idempotent
+                        }
                     }
-                } else {
-                    // First proposal to reach a prevote quorum this round.
-                    // Record valid_proposal AND valid_round — a future
-                    // re-proposing proposer advertises valid_round so locked
-                    // peers can apply the Tendermint unlock rule.
+                    Some(_) => false, // older round than what we have — stale
+                };
+
+                if should_update {
                     self.current_round.valid_proposal = Some(proposal_id.clone());
-                    self.current_round.valid_round = Some(self.current_round.round);
+                    self.current_round.valid_round = Some(vote.round);
+                    tracing::debug!(
+                        "Recorded valid_proposal={:?}, valid_round={} from prevote quorum (current_round={})",
+                        proposal_id, vote.round, self.current_round.round,
+                    );
                 }
 
-                // CONS-305d: route the prevote-quorum threshold through the
-                // FSM. `(Prevoting, PrevoteThresholdReached) → Precommitting`
-                // — `enter_precommit_step` casts + broadcasts the precommit.
-                let prior_fsm = self.fsm_state.clone();
-                let (next_fsm, actions) = lib_consensus_core::fsm::transition(
-                    prior_fsm,
-                    lib_consensus_core::fsm::Event::PrevoteThresholdReached {
-                        block_id: proposal_id.clone(),
-                    },
-                );
-                self.enter_fsm_state(next_fsm).await;
-                for action in actions {
-                    self.dispatch_action(action).await;
+                // (b) Local-action arm — cast precommit ONLY if the quorum is
+                // for the round we're currently in. A round-R quorum does not
+                // authorize a round-(R+1) precommit.
+                if vote.round == self.current_round.round
+                    && self.current_round.step <= ConsensusStep::PreCommit
+                {
+                    // CONS-305d: route through the FSM.
+                    // (Prevoting, PrevoteThresholdReached) → Precommitting,
+                    // emits SendPrecommit + ResetWatchdog.
+                    let prior_fsm = self.fsm_state.clone();
+                    let (next_fsm, actions) = lib_consensus_core::fsm::transition(
+                        prior_fsm,
+                        lib_consensus_core::fsm::Event::PrevoteThresholdReached {
+                            block_id: proposal_id.clone(),
+                        },
+                    );
+                    self.enter_fsm_state(next_fsm).await;
+                    for action in actions {
+                        self.dispatch_action(action).await;
+                    }
                 }
             }
         }
@@ -1975,43 +2159,76 @@ impl ConsensusEngine {
             }
         }
 
-        // **CE-S1**: precommit-quorum check — proposal-scoped, current-round
-        // only. A higher-round quorum is reached via the Trigger C jump
-        // above; a stale-round quorum is not actionable for locking.
-        if vote.round == self.current_round.round
-            && vote.height == self.current_round.height
-        {
-            let precommit_count =
-                self.count_precommits_for(vote.height, vote.round, &proposal_id);
+        // **CE-S2 part 2**: precommit-quorum detection must run against the
+        // vote's own (height, round, proposal_id) and ALSO across all rounds
+        // at this height — not be gated on `vote.round == current_round`.
+        //
+        // Symmetric to the prevote fix (CE-S2) shipped in PR #2620. The
+        // previous current-round-only gate left precommits in the same
+        // drift-induced limbo: with each validator advancing rounds on its
+        // own clock, the 4th-of-5 precommit at round R routinely landed at
+        // peers whose `current_round.round` had moved past R, skipping the
+        // quorum check, never transitioning to Commit step, never casting a
+        // Commit vote, and never letting `maybe_finalize`'s commit-quorum
+        // path run (it needs Commit votes, which depend on this transition).
+        //
+        // The 2f+1 precommit count is taken across ALL rounds at this height
+        // (same as count_commits_for) — BFT safety holds because two
+        // proposals cannot each receive 2f+1 distinct precommits at the same
+        // height without f+1 Byzantine validators (counting argument with
+        // n=5, f=1: 4+4 ≤ 5 distinct + Byzantine doubles would require
+        // f+1 = 2 Byzantine validators).
+        if vote.height == self.current_round.height {
+            // Cross-round count for (height, proposal_id) — proposal-scoped.
+            let precommit_count: u64 = self
+                .vote_pool
+                .iter()
+                .filter(|(k, (_, voted_id))| {
+                    k.height == vote.height
+                        && k.vote_type == VoteType::PreCommit
+                        && voted_id == &proposal_id
+                })
+                .count() as u64;
             let total_validators =
                 self.validator_manager.get_active_validators().len() as u64;
 
             if check_supermajority(precommit_count, total_validators)
                 && self.current_round.step <= ConsensusStep::Commit
             {
-                // **CE-S1**: only lock if this proposal can BE the lock. A
-                // conflicting locked_proposal means two precommit quorums —
-                // refuse, to preserve BFT safety.
+                // Conflicting-quorum guard (CE-S1 / CE-S2):
+                // - same-locked-proposal: idempotent, no overwrite.
+                // - different locked_proposal: in honest operation with n=5
+                //   f=1 this is unreachable (see counting argument above);
+                //   if observed, prefer the FIRST lock seen and log loudly.
                 if let Some(existing) = self.current_round.locked_proposal.as_ref() {
                     if existing != &proposal_id {
                         tracing::warn!(
-                            "Conflicting precommit quorum detected: proposal {:?} has quorum but locked_proposal is already {:?}",
-                            proposal_id, existing
+                            "Conflicting precommit quorum: proposal {:?} reached quorum \
+                             at height {} but locked_proposal is already {:?} — refusing \
+                             overwrite (possible Byzantine evidence)",
+                            proposal_id, vote.height, existing
                         );
                         return Ok(());
                     }
+                    // Same proposal — idempotent, fall through to FSM
+                    // transition so a late-arriving precommit can still
+                    // drive the Commit step on a node that previously
+                    // observed the quorum but had not yet stepped to Commit.
                 } else {
-                    // First proposal to reach a precommit quorum this round.
-                    // Record locked_proposal AND locked_round — the prevote
-                    // lock rule needs both to decide whether a conflicting
-                    // proposal in a later round may be prevoted.
                     self.current_round.locked_proposal = Some(proposal_id.clone());
-                    self.current_round.locked_round = Some(self.current_round.round);
+                    // Record locked_round as the round the QUORUM was observed
+                    // at (vote.round) — that is the round whose precommit set
+                    // formed the lock. Tendermint's lock-unlock rule reads
+                    // locked_round to decide if a later proposal's
+                    // `valid_round >= locked_round` is sufficient to unlock.
+                    self.current_round.locked_round = Some(vote.round);
                 }
 
-                // CONS-305c: route the precommit-quorum threshold through
-                // the FSM. `enter_commit_step` (via SendCommit) casts the
-                // commit vote.
+                // CONS-305c: drive the Commit-step transition via FSM.
+                // `enter_commit_step` (via SendCommit) casts the Commit vote
+                // tagged with the LOCAL current_round, which the cross-round
+                // commit count then aggregates with peers' Commit votes
+                // (also tagged with each peer's own round).
                 let prior_fsm = self.fsm_state.clone();
                 let (next_fsm, actions) = lib_consensus_core::fsm::transition(
                     prior_fsm,
@@ -2710,16 +2927,29 @@ impl ConsensusEngine {
             .cloned();
 
         if let Some(proposal_id) = commit_target {
-            // Skip if we already cast a commit vote for this round.
+            // Skip if we already cast a commit vote for this proposal at this
+            // height — **at any round**, not just the current one.
+            //
+            // CE-S3: the previous "current-round-only" guard let a single
+            // validator emit MULTIPLE commit votes across rounds (one per
+            // round in which precommit-quorum was observed). Each commit's
+            // signature is bound to its round (see serialize_vote_data L412),
+            // so peers received distinct g3-at-r5 and g3-at-r6 attestations.
+            // When validator A's vote_pool happened to hold g3@r5 and
+            // validator B's held g3@r6, their quorum proofs differed and the
+            // `bft_quorum_root` (which feeds block.hash) diverged → fork at
+            // the next height. The investigation that produced this fix
+            // traced exactly that mechanism through the testnet stall at
+            // heights 59118–59123 on 2026-05-20.
             let already_committed = self
                 .validator_identity
                 .as_ref()
                 .map(|id| {
-                    self.vote_pool.contains_key(&VotePoolKey {
-                        height: self.current_round.height,
-                        round: self.current_round.round,
-                        vote_type: VoteType::Commit,
-                        validator_id: id.clone(),
+                    self.vote_pool.iter().any(|(k, (_, voted_id))| {
+                        k.height == self.current_round.height
+                            && k.vote_type == VoteType::Commit
+                            && k.validator_id == *id
+                            && voted_id == &proposal_id
                     })
                 })
                 .unwrap_or(false);
