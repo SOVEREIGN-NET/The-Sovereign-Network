@@ -909,13 +909,24 @@ impl<B: StorageBackend> DhtStorage<B> {
         };
 
         // Generate expected proof with cryptographic parameters
-        let _expected_proof = zk_system.prove_storage_access(
+        let expected_proof = zk_system.prove_storage_access(
             access_key_u64,
             requester_secret,
             data_hash_u64,
             access_level_u64,
             required_permission,
         )?;
+        // Verify the submitted proof matches the expected proof
+        if let Some(ref backend_proof) = zk_proof.backend_proof {
+            if backend_proof.data != expected_proof.proof {
+                debug!("Proof rejected: expected proof data mismatch");
+                return Ok(false);
+            }
+        } else {
+            debug!("Proof rejected: no backend proof provided");
+            return Ok(false);
+        }
+
 
         // Verify proof system compatibility
         if zk_proof.proof_system != "Plonky2" {
