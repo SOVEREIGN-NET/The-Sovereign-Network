@@ -1099,17 +1099,22 @@ impl IdentityHandler {
 
         tracing::info!("🔍 Checking username availability: {}", username);
 
-        let identity_manager = self.identity_manager.read().await;
-
-        // Check if any identity has this display_name (case-insensitive)
+        // Query on-chain identity_registry (canonical state) rather than the
+        // in-memory IdentityManager. The registration handler and OPAQUE
+        // register flow both pre-populate in-memory caches before their txes
+        // commit; if a tx never lands (mempool eviction, consensus stall),
+        // the cache holds a phantom entry per-node and skews availability
+        // checks. The chain registry is the single source of truth.
         let username_lower = username.to_lowercase();
-        let is_taken = identity_manager.list_identities().iter().any(|identity| {
-            identity
-                .metadata
-                .get("display_name")
-                .map(|name| name.to_lowercase() == username_lower)
-                .unwrap_or(false)
-        });
+        let is_taken = {
+            let blockchain_arc =
+                crate::runtime::blockchain_provider::get_global_blockchain().await?;
+            let blockchain = blockchain_arc.read().await;
+            blockchain
+                .identity_registry
+                .values()
+                .any(|id| id.display_name.to_lowercase() == username_lower)
+        };
 
         let response_body = json!({
             "username": username,
