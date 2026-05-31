@@ -118,6 +118,25 @@ impl ConsensusEngine {
             tokio::select! {
                 // Timer fired: only process if token matches current state
                 _ = &mut timer_fut => {
+                    // Catch-up sync may have advanced the local blockchain past
+                    // our engine height without us noticing — engine height only
+                    // advances on commits driven by the engine itself. Re-sync
+                    // each tick so the engine doesn't sit voting on a stale
+                    // height forever while blocks land via the catch-up path.
+                    // sync_height_with_blockchain is a no-op when already in
+                    // sync (height_unchanged branch in mod.rs).
+                    if let Some(ref provider) = self.blockchain_provider {
+                        if let Ok(bc_height) = provider.get_blockchain_height().await {
+                            if bc_height >= self.current_round.height {
+                                if let Err(e) = self.sync_height_with_blockchain().await {
+                                    tracing::warn!(
+                                        "Failed to sync height from catch-up advance: {}",
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                    }
                     // Check for mode transitions (Bootstrap <-> BFT)
                     let current_bft_mode = self.is_bft_mode_active();
                     if current_bft_mode != last_bft_mode {
