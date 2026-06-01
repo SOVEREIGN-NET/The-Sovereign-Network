@@ -29,7 +29,9 @@ fn cmd_build(config: Option<PathBuf>, output: Option<PathBuf>) -> Result<()> {
     let bc = cfg
         .build_block0()
         .context("Failed to build genesis block")?;
-    let block0 = bc.blocks.first().context("No genesis block")?;
+    // #2636: get_block(0) is the facade for "genesis" — correct even on a
+    // store-backed chain where the in-memory window no longer starts at height 0.
+    let block0 = bc.get_block(0).context("No genesis block")?;
     let hash = block0.header.block_hash;
     let hash_hex = hex::encode(hash.as_bytes());
 

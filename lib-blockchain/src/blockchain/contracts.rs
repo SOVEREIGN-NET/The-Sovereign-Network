@@ -93,7 +93,12 @@ impl Blockchain {
     pub fn rebuild_pouw_mint_index(&mut self) {
         self.pouw_mint_index.clear();
         let mut total = 0usize;
-        for block in &self.blocks {
+        // #2636: materialize the full chain (window + sled) up front. iter_blocks()
+        // borrows &self, but the loop body mutates self.pouw_mint_index, so we
+        // can't iterate it lazily here; the previous `&self.blocks` scan also
+        // silently bounded the rebuild to the hot window on a pruned node.
+        let blocks: Vec<crate::block::Block> = self.iter_blocks().collect();
+        for block in &blocks {
             let height = block.height();
             for tx in &block.transactions {
                 if tx.transaction_type != TransactionType::TokenMint {
@@ -124,21 +129,43 @@ impl Blockchain {
         );
     }
 
-    /// Process token transfer and mint transactions from a block.
-    ///
-    /// During boot-time block replay (`self.store.is_none()`), any error
-    /// inside a `TokenTransfer` arm is downgraded from fatal `Err` to a
-    /// warning and the offending transaction is skipped. The sled-backed
-    /// `BlockExecutor` is the source of truth for runtime token state and is
-    /// attached AFTER replay completes; the in-memory state rebuilt here is
-    /// approximate. Refusing to boot because a historical transfer can't be
-    /// reproduced against this approximate state would make any
-    /// live-committed edge case (unsignable mint address, amount > u64,
-    /// nonce skew, etc.) bring the node down on restart. Tolerance is scoped
-    /// to TokenTransfer; every other transaction type still propagates
-    /// errors and halts replay.
+    /// Process token transfer and mint transactions from a block, with **full
+    /// enforcement** — every error propagates. Used by the new-block commit
+    /// paths (`process_and_commit_block`, `finish_block_processing`) and by
+    /// tests. For boot replay use [`Self::process_token_transactions_replay`].
     pub fn process_token_transactions(&mut self, block: &Block) -> Result<()> {
-        let is_replay = self.store.is_none();
+        self.process_token_transactions_inner(block, false)
+    }
+
+    /// Boot-replay variant: tolerates non-integrity `TokenTransfer` errors.
+    ///
+    /// During boot-time block replay the in-memory state rebuilt here is
+    /// approximate (the sled-backed `BlockExecutor` is the source of truth and
+    /// is attached AFTER replay completes). Refusing to boot because a
+    /// historical transfer can't be reproduced against this approximate state
+    /// would let any live-committed edge case (unsignable mint address,
+    /// amount > u64, etc.) bring the node down on restart — so such errors are
+    /// downgraded to a warning and the transfer is skipped. Tolerance is scoped
+    /// to `TokenTransfer`; every other transaction type still halts replay.
+    ///
+    /// **Replay-protection (nonce-mismatch) errors are NEVER tolerated**, even
+    /// here: they are integrity violations, not approximate-state reproduction
+    /// issues, and a committed block can never legitimately carry a duplicate
+    /// nonce. Silently skipping one would accept a replayed transfer on boot.
+    ///
+    /// Tolerance keys off this explicit parameter, NOT `self.store.is_none()` —
+    /// unit tests construct store-less blockchains as a harness and must get
+    /// full enforcement, not boot-replay tolerance.
+    pub(crate) fn process_token_transactions_replay(&mut self, block: &Block) -> Result<()> {
+        self.process_token_transactions_inner(block, true)
+    }
+
+    fn process_token_transactions_inner(
+        &mut self,
+        block: &Block,
+        replay_tolerant: bool,
+    ) -> Result<()> {
+        let is_replay = replay_tolerant;
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
 
         'tx_loop: for transaction in &block.transactions {
@@ -751,7 +778,18 @@ impl Blockchain {
             Ok(())
             })();
             if let Err(e) = arm_result {
-                if is_replay && tx_type == TransactionType::TokenTransfer {
+                // Replay tolerance covers transfers that can't be reproduced
+                // against approximate in-memory state (insufficient balance,
+                // unsignable address, amount overflow). It must NEVER cover
+                // replay-protection (nonce) errors: a duplicate/replayed nonce
+                // is an integrity violation, and a committed block can never
+                // legitimately contain one, so silently skipping it would accept
+                // a replayed transfer during boot. Those always propagate.
+                let is_replay_protection = e.to_string().contains("nonce mismatch");
+                if is_replay
+                    && tx_type == TransactionType::TokenTransfer
+                    && !is_replay_protection
+                {
                     warn!(
                         "Replay: skipping TokenTransfer at height={} tx={}: {}",
                         block.height(),
@@ -813,7 +851,11 @@ impl Blockchain {
     }
 
     pub(super) fn reprocess_contract_executions(&mut self) -> Result<()> {
-        let block_count = self.blocks.len();
+        // #2636: full chain (window + sled), materialized up front since the
+        // loop mutates self. The previous `self.blocks` scan only reprocessed
+        // the hot window on a pruned node.
+        let blocks: Vec<crate::block::Block> = self.iter_blocks().collect();
+        let block_count = blocks.len();
         if block_count == 0 {
             return Ok(());
         }
@@ -826,7 +868,7 @@ impl Blockchain {
         let mut tokens_found = 0;
         let mut contract_txs_found = 0;
 
-        for block in &self.blocks.clone() {
+        for block in &blocks {
             for transaction in &block.transactions {
                 if transaction.transaction_type == TransactionType::ContractExecution {
                     contract_txs_found += 1;
@@ -1037,6 +1079,69 @@ impl Blockchain {
         self.token_contracts.get_mut(contract_id)
     }
 
+    /// Sled-first balance facade (state-unification #2635 / #2637).
+    ///
+    /// `token_id` and `address` are 32-byte ids (the address is a `key_id`, the
+    /// same form the executor's `StateMutator` uses as the sled `Address`). When
+    /// a `BlockchainStore` is attached it is the authoritative source and a sled
+    /// failure is **propagated as an error** — we do NOT silently fall back to a
+    /// possibly-stale in-memory balance (that masks corrupt-tree / disk-full /
+    /// unmounted-store failures, exactly the class that leads to authorizing a
+    /// transfer on a wrong balance). The in-memory `TokenContract` map is read
+    /// only in store-less mode (unit tests, pre-store bootstrap).
+    ///
+    /// # Mid-block invariant (CR #2658 / blocks Phase 3)
+    ///
+    /// This reads **committed** sled state. Writes staged in the current block's
+    /// `tx_batch` (between `begin_block` and `commit_block`) are NOT visible
+    /// here. HTTP read handlers (the current callers) are never inside a block
+    /// boundary, so this is correct for them. **Before any consensus-path /
+    /// mid-`apply_block` caller uses this facade (Phase 3), a `tx_batch`-aware
+    /// read must be added to `SledStore::get_token_balance`** or that caller
+    /// will see the pre-block value and could authorize a double-spend.
+    pub fn token_balance(
+        &self,
+        token_id: &[u8; 32],
+        address: &[u8; 32],
+    ) -> crate::storage::StorageResult<u128> {
+        if let Some(store) = self.get_store() {
+            let token = crate::storage::TokenId::new(*token_id);
+            let addr = crate::storage::Address::new(*address);
+            // sled is authoritative — propagate errors instead of serving stale in-mem.
+            return store.get_token_balance(&token, &addr);
+        }
+        Ok(self
+            .token_contracts
+            .get(token_id)
+            .and_then(|c| c.find_balance_by_key_id(address))
+            .map(|(_, balance)| balance)
+            .unwrap_or(0))
+    }
+
+    /// Sled-first iterator facade over all token contracts — **METADATA ONLY**
+    /// (#2637).
+    ///
+    /// Returns the authoritative contract set from the store when attached,
+    /// falling back to the in-memory map in store-less mode. Use for listing /
+    /// counting / finding tokens by name/symbol/decimals/supply.
+    ///
+    /// # ⚠️ Balances are NOT populated on these results
+    ///
+    /// Per-address balances live in a **separate** sled tree (`token_balances`),
+    /// not inside the serialized `TokenContract`. A contract deserialized from
+    /// sled has an **empty** `balances` map, so `c.balance_of(addr)` on a result
+    /// of this method **always returns 0**. The name encodes the contract: this
+    /// is metadata only. For balances call [`Self::token_balance`]. (This is the
+    /// footgun the renamed-from-`iter_token_contracts` CR flagged.)
+    pub fn iter_token_contract_metadata(&self) -> Vec<crate::contracts::TokenContract> {
+        if let Some(store) = self.get_store() {
+            if let Ok(iter) = store.iter_token_contracts() {
+                return iter.map(|(_, c)| c).collect();
+            }
+        }
+        self.token_contracts.values().cloned().collect()
+    }
+
     pub fn register_web4_contract(
         &mut self,
         contract_id: [u8; 32],
@@ -1082,12 +1187,10 @@ impl Blockchain {
     /// For V2 (`DOMREG2:`) payloads, debits `payload.fee_amount_atoms` from
     /// the payer's SOV balance and credits the DAO treasury wallet BEFORE
     /// inserting the domain record. If the debit fails (insufficient balance,
-    /// SOV contract missing, treasury wallet missing), the registration is
-    /// dropped and the record is NOT inserted — this is the consensus-level
-    /// gate that closes the "domains are free" hole. The balance check at
-    /// mempool admit also enforces this, so a non-malicious tx flow won't
-    /// hit the apply-time rejection; the apply-time check is a defense
-    /// against state drift between admit and apply.
+    /// fee below the governance floor, missing SOV contract or treasury, or
+    /// owner-key mismatch), the registration is dropped and the record is
+    /// NOT inserted — this is the consensus-level gate that closes the
+    /// "domains are free" hole.
     ///
     /// V1 (`DOMREG1:`) payloads — historical chain replay — carry zeroed
     /// fee fields and the debit path is skipped entirely, preserving the
@@ -1096,21 +1199,39 @@ impl Blockchain {
         let block_ts = block.header.timestamp;
         let block_height = block.height();
 
+        // Snapshot the current governance fee floor and treasury wallet ID
+        // BEFORE the per-tx loop so subsequent debits use a consistent
+        // value across the block. Borrowing `&self` here doesn't conflict
+        // with the later `&mut self` calls in `apply_domain_registration_fee`.
+        let fee_floor_atoms = self.tx_fee_config.domain_registration_fee_atoms;
+        let treasury_wallet_id_hex = self.get_dao_treasury_wallet_id().cloned();
+
         for tx in &block.transactions {
             if tx.transaction_type == TransactionType::DomainRegistration {
+                // Capture the transaction signer for the apply-time owner
+                // re-check (CR #2665 issue #6). Mempool admit already
+                // verified `payload.fee_payer_wallet_id` belongs to the
+                // signer's Primary wallet, but a system/pending tx can
+                // bypass mempool entirely — the re-check is a defense in
+                // depth against that path.
+                let tx_signer_key_id = tx.signature.public_key.key_id;
                 match crate::transaction::DomainRegistrationPayload::decode_memo(&tx.memo) {
                     Ok(payload) => {
-                        // Apply the fee FIRST. If it fails, drop the registration —
-                        // the chain should not record a domain whose fee couldn't be
-                        // settled.
-                        if payload.fee_amount_atoms > 0 {
+                        // Fee debit gate for V2 payloads.
+                        // V1 fields are zeroed (legacy replay) → skip.
+                        let is_v2 = payload.fee_amount_atoms > 0
+                            || payload.fee_payer_wallet_id != [0u8; 32];
+                        if is_v2 {
                             if let Err(e) = self.apply_domain_registration_fee(
                                 &payload,
+                                tx_signer_key_id,
+                                fee_floor_atoms,
+                                treasury_wallet_id_hex.as_deref(),
                                 block_height,
                             ) {
                                 warn!(
-                                    "DomainRegistration at height {} rejected: {}",
-                                    block_height, e
+                                    "DomainRegistration {} at height {} dropped: {}",
+                                    payload.domain, block_height, e
                                 );
                                 continue;
                             }
@@ -1133,8 +1254,8 @@ impl Blockchain {
                             fee_tx_hash: payload.fee_tx_hash,
                         };
                         info!(
-                            "⛓️  Domain registered on-chain: {} at height {} (fee {} atoms)",
-                            record.domain, block_height, payload.fee_amount_atoms
+                            "⛓️  Domain registered on-chain: {} at height {} (fee {} atoms, v2={})",
+                            record.domain, block_height, payload.fee_amount_atoms, is_v2
                         );
                         self.domain_registry.insert(payload.domain, record);
                     }
@@ -1331,21 +1452,59 @@ impl Blockchain {
 
     /// Debit `payload.fee_amount_atoms` from the payer's SOV balance and credit
     /// the DAO treasury wallet. Called from `process_domain_transactions` for
-    /// V2 (`DOMREG2:`) payloads. The mutation runs inside the executor's
-    /// `begin_block`/`commit_block` window so it's persisted to sled and survives
-    /// the post-block `sync_in_memory_from_sled` cycle.
+    /// V2 (`DOMREG2:`) payloads inside the executor's `begin_block`/`commit_block`
+    /// window — the mutation persists to sled and survives the post-block
+    /// `sync_in_memory_from_sled` cycle.
+    ///
+    /// Enforces the four CR #2665 invariants the mempool admit path also checks,
+    /// repeated here so a tx submitted via the system/pending path (which bypasses
+    /// mempool) cannot escape any of them:
+    ///
+    /// 1. **Fee floor**: `fee_amount_atoms >= fee_floor_atoms`. A zero or
+    ///    below-floor V2 memo would otherwise register cheaply or free.
+    /// 2. **Owner re-check**: `payload.fee_payer_wallet_id`'s derived owner-DID
+    ///    must equal the transaction signer's derived DID. Prevents a system tx
+    ///    that names someone else's wallet as the payer.
+    /// 3. **Lock-aware debit**: uses `debit_balance` (which subtracts locked
+    ///    balances before checking sufficiency) — never `set_balance`, which
+    ///    would silently spend locked funds.
+    /// 4. **Overflow-safe credit**: uses `credit_balance` (checked add) — never
+    ///    `treasury_balance + fee`, which would wrap on u128 overflow.
     fn apply_domain_registration_fee(
         &mut self,
         payload: &crate::transaction::domain::DomainRegistrationPayload,
+        tx_signer_key_id: [u8; 32],
+        fee_floor_atoms: u128,
+        treasury_wallet_id_hex: Option<&str>,
         block_height: u64,
     ) -> Result<()> {
         use anyhow::anyhow;
 
-        let treasury_wallet_id_hex = self
-            .get_dao_treasury_wallet_id()
-            .ok_or_else(|| anyhow!("DAO treasury wallet is not configured"))?
-            .clone();
-        let treasury_bytes = hex::decode(&treasury_wallet_id_hex)
+        // (1) Fee floor.
+        if payload.fee_amount_atoms < fee_floor_atoms {
+            return Err(anyhow!(
+                "fee below governance floor: payload {} < floor {} atoms",
+                payload.fee_amount_atoms,
+                fee_floor_atoms
+            ));
+        }
+
+        // (2) Owner re-check: the fee_payer_wallet_id MUST belong to the
+        // transaction signer. Derived owner-DID from the wallet ID is the
+        // signer's identity_id. The handler computes this from the Primary
+        // wallet of the signer, so equality means "this wallet belongs to
+        // me". A system tx that names someone else's wallet here is rejected.
+        if payload.fee_payer_wallet_id != tx_signer_key_id {
+            return Err(anyhow!(
+                "fee payer mismatch at height {}: payload wallet does not derive from tx signer",
+                block_height
+            ));
+        }
+
+        // Resolve treasury wallet.
+        let treasury_hex = treasury_wallet_id_hex
+            .ok_or_else(|| anyhow!("DAO treasury wallet is not configured"))?;
+        let treasury_bytes = hex::decode(treasury_hex)
             .map_err(|_| anyhow!("DAO treasury wallet id is malformed hex"))?;
         if treasury_bytes.len() != 32 {
             return Err(anyhow!("DAO treasury wallet id must be 32 bytes"));
@@ -1364,20 +1523,22 @@ impl Blockchain {
             .get_mut(&sov_id)
             .ok_or_else(|| anyhow!("SOV token contract not initialised at height {}", block_height))?;
 
-        let payer_balance = token.balance_of(&payer_key);
-        if payer_balance < payload.fee_amount_atoms {
-            return Err(anyhow!(
-                "insufficient balance: payer has {} atoms, fee is {} atoms",
-                payer_balance,
-                payload.fee_amount_atoms
-            ));
+        // (3) Lock-aware debit. debit_balance subtracts `locked_balances`
+        // before checking sufficiency and returns an explicit Err with the
+        // breakdown — never silently spends locked funds.
+        token
+            .debit_balance(&payer_key, payload.fee_amount_atoms)
+            .map_err(|e| anyhow!("debit payer: {}", e))?;
+
+        // (4) Overflow-safe credit. credit_balance uses checked_add and
+        // surfaces overflow as Err rather than wrapping.
+        if let Err(e) = token.credit_balance(&treasury_key, payload.fee_amount_atoms) {
+            // Roll back the payer debit so the block apply stays atomic.
+            // We just successfully debited the same amount; re-crediting it
+            // can't overflow.
+            let _ = token.credit_balance(&payer_key, payload.fee_amount_atoms);
+            return Err(anyhow!("credit treasury: {}", e));
         }
-        let treasury_balance = token.balance_of(&treasury_key);
-        token.set_balance(&payer_key, payer_balance - payload.fee_amount_atoms);
-        token.set_balance(
-            &treasury_key,
-            treasury_balance + payload.fee_amount_atoms,
-        );
         Ok(())
     }
 }

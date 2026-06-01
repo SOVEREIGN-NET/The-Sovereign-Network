@@ -1113,7 +1113,13 @@ impl BlockchainHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
-        let total: usize = blockchain.query_blocks().iter().map(|b| b.transactions.len()).sum();
+        // #2636: materialize the full chain once (window + sled), then both
+        // count and iterate over the same vector. iter_blocks() on a
+        // store-backed node calls get_block(h) per block; doing it twice
+        // (once for total, once for the loop) doubles the sled work per
+        // request — measurable latency hit on long chains.
+        let all_blocks: Vec<_> = blockchain.iter_blocks().collect();
+        let total: usize = all_blocks.iter().map(|b| b.transactions.len()).sum();
         let total_pages = if total == 0 {
             0
         } else {
@@ -1124,7 +1130,7 @@ impl BlockchainHandler {
         let mut skipped = 0usize;
         let mut transactions = Vec::new();
 
-        for block in blockchain.query_blocks().iter().rev() {
+        for block in all_blocks.iter().rev() {
             for tx in block.transactions.iter().rev() {
                 if skipped < offset {
                     skipped += 1;
@@ -1177,7 +1183,9 @@ impl BlockchainHandler {
 
         let avg_block_time_secs = if blockchain.query_block_count() >= 2 {
             let mut total_delta = 0u64;
-            for window in blockchain.query_blocks().windows(2) {
+            // #2636: full chain (window + sled), materialized for windows(2).
+            let all_blocks: Vec<_> = blockchain.iter_blocks().collect();
+            for window in all_blocks.windows(2) {
                 let a = window[0].header.timestamp;
                 let b = window[1].header.timestamp;
                 total_delta = total_delta.saturating_add(b.saturating_sub(a));
@@ -1188,9 +1196,9 @@ impl BlockchainHandler {
         };
 
         let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+        // #2637: get_token_contract() is the sled-first metadata facade.
         let total_supply = blockchain
-            .token_contracts
-            .get(&sov_token_id)
+            .get_token_contract(&sov_token_id)
             .map(|token| token.total_supply)
             .unwrap_or(0);
 
@@ -1281,7 +1289,9 @@ impl BlockchainHandler {
                 }));
             }
 
-            for block in blockchain.query_blocks().iter().rev() {
+            // #2636: full chain (window + sled), newest-first.
+            let all_blocks: Vec<_> = blockchain.iter_blocks().collect();
+            for block in all_blocks.iter().rev() {
                 if let Some(tx) = block.transactions.iter().find(|tx| tx.hash() == tx_hash) {
                     let confirmations = latest_height.saturating_sub(block.header.height) + 1;
                     return Some(serde_json::json!({
@@ -1978,7 +1988,7 @@ impl BlockchainHandler {
         }
 
         // Search through all blocks for the transaction
-        for (_block_index, block) in blockchain.query_blocks().iter().enumerate() {
+        for (_block_index, block) in blockchain.iter_blocks().enumerate() {
             if let Some(confirmed_tx) = block.transactions.iter().find(|tx| tx.hash() == tx_hash) {
                 let transaction_info = Self::tx_to_info(confirmed_tx);
 
@@ -2297,7 +2307,7 @@ impl BlockchainHandler {
         }
 
         // Fallback: Search through all blocks for the transaction (for backward compatibility)
-        for (_block_index, block) in blockchain.query_blocks().iter().enumerate() {
+        for (_block_index, block) in blockchain.iter_blocks().enumerate() {
             if let Some((tx_index, confirmed_tx)) = block
                 .transactions
                 .iter()
@@ -2445,14 +2455,15 @@ impl BlockchainHandler {
 
         let mut contracts = Vec::new();
         if contract_filter == "all" || contract_filter == "token" {
+            // #2637: iter_token_contract_metadata() is the sled-first list facade.
             contracts.extend(
                 blockchain
-                    .token_contracts
-                    .keys()
-                    .map(|id| ContractListItem {
-                        contract_id: hex::encode(id),
+                    .iter_token_contract_metadata()
+                    .into_iter()
+                    .map(|t| ContractListItem {
+                        contract_id: hex::encode(t.token_id),
                         contract_kind: "token".to_string(),
-                        block_height: blockchain.contract_blocks.get(id).copied(),
+                        block_height: blockchain.contract_blocks.get(&t.token_id).copied(),
                     }),
             );
         }

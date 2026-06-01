@@ -2161,28 +2161,18 @@ impl<'a> StatefulTransactionValidator<'a> {
                     return Err(ValidationError::InvalidTransaction);
                 }
 
-                // Canonical fee enforcement (V2 wire path).
+                // Canonical fee enforcement.
                 //
-                // Legacy V1 txes deserialise with `fee_amount_atoms = 0` and
-                // `fee_payer_wallet_id = [0; 32]` — historical replay needs to
-                // pass cleanly, so we only enforce when those fields are
-                // populated.
-                //
-                // For V2 txes we check three things up-front, before the tx
-                // can enter the mempool:
-                //   1. The declared fee meets or exceeds the current
-                //      governance-set rate (`TxFeeConfig.domain_registration_fee_atoms`).
-                //   2. The declared payer wallet is the signer's Primary
-                //      wallet — prevents debiting someone else's balance.
-                //   3. The payer's SOV balance covers the declared fee.
-                //
-                // This is the gate that closes the "domains are free" hole:
-                // pre-fix, neither this validator nor `process_domain_transactions`
-                // looked at balance at all (see `feedback_*` writeup in the
-                // canonical-domain-registration-fee PR).
-                if payload.fee_amount_atoms > 0
-                    || payload.fee_payer_wallet_id != [0u8; 32]
-                {
+                // V1 vs V2 is determined by the MEMO PREFIX, not by field values
+                // (CR #2665 issue #1). The previous check keyed off
+                // `fee_amount_atoms > 0 || fee_payer_wallet_id != [0;32]`,
+                // which meant a hand-crafted V2 memo with both fields zeroed
+                // would silently fall through to the "legacy V1" no-check
+                // branch — registering a domain for free.
+                let memo_is_v2 = transaction.memo.starts_with(
+                    crate::transaction::domain::DOMAIN_REGISTRATION_PREFIX_V2,
+                );
+                if memo_is_v2 {
                     if let Some(bc) = self.blockchain {
                         let required = bc.tx_fee_config.domain_registration_fee_atoms;
                         if payload.fee_amount_atoms < required {
@@ -2220,15 +2210,21 @@ impl<'a> StatefulTransactionValidator<'a> {
                             crate::contracts::utils::wallet_key_for_sov(
                                 payload.fee_payer_wallet_id,
                             );
-                        let balance = bc
+                        // Use available_balance (total - locked) to match the
+                        // executor's debit_balance check at apply time
+                        // (CR #2665 issue #4). Using total balance_of here would
+                        // let a wallet with fully-locked SOV pass mempool admit
+                        // only to fail at apply, which would surface as an
+                        // unexplained dropped registration.
+                        let available = bc
                             .token_contracts
                             .get(&sov_id)
-                            .map(|t| t.balance_of(&payer_key))
+                            .map(|t| t.available_balance(&payer_key))
                             .unwrap_or(0);
-                        if balance < payload.fee_amount_atoms {
+                        if available < payload.fee_amount_atoms {
                             tracing::warn!(
-                                "[DOMAIN_REG] insufficient balance: have {} atoms, need {} atoms",
-                                balance,
+                                "[DOMAIN_REG] insufficient available balance: have {} atoms (excl. locked), need {} atoms",
+                                available,
                                 payload.fee_amount_atoms
                             );
                             return Err(ValidationError::InvalidTransaction);
@@ -2357,7 +2353,7 @@ impl<'a> StatefulTransactionValidator<'a> {
         if transaction.transaction_type == TransactionType::TokenMint {
             if let Some(blockchain) = self.blockchain {
                 if blockchain.height == 0
-                    && blockchain.blocks.is_empty()
+                    && blockchain.latest_block().is_none() // #2636: facade form of blocks.is_empty()
                     && transaction.signature.signature.is_empty()
                 {
                     skip_signature = true; // Allow genesis TokenMint without signature

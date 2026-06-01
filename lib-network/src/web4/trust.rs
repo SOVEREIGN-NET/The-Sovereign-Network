@@ -592,14 +592,19 @@ impl ServerCertVerifier for ZhtpTrustVerifier {
                     });
                 }
                 return Ok(ServerCertVerified::assertion());
-            } else if self.config.bootstrap_mode {
+            } else if self.config.bootstrap_mode
+                && !matches!(anchor.policy, TrustPolicy::Pinned)
+            {
                 // Cert rotation under bootstrap mode (e.g. Let's Encrypt
                 // renewal, operator-driven re-issue). The TLS-layer
                 // anchor is no longer authoritative — the real identity
                 // gate is the Dilithium handshake at the UHP layer.
-                // Re-pin the new SPKI, log loudly, and accept. Strict
-                // (`Pinned`) anchors below still reject on mismatch;
-                // only bootstrap-loaded TOFU anchors get rotated.
+                // Re-pin the new SPKI, log loudly, and accept.
+                //
+                // Only TOFU anchors are rotated. `Pinned` anchors are
+                // explicit operator decisions and must continue to reject
+                // on mismatch even under bootstrap_mode, otherwise the
+                // pinning guarantee silently degrades (CR #2660).
                 let old_spki_short: String = anchor.spki_sha256
                     .chars().take(32).collect();
                 warn!(

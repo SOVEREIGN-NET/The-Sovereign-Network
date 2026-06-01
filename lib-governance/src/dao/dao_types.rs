@@ -265,6 +265,10 @@ pub enum GovernanceParameterValue {
     TxFeeWitnessCap(u32),
     /// Fixed fee for canonical TokenCreation transactions
     TokenCreationFee(u64),
+    /// Flat fee for canonical DomainRegistration transactions, in atomic SOV
+    /// units (10^18 per whole SOV). u128 because 10 whole SOV in atoms is
+    /// 10^19, exceeding u64::MAX.
+    DomainRegistrationFeeAtoms(u128),
     /// Oracle committee membership set (validator pubkeys), activates at next epoch boundary.
     OracleCommitteeMembers(Vec<[u8; 32]>),
     /// Oracle epoch duration in seconds.

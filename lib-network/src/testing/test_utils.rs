@@ -21,7 +21,22 @@ pub async fn create_test_mesh_server() -> Result<ZhtpMeshServer> {
 
     // Create dummy owner key for testing
     let owner_key = lib_crypto::PublicKey::new(node_id_bytes.as_slice().try_into().unwrap_or([0u8; 2592]));
-    let tmp = std::env::temp_dir().join(format!("zhtp-test-mesh-{}", std::process::id()));
+    // Per-call unique suffix to avoid TLS file collisions when cargo
+    // runs multiple mesh tests in parallel in the same process
+    // (CR #2660).
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let tmp = std::env::temp_dir().join(format!(
+        "zhtp-test-mesh-{}-{}-{}",
+        std::process::id(),
+        unique,
+        nanos
+    ));
     let tls_cert_path = tmp.join("server.crt");
     let tls_key_path = tmp.join("server.key");
     ZhtpMeshServer::new(

@@ -801,8 +801,11 @@ impl BlockchainStorageManager {
         results.push(state_result);
 
         // 2. Backup individual blocks
-        for block in &blockchain.blocks {
-            match self.store_block(block).await {
+        // #2636: iter_blocks() backs up the FULL chain (window + sled); the
+        // previous `blockchain.blocks` loop silently backed up only the hot
+        // window on a pruned node.
+        for block in blockchain.iter_blocks() {
+            match self.store_block(&block).await {
                 Ok(result) => results.push(result),
                 Err(e) => {
                     error!(
@@ -1595,7 +1598,7 @@ mod tests {
         let mut manager = BlockchainStorageManager::new(config).await?;
 
         let blockchain = Blockchain::new()?;
-        let genesis_block = blockchain.blocks[0].clone();
+        let genesis_block = blockchain.get_block(0).expect("genesis block"); // #2636
         drop(blockchain); // Free the massive Blockchain struct early
 
         // Store block

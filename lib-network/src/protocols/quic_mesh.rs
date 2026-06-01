@@ -353,9 +353,23 @@ impl QuicMeshProtocol {
     /// absolute path chosen by the application.
     #[cfg(test)]
     pub fn new(identity: Arc<ZhtpIdentity>, bind_addr: SocketAddr) -> Result<Self> {
+        // Per-call unique suffix: `process::id()` alone collides when cargo
+        // runs multiple tests in parallel in the same process. Adding a
+        // monotonic counter + nanosecond timestamp gives every call its own
+        // dir, preventing TLS file sharing across concurrent mesh tests
+        // (CR #2660).
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
         let tmp = std::env::temp_dir().join(format!(
-            "zhtp-test-tls-{}",
-            std::process::id()
+            "zhtp-test-tls-{}-{}-{}",
+            std::process::id(),
+            unique,
+            nanos
         ));
         let cert_path = tmp.join("server.crt");
         let key_path = tmp.join("server.key");

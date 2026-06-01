@@ -1429,15 +1429,16 @@ impl lib_consensus::types::ConsensusBlockchainProvider for ConsensusBlockchainAd
         drop(slot);
 
         let blockchain = blockchain_arc.read().await;
-        if blockchain.blocks.is_empty() {
-            // No blocks yet - genesis
-            Ok(lib_crypto::Hash([0u8; 32]))
-        } else {
-            let latest_block = blockchain.blocks.last().unwrap();
+        // #2636: latest_block() is the facade form of `blocks.last()` (identical
+        // semantics — the in-memory hot-window tip).
+        if let Some(latest_block) = blockchain.latest_block() {
             // Convert lib_blockchain::Hash to lib_crypto::Hash
             let block_hash = latest_block.header.hash();
             let hash_bytes = block_hash.as_array();
             Ok(lib_crypto::Hash(hash_bytes))
+        } else {
+            // No blocks yet - genesis
+            Ok(lib_crypto::Hash([0u8; 32]))
         }
     }
 
@@ -1531,7 +1532,7 @@ impl lib_consensus::types::ConsensusBlockchainProvider for ConsensusBlockchainAd
         if let Some(blockchain_arc) = slot.as_ref() {
             // Blockchain is wired and ready
             if let Ok(blockchain) = blockchain_arc.try_read() {
-                return !blockchain.blocks.is_empty() || blockchain.height == 0;
+                return blockchain.latest_block().is_some() || blockchain.height == 0;
             }
         }
         false

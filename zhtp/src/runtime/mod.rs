@@ -86,6 +86,7 @@ pub mod shared_blockchain;
 pub mod shared_dht;
 pub mod storage_provider; // Global access to storage for component sharing
 pub mod validator_ip;
+pub mod divergence_service;
 pub mod storage_rewards;
 #[cfg(test)]
 pub mod test_api_integration;
@@ -2463,7 +2464,11 @@ impl RuntimeOrchestrator {
                     // Log the genesis block hash for verification/debugging.
                     // Note: Full hash verification against CANONICAL_GENESIS_HASH is done
                     // inside lib_blockchain::Blockchain::new() -> GenesisConfig::verify_hash().
-                    if let Some(genesis_block) = bc.blocks.first() {
+                    // #2636: get_block(0) is the facade for genesis. The chain was
+                    // just built in memory (single genesis block) with an empty
+                    // store, so this resolves to the in-memory genesis we are about
+                    // to persist below.
+                    if let Some(genesis_block) = bc.get_block(0) {
                         let genesis_hash = hex::encode(genesis_block.header.block_hash.as_bytes());
                         info!("🔗 Genesis block hash: {}", genesis_hash);
 
@@ -2474,7 +2479,7 @@ impl RuntimeOrchestrator {
                         store_ref
                             .begin_block(0)
                             .map_err(|e| anyhow::anyhow!("Failed to begin genesis block: {}", e))?;
-                        store_ref.append_block(genesis_block).map_err(|e| {
+                        store_ref.append_block(&genesis_block).map_err(|e| {
                             anyhow::anyhow!("Failed to append genesis block: {}", e)
                         })?;
                         store_ref.commit_block().map_err(|e| {
@@ -3303,6 +3308,15 @@ impl RuntimeOrchestrator {
             };
             // Initial discovery + periodic re-check, all in background
             crate::runtime::validator_ip::spawn_periodic_ip_update(own_did, 300);
+        }
+
+        // ====================================================================
+        // State-divergence detector (#2635, Phase 1). No-op unless
+        // ZHTP_DIVERGENCE_DETECT is set. Samples in-memory vs sled state and
+        // reports drift before the read-migration phases flip to sled-first.
+        // ====================================================================
+        if let Ok(blockchain_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
+            crate::runtime::divergence_service::spawn_divergence_detector(blockchain_arc);
         }
 
         // ====================================================================
@@ -5415,9 +5429,9 @@ impl RuntimeOrchestrator {
 
 fn canonical_genesis_hash() -> Result<lib_blockchain::Hash> {
     let bc = lib_blockchain::genesis::GenesisConfig::from_embedded()?.build_block0()?;
+    // #2636: get_block(0) facade (store-less chain → in-memory genesis).
     let genesis = bc
-        .blocks
-        .first()
+        .get_block(0)
         .ok_or_else(|| anyhow::anyhow!("embedded genesis config produced no block 0"))?;
     Ok(genesis.header.calculate_hash())
 }
@@ -5427,9 +5441,10 @@ fn validate_local_restore_compatibility(
     allow_genesis_mismatch: bool,
 ) -> Result<()> {
     let expected_genesis_hash = canonical_genesis_hash()?;
+    // #2636: get_block(0) facade. dat_bc was loaded from a .dat snapshot with no
+    // store attached, so this reads the in-memory genesis (block 0).
     let actual_genesis_hash = dat_bc
-        .blocks
-        .first()
+        .get_block(0)
         .ok_or_else(|| anyhow::anyhow!("blockchain.dat contains no genesis block"))?
         .header
         .calculate_hash();

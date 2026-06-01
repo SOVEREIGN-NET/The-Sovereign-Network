@@ -404,12 +404,19 @@ impl Web4Handler {
             // mempool admit and the executor re-checks at apply time, so a
             // race between preview and apply is harmless (the tx fails
             // cleanly instead of half-applying).
-            let payer_key = lib_blockchain::contracts::utils::wallet_key_for_sov(bytes);
+            //
+            // #2637: read via sled-first token_balance() keyed by key_id,
+            // not via the synthetic-PublicKey balance_of (which had a bug
+            // when dilithium/kyber were zeroed).
+            if blockchain.get_token_contract(&sov_token_id).is_none() {
+                return Err(anyhow!(
+                    "SOV token contract not initialized. Network may still be bootstrapping."
+                ));
+            }
             let user_sov_balance = blockchain
-                .token_contracts
-                .get(&sov_token_id)
-                .map(|t| t.balance_of(&payer_key))
+                .token_balance(&sov_token_id, &bytes)
                 .unwrap_or(0);
+
             info!(
                 " User SOV balance: {} atoms (fee: {} atoms)",
                 user_sov_balance, registration_fee_sov
