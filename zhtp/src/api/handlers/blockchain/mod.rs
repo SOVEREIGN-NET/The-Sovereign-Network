@@ -1113,8 +1113,13 @@ impl BlockchainHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
-        // #2636: full chain via iter_blocks(); query_blocks() summed only the window.
-        let total: usize = blockchain.iter_blocks().map(|b| b.transactions.len()).sum();
+        // #2636: materialize the full chain once (window + sled), then both
+        // count and iterate over the same vector. iter_blocks() on a
+        // store-backed node calls get_block(h) per block; doing it twice
+        // (once for total, once for the loop) doubles the sled work per
+        // request — measurable latency hit on long chains.
+        let all_blocks: Vec<_> = blockchain.iter_blocks().collect();
+        let total: usize = all_blocks.iter().map(|b| b.transactions.len()).sum();
         let total_pages = if total == 0 {
             0
         } else {
@@ -1125,8 +1130,6 @@ impl BlockchainHandler {
         let mut skipped = 0usize;
         let mut transactions = Vec::new();
 
-        // #2636: materialize the full chain (window + sled), then iterate newest-first.
-        let all_blocks: Vec<_> = blockchain.iter_blocks().collect();
         for block in all_blocks.iter().rev() {
             for tx in block.transactions.iter().rev() {
                 if skipped < offset {
