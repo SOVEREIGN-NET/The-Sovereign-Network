@@ -97,6 +97,7 @@ pub trait CatchUpTransport: Send + Sync {
         &self,
         peer_addr: &str,
         our_height: u64,
+        target_height: u64,
     ) -> Result<usize, CatchUpError>;
 }
 
@@ -139,9 +140,19 @@ pub async fn run_catch_up_sync_task(
     // on any success.
     let mut consecutive_wrong_chain_rounds: u32 = 0;
 
-    while let Some(_trigger_height) = rx.recv().await {
-        // Drain any duplicate triggers buffered while we were processing.
-        while rx.try_recv().is_ok() {}
+    while let Some(first_target) = rx.recv().await {
+        // Drain any duplicate triggers buffered while we were processing,
+        // keeping the LARGEST target hint. This matters when divergence
+        // fires many times in quick succession against a moving network —
+        // we want to chase the most-recent (highest) observed height, not
+        // the first one queued. Triggers passing 0 mean "no specific
+        // target" (stall heuristic) and don't lift the running max.
+        let mut target_hint = first_target;
+        while let Ok(next) = rx.try_recv() {
+            if next > target_hint {
+                target_hint = next;
+            }
+        }
 
         // Adaptive rate-limit.
         let now = tokio::time::Instant::now();
@@ -182,7 +193,10 @@ pub async fn run_catch_up_sync_task(
         // wording changes.
         let mut ahead_peers_rejecting: u32 = 0;
         for peer in &peers {
-            match transport.sync_from_peer(&peer.addr, from_height).await {
+            match transport
+                .sync_from_peer(&peer.addr, from_height, target_hint)
+                .await
+            {
                 Ok(0) => {
                     debug!(
                         "Catch-up sync: peer {} at same height ({})",
@@ -292,6 +306,7 @@ mod tests {
             &self,
             _peer_addr: &str,
             _our_height: u64,
+            _target_height: u64,
         ) -> Result<usize, CatchUpError> {
             let n = self.sync_calls.fetch_add(1, Ordering::SeqCst);
             (self.result)(n)

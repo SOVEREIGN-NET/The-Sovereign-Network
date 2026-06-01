@@ -244,7 +244,11 @@ impl ConsensusEngine {
                 our_blockchain_height
             );
             if let Some(ref trigger) = self.catch_up_sync_trigger {
-                trigger.trigger(our_blockchain_height);
+                // Pass vote.height as the target — a peer's vote is firm
+                // evidence the network is AT LEAST at that height. Catch-up
+                // uses this so the worker doesn't stop at a stale first-peer
+                // tip when the chain has already moved further.
+                trigger.trigger(vote.height);
             }
             return Ok(false);
         }

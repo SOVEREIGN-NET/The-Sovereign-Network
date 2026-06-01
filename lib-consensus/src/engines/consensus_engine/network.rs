@@ -187,9 +187,13 @@ impl ConsensusEngine {
                                         self.current_round.height.saturating_sub(1),
                                         last_height_seen,
                                     );
-                                    // Trigger catch-up sync
+                                    // Trigger catch-up sync. `last_height_seen` is
+                                    // the highest height we've observed from any
+                                    // peer — use it as the target hint so catch-up
+                                    // fetches up to that height even if the first
+                                    // peer queried has a stale tip.
                                     if let Some(ref trigger) = self.catch_up_sync_trigger {
-                                        trigger.trigger(self.current_round.height.saturating_sub(1));
+                                        trigger.trigger(last_height_seen);
                                     }
                                 } else {
                                     tracing::info!(
@@ -447,6 +451,9 @@ impl ConsensusEngine {
                                 // behind peers and unable to receive their higher-height votes
                                 // because of the height divergence itself.  This breaks the
                                 // deadlock: detection → action, no in-band message required.
+                                //
+                                // No specific target height: stall is a vague signal — pass 0
+                                // (no hint) so the runtime falls back to peer.tip.
                                 let our_blockchain_height =
                                     self.current_round.height.saturating_sub(1);
                                 if let Some(ref trigger) = self.catch_up_sync_trigger {
@@ -454,7 +461,7 @@ impl ConsensusEngine {
                                         "🔄 Stall detected — triggering catch-up sync from height {}",
                                         our_blockchain_height
                                     );
-                                    trigger.trigger(our_blockchain_height);
+                                    trigger.trigger(0);
                                 }
                             } else {
                                 let timestamp = std::time::SystemTime::now()
@@ -510,14 +517,16 @@ impl ConsensusEngine {
                     } else if current_time.saturating_sub(last_height_advance_secs)
                         >= BOOTSTRAP_CATCHUP_TIMEOUT_SECS
                     {
-                        let our_blockchain_height = h.saturating_sub(1);
+                        let _our_blockchain_height = h.saturating_sub(1);
                         if let Some(ref trigger) = self.catch_up_sync_trigger {
                             tracing::info!(
                                 "🔄 Height {} stuck for {}s — triggering catch-up sync (bootstrap/partition recovery)",
                                 h,
                                 current_time.saturating_sub(last_height_advance_secs)
                             );
-                            trigger.trigger(our_blockchain_height);
+                            // No specific target height for bootstrap-stuck case;
+                            // pass 0 so the runtime uses peer.tip alone.
+                            trigger.trigger(0);
                         }
                         // Reset timer so we don't spam every 5 s
                         last_height_advance_secs = current_time;

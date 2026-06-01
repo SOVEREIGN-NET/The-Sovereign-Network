@@ -488,18 +488,22 @@ impl ConsensusBlockchainProvider for NoOpBlockchainProvider {
 ///
 /// - Implementations MUST be **non-blocking** — fire-and-forget semantics.
 /// - Implementations SHOULD rate-limit internally to avoid hammering peers.
-/// - The `our_height` argument is the local *blockchain* height (not the
-///   consensus round height which is `blockchain_height + 1`).
+/// - `target_height` is the *highest known network height* the caller has
+///   evidence of (typically a vote height observed from a peer). The runtime
+///   uses it as an upper-bound hint so catch-up does not stop early when the
+///   first-queried peer's tip is stale. Pass `0` if no specific target is
+///   known (e.g. stall heuristic) and the runtime will use peer.tip alone.
 pub trait CatchUpSyncTrigger: Send + Sync {
-    /// Signal that a catch-up sync is needed starting from `our_height + 1`.
-    fn trigger(&self, our_height: u64);
+    /// Signal that a catch-up sync is needed. `target_height` is an
+    /// upper-bound hint (see trait docs).
+    fn trigger(&self, target_height: u64);
 }
 
 /// No-op catch-up sync trigger — used in tests and standalone mode.
 pub struct NoOpCatchUpSyncTrigger;
 
 impl CatchUpSyncTrigger for NoOpCatchUpSyncTrigger {
-    fn trigger(&self, _our_height: u64) {}
+    fn trigger(&self, _target_height: u64) {}
 }
 
 /// Callback for committing finalized blocks to the blockchain
