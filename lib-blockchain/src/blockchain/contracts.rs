@@ -1017,6 +1017,69 @@ impl Blockchain {
         self.token_contracts.get_mut(contract_id)
     }
 
+    /// Sled-first balance facade (state-unification #2635 / #2637).
+    ///
+    /// `token_id` and `address` are 32-byte ids (the address is a `key_id`, the
+    /// same form the executor's `StateMutator` uses as the sled `Address`). When
+    /// a `BlockchainStore` is attached it is the authoritative source and a sled
+    /// failure is **propagated as an error** — we do NOT silently fall back to a
+    /// possibly-stale in-memory balance (that masks corrupt-tree / disk-full /
+    /// unmounted-store failures, exactly the class that leads to authorizing a
+    /// transfer on a wrong balance). The in-memory `TokenContract` map is read
+    /// only in store-less mode (unit tests, pre-store bootstrap).
+    ///
+    /// # Mid-block invariant (CR #2658 / blocks Phase 3)
+    ///
+    /// This reads **committed** sled state. Writes staged in the current block's
+    /// `tx_batch` (between `begin_block` and `commit_block`) are NOT visible
+    /// here. HTTP read handlers (the current callers) are never inside a block
+    /// boundary, so this is correct for them. **Before any consensus-path /
+    /// mid-`apply_block` caller uses this facade (Phase 3), a `tx_batch`-aware
+    /// read must be added to `SledStore::get_token_balance`** or that caller
+    /// will see the pre-block value and could authorize a double-spend.
+    pub fn token_balance(
+        &self,
+        token_id: &[u8; 32],
+        address: &[u8; 32],
+    ) -> crate::storage::StorageResult<u128> {
+        if let Some(store) = self.get_store() {
+            let token = crate::storage::TokenId::new(*token_id);
+            let addr = crate::storage::Address::new(*address);
+            // sled is authoritative — propagate errors instead of serving stale in-mem.
+            return store.get_token_balance(&token, &addr);
+        }
+        Ok(self
+            .token_contracts
+            .get(token_id)
+            .and_then(|c| c.find_balance_by_key_id(address))
+            .map(|(_, balance)| balance)
+            .unwrap_or(0))
+    }
+
+    /// Sled-first iterator facade over all token contracts — **METADATA ONLY**
+    /// (#2637).
+    ///
+    /// Returns the authoritative contract set from the store when attached,
+    /// falling back to the in-memory map in store-less mode. Use for listing /
+    /// counting / finding tokens by name/symbol/decimals/supply.
+    ///
+    /// # ⚠️ Balances are NOT populated on these results
+    ///
+    /// Per-address balances live in a **separate** sled tree (`token_balances`),
+    /// not inside the serialized `TokenContract`. A contract deserialized from
+    /// sled has an **empty** `balances` map, so `c.balance_of(addr)` on a result
+    /// of this method **always returns 0**. The name encodes the contract: this
+    /// is metadata only. For balances call [`Self::token_balance`]. (This is the
+    /// footgun the renamed-from-`iter_token_contracts` CR flagged.)
+    pub fn iter_token_contract_metadata(&self) -> Vec<crate::contracts::TokenContract> {
+        if let Some(store) = self.get_store() {
+            if let Ok(iter) = store.iter_token_contracts() {
+                return iter.map(|(_, c)| c).collect();
+            }
+        }
+        self.token_contracts.values().cloned().collect()
+    }
+
     pub fn register_web4_contract(
         &mut self,
         contract_id: [u8; 32],

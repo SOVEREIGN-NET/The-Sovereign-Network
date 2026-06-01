@@ -396,18 +396,19 @@ impl Web4Handler {
                 key_id: owner_wallet_id.into(),
             };
 
-            // Check if SOV token contract exists
-            let sov_token = blockchain
-                .token_contracts
-                .get(&sov_token_id)
-                .ok_or_else(|| {
-                    anyhow!(
-                        "SOV token contract not initialized. Network may still be bootstrapping."
-                    )
-                })?;
+            // #2637: keep the existence check, read the balance via sled-first
+            // token_balance() keyed by key_id. (Fixes the synthetic-PublicKey
+            // balance_of bug — owner_wallet_key has zeroed dilithium/kyber.)
+            if blockchain.get_token_contract(&sov_token_id).is_none() {
+                return Err(anyhow!(
+                    "SOV token contract not initialized. Network may still be bootstrapping."
+                ));
+            }
 
             // Check user's SOV balance
-            let user_sov_balance = sov_token.balance_of(&owner_wallet_key);
+            let user_sov_balance = blockchain
+                .token_balance(&sov_token_id, &owner_wallet_key.key_id)
+                .unwrap_or(0);
 
             info!(
                 " User SOV balance: {} SOV (need {} SOV)",

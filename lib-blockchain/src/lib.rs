@@ -17,6 +17,7 @@ pub mod chain_evaluation;
 pub mod dao;
 pub mod dht_index;
 pub mod difficulty;
+pub mod divergence_detector;
 pub mod edge_node_state;
 pub mod events;
 pub mod exchange;
@@ -308,7 +309,7 @@ pub const TARGET_TIMESPAN: u64 = 14 * 24 * 60 * 60;
 /// Maximum nullifier cache size
 pub const MAX_NULLIFIER_CACHE: usize = 1_000_000;
 
-/// Maximum UTXO cache size  
+/// Maximum UTXO cache size
 pub const MAX_UTXO_CACHE: usize = 10_000_000;
 
 /// Genesis block message

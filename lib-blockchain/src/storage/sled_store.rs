@@ -208,6 +208,32 @@ impl PendingBatch {
         self.trees.entry(name).or_default()
     }
 
+    /// Write-through read for staged operations.
+    ///
+    /// Returns:
+    ///   `Some(Some(value))` — the key was inserted into `tree` during this
+    ///                          block; return the staged value.
+    ///   `Some(None)`        — the key was removed during this block; return
+    ///                          "absent" (caller treats as default).
+    ///   `None`              — the key was not touched in this block; caller
+    ///                          should fall through to committed sled state.
+    ///
+    /// Scans the per-tree ops in REVERSE so the most-recent write wins, since
+    /// repeated set_*/clear_* within a block append to `ops`. Required by the
+    /// state-unification facade contract — a `get_*` issued by
+    /// `process_*_transactions` or `finish_block_processing` after a staged
+    /// write must observe that write, otherwise mid-block reads silently see
+    /// pre-block state. (CR #2658 issue #2.)
+    fn tree_lookup(&self, name: &'static str, key: &[u8]) -> Option<Option<IVec>> {
+        let batch = self.trees.get(name)?;
+        for (k, v) in batch.ops.iter().rev() {
+            if k.as_ref() == key {
+                return Some(v.clone());
+            }
+        }
+        None
+    }
+
     /// Build the durable WAL record for committing block `height`.
     /// Empty per-tree batches are omitted to keep the record compact.
     fn to_wal_record(&self, height: u64) -> WalRecord {
@@ -1480,6 +1506,34 @@ impl BlockchainStore for SledStore {
 
     fn get_token_balance(&self, t: &TokenId, a: &Address) -> StorageResult<Amount> {
         let key = keys::token_balance_key(t, a);
+
+        // Write-through read: if a `set_token_balance` for this key is staged
+        // in the open block's batch, it has not yet flushed to
+        // `self.token_balances` but IS the value any subsequent reader within
+        // the same block should observe. Without this lookup, a balance
+        // updated earlier in `apply_transaction` would still appear as the
+        // pre-block value to `process_*_transactions` later in the same block
+        // — silently authorising a double-spend (CR #2658 issue #2).
+        {
+            let batch_guard = self.tx_batch.lock().unwrap();
+            if let Some(ref batch) = *batch_guard {
+                if let Some(staged) = batch.tree_lookup(TREE_TOKEN_BALANCES, key.as_ref()) {
+                    return match staged {
+                        Some(bytes) => {
+                            if bytes.len() != 16 {
+                                return Err(StorageError::CorruptedData(
+                                    "Invalid balance length in staged batch".to_string(),
+                                ));
+                            }
+                            Ok(u128::from_be_bytes(bytes.as_ref().try_into().unwrap()))
+                        }
+                        // Staged remove → balance was cleared this block.
+                        None => Ok(0),
+                    };
+                }
+            }
+        }
+
         match self.token_balances.get(key) {
             Ok(Some(bytes)) => {
                 if bytes.len() != 16 {
