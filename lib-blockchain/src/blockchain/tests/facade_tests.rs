@@ -8,6 +8,43 @@ use super::*;
 use crate::storage::{Address, IdentityConsensus, SledStore, TokenId};
 use std::sync::Arc;
 
+/// #2637: iter_token_contract_metadata() is sled-first and surfaces the
+/// contract set (name/symbol/decimals/supply). It is METADATA ONLY — per its
+/// doc, per-address balances on the returned contracts are unreliable (the
+/// executor writes balances to a separate token_balances tree, so a contract it
+/// wrote has an empty balances map). Balances must be read via token_balance().
+#[test]
+fn iter_token_contract_metadata_lists_sled_contracts() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("facade_meta_store")).unwrap());
+
+    let creator = crate::integration::crypto_integration::PublicKey::new([1u8; 2592]);
+    let custom = crate::contracts::TokenContract::new(
+        [0xCC; 32],
+        "Meta".to_string(),
+        "MTA".to_string(),
+        8,
+        1_000_000,
+        false,
+        0,
+        creator,
+    );
+    store.begin_block(0).unwrap();
+    store.put_token_contract(&custom).unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+
+    let listed = bc.iter_token_contract_metadata();
+    let mta = listed
+        .iter()
+        .find(|c| c.symbol == "MTA")
+        .expect("MTA contract must be listed from sled");
+    assert_eq!(mta.name, "Meta");
+    assert_eq!(mta.max_supply, 1_000_000);
+}
+
 /// CR #2658 #2/#7: `token_balance` reads COMMITTED sled state. A write staged in
 /// an open block (`begin_block`..`commit_block`) is invisible until commit —
 /// `SledStore::set_token_balance` stages to `tx_batch` but `get_token_balance`
