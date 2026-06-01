@@ -44,6 +44,17 @@ pub fn node_data_dir() -> PathBuf {
 /// `subpath` is joined as-is — pass a relative path like `data/testnet` or
 /// `data/tls/server.crt`, **not** a leading-slash absolute path.
 pub fn node_data_path(subpath: impl AsRef<std::path::Path>) -> PathBuf {
+    let subpath = subpath.as_ref();
+    // Catch absolute-path inputs early: `PathBuf::join` silently drops the
+    // base when the argument is absolute, so an accidental `"/data/..."` or
+    // `"C:\..."` would route persisted files OUTSIDE the node data dir
+    // without any indication. Debug-only — production keeps the silent-drop
+    // behavior to avoid panicking from a stray caller (CR #2660).
+    debug_assert!(
+        subpath.is_relative(),
+        "node_data_path requires a relative subpath, got absolute {:?}",
+        subpath
+    );
     let path = node_data_dir().join(subpath);
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);

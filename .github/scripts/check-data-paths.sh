@@ -13,7 +13,16 @@
 
 set -euo pipefail
 
-hits=$(grep -RInE '"\./data/|PathBuf::from\("\./data/' \
+# Catch every common CWD-relative form:
+#   "./data/..."                            (raw literal)
+#   PathBuf::from("./data/...")             (PathBuf ctor)
+#   Path::new("./data/...")                 (borrowed Path)
+#   std::path::Path::new("./data/...")      (fully-qualified)
+#   PathBuf::from_str("./data/...")         (Result-returning ctor)
+# The character class `[A-Za-z_:]*` matches optional path prefixes
+# (`std::path::`) on Path/PathBuf so qualified forms also trip the guard
+# (CR #2660).
+hits=$(grep -RInE '"\./data/|(PathBuf|Path)::(from|from_str|new)\("\./data/|[A-Za-z_:]+::Path::new\("\./data/' \
     zhtp/src lib-network/src lib-blockchain/src lib-consensus/src \
   | grep -vE '/tests?/|_tests\.rs|/target/|/docs/|/plans/' \
   || true)

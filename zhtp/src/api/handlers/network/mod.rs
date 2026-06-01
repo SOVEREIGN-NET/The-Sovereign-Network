@@ -970,16 +970,19 @@ impl NetworkHandler {
 
         let state = if node_did == "not_initialized" {
             "setup_required"
+        } else if !identity_known_to_chain && chain_height == 0 {
+            // Genuine first-boot: node has a DID but neither the chain knows
+            // about it nor have we loaded any chain state. Check this BEFORE
+            // the `chain_height == 0 → connecting` branch — otherwise this
+            // arm is unreachable and a fresh-boot node always reports
+            // "connecting" instead of the more precise
+            // "identity_not_registered" the mobile setup flow keys off of
+            // (CR #2660).
+            "identity_not_registered"
         } else if chain_height == 0 {
             "connecting"
         } else if validator_count == 0 {
             "connecting"
-        } else if !identity_known_to_chain && chain_height == 0 {
-            // Only flag identity-not-registered if the node also has *no*
-            // chain state — that's the genuine first-boot scenario. A
-            // synced observer with a DID that hasn't been chain-registered
-            // is still fully operational.
-            "identity_not_registered"
         } else {
             "ready"
         };

@@ -146,64 +146,9 @@ impl ConsensusEngine {
                                 timestamp,
                             });
 
-                            // Only transition from Bootstrapping to active consensus
-                            // when the local chain is caught up (within 2 blocks of tip).
-                            // Otherwise stay in Bootstrapping and let catch-up sync run.
-                            //
-                            // Require BOTH a confirmed observation of a peer's height
-                            // (`last_height_seen > 1`) AND local-within-2-of-tip. The old
-                            // `last_height_seen <= 1` short-circuit meant a freshly-restarted
-                            // node — having received zero proposals yet — would treat itself
-                            // as "caught up" and start proposing into a partition before any
-                            // sync. Now we wait until we've actually heard from peers.
-                            if matches!(self.fsm_state, lib_consensus_core::fsm::ValidatorState::Bootstrapping) {
-                                let blockchain_height = self.current_round.height.saturating_sub(1);
-                                let caught_up = last_height_seen > 1
-                                    && blockchain_height + 2 >= last_height_seen;
-
-                                if !caught_up {
-                                    tracing::info!(
-                                        "⛏️ Still catching up: local height {}, network height ~{}. \
-                                         Staying in Bootstrapping.",
-                                        self.current_round.height.saturating_sub(1),
-                                        last_height_seen,
-                                    );
-                                    // Trigger catch-up sync
-                                    if let Some(ref trigger) = self.catch_up_sync_trigger {
-                                        trigger.trigger(self.current_round.height.saturating_sub(1));
-                                    }
-                                } else {
-                                    tracing::info!(
-                                        "🛡️ Caught up at height {} — entering active consensus",
-                                        self.current_round.height,
-                                    );
-                                    // FSM: Bootstrapping → Idle
-                                    let (next, actions) = lib_consensus_core::fsm::transition(
-                                        self.fsm_state.clone(),
-                                        lib_consensus_core::fsm::events::Event::BootstrapComplete,
-                                    );
-                                    self.enter_fsm_state(next).await;
-                                    for action in actions {
-                                        self.dispatch_action(action).await;
-                                    }
-                                    // Idle → Proposing
-                                    let (next, actions) = lib_consensus_core::fsm::transition(
-                                        self.fsm_state.clone(),
-                                        lib_consensus_core::fsm::events::Event::SelectedAsProposer {
-                                            height: self.current_round.height,
-                                            round: self.current_round.round,
-                                        },
-                                    );
-                                    self.enter_fsm_state(next).await;
-                                    for action in actions {
-                                        self.dispatch_action(action).await;
-                                    }
-                                    if let Err(e) = self.enter_propose_step().await {
-                                        tracing::warn!("Failed to enter propose step: {}", e);
-                                    }
-                                }
-                            }
-                            // Re-arm timer
+                            // Re-arm timer; the Bootstrapping→Idle gate runs on every
+                            // tick below (not only on this transition edge), so peers'
+                            // heights arriving later still cause us to advance.
                             timer_token = TimerToken::new(
                                 self.current_round.height,
                                 self.current_round.round,
@@ -233,6 +178,67 @@ impl ConsensusEngine {
                             });
                         }
                         last_bft_mode = current_bft_mode;
+                    }
+
+                    // Bootstrapping→Idle gate: evaluated every tick (not only on
+                    // the mode-transition edge above) so that peer heights observed
+                    // AFTER we entered BFT mode still unblock us. Previously this
+                    // check only ran inside the `current_bft_mode != last_bft_mode`
+                    // block, which meant that if `last_height_seen` was still 0 at
+                    // the moment we transitioned, we'd stay in Bootstrapping forever
+                    // even after peer proposals/votes arrived (CR #2660).
+                    //
+                    // Require BOTH a confirmed observation of a peer's height
+                    // (`last_height_seen > 1`) AND local-within-2-of-tip. The
+                    // weaker `last_height_seen <= 1` short-circuit would let a
+                    // freshly-restarted node — having received zero proposals yet
+                    // — start proposing into a partition before any sync. Fresh
+                    // networks come up via the bootstrap (mining-loop) path until
+                    // enough validators exist for BFT.
+                    if current_bft_mode
+                        && matches!(self.fsm_state, lib_consensus_core::fsm::ValidatorState::Bootstrapping)
+                    {
+                        let blockchain_height = self.current_round.height.saturating_sub(1);
+                        let caught_up = last_height_seen > 1
+                            && blockchain_height + 2 >= last_height_seen;
+
+                        if !caught_up {
+                            tracing::debug!(
+                                "⛏️ Still catching up: local height {}, network height ~{}",
+                                blockchain_height,
+                                last_height_seen,
+                            );
+                            if let Some(ref trigger) = self.catch_up_sync_trigger {
+                                trigger.trigger(last_height_seen);
+                            }
+                        } else {
+                            tracing::info!(
+                                "🛡️ Caught up at height {} — entering active consensus",
+                                self.current_round.height,
+                            );
+                            let (next, actions) = lib_consensus_core::fsm::transition(
+                                self.fsm_state.clone(),
+                                lib_consensus_core::fsm::events::Event::BootstrapComplete,
+                            );
+                            self.enter_fsm_state(next).await;
+                            for action in actions {
+                                self.dispatch_action(action).await;
+                            }
+                            let (next, actions) = lib_consensus_core::fsm::transition(
+                                self.fsm_state.clone(),
+                                lib_consensus_core::fsm::events::Event::SelectedAsProposer {
+                                    height: self.current_round.height,
+                                    round: self.current_round.round,
+                                },
+                            );
+                            self.enter_fsm_state(next).await;
+                            for action in actions {
+                                self.dispatch_action(action).await;
+                            }
+                            if let Err(e) = self.enter_propose_step().await {
+                                tracing::warn!("Failed to enter propose step: {}", e);
+                            }
+                        }
                     }
 
                     // Only process timeouts in BFT mode

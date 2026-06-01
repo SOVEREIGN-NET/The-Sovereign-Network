@@ -558,9 +558,10 @@ impl TokenHandler {
             if let Some(store) = blockchain.get_store() {
                 let storage_token_id = lib_blockchain::storage::TokenId(token_id_array);
                 let addr = lib_blockchain::storage::Address::new(target_key_id);
+                // get_token_balance returns Amount (u128) — no cast needed (CR #2660).
                 store
                     .get_token_balance(&storage_token_id, &addr)
-                    .unwrap_or(0) as u128
+                    .unwrap_or(0)
             } else {
                 token
                     .find_balance_by_key_id(&target_key_id)
@@ -741,9 +742,10 @@ impl TokenHandler {
                 if let Some(store) = blockchain.get_store() {
                     let storage_token_id = lib_blockchain::storage::TokenId(*token_id);
                     let addr = lib_blockchain::storage::Address::new(target_key_id);
+                    // get_token_balance returns Amount (u128) — no cast needed (CR #2660).
                     store
                         .get_token_balance(&storage_token_id, &addr)
-                        .unwrap_or(0) as u128
+                        .unwrap_or(0)
                 } else {
                     token
                         .find_balance_by_key_id(&target_key_id)
