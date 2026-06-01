@@ -1241,8 +1241,8 @@ impl OracleHandler {
         match bc.bootstrap_oracle_committee(members_with_pubkeys) {
             Ok(()) => {
                 // Persist immediately so the change survives restart before next block.
-                let dat_path = std::path::Path::new("./data/testnet/blockchain.dat");
-                if let Err(e) = bc.save_to_file(dat_path) {
+                let dat_path = crate::node_data_path("data/testnet/blockchain.dat");
+                if let Err(e) = bc.save_to_file(&dat_path) {
                     warn!(
                         "Oracle bootstrap: failed to persist blockchain after committee update: {}",
                         e

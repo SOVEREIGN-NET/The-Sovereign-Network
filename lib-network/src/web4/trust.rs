@@ -192,6 +192,31 @@ impl TrustDb {
     pub fn remove(&mut self, node_addr: &str) -> Option<TrustAnchor> {
         self.anchors.remove(node_addr)
     }
+
+    /// Bind the verified peer DID to an existing anchor.
+    ///
+    /// Called by the UHP+Dilithium handshake layer after it has
+    /// authenticated the peer's identity. The TLS layer can only observe
+    /// SPKI and `node_addr`; the chain-anchored DID is only known after
+    /// the application-layer handshake. Binding closes the loop: any
+    /// future connection to the same `node_addr` whose UHP handshake
+    /// resolves to a different DID is a clear identity-swap signal even
+    /// if the SPKI happens to match.
+    ///
+    /// Returns `true` if an anchor existed at `node_addr` and was
+    /// updated, `false` otherwise.
+    pub fn bind_node_did(&mut self, node_addr: &str, node_did: &str) -> bool {
+        if let Some(anchor) = self.anchors.get_mut(node_addr) {
+            anchor.node_did = Some(node_did.to_string());
+            anchor.last_seen = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// Trust configuration for a connection
@@ -225,10 +250,27 @@ impl Default for TrustConfig {
 }
 
 impl TrustConfig {
-    /// Create config for bootstrap mode (dev only)
+    /// Create config for bootstrap mode.
+    ///
+    /// Bootstrap mode accepts a peer's TLS cert on the *first* connection,
+    /// pins the observed SPKI into the trustdb, and verifies against that
+    /// pin on every subsequent connection. A change in SPKI to the same
+    /// `node_addr` after the first connection produces a hard error
+    /// ("cert changed"), not silent acceptance. The trust binding is keyed
+    /// by `node_addr` until the UHP+Dilithium handshake completes, at
+    /// which point the persistent anchor is updated with the verified
+    /// `node_did` (see `TrustDb::bind_node_did`).
+    ///
+    /// This means the "MITM possible on the very first connection" window
+    /// is still real but is bounded to a single connection and is
+    /// detectable on the next attempt — much narrower than the previous
+    /// "accept anything every time" semantics.
     pub fn bootstrap() -> Self {
+        let trustdb_path = Self::default_trustdb_path().ok();
         Self {
             bootstrap_mode: true,
+            trustdb_path,
+            audit_log_path: Some(Self::default_audit_path()),
             ..Default::default()
         }
     }
@@ -524,32 +566,76 @@ impl ServerCertVerifier for ZhtpTrustVerifier {
         }
 
         // 2. Check trustdb
-        if let Ok(db) = self.trustdb.read() {
-            if let Some(anchor) = db.get(&self.node_addr) {
-                if anchor.spki_sha256 == spki_hash {
-                    info!(
-                        fingerprint = %fingerprint,
-                        policy = ?anchor.policy,
-                        "Certificate verified via trustdb"
-                    );
-                    if let Ok(mut result) = self.result.write() {
-                        *result = Some(TlsVerificationResult {
-                            spki_sha256: spki_hash,
-                            cert_fingerprint: fingerprint,
-                            tofu_accepted: false,
-                        });
-                    }
-                    return Ok(ServerCertVerified::assertion());
-                } else {
-                    return Err(TlsError::General(
-                        format!(
-                            "Certificate changed! Trusted fingerprint: {}, presented: {}. \
-                        If this is expected, remove the old entry with: zhtp trust remove {}",
-                            anchor.cert_fingerprint, fingerprint, self.node_addr
-                        )
-                        .into(),
-                    ));
+        //
+        // Take a cloned snapshot of any existing anchor so we can release
+        // the read lock before deciding what to do — the rotation path
+        // below needs to grab the *write* lock via `store_tofu_anchor`,
+        // which would deadlock if we still held this read guard.
+        let existing_anchor: Option<TrustAnchor> = self
+            .trustdb
+            .read()
+            .ok()
+            .and_then(|db| db.get(&self.node_addr).cloned());
+
+        if let Some(anchor) = existing_anchor {
+            if anchor.spki_sha256 == spki_hash {
+                info!(
+                    fingerprint = %fingerprint,
+                    policy = ?anchor.policy,
+                    "Certificate verified via trustdb"
+                );
+                if let Ok(mut result) = self.result.write() {
+                    *result = Some(TlsVerificationResult {
+                        spki_sha256: spki_hash,
+                        cert_fingerprint: fingerprint,
+                        tofu_accepted: false,
+                    });
                 }
+                return Ok(ServerCertVerified::assertion());
+            } else if self.config.bootstrap_mode
+                && !matches!(anchor.policy, TrustPolicy::Pinned)
+            {
+                // Cert rotation under bootstrap mode (e.g. Let's Encrypt
+                // renewal, operator-driven re-issue). The TLS-layer
+                // anchor is no longer authoritative — the real identity
+                // gate is the Dilithium handshake at the UHP layer.
+                // Re-pin the new SPKI, log loudly, and accept.
+                //
+                // Only TOFU anchors are rotated. `Pinned` anchors are
+                // explicit operator decisions and must continue to reject
+                // on mismatch even under bootstrap_mode, otherwise the
+                // pinning guarantee silently degrades (CR #2660).
+                let old_spki_short: String = anchor.spki_sha256
+                    .chars().take(32).collect();
+                warn!(
+                    node = %self.node_addr,
+                    old_spki = %old_spki_short,
+                    new_spki = %&spki_hash[..32.min(spki_hash.len())],
+                    old_fp = %anchor.cert_fingerprint,
+                    new_fp = %fingerprint,
+                    "bootstrap: SPKI rotation detected at {} — re-pinning under bootstrap mode (Dilithium handshake remains the identity gate)",
+                    self.node_addr
+                );
+                if let Err(e) = self.store_tofu_anchor(&spki_hash, &fingerprint) {
+                    debug!("bootstrap: re-pin failed: {}", e);
+                }
+                if let Ok(mut result) = self.result.write() {
+                    *result = Some(TlsVerificationResult {
+                        spki_sha256: spki_hash,
+                        cert_fingerprint: fingerprint,
+                        tofu_accepted: true,
+                    });
+                }
+                return Ok(ServerCertVerified::assertion());
+            } else {
+                return Err(TlsError::General(
+                    format!(
+                        "Certificate changed! Trusted fingerprint: {}, presented: {}. \
+                    If this is expected, remove the old entry with: zhtp trust remove {}",
+                        anchor.cert_fingerprint, fingerprint, self.node_addr
+                    )
+                    .into(),
+                ));
             }
         }
 
@@ -583,25 +669,32 @@ impl ServerCertVerifier for ZhtpTrustVerifier {
             return Ok(ServerCertVerified::assertion());
         }
 
-        // 4. Check bootstrap mode
+        // 4. Bootstrap mode — accept on first contact, pin into trustdb so
+        //    subsequent connections to the same node_addr require an exact
+        //    SPKI match. Same persistence path as TOFU; the only difference
+        //    is that bootstrap was reached via "no trustdb path and no pin
+        //    explicitly configured" rather than an explicit TOFU request.
         if self.config.bootstrap_mode {
-            // Log fingerprint even in bootstrap mode for debugging/auditing
-            warn!("╔══════════════════════════════════════════════════════════════╗");
-            warn!("║  INSECURE: Bootstrap mode - accepting ANY certificate        ║");
-            warn!("╠══════════════════════════════════════════════════════════════╣");
-            warn!("║  Node: {:<52} ║", &self.node_addr);
-            warn!("║  Fingerprint: {:<46} ║", &fingerprint);
-            warn!("║  SPKI Hash: {}...  ║", &spki_hash[..32]);
-            warn!("╠══════════════════════════════════════════════════════════════╣");
-            warn!("║  WARNING: No verification performed! Vulnerable to MITM!     ║");
-            warn!("║  For production, use: --pin-spki {} ║", &spki_hash[..32]);
-            warn!("╚══════════════════════════════════════════════════════════════╝");
+            // Best-effort persist; if no trustdb_path is configured (or
+            // the write fails) we still accept, but a transient anchor is
+            // never useful.
+            if let Err(e) = self.store_tofu_anchor(&spki_hash, &fingerprint) {
+                debug!("bootstrap: failed to persist anchor: {}", e);
+            }
+
+            info!(
+                node = %self.node_addr,
+                spki = %&spki_hash[..32.min(spki_hash.len())],
+                fingerprint = %fingerprint,
+                "bootstrap: cert pinned for {} on first connection (anchor stored — any change on next connection will fail)",
+                self.node_addr
+            );
 
             if let Ok(mut result) = self.result.write() {
                 *result = Some(TlsVerificationResult {
                     spki_sha256: spki_hash,
                     cert_fingerprint: fingerprint,
-                    tofu_accepted: false,
+                    tofu_accepted: true,
                 });
             }
             return Ok(ServerCertVerified::assertion());

@@ -29,6 +29,39 @@ pub fn node_data_dir() -> PathBuf {
         })
 }
 
+/// Resolve `subpath` relative to the global node data directory and ensure
+/// the parent exists.
+///
+/// Use this for every persisted-file path instead of writing raw
+/// CWD-relative string literals. Such literals only work when systemd
+/// happens to set the right `WorkingDirectory=` and break silently when
+/// run any other way; routing everything through here means the
+/// result is the same regardless of how the binary is invoked. The parent
+/// directory of the resolved path is created (best-effort) so background
+/// writers that fire before any other component has materialised the
+/// directory don't blow up on `File::create`.
+///
+/// `subpath` is joined as-is — pass a relative path like `data/testnet` or
+/// `data/tls/server.crt`, **not** a leading-slash absolute path.
+pub fn node_data_path(subpath: impl AsRef<std::path::Path>) -> PathBuf {
+    let subpath = subpath.as_ref();
+    // Catch absolute-path inputs early: `PathBuf::join` silently drops the
+    // base when the argument is absolute, so an accidental `"/data/..."` or
+    // `"C:\..."` would route persisted files OUTSIDE the node data dir
+    // without any indication. Debug-only — production keeps the silent-drop
+    // behavior to avoid panicking from a stray caller (CR #2660).
+    debug_assert!(
+        subpath.is_relative(),
+        "node_data_path requires a relative subpath, got absolute {:?}",
+        subpath
+    );
+    let path = node_data_dir().join(subpath);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    path
+}
+
 pub mod config;
 pub mod integration;
 pub mod messaging;

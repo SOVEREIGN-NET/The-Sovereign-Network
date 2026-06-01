@@ -907,12 +907,20 @@ async fn fetch_and_verify_quorum_proof(
     };
 
     // Build validator_id → consensus_key map from local registry.
+    //
+    // `validator_registry` keys are full DID strings (`"did:zhtp:<hex>"`)
+    // — both seeded-from-bootstrap entries (`seed_validators_from_bootstrap_config`)
+    // and on-chain registrations use that format. A bare `hex::decode` of the
+    // DID string fails and silently filters every validator out, leaving
+    // `validator_keys` empty and every quorum-proof verification to fail with
+    // "local validator set is empty" — blocking catch-up sync entirely.
     let bc = blockchain_arc.read().await;
     let validator_keys: std::collections::HashMap<[u8; 32], [u8; 2592]> = bc
         .get_all_validators()
         .iter()
         .filter_map(|(id_str, info)| {
-            let bytes = hex::decode(id_str).ok()?;
+            let hex_part = id_str.strip_prefix("did:zhtp:").unwrap_or(id_str);
+            let bytes = hex::decode(hex_part).ok()?;
             if bytes.len() != 32 {
                 return None;
             }

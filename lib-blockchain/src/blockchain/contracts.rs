@@ -129,12 +129,49 @@ impl Blockchain {
         );
     }
 
-    /// Process token transfer and mint transactions from a block.
+    /// Process token transfer and mint transactions from a block, with **full
+    /// enforcement** — every error propagates. Used by the new-block commit
+    /// paths (`process_and_commit_block`, `finish_block_processing`) and by
+    /// tests. For boot replay use [`Self::process_token_transactions_replay`].
     pub fn process_token_transactions(&mut self, block: &Block) -> Result<()> {
+        self.process_token_transactions_inner(block, false)
+    }
+
+    /// Boot-replay variant: tolerates non-integrity `TokenTransfer` errors.
+    ///
+    /// During boot-time block replay the in-memory state rebuilt here is
+    /// approximate (the sled-backed `BlockExecutor` is the source of truth and
+    /// is attached AFTER replay completes). Refusing to boot because a
+    /// historical transfer can't be reproduced against this approximate state
+    /// would let any live-committed edge case (unsignable mint address,
+    /// amount > u64, etc.) bring the node down on restart — so such errors are
+    /// downgraded to a warning and the transfer is skipped. Tolerance is scoped
+    /// to `TokenTransfer`; every other transaction type still halts replay.
+    ///
+    /// **Replay-protection (nonce-mismatch) errors are NEVER tolerated**, even
+    /// here: they are integrity violations, not approximate-state reproduction
+    /// issues, and a committed block can never legitimately carry a duplicate
+    /// nonce. Silently skipping one would accept a replayed transfer on boot.
+    ///
+    /// Tolerance keys off this explicit parameter, NOT `self.store.is_none()` —
+    /// unit tests construct store-less blockchains as a harness and must get
+    /// full enforcement, not boot-replay tolerance.
+    pub(crate) fn process_token_transactions_replay(&mut self, block: &Block) -> Result<()> {
+        self.process_token_transactions_inner(block, true)
+    }
+
+    fn process_token_transactions_inner(
+        &mut self,
+        block: &Block,
+        replay_tolerant: bool,
+    ) -> Result<()> {
+        let is_replay = replay_tolerant;
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
 
-        for transaction in &block.transactions {
-            match transaction.transaction_type {
+        'tx_loop: for transaction in &block.transactions {
+            let tx_type = transaction.transaction_type;
+            let arm_result: anyhow::Result<()> = (|| -> anyhow::Result<()> {
+            match tx_type {
                 TransactionType::TokenTransfer => {
                     let transfer = transaction
                         .token_transfer_data()
@@ -737,6 +774,31 @@ impl Blockchain {
                     ));
                 }
                 _ => {}
+            }
+            Ok(())
+            })();
+            if let Err(e) = arm_result {
+                // Replay tolerance covers transfers that can't be reproduced
+                // against approximate in-memory state (insufficient balance,
+                // unsignable address, amount overflow). It must NEVER cover
+                // replay-protection (nonce) errors: a duplicate/replayed nonce
+                // is an integrity violation, and a committed block can never
+                // legitimately contain one, so silently skipping it would accept
+                // a replayed transfer during boot. Those always propagate.
+                let is_replay_protection = e.to_string().contains("nonce mismatch");
+                if is_replay
+                    && tx_type == TransactionType::TokenTransfer
+                    && !is_replay_protection
+                {
+                    warn!(
+                        "Replay: skipping TokenTransfer at height={} tx={}: {}",
+                        block.height(),
+                        hex::encode(&transaction.hash().as_bytes()[..4]),
+                        e,
+                    );
+                    continue 'tx_loop;
+                }
+                return Err(e);
             }
         }
 

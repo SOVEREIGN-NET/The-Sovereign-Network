@@ -602,7 +602,9 @@ impl Default for ValidatorConfig {
             identity_id: String::new(),
             stake: 1000 * 1_000_000, // 1000 SOV minimum stake
             storage_provided: 0, // 0 = pure validator (no storage), can be increased for storage bonus
-            consensus_key_path: "./data/consensus_key.pem".to_string(),
+            consensus_key_path: crate::node_data_path("data/consensus_key.pem")
+                .to_string_lossy()
+                .into_owned(),
             commission_rate: 500, // 5% default
         }
     }

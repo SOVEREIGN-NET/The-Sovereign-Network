@@ -546,10 +546,28 @@ impl TokenHandler {
         } else {
             let pubkey = self.identity_to_pubkey(address)?;
             let target_key_id = pubkey.key_id;
-            token
-                .find_balance_by_key_id(&target_key_id)
-                .map(|(_, bal)| bal)
-                .unwrap_or(0)
+            // When BlockExecutor is active it writes credited balances to the
+            // sled-backed `token_balances` tree under the recipient's 32-byte
+            // key_id, NOT to the in-memory `TokenContract.balances` HashMap
+            // (the legacy `process_token_transactions` path is skipped at
+            // commit-time per `lib-blockchain/src/blockchain.rs:1382`). The
+            // in-memory HashMap therefore lags behind for every custom token
+            // (BUBL etc.) — a fallback to it would silently report 0 BUBL for
+            // every wallet that has received reward transfers. Mirror the
+            // SOV-branch behaviour above and read from sled when present.
+            if let Some(store) = blockchain.get_store() {
+                let storage_token_id = lib_blockchain::storage::TokenId(token_id_array);
+                let addr = lib_blockchain::storage::Address::new(target_key_id);
+                // get_token_balance returns Amount (u128) — no cast needed (CR #2660).
+                store
+                    .get_token_balance(&storage_token_id, &addr)
+                    .unwrap_or(0)
+            } else {
+                token
+                    .find_balance_by_key_id(&target_key_id)
+                    .map(|(_, bal)| bal)
+                    .unwrap_or(0)
+            }
         };
 
         create_json_response(json!({
@@ -718,10 +736,24 @@ impl TokenHandler {
                     0
                 }
             } else {
-                token
-                    .find_balance_by_key_id(&target_key_id)
-                    .map(|(_, bal)| bal)
-                    .unwrap_or(0)
+                // BlockExecutor writes custom-token balances to the sled
+                // `token_balances` tree under the recipient's 32-byte key_id,
+                // not to the in-memory HashMap (commit-time skips the legacy
+                // path per `lib-blockchain/src/blockchain.rs:1382`). Same
+                // divergence as `handle_get_balance` — read sled first.
+                if let Some(store) = blockchain.get_store() {
+                    let storage_token_id = lib_blockchain::storage::TokenId(*token_id);
+                    let addr = lib_blockchain::storage::Address::new(target_key_id);
+                    // get_token_balance returns Amount (u128) — no cast needed (CR #2660).
+                    store
+                        .get_token_balance(&storage_token_id, &addr)
+                        .unwrap_or(0)
+                } else {
+                    token
+                        .find_balance_by_key_id(&target_key_id)
+                        .map(|(_, bal)| bal)
+                        .unwrap_or(0)
+                }
             };
 
             debug!(

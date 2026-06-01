@@ -42,7 +42,9 @@ impl Blockchain {
         self.process_validator_registration_transactions(block);
         self.process_gateway_transactions(block);
         self.process_contract_transactions(block)?;
-        self.process_token_transactions(block)?;
+        // Boot replay: tolerate non-integrity TokenTransfer errors (approximate
+        // in-memory state) but still enforce replay protection. See the method doc.
+        self.process_token_transactions_replay(block)?;
         self.process_nft_transactions(block);
 
         // DAO registry indexing

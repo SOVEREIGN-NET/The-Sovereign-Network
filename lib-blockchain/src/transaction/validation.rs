@@ -1962,9 +1962,44 @@ impl<'a> StatefulTransactionValidator<'a> {
                     }
                 }
 
+                let cbe_token_id = crate::Blockchain::derive_cbe_token_id_pub();
+
+                // Generic token (non-SOV, non-CBE) balance check.
+                // Mirrors the SOV branch above — sled-first read, rejects at
+                // mempool time if sender has insufficient balance. Without
+                // this branch any custom-token transfer (BUBL, etc.) reaches
+                // the block-apply phase with no balance check; the executor
+                // then fails apply on insufficient funds and the safety logic
+                // halts the whole chain. Reject at submission instead.
+                if !is_sov && data.token_id != cbe_token_id {
+                    if let Some(blockchain) = self.blockchain {
+                        let effective_key = if data.from != transaction.signature.public_key.key_id {
+                            transaction.signature.public_key.key_id
+                        } else {
+                            data.from
+                        };
+                        let balance: u128 = if let Some(store) = &blockchain.store {
+                            let storage_token = crate::storage::TokenId(data.token_id);
+                            let addr = crate::storage::Address::new(effective_key);
+                            store.get_token_balance(&storage_token, &addr).unwrap_or(0)
+                        } else {
+                            0
+                        };
+                        if balance < data.amount {
+                            tracing::warn!(
+                                "[TOKEN_TRANSFER] insufficient token balance: token={} from={} have={} need={}",
+                                hex::encode(&data.token_id[..4]),
+                                hex::encode(&data.from[..8]),
+                                balance,
+                                data.amount
+                            );
+                            return Err(ValidationError::InvalidAmount);
+                        }
+                    }
+                }
+
                 // CBE balance check: reject at mempool time if sender has insufficient CBE.
                 // Phase 1B moved all CBE balances to token_balances; cbe_account_state is no longer used.
-                let cbe_token_id = crate::Blockchain::derive_cbe_token_id_pub();
                 if data.token_id == cbe_token_id {
                     if let Some(blockchain) = self.blockchain {
                         let effective_key = if data.from != transaction.signature.public_key.key_id {
