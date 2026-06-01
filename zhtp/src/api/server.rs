@@ -300,10 +300,12 @@ impl ZhtpServer {
 
         let blockchain_stats = {
             let blockchain = self.blockchain.read().await;
-            let block_count = blockchain.blocks.len();
+            // #2636: block_count() is the full chain length; iter_blocks() sums
+            // transactions across the whole chain (hot window + sled), not just
+            // the in-memory window the previous `blocks` reads saw.
+            let block_count = blockchain.block_count() as usize;
             let transaction_count = blockchain
-                .blocks
-                .iter()
+                .iter_blocks()
                 .map(|block| block.transactions.len())
                 .sum::<usize>();
             (block_count, transaction_count)

@@ -142,7 +142,10 @@ impl Blockchain {
             return true;
         }
 
-        self.blocks.iter().any(|block| {
+        // #2636: scan the full chain (window + sled). The previous self.blocks
+        // scan only saw the hot window, so a wallet registered in an aged-out
+        // block was wrongly reported as absent from canonical history.
+        self.iter_blocks().any(|block| {
             block.transactions.iter().any(|tx| {
                 tx.wallet_data()
                     .map(|wallet_data| wallet_data.wallet_id == *wallet_id)

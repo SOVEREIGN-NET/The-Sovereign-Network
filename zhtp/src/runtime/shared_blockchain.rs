@@ -100,11 +100,12 @@ impl SharedBlockchainService {
             } => {
                 let result = {
                     let blockchain = blockchain_arc.read().await;
-                    if height < blockchain.blocks.len() as u64 {
-                        Ok(Some(blockchain.blocks[height as usize].clone()))
-                    } else {
-                        Ok(None)
-                    }
+                    // #2636: get_block(height) resolves by absolute height across
+                    // the hot window AND sled. The previous `blocks[height]`
+                    // indexed the in-memory window by absolute height, which
+                    // silently returned the wrong block (or None) once the window
+                    // slid past genesis on a store-backed node.
+                    Ok(blockchain.get_block(height))
                 };
                 let _ = response_tx.send(result);
             }
@@ -112,9 +113,12 @@ impl SharedBlockchainService {
             BlockchainOperation::GetTransaction { hash, response_tx } => {
                 let result = {
                     let blockchain = blockchain_arc.read().await;
-                    // Search for transaction in all blocks
+                    // Search for transaction in all blocks.
+                    // #2636: iter_blocks() walks the full chain (hot window + sled),
+                    // so this no longer misses transactions in blocks that have
+                    // aged out of the in-memory window on a store-backed node.
                     let mut found_tx = None;
-                    for block in &blockchain.blocks {
+                    for block in blockchain.iter_blocks() {
                         for tx in &block.transactions {
                             if format!("{:?}", tx.hash()) == hash {
                                 found_tx = Some(tx.clone());
@@ -183,10 +187,9 @@ impl SharedBlockchainService {
                         let header = BlockHeader::new(
                             1, // version
                             blockchain
-                                .blocks
-                                .last()
+                                .latest_block()
                                 .map(|b| b.hash())
-                                .unwrap_or_default(), // previous hash
+                                .unwrap_or_default(), // previous hash (#2636: facade form of blocks.last())
                             Hash::default(), // data helix root (simplified)
                             timestamp,
                             blockchain.height + 1, // height

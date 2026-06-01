@@ -15,7 +15,9 @@ impl BlockchainQuery for Blockchain {
     }
 
     fn query_block_count(&self) -> usize {
-        self.blocks.len()
+        // #2636: full chain length, not the hot-window size (`self.blocks.len()`
+        // under-counts once the window slides on a store-backed node).
+        self.block_count() as usize
     }
 
     fn query_block(&self, height: u64) -> Option<Block> {
@@ -155,12 +157,16 @@ impl BlockchainQuery for Blockchain {
     }
 
     fn query_block_range(&self, start: u64, end: u64) -> Vec<Block> {
-        let start = start as usize;
-        let end = (end as usize).min(self.blocks.len().saturating_sub(1));
-        if start >= self.blocks.len() || start > end {
+        // #2636: `start`/`end` are ABSOLUTE heights. `self.blocks` is only the
+        // hot window, so `self.blocks[start..=end]` indexed it by absolute
+        // height — returning the wrong blocks (or empty) once the window slid
+        // past genesis on a store-backed node. get_block(h) resolves each height
+        // across the window AND sled.
+        let end = end.min(self.height);
+        if start > end {
             return Vec::new();
         }
-        self.blocks[start..=end].to_vec()
+        (start..=end).filter_map(|h| self.get_block(h)).collect()
     }
 }
 

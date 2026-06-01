@@ -93,7 +93,12 @@ impl Blockchain {
     pub fn rebuild_pouw_mint_index(&mut self) {
         self.pouw_mint_index.clear();
         let mut total = 0usize;
-        for block in &self.blocks {
+        // #2636: materialize the full chain (window + sled) up front. iter_blocks()
+        // borrows &self, but the loop body mutates self.pouw_mint_index, so we
+        // can't iterate it lazily here; the previous `&self.blocks` scan also
+        // silently bounded the rebuild to the hot window on a pruned node.
+        let blocks: Vec<crate::block::Block> = self.iter_blocks().collect();
+        for block in &blocks {
             let height = block.height();
             for tx in &block.transactions {
                 if tx.transaction_type != TransactionType::TokenMint {
@@ -784,7 +789,11 @@ impl Blockchain {
     }
 
     pub(super) fn reprocess_contract_executions(&mut self) -> Result<()> {
-        let block_count = self.blocks.len();
+        // #2636: full chain (window + sled), materialized up front since the
+        // loop mutates self. The previous `self.blocks` scan only reprocessed
+        // the hot window on a pruned node.
+        let blocks: Vec<crate::block::Block> = self.iter_blocks().collect();
+        let block_count = blocks.len();
         if block_count == 0 {
             return Ok(());
         }
@@ -797,7 +806,7 @@ impl Blockchain {
         let mut tokens_found = 0;
         let mut contract_txs_found = 0;
 
-        for block in &self.blocks.clone() {
+        for block in &blocks {
             for transaction in &block.transactions {
                 if transaction.transaction_type == TransactionType::ContractExecution {
                     contract_txs_found += 1;

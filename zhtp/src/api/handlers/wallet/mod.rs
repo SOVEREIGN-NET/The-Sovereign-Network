@@ -1338,7 +1338,8 @@ impl WalletHandler {
         let mut tx_by_hash: HashMap<String, TransactionRecord> = HashMap::new();
 
         // Search through all blocks for transactions
-        for block in blockchain.query_blocks() {
+        // #2636: iter_blocks() (full chain) — query_blocks() saw only the window.
+        for block in blockchain.iter_blocks() {
             for tx in &block.transactions {
                 if Self::tx_involves_identity(
                     tx,

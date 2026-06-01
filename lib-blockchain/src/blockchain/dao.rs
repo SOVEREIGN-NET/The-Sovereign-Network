@@ -207,12 +207,13 @@ impl Blockchain {
     }
 
     pub fn get_dao_proposals(&self) -> Vec<crate::transaction::DaoProposalData> {
-        self.blocks
-            .iter()
-            .flat_map(|block| &block.transactions)
+        // #2636: iter_blocks() walks the full chain (window + sled); scanning
+        // self.blocks only saw the hot window, silently truncating DAO history
+        // on a store-backed node.
+        self.iter_blocks()
+            .flat_map(|block| block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoProposal)
-            .filter_map(|tx| tx.dao_proposal_data())
-            .cloned()
+            .filter_map(|tx| tx.dao_proposal_data().cloned())
             .collect()
     }
 
@@ -220,46 +221,42 @@ impl Blockchain {
         &self,
         proposal_id: &Hash,
     ) -> Option<crate::transaction::DaoProposalData> {
-        self.blocks
-            .iter()
-            .flat_map(|block| &block.transactions)
+        // #2636: full-chain scan via iter_blocks() (window + sled).
+        self.iter_blocks()
+            .flat_map(|block| block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoProposal)
-            .filter_map(|tx| tx.dao_proposal_data())
+            .filter_map(|tx| tx.dao_proposal_data().cloned())
             .find(|proposal| &proposal.proposal_id == proposal_id)
-            .cloned()
     }
 
     pub fn get_dao_votes_for_proposal(
         &self,
         proposal_id: &Hash,
     ) -> Vec<crate::transaction::DaoVoteData> {
-        self.blocks
-            .iter()
-            .flat_map(|block| &block.transactions)
+        // #2636: full-chain scan via iter_blocks() (window + sled).
+        self.iter_blocks()
+            .flat_map(|block| block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoVote)
-            .filter_map(|tx| tx.dao_vote_data())
+            .filter_map(|tx| tx.dao_vote_data().cloned())
             .filter(|vote| &vote.proposal_id == proposal_id)
-            .cloned()
             .collect()
     }
 
     pub fn get_all_dao_votes(&self) -> Vec<crate::transaction::DaoVoteData> {
-        self.blocks
-            .iter()
-            .flat_map(|block| &block.transactions)
+        // #2636: full-chain scan via iter_blocks() (window + sled).
+        self.iter_blocks()
+            .flat_map(|block| block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoVote)
-            .filter_map(|tx| tx.dao_vote_data())
-            .cloned()
+            .filter_map(|tx| tx.dao_vote_data().cloned())
             .collect()
     }
 
     pub fn get_dao_executions(&self) -> Vec<crate::transaction::DaoExecutionData> {
-        self.blocks
-            .iter()
-            .flat_map(|block| &block.transactions)
+        // #2636: full-chain scan via iter_blocks() (window + sled).
+        self.iter_blocks()
+            .flat_map(|block| block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoExecution)
-            .filter_map(|tx| tx.dao_execution_data())
-            .cloned()
+            .filter_map(|tx| tx.dao_execution_data().cloned())
             .collect()
     }
 
@@ -343,7 +340,9 @@ impl Blockchain {
 
     pub fn rebuild_dao_registry_index(&mut self) {
         let mut rebuilt: HashMap<[u8; 32], DaoRegistryIndexEntry> = HashMap::new();
-        for block in &self.blocks {
+        // #2636: full-chain scan via iter_blocks() (window + sled) so the index
+        // rebuild isn't silently bounded to the hot window on a pruned node.
+        for block in self.iter_blocks() {
             for tx in &block.transactions {
                 if let Some(entry) = Self::dao_registry_entry_from_tx(tx, block.header.height) {
                     rebuilt.entry(entry.dao_id).or_insert(entry);
