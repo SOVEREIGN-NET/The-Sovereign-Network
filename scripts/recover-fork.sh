@@ -66,10 +66,18 @@ fail() { printf '\033[31m[fail]\033[0m %s\n' "$*"; exit 1; }
 # ---- step 1: target tip ----------------------------------------------------
 
 log "querying $TARGET tip..."
-TARGET_TIP=$(ssh "$TARGET" "${TARGET_SUDO} journalctl -u $SERVICE -n 30 --no-pager 2>/dev/null | grep -oE 'height=[0-9]+' | tail -1 | cut -d= -f2" 2>/dev/null || echo "")
-[[ -z "$TARGET_TIP" ]] && fail "could not read $TARGET tip height"
+# Log format examples we accept:
+#   "Block committed at height 112624"   (state_machine commit log)
+#   "Served chain tip: height=112623"    (blockchain API handler log)
+#   "Caught up at height 105622"         (network entering active consensus)
+#   "height 112624 round N"              (proposer log)
+TARGET_TIP=$(ssh "$TARGET" "${TARGET_SUDO} journalctl -u $SERVICE -n 200 --no-pager 2>/dev/null | grep -oE '(height[= ][0-9]+|at height [0-9]+)' | grep -oE '[0-9]+' | sort -n | tail -1" 2>/dev/null || echo "")
+[[ -z "$TARGET_TIP" ]] && fail "could not read $TARGET tip height (journalctl returned no matching lines — node may be down)"
 
-TARGET_HASH=$(ssh "$TARGET" "${TARGET_SUDO} journalctl -u $SERVICE -n 200 --no-pager 2>/dev/null | grep -oE 'block_hash=[a-f0-9]{8,}' | tail -1 | cut -d= -f2" 2>/dev/null || echo "")
+# block_hash from journal log if present. Optional — the majority-quorum
+# check below uses peer-reported hashes regardless of whether we have a
+# local hash to compare against.
+TARGET_HASH=$(ssh "$TARGET" "${TARGET_SUDO} journalctl -u $SERVICE -n 500 --no-pager 2>/dev/null | grep -oE 'block_hash=[a-f0-9]{8,}' | tail -1 | cut -d= -f2" 2>/dev/null || echo "")
 ok "$TARGET at height=$TARGET_TIP hash=${TARGET_HASH:-unknown}"
 
 # ---- step 2: peer tips at same height --------------------------------------
