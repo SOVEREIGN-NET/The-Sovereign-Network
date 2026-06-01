@@ -794,6 +794,7 @@ impl Blockchain {
         let mut new_bytes_per_sov: Option<u64> = None;
         let mut new_witness_cap: Option<u32> = None;
         let mut new_token_creation_fee: Option<u64> = None;
+        let mut new_domain_registration_fee_atoms: Option<u128> = None;
 
         for param in &update.updates {
             match param {
@@ -815,6 +816,9 @@ impl Blockchain {
                 lib_consensus::dao::dao_types::GovernanceParameterValue::TokenCreationFee(v) => {
                     new_token_creation_fee = Some(*v);
                 }
+                lib_consensus::dao::dao_types::GovernanceParameterValue::DomainRegistrationFeeAtoms(v) => {
+                    new_domain_registration_fee_atoms = Some(*v);
+                }
                 _ => {}
             }
         }
@@ -825,6 +829,7 @@ impl Blockchain {
             && new_bytes_per_sov.is_none()
             && new_witness_cap.is_none()
             && new_token_creation_fee.is_none()
+            && new_domain_registration_fee_atoms.is_none()
         {
             return Err(anyhow::anyhow!(
                 "ParameterValidationError: No applicable parameters found in governance update"
@@ -873,6 +878,13 @@ impl Blockchain {
                 ));
             }
         }
+        if let Some(domain_fee) = new_domain_registration_fee_atoms {
+            if domain_fee == 0 {
+                return Err(anyhow::anyhow!(
+                    "ParameterValidationError: domain_registration_fee_atoms cannot be zero"
+                ));
+            }
+        }
 
         info!(
             "📊 Applying difficulty parameter update from proposal {:?}",
@@ -914,6 +926,12 @@ impl Blockchain {
                 self.tx_fee_config.token_creation_fee, token_creation_fee
             );
         }
+        if let Some(domain_fee) = new_domain_registration_fee_atoms {
+            info!(
+                "   domain_registration_fee_atoms: {} → {}",
+                self.tx_fee_config.domain_registration_fee_atoms, domain_fee
+            );
+        }
 
         if let Some(ts) = new_target_timespan {
             self.difficulty_config.target_timespan = ts;
@@ -935,6 +953,10 @@ impl Blockchain {
         }
         if let Some(token_creation_fee) = new_token_creation_fee {
             self.tx_fee_config.token_creation_fee = token_creation_fee;
+            self.tx_fee_config_updated_at_height = self.height;
+        }
+        if let Some(domain_fee) = new_domain_registration_fee_atoms {
+            self.tx_fee_config.domain_registration_fee_atoms = domain_fee;
             self.tx_fee_config_updated_at_height = self.height;
         }
         self.refresh_executor_token_creation_fee_if_needed();

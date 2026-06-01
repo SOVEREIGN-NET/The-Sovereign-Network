@@ -499,10 +499,12 @@ impl lib_consensus_runtime::CatchUpTransport for ZhtpCatchUpTransport {
         &self,
         peer_addr: &str,
         our_height: u64,
+        target_height: u64,
     ) -> Result<usize, lib_consensus_runtime::CatchUpError> {
         match catchup_sync_from_peer(
             peer_addr,
             our_height,
+            target_height,
             &self.blockchain_slot,
             &self.bft_active_height,
         )
@@ -626,6 +628,7 @@ async fn prioritize_catchup_peers(
 async fn catchup_sync_from_peer(
     peer_addr: &str,
     our_height: u64,
+    target_height: u64,
     blockchain_slot: &SharedBlockchainSlot,
     bft_active_height: &Arc<std::sync::atomic::AtomicU64>,
 ) -> anyhow::Result<usize> {
@@ -690,8 +693,16 @@ async fn catchup_sync_from_peer(
     let tip: TipInfo =
         serde_json::from_slice(&tip_resp.body).context("failed to deserialize chain tip")?;
 
-    if tip.height <= our_height {
-        return Ok(0); // Peer is not ahead of us — nothing to download.
+    // Honor target_height as an upper-bound hint: when the caller has
+    // observed a peer voting at height H but the peer we just queried
+    // reports a lower tip (it may be stale or behind), keep going up to
+    // max(peer.tip, target). This is what closes the 1-block-per-round
+    // treadmill where peer.tip is read fresh and equals our_height + 1
+    // because the chain produces at the same rate we're syncing.
+    let effective_tip = tip.height.max(target_height);
+
+    if effective_tip <= our_height {
+        return Ok(0); // Network is not ahead of us — nothing to download.
     }
 
     // Resolve blockchain Arc once, then iterate pages until caught up.
@@ -730,15 +741,13 @@ async fn catchup_sync_from_peer(
     const MAX_BLOCKS_PER_PAGE: u64 = 50;
     const MAX_PAGES_PER_SYNC: usize = 80;
 
-    while next_start <= tip.height && pages < MAX_PAGES_PER_SYNC {
+    while next_start <= effective_tip && pages < MAX_PAGES_PER_SYNC {
         let start = next_start;
-        let end = tip
-            .height
-            .min(start.saturating_add(MAX_BLOCKS_PER_PAGE - 1));
+        let end = effective_tip.min(start.saturating_add(MAX_BLOCKS_PER_PAGE - 1));
 
         info!(
-            "⬇️  Catch-up: fetching blocks {}-{} from {} (peer tip={})",
-            start, end, peer_addr, tip.height
+            "⬇️  Catch-up: fetching blocks {}-{} from {} (peer tip={}, target={})",
+            start, end, peer_addr, tip.height, effective_tip
         );
 
         let blocks_url = format!("/api/v1/blockchain/blocks/{}/{}", start, end);
@@ -767,31 +776,34 @@ async fn catchup_sync_from_peer(
         for block in blocks {
             let height = block.height();
 
-            // BFT finality gate: blocks at or above bft_active_height require a
-            // quorum proof to be applied via catch-up.  This replaces the old
-            // blanket height guard that caused deadlocks when a node missed a BFT
-            // callback — the guard blocked catch-up at the exact height BFT was
-            // stuck on, and BFT couldn't commit because the rest of the network
-            // had already moved on.
+            // BFT finality gate: once the chain has ever been in BFT mode
+            // (`bft_active_height > 0`), every non-genesis block applied via
+            // catch-up MUST carry a verifiable 2f+1 quorum proof — regardless
+            // of whether the block itself is at or above bft_active_height.
             //
-            // With quorum proofs, the guard becomes identity-based: a block with
-            // 2f+1 valid commit signatures IS the BFT-committed block regardless
-            // of what the local consensus engine is working on.
+            // Why this is stricter than before: the previous gate only
+            // required proofs for `height >= bft_active_height`, leaving
+            // pre-BFT-zone heights accepted on prev_hash chain alone. That
+            // gap let a single peer's minority-fork block land in sled
+            // (the May 30 g4 incident: divergent block at h=106880 with
+            // hash `6f1498af…` blocking all subsequent catch-up).
             //
-            // Fallback: blocks without a proof (pre-upgrade, or peer doesn't have
-            // one) are still blocked by the height guard for safety.
+            // Carveouts:
+            //   - height == 0 (genesis): no proof, validated by initial-sync path.
+            //   - `bft_active_height == 0` (chain has never entered BFT mode):
+            //     truly fresh bootstrap, no validator set exists yet. This is
+            //     a vanishingly small window in practice and a separate
+            //     trusted-peer code path covers it.
             let bft_height = bft_active_height.load(std::sync::atomic::Ordering::Acquire);
-            let verified_proof: Option<lib_types::consensus::BftQuorumProof> = if bft_height > 0
-                && height >= bft_height
+            let verified_proof: Option<lib_types::consensus::BftQuorumProof> = if height > 0
+                && bft_height > 0
             {
-                // Block is in the BFT-active zone.  Fetch + verify a quorum
-                // proof from the peer BEFORE acquiring the write lock.
                 match fetch_and_verify_quorum_proof(&mut client, &block, &blockchain_arc).await {
                     Some(proof) => Some(proof),
                     None => {
-                        debug!(
-                            "Catch-up: skipping block {} (BFT active at {}, no valid proof)",
-                            height, bft_height
+                        warn!(
+                            "Catch-up: refusing block {} from {} (no valid quorum proof — could be a divergent minority block)",
+                            height, peer_addr
                         );
                         break;
                     }

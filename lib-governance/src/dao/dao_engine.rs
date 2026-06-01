@@ -484,6 +484,7 @@ impl DaoEngine {
                 | GovernanceParameterValue::TxFeeBytesPerSov(_)
                 | GovernanceParameterValue::TxFeeWitnessCap(_)
                 | GovernanceParameterValue::TokenCreationFee(_)
+                | GovernanceParameterValue::DomainRegistrationFeeAtoms(_)
                 | GovernanceParameterValue::OracleCommitteeMembers(_)
                 | GovernanceParameterValue::OracleEpochDurationSecs(_)
                 | GovernanceParameterValue::OracleMaxSourceAgeSecs(_)
@@ -638,6 +639,13 @@ impl DaoEngine {
                     if *value == 0 {
                         return Err(anyhow::anyhow!(
                             "Token creation fee must be greater than zero"
+                        ));
+                    }
+                }
+                GovernanceParameterValue::DomainRegistrationFeeAtoms(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!(
+                            "Domain registration fee must be greater than zero"
                         ));
                     }
                 }

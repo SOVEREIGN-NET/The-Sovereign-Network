@@ -2728,7 +2728,10 @@ impl ConsensusEngine {
                         self.current_round.round,
                     );
                     if let Some(ref trigger) = self.catch_up_sync_trigger {
-                        trigger.trigger(self.current_round.height.saturating_sub(1));
+                        // We don't have a specific peer-vote target here; the engine
+                        // height is what we're trying to reach, so use it as the
+                        // target hint.
+                        trigger.trigger(self.current_round.height);
                     }
                     return Ok(());
                 }

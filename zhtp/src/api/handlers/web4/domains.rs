@@ -252,28 +252,38 @@ impl Web4Handler {
                 .unwrap_or("no name")
         );
 
-        // Domain registration fee: fixed 10 SOV (in whole tokens for display / signature).
-        // The actual on-chain transfer amount is in 18-decimal atomic units.
-        const DOMAIN_REGISTRATION_FEE_SOV_WHOLE: u64 = 10;
-        const DOMAIN_REGISTRATION_FEE_ATOMIC: u128 =
-            lib_types::sov::atoms(DOMAIN_REGISTRATION_FEE_SOV_WHOLE as u128);
+        // Domain registration fee — read live from `TxFeeConfig` so DAO
+        // governance can change it without a code edit. The on-wire value
+        // (`fee_amount_atoms` on the V2 payload) and the validators'
+        // accepted floor (mempool admit + `process_domain_transactions`)
+        // both come from this same value, so any rate change applied via
+        // governance proposal takes effect uniformly across the network.
+        let registration_fee_sov: u128 = {
+            let blockchain = self.blockchain.read().await;
+            blockchain.tx_fee_config.domain_registration_fee_atoms
+        };
+        // Whole-SOV value for display / signature compatibility with the
+        // existing client signature canonicalisation (which signs the
+        // amount as `u64` whole tokens, not atoms). Truncating division —
+        // governance rates are expected to be whole-SOV multiples and the
+        // signature gate just enforces that the client knew the price.
+        let registration_fee_whole: u64 =
+            (registration_fee_sov / lib_types::TOKEN_SCALE_18) as u64;
 
         // Fee is fixed; if the client provides it explicitly, it must match.
-        let user_provided_fee = simple_request.fee.unwrap_or(DOMAIN_REGISTRATION_FEE_SOV_WHOLE);
-        if user_provided_fee != DOMAIN_REGISTRATION_FEE_SOV_WHOLE {
+        let user_provided_fee = simple_request.fee.unwrap_or(registration_fee_whole);
+        if user_provided_fee != registration_fee_whole {
             return Err(anyhow!(
                 "Invalid fee: provided {} SOV, required exactly {} SOV for domain registration",
                 user_provided_fee,
-                DOMAIN_REGISTRATION_FEE_SOV_WHOLE
+                registration_fee_whole
             ));
         }
 
         info!(
-            " Domain registration fee: {} SOV",
-            DOMAIN_REGISTRATION_FEE_SOV_WHOLE
+            " Domain registration fee: {} SOV (governance-tunable via TxFeeConfig)",
+            registration_fee_whole
         );
-
-        let registration_fee_sov = DOMAIN_REGISTRATION_FEE_ATOMIC;
 
         // ========== SECURITY: SIGNATURE VERIFICATION ==========
         // Verify that the request was signed by the owner's private key
@@ -360,27 +370,25 @@ impl Web4Handler {
             registration_fee_sov
         );
 
-        // Resolve owner's Primary wallet for SOV balance lookup
+        // Resolve owner's Primary wallet. Used both for the optimistic
+        // balance preview below AND populated onto the V2
+        // DomainRegistrationPayload so the validators can debit it at
+        // block-apply time. The actual authoritative balance check runs
+        // inside `StatefulTransactionValidator::validate_transaction_with_state`
+        // for the DomainRegistration tx — this preview is purely a UX
+        // affordance so the client gets a 400 instead of a silently
+        // dropped mempool tx.
         let owner_identity_hash = lib_blockchain::Hash::from_slice(&owner_identity.id.0);
-
-        // Get SOV token contract and check balance
         let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
 
-        // Verify SOV token contract exists (initialized at genesis)
-        {
+        let owner_wallet_id_bytes: [u8; 32] = {
             let blockchain = self.blockchain.read().await;
             if blockchain.query_token_contract(&sov_token_id).is_none() {
                 return Err(anyhow::anyhow!(
                     "SOV token contract not found — genesis may not have initialized correctly"
                 ));
             }
-        }
-
-        // Check SOV balance
-        {
-            let blockchain = self.blockchain.read().await;
-
-            let owner_wallet_id = blockchain
+            let wallet_id = blockchain
                 .wallet_registry
                 .values()
                 .find(|wallet| {
@@ -389,49 +397,51 @@ impl Web4Handler {
                 })
                 .map(|wallet| wallet.wallet_id)
                 .ok_or_else(|| anyhow!("Primary wallet not found for identity"))?;
+            let mut bytes = [0u8; 32];
+            bytes.copy_from_slice(wallet_id.as_bytes());
 
-            let owner_wallet_key = lib_blockchain::integration::crypto_integration::PublicKey {
-                dilithium_pk: [0u8; 2592],
-                kyber_pk: [0u8; 1568],
-                key_id: owner_wallet_id.into(),
-            };
-
-            // #2637: keep the existence check, read the balance via sled-first
-            // token_balance() keyed by key_id. (Fixes the synthetic-PublicKey
-            // balance_of bug — owner_wallet_key has zeroed dilithium/kyber.)
+            // Optimistic UX balance preview — the validator re-checks at
+            // mempool admit and the executor re-checks at apply time, so a
+            // race between preview and apply is harmless (the tx fails
+            // cleanly instead of half-applying).
+            //
+            // #2637: read via sled-first token_balance() keyed by key_id,
+            // not via the synthetic-PublicKey balance_of (which had a bug
+            // when dilithium/kyber were zeroed).
             if blockchain.get_token_contract(&sov_token_id).is_none() {
                 return Err(anyhow!(
                     "SOV token contract not initialized. Network may still be bootstrapping."
                 ));
             }
-
-            // Check user's SOV balance
             let user_sov_balance = blockchain
-                .token_balance(&sov_token_id, &owner_wallet_key.key_id)
+                .token_balance(&sov_token_id, &bytes)
                 .unwrap_or(0);
 
             info!(
-                " User SOV balance: {} SOV (need {} SOV)",
+                " User SOV balance: {} atoms (fee: {} atoms)",
                 user_sov_balance, registration_fee_sov
             );
-
             if user_sov_balance < registration_fee_sov {
                 return Err(anyhow!(
-                    "Insufficient SOV balance. Required: {} SOV, Available: {} SOV. \
-                    You need SOV tokens to register domains.",
+                    "Insufficient SOV balance. Required: {} atoms, Available: {} atoms.",
                     registration_fee_sov,
                     user_sov_balance
                 ));
             }
-        }
+            bytes
+        };
 
-        let fee_tx_hash_hex = self
-            .create_domain_fee_system_tx(&owner_identity, registration_fee_sov)
-            .await?;
-
-        info!(" Domain registration payment complete!");
-        info!("   Fee paid: {} SOV", registration_fee_sov);
-        info!("   Transaction ref: {}", fee_tx_hash_hex);
+        // No out-of-band debit. The V2 DomainRegistrationPayload below carries
+        // `fee_amount_atoms` + `fee_payer_wallet_id`; the debit runs inside
+        // `process_domain_transactions` at block-apply, in the same
+        // `begin_block`/`commit_block` window as every other tx-derived state
+        // change, so it's persisted to sled and survives `sync_in_memory_from_sled`.
+        let fee_tx_hash_hex = String::new();
+        info!(
+            " Domain registration: fee {} atoms ({} SOV) payable by wallet {} — debit at block-apply",
+            registration_fee_sov, registration_fee_whole,
+            hex::encode(&owner_wallet_id_bytes[..8])
+        );
 
         // Prepare content mappings WITH RICH METADATA for storage
         let mut initial_content = HashMap::new();
@@ -623,6 +633,12 @@ impl Web4Handler {
                     tags,
                     duration_days: 365,
                     fee_tx_hash: fee_tx_hash_hex.clone(),
+                    // Canonical fee fields — populated from the live
+                    // governance-configured `TxFeeConfig`. Consensus debit
+                    // happens inside `process_domain_transactions` at
+                    // block-apply time.
+                    fee_amount_atoms: registration_fee_sov,
+                    fee_payer_wallet_id: owner_wallet_id_bytes,
                 };
                 (lib_blockchain::TransactionType::DomainRegistration, payload.encode_memo()
                     .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?)
@@ -805,24 +821,29 @@ impl Web4Handler {
             ));
         }
 
-        const DOMAIN_REGISTRATION_FEE_SOV_WHOLE: u64 = 10;
-        const DOMAIN_REGISTRATION_FEE_ATOMIC: u128 =
-            lib_types::sov::atoms(DOMAIN_REGISTRATION_FEE_SOV_WHOLE as u128);
-        let user_provided_fee = request.fee.unwrap_or(DOMAIN_REGISTRATION_FEE_SOV_WHOLE);
-        if user_provided_fee != DOMAIN_REGISTRATION_FEE_SOV_WHOLE {
+        // Read fee live from governance-tunable TxFeeConfig — same source as
+        // the simple-registration path above.
+        let registration_fee_atoms: u128 = {
+            let blockchain = self.blockchain.read().await;
+            blockchain.tx_fee_config.domain_registration_fee_atoms
+        };
+        let registration_fee_whole: u64 =
+            (registration_fee_atoms / lib_types::TOKEN_SCALE_18) as u64;
+        let user_provided_fee = request.fee.unwrap_or(registration_fee_whole);
+        if user_provided_fee != registration_fee_whole {
             return Err(anyhow!(
                 "Invalid fee: provided {} SOV, required exactly {} SOV for domain registration",
                 user_provided_fee,
-                DOMAIN_REGISTRATION_FEE_SOV_WHOLE
+                registration_fee_whole
             ));
         }
-        let fee_tx_hash_hex = self
-            .create_domain_fee_system_tx(&owner_identity, DOMAIN_REGISTRATION_FEE_ATOMIC)
-            .await?;
-        info!(
-            " Manifest domain registration fee tx accepted: {}",
-            fee_tx_hash_hex
-        );
+        // No out-of-band balance debit — the V2 DomainRegistrationPayload
+        // emitted below carries `fee_amount_atoms` and the fee is settled
+        // inside `process_domain_transactions` at block-apply time. The
+        // `fee_tx_hash` field on the payload retains its audit-trail role
+        // but is no longer the source of truth for the debit.
+        let fee_tx_hash_hex = String::new();
+        let _ = (registration_fee_atoms, fee_tx_hash_hex.clone());
 
         // Register domain using manifest CID
         info!("Registering domain from manifest: {}", request.domain);
@@ -907,6 +928,29 @@ impl Web4Handler {
                 (lib_blockchain::TransactionType::DomainUpdate, payload.encode_memo()
                     .map_err(|e| anyhow::anyhow!("Failed to encode domain update: {}", e))?)
             } else {
+                // Resolve the signer's Primary wallet so the V2 payload can
+                // carry `fee_payer_wallet_id`. Validator + executor both
+                // require this for the canonical fee debit; without it
+                // mempool admit rejects the tx.
+                let owner_identity_hash =
+                    lib_blockchain::Hash::from_slice(&owner_identity.id.0);
+                let owner_wallet_id_bytes: [u8; 32] = {
+                    let bc = self.blockchain.read().await;
+                    let wallet_id = bc
+                        .wallet_registry
+                        .values()
+                        .find(|w| {
+                            w.owner_identity_id.as_ref() == Some(&owner_identity_hash)
+                                && w.wallet_type == "Primary"
+                        })
+                        .map(|w| w.wallet_id)
+                        .ok_or_else(|| {
+                            anyhow!("Primary wallet not found for identity (manifest path)")
+                        })?;
+                    let mut bytes = [0u8; 32];
+                    bytes.copy_from_slice(wallet_id.as_bytes());
+                    bytes
+                };
                 let payload = lib_blockchain::transaction::DomainRegistrationPayload {
                     domain: request.domain.clone(),
                     owner_did: owner_did.clone(),
@@ -921,6 +965,8 @@ impl Web4Handler {
                     tags: vec!["web4".to_string(), "manifest".to_string()],
                     duration_days: 365,
                     fee_tx_hash: fee_tx_hash_hex.clone(),
+                    fee_amount_atoms: registration_fee_atoms,
+                    fee_payer_wallet_id: owner_wallet_id_bytes,
                 };
                 (lib_blockchain::TransactionType::DomainRegistration, payload.encode_memo()
                     .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?)
@@ -958,7 +1004,7 @@ impl Web4Handler {
             "deploy_manifest_cid": request.deploy_manifest_cid,
             "owner": owner_did,
             "registration_id": registration_result.registration_id,
-            "fees_charged": DOMAIN_REGISTRATION_FEE_SOV_WHOLE,
+            "fees_charged": registration_fee_whole,
             "fee_payment_tx_hash": fee_tx_hash_hex,
             "message": "Domain registered successfully"
         });

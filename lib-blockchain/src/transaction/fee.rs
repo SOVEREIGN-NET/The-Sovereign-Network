@@ -5,6 +5,14 @@ pub const DEFAULT_TX_BYTES_PER_SOV: u64 = 100;
 pub const DEFAULT_TX_WITNESS_CAP: u32 = 500;
 pub const DEFAULT_TOKEN_CREATION_FEE: u64 = 1_000;
 
+/// Default DomainRegistration fee, in atomic SOV units (10^18 per whole SOV).
+/// Default value = 10 whole SOV = `10 * 10^18` atoms. The value exceeds
+/// `u64::MAX` at the 19th whole-SOV boundary, so this field is `u128`
+/// rather than `u64` like `token_creation_fee` — `token_creation_fee`
+/// stores a much smaller atom count that fits comfortably in u64.
+pub const DEFAULT_DOMAIN_REGISTRATION_FEE_ATOMS: u128 =
+    10 * lib_types::TOKEN_SCALE_18;
+
 /// Non-refundable SOV burn applied at observer-admission registration time
 /// (observer-admission-3). Provides a small economic barrier against Sybil
 /// observer-node spam beyond the sponsor-identity gate. Debited from the
@@ -13,6 +21,10 @@ pub const OBSERVER_REGISTRATION_FEE: u64 = 1_000;
 
 fn default_token_creation_fee() -> u64 {
     DEFAULT_TOKEN_CREATION_FEE
+}
+
+fn default_domain_registration_fee_atoms() -> u128 {
+    DEFAULT_DOMAIN_REGISTRATION_FEE_ATOMS
 }
 
 /// Governance-configurable fee parameters for the legacy size-based fee model.
@@ -32,6 +44,13 @@ pub struct TxFeeConfig {
     /// Fixed DAO-governed fee for canonical TokenCreation transactions
     #[serde(default = "default_token_creation_fee")]
     pub token_creation_fee: u64,
+    /// DAO-governed flat fee for canonical DomainRegistration transactions,
+    /// in atomic SOV units. Read by both mempool admission validation and
+    /// block-level fee application (`process_domain_transactions`) so the
+    /// debit happens inside consensus rather than as an out-of-band handler
+    /// side effect.
+    #[serde(default = "default_domain_registration_fee_atoms")]
+    pub domain_registration_fee_atoms: u128,
 }
 
 impl Default for TxFeeConfig {
@@ -41,12 +60,18 @@ impl Default for TxFeeConfig {
             bytes_per_sov: DEFAULT_TX_BYTES_PER_SOV,
             witness_cap: DEFAULT_TX_WITNESS_CAP,
             token_creation_fee: DEFAULT_TOKEN_CREATION_FEE,
+            domain_registration_fee_atoms: DEFAULT_DOMAIN_REGISTRATION_FEE_ATOMS,
         }
     }
 }
 
 pub fn required_token_creation_fee(config: &TxFeeConfig) -> u64 {
     config.token_creation_fee
+}
+
+/// Resolve the canonical DomainRegistration fee from the live fee config.
+pub fn required_domain_registration_fee(config: &TxFeeConfig) -> u128 {
+    config.domain_registration_fee_atoms
 }
 
 #[cfg(test)]

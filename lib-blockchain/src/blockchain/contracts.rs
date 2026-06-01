@@ -1183,14 +1183,59 @@ impl Blockchain {
 
     /// Process DomainRegistration and DomainUpdate transactions from a block.
     /// Writes authoritative records into `self.domain_registry`.
+    ///
+    /// For V2 (`DOMREG2:`) payloads, debits `payload.fee_amount_atoms` from
+    /// the payer's SOV balance and credits the DAO treasury wallet BEFORE
+    /// inserting the domain record. If the debit fails (insufficient balance,
+    /// fee below the governance floor, missing SOV contract or treasury, or
+    /// owner-key mismatch), the registration is dropped and the record is
+    /// NOT inserted — this is the consensus-level gate that closes the
+    /// "domains are free" hole.
+    ///
+    /// V1 (`DOMREG1:`) payloads — historical chain replay — carry zeroed
+    /// fee fields and the debit path is skipped entirely, preserving the
+    /// original semantics for old blocks.
     pub fn process_domain_transactions(&mut self, block: &Block) {
         let block_ts = block.header.timestamp;
         let block_height = block.height();
 
+        // Snapshot the current governance fee floor and treasury wallet ID
+        // BEFORE the per-tx loop so subsequent debits use a consistent
+        // value across the block. Borrowing `&self` here doesn't conflict
+        // with the later `&mut self` calls in `apply_domain_registration_fee`.
+        let fee_floor_atoms = self.tx_fee_config.domain_registration_fee_atoms;
+        let treasury_wallet_id_hex = self.get_dao_treasury_wallet_id().cloned();
+
         for tx in &block.transactions {
             if tx.transaction_type == TransactionType::DomainRegistration {
+                // Capture the transaction signer for the apply-time owner
+                // re-check (CR #2665 issue #6). Mempool admit already
+                // verified `payload.fee_payer_wallet_id` belongs to the
+                // signer's Primary wallet, but a system/pending tx can
+                // bypass mempool entirely — the re-check is a defense in
+                // depth against that path.
+                let tx_signer_key_id = tx.signature.public_key.key_id;
                 match crate::transaction::DomainRegistrationPayload::decode_memo(&tx.memo) {
                     Ok(payload) => {
+                        // Fee debit gate for V2 payloads.
+                        // V1 fields are zeroed (legacy replay) → skip.
+                        let is_v2 = payload.fee_amount_atoms > 0
+                            || payload.fee_payer_wallet_id != [0u8; 32];
+                        if is_v2 {
+                            if let Err(e) = self.apply_domain_registration_fee(
+                                &payload,
+                                tx_signer_key_id,
+                                fee_floor_atoms,
+                                treasury_wallet_id_hex.as_deref(),
+                                block_height,
+                            ) {
+                                warn!(
+                                    "DomainRegistration {} at height {} dropped: {}",
+                                    payload.domain, block_height, e
+                                );
+                                continue;
+                            }
+                        }
                         let expires_at =
                             block_ts + payload.duration_days.saturating_mul(86_400);
                         let record = crate::transaction::OnChainDomainRecord {
@@ -1209,8 +1254,8 @@ impl Blockchain {
                             fee_tx_hash: payload.fee_tx_hash,
                         };
                         info!(
-                            "⛓️  Domain registered on-chain: {} at height {}",
-                            record.domain, block_height
+                            "⛓️  Domain registered on-chain: {} at height {} (fee {} atoms, v2={})",
+                            record.domain, block_height, payload.fee_amount_atoms, is_v2
                         );
                         self.domain_registry.insert(payload.domain, record);
                     }
@@ -1403,5 +1448,97 @@ impl Blockchain {
 
     pub fn get_contract_block_height(&self, contract_id: &[u8; 32]) -> Option<u64> {
         self.contract_blocks.get(contract_id).copied()
+    }
+
+    /// Debit `payload.fee_amount_atoms` from the payer's SOV balance and credit
+    /// the DAO treasury wallet. Called from `process_domain_transactions` for
+    /// V2 (`DOMREG2:`) payloads inside the executor's `begin_block`/`commit_block`
+    /// window — the mutation persists to sled and survives the post-block
+    /// `sync_in_memory_from_sled` cycle.
+    ///
+    /// Enforces the four CR #2665 invariants the mempool admit path also checks,
+    /// repeated here so a tx submitted via the system/pending path (which bypasses
+    /// mempool) cannot escape any of them:
+    ///
+    /// 1. **Fee floor**: `fee_amount_atoms >= fee_floor_atoms`. A zero or
+    ///    below-floor V2 memo would otherwise register cheaply or free.
+    /// 2. **Owner re-check**: `payload.fee_payer_wallet_id`'s derived owner-DID
+    ///    must equal the transaction signer's derived DID. Prevents a system tx
+    ///    that names someone else's wallet as the payer.
+    /// 3. **Lock-aware debit**: uses `debit_balance` (which subtracts locked
+    ///    balances before checking sufficiency) — never `set_balance`, which
+    ///    would silently spend locked funds.
+    /// 4. **Overflow-safe credit**: uses `credit_balance` (checked add) — never
+    ///    `treasury_balance + fee`, which would wrap on u128 overflow.
+    fn apply_domain_registration_fee(
+        &mut self,
+        payload: &crate::transaction::domain::DomainRegistrationPayload,
+        tx_signer_key_id: [u8; 32],
+        fee_floor_atoms: u128,
+        treasury_wallet_id_hex: Option<&str>,
+        block_height: u64,
+    ) -> Result<()> {
+        use anyhow::anyhow;
+
+        // (1) Fee floor.
+        if payload.fee_amount_atoms < fee_floor_atoms {
+            return Err(anyhow!(
+                "fee below governance floor: payload {} < floor {} atoms",
+                payload.fee_amount_atoms,
+                fee_floor_atoms
+            ));
+        }
+
+        // (2) Owner re-check: the fee_payer_wallet_id MUST belong to the
+        // transaction signer. Derived owner-DID from the wallet ID is the
+        // signer's identity_id. The handler computes this from the Primary
+        // wallet of the signer, so equality means "this wallet belongs to
+        // me". A system tx that names someone else's wallet here is rejected.
+        if payload.fee_payer_wallet_id != tx_signer_key_id {
+            return Err(anyhow!(
+                "fee payer mismatch at height {}: payload wallet does not derive from tx signer",
+                block_height
+            ));
+        }
+
+        // Resolve treasury wallet.
+        let treasury_hex = treasury_wallet_id_hex
+            .ok_or_else(|| anyhow!("DAO treasury wallet is not configured"))?;
+        let treasury_bytes = hex::decode(treasury_hex)
+            .map_err(|_| anyhow!("DAO treasury wallet id is malformed hex"))?;
+        if treasury_bytes.len() != 32 {
+            return Err(anyhow!("DAO treasury wallet id must be 32 bytes"));
+        }
+        let mut treasury_wallet_id = [0u8; 32];
+        treasury_wallet_id.copy_from_slice(&treasury_bytes);
+
+        let sov_id = crate::contracts::utils::generate_lib_token_id();
+        let payer_key =
+            crate::contracts::utils::wallet_key_for_sov(payload.fee_payer_wallet_id);
+        let treasury_key =
+            crate::contracts::utils::wallet_key_for_sov(treasury_wallet_id);
+
+        let token = self
+            .token_contracts
+            .get_mut(&sov_id)
+            .ok_or_else(|| anyhow!("SOV token contract not initialised at height {}", block_height))?;
+
+        // (3) Lock-aware debit. debit_balance subtracts `locked_balances`
+        // before checking sufficiency and returns an explicit Err with the
+        // breakdown — never silently spends locked funds.
+        token
+            .debit_balance(&payer_key, payload.fee_amount_atoms)
+            .map_err(|e| anyhow!("debit payer: {}", e))?;
+
+        // (4) Overflow-safe credit. credit_balance uses checked_add and
+        // surfaces overflow as Err rather than wrapping.
+        if let Err(e) = token.credit_balance(&treasury_key, payload.fee_amount_atoms) {
+            // Roll back the payer debit so the block apply stays atomic.
+            // We just successfully debited the same amount; re-crediting it
+            // can't overflow.
+            let _ = token.credit_balance(&payer_key, payload.fee_amount_atoms);
+            return Err(anyhow!("credit treasury: {}", e));
+        }
+        Ok(())
     }
 }

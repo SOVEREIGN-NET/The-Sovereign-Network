@@ -2160,6 +2160,77 @@ impl<'a> StatefulTransactionValidator<'a> {
                     );
                     return Err(ValidationError::InvalidTransaction);
                 }
+
+                // Canonical fee enforcement.
+                //
+                // V1 vs V2 is determined by the MEMO PREFIX, not by field values
+                // (CR #2665 issue #1). The previous check keyed off
+                // `fee_amount_atoms > 0 || fee_payer_wallet_id != [0;32]`,
+                // which meant a hand-crafted V2 memo with both fields zeroed
+                // would silently fall through to the "legacy V1" no-check
+                // branch — registering a domain for free.
+                let memo_is_v2 = transaction.memo.starts_with(
+                    crate::transaction::domain::DOMAIN_REGISTRATION_PREFIX_V2,
+                );
+                if memo_is_v2 {
+                    if let Some(bc) = self.blockchain {
+                        let required = bc.tx_fee_config.domain_registration_fee_atoms;
+                        if payload.fee_amount_atoms < required {
+                            tracing::warn!(
+                                "[DOMAIN_REG] underpaid: declared {} atoms, required {} atoms",
+                                payload.fee_amount_atoms,
+                                required
+                            );
+                            return Err(ValidationError::InvalidTransaction);
+                        }
+                        if payload.fee_payer_wallet_id == [0u8; 32] {
+                            tracing::warn!(
+                                "[DOMAIN_REG] V2 payload with zero fee_payer_wallet_id"
+                            );
+                            return Err(ValidationError::InvalidTransaction);
+                        }
+                        let signer_wallet_owned = bc
+                            .wallet_registry
+                            .get(&hex::encode(payload.fee_payer_wallet_id))
+                            .map(|w| {
+                                w.owner_identity_id.as_ref().map(|h| h.as_bytes())
+                                    == Some(&transaction.signature.public_key.key_id)
+                                    && w.wallet_type == "Primary"
+                            })
+                            .unwrap_or(false);
+                        if !signer_wallet_owned {
+                            tracing::warn!(
+                                "[DOMAIN_REG] fee_payer_wallet_id is not the signer's Primary wallet"
+                            );
+                            return Err(ValidationError::InvalidTransaction);
+                        }
+                        let sov_id =
+                            crate::contracts::utils::generate_lib_token_id();
+                        let payer_key =
+                            crate::contracts::utils::wallet_key_for_sov(
+                                payload.fee_payer_wallet_id,
+                            );
+                        // Use available_balance (total - locked) to match the
+                        // executor's debit_balance check at apply time
+                        // (CR #2665 issue #4). Using total balance_of here would
+                        // let a wallet with fully-locked SOV pass mempool admit
+                        // only to fail at apply, which would surface as an
+                        // unexplained dropped registration.
+                        let available = bc
+                            .token_contracts
+                            .get(&sov_id)
+                            .map(|t| t.available_balance(&payer_key))
+                            .unwrap_or(0);
+                        if available < payload.fee_amount_atoms {
+                            tracing::warn!(
+                                "[DOMAIN_REG] insufficient available balance: have {} atoms (excl. locked), need {} atoms",
+                                available,
+                                payload.fee_amount_atoms
+                            );
+                            return Err(ValidationError::InvalidTransaction);
+                        }
+                    }
+                }
             }
             TransactionType::DomainUpdate => {
                 if !transaction
