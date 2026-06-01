@@ -94,47 +94,74 @@ if [[ $DRY_RUN -eq 1 ]]; then
 fi
 
 # ---- step 2: halt all validators -------------------------------------------
+#
+# The safety invariant we actually care about: no node is producing blocks.
+# That's a property of node STATE (FSM in Halting), not of CLI success.
+# Halt-consensus on any single node also broadcasts via mesh to all peers,
+# so a CLI call that fails for half the nodes can still result in 5/5
+# halted state. We therefore:
+#   1. Send halt-consensus to every node (best effort, no abort on failure).
+#   2. Wait for the broadcast to settle.
+#   3. Verify the actual outcome by reading journalctl on each — `HALTED`
+#      log entry within the last 2 minutes.
+#   4. Abort if fewer than 4/5 are actually halted (quorum threshold is 4,
+#      so 4 halted is sufficient to guarantee no block production).
 
 if [[ $SKIP_HALT -eq 1 ]]; then
     log "skip-halt requested — chain must already be stopped"
 else
-    log "halting consensus on all validators..."
-    HALT_OK=0
+    log "sending halt-consensus to all validators (best effort)..."
     for entry in "${NODES[@]}"; do
         IFS='|' read -r alias ip _sudo <<< "$entry"
         if [[ $DRY_RUN -eq 1 ]]; then
             echo "  zhtp-cli -s $ip:9334 node halt-consensus --reason upgrade"
             continue
         fi
-        # halt-consensus is per-node; council role required.
         if ./target/dev-release/zhtp-cli -s "$ip:9334" node halt-consensus --reason upgrade >/dev/null 2>&1; then
-            ok "halt sent: $alias ($ip)"
-            HALT_OK=$((HALT_OK+1))
+            ok "halt sent via CLI: $alias"
         else
-            warn "halt FAILED for $alias ($ip) — continuing; restart will reset state"
+            log "halt CLI failed for $alias — relying on mesh broadcast from other nodes"
         fi
     done
 
     if [[ $DRY_RUN -eq 0 ]]; then
-        [[ $HALT_OK -ge 3 ]] || fail "halt succeeded on $HALT_OK/${#NODES[@]} — abort, chain not safely stopped"
-        sleep 5  # let HaltScheduled propagate
-    fi
-fi
+        log "waiting for halt broadcast to settle (10s)..."
+        sleep 10
 
-# ---- step 3: verify HALTED in logs (best effort) ---------------------------
+        log "verifying HALTED state in each node's journal (window: ${HALT_WAIT_SECS}s)..."
+        ACTUALLY_HALTED=0
+        UNREACHABLE=0
+        for entry in "${NODES[@]}"; do
+            IFS='|' read -r alias _ip sudo <<< "$entry"
+            # Look at the last 2 min of logs — HALTED is repeated every 30s
+            # by the halted loop, so a 2-minute window is generous.
+            if timeout "$HALT_WAIT_SECS" ssh -o ConnectTimeout=10 "$alias" \
+                "${sudo} journalctl -u $SERVICE --since '2 min ago' --no-pager 2>/dev/null | grep -q 'HALTED'" 2>/dev/null
+            then
+                ok "halted (verified via log): $alias"
+                ACTUALLY_HALTED=$((ACTUALLY_HALTED+1))
+            else
+                # Distinguish "node responds but not halted" from "unreachable".
+                if timeout 10 ssh -o ConnectTimeout=10 "$alias" "true" >/dev/null 2>&1; then
+                    warn "reachable but NOT halted: $alias"
+                else
+                    warn "unreachable: $alias (can't verify halt state)"
+                    UNREACHABLE=$((UNREACHABLE+1))
+                fi
+            fi
+        done
 
-if [[ $DRY_RUN -eq 0 && $SKIP_HALT -eq 0 ]]; then
-    log "verifying HALTED in logs (window: ${HALT_WAIT_SECS}s)..."
-    for entry in "${NODES[@]}"; do
-        IFS='|' read -r alias _ip sudo <<< "$entry"
-        if timeout "$HALT_WAIT_SECS" ssh "$alias" \
-            "until ${sudo} journalctl -u $SERVICE --since '1 min ago' --no-pager 2>/dev/null | grep -q 'HALTED'; do sleep 2; done" 2>/dev/null
-        then
-            ok "halted: $alias"
-        else
-            warn "no HALTED log from $alias in ${HALT_WAIT_SECS}s (may still be safe if call returned 200)"
+        TOTAL=${#NODES[@]}
+        # Safety: require at least TOTAL-1 actually halted, regardless of cause.
+        # With 5 nodes and a 4/5 quorum threshold, 4 halted means no node set
+        # of size 4 can vote — chain cannot produce. If we permit 2 unhalted
+        # we'd allow the chain to keep producing during deploy, which is the
+        # exact fork-causing scenario this script exists to prevent.
+        if [[ $ACTUALLY_HALTED -lt $((TOTAL - 1)) ]]; then
+            fail "only $ACTUALLY_HALTED/$TOTAL halted (unreachable: $UNREACHABLE) — abort, chain may still be producing"
         fi
-    done
+        log "halt verified: $ACTUALLY_HALTED/$TOTAL nodes in HALTED state (proceeding)"
+    fi
 fi
 
 # ---- step 4: rsync to all (parallel) ---------------------------------------
