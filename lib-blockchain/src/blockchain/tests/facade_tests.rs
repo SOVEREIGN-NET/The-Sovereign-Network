@@ -45,13 +45,13 @@ fn iter_token_contract_metadata_lists_sled_contracts() {
     assert_eq!(mta.max_supply, 1_000_000);
 }
 
-/// CR #2658 #2/#7: `token_balance` reads COMMITTED sled state. A write staged in
-/// an open block (`begin_block`..`commit_block`) is invisible until commit —
-/// `SledStore::set_token_balance` stages to `tx_batch` but `get_token_balance`
-/// reads the committed tree directly. This documents the invariant that a
-/// consensus-path / mid-`apply_block` caller must NOT rely on this facade.
+/// CR #2658 #2: `token_balance` is now write-through inside an open block.
+/// A `set_token_balance` staged in `tx_batch` between `begin_block` and
+/// `commit_block` is observed by subsequent reads via the facade. Without
+/// this, mid-`apply_block` reads from `process_*_transactions` would see
+/// pre-block state and silently authorise a double-spend.
 #[test]
-fn token_balance_mid_block_reads_committed_pre_block_value() {
+fn token_balance_mid_block_reads_staged_write() {
     let temp = tempfile::tempdir().unwrap();
     let store = Arc::new(SledStore::open(&temp.path().join("midblock_store")).unwrap());
     let token = TokenId::new([3u8; 32]);
@@ -71,13 +71,32 @@ fn token_balance_mid_block_reads_committed_pre_block_value() {
     store.set_token_balance(&token, &addr, 999).unwrap();
     assert_eq!(
         bc.token_balance(&[3u8; 32], &[0x55; 32]).unwrap(),
-        100,
-        "mid-block: facade sees committed pre-block value; staged tx_batch write is invisible"
+        999,
+        "mid-block: facade must observe the staged write (write-through)"
     );
 
-    // After commit, the new value is visible.
+    // After commit, the value persists.
     store.commit_block().unwrap();
     assert_eq!(bc.token_balance(&[3u8; 32], &[0x55; 32]).unwrap(), 999);
+
+    // Multiple staged writes in the same block: last write wins.
+    store.begin_block(2).unwrap();
+    store.set_token_balance(&token, &addr, 1).unwrap();
+    store.set_token_balance(&token, &addr, 7).unwrap();
+    assert_eq!(bc.token_balance(&[3u8; 32], &[0x55; 32]).unwrap(), 7);
+    store.commit_block().unwrap();
+    assert_eq!(bc.token_balance(&[3u8; 32], &[0x55; 32]).unwrap(), 7);
+
+    // Staged remove (zero balance) is observed as 0 even if sled still has the
+    // pre-block value.
+    store.begin_block(3).unwrap();
+    store.set_token_balance(&token, &addr, 0).unwrap();
+    assert_eq!(
+        bc.token_balance(&[3u8; 32], &[0x55; 32]).unwrap(),
+        0,
+        "mid-block: staged remove visible as 0"
+    );
+    store.commit_block().unwrap();
 }
 
 #[test]
