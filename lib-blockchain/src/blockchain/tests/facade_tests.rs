@@ -5,7 +5,7 @@
 //! attached, and degrade gracefully (in-mem / `None`) in store-less mode.
 
 use super::*;
-use crate::storage::{Address, IdentityConsensus, SledStore, TokenId};
+use crate::storage::{Address, IdentityConsensus, IdentityMetadata, SledStore, TokenId};
 use std::sync::Arc;
 
 /// #2637: iter_token_contract_metadata() is sled-first and surfaces the
@@ -162,4 +162,172 @@ fn identity_consensus_by_did_reads_sled() {
     assert_eq!(got.registration_fee, 100);
     // An unknown DID is None even with a store attached.
     assert!(bc.identity_consensus_by_did("did:zhtp:unknown").is_none());
+}
+
+// ---- #2639 identity field facade tests ----
+
+/// Construct a minimal in-memory IdentityTransactionData (no Default derive).
+fn mk_inmem_identity(did: &str) -> crate::transaction::core::IdentityTransactionData {
+    crate::transaction::core::IdentityTransactionData {
+        did: did.to_string(),
+        display_name: "InMem".to_string(),
+        public_key: vec![],
+        ownership_proof: vec![],
+        identity_type: "user".to_string(),
+        did_document_hash: crate::types::hash::Hash::default(),
+        created_at: 0,
+        registration_fee: 0,
+        dao_fee: 0,
+        controlled_nodes: vec![],
+        owned_wallets: vec![],
+        kyber_public_key: vec![],
+    }
+}
+
+fn put_sled_identity(store: &SledStore, height: u64, did: &str, consensus: IdentityConsensus) {
+    let did_hash = crate::storage::did_to_hash(did);
+    store.begin_block(height).unwrap();
+    store.put_identity(&did_hash, &consensus).unwrap();
+    store.commit_block().unwrap();
+}
+
+/// identity_exists() is a union: in-mem (pending/same-block) OR durable sled.
+/// The sled-only case is what a store-backed node sees after restart (the
+/// in-memory registry is empty — no sled->in-mem rebuild).
+#[test]
+fn identity_exists_union_inmem_or_sled() {
+    // store-less: answers from the in-memory shadow.
+    let mut bc = Blockchain::new().unwrap();
+    bc.identity_registry
+        .insert("did:zhtp:inmem".to_string(), mk_inmem_identity("did:zhtp:inmem"));
+    assert!(bc.identity_exists("did:zhtp:inmem"), "in-mem present -> true");
+    assert!(!bc.identity_exists("did:zhtp:ghost"), "absent everywhere -> false");
+
+    // sled-backed with an EMPTY in-mem registry (post-restart simulation):
+    // the sled-only identity must still be found.
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("id_exists")).unwrap());
+    let did = "did:zhtp:sledonly";
+    let did_hash = crate::storage::did_to_hash(did);
+    put_sled_identity(
+        &store,
+        0,
+        did,
+        IdentityConsensus { did_hash, ..Default::default() },
+    );
+    let mut bc2 = Blockchain::new().unwrap();
+    bc2.set_store(store);
+    assert!(
+        !bc2.identity_registry.contains_key(did),
+        "test premise: this DID is sled-only (absent from the in-mem shadow)"
+    );
+    assert!(bc2.identity_exists(did), "sled-only identity found via union");
+    assert!(!bc2.identity_exists("did:zhtp:ghost"));
+}
+
+/// identity_count() reports the authoritative sled count, not the (possibly
+/// empty) in-memory shadow.
+#[test]
+fn identity_count_reads_sled() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("id_count")).unwrap());
+    store.begin_block(0).unwrap();
+    for i in 0..3u8 {
+        let did = format!("did:zhtp:count{}", i);
+        let did_hash = crate::storage::did_to_hash(&did);
+        store
+            .put_identity(&did_hash, &IdentityConsensus { did_hash, ..Default::default() })
+            .unwrap();
+    }
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().unwrap();
+    bc.set_store(store);
+    assert_eq!(bc.identity_count(), 3, "count comes from sled, not the in-mem shadow");
+    assert_eq!(
+        bc.iter_identities_consensus().len(),
+        3,
+        "iter_identities_consensus surfaces the full sled set"
+    );
+}
+
+/// identity_public_key() returns the metadata key ONLY when it is pinned to
+/// consensus (blake3(pk) == consensus.public_key_hash); a drifted key is
+/// refused (None).
+#[test]
+fn identity_public_key_pins_to_consensus() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("id_pk")).unwrap());
+
+    // Pinned: metadata key hashes to consensus.public_key_hash.
+    let did = "did:zhtp:pk-ok";
+    let did_hash = crate::storage::did_to_hash(did);
+    let pk = vec![0x7u8; 2592];
+    let pk_hash = crate::types::hash::blake3_hash(&pk).as_array();
+    store.begin_block(0).unwrap();
+    store
+        .put_identity(
+            &did_hash,
+            &IdentityConsensus { did_hash, public_key_hash: pk_hash, ..Default::default() },
+        )
+        .unwrap();
+    store
+        .put_identity_metadata(
+            &did_hash,
+            &IdentityMetadata {
+                did: did.to_string(),
+                display_name: "Pinned".to_string(),
+                public_key: pk.clone(),
+                ownership_proof: vec![],
+                controlled_nodes: vec![],
+                owned_wallets: vec![],
+                attributes: vec![],
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    // Drifted: metadata key whose hash does NOT match consensus.public_key_hash.
+    let bad = "did:zhtp:pk-drift";
+    let bad_hash = crate::storage::did_to_hash(bad);
+    store.begin_block(1).unwrap();
+    store
+        .put_identity(
+            &bad_hash,
+            &IdentityConsensus { did_hash: bad_hash, public_key_hash: [0xAB; 32], ..Default::default() },
+        )
+        .unwrap();
+    store
+        .put_identity_metadata(
+            &bad_hash,
+            &IdentityMetadata {
+                did: bad.to_string(),
+                display_name: "Drift".to_string(),
+                public_key: vec![0x9u8; 2592],
+                ownership_proof: vec![],
+                controlled_nodes: vec![],
+                owned_wallets: vec![],
+                attributes: vec![],
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().unwrap();
+    bc.set_store(store);
+    assert_eq!(
+        bc.identity_public_key(did),
+        Some(pk),
+        "pinned key returned when blake3(pk) == consensus.public_key_hash"
+    );
+    assert_eq!(
+        bc.identity_public_key(bad),
+        None,
+        "drifted key (hash mismatch) refused"
+    );
+    assert_eq!(
+        bc.identity_display_name(did),
+        Some("Pinned".to_string()),
+        "display_name read from sled metadata"
+    );
 }
