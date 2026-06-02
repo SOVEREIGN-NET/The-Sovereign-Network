@@ -3915,15 +3915,11 @@ mod tests {
         ));
     }
 
-    // #60: reveals a real DAO address-model contradiction, not test drift.
-    // The replay derives token/treasury via public_key_from_key_id (key_id set,
-    // dilithium_pk = 0), but register_dao rejects any key whose as_bytes()
-    // (dilithium_pk) is all-zero — the same condition the register_dao_rejects_*
-    // tests rely on. A zero PublicKey and a key_id-only replay key are therefore
-    // indistinguishable to register_dao, so it cannot accept the replay key
-    // without also accepting a null address. Resolving this is a DAO-feature
-    // decision (canonical address = key_id vs full PublicKey); not a blind fix.
-    #[ignore = "pre-existing DAO address-model bug — see #60"]
+    // #60: the registry reconstruction rebuilds token/treasury keys from on-chain
+    // events that carry only key_ids (dilithium_pk == 0). register_dao now applies
+    // its null-address checks to key_id (the canonical address), matching
+    // derive_dao_id — so reconstructed registrations are accepted instead of being
+    // rejected as "zero address", which had left the queryable registry empty.
     #[test]
     fn dao_registry_replay_applies_only_valid_registration_events() {
         let mut registry = DAORegistry::new();
