@@ -188,7 +188,7 @@ impl MiningService {
                 info!("Total UTXOs: {}", blockchain.utxo_set.len());
                 info!(
                     "Identity Registry: {} entries",
-                    blockchain.identity_registry.len()
+                    blockchain.identity_count() // #2639: sled-authoritative
                 );
 
                 if let Err(e) = index_block_in_dht(&new_block).await {
@@ -236,7 +236,7 @@ impl MiningService {
                         current_height,
                         pending_count,
                         blockchain_guard.utxo_set.len(),
-                        blockchain_guard.identity_registry.len()
+                        blockchain_guard.identity_count() // #2639: sled-authoritative
                     );
 
                     // Check if we have pending transactions

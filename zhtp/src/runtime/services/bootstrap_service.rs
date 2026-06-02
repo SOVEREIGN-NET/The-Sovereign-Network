@@ -157,7 +157,9 @@ impl BootstrapService {
 
         // If same height, check if peer has more identities/data
         if peer_tip.height == local_height {
-            let local_identity_count = local_blockchain.identity_registry.len();
+            // #2639: sled-authoritative count — an empty in-mem registry on a
+            // restarted store-backed node would force needless full-chain re-syncs.
+            let local_identity_count = local_blockchain.identity_count();
             drop(local_blockchain); // Release lock before any network I/O
 
             if peer_tip.identity_count > local_identity_count {
@@ -271,7 +273,7 @@ impl BootstrapService {
             peer_label
         );
         info!("  New height: {}", blockchain_guard.height);
-        info!("  Identities: {}", blockchain_guard.identity_registry.len());
+        info!("  Identities: {}", blockchain_guard.identity_count()); // #2639: sled-authoritative
 
         Ok(blockchain_guard.clone())
     }

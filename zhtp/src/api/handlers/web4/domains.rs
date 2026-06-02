@@ -193,13 +193,13 @@ impl Web4Handler {
                     .await
                     .map_err(|e| anyhow!("Blockchain unavailable: {}", e))?;
                 let bc = bc_arc.read().await;
-                let chain_id = bc.identity_registry.get(&owner_did).ok_or_else(|| {
+                // #2639: sled-first dilithium key (consensus-pinned), in-mem pending fallback.
+                let pk = bc.identity_public_key(&owner_did).ok_or_else(|| {
                     anyhow!(
                         "Owner identity not found on chain: {}. Register this identity first.",
                         owner_did
                     )
                 })?;
-                let pk = chain_id.public_key.clone();
                 drop(bc);
 
                 let pubkey = lib_crypto::PublicKey::new(

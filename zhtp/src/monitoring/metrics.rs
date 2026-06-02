@@ -457,7 +457,7 @@ impl MetricsCollector {
             // pending a real economic-metrics source.
             metrics.total_ubi_distributed = 0;
             metrics.token_circulation = 0;
-            metrics.active_citizens = blockchain.identity_registry.len() as u64; // Active identities as citizens
+            metrics.active_citizens = blockchain.identity_count() as u64; // #2639: sled-authoritative count
             metrics.dao_proposals = blockchain.pending_transactions.len() as u64 / 10; // Estimate proposals
             metrics.dao_votes = blockchain.pending_transactions.len() as u64 / 5; // Estimate votes
 

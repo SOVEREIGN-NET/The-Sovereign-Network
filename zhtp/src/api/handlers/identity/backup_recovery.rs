@@ -437,7 +437,7 @@ pub async fn handle_recover_identity(
     let (display_name, username) = {
         if let Ok(blockchain_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
             let blockchain = blockchain_arc.read().await;
-            let dn = blockchain.identity_registry.get(&did).map(|id| id.display_name.clone());
+            let dn = blockchain.identity_display_name(&did); // #2639: sled-first (metadata)
             let un = blockchain.did_to_username.get(&did).cloned();
             (dn, un)
         } else {
@@ -499,7 +499,7 @@ async fn auto_create_identity_from_seed(
                     // Preserve existing on-chain display_name if available
                     let existing_name = if let Ok(bc_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
                         let bc = bc_arc.read().await;
-                        bc.identity_registry.get(&did).map(|id| id.display_name.clone())
+                        bc.identity_display_name(&did) // #2639: sled-first (metadata)
                     } else {
                         None
                     };

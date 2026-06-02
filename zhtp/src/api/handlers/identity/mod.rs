@@ -1152,7 +1152,7 @@ impl IdentityHandler {
         let (chain_display_name, chain_username) = {
             if let Ok(bc_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
                 let bc = bc_arc.read().await;
-                let dn = bc.identity_registry.get(&did).map(|id| id.display_name.clone());
+                let dn = bc.identity_display_name(&did); // #2639: sled-first (metadata)
                 let un = bc.did_to_username.get(&did).cloned();
                 (dn, un)
             } else {
@@ -1560,8 +1560,9 @@ impl IdentityHandler {
                 .await
                 .map_err(|e| anyhow::anyhow!("Blockchain unavailable: {}", e))?;
             let blockchain = blockchain_arc.read().await;
-            match blockchain.identity_registry.get(&req.did) {
-                Some(id) => id.public_key.clone(),
+            // #2639: sled-first dilithium key (consensus-pinned), in-mem pending fallback.
+            match blockchain.identity_public_key(&req.did) {
+                Some(pk) => pk,
                 None => {
                     return Ok(ZhtpResponse::error(
                         ZhtpStatus::NotFound,

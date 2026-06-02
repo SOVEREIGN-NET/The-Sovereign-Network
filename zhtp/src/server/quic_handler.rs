@@ -892,10 +892,13 @@ impl QuicHandler {
         let chain_created_at = match crate::runtime::blockchain_provider::get_global_blockchain().await {
             Ok(blockchain_arc) => {
                 let blockchain = blockchain_arc.read().await;
+                // #2639: sled-first. The in-memory identity_registry is empty on a
+                // store-backed node after restart (no sled->in-mem rebuild), which
+                // would silently reset peer age to handshake time; the durable
+                // IdentityConsensus projection survives restarts.
                 blockchain
-                    .identity_registry
-                    .get(peer_did)
-                    .map(|id| id.created_at)
+                    .identity_consensus_by_did(peer_did)
+                    .map(|c| c.created_at)
             }
             Err(_) => None,
         };
@@ -1548,10 +1551,15 @@ impl QuicHandler {
         // Gateways that are not yet formally registered in gateway_registry can
         // still forward traffic if their DID exists in identity_registry.
         // This allows operators to deploy a gateway and register on-chain later.
-        if let Some(identity_data) = blockchain_guard.get_identity(&ctx.gateway_did) {
+        // #2639: source the gateway key sled-first and consensus-pinned. The
+        // in-memory identity_registry is empty after restart on a store-backed
+        // node, which would silently drop a legitimate gateway to the testnet
+        // "unknown DID — allowing" branch below. identity_public_key returns the
+        // metadata key ONLY when blake3(key) == consensus.public_key_hash.
+        if let Some(gateway_pk_bytes) = blockchain_guard.identity_public_key(&ctx.gateway_did) {
             warn!(did = %ctx.gateway_did, "Gateway not in gateway_registry — falling back to identity_registry (register on-chain for production)");
 
-            match verify_gateway_identity_fallback(&ctx, &sig_bytes, identity_data) {
+            match verify_gateway_identity_fallback(&ctx, &sig_bytes, &gateway_pk_bytes) {
                 Ok(true) => {
                     drop(blockchain_guard);
                     let mut bc = blockchain.write().await;
@@ -1591,19 +1599,22 @@ fn verify_gateway_identity(
 fn verify_gateway_identity_fallback(
     ctx: &lib_protocols::forward_context::ForwardedClientContext,
     sig_bytes: &[u8],
-    identity_data: &lib_blockchain::transaction::core::IdentityTransactionData,
+    gateway_public_key: &[u8],
 ) -> Result<bool, anyhow::Error> {
     use lib_protocols::forward_context::verify_context;
 
-    if identity_data.public_key.len() != 2592 {
+    // #2639: takes raw key bytes (sourced sled-first + consensus-pinned by the
+    // caller) instead of the in-memory IdentityTransactionData, decoupling the
+    // gateway-auth verifier from the legacy in-memory identity type.
+    if gateway_public_key.len() != 2592 {
         return Err(anyhow::anyhow!(
             "Registered identity does not have a full Dilithium public key (len={})",
-            identity_data.public_key.len()
+            gateway_public_key.len()
         ));
     }
 
     let mut dilithium_pk = [0u8; 2592];
-    dilithium_pk.copy_from_slice(&identity_data.public_key);
+    dilithium_pk.copy_from_slice(gateway_public_key);
     let gateway_pubkey = lib_crypto::PublicKey::new(dilithium_pk);
 
     verify_context(ctx, sig_bytes, &gateway_pubkey)

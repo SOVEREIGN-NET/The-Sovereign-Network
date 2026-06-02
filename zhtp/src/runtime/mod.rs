@@ -1182,7 +1182,7 @@ impl RuntimeOrchestrator {
                         info!(
                             "Block replay complete: height={}, identities={}, validators={}, domains={}, credentials={}",
                             bc.height,
-                            bc.identity_registry.len(),
+                            bc.identity_count(), // #2639: sled-authoritative
                             bc.validator_registry.len(),
                             bc.domain_registry.len(),
                             bc.credential_registry.len(),

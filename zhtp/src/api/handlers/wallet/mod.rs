@@ -1588,10 +1588,9 @@ impl WalletHandler {
                 .map_err(|e| anyhow::anyhow!("blockchain unavailable: {}", e))?;
             let blockchain = blockchain_arc.read().await;
             let did = format!("did:zhtp:{}", owner_hex);
+            // #2639: sled-first dilithium key (consensus-pinned), in-mem pending fallback.
             blockchain
-                .identity_registry
-                .get(&did)
-                .map(|id| id.public_key.clone())
+                .identity_public_key(&did)
                 .unwrap_or_else(|| vec![0u8; 2592])
         };
 

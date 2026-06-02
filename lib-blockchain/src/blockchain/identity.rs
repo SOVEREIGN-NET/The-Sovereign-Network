@@ -165,23 +165,30 @@ impl Blockchain {
     /// auth path trust sled's durable state while catching any metadata↔consensus
     /// drift (exactly the divergence class #2645 exists to eliminate).
     ///
-    /// Falls back to the in-memory shadow only in store-less mode.
+    /// Union semantics: a sled-COMMITTED identity is served pinned; an identity
+    /// not yet in sled (pending / same-block, or store-less mode) falls back to
+    /// the in-memory shadow so callers don't regress in the pre-commit window.
+    /// A hash MISMATCH on a committed identity returns `None` (refuse) — it
+    /// signals real drift, and the shadow is no more trustworthy than sled there.
     pub fn identity_public_key(&self, did: &str) -> Option<Vec<u8>> {
         if let Some(store) = self.get_store() {
             let did_hash = crate::storage::did_to_hash(did);
-            let consensus = store.get_identity(&did_hash).ok().flatten()?;
-            let metadata = store.get_identity_metadata(&did_hash).ok().flatten()?;
-            // Pin the metadata key to the consensus-committed hash before trusting it.
-            if crate::types::hash::blake3_hash(&metadata.public_key).as_array()
-                != consensus.public_key_hash
-            {
-                tracing::warn!(
-                    did = %did,
-                    "identity_public_key: metadata key hash != consensus public_key_hash; refusing drifted key"
-                );
-                return None;
+            if let Some(consensus) = store.get_identity(&did_hash).ok().flatten() {
+                // Committed to sled — pin the metadata key to consensus.
+                let metadata = store.get_identity_metadata(&did_hash).ok().flatten()?;
+                if crate::types::hash::blake3_hash(&metadata.public_key).as_array()
+                    != consensus.public_key_hash
+                {
+                    tracing::warn!(
+                        did = %did,
+                        "identity_public_key: metadata key hash != consensus public_key_hash; refusing drifted key"
+                    );
+                    return None;
+                }
+                return Some(metadata.public_key);
             }
-            return Some(metadata.public_key);
+            // Not committed to sled yet — fall through to the in-memory shadow,
+            // which still holds pending / same-block registrations.
         }
         self.identity_registry.get(did).map(|id| id.public_key.clone())
     }
@@ -197,7 +204,7 @@ impl Blockchain {
             if let Some(meta) = store.get_identity_metadata(&did_hash).ok().flatten() {
                 return Some(meta.display_name);
             }
-            return None;
+            // Not in sled yet — fall through to the in-memory pending shadow.
         }
         self.identity_registry.get(did).map(|id| id.display_name.clone())
     }

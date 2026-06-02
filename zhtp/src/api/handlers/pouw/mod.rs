@@ -199,10 +199,11 @@ impl PouwHandler {
                 {
                     Ok(blockchain_arc) => {
                         let blockchain = blockchain_arc.read().await;
+                        // #2639: sled-first — durable created_at survives restart
+                        // (in-mem registry is empty on a store-backed node then).
                         blockchain
-                            .identity_registry
-                            .get(client_did)
-                            .map(|id| id.created_at)
+                            .identity_consensus_by_did(client_did)
+                            .map(|c| c.created_at)
                             .unwrap_or(identity.created_at)
                     }
                     Err(_) => identity.created_at,
