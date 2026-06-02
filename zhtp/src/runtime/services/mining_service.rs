@@ -262,32 +262,24 @@ impl MiningService {
                                     vm_guard.select_proposer(next_height, consensus_round)
                                 {
                                     let node_id_hex = hex::encode(node_id.as_bytes());
-                                    let mut is_proposer = false;
 
-                                    // Find which user controls this node
-                                    for (did_string, identity_data) in
-                                        blockchain_guard.identity_registry.iter()
-                                    {
-                                        if identity_data.controlled_nodes.contains(&node_id_hex) {
-                                            if let Some(identity_hex) =
-                                                did_string.strip_prefix("did:zhtp:")
-                                            {
-                                                if let Ok(identity_bytes) =
-                                                    hex::decode(identity_hex)
-                                                {
-                                                    let user_identity_hash =
-                                                        lib_crypto::Hash::from_bytes(
-                                                            &identity_bytes[..32],
-                                                        );
-
-                                                    if user_identity_hash == proposer.identity {
-                                                        is_proposer = true;
-                                                        info!(" CONSENSUS: This node selected as block proposer");
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                        }
+                                    // #2639: point-lookup the SELECTED PROPOSER's
+                                    // controlled nodes from sled metadata. The old
+                                    // scan of the in-memory identity_registry found
+                                    // nothing on a store-backed node after restart
+                                    // (the shadow is empty), so a validator never
+                                    // recognized itself as proposer and stopped
+                                    // producing blocks. This node is the proposer iff
+                                    // the proposer controls it.
+                                    let proposer_did = format!(
+                                        "did:zhtp:{}",
+                                        hex::encode(proposer.identity.as_bytes())
+                                    );
+                                    let is_proposer = blockchain_guard
+                                        .identity_controlled_nodes(&proposer_did)
+                                        .map_or(false, |nodes| nodes.contains(&node_id_hex));
+                                    if is_proposer {
+                                        info!(" CONSENSUS: This node selected as block proposer");
                                     }
 
                                     is_proposer

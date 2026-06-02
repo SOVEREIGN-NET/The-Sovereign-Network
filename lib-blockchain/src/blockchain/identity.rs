@@ -212,6 +212,31 @@ impl Blockchain {
         self.identity_registry.get(did).map(|id| id.display_name.clone())
     }
 
+    /// Node IDs (hex) controlled by a DID, sled-first (#2639).
+    ///
+    /// `controlled_nodes` is metadata (persisted by the executor to the
+    /// `identity_metadata` tree on registration and identity update). Reading it
+    /// from durable sled — instead of the in-memory `identity_registry`, which is
+    /// empty on a store-backed node after restart — is what lets a restarted
+    /// validator still resolve which nodes a user controls (and thus recognize
+    /// itself as the selected proposer; consensus liveness).
+    ///
+    /// Returns `None` when the DID is unknown, `Some(vec)` when it exists (the vec
+    /// may be empty). In-memory shadow is consulted only when sled has no record
+    /// (store-less mode, or a pending pre-commit registration).
+    pub fn identity_controlled_nodes(&self, did: &str) -> Option<Vec<String>> {
+        if let Some(store) = self.get_store() {
+            let did_hash = crate::storage::did_to_hash(did);
+            if let Some(meta) = store.get_identity_metadata(&did_hash).ok().flatten() {
+                return Some(meta.controlled_nodes);
+            }
+            // Not committed to sled — fall through to the in-memory shadow.
+        }
+        self.identity_registry
+            .get(did)
+            .map(|id| id.controlled_nodes.clone())
+    }
+
     pub fn update_identity(
         &mut self,
         did: &str,
