@@ -199,10 +199,11 @@ impl PouwHandler {
                 {
                     Ok(blockchain_arc) => {
                         let blockchain = blockchain_arc.read().await;
+                        // #2639: sled-first — durable created_at survives restart
+                        // (in-mem registry is empty on a store-backed node then).
                         blockchain
-                            .identity_registry
-                            .get(client_did)
-                            .map(|id| id.created_at)
+                            .identity_consensus_by_did(client_did)
+                            .map(|c| c.created_at)
                             .unwrap_or(identity.created_at)
                     }
                     Err(_) => identity.created_at,
@@ -1358,23 +1359,28 @@ mod tests {
         register_known_identity(&identity_manager, client_did).await;
         let handler = PouwHandler::new(generator, validator, reward_calculator, identity_manager);
 
+        // The /pouw/rewards/{did} endpoint reports PAID, on-chain rewards read
+        // from the blockchain's pouw_mint_index (keyed by the client's key_id) —
+        // NOT the in-memory RewardCalculator. Seed one mint record + a global
+        // blockchain so the endpoint has data to return.
         {
-            let calc = &*handler.reward_calculator;
-            let validated = vec![ValidatedReceipt {
-                receipt_nonce: vec![1u8; 16],
-                client_did: client_did.to_string(),
-                task_id: vec![2u8; 16],
-                proof_type: ProofType::Hash,
-                bytes_verified: 4096,
-                validated_at: 1_700_003_601,
-                challenge_nonce: vec![3u8; 16],
-                manifest_cid: None,
-                domain: None,
-                route_hops: None,
-                route_intermediaries: vec![],
-                served_from_cache: None,
-            }];
-            let _ = calc.calculate_epoch_rewards(&validated, 1).await.unwrap();
+            let mut bc = lib_blockchain::Blockchain::new().unwrap();
+            let mut key_id = [0u8; 32];
+            key_id.copy_from_slice(
+                &hex::decode(client_did.strip_prefix("did:zhtp:").unwrap()).unwrap(),
+            );
+            bc.pouw_mint_index.insert(
+                key_id,
+                vec![lib_blockchain::PouwMintRecord {
+                    amount: 1_000_000_000_000,
+                    block_height: 1,
+                    tx_hash: [0u8; 32],
+                }],
+            );
+            crate::runtime::blockchain_provider::initialize_global_blockchain_provider()
+                .set_blockchain(Arc::new(RwLock::new(bc)))
+                .await
+                .unwrap();
         }
 
         let mut req = ZhtpRequest::get(

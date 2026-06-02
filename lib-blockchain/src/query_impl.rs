@@ -41,7 +41,9 @@ impl BlockchainQuery for Blockchain {
     }
 
     fn query_identity_exists(&self, did: &str) -> bool {
-        self.identity_registry.contains_key(did)
+        // #2639: sled-first — the in-memory registry can be empty/partial on a
+        // store-backed node after restart or window prune.
+        self.identity_exists(did)
     }
 
     fn query_identity(&self, did: &str) -> Option<&IdentityTransactionData> {
@@ -53,7 +55,8 @@ impl BlockchainQuery for Blockchain {
     }
 
     fn query_identity_count(&self) -> usize {
-        self.identity_registry.len()
+        // #2639: authoritative sled count (in-memory shadow is non-durable).
+        self.identity_count()
     }
 
     fn query_wallet_exists(&self, wallet_id: &str) -> bool {

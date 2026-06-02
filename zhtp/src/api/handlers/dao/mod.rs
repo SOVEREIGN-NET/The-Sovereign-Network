@@ -3915,6 +3915,11 @@ mod tests {
         ));
     }
 
+    // #60: the registry reconstruction rebuilds token/treasury keys from on-chain
+    // events that carry only key_ids (dilithium_pk == 0). register_dao now applies
+    // its null-address checks to key_id (the canonical address), matching
+    // derive_dao_id — so reconstructed registrations are accepted instead of being
+    // rejected as "zero address", which had left the queryable registry empty.
     #[test]
     fn dao_registry_replay_applies_only_valid_registration_events() {
         let mut registry = DAORegistry::new();

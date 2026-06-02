@@ -193,13 +193,13 @@ impl Web4Handler {
                     .await
                     .map_err(|e| anyhow!("Blockchain unavailable: {}", e))?;
                 let bc = bc_arc.read().await;
-                let chain_id = bc.identity_registry.get(&owner_did).ok_or_else(|| {
+                // #2639: sled-first dilithium key (consensus-pinned), in-mem pending fallback.
+                let pk = bc.identity_public_key(&owner_did).ok_or_else(|| {
                     anyhow!(
                         "Owner identity not found on chain: {}. Register this identity first.",
                         owner_did
                     )
                 })?;
-                let pk = chain_id.public_key.clone();
                 drop(bc);
 
                 let pubkey = lib_crypto::PublicKey::new(
@@ -2371,7 +2371,8 @@ mod tests {
             kyber_pk: [0u8; 1568],
             key_id: owner_wallet_id,
         };
-        sov.mint(&owner_wallet_key, 100).unwrap();
+        // 11 SOV — enough to cover the 10 SOV domain registration fee (atoms).
+        sov.mint(&owner_wallet_key, lib_types::sov::atoms(11)).unwrap();
         blockchain
             .token_contracts
             .insert(generate_lib_token_id(), sov);
@@ -2456,25 +2457,17 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&response.body)?;
         assert_eq!(body["success"], serde_json::Value::Bool(true));
 
-        // Assert balances changed: sender debited, treasury credited
+        // The fee is paid via a canonical SOV TokenTransfer SYSTEM transaction
+        // added to the mempool (see add_system_transaction); balances change only
+        // once that tx is mined into a block, NOT synchronously in the handler.
+        // So this test asserts the system transaction was created, not a balance
+        // delta. (owner/treasury wallet ids are unused now.)
+        let _ = (owner_wallet_id, treasury_wallet_id);
         let bc = blockchain.read().await;
-        let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
-        let token = bc.token_contracts.get(&sov_token_id).unwrap();
-
-        let sender_key = BcPublicKey {
-            dilithium_pk: [0u8; 2592],
-            kyber_pk: [0u8; 1568],
-            key_id: owner_wallet_id,
-        };
-        let treasury_key = BcPublicKey {
-            dilithium_pk: [0u8; 2592],
-            kyber_pk: [0u8; 1568],
-            key_id: treasury_wallet_id,
-        };
-        // Owner started with 100, fee is 10 → 90 remaining
-        assert_eq!(token.balance_of(&sender_key), 90);
-        // Treasury started with 0, received 10
-        assert_eq!(token.balance_of(&treasury_key), 10);
+        assert!(
+            !bc.pending_transactions.is_empty(),
+            "domain registration must create a pending system transaction for the fee"
+        );
 
         Ok(())
     }
@@ -2505,17 +2498,16 @@ mod tests {
             Role::Citizen,
             NodeType::FullNode,
         );
-        let response = handler
+        // The handler surfaces an insufficient-balance failure as an Err (the
+        // pre-validation balance check returns Err before any response is built).
+        let err = handler
             .register_domain_simple(serde_json::to_vec(&request)?, &principal)
-            .await?;
-        // Should fail due to insufficient balance
-        assert_ne!(response.status, ZhtpStatus::Ok);
-        let body: serde_json::Value = serde_json::from_slice(&response.body)?;
-        let error_msg = body["error"].as_str().unwrap_or("");
+            .await
+            .expect_err("registration with zero balance must fail");
         assert!(
-            error_msg.contains("Insufficient SOV balance"),
+            err.to_string().contains("Insufficient SOV balance"),
             "Expected insufficient balance error, got: {}",
-            error_msg
+            err
         );
 
         Ok(())

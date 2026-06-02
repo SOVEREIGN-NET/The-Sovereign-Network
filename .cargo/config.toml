@@ -1,0 +1,6 @@
+# Heavy end-to-end tests (e.g. zhtp's identity-migration tests that build a full
+# UnifiedStorageSystem) exceed the default 2MB stack of libtest / current-thread
+# tokio test threads and abort with a stack overflow. Bump the per-thread stack
+# for all cargo-invoked processes. Harmless in production (larger stacks only).
+[env]
+RUST_MIN_STACK = "16777216"

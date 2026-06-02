@@ -1712,11 +1712,13 @@ bootstrap_peers = ["10.0.0.1:9334", "10.0.0.2:9334"]
         config1.derive_node_type();
         assert_eq!(config1.node_type, Some(NodeType::Validator));
 
-        // Test 2: Edge node config -> should produce EdgeNode, not Relay
+        // Test 2: Edge node config -> should produce EdgeNode, not Relay.
+        // is_edge_node_config requires !smart_contracts (default is true).
         let mut config2 = NodeConfig::default();
         config2.node_type = None;
         config2.consensus_config.validator_enabled = false;
         config2.blockchain_config.edge_mode = true;
+        config2.blockchain_config.smart_contracts = false;
         config2.derive_node_type();
         assert_eq!(config2.node_type, Some(NodeType::EdgeNode));
 

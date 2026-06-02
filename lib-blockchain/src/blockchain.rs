@@ -4915,9 +4915,12 @@ impl Blockchain {
     /// Create chain summary for local blockchain
     async fn create_local_chain_summary_async(&self) -> crate::ChainSummary {
         // Use the data helix root as the genesis content commitment.
+        // #2636: get_block(0) resolves genesis across the hot window AND sled.
+        // self.blocks.first() returned the oldest in-memory WINDOW block, which is
+        // NOT genesis once genesis ages out on a store-backed node — advertising a
+        // wrong genesis hash to peers.
         let genesis_hash = self
-            .blocks
-            .first()
+            .get_block(0)
             .map(|b| hex::encode(b.header.data_helix_root))
             .unwrap_or_else(|| "none".to_string());
 
@@ -4964,7 +4967,10 @@ impl Blockchain {
         };
 
         // Network size estimate from identity registry (each identity represents a potential node)
-        let network_size = self.identity_registry.len().max(1) as u64;
+        // #2639: sled-authoritative. ChainSummary is advertised to peers and drives
+        // bootstrap sync (peer_tip.identity_count > local) and merge decisions; an
+        // empty in-mem shadow after restart would report 0 here.
+        let network_size = self.identity_count().max(1) as u64;
 
         // Bridge node count (for now, based on special identity types in registry)
         let bridge_node_count = self
@@ -4976,12 +4982,14 @@ impl Blockchain {
         crate::ChainSummary {
             height: self.get_height(),
             total_work: self.calculate_total_work(),
+            // #2636: iter_blocks() walks the full chain (hot window + sled); the
+            // previous self.blocks.iter() counted only the in-memory window,
+            // undercounting transactions on a store-backed node.
             total_transactions: self
-                .blocks
-                .iter()
+                .iter_blocks()
                 .map(|b| b.transactions.len() as u64)
                 .fold(0u64, |acc, x| acc.saturating_add(x)),
-            total_identities: self.identity_registry.len() as u64,
+            total_identities: self.identity_count() as u64, // #2639: sled-authoritative (sync/merge)
             total_utxos: self.utxo_set.len() as u64,
             total_contracts: (self.token_contracts.len() + self.web4_contracts.len()) as u64,
             genesis_timestamp,

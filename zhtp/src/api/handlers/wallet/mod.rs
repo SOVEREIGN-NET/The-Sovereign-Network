@@ -1588,11 +1588,22 @@ impl WalletHandler {
                 .map_err(|e| anyhow::anyhow!("blockchain unavailable: {}", e))?;
             let blockchain = blockchain_arc.read().await;
             let did = format!("did:zhtp:{}", owner_hex);
-            blockchain
-                .identity_registry
-                .get(&did)
-                .map(|id| id.public_key.clone())
-                .unwrap_or_else(|| vec![0u8; 2592])
+            // #2639: sled-first dilithium key (consensus-pinned), in-mem pending
+            // fallback. Fail CLOSED when the owner's on-chain key is missing or
+            // refused (e.g. consensus-pin mismatch): provisioning a wallet with a
+            // placeholder zero key would create an unusable, on-chain-invalid wallet.
+            match blockchain.identity_public_key(&did) {
+                Some(pk) => pk,
+                None => {
+                    return Ok(create_error_response(
+                        ZhtpStatus::NotFound,
+                        format!(
+                            "Owner identity {} has no usable on-chain public key; register the identity first",
+                            did
+                        ),
+                    ));
+                }
+            }
         };
 
         let now = std::time::SystemTime::now()

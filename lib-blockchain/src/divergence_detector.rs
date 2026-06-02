@@ -277,6 +277,11 @@ pub struct DivergenceSnapshot {
     all_token_ids: std::collections::HashSet<[u8; 32]>,
     /// Sampled in-memory identities.
     identities: Vec<IdentitySample>,
+    /// FULL in-memory identity DID-hash set, for the sled-side absence scan
+    /// (#2639). Lets the reverse scan flag sled-only identities — the dominant
+    /// case on a store-backed node after restart, where the in-memory registry
+    /// is empty but sled is authoritative.
+    all_did_hashes: std::collections::HashSet<[u8; 32]>,
     /// In-memory hot-window block hashes (stored header hash), by height.
     window_block_hashes: Vec<(u64, [u8; 32])>,
     /// Per-field sample cap.
@@ -352,6 +357,10 @@ pub fn snapshot_in_memory(bc: &Blockchain, sample_size: usize) -> Option<Diverge
         .collect();
 
     // --- identities ---
+    // FULL DID-hash set (not truncated) so the sled-side reverse scan can flag
+    // sled-only identities.
+    let all_did_hashes: std::collections::HashSet<[u8; 32]> =
+        bc.identity_registry.keys().map(|did| did_to_hash(did)).collect();
     let mut dids: Vec<String> = bc.identity_registry.keys().cloned().collect();
     dids.sort_unstable();
     dids.truncate(sample_size);
@@ -386,6 +395,7 @@ pub fn snapshot_in_memory(bc: &Blockchain, sample_size: usize) -> Option<Diverge
         contracts,
         all_token_ids,
         identities,
+        all_did_hashes,
         window_block_hashes,
         sample_size,
         sampled_count,
@@ -516,11 +526,11 @@ fn compare_token_balances(
     }
 
     // --- Sled-side scan: sled contracts absent from the in-memory set (#4). ---
-    // Bounded to `sample_size` in deterministic sled key order. NOTE: only
-    // implemented for contracts, where `iter_token_contracts` exists. The
-    // reverse scan for nonces / balances / identities needs sled iterators the
-    // trait does not yet expose — tracked as follow-up; until then those fields
-    // are covered only in the in-mem → sled direction.
+    // Bounded to `sample_size` in deterministic sled key order. Identities now
+    // also have a reverse scan (see `compare_identities`, via `iter_identities`,
+    // #2639). The reverse scan for nonces / balances still needs sled iterators
+    // the trait does not yet expose — tracked as follow-up; until then those two
+    // fields are covered only in the in-mem → sled direction.
     if let Ok(iter) = store.iter_token_contracts() {
         for (_token_id, sled_contract) in iter.take(snap.sample_size) {
             if !snap.all_token_ids.contains(&sled_contract.token_id) {
@@ -605,6 +615,29 @@ fn compare_identities(
                         height,
                     });
                 }
+            }
+        }
+    }
+
+    // --- Sled-side scan: identities in sled but absent from the in-memory set
+    // (#2639). This is the dominant divergence direction on a store-backed node
+    // after restart, where the in-memory registry is empty (no sled->in-mem
+    // rebuild) but sled holds the authoritative set. Bounded to `sample_size`
+    // in sled iteration order; compared by did_hash since the sled record does
+    // not carry the DID string. Enabled by `iter_identities` (#2639).
+    if let Ok(iter) = store.iter_identities() {
+        for sled_identity in iter.take(snap.sample_size) {
+            if !snap.all_did_hashes.contains(&sled_identity.did_hash) {
+                out.push(Divergence {
+                    field: DivergenceField::Identity,
+                    key: format!("{}:sled-only", hex::encode(sled_identity.did_hash)),
+                    in_mem: ABSENT.to_string(),
+                    sled: format!(
+                        "present did_document_hash={}",
+                        hex::encode(sled_identity.did_document_hash)
+                    ),
+                    height,
+                });
             }
         }
     }
@@ -952,6 +985,46 @@ mod tests {
                 && d.in_mem == ABSENT
                 && d.key.starts_with(&hex::encode([0xEE; 32]))),
             "sled-only [0xEE..] contract must be flagged by the sled-side scan; got: {:?}",
+            divs
+        );
+    }
+
+    #[test]
+    fn detects_sled_only_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Arc::new(SledStore::open(&temp.path().join("sled_only_id_store")).unwrap());
+
+        // An identity that exists ONLY in sled (the post-restart case: the
+        // in-memory registry is empty of it). The sled-side reverse scan must
+        // flag it — without `iter_identities` (#2639) this direction was blind.
+        let did = "did:zhtp:sled-only-id";
+        let did_hash = crate::storage::did_to_hash(did);
+        store.begin_block(0).unwrap();
+        store
+            .put_identity(
+                &did_hash,
+                &crate::storage::IdentityConsensus {
+                    did_hash,
+                    did_document_hash: [0x5A; 32],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        store.commit_block().unwrap();
+
+        let mut bc = Blockchain::new().expect("blockchain construct");
+        bc.set_store(store);
+        assert!(
+            !bc.identity_registry.contains_key(did),
+            "test premise: identity is sled-only"
+        );
+
+        let divs = detect_divergences(&bc, DEFAULT_SAMPLE_SIZE);
+        assert!(
+            divs.iter().any(|d| d.field == DivergenceField::Identity
+                && d.in_mem == ABSENT
+                && d.key.starts_with(&hex::encode(did_hash))),
+            "sled-only identity must be flagged by the sled-side reverse scan; got: {:?}",
             divs
         );
     }

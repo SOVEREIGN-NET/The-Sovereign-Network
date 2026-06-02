@@ -1328,7 +1328,7 @@ impl Blockchain {
     pub fn get_persistence_stats(&self) -> PersistenceStats {
         PersistenceStats {
             height: self.height,
-            blocks_count: self.blocks.len(),
+            blocks_count: self.block_count() as usize, // #2636: full chain, not the hot window
             utxo_count: self.utxo_set.len(),
             identity_count: self.identity_registry.len(),
             wallet_count: self.wallet_registry.len(),

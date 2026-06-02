@@ -1686,6 +1686,45 @@ impl BlockchainStore for SledStore {
         }
     }
 
+    fn iter_identities(&self) -> StorageResult<Box<dyn Iterator<Item = IdentityConsensus> + '_>> {
+        // Materialize under one pass so a deserialize error surfaces here rather
+        // than mid-iteration in the caller. Mirrors iter_token_contracts.
+        let mut results = Vec::new();
+        for entry in self.identities.iter() {
+            match entry {
+                Ok((key, value)) => {
+                    let identity: IdentityConsensus = Self::deserialize(&value)?;
+                    // The tree key IS the did_hash (see put_identity). Validate the
+                    // deserialized record's embedded did_hash matches its key so a
+                    // corrupted/mismatched value cannot feed callers (and the
+                    // divergence detector) a wrong did_hash silently.
+                    let key_hash: [u8; 32] = key.as_ref().try_into().map_err(|_| {
+                        StorageError::CorruptedData(format!(
+                            "identities tree key is not 32 bytes (len={})",
+                            key.len()
+                        ))
+                    })?;
+                    if key_hash != identity.did_hash {
+                        return Err(StorageError::CorruptedData(format!(
+                            "identity did_hash {} does not match tree key {}",
+                            hex::encode(identity.did_hash),
+                            hex::encode(key_hash)
+                        )));
+                    }
+                    results.push(identity);
+                }
+                Err(e) => return Err(StorageError::Database(e.to_string())),
+            }
+        }
+        Ok(Box::new(results.into_iter()))
+    }
+
+    fn count_identities(&self) -> StorageResult<usize> {
+        // sled::Tree::len is an O(n) walk but avoids deserializing every record,
+        // so it is the cheapest authoritative count available.
+        Ok(self.identities.len())
+    }
+
     fn put_identity(&self, did_hash: &[u8; 32], identity: &IdentityConsensus) -> StorageResult<()> {
         self.require_transaction()?;
 

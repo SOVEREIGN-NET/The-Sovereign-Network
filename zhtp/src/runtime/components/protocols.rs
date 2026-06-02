@@ -292,8 +292,12 @@ impl Component for ProtocolsComponent {
         // Initialize network genesis hash for QUIC protocol (CRITICAL: must be before unified server creation)
         {
             let blockchain_read = blockchain.read().await;
-            if !blockchain_read.blocks.is_empty() {
-                let genesis_hash = blockchain_read.blocks[0].header.block_hash.as_array();
+            // #2636: get_block(0) resolves genesis across the hot window AND sled.
+            // blocks[0] is the oldest in-memory WINDOW block, which is NOT genesis
+            // once genesis ages out on a store-backed node after restart — so the
+            // QUIC network genesis hash (peer-identity critical) would be set wrong.
+            if let Some(genesis) = blockchain_read.get_block(0) {
+                let genesis_hash = genesis.header.block_hash.as_array();
                 // Use try_ version to avoid panic if already set (e.g., on restart)
                 let _ = lib_identity::types::node_id::try_set_network_genesis(genesis_hash);
                 info!(" ✓ Network genesis initialized for QUIC protocol");

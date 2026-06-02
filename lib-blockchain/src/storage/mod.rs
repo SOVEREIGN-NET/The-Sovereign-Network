@@ -1141,6 +1141,25 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// Use `did_to_hash()` to convert a DID string to hash.
     fn get_identity(&self, did_hash: &[u8; 32]) -> StorageResult<Option<IdentityConsensus>>;
 
+    /// Iterate over every persisted identity (consensus projection).
+    ///
+    /// Returns the authoritative, complete set of `IdentityConsensus` records.
+    /// Unlike the in-memory `Blockchain::identity_registry` — a non-durable
+    /// shadow that can be empty or partial on a store-backed node after restart
+    /// or window pruning — this reflects what consensus actually committed.
+    ///
+    /// Intentionally has NO default implementation: a backend that silently
+    /// returned an empty iterator would make callers report zero identities
+    /// (the same class of consensus footgun the #2639 migration exists to
+    /// eliminate), so every backend MUST provide a real scan.
+    fn iter_identities(&self) -> StorageResult<Box<dyn Iterator<Item = IdentityConsensus> + '_>>;
+
+    /// Count persisted identities (authoritative).
+    ///
+    /// No default for the same reason as [`iter_identities`]: an empty/zero
+    /// default would silently misreport the validator/citizen population.
+    fn count_identities(&self) -> StorageResult<usize>;
+
     /// Store identity consensus state.
     ///
     /// # Requirements

@@ -1182,7 +1182,7 @@ impl RuntimeOrchestrator {
                         info!(
                             "Block replay complete: height={}, identities={}, validators={}, domains={}, credentials={}",
                             bc.height,
-                            bc.identity_registry.len(),
+                            bc.identity_count(), // #2639: sled-authoritative
                             bc.validator_registry.len(),
                             bc.domain_registry.len(),
                             bc.credential_registry.len(),
@@ -6273,7 +6273,10 @@ mod oracle_startup_tests {
 
     fn write_incompatible_dat(dat_path: &std::path::Path) {
         let mut bc = Blockchain::new().expect("Blockchain::new");
-        bc.blocks[0].header.version = bc.blocks[0].header.version.saturating_add(1);
+        // Mutate a field that participates in BlockHeader::calculate_hash so the
+        // recomputed genesis hash actually differs from canonical. (version is
+        // NOT hashed, so bumping it would not trip the genesis-mismatch check.)
+        bc.blocks[0].header.timestamp = bc.blocks[0].header.timestamp.saturating_add(1);
         #[allow(deprecated)]
         bc.save_to_file(dat_path).expect("save_to_file");
     }

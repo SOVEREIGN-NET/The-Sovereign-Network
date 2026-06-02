@@ -204,14 +204,24 @@ impl DAORegistry {
         block_height: u64,
     ) -> Result<[u8; 32], String> {
         // === VALIDATION PHASE (before any mutation) ===
+        //
+        // Null-address checks are on `key_id`, the canonical address identifier —
+        // NOT `as_bytes()` (which returns only `dilithium_pk`). This matches
+        // `derive_dao_id`, which keys off `key_id` precisely because the sole
+        // production caller (the registry reconstruction in
+        // `apply_registry_registration_from_tx`) rebuilds token/treasury keys
+        // from on-chain events that carry only key_ids — the full Dilithium
+        // material is absent (dilithium_pk == 0). Checking `as_bytes()` here
+        // rejected every reconstructed registration, leaving the queryable DAO
+        // registry permanently empty.
 
-        // I1: token_addr cannot be zero
-        if token_addr.as_bytes().iter().all(|b| *b == 0) {
+        // I1: token_addr cannot be the null address
+        if token_addr.key_id.iter().all(|b| *b == 0) {
             return Err("Token address cannot be zero".to_string());
         }
 
-        // I1: treasury cannot be zero
-        if treasury.as_bytes().iter().all(|b| *b == 0) {
+        // I1: treasury cannot be the null address
+        if treasury.key_id.iter().all(|b| *b == 0) {
             return Err("Treasury address cannot be zero".to_string());
         }
 
@@ -220,8 +230,8 @@ impl DAORegistry {
             return Err("Metadata hash cannot be zero".to_string());
         }
 
-        // I2: caller (owner) cannot be zero
-        if caller.as_bytes().iter().all(|b| *b == 0) {
+        // I2: caller (owner) cannot be the null address
+        if caller.key_id.iter().all(|b| *b == 0) {
             return Err("Owner/caller address cannot be zero".to_string());
         }
 
@@ -1002,7 +1012,7 @@ mod tests {
     fn test_treasury_cannot_be_zero() {
         let mut registry = DAORegistry::new();
         let token = test_public_key(1);
-        let zero_treasury = PublicKey::new([0u8; 2592]);
+        let zero_treasury = PublicKey { dilithium_pk: [0u8; 2592], kyber_pk: [0u8; 1568], key_id: [0u8; 32] };
         let owner = test_public_key(3);
 
         let result =
@@ -1017,7 +1027,7 @@ mod tests {
     #[test]
     fn test_token_address_cannot_be_zero() {
         let mut registry = DAORegistry::new();
-        let zero_token = PublicKey::new([0u8; 2592]);
+        let zero_token = PublicKey { dilithium_pk: [0u8; 2592], kyber_pk: [0u8; 1568], key_id: [0u8; 32] };
         let treasury = test_public_key(2);
         let owner = test_public_key(3);
 
@@ -1033,7 +1043,7 @@ mod tests {
         let mut registry = DAORegistry::new();
         let token = test_public_key(1);
         let treasury = test_public_key(2);
-        let zero_owner = PublicKey::new([0u8; 2592]);
+        let zero_owner = PublicKey { dilithium_pk: [0u8; 2592], kyber_pk: [0u8; 1568], key_id: [0u8; 32] };
 
         let result =
             registry.register_dao(token, DAOType::NP, treasury, [1u8; 32], zero_owner, 100);

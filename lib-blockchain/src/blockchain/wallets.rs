@@ -24,14 +24,15 @@ impl Blockchain {
             .first()
             .and_then(|cm| {
                 let did = cm.identity_id.clone();
-                self.identity_registry.get(&did).and_then(|id| {
-                    match id.public_key.as_slice().try_into() {
+                // #2639: sled-first, consensus-pinned key (in-mem fallback). On a
+                // restarted store-backed node the in-memory shadow is empty, so the
+                // council authority key would not be found and the treasury kernel
+                // would silently fail to initialize.
+                self.identity_public_key(&did).and_then(|pk| {
+                    match pk.as_slice().try_into() {
                         Ok(pk_bytes) => Some((lib_crypto::PublicKey::new(pk_bytes), did)),
                         Err(_) => {
-                            warn!(
-                                "Treasury Kernel skip: council pk length {}",
-                                id.public_key.len()
-                            );
+                            warn!("Treasury Kernel skip: council pk length {}", pk.len());
                             None
                         }
                     }

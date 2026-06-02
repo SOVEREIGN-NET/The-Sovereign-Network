@@ -174,9 +174,13 @@ impl NetworkOutputHandler for AppNetworkOutputHandler {
                 }
             }
             BlockchainRequestType::Block(height) => {
-                if let Some(block) = blockchain_guard.blocks.get(height as usize) {
+                // #2636: get_block resolves by ABSOLUTE height across the hot
+                // window AND sled. blocks.get(height) indexed the in-memory window
+                // vector by absolute height — serving the wrong block (or None) for
+                // any historical height once the window slid past genesis.
+                if let Some(block) = blockchain_guard.get_block(height) {
                     info!("Serving block at height {}", height);
-                    match bincode::serialize(block) {
+                    match bincode::serialize(&block) {
                         Ok(data) => {
                             drop(blockchain_guard);
                             if let Err(e) =

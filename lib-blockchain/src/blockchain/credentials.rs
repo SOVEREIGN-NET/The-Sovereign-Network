@@ -43,7 +43,9 @@ impl Blockchain {
                         // Check DID exists in identity registry. Done before
                         // the uniqueness gate so that upgrade and fresh-
                         // register paths share the same prereq.
-                        if !self.identity_registry.contains_key(&data.owner_did) {
+                        // #2639: union check — in-mem (sees same-block identity
+                        // registrations) OR durable sled (survives restart/prune).
+                        if !self.identity_exists(&data.owner_did) {
                             warn!(
                                 "RegisterCredential rejected at height {}: DID {} not found in identity registry",
                                 block_height, &data.owner_did[..20.min(data.owner_did.len())]
