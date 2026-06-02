@@ -390,14 +390,17 @@ impl CredentialsHandler {
         message: &str,
     ) -> std::result::Result<(), String> {
         let blockchain = self.blockchain.read().await;
-        let identity = blockchain
-            .query_identity(did)
+        // #2639: sled-first, consensus-pinned Dilithium key (in-mem pending
+        // fallback). The old query_identity read the in-memory shadow only, which
+        // is empty on a store-backed node after restart — so DID-ownership
+        // verification wrongly returned "DID not found" for durable identities.
+        let pk_bytes = blockchain
+            .identity_public_key(did)
             .ok_or_else(|| "DID not found".to_string())?;
 
         let sig_bytes =
             hex::decode(signature_hex).map_err(|_| "Invalid signature hex".to_string())?;
 
-        let pk_bytes = &identity.public_key;
         if pk_bytes.len() < 2592 {
             return Err("Public key too short for Dilithium5".to_string());
         }

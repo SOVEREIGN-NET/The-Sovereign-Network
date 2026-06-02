@@ -96,7 +96,12 @@ impl Blockchain {
     }
 
     pub fn compute_decentralization_snapshot(&self) -> crate::dao::DecentralizationSnapshot {
-        let citizen_count = self.identity_registry.len() as u64;
+        // #2639: sled-authoritative count. verified_citizen_count gates DAO phase
+        // transitions; the in-memory identity_registry is empty on a store-backed
+        // node after restart, which would undercount citizens and could suppress
+        // phase advancement non-deterministically across nodes. identity_count()
+        // reads the durable committed set (in-mem fallback only in store-less mode).
+        let citizen_count = self.identity_count() as u64;
 
         let sov_id = crate::contracts::utils::generate_lib_token_id();
         let max_wallet_pct_bps: u16 = if let Some(token) = self.token_contracts.get(&sov_id) {
