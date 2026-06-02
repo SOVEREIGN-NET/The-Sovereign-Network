@@ -2,7 +2,10 @@ use super::*;
 
 impl Blockchain {
     pub fn register_identity(&mut self, identity_data: IdentityTransactionData) -> Result<Hash> {
-        if self.identity_registry.contains_key(&identity_data.did) {
+        // #2639: union check — also catches a DID already committed to sled but
+        // absent from the in-memory shadow after a restart, which the bare
+        // contains_key would miss (admitting a duplicate registration).
+        if self.identity_exists(&identity_data.did) {
             return Err(anyhow::anyhow!(
                 "Identity {} already exists on blockchain",
                 identity_data.did
@@ -287,7 +290,9 @@ impl Blockchain {
     }
 
     pub fn revoke_identity(&mut self, did: &str, authorizing_signature: Vec<u8>) -> Result<Hash> {
-        if !self.identity_registry.contains_key(did) {
+        // #2639: union — a durable identity in sled (in-memory shadow empty after
+        // restart) must still be revocable, not rejected as "not found".
+        if !self.identity_exists(did) {
             return Err(anyhow::anyhow!("Identity {} not found on blockchain", did));
         }
 

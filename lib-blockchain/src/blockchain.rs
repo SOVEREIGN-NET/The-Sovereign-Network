@@ -4964,7 +4964,10 @@ impl Blockchain {
         };
 
         // Network size estimate from identity registry (each identity represents a potential node)
-        let network_size = self.identity_registry.len().max(1) as u64;
+        // #2639: sled-authoritative. ChainSummary is advertised to peers and drives
+        // bootstrap sync (peer_tip.identity_count > local) and merge decisions; an
+        // empty in-mem shadow after restart would report 0 here.
+        let network_size = self.identity_count().max(1) as u64;
 
         // Bridge node count (for now, based on special identity types in registry)
         let bridge_node_count = self
@@ -4981,7 +4984,7 @@ impl Blockchain {
                 .iter()
                 .map(|b| b.transactions.len() as u64)
                 .fold(0u64, |acc, x| acc.saturating_add(x)),
-            total_identities: self.identity_registry.len() as u64,
+            total_identities: self.identity_count() as u64, // #2639: sled-authoritative (sync/merge)
             total_utxos: self.utxo_set.len() as u64,
             total_contracts: (self.token_contracts.len() + self.web4_contracts.len()) as u64,
             genesis_timestamp,
