@@ -28,7 +28,9 @@ impl Blockchain {
             ));
         }
 
-        if !self.identity_registry.contains_key(&gateway_info.identity_id) {
+        // #2639: union check — in-mem (sees pending identity registrations in
+        // the same mempool) OR durable sled (survives restart/window prune).
+        if !self.identity_exists(&gateway_info.identity_id) {
             return Err(anyhow::anyhow!(
                 "Identity {} must be registered before becoming a gateway",
                 gateway_info.identity_id

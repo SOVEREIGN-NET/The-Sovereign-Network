@@ -76,20 +76,30 @@ impl Blockchain {
         store.get_identity(&did_hash).ok().flatten()
     }
 
-    /// Sled-first existence check (#2639).
+    /// Union existence check across the in-memory shadow and durable sled (#2639).
     ///
-    /// On a store-backed node the durable `identities` tree is authoritative:
-    /// the in-memory `identity_registry` is a non-durable shadow that can be
-    /// empty or partial after a restart or window prune, so a bare
-    /// `identity_registry.contains_key` silently under-reports there. When a
-    /// store is attached we answer from sled; only in store-less (test/legacy)
-    /// mode do we consult the in-memory map.
+    /// Checks the in-memory `identity_registry` FIRST, then sled. This ordering
+    /// is deliberate and makes the method safe in every context:
     ///
-    /// A transient sled error is NOT silently treated as "absent" (which could
-    /// e.g. wrongly re-admit an already-registered DID): it is logged and we
-    /// fall back to the in-memory shadow, which is co-populated during the
-    /// transition window.
+    /// - The in-memory shadow includes identities registered earlier in the
+    ///   current block or still pending in the mempool — state sled has not yet
+    ///   committed (SledStore reads the committed tree, not the open tx_batch).
+    ///   So intra-block / submission-time gates (credential & gateway
+    ///   registration) keep accepting same-block registrations exactly as
+    ///   before — no consensus regression.
+    /// - Sled adds the identities the shadow DROPPED: on a store-backed node the
+    ///   shadow can be empty or partial after a restart or window prune, where a
+    ///   bare `contains_key` silently under-reports. Sled is durable there.
+    ///
+    /// The result is a strict superset of the old in-memory check: it returns
+    /// `true` whenever `identity_registry.contains_key` did, and ALSO catches
+    /// the sled-only (post-restart) case. A transient sled error is logged, not
+    /// treated as "absent". Detecting a shadow-only phantom (present in-mem,
+    /// absent in sled) is the divergence detector's job, not this gate's.
     pub fn identity_exists(&self, did: &str) -> bool {
+        if self.identity_registry.contains_key(did) {
+            return true;
+        }
         if let Some(store) = self.get_store() {
             let did_hash = crate::storage::did_to_hash(did);
             match store.get_identity(&did_hash) {
@@ -98,12 +108,12 @@ impl Blockchain {
                     tracing::warn!(
                         did = %did,
                         error = %e,
-                        "identity_exists: sled read failed; falling back to in-memory shadow"
+                        "identity_exists: sled read failed; treating as not-in-sled"
                     );
                 }
             }
         }
-        self.identity_registry.contains_key(did)
+        false
     }
 
     /// Authoritative identity count (#2639).
