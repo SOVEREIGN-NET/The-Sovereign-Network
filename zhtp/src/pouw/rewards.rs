@@ -1024,9 +1024,9 @@ mod tests {
         let reward = calculator.calculate_reward(&stats);
 
         // Weighted: 2*1 + 1*2 + 1*3 = 7
-        // Raw amount: 1000 * 7 = 7000
-        assert_eq!(reward.raw_amount, 7000);
-        assert_eq!(reward.final_amount, 7000); // Below cap
+        // Raw amount: BASE_REWARD_UNIT (atoms) * 7
+        assert_eq!(reward.raw_amount, BASE_REWARD_UNIT * 7);
+        assert_eq!(reward.final_amount, BASE_REWARD_UNIT * 7); // Below cap
         assert_eq!(reward.payout_status, PayoutStatus::Pending);
         assert!(reward.intermediary_splits.is_empty());
     }
@@ -1040,13 +1040,15 @@ mod tests {
             client_did: "did:zhtp:whale".to_string(),
             epoch: 0,
             total_bytes: 1_000_000_000,
-            // Need enough receipts so raw_amount > POUW_PER_NODE_EPOCH_CAP (~59,931,506)
-            // 30,000 Signature receipts × 3 multiplier × 1000 base = 90,000,000 > cap
-            receipt_count: 30_000,
+            // Need raw_amount > POUW_PER_NODE_EPOCH_CAP (~5.99e17 atoms). Weighted
+            // must exceed cap / BASE_REWARD_UNIT (~599,315), so with the x3
+            // signature multiplier we need > ~199,772 signatures.
+            // 300,000 sigs × 3 × BASE_REWARD_UNIT = 9e17 atoms > cap.
+            receipt_count: 300_000,
             proof_type_counts: ProofTypeCounts {
                 hash_count: 0,
                 merkle_count: 0,
-                signature_count: 30_000, // 30000 * 3 * 1000 = 90_000_000 > cap
+                signature_count: 300_000,
                 web4_manifest_route_count: 0,
                 web4_content_served_count: 0,
             },
@@ -1055,7 +1057,7 @@ mod tests {
 
         let reward = calculator.calculate_reward(&stats);
 
-        // Raw: 1000 * 90000 = 90_000_000
+        // Raw: BASE_REWARD_UNIT * (300000 * 3) = 9e17 atoms
         // Should be capped at POUW_PER_NODE_EPOCH_CAP
         assert!(reward.raw_amount > MAX_REWARD_PER_EPOCH);
         assert_eq!(reward.final_amount, MAX_REWARD_PER_EPOCH);
@@ -1102,8 +1104,8 @@ mod tests {
         // Idempotent - marking paid again should succeed
         assert!(calculator.mark_paid(&reward_id, None).await);
 
-        // Total paid should be the reward amount
-        assert_eq!(calculator.total_paid_rewards().await, 1000);
+        // Total paid should be the reward amount: weighted 1 * BASE_REWARD_UNIT.
+        assert_eq!(calculator.total_paid_rewards().await, BASE_REWARD_UNIT);
     }
 
     #[tokio::test]
