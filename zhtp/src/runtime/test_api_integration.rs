@@ -26,6 +26,9 @@ mod api_integration_tests {
         config.storage_config.dht_port = 8080;
         config.protocols_config.api_port = 8082;
         config.network_config.bootstrap_peers = vec![]; // No bootstrap peers for tests
+        // RuntimeOrchestrator::new requires node_type to be set (normally done by
+        // the start_* path); derive it from the config fields here.
+        config.derive_node_type();
         config
     }
 
