@@ -1686,6 +1686,28 @@ impl BlockchainStore for SledStore {
         }
     }
 
+    fn iter_identities(&self) -> StorageResult<Box<dyn Iterator<Item = IdentityConsensus> + '_>> {
+        // Materialize under one pass so a deserialize error surfaces here rather
+        // than mid-iteration in the caller. Mirrors iter_token_contracts.
+        let mut results = Vec::new();
+        for entry in self.identities.iter() {
+            match entry {
+                Ok((_did_hash, value)) => {
+                    let identity: IdentityConsensus = Self::deserialize(&value)?;
+                    results.push(identity);
+                }
+                Err(e) => return Err(StorageError::Database(e.to_string())),
+            }
+        }
+        Ok(Box::new(results.into_iter()))
+    }
+
+    fn count_identities(&self) -> StorageResult<usize> {
+        // sled::Tree::len is an O(n) walk but avoids deserializing every record,
+        // so it is the cheapest authoritative count available.
+        Ok(self.identities.len())
+    }
+
     fn put_identity(&self, did_hash: &[u8; 32], identity: &IdentityConsensus) -> StorageResult<()> {
         self.require_transaction()?;
 

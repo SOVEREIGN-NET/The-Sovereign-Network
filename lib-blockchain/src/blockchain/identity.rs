@@ -76,8 +76,120 @@ impl Blockchain {
         store.get_identity(&did_hash).ok().flatten()
     }
 
+    /// Sled-first existence check (#2639).
+    ///
+    /// On a store-backed node the durable `identities` tree is authoritative:
+    /// the in-memory `identity_registry` is a non-durable shadow that can be
+    /// empty or partial after a restart or window prune, so a bare
+    /// `identity_registry.contains_key` silently under-reports there. When a
+    /// store is attached we answer from sled; only in store-less (test/legacy)
+    /// mode do we consult the in-memory map.
+    ///
+    /// A transient sled error is NOT silently treated as "absent" (which could
+    /// e.g. wrongly re-admit an already-registered DID): it is logged and we
+    /// fall back to the in-memory shadow, which is co-populated during the
+    /// transition window.
     pub fn identity_exists(&self, did: &str) -> bool {
+        if let Some(store) = self.get_store() {
+            let did_hash = crate::storage::did_to_hash(did);
+            match store.get_identity(&did_hash) {
+                Ok(found) => return found.is_some(),
+                Err(e) => {
+                    tracing::warn!(
+                        did = %did,
+                        error = %e,
+                        "identity_exists: sled read failed; falling back to in-memory shadow"
+                    );
+                }
+            }
+        }
         self.identity_registry.contains_key(did)
+    }
+
+    /// Authoritative identity count (#2639).
+    ///
+    /// Display/metrics helper: prefers the durable sled count, falling back to
+    /// the in-memory shadow length only when store-less or on a (logged) sled
+    /// error. Best-effort by design — this never feeds a consensus decision, so
+    /// a transient miscount degrades a log line rather than the chain.
+    pub fn identity_count(&self) -> usize {
+        if let Some(store) = self.get_store() {
+            match store.count_identities() {
+                Ok(n) => return n,
+                Err(e) => {
+                    tracing::warn!(error = %e, "identity_count: sled count failed; using in-memory shadow");
+                }
+            }
+        }
+        self.identity_registry.len()
+    }
+
+    /// Iterate the authoritative identity set as consensus projections (#2639).
+    ///
+    /// Returns sled `IdentityConsensus` records on a store-backed node (the full
+    /// durable set), or an empty vec on a (logged) sled error. In store-less
+    /// mode there is no sled to read, so this returns empty — callers that must
+    /// also work store-less should branch on [`get_store`]. Returns owned
+    /// records (not borrows) so the caller need not hold the chain lock while
+    /// iterating.
+    pub fn iter_identities_consensus(&self) -> Vec<crate::storage::IdentityConsensus> {
+        let Some(store) = self.get_store() else {
+            return Vec::new();
+        };
+        match store.iter_identities() {
+            Ok(it) => it.collect(),
+            Err(e) => {
+                tracing::warn!(error = %e, "iter_identities_consensus: sled scan failed");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Full Dilithium public key for a DID, sled-first and consensus-pinned (#2639).
+    ///
+    /// The full key bytes live only in the (non-consensus) `IdentityMetadata`
+    /// tree — `IdentityConsensus` carries just `public_key_hash`. To use a
+    /// metadata-sourced key safely for signature verification we PIN it to
+    /// consensus: the returned key is accepted only if
+    /// `blake3(public_key) == IdentityConsensus.public_key_hash`. This makes the
+    /// auth path trust sled's durable state while catching any metadata↔consensus
+    /// drift (exactly the divergence class #2645 exists to eliminate).
+    ///
+    /// Falls back to the in-memory shadow only in store-less mode.
+    pub fn identity_public_key(&self, did: &str) -> Option<Vec<u8>> {
+        if let Some(store) = self.get_store() {
+            let did_hash = crate::storage::did_to_hash(did);
+            let consensus = store.get_identity(&did_hash).ok().flatten()?;
+            let metadata = store.get_identity_metadata(&did_hash).ok().flatten()?;
+            // Pin the metadata key to the consensus-committed hash before trusting it.
+            if crate::types::hash::blake3_hash(&metadata.public_key).as_array()
+                != consensus.public_key_hash
+            {
+                tracing::warn!(
+                    did = %did,
+                    "identity_public_key: metadata key hash != consensus public_key_hash; refusing drifted key"
+                );
+                return None;
+            }
+            return Some(metadata.public_key);
+        }
+        self.identity_registry.get(did).map(|id| id.public_key.clone())
+    }
+
+    /// Display name for a DID, sled-first (#2639).
+    ///
+    /// `display_name` is metadata (not consensus), read from the durable
+    /// `identity_metadata` tree on a store-backed node, with the in-memory
+    /// shadow as the store-less fallback.
+    pub fn identity_display_name(&self, did: &str) -> Option<String> {
+        if let Some(store) = self.get_store() {
+            let did_hash = crate::storage::did_to_hash(did);
+            if let Some(meta) = store.get_identity_metadata(&did_hash).ok().flatten() {
+                return Some(meta.display_name);
+            }
+            return None;
+        }
+        self.identity_registry.get(did).map(|id| id.display_name.clone())
     }
 
     pub fn update_identity(
