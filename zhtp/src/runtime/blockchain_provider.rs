@@ -697,6 +697,7 @@ mod tests {
                 dao_fee: 0,
                 controlled_nodes: vec![],
                 owned_wallets: vec![],
+                kyber_public_key: vec![],
             },
         )
         .await

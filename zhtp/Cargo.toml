@@ -134,6 +134,9 @@ tokio-test = "0.4"
 tempfile = "3.8"
 criterion = "0.5"
 zhtp_client = { package = "lib-client", path = "../lib-client" }
+# Enables lib-identity `_for_test` helpers (e.g. insert_session_for_test) for
+# zhtp's own tests. Dev-only: production builds do not pull this feature.
+lib-identity = { path = "../lib-identity", features = ["test-support"] }
 
 [features]
 default = ["production", "full-blockchain", "windows-bluetooth"]  # See Issue #739 for planned TLS pinning behavior

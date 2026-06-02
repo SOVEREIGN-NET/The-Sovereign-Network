@@ -44,3 +44,6 @@ tokio-test = "0.4"
 [features]
 default = []
 browser-compat = []
+# Exposes `_for_test` helpers (e.g. MobileAuthStore::insert_session_for_test)
+# to dependent crates' test builds. NOT enabled in production.
+test-support = []

@@ -169,7 +169,7 @@ pub struct PrepareObserverRequest {
 }
 
 /// Response body for `POST /api/v1/observer/admission/prepare`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PrepareObserverResponse {
     /// Hex-encoded 32-byte blake3 hash that the sponsor must sign with their
     /// Dilithium5 private key. Pass the resulting signature bytes as
@@ -850,8 +850,8 @@ mod tests {
             "rate_limit_tier": "Standard",
             "nonce": 1,
             "tx_signature": {
-                "signature_bytes": [1; 64],
-                "signer_dilithium_pk": [0; 2592]
+                "signature_bytes": vec![1u8; 64],
+                "signer_dilithium_pk": vec![0u8; 2592]
             }
         }))
         .unwrap();
@@ -900,8 +900,8 @@ mod tests {
             "reason": "test",
             "nonce": 1,
             "tx_signature": {
-                "signature_bytes": [1; 64],
-                "signer_dilithium_pk": [0; 2592]
+                "signature_bytes": vec![1u8; 64],
+                "signer_dilithium_pk": vec![0u8; 2592]
             }
         }))
         .unwrap();
@@ -984,8 +984,8 @@ mod tests {
             "rate_limit_tier": "Standard",
             "nonce": 1,
             "tx_signature": {
-                "signature_bytes": [1; 64],
-                "signer_dilithium_pk": [0; 2592]
+                "signature_bytes": vec![1u8; 64],
+                "signer_dilithium_pk": vec![0u8; 2592]
             }
         }))
         .unwrap()
@@ -1151,33 +1151,13 @@ mod tests {
         let sponsor_did_hash = did_to_hash(sponsor_did);
         let sponsor_addr = Address::new(sponsor_kp.public_key.key_id);
 
-        store
-            .put_identity(
-                &sponsor_did_hash,
-                &IdentityConsensus::new(
-                    sponsor_did_hash,
-                    sponsor_addr,
-                    &sponsor_kp.public_key.dilithium_pk,
-                    IdentityType::User,
-                ),
-            )
-            .expect("put identity");
-        store
-            .put_identity_owner_index(&sponsor_addr, &sponsor_did_hash)
-            .expect("owner index");
-
-        // --- Fund sponsor with enough SOV for the registration fee ---
-        let sov_token = TokenId::new(generate_lib_token_id());
-        store
-            .set_token_balance(&sov_token, &sponsor_addr, 1_000_000)
-            .expect("seed SOV");
-
         // --- Seed auto-approve policy so the record lands in Active status ---
+        // (Direct write — not part of a block transaction.)
         let mut policy = default_policy();
         policy.auto_approve = true;
         store.save_observer_policy(&policy).expect("seed policy");
 
-        // --- Create blockchain and apply genesis ---
+        // --- Create blockchain and apply genesis (block 0) FIRST ---
         let bc = Blockchain::new_with_store(store.clone()).expect("new blockchain");
         let genesis = lib_blockchain::create_genesis_block();
         let genesis_hash = genesis.header.block_hash;
@@ -1186,6 +1166,29 @@ mod tests {
             .expect("executor")
             .apply_block(&genesis)
             .expect("genesis");
+
+        // --- Seed sponsor identity + SOV in block 1 (genesis already took 0). ---
+        // Consensus writes require an active block transaction on SledStore.
+        let sov_token = TokenId::new(generate_lib_token_id());
+        store.begin_block(1).expect("begin block");
+        store
+            .put_identity(
+                &sponsor_did_hash,
+                &IdentityConsensus::new(
+                    sponsor_did_hash,
+                    sponsor_addr,
+                    &sponsor_kp.public_key.dilithium_pk,
+                    IdentityType::Human,
+                ),
+            )
+            .expect("put identity");
+        store
+            .put_identity_owner_index(&sponsor_addr, &sponsor_did_hash)
+            .expect("owner index");
+        store
+            .set_token_balance(&sov_token, &sponsor_addr, 1_000_000)
+            .expect("seed SOV");
+        store.commit_block().expect("commit block");
 
         // --- Seed global provider (bypasses IPC server) ---
         let bc_arc = Arc::new(RwLock::new(bc));

@@ -1551,13 +1551,24 @@ impl QuicHandler {
         // Gateways that are not yet formally registered in gateway_registry can
         // still forward traffic if their DID exists in identity_registry.
         // This allows operators to deploy a gateway and register on-chain later.
-        // #2639: source the gateway key sled-first and consensus-pinned. The
-        // in-memory identity_registry is empty after restart on a store-backed
-        // node, which would silently drop a legitimate gateway to the testnet
-        // "unknown DID — allowing" branch below. identity_public_key returns the
-        // metadata key ONLY when blake3(key) == consensus.public_key_hash.
-        if let Some(gateway_pk_bytes) = blockchain_guard.identity_public_key(&ctx.gateway_did) {
+        // #2639: existence and key-fetch are SEPARATE so this fails CLOSED.
+        // identity_exists is a sled-union (survives restart on a store-backed
+        // node, where the in-memory registry is empty). If the gateway DID is a
+        // registered identity, a usable consensus-pinned key is REQUIRED — a
+        // missing or refused key (e.g. metadata<->consensus hash mismatch) must
+        // NOT fall through to the "unknown DID — allow in testnet" branch below
+        // and bypass signature verification for a known identity.
+        if blockchain_guard.identity_exists(&ctx.gateway_did) {
             warn!(did = %ctx.gateway_did, "Gateway not in gateway_registry — falling back to identity_registry (register on-chain for production)");
+
+            let Some(gateway_pk_bytes) = blockchain_guard.identity_public_key(&ctx.gateway_did)
+            else {
+                warn!(did = %ctx.gateway_did, "Gateway identity is registered but has no usable consensus-pinned key — refusing (fail closed)");
+                return Some(ZhtpResponse::error(
+                    ZhtpStatus::Forbidden,
+                    "Gateway identity key unavailable".to_string(),
+                ));
+            };
 
             match verify_gateway_identity_fallback(&ctx, &sig_bytes, &gateway_pk_bytes) {
                 Ok(true) => {
@@ -1752,7 +1763,7 @@ mod tests {
 
     #[cfg(feature = "lib-blockchain")]
     mod gateway_identity_tests {
-        use super::super::verify_gateway_identity;
+        use super::super::verify_gateway_identity_fallback;
         use lib_blockchain::transaction::core::IdentityTransactionData;
         use lib_blockchain::types::Hash;
         use lib_identity::ZhtpIdentity;
@@ -1782,6 +1793,7 @@ mod tests {
                 dao_fee: 0,
                 controlled_nodes: vec![],
                 owned_wallets: vec![],
+                kyber_public_key: vec![],
             }
         }
 
@@ -1796,7 +1808,7 @@ mod tests {
             );
             let sig = sign_context(&identity, &ctx).expect("sign");
             let id_data = identity_data_from_identity(&identity);
-            assert!(verify_gateway_identity(&ctx, &sig, &id_data).expect("verify"));
+            assert!(verify_gateway_identity_fallback(&ctx, &sig, &id_data.public_key).expect("verify"));
         }
 
         #[test]
@@ -1811,7 +1823,7 @@ mod tests {
             let sig = sign_context(&identity, &ctx).expect("sign");
             let mut id_data = identity_data_from_identity(&identity);
             id_data.public_key = vec![1u8; 100]; // wrong length
-            let result = verify_gateway_identity(&ctx, &sig, &id_data);
+            let result = verify_gateway_identity_fallback(&ctx, &sig, &id_data.public_key);
             assert!(result.is_err(), "expected error for invalid key length");
         }
 
@@ -1827,7 +1839,7 @@ mod tests {
             ctx.received_at_ms = 0; // force stale
             let sig = sign_context(&identity, &ctx).expect("sign");
             let id_data = identity_data_from_identity(&identity);
-            assert!(!verify_gateway_identity(&ctx, &sig, &id_data).expect("verify"));
+            assert!(!verify_gateway_identity_fallback(&ctx, &sig, &id_data.public_key).expect("verify"));
         }
 
         #[test]
@@ -1842,7 +1854,7 @@ mod tests {
             let id_data = identity_data_from_identity(&identity);
             let mut sig = sign_context(&identity, &ctx).expect("sign");
             sig[0] ^= 0xFF; // corrupt signature
-            assert!(!verify_gateway_identity(&ctx, &sig, &id_data).expect("verify"));
+            assert!(!verify_gateway_identity_fallback(&ctx, &sig, &id_data.public_key).expect("verify"));
         }
     }
 }

@@ -107,7 +107,7 @@ mod tests {
     #[async_trait::async_trait]
     impl ZhtpRequestHandler for EchoHandler {
         async fn handle_request(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-            Ok(ZhtpResponse::success(b"ok".to_vec()))
+            Ok(ZhtpResponse::success(b"ok".to_vec(), None))
         }
         fn can_handle(&self, _: &ZhtpRequest) -> bool { true }
     }

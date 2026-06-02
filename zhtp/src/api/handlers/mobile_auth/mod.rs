@@ -1173,8 +1173,11 @@ mod tests {
     #[tokio::test]
     async fn verify_bad_signature_returns_401() {
         let h = make_handler();
-        // Issue challenge
-        let ch_req = post("/api/v1/auth/mobile/challenge", json!({}));
+        // Issue challenge (capabilities field is required by parse_capabilities)
+        let ch_req = post(
+            "/api/v1/auth/mobile/challenge",
+            json!({ "capabilities": [] }),
+        );
         let ch_resp = h.handle_request(ch_req).await.unwrap();
         let ch_body: Value = serde_json::from_slice(&ch_resp.body).unwrap();
         let session_id = ch_body["session_id"].as_str().unwrap().to_string();

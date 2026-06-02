@@ -788,8 +788,12 @@ impl MobileAuthStore {
         }
     }
 
-    /// Insert a session directly — only available in tests (bypasses challenge/verify flow)
-    #[cfg(test)]
+    /// Insert a session directly — test-only helper (bypasses challenge/verify flow).
+    ///
+    /// Gated on `test` OR the `test-support` feature so dependent crates (e.g.
+    /// `zhtp`) can call it from THEIR tests; a bare `#[cfg(test)]` only compiles
+    /// when THIS crate is the test target, leaving dependents unable to use it.
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn insert_session_for_test(&self, session: MobileDelegatedSession) {
         let token = session.access_token.clone();
         let identity_id = session.identity_id.clone();
@@ -800,6 +804,17 @@ impl MobileAuthStore {
             .entry(identity_id)
             .or_default()
             .push(token);
+    }
+
+    /// Number of sessions tracked for `identity_id` — test-only helper.
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn get_session_count(&self, identity_id: &IdentityId) -> usize {
+        self.identity_sessions
+            .read()
+            .await
+            .get(identity_id)
+            .map(|tokens| tokens.len())
+            .unwrap_or(0)
     }
 }
 
