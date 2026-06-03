@@ -133,11 +133,14 @@ impl ConsensusEngine {
                                 "🔄 MODE TRANSITION: Bootstrapping → BFT ({} validators now active)",
                                 validator_count
                             );
-                            // Re-sync height with blockchain to ensure continuity
-                            if let Err(e) = self.sync_height_with_blockchain().await {
-                                tracing::warn!("Failed to sync height during mode transition: {}", e);
-                            }
-                            // Snapshot validator set for the new height
+                            // CONS-512: do NOT call `sync_height_with_blockchain`
+                            // here. The engine's height was initialized from
+                            // storage at boot and has been authoritatively
+                            // advanced by `process_committed_block` ever since.
+                            // Re-reading storage at mode transition would
+                            // regress the engine to whatever sled flushed last,
+                            // re-introducing the pre-CONS-512 wedge bug.
+                            // Snapshot validator set for the current height.
                             self.snapshot_validator_set(self.current_round.height);
                             // Emit mode transition event
                             self.emit_liveness_event(ConsensusEvent::ModeTransitionToBft {

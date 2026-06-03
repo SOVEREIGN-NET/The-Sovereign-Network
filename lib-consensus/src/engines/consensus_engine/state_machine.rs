@@ -527,6 +527,13 @@ impl ConsensusEngine {
                 height,
                 previous_hash,
             } => {
+                // CONS-512: this variant is vestigial in production — grep
+                // confirms zero constructors outside tests. The handler is
+                // kept compilable for the test suite and as scaffolding for
+                // any future external block-ingest path (e.g. archive node
+                // replay). DO NOT add a `sync_height_with_blockchain` call
+                // here: the engine-owns-height contract makes storage
+                // downstream of consensus at runtime, not upstream.
                 tracing::info!(
                     "🧱 Processing new block at height {} with previous hash: {}",
                     height,
@@ -547,12 +554,6 @@ impl ConsensusEngine {
                 //   run the deprecated synchronous round driver from event callbacks.
                 // - Keep this event path as state synchronization and bookkeeping only.
                 if self.message_rx.is_some() {
-                    if let Err(e) = self.sync_height_with_blockchain().await {
-                        tracing::warn!(
-                            "Failed to sync consensus height after NewBlock event: {}",
-                            e
-                        );
-                    }
                     self.snapshot_validator_set(self.current_round.height);
 
                     let mut events = vec![ConsensusEvent::RoundCompleted { height }];
@@ -1263,6 +1264,26 @@ impl ConsensusEngine {
         // can verify BFT finality from the block itself.
         self.apply_block_to_state_with_proof(&proposal, quorum_proof)
             .await?;
+
+        // CONS-512: engine owns its own height. BFT decided this block is
+        // final the moment 2f+1 commit votes were observed; advancing here,
+        // in the same call frame as the consensus decision, is the only way
+        // to avoid the engine ↔ storage drift class of bug (which wedged
+        // g2 / g3 at H=123008 on 2026-06-03 — see docs/epics/cons-512-...).
+        //
+        // Storage may not have flushed yet (CONS-307 writer task is async);
+        // that is fine — a storage failure surfaces as Event::HaltScheduled
+        // and the engine halts at H+1's attempt, after which boot-time
+        // catch-up sync reconciles. We DO NOT derive engine height from
+        // storage post-boot; storage is downstream.
+        let committed_height = proposal.height;
+        self.advance_to_next_round();
+        self.snapshot_validator_set(self.current_round.height);
+        tracing::info!(
+            "✅ Engine advanced past committed H={} → now proposing H={}",
+            committed_height,
+            self.current_round.height,
+        );
 
         // Update validator activities and reputation
         self.update_validator_metrics(&proposal).await?;
@@ -2603,20 +2624,27 @@ impl ConsensusEngine {
                 }
             }
 
-            // Commit step timed out: the block was applied; advance height.
+            // Commit step timed out.
+            //
+            // CONS-512: under the engine-owns-height contract, height
+            // advancement happens synchronously inside `process_committed_block`
+            // the moment commit quorum is observed. By the time this branch
+            // fires, either:
+            //   (a) we already advanced past `height` (current_round.height
+            //       != height_before), in which case there's nothing to do
+            //       except kick off the new height's propose; or
+            //   (b) the commit attempt at `height` did not reach quorum
+            //       (we sat in Commit step without finalizing), in which
+            //       case re-drive the same height at the next round.
+            //
+            // We DO NOT call `sync_height_with_blockchain` here anymore —
+            // storage is downstream of consensus, never the source of
+            // engine height post-boot. (The old code path is what wedged
+            // g2 / g3 at H=123008 on 2026-06-03.)
             ConsensusStep::Commit => {
-                let height_before = self.current_round.height;
-                if let Err(e) = self.sync_height_with_blockchain().await {
-                    tracing::warn!(
-                        "Commit timeout: blockchain height sync failed ({}) — \
-                         falling back to local height advance",
-                        e,
-                    );
-                    self.advance_to_next_round();
-                }
-                if self.current_round.height == height_before {
-                    // Height did not advance — re-drive the same height at
-                    // the next round so a missed commit does not wedge us.
+                if self.current_round.height == height {
+                    // Same-height case: re-drive next round so a missed
+                    // commit does not wedge us.
                     self.enter_round(
                         height,
                         round + 1,
@@ -2624,9 +2652,8 @@ impl ConsensusEngine {
                     )
                     .await;
                 } else {
-                    // New height: sync_height_with_blockchain (or
-                    // advance_to_next_round) already reset round to 0 and
-                    // retired the lock state. Kick off its propose step.
+                    // We already advanced to a new height during commit
+                    // processing. Kick off its propose step.
                     self.restart_propose_for_current_round().await;
                 }
             }

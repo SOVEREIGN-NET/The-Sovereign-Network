@@ -914,6 +914,8 @@ async fn test_ce_l1_commit_quorum_finalizes_regardless_of_local_step() {
     let (ref prop_id, ref prop_kp) = validators[0];
     stage_stub_proposal(&mut engine, proposal_id.clone(), h, r, prop_id, prop_kp);
 
+    let pre_commit_height = engine.current_round.height;
+
     // Call maybe_finalize: should transition to Commit step and finalize
     engine
         .maybe_finalize(
@@ -924,17 +926,31 @@ async fn test_ce_l1_commit_quorum_finalizes_regardless_of_local_step() {
         .await
         .unwrap();
 
-    // Verify: Step transitioned to Commit (CE-L1)
+    // CONS-512: under the engine-owns-height contract, a successful commit
+    // advances the engine to the next height in the same call frame. The
+    // post-finalize state is therefore (H+1, round=0, step=Propose), not
+    // (H, step=Commit) as the pre-CONS-512 CE-L1 spec expected.
+    assert_eq!(
+        engine.current_round.height,
+        pre_commit_height + 1,
+        "CONS-512: engine must advance to H+1 after commit quorum"
+    );
+    assert_eq!(
+        engine.current_round.round,
+        0,
+        "CONS-512: round resets to 0 after height advance"
+    );
     assert_eq!(
         engine.current_round.step,
-        ConsensusStep::Commit,
-        "CE-L1: Commit quorum should fast-track to Commit step"
+        ConsensusStep::Propose,
+        "CONS-512: step resets to Propose at the new height"
     );
 
-    // Verify: Commit count is correct
+    // Verify: Commit count is correct (at the height we just committed,
+    // not the new current height).
     let commit_count = engine.count_commits_for(
-        engine.current_round.height,
-        engine.current_round.round,
+        pre_commit_height,
+        0,
         &proposal_id,
     );
     assert_eq!(commit_count, 3, "Should have 3 commits for proposal");
@@ -1721,20 +1737,34 @@ async fn test_canonical_convergence_different_vote_order() {
         .await
         .expect("B: vote 2");
 
-    // INVARIANT CHECK: Both engines MUST be in Commit step
+    // CONS-512 INVARIANT CHECK: Both engines MUST have advanced past the
+    // committed height. Under the engine-owns-height contract a successful
+    // commit advances synchronously, so the post-finalize state is
+    // (height+1, round=0, step=Propose) — not Commit.
+    assert_eq!(
+        engine_a.current_round.height,
+        height + 1,
+        "Node A MUST advance to H+1 after processing quorum"
+    );
     assert_eq!(
         engine_a.current_round.step,
-        ConsensusStep::Commit,
-        "Node A MUST transition to Commit step after processing quorum"
+        ConsensusStep::Propose,
+        "Node A MUST be in Propose at the new height"
     );
 
     assert_eq!(
+        engine_b.current_round.height,
+        height + 1,
+        "Node B MUST advance to H+1 after processing quorum"
+    );
+    assert_eq!(
         engine_b.current_round.step,
-        ConsensusStep::Commit,
-        "Node B MUST transition to Commit step after processing quorum"
+        ConsensusStep::Propose,
+        "Node B MUST be in Propose at the new height"
     );
 
     // INVARIANT CHECK: Both engines MUST have identical commit vote counts
+    // at the height that was just committed (pre-advance height).
     let count_a = engine_a.count_commits_for(height, round, &proposal_id);
     let count_b = engine_b.count_commits_for(height, round, &proposal_id);
 
@@ -1758,7 +1788,7 @@ async fn test_canonical_convergence_different_vote_order() {
     tracing::info!("   - Node A processed votes in order: V1 → V2 → V3");
     tracing::info!("   - Node B processed votes in order: V3 → V1 → V2");
     tracing::info!("   - Both nodes finalized proposal: {}", proposal_id);
-    tracing::info!("   - Both nodes reached Commit step");
+    tracing::info!("   - Both nodes advanced past H={} to H+1", height);
     tracing::info!("   - Deterministic finality: CONFIRMED");
 }
 
@@ -2023,28 +2053,43 @@ async fn test_canonical_convergence_seven_validators() {
             .expect("B: vote");
     }
 
-    // INVARIANT: Both nodes MUST finalize
+    // CONS-512 INVARIANT: Both nodes MUST have advanced past H after
+    // observing the 5th commit vote (quorum). Late-arriving 6th and 7th
+    // votes are correctly stale-rejected at H+1.
+    assert_eq!(
+        engine_a.current_round.height,
+        height + 1,
+        "Node A MUST advance to H+1 after 5/7 quorum"
+    );
     assert_eq!(
         engine_a.current_round.step,
-        ConsensusStep::Commit,
-        "Node A MUST finalize with 5/7 votes"
+        ConsensusStep::Propose,
+        "Node A MUST be in Propose at the new height"
+    );
+    assert_eq!(
+        engine_b.current_round.height,
+        height + 1,
+        "Node B MUST advance to H+1 after 5/7 quorum"
     );
     assert_eq!(
         engine_b.current_round.step,
-        ConsensusStep::Commit,
-        "Node B MUST finalize with 5/7 votes"
+        ConsensusStep::Propose,
+        "Node B MUST be in Propose at the new height"
     );
 
-    // INVARIANT: Vote counts MUST be identical
+    // INVARIANT: Vote counts MUST be identical at the committed height.
+    // Exactly 5 votes were observed pre-advance; votes 6 and 7 arrived
+    // after advance and were stale-rejected (this is desired CONS-512
+    // behavior: post-finalization, peers should move to the next height).
     let count_a = engine_a.count_commits_for(height, round, &proposal_id);
     let count_b = engine_b.count_commits_for(height, round, &proposal_id);
 
-    assert_eq!(count_a, 5, "Node A MUST have 5 commit votes");
-    assert_eq!(count_b, 5, "Node B MUST have 5 commit votes");
+    assert_eq!(count_a, 5, "Node A MUST have 5 commit votes at H (quorum)");
+    assert_eq!(count_b, 5, "Node B MUST have 5 commit votes at H (quorum)");
 
     tracing::info!("✅ 7-validator canonical convergence verified:");
     tracing::info!("   - 7 validators (quorum = 5)");
-    tracing::info!("   - Both nodes finalized with 5 votes");
+    tracing::info!("   - Both nodes advanced past H={} after 5-vote quorum", height);
     tracing::info!("   - Deterministic finality: CONFIRMED");
 }
 
@@ -2217,37 +2262,52 @@ async fn test_canonical_convergence_with_equivocation() {
         .expect("B: vote 3");
 
     // INVARIANT: Both nodes must reach quorum (>= 3) for proposal A.
-    // Vote counts differ due to first-seen-wins: A accepts v0's A-vote, B rejects it.
-    // What matters for BFT safety is that both commit to the SAME proposal, not equal counts.
+    // Under CONS-512, the 3rd vote received triggers immediate finalize +
+    // advance. Subsequent votes (including vote_3 here) arrive at H+1 and
+    // are correctly stale-rejected. Counts therefore reflect only the
+    // votes observed pre-quorum.
     let count_a_proposal_a = engine_a.count_commits_for(height, round, &proposal_a);
     let count_b_proposal_a = engine_b.count_commits_for(height, round, &proposal_a);
 
     assert_eq!(
-        count_a_proposal_a, 4,
-        "Node A should count 4 valid votes for proposal A (v0 accepted first)"
+        count_a_proposal_a, 3,
+        "Node A: 3 votes for proposal A reached pre-advance (v0a, v1, v2); \
+         vote_3 arrived after engine had advanced to H+1 and is stale-rejected"
     );
     assert_eq!(
         count_b_proposal_a, 3,
-        "Node B should count 3 valid votes for proposal A (v0 slot occupied by v0b)"
+        "Node B: 3 votes for proposal A reached pre-advance (v1, v0b, v2); \
+         vote_0a and vote_3 arrived after advance and are stale-rejected"
     );
 
-    // INVARIANT: Both nodes should have finalized on proposal A (quorum = 3/4)
+    // CONS-512: Both nodes should have advanced past H after observing
+    // their respective 3-vote quorums.
+    assert_eq!(
+        engine_a.current_round.height,
+        height + 1,
+        "Node A MUST advance to H+1 after equivocation-tolerant quorum"
+    );
     assert_eq!(
         engine_a.current_round.step,
-        ConsensusStep::Commit,
-        "Node A MUST finalize despite equivocation"
+        ConsensusStep::Propose,
+        "Node A MUST be in Propose at the new height"
+    );
+    assert_eq!(
+        engine_b.current_round.height,
+        height + 1,
+        "Node B MUST advance to H+1 after equivocation-tolerant quorum"
     );
     assert_eq!(
         engine_b.current_round.step,
-        ConsensusStep::Commit,
-        "Node B MUST finalize despite equivocation"
+        ConsensusStep::Propose,
+        "Node B MUST be in Propose at the new height"
     );
 
     tracing::info!("✅ Equivocation handling verified:");
     tracing::info!("   - Validator 0 equivocated (2 different votes)");
-    tracing::info!("   - Node A: rejected v0b (equivocating), 4 votes for A");
-    tracing::info!("   - Node B: rejected v0a (equivocating), 3 votes for A");
-    tracing::info!("   - Both nodes finalized on proposal A (quorum = 3/4)");
+    tracing::info!("   - Node A: rejected v0b (equivocating), reached 3-vote quorum on A");
+    tracing::info!("   - Node B: rejected v0a (equivocating), reached 3-vote quorum on A");
+    tracing::info!("   - Both nodes finalized on proposal A and advanced to H+1");
     tracing::info!("   - BFT convergence maintained: CONFIRMED");
 }
 
@@ -3852,5 +3912,117 @@ async fn test_ce_s2p2_same_round_precommit_quorum_still_advances() {
     assert!(
         engine.current_round.step >= ConsensusStep::Commit,
         "same-round precommit quorum must advance to Commit step"
+    );
+}
+
+/// CONS-512 regression: engine must advance height synchronously when
+/// commit quorum is observed, in the same call frame as the consensus
+/// decision. NO external trigger (NewBlock event, on_round_timeout(Commit),
+/// mode transition) may be required.
+///
+/// This is the exact scenario that wedged g2 / g3 on 2026-06-03: an engine
+/// observed commit quorum at height H, but `current_round.height` did not
+/// advance because the only height-advance triggers were paths the engine
+/// never reached afterwards.
+///
+/// Test shape:
+/// 1. Engine at (H=42, R=0, step=PreVote).
+/// 2. Add 3/4 commit votes (quorum) to the vote pool for proposal P.
+/// 3. Stage proposal P in pending_proposals.
+/// 4. Call `maybe_finalize(H, R, P)` once.
+/// 5. Engine MUST end at (H=43, R=0, step=Propose) — *immediately*, with
+///    no subsequent timer fire or event injection.
+#[tokio::test]
+async fn test_cons512_commit_advances_height_synchronously() {
+    let config = ConsensusConfig {
+        development_mode: true,
+        ..Default::default()
+    };
+    let broadcaster = Arc::new(MockMessageBroadcaster::new());
+    let mut engine =
+        ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+    let mut validators = Vec::new();
+    for i in 1..=4 {
+        let validator_id = test_validator_id(i as u8);
+        let keypair = create_test_keypair();
+        register_validator_with_keypair(&mut engine, validator_id.clone(), &keypair, i == 1).await;
+        validators.push((validator_id, keypair));
+    }
+
+    // Pin the engine to a recognisable height — picked away from 0 to make
+    // sure we're not accidentally testing the genesis-special-case path.
+    const COMMITTED_HEIGHT: u64 = 42;
+    const COMMITTED_ROUND: u32 = 0;
+    engine.current_round.height = COMMITTED_HEIGHT;
+    engine.current_round.round = COMMITTED_ROUND;
+    engine.current_round.step = ConsensusStep::PreVote;
+    engine.snapshot_validator_set(COMMITTED_HEIGHT);
+
+    let proposal_id = Hash::from_bytes(&[0xC5u8; 32]);
+    let (ref proposer_id, ref proposer_kp) = validators[0];
+    stage_stub_proposal(
+        &mut engine,
+        proposal_id.clone(),
+        COMMITTED_HEIGHT,
+        COMMITTED_ROUND,
+        proposer_id,
+        proposer_kp,
+    );
+
+    // Inject 3 commit votes (quorum for 4-validator set: 2f+1 with f=1).
+    for i in 0..3 {
+        let (validator_id, keypair) = validators[i].clone();
+        let key = VotePoolKey {
+            height: COMMITTED_HEIGHT,
+            round: COMMITTED_ROUND,
+            vote_type: VoteType::Commit,
+            validator_id: validator_id.clone(),
+        };
+        let vote = make_signed_vote(
+            &engine,
+            &keypair,
+            validator_id,
+            proposal_id.clone(),
+            VoteType::Commit,
+            COMMITTED_HEIGHT,
+            COMMITTED_ROUND,
+        );
+        engine.vote_pool.insert(key, (vote, proposal_id.clone()));
+    }
+
+    // Drive finalization once. Under the pre-CONS-512 contract the engine
+    // would end at (42, *, Commit) and wait for an external trigger to
+    // advance; under CONS-512 it must advance in the same call frame.
+    engine
+        .maybe_finalize(COMMITTED_HEIGHT, COMMITTED_ROUND, &proposal_id)
+        .await
+        .expect("maybe_finalize should succeed with commit quorum");
+
+    assert_eq!(
+        engine.current_round.height,
+        COMMITTED_HEIGHT + 1,
+        "CONS-512: engine MUST advance to H+1 synchronously after commit \
+         quorum. Was the height-advance code in process_committed_block \
+         removed? See docs/epics/cons-512-engine-owns-height.md."
+    );
+    assert_eq!(
+        engine.current_round.round,
+        0,
+        "CONS-512: round resets to 0 at the new height"
+    );
+    assert_eq!(
+        engine.current_round.step,
+        ConsensusStep::Propose,
+        "CONS-512: step resets to Propose at the new height"
+    );
+    assert!(
+        engine.current_round.locked_proposal.is_none(),
+        "CONS-512: locks are retired across the height boundary"
+    );
+    assert!(
+        engine.current_round.valid_proposal.is_none(),
+        "CONS-512: valid_proposal cleared across the height boundary"
     );
 }
