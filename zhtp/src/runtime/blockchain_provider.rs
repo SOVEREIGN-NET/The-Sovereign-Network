@@ -87,32 +87,13 @@ impl BlockchainProvider {
         let arc = self.blockchain.read().await.as_ref().cloned()?;
         let bc = arc.read().await;
         let key_id_hex = hex::encode(device_key);
-        let key_id_did = format!("did:zhtp:{}", key_id_hex);
 
-        // (1) Direct match — same DID is registered.
-        if bc.identity_registry.contains_key(&key_id_did) {
-            return Some(key_id_did);
-        }
-
-        // (2) Hash-of-public-key match (Dilithium alone, then Dilithium+Kyber).
-        for (canonical_did, identity) in bc.identity_registry.iter() {
-            if identity.public_key.len() < 32 {
-                continue;
-            }
-            let dil_hash = hex::encode(lib_crypto::hash_blake3(&identity.public_key));
-            if dil_hash == key_id_hex {
-                return Some(canonical_did.clone());
-            }
-            if !identity.kyber_public_key.is_empty() {
-                let combined = [&identity.public_key[..], &identity.kyber_public_key[..]].concat();
-                let combined_hash = hex::encode(lib_crypto::hash_blake3(&combined));
-                if combined_hash == key_id_hex {
-                    return Some(canonical_did.clone());
-                }
-            }
-        }
-
-        None
+        // #58: sled-first resolution. The facade does the same direct-match +
+        // Dilithium / Dilithium+Kyber hash scan this used to open-code over the
+        // in-memory `identity_registry`, but reads the durable `identity_metadata`
+        // set so a store-backed node still resolves the recipient after a restart
+        // (the in-memory registry is empty then).
+        bc.did_by_device_key_id(&key_id_hex)
     }
 
     /// Configure blockchain mutation access mode.
