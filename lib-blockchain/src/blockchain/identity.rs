@@ -227,10 +227,35 @@ impl Blockchain {
     pub fn identity_controlled_nodes(&self, did: &str) -> Option<Vec<String>> {
         if let Some(store) = self.get_store() {
             let did_hash = crate::storage::did_to_hash(did);
-            if let Some(meta) = store.get_identity_metadata(&did_hash).ok().flatten() {
-                return Some(meta.controlled_nodes);
+            match store.get_identity_metadata(&did_hash) {
+                Ok(Some(meta)) => return Some(meta.controlled_nodes),
+                // Sled has no record yet — fall through to the in-memory
+                // shadow. This is the legitimate pending pre-commit case
+                // (registration just queued, not yet flushed); shadow may
+                // also be the only source in store-less harness mode.
+                Ok(None) => {}
+                // Sled returned an error (corrupt tree, disk pressure, IO
+                // failure). Falling through to the in-memory shadow here
+                // would have the same symptom the rest of this PR exists
+                // to fix: on a store-backed node after restart the shadow
+                // is empty, so a sled error would silently look like
+                // "unknown DID" and stop the validator producing blocks.
+                // Log loudly and return None so callers see the absence —
+                // the validator dropping out of consensus is preferable
+                // to it building proposals against partial state, and
+                // the warn! gives operators a signal to investigate
+                // before blaming consensus. (CR PR #2676.)
+                Err(e) => {
+                    tracing::warn!(
+                        did = did,
+                        error = %e,
+                        "identity_controlled_nodes: sled metadata read failed; \
+                         NOT falling back to in-memory shadow to avoid masking \
+                         the error as a missing identity"
+                    );
+                    return None;
+                }
             }
-            // Not committed to sled — fall through to the in-memory shadow.
         }
         self.identity_registry
             .get(did)
