@@ -341,20 +341,17 @@ fn controlled_nodes_for_validator_id(
     blockchain: &Blockchain,
     validator_id: &IdentityId,
 ) -> Option<Vec<Vec<u8>>> {
-    for (did, identity_data) in blockchain.identity_registry.iter() {
-        let did_hash = did_hash_to_identity_id(did)?;
-        if did_hash != *validator_id {
-            continue;
-        }
-        let mut node_ids = Vec::new();
-        for node_hex in &identity_data.controlled_nodes {
-            if let Some(node_id) = decode_node_id_hex(node_hex) {
-                node_ids.push(node_id);
-            }
-        }
-        return Some(node_ids);
-    }
-    None
+    // #2639: point-lookup the validator's controlled nodes from sled metadata.
+    // The old scan of the in-memory identity_registry returned None on a
+    // store-backed node after restart (the shadow is empty), dropping the
+    // validator's controlled node-ids from the consensus peer set.
+    let did = format!("did:zhtp:{}", hex::encode(validator_id.as_bytes()));
+    let controlled = blockchain.identity_controlled_nodes(&did)?;
+    let node_ids = controlled
+        .iter()
+        .filter_map(|node_hex| decode_node_id_hex(node_hex))
+        .collect();
+    Some(node_ids)
 }
 
 fn did_hash_to_identity_id(did: &str) -> Option<IdentityId> {

@@ -378,14 +378,31 @@ impl Blockchain {
         // would fail to resolve a recipient's public key by key_id during
         // TokenTransfer / TokenMint execution (consensus path).
         if let Some(store) = self.get_store() {
-            if let Ok(iter) = store.iter_identity_metadata() {
-                for meta in iter {
-                    if let Ok(pk_arr) = meta.public_key.as_slice().try_into() {
-                        let pk = PublicKey::new(pk_arr);
-                        if &pk.key_id == key_id {
-                            return Some(meta.public_key);
+            match store.iter_identity_metadata() {
+                Ok(iter) => {
+                    for meta in iter {
+                        if let Ok(pk_arr) = meta.public_key.as_slice().try_into() {
+                            let pk = PublicKey::new(pk_arr);
+                            if &pk.key_id == key_id {
+                                return Some(meta.public_key);
+                            }
                         }
                     }
+                }
+                // Scan error on a store-backed node: on the consensus path
+                // (TokenTransfer / TokenMint execution), masking this as
+                // "not found" would silently fail recipient resolution and
+                // looks identical to "unknown identity" — exactly the silent
+                // post-restart failure mode #2639 exists to remove. Log
+                // loudly so operators see the underlying error rather than
+                // blaming consensus; still fall through to the in-memory
+                // shadow so the legitimate pending pre-commit path keeps
+                // working (CR PR #2678).
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "resolve_public_key_by_key_id: iter_identity_metadata failed; falling back to in-memory shadow"
+                    );
                 }
             }
         }

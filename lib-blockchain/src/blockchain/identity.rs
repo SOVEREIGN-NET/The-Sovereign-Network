@@ -161,22 +161,75 @@ impl Blockchain {
     /// Resolve the DID owning a given Dilithium public key, sled-first (#2639).
     ///
     /// Scans the durable `identity_metadata` set for a record whose `public_key`
-    /// matches and returns its DID. Revoked identities are excluded
-    /// automatically: revocation deletes the metadata record (see
-    /// `delete_identity_metadata`), so the old in-memory
-    /// `identity_type != "revoked"` filter is implicit here. Falls back to the
-    /// in-memory shadow only when sled has no match (store-less mode, or a
-    /// pending pre-commit registration) — the in-memory scan is empty on a
-    /// store-backed node after restart, which previously made consensus
+    /// matches and PINS the result to consensus: a metadata-only match is not
+    /// trusted on its own. Once a candidate is found, the corresponding
+    /// `IdentityConsensus` record is loaded and the metadata key must
+    /// `blake3`-hash to the consensus `public_key_hash`, and the consensus
+    /// status must not be `Revoked`. This makes council-membership / signer
+    /// resolution safe even if the metadata tree ever drifts from consensus
+    /// (CR PR #2678).
+    ///
+    /// Falls back to the in-memory shadow only when sled has no match (store-less
+    /// mode, or a pending pre-commit registration) — the in-memory scan is empty
+    /// on a store-backed node after restart, which previously made consensus
     /// council-membership checks (threshold approvals) silently fail there.
     pub fn did_by_public_key(&self, public_key: &[u8]) -> Option<String> {
         if let Some(store) = self.get_store() {
-            if let Ok(iter) = store.iter_identity_metadata() {
-                if let Some(meta) = iter.into_iter().find(|m| m.public_key == public_key) {
-                    return Some(meta.did);
+            match store.iter_identity_metadata() {
+                Ok(iter) => {
+                    if let Some(meta) =
+                        iter.into_iter().find(|m| m.public_key == public_key)
+                    {
+                        // Consensus-pin the metadata match.
+                        let did_hash = crate::storage::did_to_hash(&meta.did);
+                        match store.get_identity(&did_hash) {
+                            Ok(Some(consensus)) => {
+                                if crate::types::hash::blake3_hash(&meta.public_key).as_array()
+                                    != consensus.public_key_hash
+                                {
+                                    tracing::warn!(
+                                        did = %meta.did,
+                                        "did_by_public_key: metadata key hash != consensus public_key_hash; refusing drifted match"
+                                    );
+                                    return None;
+                                }
+                                if matches!(
+                                    consensus.status,
+                                    crate::storage::IdentityStatus::Revoked
+                                ) {
+                                    return None;
+                                }
+                                return Some(meta.did);
+                            }
+                            Ok(None) => {
+                                // Metadata present without a consensus record is
+                                // itself a drift signal — refuse rather than
+                                // accept a non-consensus identity.
+                                tracing::warn!(
+                                    did = %meta.did,
+                                    "did_by_public_key: metadata match has no consensus record; refusing"
+                                );
+                                return None;
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    did = %meta.did,
+                                    error = %e,
+                                    "did_by_public_key: consensus pin lookup failed; refusing"
+                                );
+                                return None;
+                            }
+                        }
+                    }
+                    // No metadata match — fall through to in-mem shadow.
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "did_by_public_key: iter_identity_metadata failed; falling back to in-memory shadow (may be empty after restart on store-backed node)"
+                    );
                 }
             }
-            // Not in sled (or a scan error) — fall through to the in-memory shadow.
         }
         self.identity_registry
             .values()
@@ -236,6 +289,56 @@ impl Blockchain {
             // Not in sled yet — fall through to the in-memory pending shadow.
         }
         self.identity_registry.get(did).map(|id| id.display_name.clone())
+    }
+
+    /// Node IDs (hex) controlled by a DID, sled-first (#2639).
+    ///
+    /// `controlled_nodes` is metadata (persisted by the executor to the
+    /// `identity_metadata` tree on registration and identity update). Reading it
+    /// from durable sled — instead of the in-memory `identity_registry`, which is
+    /// empty on a store-backed node after restart — is what lets a restarted
+    /// validator still resolve which nodes a user controls (and thus recognize
+    /// itself as the selected proposer; consensus liveness).
+    ///
+    /// Returns `None` when the DID is unknown, `Some(vec)` when it exists (the vec
+    /// may be empty). In-memory shadow is consulted only when sled has no record
+    /// (store-less mode, or a pending pre-commit registration).
+    pub fn identity_controlled_nodes(&self, did: &str) -> Option<Vec<String>> {
+        if let Some(store) = self.get_store() {
+            let did_hash = crate::storage::did_to_hash(did);
+            match store.get_identity_metadata(&did_hash) {
+                Ok(Some(meta)) => return Some(meta.controlled_nodes),
+                // Sled has no record yet — fall through to the in-memory
+                // shadow. This is the legitimate pending pre-commit case
+                // (registration just queued, not yet flushed); shadow may
+                // also be the only source in store-less harness mode.
+                Ok(None) => {}
+                // Sled returned an error (corrupt tree, disk pressure, IO
+                // failure). Falling through to the in-memory shadow here
+                // would have the same symptom the rest of this PR exists
+                // to fix: on a store-backed node after restart the shadow
+                // is empty, so a sled error would silently look like
+                // "unknown DID" and stop the validator producing blocks.
+                // Log loudly and return None so callers see the absence —
+                // the validator dropping out of consensus is preferable
+                // to it building proposals against partial state, and
+                // the warn! gives operators a signal to investigate
+                // before blaming consensus. (CR PR #2676.)
+                Err(e) => {
+                    tracing::warn!(
+                        did = did,
+                        error = %e,
+                        "identity_controlled_nodes: sled metadata read failed; \
+                         NOT falling back to in-memory shadow to avoid masking \
+                         the error as a missing identity"
+                    );
+                    return None;
+                }
+            }
+        }
+        self.identity_registry
+            .get(did)
+            .map(|id| id.controlled_nodes.clone())
     }
 
     pub fn update_identity(
