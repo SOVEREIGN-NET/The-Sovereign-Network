@@ -904,14 +904,29 @@ impl ConsensusEngine {
         tracing::info!("🔄 Catch-up sync trigger connected to consensus engine");
     }
 
-    /// Synchronize consensus engine height with blockchain
+    /// CONS-512: Initialize engine height from durable storage at BOOT.
     ///
-    /// Called before starting the consensus loop to ensure the engine
-    /// starts proposing at the correct height (blockchain_height + 1).
+    /// **Boot-only contract.** This is the *single* legitimate point of
+    /// coupling between engine height and blockchain storage. Under the
+    /// engine-owns-height contract (`docs/epics/cons-512-engine-owns-height.md`),
+    /// engine height advancement at runtime happens synchronously inside
+    /// `process_committed_block` — storage is downstream of consensus,
+    /// never the source of truth for runtime height.
     ///
-    /// This is critical for mode transitions:
-    /// - Bootstrap mode produces blocks directly to blockchain
-    /// - When switching to BFT mode, consensus must continue from the correct height
+    /// The bug this contract fixes: pre-CONS-512, `sync_height_with_blockchain`
+    /// was called from `on_round_timeout(Commit)`, the NewBlock event handler
+    /// (never fired in production), and mode transitions. If the engine left
+    /// Commit step before its timer fired, the runtime sync triggers all
+    /// missed, and the engine wedged at H=N with `blockchain.height = N`
+    /// (engine and storage agree on N but disagree on whether N is the
+    /// "next to vote on" or "already committed"). This was the 2026-06-03
+    /// stall.
+    ///
+    /// Callers (post-CONS-512):
+    /// - `run_consensus_loop` start — sole production caller.
+    ///
+    /// Anyone adding a new caller MUST justify why this is not a CONS-512
+    /// regression in the PR description.
     pub async fn sync_height_with_blockchain(&mut self) -> ConsensusResult<()> {
         if let Some(ref provider) = self.blockchain_provider {
             match provider.get_blockchain_height().await {
