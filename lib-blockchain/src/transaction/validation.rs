@@ -2474,9 +2474,13 @@ impl<'a> StatefulTransactionValidator<'a> {
             &data.approvals,
             &preimage,
             |pk_bytes| {
+                // #2639: sled-first DID-by-pubkey (in-mem fallback). The old
+                // get_identity_by_public_key scanned the in-memory shadow only,
+                // empty on a store-backed node after restart — so council members
+                // were unverifiable and threshold approvals silently failed there.
                 blockchain
-                    .get_identity_by_public_key(pk_bytes)
-                    .map(|id| blockchain.is_council_member(&id.did))
+                    .did_by_public_key(pk_bytes)
+                    .map(|did| blockchain.is_council_member(&did))
                     .unwrap_or(false)
             },
             blockchain.council_threshold as usize,
@@ -2679,9 +2683,13 @@ impl<'a> StatefulTransactionValidator<'a> {
             &data.approvals,
             &preimage,
             |pk_bytes| {
+                // #2639: sled-first DID-by-pubkey (in-mem fallback). The old
+                // get_identity_by_public_key scanned the in-memory shadow only,
+                // empty on a store-backed node after restart — so council members
+                // were unverifiable and threshold approvals silently failed there.
                 blockchain
-                    .get_identity_by_public_key(pk_bytes)
-                    .map(|id| blockchain.is_council_member(&id.did))
+                    .did_by_public_key(pk_bytes)
+                    .map(|did| blockchain.is_council_member(&did))
                     .unwrap_or(false)
             },
             blockchain.council_threshold as usize,

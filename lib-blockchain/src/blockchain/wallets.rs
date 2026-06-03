@@ -373,15 +373,29 @@ impl Blockchain {
             }
         }
 
-        for identity in self.identity_registry.values() {
-            if identity.public_key.is_empty() {
-                continue;
+        // #2639: resolve from sled identity metadata first. The in-memory
+        // identity_registry is empty on a store-backed node after restart, which
+        // would fail to resolve a recipient's public key by key_id during
+        // TokenTransfer / TokenMint execution (consensus path).
+        if let Some(store) = self.get_store() {
+            if let Ok(iter) = store.iter_identity_metadata() {
+                for meta in iter {
+                    if let Ok(pk_arr) = meta.public_key.as_slice().try_into() {
+                        let pk = PublicKey::new(pk_arr);
+                        if &pk.key_id == key_id {
+                            return Some(meta.public_key);
+                        }
+                    }
+                }
             }
-            let pk = PublicKey::new(
-                identity.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
-            );
-            if &pk.key_id == key_id {
-                return Some(identity.public_key.clone());
+        }
+        // In-memory fallback (store-less, or a pending pre-commit identity).
+        for identity in self.identity_registry.values() {
+            if let Ok(pk_arr) = identity.public_key.as_slice().try_into() {
+                let pk = PublicKey::new(pk_arr);
+                if &pk.key_id == key_id {
+                    return Some(identity.public_key.clone());
+                }
             }
         }
 

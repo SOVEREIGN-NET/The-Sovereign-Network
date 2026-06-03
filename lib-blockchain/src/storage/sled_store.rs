@@ -1719,6 +1719,33 @@ impl BlockchainStore for SledStore {
         Ok(Box::new(results.into_iter()))
     }
 
+    fn iter_identity_metadata(
+        &self,
+    ) -> StorageResult<Box<dyn Iterator<Item = IdentityMetadata> + '_>> {
+        // Materialize in one pass so a deserialize error surfaces here. Mirrors
+        // iter_identities; the tree is keyed by did_hash = did_to_hash(did).
+        let mut results = Vec::new();
+        for entry in self.identity_metadata.iter() {
+            match entry {
+                Ok((key, value)) => {
+                    let metadata: IdentityMetadata = Self::deserialize(&value)?;
+                    // Validate the record's DID hashes back to its tree key, so a
+                    // corrupted/mismatched value cannot feed callers a wrong DID.
+                    if crate::storage::did_to_hash(&metadata.did).as_ref() != key.as_ref() {
+                        return Err(StorageError::CorruptedData(format!(
+                            "identity_metadata did {} does not hash to its tree key {}",
+                            metadata.did,
+                            hex::encode(key.as_ref())
+                        )));
+                    }
+                    results.push(metadata);
+                }
+                Err(e) => return Err(StorageError::Database(e.to_string())),
+            }
+        }
+        Ok(Box::new(results.into_iter()))
+    }
+
     fn count_identities(&self) -> StorageResult<usize> {
         // sled::Tree::len is an O(n) walk but avoids deserializing every record,
         // so it is the cheapest authoritative count available.

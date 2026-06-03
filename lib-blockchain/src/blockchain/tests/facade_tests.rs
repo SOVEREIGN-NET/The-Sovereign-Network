@@ -331,3 +331,56 @@ fn identity_public_key_pins_to_consensus() {
         "display_name read from sled metadata"
     );
 }
+
+/// did_by_public_key() resolves a DID from a public key by scanning sled
+/// metadata even when the in-memory shadow is empty (restart case) — the read
+/// that lets council-membership / dedup checks work on a store-backed node
+/// (#2639/#61).
+#[test]
+fn did_by_public_key_reads_sled_metadata() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("did_by_pk")).unwrap());
+
+    let did = "did:zhtp:signer";
+    let did_hash = crate::storage::did_to_hash(did);
+    let pk = vec![0x9u8; 2592];
+    store.begin_block(0).unwrap();
+    store
+        .put_identity(&did_hash, &IdentityConsensus { did_hash, ..Default::default() })
+        .unwrap();
+    store
+        .put_identity_metadata(
+            &did_hash,
+            &IdentityMetadata {
+                did: did.to_string(),
+                display_name: "S".to_string(),
+                public_key: pk.clone(),
+                ownership_proof: vec![],
+                controlled_nodes: vec![],
+                owned_wallets: vec![],
+                attributes: vec![],
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().unwrap();
+    bc.set_store(store);
+    assert!(
+        !bc.identity_registry.values().any(|i| i.public_key == pk),
+        "test premise: this pubkey is sled-only (in-mem shadow empty, like after restart)"
+    );
+    assert_eq!(
+        bc.did_by_public_key(&pk),
+        Some(did.to_string()),
+        "DID resolved from sled metadata despite empty in-mem shadow"
+    );
+    assert_eq!(
+        bc.did_by_public_key(&vec![0x1u8; 2592]),
+        None,
+        "unknown pubkey -> None"
+    );
+    // is_public_key_registered routes through did_by_public_key.
+    assert!(bc.is_public_key_registered(&pk));
+    assert!(!bc.is_public_key_registered(&vec![0x1u8; 2592]));
+}

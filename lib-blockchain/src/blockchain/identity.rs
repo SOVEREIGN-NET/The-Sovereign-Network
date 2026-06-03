@@ -158,6 +158,32 @@ impl Blockchain {
         }
     }
 
+    /// Resolve the DID owning a given Dilithium public key, sled-first (#2639).
+    ///
+    /// Scans the durable `identity_metadata` set for a record whose `public_key`
+    /// matches and returns its DID. Revoked identities are excluded
+    /// automatically: revocation deletes the metadata record (see
+    /// `delete_identity_metadata`), so the old in-memory
+    /// `identity_type != "revoked"` filter is implicit here. Falls back to the
+    /// in-memory shadow only when sled has no match (store-less mode, or a
+    /// pending pre-commit registration) — the in-memory scan is empty on a
+    /// store-backed node after restart, which previously made consensus
+    /// council-membership checks (threshold approvals) silently fail there.
+    pub fn did_by_public_key(&self, public_key: &[u8]) -> Option<String> {
+        if let Some(store) = self.get_store() {
+            if let Ok(iter) = store.iter_identity_metadata() {
+                if let Some(meta) = iter.into_iter().find(|m| m.public_key == public_key) {
+                    return Some(meta.did);
+                }
+            }
+            // Not in sled (or a scan error) — fall through to the in-memory shadow.
+        }
+        self.identity_registry
+            .values()
+            .find(|id| id.public_key == public_key && id.identity_type != "revoked")
+            .map(|id| id.did.clone())
+    }
+
     /// Full Dilithium public key for a DID, sled-first and consensus-pinned (#2639).
     ///
     /// The full key bytes live only in the (non-consensus) `IdentityMetadata`
@@ -329,9 +355,6 @@ impl Blockchain {
         Ok(revocation_tx.hash())
     }
 
-    pub fn list_all_identities(&self) -> Vec<&IdentityTransactionData> {
-        self.identity_registry.values().collect()
-    }
 
     pub fn get_all_identities(&self) -> &HashMap<String, IdentityTransactionData> {
         &self.identity_registry
@@ -640,21 +663,12 @@ impl Blockchain {
     }
 
     pub fn is_public_key_registered(&self, public_key: &[u8]) -> bool {
-        self.identity_registry
-            .values()
-            .any(|identity_data| {
-                identity_data.public_key == public_key && identity_data.identity_type != "revoked"
-            })
+        // #2639: sled-first via did_by_public_key (union). The old in-memory scan
+        // returned false on a store-backed node after restart, letting an
+        // already-registered public key be registered again as a duplicate.
+        self.did_by_public_key(public_key).is_some()
     }
 
-    pub fn get_identity_by_public_key(
-        &self,
-        public_key: &[u8],
-    ) -> Option<&IdentityTransactionData> {
-        self.identity_registry.values().find(|identity_data| {
-            identity_data.public_key == public_key && identity_data.identity_type != "revoked"
-        })
-    }
 
     pub fn auto_register_wallet_identity(
         &mut self,
