@@ -1244,6 +1244,10 @@ impl Blockchain {
         self.height += 1;
         self.update_utxo_set(&block)?;
         self.save_utxo_snapshot(self.height)?;
+        // BST-202: snapshots accumulate without bound otherwise — RSS grew to
+        // 12 GB / 123k snapshots on validators. Retention matches the hot
+        // block window, since reorg cannot exceed it anyway.
+        self.prune_utxo_history(self.block_window_size() as u64);
         self.adjust_difficulty()?;
 
         // Remove processed transactions from pending pool
