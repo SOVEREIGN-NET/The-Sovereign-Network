@@ -413,6 +413,29 @@ impl SledStore {
         // open — a no-op when no commit is pending.
         store.recover_pending_commit()?;
 
+        // CR PR #2679: brand-new stores (identity_metadata tree empty AND no
+        // schema version key) get marked at the current version so the next
+        // replay-based boot doesn't trigger a needless clear+rewrite migration.
+        // An absent version key with NON-empty metadata still reads as v1 (the
+        // legitimate legacy pre-versioning case) and is migrated as designed.
+        let needs_init_marker = matches!(
+            store.meta.get(keys::meta::IDENTITY_METADATA_SCHEMA_VERSION),
+            Ok(None)
+        ) && store.identity_metadata.is_empty();
+        if needs_init_marker {
+            store
+                .meta
+                .insert(
+                    keys::meta::IDENTITY_METADATA_SCHEMA_VERSION,
+                    &super::IDENTITY_METADATA_SCHEMA_VERSION.to_be_bytes(),
+                )
+                .map_err(|e| StorageError::Database(e.to_string()))?;
+            store
+                .meta
+                .flush()
+                .map_err(|e| StorageError::Database(e.to_string()))?;
+        }
+
         Ok(store)
     }
 
@@ -877,6 +900,26 @@ impl SledStore {
         // The WAL marker is deliberately left in place — recovery must heal it.
         self.tx_active.store(false, Ordering::SeqCst);
         Ok(total_trees)
+    }
+
+    /// TEST-ONLY: insert raw bytes into the `identity_metadata` tree without
+    /// going through `Self::serialize`. Used by the schema-migration
+    /// safety-property test (CR PR #2679) to plant an old-shaped / corrupt
+    /// blob and verify the migration succeeds without ever decoding it.
+    /// (`pub(crate)` + `#[cfg(test)]` so production paths cannot reach it.)
+    #[cfg(test)]
+    pub(crate) fn put_identity_metadata_raw_bytes(
+        &self,
+        did_hash: &[u8; 32],
+        bytes: &[u8],
+    ) -> StorageResult<()> {
+        self.identity_metadata
+            .insert(did_hash.as_ref(), bytes)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        self.identity_metadata
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
     }
 }
 
@@ -1891,6 +1934,67 @@ impl BlockchainStore for SledStore {
         let value = Self::serialize(metadata)?;
         self.identity_metadata
             .insert(did_hash.as_ref(), value)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        self.identity_metadata
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Bulk insert + single flush (CR PR #2679 — used by the schema-v2
+    /// regenerate-from-blocks migration to amortise the fsync cost; the
+    /// per-record `put_identity_metadata_direct` flushed every call,
+    /// making upgrades O(n) in fsync count).
+    fn put_identity_metadata_batch(
+        &self,
+        records: &[([u8; 32], IdentityMetadata)],
+    ) -> StorageResult<usize> {
+        let mut written = 0usize;
+        for (did_hash, metadata) in records {
+            let value = Self::serialize(metadata)?;
+            self.identity_metadata
+                .insert(did_hash.as_ref(), value)
+                .map_err(|e| StorageError::Database(e.to_string()))?;
+            written += 1;
+        }
+        self.identity_metadata
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(written)
+    }
+
+    fn identity_metadata_schema_version(&self) -> StorageResult<u32> {
+        // Absent key => version 1 (pre-kyber records written before #58).
+        match self.meta.get(keys::meta::IDENTITY_METADATA_SCHEMA_VERSION) {
+            Ok(Some(bytes)) => {
+                let arr: [u8; 4] = bytes.as_ref().try_into().map_err(|_| {
+                    StorageError::Database(
+                        "identity_metadata_schema_version: malformed u32".to_string(),
+                    )
+                })?;
+                Ok(u32::from_be_bytes(arr))
+            }
+            Ok(None) => Ok(1),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn set_identity_metadata_schema_version(&self, version: u32) -> StorageResult<()> {
+        self.meta
+            .insert(
+                keys::meta::IDENTITY_METADATA_SCHEMA_VERSION,
+                &version.to_be_bytes(),
+            )
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        self.meta
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    fn clear_identity_metadata(&self) -> StorageResult<()> {
+        self.identity_metadata
+            .clear()
             .map_err(|e| StorageError::Database(e.to_string()))?;
         self.identity_metadata
             .flush()
@@ -2978,9 +3082,8 @@ mod tests {
             display_name: "Test Organization".to_string(),
             public_key: vec![0x05; 64],
             ownership_proof: vec![0x06; 128],
-            controlled_nodes: vec![],
             owned_wallets: vec!["wallet-1".to_string()],
-            attributes: vec![],
+            ..Default::default()
         };
 
         store.begin_block(0).unwrap();
@@ -3122,10 +3225,7 @@ mod tests {
             did: did.to_string(),
             display_name: "Delete Me".to_string(),
             public_key: vec![0x0d; 64],
-            ownership_proof: vec![],
-            controlled_nodes: vec![],
-            owned_wallets: vec![],
-            attributes: vec![],
+            ..Default::default()
         };
 
         // Create identity

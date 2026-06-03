@@ -291,6 +291,50 @@ impl Blockchain {
         self.identity_registry.get(did).map(|id| id.display_name.clone())
     }
 
+    /// Kyber (KEM) public key for a DID, sled-first (#2639).
+    ///
+    /// `kyber_public_key` is metadata (not consensus): it is read from the
+    /// durable `identity_metadata` tree on a store-backed node — populated for
+    /// existing identities by the schema-v2 regenerate-from-blocks migration
+    /// (see `Blockchain::migrate_identity_metadata_schema`) — with the in-memory
+    /// shadow as the store-less / not-yet-committed fallback. Returns `None`
+    /// when the identity is unknown or carries no Kyber key.
+    ///
+    /// Error handling mirrors the pattern locked in by PR #2676 / #2678 for the
+    /// other metadata facades: a sled read error returns `None` with a `warn!`
+    /// rather than falling through to the in-memory shadow, which is empty on
+    /// a store-backed node after restart and would silently look like an
+    /// "unknown identity" — the exact masking the state-unification work
+    /// (#2645) exists to remove.
+    pub fn identity_kyber_public_key(&self, did: &str) -> Option<Vec<u8>> {
+        if let Some(store) = self.get_store() {
+            let did_hash = crate::storage::did_to_hash(did);
+            match store.get_identity_metadata(&did_hash) {
+                Ok(Some(meta)) => {
+                    if meta.kyber_public_key.is_empty() {
+                        return None;
+                    }
+                    return Some(meta.kyber_public_key);
+                }
+                // Not in sled yet — legitimate pre-commit / store-less path.
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        did = did,
+                        error = %e,
+                        "identity_kyber_public_key: sled metadata read failed; \
+                         NOT falling back to in-memory shadow"
+                    );
+                    return None;
+                }
+            }
+        }
+        self.identity_registry
+            .get(did)
+            .map(|id| id.kyber_public_key.clone())
+            .filter(|k| !k.is_empty())
+    }
+
     /// Node IDs (hex) controlled by a DID, sled-first (#2639).
     ///
     /// `controlled_nodes` is metadata (persisted by the executor to the
@@ -308,22 +352,7 @@ impl Blockchain {
             let did_hash = crate::storage::did_to_hash(did);
             match store.get_identity_metadata(&did_hash) {
                 Ok(Some(meta)) => return Some(meta.controlled_nodes),
-                // Sled has no record yet — fall through to the in-memory
-                // shadow. This is the legitimate pending pre-commit case
-                // (registration just queued, not yet flushed); shadow may
-                // also be the only source in store-less harness mode.
                 Ok(None) => {}
-                // Sled returned an error (corrupt tree, disk pressure, IO
-                // failure). Falling through to the in-memory shadow here
-                // would have the same symptom the rest of this PR exists
-                // to fix: on a store-backed node after restart the shadow
-                // is empty, so a sled error would silently look like
-                // "unknown DID" and stop the validator producing blocks.
-                // Log loudly and return None so callers see the absence —
-                // the validator dropping out of consensus is preferable
-                // to it building proposals against partial state, and
-                // the warn! gives operators a signal to investigate
-                // before blaming consensus. (CR PR #2676.)
                 Err(e) => {
                     tracing::warn!(
                         did = did,
@@ -655,6 +684,7 @@ impl Blockchain {
             did: identity_data.did.clone(),
             display_name: identity_data.display_name.clone(),
             public_key: identity_data.public_key.clone(),
+            kyber_public_key: identity_data.kyber_public_key.clone(),
             ownership_proof: identity_data.ownership_proof.clone(),
             controlled_nodes: identity_data.controlled_nodes.clone(),
             owned_wallets: identity_data.owned_wallets.clone(),
@@ -747,6 +777,7 @@ impl Blockchain {
 
         let mut updated_metadata = existing_metadata.clone();
         updated_metadata.display_name = identity_data.display_name.clone();
+        updated_metadata.kyber_public_key = identity_data.kyber_public_key.clone();
         updated_metadata.ownership_proof = identity_data.ownership_proof.clone();
         updated_metadata.controlled_nodes = identity_data.controlled_nodes.clone();
         updated_metadata.owned_wallets = identity_data.owned_wallets.clone();

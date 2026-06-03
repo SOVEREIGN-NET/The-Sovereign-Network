@@ -531,6 +531,19 @@ impl Default for IdentityConsensus {
 // and display purposes. It does NOT participate in consensus state hash.
 // =============================================================================
 
+/// Current schema version of the `identity_metadata` tree.
+///
+/// - v1: original shape (no `kyber_public_key`).
+/// - v2: adds `kyber_public_key` (#58).
+///
+/// On startup, a store whose persisted version is below this triggers the
+/// regenerate-from-blocks migration (see
+/// `Blockchain::migrate_identity_metadata_schema`). Because `identity_metadata`
+/// is non-consensus and fully derivable from blocks, the migration rebuilds the
+/// whole tree rather than reading any old-shaped blob — keeping it safe under
+/// bincode's positional (non-self-describing) encoding.
+pub const IDENTITY_METADATA_SCHEMA_VERSION: u32 = 2;
+
 /// Identity metadata - for resolution and display
 ///
 /// Stored in separate `identity_metadata` tree, NOT part of consensus state hash.
@@ -541,8 +554,14 @@ pub struct IdentityMetadata {
     pub did: String,
     /// Human-readable display name
     pub display_name: String,
-    /// Full public key bytes
+    /// Full Dilithium public key bytes
     pub public_key: Vec<u8>,
+    /// Full Kyber (KEM) public key bytes — for encrypted-session setup and
+    /// DID resolution (#58). Added in identity_metadata schema v2; existing
+    /// records are regenerated from blocks by the version-gated migration
+    /// (see `Blockchain::migrate_identity_metadata_schema`), so this is NOT
+    /// read out of pre-v2 bincode blobs.
+    pub kyber_public_key: Vec<u8>,
     /// Full ownership proof
     pub ownership_proof: Vec<u8>,
     /// Node IDs controlled by this identity
@@ -559,6 +578,7 @@ impl IdentityMetadata {
             did,
             display_name,
             public_key,
+            kyber_public_key: Vec::new(),
             ownership_proof: Vec::new(),
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
@@ -573,6 +593,7 @@ impl Default for IdentityMetadata {
             did: String::new(),
             display_name: String::new(),
             public_key: Vec::new(),
+            kyber_public_key: Vec::new(),
             ownership_proof: Vec::new(),
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
@@ -687,6 +708,7 @@ pub fn convert_legacy_identity(
         did: legacy.did.clone(),
         display_name: legacy.display_name.clone(),
         public_key: legacy.public_key.clone(),
+        kyber_public_key: legacy.kyber_public_key.clone(),
         ownership_proof: legacy.ownership_proof.clone(),
         controlled_nodes: legacy.controlled_nodes.clone(),
         owned_wallets: legacy.owned_wallets.clone(),
@@ -1251,6 +1273,32 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         Ok(())
     }
 
+    /// Read the persisted `identity_metadata` schema version.
+    ///
+    /// Drives the version-gated regenerate-from-blocks migration (#58).
+    /// The default returns [`IDENTITY_METADATA_SCHEMA_VERSION`] so backends with
+    /// no persisted metadata (mocks, in-memory) are treated as already current
+    /// and never trigger a rebuild. Sled overrides this to read the meta key,
+    /// defaulting to `1` when the key is absent (pre-kyber records).
+    fn identity_metadata_schema_version(&self) -> StorageResult<u32> {
+        Ok(IDENTITY_METADATA_SCHEMA_VERSION)
+    }
+
+    /// Persist the `identity_metadata` schema version. Default is a no-op.
+    fn set_identity_metadata_schema_version(&self, version: u32) -> StorageResult<()> {
+        let _ = version;
+        Ok(())
+    }
+
+    /// Remove every record from the `identity_metadata` tree.
+    ///
+    /// Used by the schema migration to drop stale pre-kyber blobs before
+    /// regenerating the tree from blocks. Default is a no-op (metadata is
+    /// non-consensus and rebuildable, so clearing a backend without one is safe).
+    fn clear_identity_metadata(&self) -> StorageResult<()> {
+        Ok(())
+    }
+
     /// Write an identity consensus entry directly, bypassing the block-tx batch.
     ///
     /// Used for one-off bootstrap writes (genesis backfill) that must happen
@@ -1278,6 +1326,25 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         Err(StorageError::Database(
             "put_identity_metadata_direct not supported by this backend".to_string(),
         ))
+    }
+
+    /// Bulk-write identity metadata, with a SINGLE flush at the end (CR PR #2679).
+    ///
+    /// Used by the schema-v2 regenerate-from-blocks migration where calling
+    /// `put_identity_metadata_direct` per record makes upgrade time O(n) in
+    /// fsync calls. Implementations should batch the inserts and flush once.
+    /// Default falls back to the per-record direct write so backends that
+    /// haven't specialised this still function (just at the old cost).
+    fn put_identity_metadata_batch(
+        &self,
+        records: &[([u8; 32], IdentityMetadata)],
+    ) -> StorageResult<usize> {
+        let mut written = 0usize;
+        for (did_hash, metadata) in records {
+            self.put_identity_metadata_direct(did_hash, metadata)?;
+            written += 1;
+        }
+        Ok(written)
     }
 
     /// List identity DID hashes registered at a specific block height.
