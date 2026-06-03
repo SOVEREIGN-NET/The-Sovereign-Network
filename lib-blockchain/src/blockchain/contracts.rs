@@ -192,6 +192,7 @@ impl Blockchain {
                     // falls through when the in-memory cache is empty. Direct
                     // `self.token_nonces.get(...)` reads bypass the canonical
                     // store and were the source of the g3/g5 halt at h=114445.
+                    let nonce_key = (token_id, transfer.from);
                     let expected_nonce = self.get_token_nonce(&token_id, &transfer.from);
                     if transfer.nonce != expected_nonce {
                         return Err(anyhow::anyhow!(
@@ -437,15 +438,22 @@ impl Blockchain {
                         )?;
                     };
 
-                    // Nonce advance is owned by the sled-backed store via
-                    // BlockExecutor::increment_token_nonce, NOT this in-memory
-                    // legacy path. Writing to `self.token_nonces` here would
-                    // create a second, divergent write source — that's the
-                    // root cause of the g3/g5 halt at h=114445 (executor
-                    // wrote sled, this path wrote in-memory, the two drifted
-                    // and validation/apply disagreed at commit time). The
-                    // read path uses `get_token_nonce()` which falls through
-                    // to sled when the in-memory cache is empty.
+                    // Nonce advance: sled is canonical in production (BlockExecutor
+                    // mode), so this in-memory write must be a no-op when the
+                    // executor is attached — `BlockExecutor::increment_token_nonce`
+                    // owns the canonical advance and a second write source here is
+                    // exactly what caused the g3/g5 halt at h=114445 (executor
+                    // wrote sled, this path wrote in-memory, the two drifted, and
+                    // validation/apply disagreed at commit time).
+                    //
+                    // When NO executor is attached (legacy store-less mode used by
+                    // tests and the deprecated processing path), there is no sled
+                    // for `get_token_nonce` to fall through to, so the in-memory
+                    // map IS the only nonce store and must continue to be written
+                    // here (CR PR #2675).
+                    if !self.has_executor() {
+                        *self.token_nonces.entry(nonce_key).or_insert(0) += 1;
+                    }
 
                     if tracing::enabled!(tracing::Level::INFO) {
                         let cbe_token_id = Self::derive_cbe_token_id_pub();
@@ -795,16 +803,38 @@ impl Blockchain {
                 // address, AND nonce-mismatched txes that earlier
                 // binaries committed under looser rules).
                 //
-                // We do NOT advance any in-memory nonce counter here.
-                // The previous attempt to "advance the nonce on skip"
-                // created a divergent write source — the canonical
-                // nonce lives in sled (written by BlockExecutor); this
-                // in-memory path is no longer authoritative for nonces
-                // at all. Read-side at the apply check now goes through
-                // `get_token_nonce()` which falls through to sled, so
-                // skipping a tx during replay has no consistency impact
-                // on subsequent nonce checks.
+                // In production (executor attached), the canonical nonce
+                // lives in sled — written by BlockExecutor on the live
+                // apply path. The read at the apply check
+                // (`get_token_nonce`) falls through to sled, so skipping
+                // a tx here has no consistency impact on subsequent
+                // checks.
+                //
+                // In legacy/store-less mode (tests, deprecated path),
+                // there is no sled. The in-memory map IS the nonce
+                // store, and a skipped tx that the chain committed must
+                // still advance the counter — otherwise the NEXT tx
+                // from the same sender shows up with nonce N+1 while
+                // our counter is still at N, cascading into bogus
+                // "nonce mismatch" errors that have nothing to do with
+                // replay protection (CR PR #2675).
                 if is_replay && tx_type == TransactionType::TokenTransfer {
+                    if !self.has_executor() {
+                        if let Some(transfer) = transaction.token_transfer_data() {
+                            let is_sov = Self::is_sov_token_id(&transfer.token_id);
+                            let token_id_key = if is_sov {
+                                sov_token_id
+                            } else {
+                                transfer.token_id
+                            };
+                            let nk = (token_id_key, transfer.from);
+                            let entry = self.token_nonces.entry(nk).or_insert(0);
+                            let target = transfer.nonce.saturating_add(1);
+                            if *entry < target {
+                                *entry = target;
+                            }
+                        }
+                    }
                     warn!(
                         "Replay: skipping TokenTransfer at height={} tx={}: {}",
                         block.height(),
