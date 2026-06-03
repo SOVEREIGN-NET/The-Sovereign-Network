@@ -1717,40 +1717,17 @@ impl IdentityHandler {
 
         let did: String = {
             let blockchain = blockchain_arc.read().await;
-            let key_id_did = format!("did:zhtp:{}", requester_key_id);
-            if blockchain.identity_registry.contains_key(&key_id_did) {
-                key_id_did
-            } else {
-                let found = blockchain
-                    .identity_registry
-                    .iter()
-                    .find(|(_, id)| {
-                        if id.public_key.len() < 32 {
-                            return false;
-                        }
-                        let dil_hash =
-                            hex::encode(lib_crypto::hash_blake3(&id.public_key));
-                        if dil_hash == requester_key_id {
-                            return true;
-                        }
-                        if !id.kyber_public_key.is_empty() {
-                            let combined =
-                                [&id.public_key[..], &id.kyber_public_key[..]].concat();
-                            let combined_hash =
-                                hex::encode(lib_crypto::hash_blake3(&combined));
-                            return combined_hash == requester_key_id;
-                        }
-                        false
-                    })
-                    .map(|(did, _)| did.clone());
-                match found {
-                    Some(d) => d,
-                    None => {
-                        return Ok(ZhtpResponse::error(
-                            ZhtpStatus::NotFound,
-                            "Authenticated identity not found on chain".to_string(),
-                        ));
-                    }
+            // #58: sled-first direct-match + Dilithium / Dilithium+Kyber hash
+            // resolution via the facade, which reads durable `identity_metadata`
+            // so it survives a restart (the in-memory `identity_registry` is
+            // empty then).
+            match blockchain.did_by_device_key_id(&requester_key_id) {
+                Some(d) => d,
+                None => {
+                    return Ok(ZhtpResponse::error(
+                        ZhtpStatus::NotFound,
+                        "Authenticated identity not found on chain".to_string(),
+                    ));
                 }
             }
         };

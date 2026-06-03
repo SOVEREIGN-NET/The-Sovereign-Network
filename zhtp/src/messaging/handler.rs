@@ -101,18 +101,25 @@ impl MessagingHandler {
             format!("did:zhtp:{}", req.recipient)
         };
 
-        // Get recipient's identity (including Kyber key)
-        let identity = match blockchain.query_identity(&recipient_did) {
-            Some(id) => id.clone(),
+        // Get recipient's keys, sled-first (#58). The Dilithium key is the
+        // existence signal — `identity_public_key` is consensus-pinned, so it
+        // serves the durable key and refuses a metadata↔consensus drift. The
+        // Kyber key drives the encrypted-session error path. Both read durable
+        // `identity_metadata`, so a store-backed node still resolves the
+        // recipient after a restart (the in-memory registry is empty then).
+        let dilithium_public_key = match blockchain.identity_public_key(&recipient_did) {
+            Some(pk) => pk,
             None => return Ok(error_resp(ZhtpStatus::NotFound, "Recipient DID not found")),
         };
-
-        if identity.kyber_public_key.is_empty() {
-            return Ok(error_resp(
-                ZhtpStatus::BadRequest,
-                "Recipient has no Kyber public key — cannot establish encrypted session",
-            ));
-        }
+        let kyber_public_key = match blockchain.identity_kyber_public_key(&recipient_did) {
+            Some(k) => k,
+            None => {
+                return Ok(error_resp(
+                    ZhtpStatus::BadRequest,
+                    "Recipient has no Kyber public key — cannot establish encrypted session",
+                ))
+            }
+        };
 
         // Get username if available
         let username = blockchain.did_to_username.get(&recipient_did).cloned();
@@ -121,8 +128,8 @@ impl MessagingHandler {
             "status": "success",
             "recipient_did": recipient_did,
             "recipient_username": username,
-            "kyber_public_key": hex::encode(&identity.kyber_public_key),
-            "dilithium_public_key": hex::encode(&identity.public_key),
+            "kyber_public_key": hex::encode(&kyber_public_key),
+            "dilithium_public_key": hex::encode(&dilithium_public_key),
         }))
     }
 
@@ -292,36 +299,14 @@ impl MessagingHandler {
                 did
             } else {
                 let blockchain = self.blockchain.read().await;
-                // (2) Direct match.
-                if blockchain.identity_registry.contains_key(&key_id_did) {
-                    key_id_did.clone()
-                } else {
-                    // (3) Public-key hash match.
-                    blockchain
-                        .identity_registry
-                        .iter()
-                        .find(|(_, id)| {
-                            if id.public_key.len() < 32 {
-                                return false;
-                            }
-                            let dil_hash = hex::encode(lib_crypto::hash_blake3(&id.public_key));
-                            if dil_hash == requester_key_id {
-                                return true;
-                            }
-                            if !id.kyber_public_key.is_empty() {
-                                let combined =
-                                    [&id.public_key[..], &id.kyber_public_key[..]].concat();
-                                let combined_hash =
-                                    hex::encode(lib_crypto::hash_blake3(&combined));
-                                if combined_hash == requester_key_id {
-                                    return true;
-                                }
-                            }
-                            false
-                        })
-                        .map(|(did, _)| did.clone())
-                        .unwrap_or(key_id_did)
-                }
+                // #58: sled-first direct-match + Dilithium / Dilithium+Kyber hash
+                // resolution. Reads durable `identity_metadata` so a store-backed
+                // node resolves the requester after a restart (the in-memory
+                // `identity_registry` is empty then). Falls back to the raw
+                // key-id DID when no identity matches, as before.
+                blockchain
+                    .did_by_device_key_id(&requester_key_id)
+                    .unwrap_or(key_id_did)
             }
         };
 

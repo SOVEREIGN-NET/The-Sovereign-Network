@@ -237,6 +237,80 @@ impl Blockchain {
             .map(|id| id.did.clone())
     }
 
+    /// Resolve the canonical DID for a device key-id fingerprint, sled-first (#58).
+    ///
+    /// The messaging / device-key layer fingerprints an identity two ways
+    /// (see `zhtp` reverse lookups), and this resolver mirrors both exactly:
+    ///   * `blake3(dilithium_public_key)` — the Dilithium-only key id (also the
+    ///     DID suffix), and
+    ///   * `blake3(dilithium_public_key ++ kyber_public_key)` — the combined
+    ///     post-quantum device key.
+    /// `key_id_hex` is the lowercase hex of that 32-byte blake3 hash; the hash is
+    /// computed with `lib_crypto::hash_blake3`, byte-identical to the callers, so
+    /// this is a behavior-preserving drop-in for the open-coded `identity_registry`
+    /// scans it replaces.
+    ///
+    /// Resolution order, mirroring the prior in-memory logic:
+    ///   1. direct match — `did:zhtp:{key_id_hex}` is itself a registered DID
+    ///      (sled-first via `identity_exists`); then
+    ///   2. a hash match over the durable `identity_metadata` set, which carries
+    ///      `kyber_public_key` from schema v2 (#2679).
+    /// Reading durable metadata is what lets a store-backed node resolve a
+    /// recipient after a restart, when the in-memory `identity_registry` is empty.
+    /// Falls back to the in-memory shadow only when sled has no match or the scan
+    /// errors (store-less mode, or a pending pre-commit registration). Returns
+    /// `None` when no identity matches.
+    pub fn did_by_device_key_id(&self, key_id_hex: &str) -> Option<String> {
+        // (1) Direct match — the key id is itself a registered DID suffix.
+        let candidate = format!("did:zhtp:{key_id_hex}");
+        if self.identity_exists(&candidate) {
+            return Some(candidate);
+        }
+
+        // (2) Hash match: Dilithium-only key id, then the combined Dilithium+Kyber
+        //     device key. Identical derivation on both the sled and in-mem paths.
+        let matches_key_id = |public_key: &[u8], kyber: &[u8]| -> bool {
+            if public_key.len() < 32 {
+                return false;
+            }
+            if hex::encode(lib_crypto::hash_blake3(public_key)) == key_id_hex {
+                return true;
+            }
+            if !kyber.is_empty() {
+                let combined = [public_key, kyber].concat();
+                if hex::encode(lib_crypto::hash_blake3(&combined)) == key_id_hex {
+                    return true;
+                }
+            }
+            false
+        };
+
+        if let Some(store) = self.get_store() {
+            match store.iter_identity_metadata() {
+                Ok(iter) => {
+                    if let Some(meta) = iter
+                        .into_iter()
+                        .find(|m| matches_key_id(&m.public_key, &m.kyber_public_key))
+                    {
+                        return Some(meta.did);
+                    }
+                    // No metadata match — fall through to the in-mem shadow.
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "did_by_device_key_id: iter_identity_metadata failed; falling back to in-memory shadow (may be empty after restart on store-backed node)"
+                    );
+                }
+            }
+        }
+
+        self.identity_registry
+            .values()
+            .find(|id| matches_key_id(&id.public_key, &id.kyber_public_key))
+            .map(|id| id.did.clone())
+    }
+
     /// Full Dilithium public key for a DID, sled-first and consensus-pinned (#2639).
     ///
     /// The full key bytes live only in the (non-consensus) `IdentityMetadata`

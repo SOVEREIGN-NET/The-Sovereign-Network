@@ -481,3 +481,95 @@ fn identity_controlled_nodes_reads_sled_metadata() {
         "unknown DID -> None"
     );
 }
+
+/// did_by_device_key_id() resolves a canonical DID from a device key-id
+/// fingerprint — `blake3(dilithium)` or `blake3(dilithium || kyber)` — by
+/// scanning sled metadata even when the in-memory shadow is empty (the restart
+/// case). This is the read the messaging / device-key reverse lookups depend on
+/// (#58); the combined-hash arm exercises the schema-v2 `kyber_public_key` the
+/// migration persists (#2679). It is a fingerprint resolver (NOT consensus
+/// signature verification), so it is not consensus-pinned.
+#[test]
+fn did_by_device_key_id_reads_sled_metadata() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("did_by_devkey")).unwrap());
+
+    let did = "did:zhtp:device-owner";
+    let did_hash = crate::storage::did_to_hash(did);
+    let pk = vec![0x9u8; 2592];
+    let kyber = vec![0x7u8; 1568];
+
+    store.begin_block(0).unwrap();
+    store
+        .put_identity(
+            &did_hash,
+            &IdentityConsensus { did_hash, ..Default::default() },
+        )
+        .unwrap();
+    store
+        .put_identity_metadata(
+            &did_hash,
+            &IdentityMetadata {
+                did: did.to_string(),
+                display_name: "D".to_string(),
+                public_key: pk.clone(),
+                kyber_public_key: kyber.clone(),
+                ownership_proof: vec![],
+                controlled_nodes: vec![],
+                owned_wallets: vec![],
+                attributes: vec![],
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().unwrap();
+    bc.set_store(store.clone());
+    assert!(
+        !bc.identity_registry.contains_key(did)
+            && !bc.identity_registry.values().any(|i| i.public_key == pk),
+        "test premise: this identity is sled-only (absent from the in-mem shadow, like after restart)"
+    );
+
+    // (a) Dilithium-only key id. Computed with lib_crypto::hash_blake3 exactly
+    //     as the facade does, so the hashes are byte-identical.
+    let dil_key_id = hex::encode(lib_crypto::hash_blake3(&pk));
+    assert_eq!(
+        bc.did_by_device_key_id(&dil_key_id),
+        Some(did.to_string()),
+        "resolves DID from blake3(dilithium) over sled metadata"
+    );
+
+    // (b) Combined Dilithium+Kyber device key id (the schema-v2 kyber path).
+    let combined = [&pk[..], &kyber[..]].concat();
+    let combined_key_id = hex::encode(lib_crypto::hash_blake3(&combined));
+    assert_eq!(
+        bc.did_by_device_key_id(&combined_key_id),
+        Some(did.to_string()),
+        "resolves DID from blake3(dilithium || kyber) over sled metadata"
+    );
+
+    // (c) Unknown fingerprint -> None (no match, and the constructed
+    //     did:zhtp:{key_id} is not a registered DID either).
+    assert_eq!(
+        bc.did_by_device_key_id(&"de".repeat(32)),
+        None,
+        "unknown device key id -> None"
+    );
+
+    // (d) Direct match: the key id is itself a registered DID suffix, resolved
+    //     via the sled-first existence check (not the hash scan).
+    let direct_did = "did:zhtp:abcd1234";
+    let direct_hash = crate::storage::did_to_hash(direct_did);
+    put_sled_identity(
+        &store,
+        1,
+        direct_did,
+        IdentityConsensus { did_hash: direct_hash, ..Default::default() },
+    );
+    assert_eq!(
+        bc.did_by_device_key_id("abcd1234"),
+        Some(direct_did.to_string()),
+        "direct DID-suffix match resolves via identity_exists"
+    );
+}

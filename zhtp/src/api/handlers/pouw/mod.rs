@@ -276,7 +276,6 @@ impl PouwHandler {
         if requester_key_id.is_empty() {
             return None;
         }
-        let key_id_did = format!("did:zhtp:{}", requester_key_id);
 
         let blockchain_arc =
             crate::runtime::blockchain_provider::get_global_blockchain()
@@ -284,34 +283,11 @@ impl PouwHandler {
                 .ok()?;
         let blockchain = blockchain_arc.read().await;
 
-        // Fast path: the QUIC identity_id is itself the canonical DID.
-        if blockchain.identity_registry.contains_key(&key_id_did) {
-            return Some(key_id_did);
-        }
-        // Slow path: scan, matching dilithium-only and dilithium||kyber.
-        blockchain
-            .identity_registry
-            .iter()
-            .find(|(_, id)| {
-                if id.public_key.len() < 32 {
-                    return false;
-                }
-                let dil_hash = hex::encode(lib_crypto::hash_blake3(&id.public_key));
-                if dil_hash == requester_key_id {
-                    return true;
-                }
-                if !id.kyber_public_key.is_empty() {
-                    let combined =
-                        [&id.public_key[..], &id.kyber_public_key[..]].concat();
-                    let combined_hash =
-                        hex::encode(lib_crypto::hash_blake3(&combined));
-                    if combined_hash == requester_key_id {
-                        return true;
-                    }
-                }
-                false
-            })
-            .map(|(did, _)| did.clone())
+        // #58: sled-first direct-match + Dilithium / Dilithium+Kyber hash
+        // resolution via the facade, which reads durable `identity_metadata` so
+        // it survives a restart (the in-memory `identity_registry` is empty
+        // then). Returns None when no identity matches, as before.
+        blockchain.did_by_device_key_id(&requester_key_id)
     }
 
     async fn check_reward_query_access(
