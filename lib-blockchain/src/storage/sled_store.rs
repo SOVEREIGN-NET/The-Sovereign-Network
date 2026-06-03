@@ -1871,6 +1871,45 @@ impl BlockchainStore for SledStore {
         Ok(())
     }
 
+    fn identity_metadata_schema_version(&self) -> StorageResult<u32> {
+        // Absent key => version 1 (pre-kyber records written before #58).
+        match self.meta.get(keys::meta::IDENTITY_METADATA_SCHEMA_VERSION) {
+            Ok(Some(bytes)) => {
+                let arr: [u8; 4] = bytes.as_ref().try_into().map_err(|_| {
+                    StorageError::Database(
+                        "identity_metadata_schema_version: malformed u32".to_string(),
+                    )
+                })?;
+                Ok(u32::from_be_bytes(arr))
+            }
+            Ok(None) => Ok(1),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn set_identity_metadata_schema_version(&self, version: u32) -> StorageResult<()> {
+        self.meta
+            .insert(
+                keys::meta::IDENTITY_METADATA_SCHEMA_VERSION,
+                &version.to_be_bytes(),
+            )
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        self.meta
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    fn clear_identity_metadata(&self) -> StorageResult<()> {
+        self.identity_metadata
+            .clear()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        self.identity_metadata
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     fn get_identities_at_height(&self, height: u64) -> StorageResult<Vec<[u8; 32]>> {
         // Scan all identities and filter by registration height
         // Returns did_hashes, not full identity data
@@ -2951,9 +2990,8 @@ mod tests {
             display_name: "Test Organization".to_string(),
             public_key: vec![0x05; 64],
             ownership_proof: vec![0x06; 128],
-            controlled_nodes: vec![],
             owned_wallets: vec!["wallet-1".to_string()],
-            attributes: vec![],
+            ..Default::default()
         };
 
         store.begin_block(0).unwrap();
@@ -3095,10 +3133,7 @@ mod tests {
             did: did.to_string(),
             display_name: "Delete Me".to_string(),
             public_key: vec![0x0d; 64],
-            ownership_proof: vec![],
-            controlled_nodes: vec![],
-            owned_wallets: vec![],
-            attributes: vec![],
+            ..Default::default()
         };
 
         // Create identity

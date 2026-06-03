@@ -278,10 +278,7 @@ fn identity_public_key_pins_to_consensus() {
                 did: did.to_string(),
                 display_name: "Pinned".to_string(),
                 public_key: pk.clone(),
-                ownership_proof: vec![],
-                controlled_nodes: vec![],
-                owned_wallets: vec![],
-                attributes: vec![],
+                ..Default::default()
             },
         )
         .unwrap();
@@ -304,10 +301,7 @@ fn identity_public_key_pins_to_consensus() {
                 did: bad.to_string(),
                 display_name: "Drift".to_string(),
                 public_key: vec![0x9u8; 2592],
-                ownership_proof: vec![],
-                controlled_nodes: vec![],
-                owned_wallets: vec![],
-                attributes: vec![],
+                ..Default::default()
             },
         )
         .unwrap();

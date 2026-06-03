@@ -252,6 +252,11 @@ pub mod meta {
 
     /// Key for canonical observer admission policy (single global record).
     pub const OBSERVER_POLICY: &[u8] = b"observer_policy";
+
+    /// Key for the persisted `identity_metadata` schema version (u32, big-endian).
+    /// Drives the version-gated regenerate-from-blocks migration (#58). Absent
+    /// key is treated as version 1 (pre-kyber records).
+    pub const IDENTITY_METADATA_SCHEMA_VERSION: &[u8] = b"identity_metadata_schema_version";
 }
 
 // =============================================================================
