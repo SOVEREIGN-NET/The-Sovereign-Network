@@ -947,10 +947,12 @@ async fn test_ce_l1_commit_quorum_finalizes_regardless_of_local_step() {
     );
 
     // Verify: Commit count is correct (at the height we just committed,
-    // not the new current height).
+    // not the new current height). Use the captured round `r` so the
+    // assertion remains correct if the engine's default initial round
+    // changes from 0.
     let commit_count = engine.count_commits_for(
         pre_commit_height,
-        0,
+        r,
         &proposal_id,
     );
     assert_eq!(commit_count, 3, "Should have 3 commits for proposal");
@@ -4024,5 +4026,105 @@ async fn test_cons512_commit_advances_height_synchronously() {
     assert!(
         engine.current_round.valid_proposal.is_none(),
         "CONS-512: valid_proposal cleared across the height boundary"
+    );
+}
+
+/// CONS-512 safety regression (PR #2683 review P1): when the runtime's
+/// commit executor receiver is gone (channel closed), `apply_block_to_state_with_proof`
+/// MUST return Err so that `process_committed_block` propagates the
+/// error and the engine does NOT advance height. Otherwise the engine
+/// would proceed to H+1 while storage perpetually misses H — and no
+/// `HaltScheduled` event would ever fire (there is no executor to emit it).
+#[tokio::test]
+async fn test_cons512_closed_commit_channel_blocks_height_advance() {
+    let config = ConsensusConfig {
+        development_mode: true,
+        ..Default::default()
+    };
+    let broadcaster = Arc::new(MockMessageBroadcaster::new());
+    let mut engine =
+        ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+    let mut validators = Vec::new();
+    for i in 1..=4 {
+        let validator_id = test_validator_id(i as u8);
+        let keypair = create_test_keypair();
+        register_validator_with_keypair(&mut engine, validator_id.clone(), &keypair, i == 1).await;
+        validators.push((validator_id, keypair));
+    }
+
+    // Wire a commit channel and IMMEDIATELY drop the receiver to simulate
+    // a dead/never-started runtime executor.
+    let (commit_tx, commit_rx) =
+        tokio::sync::mpsc::unbounded_channel::<crate::engines::consensus_engine::CommitEnvelope>();
+    engine.set_commit_sender(commit_tx);
+    drop(commit_rx);
+
+    const COMMITTED_HEIGHT: u64 = 7;
+    const COMMITTED_ROUND: u32 = 0;
+    engine.current_round.height = COMMITTED_HEIGHT;
+    engine.current_round.round = COMMITTED_ROUND;
+    engine.current_round.step = ConsensusStep::PreVote;
+    engine.snapshot_validator_set(COMMITTED_HEIGHT);
+
+    let proposal_id = Hash::from_bytes(&[0xDEu8; 32]);
+    let (ref proposer_id, ref proposer_kp) = validators[0];
+    stage_stub_proposal(
+        &mut engine,
+        proposal_id.clone(),
+        COMMITTED_HEIGHT,
+        COMMITTED_ROUND,
+        proposer_id,
+        proposer_kp,
+    );
+
+    for i in 0..3 {
+        let (validator_id, keypair) = validators[i].clone();
+        let key = VotePoolKey {
+            height: COMMITTED_HEIGHT,
+            round: COMMITTED_ROUND,
+            vote_type: VoteType::Commit,
+            validator_id: validator_id.clone(),
+        };
+        let vote = make_signed_vote(
+            &engine,
+            &keypair,
+            validator_id,
+            proposal_id.clone(),
+            VoteType::Commit,
+            COMMITTED_HEIGHT,
+            COMMITTED_ROUND,
+        );
+        engine.vote_pool.insert(key, (vote, proposal_id.clone()));
+    }
+
+    // maybe_finalize must surface the commit-dispatch failure so the
+    // engine does not silently advance height.
+    let result = engine
+        .maybe_finalize(COMMITTED_HEIGHT, COMMITTED_ROUND, &proposal_id)
+        .await;
+
+    assert!(
+        result.is_err(),
+        "maybe_finalize MUST propagate the closed-channel error from \
+         apply_block_to_state_with_proof"
+    );
+
+    assert_eq!(
+        engine.current_round.height,
+        COMMITTED_HEIGHT,
+        "CONS-512 P1: engine MUST NOT advance height when the commit \
+         executor receiver is gone. Storage will never see this block; \
+         advancing would leave the engine voting on a chain with no \
+         local persistence."
+    );
+
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("commit executor") || err_msg.contains("channel closed"),
+        "error message must clearly identify the executor channel failure; \
+         got: {}",
+        err_msg
     );
 }

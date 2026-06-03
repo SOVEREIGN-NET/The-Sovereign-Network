@@ -2,7 +2,7 @@
 
 **Status.** Draft (2026-06-03). Drafted in response to the 2026-06-03 stall at H=123008/123009 where two of five validators wedged because their engine's `current_round.height` and `blockchain.height` drifted by one.
 
-**Branch.** `fix/synchronous-commit-path-cons508`
+**Branch.** `fix/synchronous-commit-path-cons508` (branch name predates the CONS-512 ticket assignment — the synchronous-commit work was originally scoped under CONS-508's "delete legacy lib-consensus" umbrella before being scoped down to this surgical change. Kept as-is to preserve PR continuity; future references should use CONS-512.)
 
 **Tracks.** CONS-307, CONS-504, CONS-505. Supersedes the "wire a `ConsensusEvent::NewBlock` event" patch sketch.
 
@@ -42,13 +42,20 @@ In BFT, a block is final the moment 2/3+1 commit votes are observed. Persistence
 
 ### 2. `sync_height_with_blockchain` becomes boot-only.
 
-Renamed to `init_height_from_storage`. Called only from `run_consensus_loop` start. Removed from `on_round_timeout(Commit)`, removed from `handle_consensus_event(ConsensusEvent::NewBlock)`, removed from the mode transition.
+Called only from `run_consensus_loop` start. Removed from `on_round_timeout(Commit)`, removed from the Bootstrap→BFT mode transition, removed from the (vestigial) `handle_consensus_event(ConsensusEvent::NewBlock)` handler.
 
-The new name makes the intent explicit: storage is the source of truth *at boot* (recovering from a crash), and never again at runtime.
+The function name is unchanged in this PR — the rename to `init_height_from_storage` was considered to make the intent explicit but deferred to keep the diff focused on the safety-critical behavior change. The doc comment now spells out the boot-only contract in unambiguous terms, and any future caller addition is required to justify itself as a non-regression in the PR description.
 
-### 3. `ConsensusEvent::NewBlock` is deleted.
+### 3. `ConsensusEvent::NewBlock` — kept, but neutered.
 
-It has no production constructors and the only handler now belongs to a code path we're removing. Removing it deletes ~30 lines of dead state-machine code plus the unused variant.
+Grep confirms zero production constructors of this variant; only test code builds it. We considered deleting both the variant and its handler in this PR but kept them, for two reasons:
+
+- The handler does post-block bookkeeping (governance callback, byzantine fault detection, reward callback) that is duplicated in `process_committed_block`. Cleanly de-duplicating is a separate, scoped refactor, and bundling it into a safety-critical change is the kind of scope creep that turns a 4-file diff into a 20-file diff with a wider blast radius.
+- The handler is a plausible attachment point for a future external block-ingest path (archive-node replay, fast-sync apply).
+
+What this PR *does* change in the handler: the `sync_height_with_blockchain()` call inside it is removed, and a CONS-512 contract comment is added stating that re-adding it would re-introduce the engine ↔ storage drift bug.
+
+Deletion of the variant + handler is tracked as a follow-up cleanup, not a prerequisite for the CONS-512 contract.
 
 ### 4. Storage write stays async (CONS-307 unchanged).
 

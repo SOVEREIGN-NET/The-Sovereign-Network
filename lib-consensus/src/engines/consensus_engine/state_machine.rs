@@ -1424,26 +1424,45 @@ impl ConsensusEngine {
         quorum_proof: lib_types::consensus::BftQuorumProof,
     ) -> ConsensusResult<()> {
         // CONS-307 channel path: dispatch to the runtime's commit
-        // executor and return immediately. Failures surface back via
+        // executor and return immediately on successful enqueue.
+        // Failures from the executor's own write path surface back via
         // the runtime event channel as `Event::HaltScheduled`, which
         // transitions the FSM to `Halting` on the next select! tick.
+        //
+        // CONS-512 safety: a closed channel (executor receiver dropped,
+        // panicked, or never started) means storage will NEVER receive
+        // this finalized block AND no HaltScheduled event will ever fire.
+        // Under the engine-owns-height contract, returning Ok(()) here
+        // would let `process_committed_block` advance to H+1 while
+        // storage perpetually misses H — exactly the dangerous case the
+        // contract was designed to prevent. Treat send failure as a
+        // hard error so the engine does NOT advance.
         if let Some(tx) = &self.commit_tx {
             let envelope = super::CommitEnvelope {
                 proposal: proposal.clone(),
                 quorum_proof,
             };
-            if tx.send(envelope).is_err() {
-                tracing::warn!(
+            if let Err(e) = tx.send(envelope) {
+                tracing::error!(
                     height = proposal.height,
-                    "Commit channel closed — runtime executor dropped its receiver (CE-ENG-4)"
-                );
-            } else {
-                tracing::debug!(
-                    block_height = proposal.height,
                     proposal_id = ?proposal.id,
-                    "BFT finalized block dispatched to commit executor"
+                    error = %e,
+                    "BFT-A-939 / CONS-512: commit channel closed — runtime executor receiver is gone. \
+                     Refusing to advance engine height; consensus halts at this block until the runtime is restarted."
                 );
+                return Err(ConsensusError::ValidatorError(format!(
+                    "BFT safety violation: committed block at height {} could not be dispatched \
+                     to the commit executor (channel closed). Engine refused to advance to H+1 \
+                     because the executor will never persist this block nor emit HaltScheduled. \
+                     Recovery: investigate why the commit executor died; restart the node.",
+                    proposal.height
+                )));
             }
+            tracing::debug!(
+                block_height = proposal.height,
+                proposal_id = ?proposal.id,
+                "BFT finalized block dispatched to commit executor"
+            );
             return Ok(());
         }
 
@@ -2624,38 +2643,29 @@ impl ConsensusEngine {
                 }
             }
 
-            // Commit step timed out.
+            // Commit step timed out at `height`. Reaching this arm means
+            // the timer-token matched current state — i.e. we are still
+            // at `(height, round, Commit)`. A successful commit would
+            // have advanced us under CONS-512, which would have changed
+            // both height AND step (→ Propose at H+1), so the token
+            // would be stale and on_round_timeout would not have been
+            // called for that timer. Therefore the only reachable case
+            // here is: we sat in Commit step without finalizing (the
+            // proposal we committed to never gathered commit quorum).
+            // Re-drive the same height at the next round so a missed
+            // commit does not wedge us.
             //
-            // CONS-512: under the engine-owns-height contract, height
-            // advancement happens synchronously inside `process_committed_block`
-            // the moment commit quorum is observed. By the time this branch
-            // fires, either:
-            //   (a) we already advanced past `height` (current_round.height
-            //       != height_before), in which case there's nothing to do
-            //       except kick off the new height's propose; or
-            //   (b) the commit attempt at `height` did not reach quorum
-            //       (we sat in Commit step without finalizing), in which
-            //       case re-drive the same height at the next round.
-            //
-            // We DO NOT call `sync_height_with_blockchain` here anymore —
+            // We DO NOT call `sync_height_with_blockchain` here —
             // storage is downstream of consensus, never the source of
-            // engine height post-boot. (The old code path is what wedged
-            // g2 / g3 at H=123008 on 2026-06-03.)
+            // engine height post-boot (CONS-512). The old code path
+            // here is what wedged g2 / g3 at H=123008 on 2026-06-03.
             ConsensusStep::Commit => {
-                if self.current_round.height == height {
-                    // Same-height case: re-drive next round so a missed
-                    // commit does not wedge us.
-                    self.enter_round(
-                        height,
-                        round + 1,
-                        RoundJumpReason::LocalCommitTimeout,
-                    )
-                    .await;
-                } else {
-                    // We already advanced to a new height during commit
-                    // processing. Kick off its propose step.
-                    self.restart_propose_for_current_round().await;
-                }
+                self.enter_round(
+                    height,
+                    round + 1,
+                    RoundJumpReason::LocalCommitTimeout,
+                )
+                .await;
             }
 
             // Between rounds — nothing concrete to time out. Re-drive
