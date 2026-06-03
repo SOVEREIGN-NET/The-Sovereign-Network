@@ -413,6 +413,29 @@ impl SledStore {
         // open — a no-op when no commit is pending.
         store.recover_pending_commit()?;
 
+        // CR PR #2679: brand-new stores (identity_metadata tree empty AND no
+        // schema version key) get marked at the current version so the next
+        // replay-based boot doesn't trigger a needless clear+rewrite migration.
+        // An absent version key with NON-empty metadata still reads as v1 (the
+        // legitimate legacy pre-versioning case) and is migrated as designed.
+        let needs_init_marker = matches!(
+            store.meta.get(keys::meta::IDENTITY_METADATA_SCHEMA_VERSION),
+            Ok(None)
+        ) && store.identity_metadata.is_empty();
+        if needs_init_marker {
+            store
+                .meta
+                .insert(
+                    keys::meta::IDENTITY_METADATA_SCHEMA_VERSION,
+                    &super::IDENTITY_METADATA_SCHEMA_VERSION.to_be_bytes(),
+                )
+                .map_err(|e| StorageError::Database(e.to_string()))?;
+            store
+                .meta
+                .flush()
+                .map_err(|e| StorageError::Database(e.to_string()))?;
+        }
+
         Ok(store)
     }
 
@@ -877,6 +900,26 @@ impl SledStore {
         // The WAL marker is deliberately left in place — recovery must heal it.
         self.tx_active.store(false, Ordering::SeqCst);
         Ok(total_trees)
+    }
+
+    /// TEST-ONLY: insert raw bytes into the `identity_metadata` tree without
+    /// going through `Self::serialize`. Used by the schema-migration
+    /// safety-property test (CR PR #2679) to plant an old-shaped / corrupt
+    /// blob and verify the migration succeeds without ever decoding it.
+    /// (`pub(crate)` + `#[cfg(test)]` so production paths cannot reach it.)
+    #[cfg(test)]
+    pub(crate) fn put_identity_metadata_raw_bytes(
+        &self,
+        did_hash: &[u8; 32],
+        bytes: &[u8],
+    ) -> StorageResult<()> {
+        self.identity_metadata
+            .insert(did_hash.as_ref(), bytes)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        self.identity_metadata
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
     }
 }
 
@@ -1719,6 +1762,33 @@ impl BlockchainStore for SledStore {
         Ok(Box::new(results.into_iter()))
     }
 
+    fn iter_identity_metadata(
+        &self,
+    ) -> StorageResult<Box<dyn Iterator<Item = IdentityMetadata> + '_>> {
+        // Materialize in one pass so a deserialize error surfaces here. Mirrors
+        // iter_identities; the tree is keyed by did_hash = did_to_hash(did).
+        let mut results = Vec::new();
+        for entry in self.identity_metadata.iter() {
+            match entry {
+                Ok((key, value)) => {
+                    let metadata: IdentityMetadata = Self::deserialize(&value)?;
+                    // Validate the record's DID hashes back to its tree key, so a
+                    // corrupted/mismatched value cannot feed callers a wrong DID.
+                    if crate::storage::did_to_hash(&metadata.did).as_ref() != key.as_ref() {
+                        return Err(StorageError::CorruptedData(format!(
+                            "identity_metadata did {} does not hash to its tree key {}",
+                            metadata.did,
+                            hex::encode(key.as_ref())
+                        )));
+                    }
+                    results.push(metadata);
+                }
+                Err(e) => return Err(StorageError::Database(e.to_string())),
+            }
+        }
+        Ok(Box::new(results.into_iter()))
+    }
+
     fn count_identities(&self) -> StorageResult<usize> {
         // sled::Tree::len is an O(n) walk but avoids deserializing every record,
         // so it is the cheapest authoritative count available.
@@ -1869,6 +1939,28 @@ impl BlockchainStore for SledStore {
             .flush()
             .map_err(|e| StorageError::Database(e.to_string()))?;
         Ok(())
+    }
+
+    /// Bulk insert + single flush (CR PR #2679 — used by the schema-v2
+    /// regenerate-from-blocks migration to amortise the fsync cost; the
+    /// per-record `put_identity_metadata_direct` flushed every call,
+    /// making upgrades O(n) in fsync count).
+    fn put_identity_metadata_batch(
+        &self,
+        records: &[([u8; 32], IdentityMetadata)],
+    ) -> StorageResult<usize> {
+        let mut written = 0usize;
+        for (did_hash, metadata) in records {
+            let value = Self::serialize(metadata)?;
+            self.identity_metadata
+                .insert(did_hash.as_ref(), value)
+                .map_err(|e| StorageError::Database(e.to_string()))?;
+            written += 1;
+        }
+        self.identity_metadata
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(written)
     }
 
     fn identity_metadata_schema_version(&self) -> StorageResult<u32> {

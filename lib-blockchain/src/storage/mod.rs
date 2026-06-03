@@ -1241,6 +1241,18 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         Ok(None)
     }
 
+    /// Iterate every persisted identity metadata record (#2639).
+    ///
+    /// Returns the durable `IdentityMetadata` set (display_name, public_key,
+    /// controlled_nodes, owned_wallets, attributes). Required (no default),
+    /// unlike the point-lookup `get_identity_metadata`: a silent empty default
+    /// for an ITERATOR would make metadata scans — e.g. resolving a DID by
+    /// public key for a council-membership check during transaction validation —
+    /// drop the whole set, the consensus footgun #2645 exists to eliminate.
+    fn iter_identity_metadata(
+        &self,
+    ) -> StorageResult<Box<dyn Iterator<Item = IdentityMetadata> + '_>>;
+
     /// Store identity metadata.
     ///
     /// This is for DID resolution and display, NOT consensus.
@@ -1314,6 +1326,25 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         Err(StorageError::Database(
             "put_identity_metadata_direct not supported by this backend".to_string(),
         ))
+    }
+
+    /// Bulk-write identity metadata, with a SINGLE flush at the end (CR PR #2679).
+    ///
+    /// Used by the schema-v2 regenerate-from-blocks migration where calling
+    /// `put_identity_metadata_direct` per record makes upgrade time O(n) in
+    /// fsync calls. Implementations should batch the inserts and flush once.
+    /// Default falls back to the per-record direct write so backends that
+    /// haven't specialised this still function (just at the old cost).
+    fn put_identity_metadata_batch(
+        &self,
+        records: &[([u8; 32], IdentityMetadata)],
+    ) -> StorageResult<usize> {
+        let mut written = 0usize;
+        for (did_hash, metadata) in records {
+            self.put_identity_metadata_direct(did_hash, metadata)?;
+            written += 1;
+        }
+        Ok(written)
     }
 
     /// List identity DID hashes registered at a specific block height.

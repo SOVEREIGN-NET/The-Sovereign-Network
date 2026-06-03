@@ -373,15 +373,46 @@ impl Blockchain {
             }
         }
 
-        for identity in self.identity_registry.values() {
-            if identity.public_key.is_empty() {
-                continue;
+        // #2639: resolve from sled identity metadata first. The in-memory
+        // identity_registry is empty on a store-backed node after restart, which
+        // would fail to resolve a recipient's public key by key_id during
+        // TokenTransfer / TokenMint execution (consensus path).
+        if let Some(store) = self.get_store() {
+            match store.iter_identity_metadata() {
+                Ok(iter) => {
+                    for meta in iter {
+                        if let Ok(pk_arr) = meta.public_key.as_slice().try_into() {
+                            let pk = PublicKey::new(pk_arr);
+                            if &pk.key_id == key_id {
+                                return Some(meta.public_key);
+                            }
+                        }
+                    }
+                }
+                // Scan error on a store-backed node: on the consensus path
+                // (TokenTransfer / TokenMint execution), masking this as
+                // "not found" would silently fail recipient resolution and
+                // looks identical to "unknown identity" — exactly the silent
+                // post-restart failure mode #2639 exists to remove. Log
+                // loudly so operators see the underlying error rather than
+                // blaming consensus; still fall through to the in-memory
+                // shadow so the legitimate pending pre-commit path keeps
+                // working (CR PR #2678).
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "resolve_public_key_by_key_id: iter_identity_metadata failed; falling back to in-memory shadow"
+                    );
+                }
             }
-            let pk = PublicKey::new(
-                identity.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
-            );
-            if &pk.key_id == key_id {
-                return Some(identity.public_key.clone());
+        }
+        // In-memory fallback (store-less, or a pending pre-commit identity).
+        for identity in self.identity_registry.values() {
+            if let Ok(pk_arr) = identity.public_key.as_slice().try_into() {
+                let pk = PublicKey::new(pk_arr);
+                if &pk.key_id == key_id {
+                    return Some(identity.public_key.clone());
+                }
             }
         }
 

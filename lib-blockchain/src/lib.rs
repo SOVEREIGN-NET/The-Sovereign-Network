@@ -27,7 +27,6 @@ pub mod fees;
 mod fork_recovery; // gutted in Issue #936; kept as private to avoid orphan module errors
 pub mod genesis;
 pub mod integration;
-pub mod mining;
 pub mod observer;
 pub mod onramp;
 pub mod opaque;
