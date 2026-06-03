@@ -331,3 +331,52 @@ fn identity_public_key_pins_to_consensus() {
         "display_name read from sled metadata"
     );
 }
+
+/// identity_controlled_nodes() reads controlled_nodes from sled metadata even
+/// when the in-memory shadow is empty (the restart case) — the read that lets a
+/// restarted validator recognize itself as the selected proposer (#2639/#59).
+#[test]
+fn identity_controlled_nodes_reads_sled_metadata() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("id_cn")).unwrap());
+
+    let did = "did:zhtp:validator-x";
+    let did_hash = crate::storage::did_to_hash(did);
+    let nodes = vec!["aa".repeat(32), "bb".repeat(32)];
+    store.begin_block(0).unwrap();
+    store
+        .put_identity(&did_hash, &IdentityConsensus { did_hash, ..Default::default() })
+        .unwrap();
+    store
+        .put_identity_metadata(
+            &did_hash,
+            &IdentityMetadata {
+                did: did.to_string(),
+                display_name: "V".to_string(),
+                public_key: vec![],
+                ownership_proof: vec![],
+                controlled_nodes: nodes.clone(),
+                owned_wallets: vec![],
+                attributes: vec![],
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().unwrap();
+    bc.set_store(store);
+    assert!(
+        !bc.identity_registry.contains_key(did),
+        "test premise: DID is sled-only (in-mem shadow empty, like after restart)"
+    );
+    assert_eq!(
+        bc.identity_controlled_nodes(did),
+        Some(nodes),
+        "controlled_nodes resolved from sled metadata despite empty in-mem shadow"
+    );
+    assert_eq!(
+        bc.identity_controlled_nodes("did:zhtp:unknown"),
+        None,
+        "unknown DID -> None"
+    );
+}
