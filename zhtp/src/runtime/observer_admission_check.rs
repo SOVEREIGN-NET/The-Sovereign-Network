@@ -274,6 +274,13 @@ mod tests {
         fn count_identities(&self) -> StorageResult<usize> {
             Ok(0)
         }
+        fn iter_identity_metadata(
+            &self,
+        ) -> StorageResult<
+            Box<dyn Iterator<Item = lib_blockchain::storage::IdentityMetadata> + '_>,
+        > {
+            Ok(Box::new(std::iter::empty()))
+        }
         fn get_block_by_height(
             &self,
             _h: BlockHeight,

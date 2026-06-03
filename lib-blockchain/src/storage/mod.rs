@@ -1219,6 +1219,18 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         Ok(None)
     }
 
+    /// Iterate every persisted identity metadata record (#2639).
+    ///
+    /// Returns the durable `IdentityMetadata` set (display_name, public_key,
+    /// controlled_nodes, owned_wallets, attributes). Required (no default),
+    /// unlike the point-lookup `get_identity_metadata`: a silent empty default
+    /// for an ITERATOR would make metadata scans — e.g. resolving a DID by
+    /// public key for a council-membership check during transaction validation —
+    /// drop the whole set, the consensus footgun #2645 exists to eliminate.
+    fn iter_identity_metadata(
+        &self,
+    ) -> StorageResult<Box<dyn Iterator<Item = IdentityMetadata> + '_>>;
+
     /// Store identity metadata.
     ///
     /// This is for DID resolution and display, NOT consensus.

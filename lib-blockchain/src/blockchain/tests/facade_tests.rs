@@ -332,9 +332,113 @@ fn identity_public_key_pins_to_consensus() {
     );
 }
 
+/// did_by_public_key() resolves a DID from a public key by scanning sled
+/// metadata even when the in-memory shadow is empty (restart case) — the read
+/// that lets council-membership / dedup checks work on a store-backed node
+/// (#2639/#61).
+#[test]
+fn did_by_public_key_reads_sled_metadata() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("did_by_pk")).unwrap());
+
+    let did = "did:zhtp:signer";
+    let did_hash = crate::storage::did_to_hash(did);
+    let pk = vec![0x9u8; 2592];
+    // Consensus pin: did_by_public_key requires blake3(metadata.pk) ==
+    // consensus.public_key_hash (CR PR #2678), so build the consensus record
+    // with the matching hash.
+    let pk_hash = crate::types::hash::blake3_hash(&pk).as_array();
+    store.begin_block(0).unwrap();
+    store
+        .put_identity(
+            &did_hash,
+            &IdentityConsensus {
+                did_hash,
+                public_key_hash: pk_hash,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    store
+        .put_identity_metadata(
+            &did_hash,
+            &IdentityMetadata {
+                did: did.to_string(),
+                display_name: "S".to_string(),
+                public_key: pk.clone(),
+                ownership_proof: vec![],
+                controlled_nodes: vec![],
+                owned_wallets: vec![],
+                attributes: vec![],
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().unwrap();
+    bc.set_store(store.clone());
+    assert!(
+        !bc.identity_registry.values().any(|i| i.public_key == pk),
+        "test premise: this pubkey is sled-only (in-mem shadow empty, like after restart)"
+    );
+    assert_eq!(
+        bc.did_by_public_key(&pk),
+        Some(did.to_string()),
+        "DID resolved from sled metadata despite empty in-mem shadow"
+    );
+    assert_eq!(
+        bc.did_by_public_key(&vec![0x1u8; 2592]),
+        None,
+        "unknown pubkey -> None"
+    );
+    // is_public_key_registered routes through did_by_public_key.
+    assert!(bc.is_public_key_registered(&pk));
+    assert!(!bc.is_public_key_registered(&vec![0x1u8; 2592]));
+
+    // CR pin: a metadata-only key whose consensus hash DOES NOT match
+    // must be refused (drift signal), even though metadata says it's a
+    // valid identity.
+    let did_drift = "did:zhtp:drift";
+    let drift_did_hash = crate::storage::did_to_hash(did_drift);
+    let drift_pk = vec![0xAAu8; 2592];
+    store.begin_block(1).unwrap();
+    store
+        .put_identity(
+            &drift_did_hash,
+            &IdentityConsensus {
+                did_hash: drift_did_hash,
+                // Intentionally NOT blake3(drift_pk) — simulates metadata/consensus drift.
+                public_key_hash: [0u8; 32],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    store
+        .put_identity_metadata(
+            &drift_did_hash,
+            &IdentityMetadata {
+                did: did_drift.to_string(),
+                display_name: "D".to_string(),
+                public_key: drift_pk.clone(),
+                ownership_proof: vec![],
+                controlled_nodes: vec![],
+                owned_wallets: vec![],
+                attributes: vec![],
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+    assert_eq!(
+        bc.did_by_public_key(&drift_pk),
+        None,
+        "drifted metadata key (metadata pk hash != consensus public_key_hash) must be refused"
+    );
+}
+
 /// identity_controlled_nodes() reads controlled_nodes from sled metadata even
 /// when the in-memory shadow is empty (the restart case) — the read that lets a
 /// restarted validator recognize itself as the selected proposer (#2639/#59).
+/// (Test from #2676; preserved across the merge with #2678.)
 #[test]
 fn identity_controlled_nodes_reads_sled_metadata() {
     let temp = tempfile::tempdir().unwrap();

@@ -158,6 +158,85 @@ impl Blockchain {
         }
     }
 
+    /// Resolve the DID owning a given Dilithium public key, sled-first (#2639).
+    ///
+    /// Scans the durable `identity_metadata` set for a record whose `public_key`
+    /// matches and PINS the result to consensus: a metadata-only match is not
+    /// trusted on its own. Once a candidate is found, the corresponding
+    /// `IdentityConsensus` record is loaded and the metadata key must
+    /// `blake3`-hash to the consensus `public_key_hash`, and the consensus
+    /// status must not be `Revoked`. This makes council-membership / signer
+    /// resolution safe even if the metadata tree ever drifts from consensus
+    /// (CR PR #2678).
+    ///
+    /// Falls back to the in-memory shadow only when sled has no match (store-less
+    /// mode, or a pending pre-commit registration) — the in-memory scan is empty
+    /// on a store-backed node after restart, which previously made consensus
+    /// council-membership checks (threshold approvals) silently fail there.
+    pub fn did_by_public_key(&self, public_key: &[u8]) -> Option<String> {
+        if let Some(store) = self.get_store() {
+            match store.iter_identity_metadata() {
+                Ok(iter) => {
+                    if let Some(meta) =
+                        iter.into_iter().find(|m| m.public_key == public_key)
+                    {
+                        // Consensus-pin the metadata match.
+                        let did_hash = crate::storage::did_to_hash(&meta.did);
+                        match store.get_identity(&did_hash) {
+                            Ok(Some(consensus)) => {
+                                if crate::types::hash::blake3_hash(&meta.public_key).as_array()
+                                    != consensus.public_key_hash
+                                {
+                                    tracing::warn!(
+                                        did = %meta.did,
+                                        "did_by_public_key: metadata key hash != consensus public_key_hash; refusing drifted match"
+                                    );
+                                    return None;
+                                }
+                                if matches!(
+                                    consensus.status,
+                                    crate::storage::IdentityStatus::Revoked
+                                ) {
+                                    return None;
+                                }
+                                return Some(meta.did);
+                            }
+                            Ok(None) => {
+                                // Metadata present without a consensus record is
+                                // itself a drift signal — refuse rather than
+                                // accept a non-consensus identity.
+                                tracing::warn!(
+                                    did = %meta.did,
+                                    "did_by_public_key: metadata match has no consensus record; refusing"
+                                );
+                                return None;
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    did = %meta.did,
+                                    error = %e,
+                                    "did_by_public_key: consensus pin lookup failed; refusing"
+                                );
+                                return None;
+                            }
+                        }
+                    }
+                    // No metadata match — fall through to in-mem shadow.
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "did_by_public_key: iter_identity_metadata failed; falling back to in-memory shadow (may be empty after restart on store-backed node)"
+                    );
+                }
+            }
+        }
+        self.identity_registry
+            .values()
+            .find(|id| id.public_key == public_key && id.identity_type != "revoked")
+            .map(|id| id.did.clone())
+    }
+
     /// Full Dilithium public key for a DID, sled-first and consensus-pinned (#2639).
     ///
     /// The full key bytes live only in the (non-consensus) `IdentityMetadata`
@@ -379,9 +458,6 @@ impl Blockchain {
         Ok(revocation_tx.hash())
     }
 
-    pub fn list_all_identities(&self) -> Vec<&IdentityTransactionData> {
-        self.identity_registry.values().collect()
-    }
 
     pub fn get_all_identities(&self) -> &HashMap<String, IdentityTransactionData> {
         &self.identity_registry
@@ -690,21 +766,12 @@ impl Blockchain {
     }
 
     pub fn is_public_key_registered(&self, public_key: &[u8]) -> bool {
-        self.identity_registry
-            .values()
-            .any(|identity_data| {
-                identity_data.public_key == public_key && identity_data.identity_type != "revoked"
-            })
+        // #2639: sled-first via did_by_public_key (union). The old in-memory scan
+        // returned false on a store-backed node after restart, letting an
+        // already-registered public key be registered again as a duplicate.
+        self.did_by_public_key(public_key).is_some()
     }
 
-    pub fn get_identity_by_public_key(
-        &self,
-        public_key: &[u8],
-    ) -> Option<&IdentityTransactionData> {
-        self.identity_registry.values().find(|identity_data| {
-            identity_data.public_key == public_key && identity_data.identity_type != "revoked"
-        })
-    }
 
     pub fn auto_register_wallet_identity(
         &mut self,
