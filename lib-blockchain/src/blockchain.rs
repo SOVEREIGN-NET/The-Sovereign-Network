@@ -2661,12 +2661,34 @@ impl Blockchain {
     /// is only consulted when the key is absent from the HashMap (e.g. for
     /// nonces written by the BlockExecutor path but not yet reflected in memory).
     pub fn get_token_nonce(&self, token_id: &[u8; 32], address: &[u8; 32]) -> u64 {
-        // In-memory HashMap is the primary source (populated from snapshot on
-        // restart and incremented during process_token_transactions).
+        // CONS-513: when the BlockExecutor is wired (sled-canonical mode, PR
+        // #2675), sled is the source of truth — the in-memory HashMap is no
+        // longer kept in sync (the executor-mode write at contracts.rs is
+        // guarded by `!self.has_executor()`, so it stops incrementing). The
+        // mempool/consensus pre-check (`is_nonce_current`) must therefore
+        // read from sled FIRST in executor mode; otherwise it accepts a tx
+        // with a nonce the BlockExecutor will reject at commit time, halting
+        // consensus via the CONS-512 HaltScheduled path. Exact production
+        // failure: "Invalid nonce: expected 2280, got 2279" at H=123044,
+        // 2026-06-04 — pre-check saw HashMap=2279 (stale) while sled=2280.
+        if self.has_executor() {
+            if let Some(store) = self.get_store() {
+                let token = crate::storage::TokenId::new(*token_id);
+                let addr = crate::storage::Address::new(*address);
+                if let Ok(nonce) = store.get_token_nonce(&token, &addr) {
+                    return nonce;
+                }
+            }
+            // Sled unreachable under executor mode — fall through to the
+            // in-memory HashMap as best-effort (still better than 0).
+        }
+        // Legacy / store-less mode: in-memory HashMap is the authoritative
+        // source (populated from snapshot on restart and incremented during
+        // process_token_transactions).
         if let Some(&nonce) = self.token_nonces.get(&(*token_id, *address)) {
             return nonce;
         }
-        // Fallback to store for nonces not yet reflected in the HashMap.
+        // Store fallback when nothing in-memory yet (e.g., snapshot pre-load).
         if let Some(store) = self.get_store() {
             let token = crate::storage::TokenId::new(*token_id);
             let addr = crate::storage::Address::new(*address);
