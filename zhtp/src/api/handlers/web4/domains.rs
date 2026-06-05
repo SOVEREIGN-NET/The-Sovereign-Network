@@ -85,6 +85,14 @@ pub struct SimpleDomainRegistrationRequest {
     /// Fee amount in SOV tokens (fixed: 10 SOV for domain registration)
     #[serde(default)]
     pub fee: Option<u64>,
+    /// CONS-516: hex-encoded canonical signed TokenTransfer paying the
+    /// registration fee from the owner's Primary wallet to the DAO treasury.
+    /// REQUIRED. The handler submits this via the normal mempool path (sig
+    /// verify + nonce + balance) so the debit is enforced by consensus, not
+    /// by a broken system-tx pathway. Build it client-side via lib-client's
+    /// `build_domain_register_request_with_fee_payment`.
+    #[serde(default)]
+    pub fee_payment_tx: Option<String>,
 }
 
 /// Content mapping for simple registration
@@ -431,15 +439,44 @@ impl Web4Handler {
             bytes
         };
 
-        // No out-of-band debit. The V2 DomainRegistrationPayload below carries
-        // `fee_amount_atoms` + `fee_payer_wallet_id`; the debit runs inside
-        // `process_domain_transactions` at block-apply, in the same
-        // `begin_block`/`commit_block` window as every other tx-derived state
-        // change, so it's persisted to sled and survives `sync_in_memory_from_sled`.
-        let fee_tx_hash_hex = String::new();
+        // CONS-516: fee is paid via a client-signed canonical TokenTransfer
+        // attached as `fee_payment_tx`. Submit it through the normal mempool
+        // path so sig verify + nonce + balance are enforced by consensus.
+        // The DomainRegistration system tx below is V1 (no embedded fee) —
+        // the debit happens in the user-signed TokenTransfer, not in
+        // `process_domain_transactions`. This replaces the V2 system-tx
+        // path which was structurally unable to pass the owner re-check
+        // at `apply_domain_registration_fee` (signer key_id was zeroed).
+        let fee_tx_hex = simple_request.fee_payment_tx.as_ref().ok_or_else(|| {
+            anyhow!(
+                "fee_payment_tx is required: attach a hex-encoded signed TokenTransfer \
+                 of {} atoms ({} SOV) from your Primary wallet to the DAO treasury. \
+                 Use lib-client `build_domain_register_request_with_fee_payment` to construct it.",
+                registration_fee_sov, registration_fee_whole
+            )
+        })?;
+        let fee_tx_bytes = hex::decode(fee_tx_hex.trim())
+            .map_err(|e| anyhow!("fee_payment_tx is not valid hex: {}", e))?;
+        let fee_tx: lib_blockchain::Transaction = bincode::deserialize(&fee_tx_bytes)
+            .map_err(|e| anyhow!("fee_payment_tx is not a valid bincode-serialized Transaction: {}", e))?;
+        if fee_tx.transaction_type != lib_blockchain::TransactionType::TokenTransfer {
+            return Err(anyhow!(
+                "fee_payment_tx must be a TokenTransfer, got {:?}",
+                fee_tx.transaction_type
+            ));
+        }
+        let fee_tx_hash_bytes = fee_tx.hash();
+        let fee_tx_hash_hex = hex::encode(fee_tx_hash_bytes.as_bytes());
+        {
+            let mut blockchain = self.blockchain.write().await;
+            blockchain
+                .add_pending_transaction(fee_tx)
+                .map_err(|e| anyhow!("fee_payment_tx rejected by mempool: {}", e))?;
+        }
         info!(
-            " Domain registration: fee {} atoms ({} SOV) payable by wallet {} — debit at block-apply",
-            registration_fee_sov, registration_fee_whole,
+            " Domain registration fee tx submitted: {} ({} SOV from wallet {} to DAO treasury)",
+            &fee_tx_hash_hex[..16],
+            registration_fee_whole,
             hex::encode(&owner_wallet_id_bytes[..8])
         );
 
@@ -633,12 +670,13 @@ impl Web4Handler {
                     tags,
                     duration_days: 365,
                     fee_tx_hash: fee_tx_hash_hex.clone(),
-                    // Canonical fee fields — populated from the live
-                    // governance-configured `TxFeeConfig`. Consensus debit
-                    // happens inside `process_domain_transactions` at
-                    // block-apply time.
-                    fee_amount_atoms: registration_fee_sov,
-                    fee_payer_wallet_id: owner_wallet_id_bytes,
+                    // CONS-516: V1 fields (zeroed) so `process_domain_transactions`
+                    // takes the legacy no-debit branch. The fee is paid by the
+                    // separate user-signed TokenTransfer enqueued above; the
+                    // chain debit-attempt path is unreachable from an unsigned
+                    // system tx (signer key_id is zeroed → owner re-check fails).
+                    fee_amount_atoms: 0,
+                    fee_payer_wallet_id: [0u8; 32],
                 };
                 (lib_blockchain::TransactionType::DomainRegistration, payload.encode_memo()
                     .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?)
