@@ -439,46 +439,88 @@ impl Web4Handler {
             bytes
         };
 
-        // CONS-516: fee is paid via a client-signed canonical TokenTransfer
+        // CONS-516: the fee is paid via a client-signed canonical TokenTransfer
         // attached as `fee_payment_tx`. Submit it through the normal mempool
         // path so sig verify + nonce + balance are enforced by consensus.
         // The DomainRegistration system tx below is V1 (no embedded fee) —
         // the debit happens in the user-signed TokenTransfer, not in
-        // `process_domain_transactions`. This replaces the V2 system-tx
-        // path which was structurally unable to pass the owner re-check
-        // at `apply_domain_registration_fee` (signer key_id was zeroed).
-        let fee_tx_hex = simple_request.fee_payment_tx.as_ref().ok_or_else(|| {
-            anyhow!(
-                "fee_payment_tx is required: attach a hex-encoded signed TokenTransfer \
-                 of {} atoms ({} SOV) from your Primary wallet to the DAO treasury. \
-                 Use lib-client `build_domain_register_request_with_fee_payment` to construct it.",
-                registration_fee_sov, registration_fee_whole
-            )
-        })?;
-        let fee_tx_bytes = hex::decode(fee_tx_hex.trim())
-            .map_err(|e| anyhow!("fee_payment_tx is not valid hex: {}", e))?;
-        let fee_tx: lib_blockchain::Transaction = bincode::deserialize(&fee_tx_bytes)
-            .map_err(|e| anyhow!("fee_payment_tx is not a valid bincode-serialized Transaction: {}", e))?;
-        if fee_tx.transaction_type != lib_blockchain::TransactionType::TokenTransfer {
-            return Err(anyhow!(
-                "fee_payment_tx must be a TokenTransfer, got {:?}",
-                fee_tx.transaction_type
-            ));
-        }
-        let fee_tx_hash_bytes = fee_tx.hash();
-        let fee_tx_hash_hex = hex::encode(fee_tx_hash_bytes.as_bytes());
-        {
-            let mut blockchain = self.blockchain.write().await;
-            blockchain
-                .add_pending_transaction(fee_tx)
-                .map_err(|e| anyhow!("fee_payment_tx rejected by mempool: {}", e))?;
-        }
-        info!(
-            " Domain registration fee tx submitted: {} ({} SOV from wallet {} to DAO treasury)",
-            &fee_tx_hash_hex[..16],
-            registration_fee_whole,
-            hex::encode(&owner_wallet_id_bytes[..8])
-        );
+        // `process_domain_transactions`. Replaces the V2 system-tx path
+        // which was structurally unable to pass the owner re-check at
+        // `apply_domain_registration_fee` (signer key_id was zeroed).
+        //
+        // Determine register-vs-update up front so updates don't get
+        // charged a registration fee (DomainUpdate has no consensus debit).
+        // Reviewer comment #2689/L446: gate fee requirement on registration
+        // path only. The later `is_update` re-check at the tx-build site is
+        // kept to avoid threading the value through unrelated branches.
+        let is_register = {
+            let blockchain = self.blockchain.read().await;
+            !blockchain.domain_registry.contains_key(&simple_request.domain)
+        };
+
+        let fee_tx_hash_hex = if is_register {
+            let fee_tx_hex = simple_request.fee_payment_tx.as_ref().ok_or_else(|| {
+                anyhow!(
+                    "fee_payment_tx is required for new registrations: attach a hex-encoded \
+                     signed TokenTransfer of {} atoms ({} SOV) from your Primary wallet to \
+                     the DAO treasury. Use lib-client \
+                     `build_domain_register_request_with_fee_payment` to construct it.",
+                    registration_fee_sov, registration_fee_whole
+                )
+            })?;
+            let trimmed = fee_tx_hex.trim();
+            // Reviewer comment #2689/L475: enforce a max size before any
+            // allocation. A canonical signed TokenTransfer is ~3–4 KB; the
+            // cap is generous but still bounds the worst-case allocation
+            // and rejects obvious garbage / DoS payloads at the boundary.
+            const MAX_FEE_TX_HEX_BYTES: usize = 32 * 1024; // 32 KB hex => 16 KB raw
+            if trimmed.len() > MAX_FEE_TX_HEX_BYTES {
+                return Err(anyhow!(
+                    "fee_payment_tx hex exceeds {} bytes ({} provided)",
+                    MAX_FEE_TX_HEX_BYTES,
+                    trimmed.len()
+                ));
+            }
+            let fee_tx_bytes = hex::decode(trimmed)
+                .map_err(|e| anyhow!("fee_payment_tx is not valid hex: {}", e))?;
+            // Reviewer comment #2689/L475: route through the canonical,
+            // version-gated, size-limited decode path instead of a bare
+            // bincode::deserialize. decode_client_transaction handles V8
+            // (legacy) and V9+ (u128 fee, post-EPIC-001) wire formats and
+            // caps allocation at input length.
+            let fee_tx = lib_blockchain::transaction::decode_client_transaction(&fee_tx_bytes)
+                .map_err(|e| anyhow!("fee_payment_tx decode failed: {}", e))?;
+            if fee_tx.transaction_type != lib_blockchain::TransactionType::TokenTransfer {
+                return Err(anyhow!(
+                    "fee_payment_tx must be a TokenTransfer, got {:?}",
+                    fee_tx.transaction_type
+                ));
+            }
+            let fee_tx_hash_bytes = fee_tx.hash();
+            let hex_hash = hex::encode(fee_tx_hash_bytes.as_bytes());
+            {
+                let mut blockchain = self.blockchain.write().await;
+                blockchain
+                    .add_pending_transaction(fee_tx)
+                    .map_err(|e| anyhow!("fee_payment_tx rejected by mempool: {}", e))?;
+            }
+            info!(
+                " Domain registration fee tx submitted: {} ({} SOV from wallet {} to DAO treasury)",
+                &hex_hash[..16],
+                registration_fee_whole,
+                hex::encode(&owner_wallet_id_bytes[..8])
+            );
+            hex_hash
+        } else {
+            // Update path: no consensus-level fee. The handler still
+            // records the legacy `fee_tx_hash` field as empty so existing
+            // DomainUpdate payload semantics are preserved.
+            info!(
+                " Domain {} already registered — applying as DomainUpdate (no fee debit)",
+                simple_request.domain
+            );
+            String::new()
+        };
 
         // Prepare content mappings WITH RICH METADATA for storage
         let mut initial_content = HashMap::new();
@@ -2176,6 +2218,7 @@ fn merge_catalog_entries(
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use bincode::Options;
     use lib_blockchain::contracts::utils::generate_lib_token_id;
 
     // ── catalog merge unit tests ──────────────────────────────────────────────
@@ -2476,37 +2519,119 @@ mod tests {
         }))
     }
 
+    /// CONS-516: a new-domain registration without `fee_payment_tx` must be
+    /// rejected with a clear error pointing to the lib-client builder.
+    /// Replaces the prior test that asserted the (now-removed) broken system-tx
+    /// debit path — that path silently dropped every fee at block-apply.
     #[tokio::test]
-    async fn register_domain_without_fee_payment_tx_creates_system_tx() -> anyhow::Result<()> {
-        let (handler, owner_identity, owner_wallet_id, treasury_wallet_id, _owner_private, blockchain) =
+    async fn register_domain_requires_fee_payment_tx() -> anyhow::Result<()> {
+        let (handler, owner_identity, _owner_wallet_id, _treasury_wallet_id, _owner_private, blockchain) =
             setup_handler().await?;
         let request =
-            simple_registration_request(&owner_identity, "system-fee.zhtp", "<html>ok</html>")?;
+            simple_registration_request(&owner_identity, "needs-fee.zhtp", "<html>ok</html>")?;
 
         let principal = SecurityPrincipal::new(
             owner_identity.did.clone(),
             Role::Citizen,
             NodeType::FullNode,
         );
-        let response = handler
+        let err = handler
             .register_domain_simple(serde_json::to_vec(&request)?, &principal)
-            .await?;
-        assert_eq!(response.status, ZhtpStatus::Ok);
-        let body: serde_json::Value = serde_json::from_slice(&response.body)?;
-        assert_eq!(body["success"], serde_json::Value::Bool(true));
-
-        // The fee is paid via a canonical SOV TokenTransfer SYSTEM transaction
-        // added to the mempool (see add_system_transaction); balances change only
-        // once that tx is mined into a block, NOT synchronously in the handler.
-        // So this test asserts the system transaction was created, not a balance
-        // delta. (owner/treasury wallet ids are unused now.)
-        let _ = (owner_wallet_id, treasury_wallet_id);
-        let bc = blockchain.read().await;
+            .await
+            .expect_err("registration without fee_payment_tx must be rejected");
+        let msg = err.to_string();
         assert!(
-            !bc.pending_transactions.is_empty(),
-            "domain registration must create a pending system transaction for the fee"
+            msg.contains("fee_payment_tx is required"),
+            "error must explain the missing field; got: {}",
+            msg
+        );
+        assert!(
+            msg.contains("build_domain_register_request_with_fee_payment"),
+            "error must point to the lib-client builder; got: {}",
+            msg
         );
 
+        // No mempool tx should be enqueued — the handler must bail before
+        // any blockchain mutation when the required field is absent.
+        let bc = blockchain.read().await;
+        assert!(
+            bc.pending_transactions.is_empty(),
+            "rejected registration must not enqueue any tx"
+        );
+        Ok(())
+    }
+
+    /// CONS-516 follow-up (#2689 review L475): the handler must reject
+    /// `fee_payment_tx` payloads of the wrong type with a clear error before
+    /// touching the mempool, so a non-TokenTransfer can never be silently
+    /// admitted as a "fee tx".
+    #[tokio::test]
+    async fn register_domain_rejects_fee_payment_tx_wrong_type() -> anyhow::Result<()> {
+        use lib_blockchain::transaction::TransactionPayload;
+        use lib_blockchain::Transaction as BcTransaction;
+        use lib_blockchain::TransactionType;
+
+        let (handler, owner_identity, _ow, _tw, _op, blockchain) = setup_handler().await?;
+
+        // Build a non-TokenTransfer tx (Coinbase with payload::None — the
+        // simplest type that won't accidentally satisfy the TokenTransfer
+        // check). Serialized via the canonical bincode encoding that
+        // decode_client_transaction accepts; only the type matters here —
+        // the handler should reject before any deeper validation.
+        let wrong_tx = BcTransaction {
+            version: 8,
+            chain_id: 0x03,
+            transaction_type: TransactionType::Coinbase,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature: lib_blockchain::integration::crypto_integration::Signature {
+                signature: vec![0u8; 64],
+                public_key: lib_blockchain::integration::crypto_integration::PublicKey {
+                    dilithium_pk: [0u8; 2592],
+                    kyber_pk: [0u8; 1568],
+                    key_id: [0u8; 32],
+                },
+                algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
+                timestamp: 0,
+            },
+            memo: vec![],
+            payload: TransactionPayload::None,
+        };
+        let wrong_bytes = bincode::DefaultOptions::new()
+            .with_fixint_encoding()
+            .allow_trailing_bytes()
+            .serialize(&wrong_tx)
+            .expect("serialize wrong-type tx");
+        let wrong_hex = hex::encode(&wrong_bytes);
+
+        let mut request = simple_registration_request(
+            &owner_identity,
+            "wrong-fee-type.zhtp",
+            "<html>x</html>",
+        )?;
+        request["fee_payment_tx"] = serde_json::Value::String(wrong_hex);
+
+        let principal = SecurityPrincipal::new(
+            owner_identity.did.clone(),
+            Role::Citizen,
+            NodeType::FullNode,
+        );
+        let err = handler
+            .register_domain_simple(serde_json::to_vec(&request)?, &principal)
+            .await
+            .expect_err("non-TokenTransfer fee_payment_tx must be rejected");
+        assert!(
+            err.to_string().contains("must be a TokenTransfer"),
+            "error must call out the wrong type; got: {}",
+            err
+        );
+
+        let bc = blockchain.read().await;
+        assert!(
+            bc.pending_transactions.is_empty(),
+            "rejected wrong-type fee tx must not enqueue anything"
+        );
         Ok(())
     }
 
