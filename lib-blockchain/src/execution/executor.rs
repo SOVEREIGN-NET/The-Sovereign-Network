@@ -1566,29 +1566,46 @@ impl BlockExecutor {
         let contract_id = Self::dao_state_contract_id();
         let mut proposal_key = b"proposal:".to_vec();
         proposal_key.extend_from_slice(data.proposal_id.as_bytes());
-        let proposal_raw = self
-            .store
-            .get_contract_storage(&contract_id, &proposal_key)?
-            .ok_or_else(|| {
-                TxApplyError::InvalidType("DaoVote references unknown proposal".to_string())
-            })?;
+        let proposal_raw_opt = self.store.get_contract_storage(&contract_id, &proposal_key)?;
 
-        // Validate that the voting period has not expired.
-        let proposal: crate::transaction::DaoProposalData = bincode::deserialize(&proposal_raw)
-            .map_err(|e| {
-                TxApplyError::Internal(format!(
-                    "Failed to deserialize proposal for vote check: {e}"
-                ))
-            })?;
-        let voting_deadline = proposal
-            .created_at_height
-            .saturating_add(proposal.voting_period_blocks);
-        if block_height > voting_deadline {
-            return Err(TxApplyError::InvalidType(format!(
-                "DaoVote rejected: voting period for proposal '{}' expired at height {voting_deadline} (current height: {block_height})",
-                data.proposal_id,
-            )));
+        // CONS-514 (legacy-DAO tolerance): proposals submitted via the raw
+        // broadcast path land in `blockchain.dao_proposals` (legacy tally
+        // source) AND are visible to `process_approved_governance_proposals`
+        // via `get_dao_proposals` (iterates sled blocks), but historically
+        // were NOT mirrored into the executor's contract_storage. Rejecting
+        // the vote here halted the cluster on 2026-06-05 (Halt at H=125647)
+        // even though the proposal was demonstrably committed at H=125621.
+        //
+        // The legacy tally path (`Blockchain::tally_dao_votes` →
+        // `get_dao_votes_for_proposal`) reads votes directly from sled
+        // blocks too, so accepting the vote and skipping the executor-side
+        // deadline check is safe — the eventual
+        // `process_approved_governance_proposals` apply path re-reads the
+        // proposal from the canonical block-iter and enforces the deadline
+        // there. Worst case the executor stores a vote whose tally never
+        // counts (unknown proposal), which is identical in effect to no
+        // contract_storage entry at all.
+        if let Some(proposal_raw) = proposal_raw_opt {
+            // Fast path: proposal IS in contract_storage. Enforce the
+            // deadline at apply time as before.
+            let proposal: crate::transaction::DaoProposalData =
+                bincode::deserialize(&proposal_raw).map_err(|e| {
+                    TxApplyError::Internal(format!(
+                        "Failed to deserialize proposal for vote check: {e}"
+                    ))
+                })?;
+            let voting_deadline = proposal
+                .created_at_height
+                .saturating_add(proposal.voting_period_blocks);
+            if block_height > voting_deadline {
+                return Err(TxApplyError::InvalidType(format!(
+                    "DaoVote rejected: voting period for proposal '{}' expired at height {voting_deadline} (current height: {block_height})",
+                    data.proposal_id,
+                )));
+            }
         }
+        // else: legacy proposal — accept the vote, defer the deadline check
+        // to the legacy `apply_difficulty_parameter_update` execution path.
 
         // Key on voter identity so each voter casts exactly one vote per proposal
         // (any subsequent vote by the same voter overwrites the previous one).
@@ -4870,6 +4887,33 @@ mod tests {
         );
         let result = executor.apply_block(&block3);
         assert!(result.is_err(), "Double DaoExecution must be rejected");
+    }
+
+    /// CONS-514 regression: a DaoVote whose proposal is not in the
+    /// executor's contract_storage must NOT halt block application — the
+    /// legacy DAO path (`Blockchain::dao_proposals` / `get_dao_proposals`)
+    /// still owns the canonical tally and the proposal exists there.
+    ///
+    /// Pre-fix this rejected with `"DaoVote references unknown proposal"`
+    /// and halted the live cluster at H=125647 on 2026-06-05.
+    #[test]
+    fn test_dao_vote_accepted_when_proposal_not_in_contract_storage() {
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        // Vote on a proposal_id that was NEVER written to contract_storage
+        // (i.e. legacy-only path). Pre-fix this halts the chain; post-fix
+        // it stores the vote and continues.
+        let unknown_proposal_id = proposal_id_for("legacy-only-proposal");
+        let vote_tx = create_dao_vote_tx(unknown_proposal_id, "alice", "Yes");
+        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![vote_tx]);
+
+        executor
+            .apply_block(&block1)
+            .expect("vote on legacy-only proposal must apply, not halt the block");
     }
 
     /// DaoVote must be rejected when the proposal voting period has expired.
