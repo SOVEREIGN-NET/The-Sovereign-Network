@@ -2656,10 +2656,16 @@ impl Blockchain {
     /// For SOV transfers, the address is the wallet_id bytes.
     /// For custom token transfers, the address is the key_id bytes.
     ///
-    /// The in-memory HashMap is checked first; it is populated both during live
-    /// block processing and from the TokenStateSnapshot on restart.  The store
-    /// is only consulted when the key is absent from the HashMap (e.g. for
-    /// nonces written by the BlockExecutor path but not yet reflected in memory).
+    /// Source-of-truth depends on mode (CONS-513):
+    /// - **Executor mode** (`has_executor()` true, sled-canonical): sled is
+    ///   queried first because the in-memory HashMap is no longer kept in
+    ///   sync — the contracts.rs increment is gated by `!has_executor()`,
+    ///   so it stops updating once the executor is wired. HashMap is used
+    ///   only as a best-effort fallback when sled is unreachable.
+    /// - **Legacy / store-less mode**: in-memory HashMap is authoritative
+    ///   (populated from the TokenStateSnapshot on restart and incremented
+    ///   during `process_token_transactions`). The store is consulted only
+    ///   when the HashMap has no entry yet (e.g. pre-snapshot-load).
     pub fn get_token_nonce(&self, token_id: &[u8; 32], address: &[u8; 32]) -> u64 {
         // CONS-513: when the BlockExecutor is wired (sled-canonical mode, PR
         // #2675), sled is the source of truth — the in-memory HashMap is no
