@@ -561,7 +561,7 @@ pub struct Blockchain {
 /// `consensus_key != rewards_key`, and `networking_key != rewards_key` at validator
 /// registration time. See [`register_validator`] in the blockchain layer and
 /// [`ValidatorManager::register_validator`] in the consensus layer.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValidatorInfo {
     /// Validator identity ID
     pub identity_id: String,

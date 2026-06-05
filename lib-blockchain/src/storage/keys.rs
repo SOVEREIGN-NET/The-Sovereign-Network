@@ -257,6 +257,11 @@ pub mod meta {
     /// Drives the version-gated regenerate-from-blocks migration (#58). Absent
     /// key is treated as version 1 (pre-kyber records).
     pub const IDENTITY_METADATA_SCHEMA_VERSION: &[u8] = b"identity_metadata_schema_version";
+
+    /// Key for the persisted `validators` record schema version (u32, big-endian).
+    /// Drives the version-gated regenerate-from-blocks migration (#56). Absent
+    /// key is treated as version 0 (no durable validators yet → migrate to v1).
+    pub const VALIDATOR_RECORD_SCHEMA_VERSION: &[u8] = b"validator_record_schema_version";
 }
 
 // =============================================================================

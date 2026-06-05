@@ -369,6 +369,107 @@ pub enum ValidatorStatus {
 }
 
 // =============================================================================
+// DURABLE VALIDATOR RECORD (state-unification #56)
+// =============================================================================
+// The in-memory `ValidatorInfo` (blockchain layer) is split into two STORAGE
+// types with the consensus/metadata boundary enforced by the type system, so
+// durable storage never inherits consensus semantics by accident. Conversion
+// to/from `ValidatorInfo` lives in the blockchain layer (`blockchain/validators`)
+// — storage deliberately knows nothing about `ValidatorInfo`.
+//
+// Classification rule (per-field verified against real reads, #56): a field is
+// CONSENSUS only if it affects block validity, validator-set membership,
+// signatures, voting power, or replay determinism. Everything else is METADATA.
+// =============================================================================
+
+/// Schema version for the durable validator record set (`validators` tree).
+///
+/// v1 = first sled persistence of validator state (#56). Existing chains have no
+/// durable validator record (validators lived only in the in-memory
+/// `validator_registry`), so the version-gated regenerate-from-blocks migration
+/// (`Blockchain::migrate_validator_records_schema`) backfills the whole tree from
+/// replayed blocks. Like `identity_metadata`, the validator record set is fully
+/// rebuildable from blocks, so the migration never decodes an old-shaped blob —
+/// safe under bincode's positional (non-self-describing) encoding.
+pub const VALIDATOR_RECORD_SCHEMA_VERSION: u32 = 1;
+
+/// Consensus-affecting validator fields (#56).
+///
+/// STRICT boundary: a field belongs here ONLY if it has a verified consensus
+/// read. Every field below does:
+/// - `consensus_key` verifies BFT/validator signatures (`transaction::validation`),
+/// - `stake` + `storage_provided` are the inputs to `calculate_voting_power`,
+/// - `status` gates active-set membership (`get_active_validators`),
+/// - `oracle_key_id` derives oracle-committee membership (attestation validity).
+///
+/// Do NOT add a field here without a real consensus read — accidental coupling
+/// is exactly the divergence class #2645 exists to eliminate. Non-consensus
+/// fields (transport/rewards keys, commission, timestamps, stats, provenance)
+/// live in [`ValidatorMetadata`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ValidatorConsensusRecord {
+    /// Validator identity ID (DID string) — the validator-set key.
+    pub identity_id: String,
+    /// Dilithium5 consensus public key — verifies BFT consensus signatures.
+    #[serde(with = "serde_arrays")]
+    pub consensus_key: [u8; 2592],
+    /// Staked amount in micro-SOV — voting-power input.
+    pub stake: u64,
+    /// Storage provided in bytes — voting-power input (logarithmic storage bonus).
+    pub storage_provided: u64,
+    /// Active-set membership status: "active" | "inactive" | "jailed" | "slashed".
+    /// Kept as the in-memory string verbatim (lossless) rather than remapped to
+    /// the narrower `ValidatorStatus` enum (which has no `Slashed` variant), to
+    /// avoid a silent misclassification at the storage boundary.
+    pub status: String,
+    /// Oracle committee attestation key id (oracle-attestation validity).
+    pub oracle_key_id: Option<[u8; 32]>,
+}
+
+/// Non-consensus validator fields — ops / routing / display / provenance (#56).
+///
+/// A SEPARATE type from [`ValidatorConsensusRecord`] so a change here can never
+/// become consensus-coupled by accident. None of these have a consensus read
+/// (verified #56): `rewards_key`/`networking_key` are checked only for
+/// key-separation at admission (from the tx, never re-derived from storage);
+/// `commission_rate`/`registered_at` have no block-validity read; the rest are
+/// liveness/throughput stats or provenance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ValidatorMetadata {
+    /// Ed25519 / X25519 transport identity key (QUIC TLS, DHT node id).
+    pub networking_key: Vec<u8>,
+    /// Rewards wallet public key (reward destination; not read in state mutation).
+    pub rewards_key: Vec<u8>,
+    /// Network address for validator communication (host:port).
+    pub network_address: String,
+    /// Commission rate percentage (0-100).
+    pub commission_rate: u8,
+    /// Block height when the validator was registered.
+    pub registered_at: u64,
+    /// Last activity height/timestamp (liveness stat).
+    pub last_activity: u64,
+    /// Total blocks validated (throughput stat).
+    pub blocks_validated: u64,
+    /// Slash count (inert for validators today; only gateways threshold it).
+    pub slash_count: u32,
+    /// Provenance: validator admission path.
+    pub admission_source: String,
+    /// Provenance: governance proposal id authorizing this validator, if any.
+    pub governance_proposal_id: Option<String>,
+}
+
+/// Durable validator record — the consensus/metadata split with the boundary in
+/// the type system (#56). Persisted to the `validators` tree keyed by
+/// `did_to_hash(identity_id)`. Convert to/from the in-memory `ValidatorInfo`
+/// ONLY at the storage boundary (`blockchain/validators`), never store
+/// `ValidatorInfo` directly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoredValidatorRecord {
+    pub consensus: ValidatorConsensusRecord,
+    pub metadata: ValidatorMetadata,
+}
+
+// =============================================================================
 // IDENTITY CONSENSUS STATE (Fixed-Size Only)
 // =============================================================================
 // CONSENSUS CORE SPEC: No String identifiers in consensus state. Ever.
@@ -1354,6 +1455,112 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         // Default implementation returns empty (requires height index)
         let _ = height;
         Ok(Vec::new())
+    }
+
+    // =========================================================================
+    // Durable validator records (state-unification #56)
+    // =========================================================================
+    // The `validators` tree stores `StoredValidatorRecord` (consensus+metadata
+    // split) keyed by `did_to_hash(identity_id)`. Point reads/writes default to
+    // no-op/None so non-sled backends (mocks) compile unchanged; the ITERATOR is
+    // required (see `iter_validator_records`).
+    // =========================================================================
+
+    /// Point-lookup a durable validator record by DID hash (#56).
+    fn get_validator_record(
+        &self,
+        did_hash: &[u8; 32],
+    ) -> StorageResult<Option<StoredValidatorRecord>> {
+        let _ = did_hash;
+        Ok(None)
+    }
+
+    /// Iterate every persisted validator record (#56).
+    ///
+    /// Required (no default), mirroring `iter_identity_metadata`: a silent empty
+    /// default for an ITERATOR would make a validator-set scan — e.g. rebuilding
+    /// the active set or resolving a validator by consensus key — drop the whole
+    /// set, the consensus footgun #2645 exists to eliminate.
+    fn iter_validator_records(
+        &self,
+    ) -> StorageResult<Box<dyn Iterator<Item = StoredValidatorRecord> + '_>>;
+
+    /// Store a validator record within the open block tx batch. Default no-op.
+    fn put_validator_record(
+        &self,
+        did_hash: &[u8; 32],
+        record: &StoredValidatorRecord,
+    ) -> StorageResult<()> {
+        let _ = (did_hash, record);
+        Ok(())
+    }
+
+    /// Delete a validator record. Default no-op.
+    fn delete_validator_record(&self, did_hash: &[u8; 32]) -> StorageResult<()> {
+        let _ = did_hash;
+        Ok(())
+    }
+
+    /// Count durable validator records. Default 0.
+    fn count_validator_records(&self) -> StorageResult<usize> {
+        Ok(0)
+    }
+
+    /// Read the persisted `validators` schema version.
+    ///
+    /// Drives the version-gated regenerate-from-blocks migration (#56). The
+    /// default returns [`VALIDATOR_RECORD_SCHEMA_VERSION`] so backends with no
+    /// persisted validators (mocks) are treated as already current and never
+    /// trigger a rebuild. Sled overrides this to read the meta key, defaulting to
+    /// `0` when the key is absent (no durable validators yet → migrate to v1).
+    fn validator_record_schema_version(&self) -> StorageResult<u32> {
+        Ok(VALIDATOR_RECORD_SCHEMA_VERSION)
+    }
+
+    /// Persist the `validators` schema version. Default no-op.
+    fn set_validator_record_schema_version(&self, version: u32) -> StorageResult<()> {
+        let _ = version;
+        Ok(())
+    }
+
+    /// Remove every record from the `validators` tree.
+    ///
+    /// Used by the schema migration to drop stale records before regenerating
+    /// from blocks. Default no-op (records are rebuildable, so clearing a backend
+    /// without one is safe).
+    fn clear_validator_records(&self) -> StorageResult<()> {
+        Ok(())
+    }
+
+    /// Write a validator record directly, bypassing the block-tx batch.
+    ///
+    /// Used by the regenerate-from-blocks migration (outside begin/commit_block).
+    fn put_validator_record_direct(
+        &self,
+        did_hash: &[u8; 32],
+        record: &StoredValidatorRecord,
+    ) -> StorageResult<()> {
+        let _ = (did_hash, record);
+        Err(StorageError::Database(
+            "put_validator_record_direct not supported by this backend".to_string(),
+        ))
+    }
+
+    /// Bulk-write validator records with a SINGLE flush at the end (#56).
+    ///
+    /// Mirrors `put_identity_metadata_batch`: the migration would otherwise pay
+    /// O(n) fsyncs via per-record direct writes. Default falls back to the
+    /// per-record direct write so unspecialised backends still function.
+    fn put_validator_record_batch(
+        &self,
+        records: &[([u8; 32], StoredValidatorRecord)],
+    ) -> StorageResult<usize> {
+        let mut written = 0usize;
+        for (did_hash, record) in records {
+            self.put_validator_record_direct(did_hash, record)?;
+            written += 1;
+        }
+        Ok(written)
     }
 
     // =========================================================================

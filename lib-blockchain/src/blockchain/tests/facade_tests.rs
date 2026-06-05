@@ -573,3 +573,71 @@ fn did_by_device_key_id_reads_sled_metadata() {
         "direct DID-suffix match resolves via identity_exists"
     );
 }
+
+// ---- #56 durable validator record sled persistence ----
+
+/// Durable validator records persist + read back through the sled trait surface:
+/// direct write (migration path), point get, iterator, count, and schema version.
+/// A brand-new store reports schema version 0 (no durable validators yet), and
+/// the iterator validates each record's identity_id hashes to its tree key (#56).
+#[test]
+fn validator_records_persist_through_sled() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = SledStore::open(&temp.path().join("validators")).unwrap();
+
+    // Brand-new store: no durable validators, schema version 0.
+    assert_eq!(store.validator_record_schema_version().unwrap(), 0);
+    assert_eq!(store.count_validator_records().unwrap(), 0);
+
+    let did = "did:zhtp:val-A";
+    let did_hash = crate::storage::did_to_hash(did);
+    let record = crate::storage::StoredValidatorRecord {
+        consensus: crate::storage::ValidatorConsensusRecord {
+            identity_id: did.to_string(),
+            consensus_key: [3u8; 2592],
+            stake: 5_000,
+            storage_provided: 1 << 40,
+            status: "active".to_string(),
+            oracle_key_id: None,
+        },
+        metadata: crate::storage::ValidatorMetadata {
+            networking_key: vec![9, 9],
+            rewards_key: vec![8, 8],
+            network_address: "10.0.0.1:7000".to_string(),
+            commission_rate: 3,
+            registered_at: 12,
+            last_activity: 34,
+            blocks_validated: 0,
+            slash_count: 0,
+            admission_source: "onchain_governance".to_string(),
+            governance_proposal_id: None,
+        },
+    };
+
+    // Direct write (migration path) + point read round-trips byte-for-byte.
+    store
+        .put_validator_record_direct(&did_hash, &record)
+        .unwrap();
+    let got = store
+        .get_validator_record(&did_hash)
+        .unwrap()
+        .expect("record present");
+    assert_eq!(got, record);
+    assert_eq!(store.count_validator_records().unwrap(), 1);
+
+    // Iterator surfaces it (and would error if id didn't hash to the key).
+    let all: Vec<_> = store.iter_validator_records().unwrap().collect();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].consensus.identity_id, did);
+
+    // Schema version round-trips.
+    store.set_validator_record_schema_version(1).unwrap();
+    assert_eq!(store.validator_record_schema_version().unwrap(), 1);
+
+    // Unknown key -> None.
+    assert!(store.get_validator_record(&[0u8; 32]).unwrap().is_none());
+
+    // Clear empties the tree.
+    store.clear_validator_records().unwrap();
+    assert_eq!(store.count_validator_records().unwrap(), 0);
+}
