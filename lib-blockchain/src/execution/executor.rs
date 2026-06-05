@@ -786,8 +786,24 @@ impl BlockExecutor {
                 .map_err(|e| BlockApplyError::TxFailed { index, reason: e })?;
 
             // validate_tx_stateful (reads only)
-            self.validate_tx_stateful(tx)
-                .map_err(|e| BlockApplyError::TxFailed { index, reason: e })?;
+            // CONS-515: ReplayDropped is a soft drop, not a block-killing error.
+            // The proposer may include a tx whose nonce was advanced in an
+            // earlier block (mempool eviction race). Skip it and continue
+            // with the next tx so consensus stays live; the block hash stays
+            // valid because we don't mutate `block.transactions`.
+            if let Err(e) = self.validate_tx_stateful(tx) {
+                if let TxApplyError::ReplayDropped { expected, actual } = e {
+                    tracing::warn!(
+                        index = index,
+                        height = block_height,
+                        expected_nonce = expected,
+                        actual_nonce = actual,
+                        "CONS-515: dropping replay tx during block apply"
+                    );
+                    continue;
+                }
+                return Err(BlockApplyError::TxFailed { index, reason: e });
+            }
 
             // apply_tx (writes)
             let tx_result = self
@@ -1377,6 +1393,16 @@ impl BlockExecutor {
                 let from = Address::new(transfer.from);
 
                 let expected_nonce = view.get_token_nonce(&token, &from)?;
+                // CONS-515: distinguish replay (nonce < expected) from gap
+                // (nonce > expected). Replay means an earlier block already
+                // applied this tx — the apply loop drops it and continues so
+                // a mempool-eviction race cannot halt consensus.
+                if transfer.nonce < expected_nonce {
+                    return Err(TxApplyError::ReplayDropped {
+                        expected: expected_nonce,
+                        actual: transfer.nonce,
+                    });
+                }
                 if transfer.nonce != expected_nonce {
                     return Err(TxApplyError::InvalidNonce {
                         expected: expected_nonce,

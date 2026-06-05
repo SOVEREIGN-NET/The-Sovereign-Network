@@ -135,6 +135,15 @@ pub enum TxApplyError {
     #[error("Invalid nonce: expected {expected}, got {actual}")]
     InvalidNonce { expected: u64, actual: u64 },
 
+    /// CONS-515: replay protection at execution. The tx's nonce is strictly
+    /// below the account's expected nonce, which means it was already applied
+    /// in an earlier block. The apply loop treats this as a soft drop — the
+    /// tx is skipped and execution continues with the next tx in the block.
+    /// Hard-failing on replays would halt consensus whenever the proposer
+    /// re-included a since-applied tx (mempool eviction race).
+    #[error("Replay nonce dropped: expected {expected}, got {actual} (replay protection)")]
+    ReplayDropped { expected: u64, actual: u64 },
+
     #[error("Account not found: {0}")]
     AccountNotFound(Address),
 
