@@ -644,6 +644,37 @@ pub enum DaoAction {
         #[arg(long = "approval", value_name = "PK_HEX:SIG_HEX")]
         approvals: Vec<String>,
     },
+    /// Submit a governance parameter update proposal (e.g. set the on-chain
+    /// domain-registration fee). The local identity signs the DaoProposal
+    /// transaction and broadcasts it raw. Council members then vote via
+    /// `dao vote`; once quorum passes, `process_approved_governance_proposals`
+    /// applies the parameter change automatically.
+    GovernanceUpdate {
+        /// Proposal title (shown in `dao info` / vote UI)
+        #[arg(long)]
+        title: String,
+        /// Proposal description (rationale, target value)
+        #[arg(long)]
+        description: String,
+        /// Set `tx_fee_config.domain_registration_fee_atoms` to this value
+        /// (in atomic SOV units, 10^18 per whole SOV). Example: 10 SOV =
+        /// 10000000000000000000.
+        #[arg(long)]
+        domain_fee_atoms: Option<u128>,
+        /// Set `tx_fee_config.token_creation_fee` to this value (atomic SOV)
+        #[arg(long)]
+        token_creation_fee: Option<u64>,
+        /// Voting period length in blocks. Default: 1000.
+        #[arg(long, default_value = "1000")]
+        voting_period_blocks: u64,
+        /// Quorum percentage required to pass (0-100). Default: 51.
+        #[arg(long, default_value = "51")]
+        quorum_required: u8,
+        /// Optional keystore path for the proposer identity (defaults to
+        /// the standard keystore lookup).
+        #[arg(long)]
+        keystore: Option<String>,
+    },
 }
 
 /// Citizen management commands

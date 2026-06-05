@@ -60,6 +60,8 @@ lib-economy = { path = "../lib-economy" }
 lib-types = { path = "../lib-types" }
 lib-network = { path = "../lib-network" }
 lib-blockchain = { path = "../lib-blockchain", features = ["contracts"] }
+# Governance parameter enums referenced by `dao governance-update`.
+lib-governance = { path = "../lib-governance" }
 lib-protocols = { path = "../lib-protocols" }
 lib-proofs = { path = "../lib-proofs" }
 zhtp_client = { package = "lib-client", path = "../lib-client" }

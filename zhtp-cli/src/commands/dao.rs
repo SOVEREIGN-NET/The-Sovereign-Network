@@ -122,6 +122,7 @@ pub fn action_to_operation(action: &DaoAction) -> Option<DaoOperation> {
         | DaoAction::EntityRegistryStatus
         | DaoAction::RecordOnRampTrade { .. }
         | DaoAction::TreasuryAllocation { .. }
+        | DaoAction::GovernanceUpdate { .. }
         | DaoAction::Stake { .. }
         | DaoAction::Unstake { .. } => None,
     }
@@ -604,6 +605,115 @@ async fn handle_dao_command_impl(
                 })?;
             output.header("Treasury Allocation Submitted")?;
             output.print(&format_output(&result, &cli.format)?)?;
+            Ok(())
+        }
+        DaoAction::GovernanceUpdate {
+            title,
+            description,
+            domain_fee_atoms,
+            token_creation_fee,
+            voting_period_blocks,
+            quorum_required,
+            keystore,
+        } => {
+            // Build the list of parameter changes from the flags the operator passed.
+            let mut updates: Vec<lib_governance::dao::dao_types::GovernanceParameterValue> =
+                Vec::new();
+            if let Some(v) = domain_fee_atoms {
+                updates.push(
+                    lib_governance::dao::dao_types::GovernanceParameterValue::DomainRegistrationFeeAtoms(v),
+                );
+            }
+            if let Some(v) = token_creation_fee {
+                updates.push(
+                    lib_governance::dao::dao_types::GovernanceParameterValue::TokenCreationFee(v),
+                );
+            }
+            if updates.is_empty() {
+                return Err(CliError::ConfigError(
+                    "governance-update requires at least one parameter flag (e.g. --domain-fee-atoms)"
+                        .to_string(),
+                ));
+            }
+
+            // Load the proposer identity from keystore (default or override).
+            let identity = if let Some(path) = keystore {
+                let loaded = load_identity_from_keystore(std::path::Path::new(&path))?;
+                zhtp_client::Identity {
+                    did: loaded.identity.did.clone(),
+                    public_key: loaded.identity.public_key.dilithium_pk.to_vec(),
+                    private_key: loaded.keypair.private_key.dilithium_sk.to_vec(),
+                    kyber_public_key: loaded.identity.public_key.kyber_pk.to_vec(),
+                    kyber_secret_key: loaded.keypair.private_key.kyber_sk.to_vec(),
+                    node_id: loaded.identity.node_id.as_bytes().to_vec(),
+                    device_id: loaded.identity.primary_device.clone(),
+                    recovery_entropy: loaded.keypair.private_key.master_seed.to_vec(),
+                    created_at: loaded.identity.created_at,
+                }
+            } else {
+                load_identity()?
+            };
+
+            // Read the current chain tip so the proposal carries an accurate
+            // created_at_height. The chain doesn't reject stale heights, but
+            // operators / vote-UI display benefit from a meaningful value.
+            let tip_response = client.get("/api/v1/blockchain/tip").await.map_err(|e| {
+                CliError::ApiCallFailed {
+                    endpoint: "/api/v1/blockchain/tip".to_string(),
+                    status: 0,
+                    reason: e.to_string(),
+                }
+            })?;
+            let tip_json: Value = ZhtpClient::parse_json(&tip_response)
+                .map_err(|e| CliError::ApiCallFailed {
+                    endpoint: "/api/v1/blockchain/tip".to_string(),
+                    status: 0,
+                    reason: format!("Failed to parse tip response: {e}"),
+                })?;
+            let current_height = tip_json
+                .get("height")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+
+            let signed_tx = zhtp_client::build_governance_parameter_update_proposal_tx(
+                &identity,
+                title.clone(),
+                description,
+                voting_period_blocks,
+                quorum_required,
+                updates,
+                current_height,
+                3, // chain_id = testnet (matches the rest of the CLI)
+            )
+            .map_err(CliError::ConfigError)?;
+
+            // Broadcast via the canonical raw-tx endpoint. Same path used by
+            // `zhtp-cli blockchain broadcast-raw`.
+            let body = serde_json::json!({ "transaction_data": signed_tx });
+            let endpoint = "/api/v1/blockchain/transaction/broadcast";
+            output.info(&format!(
+                "Submitting governance update proposal '{}' at height {}...",
+                title, current_height
+            ))?;
+            let response = client.post_json(endpoint, &body).await.map_err(|e| {
+                CliError::ApiCallFailed {
+                    endpoint: endpoint.to_string(),
+                    status: 0,
+                    reason: e.to_string(),
+                }
+            })?;
+            let result: Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
+                    endpoint: endpoint.to_string(),
+                    status: 0,
+                    reason: format!("Failed to parse response: {e}"),
+                })?;
+            output.header("Governance Update Proposal Submitted")?;
+            output.print(&format_output(&result, &cli.format)?)?;
+            output.info(
+                "Next step: have Council members vote with `zhtp-cli dao vote --proposal-id <id> --choice yes`.\n\
+                 When quorum is met, process_approved_governance_proposals applies the change automatically.",
+            )?;
             Ok(())
         }
         DaoAction::Stake {
