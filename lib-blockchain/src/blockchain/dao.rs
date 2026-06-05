@@ -278,7 +278,7 @@ impl Blockchain {
     pub(crate) const DAO_REGISTRY_REGISTER_EXEC: &'static str = "dao_registry_register_v1";
     pub(crate) const DAO_FACTORY_CREATE_EXEC: &'static str = "dao_factory_create_v1";
 
-    fn dao_registry_entry_from_tx(
+    pub(super) fn dao_registry_entry_from_tx(
         tx: &Transaction,
         block_height: u64,
     ) -> Option<DaoRegistryIndexEntry> {
