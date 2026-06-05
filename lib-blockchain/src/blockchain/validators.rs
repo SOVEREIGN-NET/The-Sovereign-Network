@@ -1,4 +1,65 @@
 use super::*;
+use crate::storage::{StoredValidatorRecord, ValidatorConsensusRecord, ValidatorMetadata};
+
+// =============================================================================
+// Validator storage boundary (#56)
+// =============================================================================
+// The ONLY place the in-memory `ValidatorInfo` is converted to/from the durable
+// `StoredValidatorRecord` (consensus+metadata split). Storage stays ignorant of
+// `ValidatorInfo`; the blockchain layer owns the mapping. The split is lossless:
+// every `ValidatorInfo` field maps to exactly one of consensus/metadata, so the
+// round-trip `ValidatorInfo -> StoredValidatorRecord -> ValidatorInfo` is the
+// identity (guarded by `validator_record_roundtrip_is_lossless`).
+
+impl From<&ValidatorInfo> for StoredValidatorRecord {
+    fn from(info: &ValidatorInfo) -> Self {
+        StoredValidatorRecord {
+            consensus: ValidatorConsensusRecord {
+                identity_id: info.identity_id.clone(),
+                consensus_key: info.consensus_key,
+                stake: info.stake,
+                storage_provided: info.storage_provided,
+                status: info.status.clone(),
+                oracle_key_id: info.oracle_key_id,
+            },
+            metadata: ValidatorMetadata {
+                networking_key: info.networking_key.clone(),
+                rewards_key: info.rewards_key.clone(),
+                network_address: info.network_address.clone(),
+                commission_rate: info.commission_rate,
+                registered_at: info.registered_at,
+                last_activity: info.last_activity,
+                blocks_validated: info.blocks_validated,
+                slash_count: info.slash_count,
+                admission_source: info.admission_source.clone(),
+                governance_proposal_id: info.governance_proposal_id.clone(),
+            },
+        }
+    }
+}
+
+impl From<&StoredValidatorRecord> for ValidatorInfo {
+    fn from(rec: &StoredValidatorRecord) -> Self {
+        ValidatorInfo {
+            identity_id: rec.consensus.identity_id.clone(),
+            stake: rec.consensus.stake,
+            storage_provided: rec.consensus.storage_provided,
+            consensus_key: rec.consensus.consensus_key,
+            networking_key: rec.metadata.networking_key.clone(),
+            rewards_key: rec.metadata.rewards_key.clone(),
+            network_address: rec.metadata.network_address.clone(),
+            commission_rate: rec.metadata.commission_rate,
+            status: rec.consensus.status.clone(),
+            registered_at: rec.metadata.registered_at,
+            last_activity: rec.metadata.last_activity,
+            blocks_validated: rec.metadata.blocks_validated,
+            slash_count: rec.metadata.slash_count,
+            admission_source: rec.metadata.admission_source.clone(),
+            governance_proposal_id: rec.metadata.governance_proposal_id.clone(),
+            oracle_key_id: rec.consensus.oracle_key_id,
+        }
+    }
+}
 
 impl Blockchain {
     pub fn register_validator(&mut self, validator_info: ValidatorInfo) -> Result<Hash> {
@@ -328,5 +389,72 @@ impl Blockchain {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod validator_boundary_tests {
+    use super::*;
+
+    fn sample_validator_info() -> ValidatorInfo {
+        ValidatorInfo {
+            identity_id: "did:zhtp:validator-1".to_string(),
+            stake: 1_000_000,
+            storage_provided: 42 * 1024 * 1024 * 1024,
+            consensus_key: [7u8; 2592],
+            networking_key: vec![1, 2, 3],
+            rewards_key: vec![4, 5, 6],
+            network_address: "1.2.3.4:9000".to_string(),
+            commission_rate: 5,
+            status: "active".to_string(),
+            registered_at: 100,
+            last_activity: 200,
+            blocks_validated: 17,
+            slash_count: 0,
+            admission_source: "onchain_governance".to_string(),
+            governance_proposal_id: Some("prop-7".to_string()),
+            oracle_key_id: Some([9u8; 32]),
+        }
+    }
+
+    /// The `ValidatorInfo -> StoredValidatorRecord -> ValidatorInfo` round-trip is
+    /// the identity: every field maps to exactly one side of the consensus/metadata
+    /// split, so the boundary conversion is lossless (#56). If a new `ValidatorInfo`
+    /// field is added without being routed into one of the halves, this fails.
+    #[test]
+    fn validator_record_roundtrip_is_lossless() {
+        let original = sample_validator_info();
+        let stored: StoredValidatorRecord = (&original).into();
+        let back: ValidatorInfo = (&stored).into();
+        assert_eq!(original, back, "round-trip must preserve every field");
+    }
+
+    /// Consensus-affecting fields land in the consensus half; everything else in
+    /// metadata. Locks the boundary so a field can't silently change sides (#56).
+    #[test]
+    fn validator_record_split_places_fields_correctly() {
+        let info = sample_validator_info();
+        let s: StoredValidatorRecord = (&info).into();
+        // CONSENSUS half — only fields with a verified consensus read.
+        assert_eq!(s.consensus.identity_id, info.identity_id);
+        assert_eq!(s.consensus.consensus_key, info.consensus_key);
+        assert_eq!(s.consensus.stake, info.stake);
+        assert_eq!(s.consensus.storage_provided, info.storage_provided);
+        assert_eq!(s.consensus.status, info.status);
+        assert_eq!(s.consensus.oracle_key_id, info.oracle_key_id);
+        // METADATA half — ops / routing / provenance, incl. the other two keys.
+        assert_eq!(s.metadata.networking_key, info.networking_key);
+        assert_eq!(s.metadata.rewards_key, info.rewards_key);
+        assert_eq!(s.metadata.network_address, info.network_address);
+        assert_eq!(s.metadata.commission_rate, info.commission_rate);
+        assert_eq!(s.metadata.registered_at, info.registered_at);
+        assert_eq!(s.metadata.last_activity, info.last_activity);
+        assert_eq!(s.metadata.blocks_validated, info.blocks_validated);
+        assert_eq!(s.metadata.slash_count, info.slash_count);
+        assert_eq!(s.metadata.admission_source, info.admission_source);
+        assert_eq!(
+            s.metadata.governance_proposal_id,
+            info.governance_proposal_id
+        );
     }
 }

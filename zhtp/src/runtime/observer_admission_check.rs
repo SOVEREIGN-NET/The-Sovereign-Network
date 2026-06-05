@@ -281,6 +281,13 @@ mod tests {
         > {
             Ok(Box::new(std::iter::empty()))
         }
+        fn iter_validator_records(
+            &self,
+        ) -> StorageResult<
+            Box<dyn Iterator<Item = lib_blockchain::storage::StoredValidatorRecord> + '_>,
+        > {
+            Ok(Box::new(std::iter::empty()))
+        }
         fn get_block_by_height(
             &self,
             _h: BlockHeight,
