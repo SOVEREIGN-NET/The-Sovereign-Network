@@ -333,6 +333,152 @@ impl Blockchain {
         Ok(blockchain)
     }
 
+    fn load_blocks_and_legacy_indexes_from_store(
+        &mut self,
+        store: &dyn BlockchainStore,
+        latest_height: u64,
+    ) -> Result<()> {
+        self.blocks.clear();
+        self.utxo_set.clear();
+        self.nullifier_set.clear();
+
+        for height in 0..=latest_height {
+            let Some(block) = store.get_block_by_height(height)? else {
+                return Err(anyhow::anyhow!(
+                    "Missing block at height {} - store is corrupted",
+                    height
+                ));
+            };
+
+            for tx in &block.transactions {
+                for input in &tx.inputs {
+                    self.nullifier_set.insert(input.nullifier);
+                    self.utxo_set.remove(&input.previous_output);
+                }
+
+                for output in &tx.outputs {
+                    self.utxo_set.insert(tx.hash(), output.clone());
+                }
+            }
+
+            self.blocks.push(block);
+            self.height = height;
+        }
+
+        Ok(())
+    }
+
+    fn hydrate_checkpointed_state_from_store(
+        &mut self,
+        store: &dyn BlockchainStore,
+        latest_height: u64,
+    ) -> Result<bool> {
+        if !Self::hot_state_projection_is_current(store, latest_height)? {
+            return Ok(false);
+        }
+
+        self.load_blocks_and_legacy_indexes_from_store(store, latest_height)?;
+        let expected_identity_count = self
+            .blocks
+            .iter()
+            .flat_map(|block| block.transactions.iter())
+            .filter(|tx| tx.identity_data().is_some())
+            .count();
+        let expected_wallet_count = self
+            .blocks
+            .iter()
+            .flat_map(|block| block.transactions.iter())
+            .filter(|tx| tx.wallet_data().is_some())
+            .count();
+
+        self.identity_registry.clear();
+        self.identity_blocks.clear();
+        for (_did_hash, consensus, metadata) in store.iter_identities()? {
+            let Some(metadata) = metadata else {
+                return Ok(false);
+            };
+            if metadata.did.is_empty() {
+                return Ok(false);
+            }
+            self.identity_blocks
+                .insert(metadata.did.clone(), consensus.registered_at_height);
+            self.identity_registry.insert(
+                metadata.did.clone(),
+                crate::transaction::IdentityTransactionData {
+                    did: metadata.did,
+                    display_name: metadata.display_name,
+                    public_key: metadata.public_key,
+                    ownership_proof: metadata.ownership_proof,
+                    identity_type: consensus.identity_type.as_str().to_string(),
+                    did_document_hash: Hash::new(consensus.did_document_hash),
+                    created_at: consensus.created_at,
+                    registration_fee: consensus.registration_fee,
+                    dao_fee: consensus.dao_fee,
+                    controlled_nodes: metadata.controlled_nodes,
+                    owned_wallets: metadata.owned_wallets,
+                    kyber_public_key: Vec::new(),
+                },
+            );
+        }
+
+        if self.identity_registry.len() != expected_identity_count {
+            return Ok(false);
+        }
+
+        self.wallet_registry.clear();
+        self.wallet_blocks.clear();
+        for (wallet_id, record) in store.iter_wallet_projections()? {
+            let wallet_id_hex = hex::encode(wallet_id);
+            self.wallet_blocks
+                .insert(wallet_id_hex.clone(), record.committed_at_height);
+            self.wallet_registry
+                .insert(wallet_id_hex, record.wallet_data);
+        }
+        if self.wallet_registry.len() != expected_wallet_count {
+            return Ok(false);
+        }
+
+        self.token_contracts.clear();
+        self.token_nonces.clear();
+        match store.get_token_state_snapshot()? {
+            Some(snapshot) => {
+                self.token_contracts = snapshot.token_contracts;
+                self.token_nonces = snapshot.token_nonces;
+            }
+            None => {
+                for (token_id, contract) in store.iter_token_contracts()? {
+                    self.token_contracts.insert(token_id.0, contract);
+                }
+            }
+        }
+
+        self.bonding_curve_registry = crate::contracts::bonding_curve::BondingCurveRegistry::new();
+        for (_token_id, token) in store.iter_bonding_curve_tokens()? {
+            if let Err(e) = self.bonding_curve_registry.register(token) {
+                warn!(
+                    "⚠️ Failed to hydrate bonding curve token from SledStore: {}",
+                    e
+                );
+            }
+        }
+
+        match store.get_oracle_state() {
+            Ok(Some(oracle_state)) => self.oracle_state = oracle_state,
+            Ok(None) => {}
+            Err(e) => warn!("⚠️ Failed to hydrate oracle_state from SledStore: {}", e),
+        }
+
+        if !self.hydrate_hot_state_from_projections(store, latest_height)? {
+            return Ok(false);
+        }
+
+        info!(
+            "📂 Hydrated blockchain hot state from current projection checkpoint at height {}",
+            latest_height
+        );
+        Ok(true)
+    }
+
     pub fn load_from_store(store: std::sync::Arc<dyn BlockchainStore>) -> Result<Option<Self>> {
         info!("📂 Loading blockchain from SledStore...");
 
@@ -384,156 +530,192 @@ impl Blockchain {
             ),
         }
 
-        for height in 0..=latest_height {
-            match store.get_block_by_height(height)? {
-                Some(block) => {
-                    for tx in &block.transactions {
-                        for input in &tx.inputs {
-                            blockchain.nullifier_set.insert(input.nullifier);
-                            blockchain.utxo_set.remove(&input.previous_output);
-                        }
+        let used_projection_hydrate = match blockchain
+            .hydrate_checkpointed_state_from_store(store.as_ref(), latest_height)
+        {
+            Ok(true) => true,
+            Ok(false) => false,
+            Err(e) => {
+                warn!(
+                    "⚠️ Failed to hydrate checkpointed state from SledStore, falling back to replay: {}",
+                    e
+                );
+                false
+            }
+        };
 
-                        for output in &tx.outputs {
-                            let tx_hash = tx.hash();
-                            blockchain.utxo_set.insert(tx_hash, output.clone());
-                        }
+        if !used_projection_hydrate {
+            blockchain.blocks.clear();
+            blockchain.height = 0;
+            blockchain.utxo_set.clear();
+            blockchain.nullifier_set.clear();
+            blockchain.identity_registry.clear();
+            blockchain.identity_blocks.clear();
+            blockchain.wallet_registry.clear();
+            blockchain.wallet_blocks.clear();
+            blockchain.token_contracts.clear();
+            blockchain.token_nonces.clear();
+            blockchain.bonding_curve_registry =
+                crate::contracts::bonding_curve::BondingCurveRegistry::new();
 
-                        if let Some(identity_data) = tx.identity_data() {
-                            blockchain
-                                .identity_registry
-                                .insert(identity_data.did.clone(), identity_data.clone());
-                            blockchain
-                                .identity_blocks
-                                .insert(identity_data.did.clone(), height);
-                        }
+            for height in 0..=latest_height {
+                match store.get_block_by_height(height)? {
+                    Some(block) => {
+                        for tx in &block.transactions {
+                            for input in &tx.inputs {
+                                blockchain.nullifier_set.insert(input.nullifier);
+                                blockchain.utxo_set.remove(&input.previous_output);
+                            }
 
-                        if let Some(wallet_data) = tx.wallet_data() {
-                            let wallet_id = hex::encode(wallet_data.wallet_id.as_bytes());
-                            blockchain
-                                .wallet_registry
-                                .insert(wallet_id.clone(), wallet_data.clone());
-                            blockchain.wallet_blocks.insert(wallet_id, height);
+                            for output in &tx.outputs {
+                                let tx_hash = tx.hash();
+                                blockchain.utxo_set.insert(tx_hash, output.clone());
+                            }
 
-                            // Replay SOV minting for WalletRegistration transactions.
-                            // process_token_transactions (called below with the sled store
-                            // temporarily removed) reads balances from the in-memory
-                            // token_contracts HashMap.  Without replaying the minting here,
-                            // any subsequent TokenTransfer from this wallet will fail with
-                            // "insufficient balance: have 0" even though the balance was
-                            // correctly committed to sled during the original block execution.
-                            if tx.transaction_type == TransactionType::WalletRegistration
-                                && wallet_data.initial_balance > 0
-                            {
-                                blockchain.ensure_sov_token_contract();
-                                let sov_token_id =
-                                    crate::contracts::utils::generate_lib_token_id();
-                                let mut wallet_id_bytes = [0u8; 32];
-                                wallet_id_bytes
-                                    .copy_from_slice(wallet_data.wallet_id.as_bytes());
-                                let recipient_pk =
-                                    Self::wallet_key_for_sov(&wallet_id_bytes);
-                                let current = blockchain
-                                    .token_contracts
-                                    .get(&sov_token_id)
-                                    .map(|t| t.balance_of(&recipient_pk))
-                                    .unwrap_or(0);
-                                let target = wallet_data.initial_balance as u128;
-                                let deficit = target.saturating_sub(current);
-                                if deficit > 0 {
-                                    if let Some(token) =
-                                        blockchain.token_contracts.get_mut(&sov_token_id)
-                                    {
-                                        let _ = token.mint(&recipient_pk, deficit);
+                            if let Some(identity_data) = tx.identity_data() {
+                                blockchain
+                                    .identity_registry
+                                    .insert(identity_data.did.clone(), identity_data.clone());
+                                blockchain
+                                    .identity_blocks
+                                    .insert(identity_data.did.clone(), height);
+                            }
+
+                            if let Some(wallet_data) = tx.wallet_data() {
+                                let wallet_id = hex::encode(wallet_data.wallet_id.as_bytes());
+                                blockchain
+                                    .wallet_registry
+                                    .insert(wallet_id.clone(), wallet_data.clone());
+                                blockchain.wallet_blocks.insert(wallet_id, height);
+
+                                // Replay SOV minting for WalletRegistration transactions.
+                                // process_token_transactions (called below with the sled store
+                                // temporarily removed) reads balances from the in-memory
+                                // token_contracts HashMap.  Without replaying the minting here,
+                                // any subsequent TokenTransfer from this wallet will fail with
+                                // "insufficient balance: have 0" even though the balance was
+                                // correctly committed to sled during the original block execution.
+                                if tx.transaction_type == TransactionType::WalletRegistration
+                                    && wallet_data.initial_balance > 0
+                                {
+                                    blockchain.ensure_sov_token_contract();
+                                    let sov_token_id =
+                                        crate::contracts::utils::generate_lib_token_id();
+                                    let mut wallet_id_bytes = [0u8; 32];
+                                    wallet_id_bytes
+                                        .copy_from_slice(wallet_data.wallet_id.as_bytes());
+                                    let recipient_pk = Self::wallet_key_for_sov(&wallet_id_bytes);
+                                    let current = blockchain
+                                        .token_contracts
+                                        .get(&sov_token_id)
+                                        .map(|t| t.balance_of(&recipient_pk))
+                                        .unwrap_or(0);
+                                    let target = wallet_data.initial_balance as u128;
+                                    let deficit = target.saturating_sub(current);
+                                    if deficit > 0 {
+                                        if let Some(token) =
+                                            blockchain.token_contracts.get_mut(&sov_token_id)
+                                        {
+                                            let _ = token.mint(&recipient_pk, deficit);
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        if tx.transaction_type == TransactionType::ContractExecution {
-                            debug!(
-                                "📦 Replaying ContractExecution tx at height {}, memo_len={}",
-                                height,
-                                tx.memo.len()
-                            );
-                            if let Err(e) = blockchain.process_contract_execution(tx, height) {
-                                warn!(
-                                    "⚠️ Failed to replay ContractExecution at height {}: {}",
-                                    height, e
+                            if tx.transaction_type == TransactionType::ContractExecution {
+                                debug!(
+                                    "📦 Replaying ContractExecution tx at height {}, memo_len={}",
+                                    height,
+                                    tx.memo.len()
                                 );
+                                if let Err(e) = blockchain.process_contract_execution(tx, height) {
+                                    warn!(
+                                        "⚠️ Failed to replay ContractExecution at height {}: {}",
+                                        height, e
+                                    );
+                                }
+                            }
+
+                            if let Some(validator_data) = tx.validator_data() {
+                                let status = match validator_data.operation {
+                                    crate::transaction::ValidatorOperation::Register => "active",
+                                    crate::transaction::ValidatorOperation::Update => "active",
+                                    crate::transaction::ValidatorOperation::Unregister => {
+                                        "inactive"
+                                    }
+                                };
+                                let validator_info = ValidatorInfo {
+                                    identity_id: validator_data.identity_id.clone(),
+                                    stake: validator_data.stake,
+                                    storage_provided: validator_data.storage_provided,
+                                    consensus_key: validator_data
+                                        .consensus_key
+                                        .as_slice()
+                                        .try_into()
+                                        .unwrap_or([0u8; 2592]),
+                                    networking_key: validator_data.networking_key.clone(),
+                                    rewards_key: validator_data.rewards_key.clone(),
+                                    network_address: validator_data.network_address.clone(),
+                                    commission_rate: validator_data.commission_rate,
+                                    status: status.to_string(),
+                                    registered_at: height,
+                                    last_activity: height,
+                                    blocks_validated: 0,
+                                    slash_count: 0,
+                                    admission_source: ADMISSION_SOURCE_ONCHAIN_GOVERNANCE
+                                        .to_string(),
+                                    governance_proposal_id: None,
+                                    oracle_key_id: None,
+                                };
+                                blockchain
+                                    .validator_registry
+                                    .insert(validator_data.identity_id.clone(), validator_info);
+                                blockchain
+                                    .validator_blocks
+                                    .insert(validator_data.identity_id.clone(), height);
                             }
                         }
 
-                        if let Some(validator_data) = tx.validator_data() {
-                            let status = match validator_data.operation {
-                                crate::transaction::ValidatorOperation::Register => "active",
-                                crate::transaction::ValidatorOperation::Update => "active",
-                                crate::transaction::ValidatorOperation::Unregister => "inactive",
-                            };
-                            let validator_info = ValidatorInfo {
-                                identity_id: validator_data.identity_id.clone(),
-                                stake: validator_data.stake,
-                                storage_provided: validator_data.storage_provided,
-                                consensus_key: validator_data.consensus_key.as_slice().try_into().unwrap_or([0u8; 2592]),
-                                networking_key: validator_data.networking_key.clone(),
-                                rewards_key: validator_data.rewards_key.clone(),
-                                network_address: validator_data.network_address.clone(),
-                                commission_rate: validator_data.commission_rate,
-                                status: status.to_string(),
-                                registered_at: height,
-                                last_activity: height,
-                                blocks_validated: 0,
-                                slash_count: 0,
-                                admission_source: ADMISSION_SOURCE_ONCHAIN_GOVERNANCE.to_string(),
-                                governance_proposal_id: None,
-                                oracle_key_id: None,
-                            };
-                            blockchain
-                                .validator_registry
-                                .insert(validator_data.identity_id.clone(), validator_info);
-                            blockchain
-                                .validator_blocks
-                                .insert(validator_data.identity_id.clone(), height);
+                        // Replay CBE pool initialization from on-chain InitCbeToken transactions.
+                        // Replay domain registration/update transactions.
+                        blockchain.process_domain_transactions(&block);
+
+                        // Replay gateway registration/update transactions.
+                        blockchain.process_gateway_transactions(&block);
+
+                        // Replay employment contract creation so employment_registry is populated.
+                        if let Err(e) = blockchain.process_employment_contract_transactions(&block)
+                        {
+                            warn!(
+                                "⚠️ Failed to replay CreateEmploymentContract at height {}: {}",
+                                height, e
+                            );
                         }
+
+                        // During sled-store replay we skip SOV token transaction processing
+                        // entirely.  The correct final SOV balances are loaded from the
+                        // token_balances sled tree after this loop.
+                        //
+                        // We intentionally leave blockchain.token_nonces EMPTY here.
+                        // In BlockExecutor mode (the only production mode), nonces are
+                        // tracked exclusively in sled via increment_token_nonce() and
+                        // get_token_nonce() falls through to sled when the in-memory map
+                        // has no entry.  Populating the in-memory map from the block
+                        // history would make it a stale cache: after restart the executor
+                        // continues to update only sled, so the in-memory entry never
+                        // advances past the replay count and the nonce API returns stale
+                        // values — causing clients to submit wrong nonces that the executor
+                        // then rejects with "expected N+1, got N".
+
+                        blockchain.blocks.push(block);
+                        blockchain.height = height;
                     }
-
-                    // Replay CBE pool initialization from on-chain InitCbeToken transactions.
-                    // Replay domain registration/update transactions.
-                    blockchain.process_domain_transactions(&block);
-
-                    // Replay gateway registration/update transactions.
-                    blockchain.process_gateway_transactions(&block);
-
-                    // Replay employment contract creation so employment_registry is populated.
-                    if let Err(e) = blockchain.process_employment_contract_transactions(&block) {
-                        warn!(
-                            "⚠️ Failed to replay CreateEmploymentContract at height {}: {}",
-                            height, e
-                        );
+                    None => {
+                        return Err(anyhow::anyhow!(
+                            "Missing block at height {} - store is corrupted",
+                            height
+                        ));
                     }
-
-                    // During sled-store replay we skip SOV token transaction processing
-                    // entirely.  The correct final SOV balances are loaded from the
-                    // token_balances sled tree after this loop.
-                    //
-                    // We intentionally leave blockchain.token_nonces EMPTY here.
-                    // In BlockExecutor mode (the only production mode), nonces are
-                    // tracked exclusively in sled via increment_token_nonce() and
-                    // get_token_nonce() falls through to sled when the in-memory map
-                    // has no entry.  Populating the in-memory map from the block
-                    // history would make it a stale cache: after restart the executor
-                    // continues to update only sled, so the in-memory entry never
-                    // advances past the replay count and the nonce API returns stale
-                    // values — causing clients to submit wrong nonces that the executor
-                    // then rejects with "expected N+1, got N".
-
-                    blockchain.blocks.push(block);
-                    blockchain.height = height;
-                }
-                None => {
-                    return Err(anyhow::anyhow!(
-                        "Missing block at height {} - store is corrupted",
-                        height
-                    ));
                 }
             }
         }
@@ -625,7 +807,7 @@ impl Blockchain {
                     synced
                 );
             }
-            
+
             // Also sync total supply from sled
             if let Ok(Some(supply)) = store.get_token_supply(&storage_sov_id) {
                 if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
@@ -709,10 +891,15 @@ impl Blockchain {
         // load_from_store deliberately skips token-tx processing, so the
         // PoUW mint index is not built incrementally on this path. Rebuild it
         // from the loaded blocks so /api/v1/pouw/rewards has the full history.
-        blockchain.rebuild_pouw_mint_index();
+        if !used_projection_hydrate {
+            blockchain.rebuild_pouw_mint_index();
 
-        if let Err(e) = blockchain.backfill_hot_state_projections_from_replay(store.as_ref()) {
-            warn!("⚠️ Failed to backfill hot-state projections during load_from_store: {}", e);
+            if let Err(e) = blockchain.backfill_hot_state_projections_from_replay(store.as_ref()) {
+                warn!(
+                    "⚠️ Failed to backfill hot-state projections during load_from_store: {}",
+                    e
+                );
+            }
         }
 
         // The store's wallet-projection index is non-authoritative and
@@ -723,7 +910,7 @@ impl Blockchain {
         // purpose-built for exactly this startup recovery. Without this, a
         // wiped projection index is never repaired and `get_wallet_projection`
         // diverges from the replayed truth.
-        {
+        if !used_projection_hydrate {
             let projections: Vec<([u8; 32], crate::storage::WalletProjectionRecord)> = blockchain
                 .wallet_registry
                 .iter()
@@ -789,8 +976,7 @@ impl Blockchain {
         for tx in recovered {
             // Drop entries that no longer satisfy nonce or phase-2 rules; this
             // matches the eviction sweeps that run during normal block commit.
-            let phase2_invalid =
-                tx.transaction_type == TransactionType::TokenMint && tx.fee != 0;
+            let phase2_invalid = tx.transaction_type == TransactionType::TokenMint && tx.fee != 0;
             if phase2_invalid || !self.is_nonce_current(&tx) {
                 let h = tx.hash().as_array();
                 if let Err(e) = store.delete_pending_transaction(&h) {
@@ -810,10 +996,7 @@ impl Blockchain {
             kept += 1;
         }
         if kept + dropped > 0 {
-            info!(
-                "Pending tx recovery: kept={}, dropped={}",
-                kept, dropped
-            );
+            info!("Pending tx recovery: kept={}, dropped={}", kept, dropped);
         }
     }
 
@@ -958,7 +1141,10 @@ impl Blockchain {
 
         for validator_data in validator_registrations {
             match self.register_validator(validator_data.clone()) {
-                Ok(_) => info!("Registered genesis validator: {}", validator_data.identity_id),
+                Ok(_) => info!(
+                    "Registered genesis validator: {}",
+                    validator_data.identity_id
+                ),
                 Err(e) => warn!(
                     "Failed to register genesis validator {}: {}",
                     validator_data.identity_id, e
