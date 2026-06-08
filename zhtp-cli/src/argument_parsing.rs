@@ -644,6 +644,40 @@ pub enum DaoAction {
         #[arg(long = "approval", value_name = "PK_HEX:SIG_HEX")]
         approvals: Vec<String>,
     },
+    /// Submit a governance parameter update proposal (e.g. set the on-chain
+    /// domain-registration fee). The local identity signs the DaoProposal
+    /// transaction and broadcasts it raw. Council members then vote via
+    /// `dao vote`; once quorum passes, `process_approved_governance_proposals`
+    /// applies the parameter change automatically.
+    GovernanceUpdate {
+        /// Proposal title (shown in `dao info` / vote UI)
+        #[arg(long)]
+        title: String,
+        /// Proposal description (rationale, target value)
+        #[arg(long)]
+        description: String,
+        /// Set `tx_fee_config.domain_registration_fee_atoms` to this value
+        /// (in atomic SOV units, 10^18 per whole SOV). Example: 10 SOV =
+        /// 10000000000000000000. Must be non-zero (chain rejects zero fees).
+        // Reviewer #2685/L672: validate at parse time so operators get
+        // clap's "invalid value" message instead of building a doomed proposal.
+        #[arg(long, value_parser = parse_non_zero_u128)]
+        domain_fee_atoms: Option<u128>,
+        /// Set `tx_fee_config.token_creation_fee` to this value (atomic SOV).
+        /// Must be non-zero (chain rejects zero fees).
+        #[arg(long, value_parser = parse_non_zero_u64)]
+        token_creation_fee: Option<u64>,
+        /// Voting period length in blocks. Default: 1000. Must be non-zero.
+        #[arg(long, default_value = "1000", value_parser = parse_non_zero_u64)]
+        voting_period_blocks: u64,
+        /// Quorum percentage required to pass (0-100). Default: 51.
+        #[arg(long, default_value = "51", value_parser = clap::value_parser!(u8).range(0..=100))]
+        quorum_required: u8,
+        /// Optional keystore path for the proposer identity (defaults to
+        /// the standard keystore lookup).
+        #[arg(long)]
+        keystore: Option<String>,
+    },
 }
 
 /// Citizen management commands
@@ -2005,6 +2039,31 @@ pub async fn run_cli() -> Result<()> {
         ZhtpCommand::Observer(args) => commands::observer::handle_observer_command(args.clone(), &cli)
             .await
             .map_err(anyhow::Error::msg),
+    }
+}
+
+/// Parse a u64 that must be non-zero (for clap value_parser on flags
+/// representing fees / counts where zero is semantically invalid).
+fn parse_non_zero_u64(s: &str) -> Result<u64, String> {
+    let v: u64 = s
+        .parse()
+        .map_err(|e: std::num::ParseIntError| e.to_string())?;
+    if v == 0 {
+        Err("must be non-zero".to_string())
+    } else {
+        Ok(v)
+    }
+}
+
+/// Parse a u128 that must be non-zero (atomic-SOV fee amounts).
+fn parse_non_zero_u128(s: &str) -> Result<u128, String> {
+    let v: u128 = s
+        .parse()
+        .map_err(|e: std::num::ParseIntError| e.to_string())?;
+    if v == 0 {
+        Err("must be non-zero".to_string())
+    } else {
+        Ok(v)
     }
 }
 

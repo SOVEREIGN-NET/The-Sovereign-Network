@@ -285,12 +285,300 @@ pub fn build_dao_unstake_tx(
     Ok(hex::encode(bytes))
 }
 
+/// Build and sign a `DaoProposal` transaction whose execution applies a
+/// governance parameter update.
+///
+/// Once submitted and Council-approved, the chain's
+/// `process_approved_governance_proposals` → `apply_difficulty_parameter_update`
+/// path decodes the bincode-serialized `DaoExecutionParams` from the
+/// proposal's `execution_params` and applies the listed parameter changes
+/// in `lib_blockchain::transaction::TxFeeConfig` / `DifficultyConfig`.
+///
+/// The proposal_type string is `"difficulty_parameter_update"` — the chain
+/// reuses that bucket for ALL governance parameter updates including fee
+/// fields (see `lib-blockchain/src/blockchain/dao.rs::apply_difficulty_parameter_update`).
+///
+/// # Arguments
+/// - `identity` — Proposer's identity (signs the DaoProposal tx)
+/// - `title` — Short human-readable title
+/// - `description` — Longer description for voters
+/// - `voting_period_blocks` — Voting window length
+/// - `quorum_required` — % quorum (0-100)
+/// - `updates` — One or more `GovernanceParameterValue`s to apply atomically
+/// - `current_height` — Current chain height (recorded in proposal metadata)
+/// - `chain_id` — Network chain ID
+///
+/// # Returns
+/// Hex-encoded, bincode-serialized signed `Transaction` ready to broadcast
+/// via `POST /api/v1/blockchain/transaction/broadcast` as
+/// `{"transaction_data": "<hex>"}` — the same endpoint used by every other
+/// canonical raw-tx broadcast path (`zhtp-cli blockchain broadcast-raw`,
+/// other DAO builders, etc).
+pub fn build_governance_parameter_update_proposal_tx(
+    identity: &crate::identity::Identity,
+    title: String,
+    description: String,
+    voting_period_blocks: u64,
+    quorum_required: u8,
+    updates: Vec<lib_governance::dao::dao_types::GovernanceParameterValue>,
+    current_height: u64,
+    chain_id: u8,
+) -> Result<String, String> {
+    use crate::token_tx::create_public_key_with_kyber;
+    use lib_blockchain::integration::crypto_integration::Signature;
+    use lib_blockchain::transaction::DaoProposalData;
+    use lib_blockchain::types::Hash as BcHash;
+    use lib_governance::dao::dao_types::{DaoExecutionAction, DaoExecutionParams, GovernanceParameterUpdate};
+
+    if updates.is_empty() {
+        return Err("updates must contain at least one parameter".to_string());
+    }
+    // Reviewer #2685/L333: validate field bounds client-side so an
+    // operator can't accidentally broadcast a proposal that the chain
+    // will reject or that the vote UI cannot render meaningfully.
+    if quorum_required > 100 {
+        return Err(format!(
+            "quorum_required must be 0..=100, got {}",
+            quorum_required
+        ));
+    }
+    if voting_period_blocks == 0 {
+        return Err("voting_period_blocks must be non-zero".to_string());
+    }
+    if title.trim().is_empty() {
+        return Err("title must be non-empty".to_string());
+    }
+
+    let sender_pk =
+        create_public_key_with_kyber(identity.public_key.clone(), identity.kyber_public_key.clone());
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let execution_params = DaoExecutionParams {
+        action: DaoExecutionAction::GovernanceParameterUpdate(GovernanceParameterUpdate {
+            updates,
+        }),
+    };
+    let execution_params_bytes = bincode::serialize(&execution_params)
+        .map_err(|e| format!("Failed to serialize execution_params: {}", e))?;
+
+    let proposal_type_str = "difficulty_parameter_update".to_string();
+
+    let proposal_id = BcHash::from_slice(&lib_crypto::hash_blake3(
+        &[
+            sender_pk.key_id.as_slice(),
+            title.as_bytes(),
+            description.as_bytes(),
+            proposal_type_str.as_bytes(),
+            &now.to_le_bytes(),
+        ]
+        .concat(),
+    ));
+
+    // Reviewer #2685/L376: the node-created proposal path (and chain-side
+    // proposer-match filters) compare against `identity.did`. Deriving a
+    // DID from `sender_pk.key_id` here works today but is brittle — any
+    // future change to DID derivation would silently desync. Use the
+    // canonical DID from the identity itself.
+    let proposer_did = identity.did.clone();
+
+    let proposal_data = DaoProposalData {
+        proposal_id,
+        proposer: proposer_did,
+        title: title.clone(),
+        description,
+        proposal_type: proposal_type_str,
+        voting_period_blocks,
+        quorum_required,
+        execution_params: Some(execution_params_bytes),
+        created_at: now,
+        created_at_height: current_height,
+    };
+
+    let mut tx = lib_blockchain::Transaction::new_dao_proposal(
+        proposal_data,
+        Vec::new(),
+        Vec::new(),
+        0,
+        Signature {
+            signature: Vec::new(),
+            public_key: sender_pk.clone(),
+            algorithm: SignatureAlgorithm::DEFAULT,
+            timestamp: now,
+        },
+        format!("dao:proposal:{}", title).into_bytes(),
+    );
+    tx.chain_id = chain_id;
+
+    let signing_hash = tx.signing_hash();
+    let signature_bytes = crate::identity::sign_message(identity, signing_hash.as_bytes())
+        .map_err(|e| format!("Failed to sign DaoProposal: {}", e))?;
+    tx.signature = Signature {
+        signature: signature_bytes,
+        public_key: sender_pk,
+        algorithm: SignatureAlgorithm::DEFAULT,
+        timestamp: now,
+    };
+
+    let bytes = bincode::serialize(&tx)
+        .map_err(|e| format!("Failed to serialize DaoProposal tx: {}", e))?;
+    Ok(hex::encode(bytes))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        build_init_entity_registry_tx, build_record_on_ramp_trade_tx, build_treasury_allocation_tx,
+        build_governance_parameter_update_proposal_tx, build_init_entity_registry_tx,
+        build_record_on_ramp_trade_tx, build_treasury_allocation_tx,
     };
     use lib_blockchain::types::transaction_type::TransactionType;
+
+    #[test]
+    fn test_build_governance_parameter_update_proposal_round_trip() {
+        use crate::identity::generate_identity;
+        use lib_governance::dao::dao_types::{
+            DaoExecutionAction, DaoExecutionParams, GovernanceParameterValue,
+        };
+
+        let identity = generate_identity("test-device".to_string()).unwrap();
+        let signed_tx = build_governance_parameter_update_proposal_tx(
+            &identity,
+            "Set domain fee to 10 SOV".to_string(),
+            "Restore the on-chain fee for .sov domain registrations".to_string(),
+            1_000,
+            51,
+            vec![GovernanceParameterValue::DomainRegistrationFeeAtoms(
+                10_000_000_000_000_000_000u128,
+            )],
+            12345,
+            3,
+        )
+        .expect("builder ok");
+
+        let tx_bytes = hex::decode(signed_tx).expect("valid hex");
+        let tx: lib_blockchain::Transaction =
+            bincode::deserialize(&tx_bytes).expect("valid transaction");
+
+        assert_eq!(tx.transaction_type, TransactionType::DaoProposal);
+        assert_eq!(tx.chain_id, 3);
+
+        let data = tx.dao_proposal_data().expect("proposal payload");
+        assert_eq!(data.proposal_type, "difficulty_parameter_update");
+        assert_eq!(data.voting_period_blocks, 1_000);
+        assert_eq!(data.quorum_required, 51);
+        assert_eq!(data.created_at_height, 12345);
+
+        let params_bytes = data.execution_params.clone().expect("execution_params set");
+        let params: DaoExecutionParams =
+            bincode::deserialize(&params_bytes).expect("decode execution_params");
+        match params.action {
+            DaoExecutionAction::GovernanceParameterUpdate(u) => {
+                assert_eq!(u.updates.len(), 1);
+                match &u.updates[0] {
+                    GovernanceParameterValue::DomainRegistrationFeeAtoms(v) => {
+                        assert_eq!(*v, 10_000_000_000_000_000_000u128);
+                    }
+                    other => panic!("unexpected update: {:?}", other),
+                }
+            }
+            other => panic!("unexpected action: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_build_governance_parameter_update_rejects_empty() {
+        use crate::identity::generate_identity;
+        let identity = generate_identity("test-device".to_string()).unwrap();
+        let err = build_governance_parameter_update_proposal_tx(
+            &identity,
+            "noop".to_string(),
+            "no updates".to_string(),
+            100,
+            51,
+            vec![],
+            0,
+            3,
+        )
+        .expect_err("empty updates must be rejected");
+        assert!(err.contains("at least one parameter"));
+    }
+
+    /// #2685/L333 review fix: invalid field bounds are caught client-side.
+    #[test]
+    fn test_build_governance_parameter_update_rejects_bad_bounds() {
+        use crate::identity::generate_identity;
+        use lib_governance::dao::dao_types::GovernanceParameterValue;
+        let identity = generate_identity("test-device".to_string()).unwrap();
+        let one_update = vec![GovernanceParameterValue::DomainRegistrationFeeAtoms(1)];
+
+        let q = build_governance_parameter_update_proposal_tx(
+            &identity,
+            "x".to_string(),
+            "x".to_string(),
+            100,
+            101, // > 100
+            one_update.clone(),
+            0,
+            3,
+        )
+        .expect_err("quorum > 100 must be rejected");
+        assert!(q.contains("quorum_required"));
+
+        let v = build_governance_parameter_update_proposal_tx(
+            &identity,
+            "x".to_string(),
+            "x".to_string(),
+            0, // zero voting period
+            51,
+            one_update.clone(),
+            0,
+            3,
+        )
+        .expect_err("zero voting_period_blocks must be rejected");
+        assert!(v.contains("voting_period_blocks"));
+
+        let t = build_governance_parameter_update_proposal_tx(
+            &identity,
+            "   ".to_string(), // empty/whitespace title
+            "x".to_string(),
+            100,
+            51,
+            one_update,
+            0,
+            3,
+        )
+        .expect_err("empty title must be rejected");
+        assert!(t.contains("title"));
+    }
+
+    /// #2685/L376 review fix: proposer must equal `identity.did`, not a
+    /// did derived from sender_pk.key_id, so chain-side proposer-filter
+    /// comparisons stay correct under any future DID-derivation change.
+    #[test]
+    fn test_build_governance_parameter_update_proposer_matches_identity_did() {
+        use crate::identity::generate_identity;
+        use lib_governance::dao::dao_types::GovernanceParameterValue;
+        let identity = generate_identity("test-device".to_string()).unwrap();
+        let signed_tx = build_governance_parameter_update_proposal_tx(
+            &identity,
+            "t".to_string(),
+            "d".to_string(),
+            100,
+            51,
+            vec![GovernanceParameterValue::DomainRegistrationFeeAtoms(1)],
+            0,
+            3,
+        )
+        .expect("builder ok");
+        let tx_bytes = hex::decode(signed_tx).expect("hex");
+        let tx: lib_blockchain::Transaction =
+            bincode::deserialize(&tx_bytes).expect("tx");
+        let data = tx.dao_proposal_data().expect("payload");
+        assert_eq!(data.proposer, identity.did);
+    }
 
     #[test]
     fn test_build_init_entity_registry_tx_round_trip() {

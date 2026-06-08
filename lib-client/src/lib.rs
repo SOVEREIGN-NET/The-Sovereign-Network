@@ -77,8 +77,8 @@ pub use cbe_tx::{
 };
 pub use crypto::{Blake3, Dilithium5, Kyber1024};
 pub use dao_tx::{
-    build_dao_stake_tx, build_dao_unstake_tx, build_init_entity_registry_tx,
-    build_record_on_ramp_trade_tx, build_treasury_allocation_tx,
+    build_dao_stake_tx, build_dao_unstake_tx, build_governance_parameter_update_proposal_tx,
+    build_init_entity_registry_tx, build_record_on_ramp_trade_tx, build_treasury_allocation_tx,
 };
 pub use error::{ClientError, Result};
 pub use handshake::{HandshakeResult, HandshakeState};

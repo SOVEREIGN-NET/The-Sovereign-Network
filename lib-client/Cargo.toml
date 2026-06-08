@@ -36,6 +36,9 @@ flate2 = "1.0"
 lib-blockchain = { path = "../lib-blockchain" }
 lib-crypto = { path = "../lib-crypto" }
 lib-identity-core = { path = "../lib-identity-core" }
+# DAO governance enums + bincode envelope shared with the chain executor.
+# Used by build_governance_parameter_update_proposal_tx.
+lib-governance = { path = "../lib-governance" }
 
 # Post-quantum crypto (native builds use C-based implementations)
 blake3 = "1.5"
